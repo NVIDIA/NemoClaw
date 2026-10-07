@@ -1,16 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::docker::Connections;
-use nemoclaw_sdk::fabric_catalog::FabricCatalog;
+
+//! Engine, hardware, and image facts read from the selected engine's API.
+use crate::engine::Engines;
 use nemoclaw_sdk::{
-    discovery::DiscoveryRequest, discovery::EngineObservation, discovery::FabricObservation,
-    discovery::ObservationStatus,
+    discovery::{DiscoveryRequest, EngineObservation, FabricObservation, ObservationStatus},
+    fabric_capabilities::{FabricRequirements, ImageMetadata, assess_image},
+    fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
+    hardware_discovery::HardwareObservation,
 };
 use std::time::Duration;
+
 /// Observe the selected engine, never substituting the client host for a remote target.
 /// Failure to contact the engine leaves capabilities unknown rather than unsupported.
 pub async fn observe_engine(
-    connections: &Connections,
+    engines: &dyn Engines,
     request: &DiscoveryRequest,
 ) -> EngineObservation {
     let mut observed = EngineObservation {
@@ -24,8 +28,8 @@ pub async fn observe_engine(
         cpus: None,
     };
     let work = async {
-        connections
-            .resolve(&request.engine)?
+        engines
+            .engine(&request.engine)?
             .gateway_engine_info(request.compute_driver)
             .await
     };
@@ -41,7 +45,7 @@ pub async fn observe_engine(
         Ok(Err(error)) => {
             if matches!(
                 error,
-                crate::Error::Conflict(
+                nemoclaw_sdk::Error::Conflict(
                     "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks"
                         | "Podman sandbox driver requires a Podman engine socket"
                 )
@@ -57,9 +61,24 @@ pub async fn observe_engine(
     observed
 }
 
+/// Read only the selected engine API. Never run a collector, inspect the client's
+/// host, start a probe container, or infer GPU absence from missing advertisements.
+pub async fn observe_hardware(engines: &dyn Engines, endpoint: &str) -> HardwareObservation {
+    let work = async { engines.engine(endpoint)?.info().await };
+    match tokio::time::timeout(Duration::from_secs(5), work).await {
+        Ok(Ok(info)) => HardwareObservation::from_info(info),
+        _ => {
+            let mut observation = HardwareObservation::unknown();
+            observation.reason =
+                Some("Hardware information from the selected engine is unobservable.".into());
+            observation
+        }
+    }
+}
+
 /// Inspect metadata on an existing image. This never pulls an image or starts a container.
 pub async fn observe_fabric(
-    connections: &Connections,
+    engines: &dyn Engines,
     endpoint: &str,
     image: &str,
 ) -> FabricObservation {
@@ -72,11 +91,11 @@ pub async fn observe_fabric(
         image: Default::default(),
         compatibility: None,
     };
-    let work = async { connections.resolve(endpoint)?.image(image).await };
+    let work = async { engines.engine(endpoint)?.image(image).await };
     match tokio::time::timeout(Duration::from_secs(5), work).await {
         Ok(Ok(Some(info))) => {
             observed.image_id = info.id;
-            observed.image = crate::fabric_capabilities::ImageMetadata {
+            observed.image = ImageMetadata {
                 architecture: info.architecture,
                 operating_system: info.os,
                 repo_digests: info.repo_digests.unwrap_or_default(),
@@ -85,11 +104,7 @@ pub async fn observe_fabric(
             let label = info
                 .config
                 .and_then(|config| config.labels)
-                .and_then(|labels| {
-                    labels
-                        .get(crate::fabric_catalog::IMAGE_CATALOG_LABEL)
-                        .cloned()
-                });
+                .and_then(|labels| labels.get(IMAGE_CATALOG_LABEL).cloned());
             match label.as_deref().map(FabricCatalog::from_json) {
                 Some(Ok(catalog))
                     if observed.image_id.as_ref().is_some_and(|id| !id.is_empty()) =>
@@ -114,4 +129,23 @@ pub async fn observe_fabric(
         Err(_) => observed.reason = Some("image observation timed out".into()),
     }
     observed
+}
+
+/// Judge an image read against what its sandbox requires, on the engine
+/// platform when one is known.
+pub fn judge_image(
+    observed: &mut FabricObservation,
+    image: &str,
+    requirements: &FabricRequirements,
+    architecture: Option<&str>,
+    operating_system: Option<&str>,
+) {
+    observed.compatibility = Some(assess_image(
+        observed.catalog.as_ref(),
+        requirements,
+        &observed.image,
+        image,
+        architecture,
+        operating_system,
+    ));
 }

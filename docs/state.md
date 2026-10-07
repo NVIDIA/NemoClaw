@@ -19,6 +19,8 @@ They are implementation details for identifying retained state, not a manual edi
 | `terraform.tfstate` | OpenTofu resource state and durable bindings |
 | `main.tf.json`, `providers.tfrc` | SDK-generated graph and provider configuration |
 | `runtime/` | Separate managed-runtime stage and its retained state, when applicable |
+| `runtime/helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the runtime state until recovery or removal completes |
+| `kubernetes/` | Managed Kubernetes ownership receipt, development issuer key material, and gateway client credentials |
 
 The [state store](../crates/nemoclaw-sdk/src/state/mod.rs) and [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs) define these files.
 Keep the whole directory after failure; deleting state does not establish that its runtime resources are absent.
@@ -88,5 +90,6 @@ Record those addresses and keep the state directory if you need to account for r
 ## Recovery and Transfer
 
 Use [operation recovery](usage.md#updates-and-recovery) with the original configuration and retained state.
+For a failed or interrupted native Helm release removal, use [Helm removal recovery](usage.md#recover-an-interrupted-helm-removal); preserve the checkpoint and current state together.
 For a move from an earlier product version, use [migration](migration.md).
 Moving state to another host and migrating native data are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).

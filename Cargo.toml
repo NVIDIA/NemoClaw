@@ -2,6 +2,7 @@
 members = [
     "crates/nemoclaw-sdk",
     "crates/nemoclaw-authoring",
+    "crates/nemoclaw-discovery",
     "crates/nemoclaw-provider",
     "crates/nemoclaw-e2e",
     "crates/nemoclaw-cli",
@@ -68,6 +69,9 @@ jsonschema = { version = "=0.56.0", default-features = false }
 pulldown-cmark = { version = "=0.13.4", default-features = false }
 pulldown-cmark-to-cmark = "=22.0.1"
 crossterm = "0.29"
+# Cluster access for Kubernetes gateways; helm is the only cluster subprocess.
+kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring", "ws"] }
+k8s-openapi = { version = "0.28", default-features = false, features = ["latest"] }
 
 [patch."https://github.com/NVIDIA/OpenShell"]
 openshell-sdk = { path = "crates/vendor/openshell-sdk" }

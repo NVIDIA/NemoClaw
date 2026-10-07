@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# Supply a unique deployment UID, an accessible digest-selected image for every agent,
+# and an inference endpoint reachable from inside each Kubernetes sandbox.
+# Write each image's metadata bundle with `cargo images export-metadata` and set
+# NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-agent
+  uid: 785e7cc0-d2c1-4847-aede-a9b0ba2b8d83
+spec:
+  # Supply the existing Kubernetes cluster's OpenShell gateway.
+  gateway:
+    management: external
+    runtime:
+      provider: kubernetes
+    endpoint: https://openshell.example.com
+    credential: {env: GATEWAY_TOKEN}
+    tls:
+      ca: {env: GATEWAY_CA}
+      certificate: {env: GATEWAY_CERT}
+      key: {env: GATEWAY_KEY}
+  inferenceProviders:
+    - name: inference
+      provider: openai
+      endpoint: https://inference.example.com/v1
+      credential: {env: INFERENCE_API_KEY}
+  # Each sandbox runs one independent agent using the shared inference profile.
+  sandboxes:
+    - name: assistant
+      # Replace this example digest with an image adapted for the gateway's UID/GID 10001.
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: main
+        inferenceRef: chat
+    - name: researcher
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: researcher
+        inferenceRef: chat
+    - name: reviewer
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: nvidia.fabric.openclaw
+      agent:
+        name: reviewer
+        inferenceRef: chat
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: inference
+          overrides:
+            model: example-model

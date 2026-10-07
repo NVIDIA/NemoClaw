@@ -523,7 +523,7 @@ impl nemoclaw_e2e::openshell::SandboxExecution for ImageAgents {
             "bridge".into(),
             "--read-only".into(),
             "--tmpfs".into(),
-            "/sandbox:rw,uid=1000,gid=1000,mode=0700".into(),
+            "/sandbox:rw,uid=10001,gid=10001,mode=0700".into(),
             "--tmpfs".into(),
             "/tmp:rw,mode=1777".into(),
         ];

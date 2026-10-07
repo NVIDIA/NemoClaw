@@ -5,6 +5,10 @@
   "ollama": "0.34.0",
   "platforms": {
     "linux_arm64": {
+      "kind": {
+          "url": "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-arm64",
+          "sha256": "20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2"
+      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_arm64.zip",
         "sha256": "e573979ba68a17fe7b881752051a694a7efcd970e39521f6a25775197861ed4d"
@@ -20,9 +24,17 @@
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_arm64.zip",
         "sha256": "d60fc2d42da1d567f28b6267dde57af03d7333033d8246c6880944f24d641556"
+      },
+      "helmProvider": {
+        "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_arm64.zip",
+        "sha256": "77515e5576f4ea3d8d9e404237882de62518950ccd7b312371f5c03580f22fb0"
       }
     },
     "linux_amd64": {
+      "kind": {
+          "url": "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64",
+          "sha256": "aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"
+      },
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_amd64.zip",
         "sha256": "5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8"
@@ -38,6 +50,10 @@
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_linux_amd64.zip",
         "sha256": "866046fa4938ac1ed5cc58b3c4d36e27433dac1aae50256911e6f28184dcf82e"
+      },
+      "helmProvider": {
+        "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_amd64.zip",
+        "sha256": "24a942352667cf49bed467c51a951f17a6c13e0cdf1c505b01b41f75a1a60d0f"
       }
     },
     "darwin_arm64": {
@@ -56,6 +72,10 @@
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_arm64.zip",
         "sha256": "e4f8d82f2a5171dd5cb9d5813a49d7d7221d09c10482c2c819d6b2a899e30c5f"
+      },
+      "helmProvider": {
+        "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_darwin_arm64.zip",
+        "sha256": "a4e601eddf9781b5f8678ee9c2b6fb0791fbe6ab85a53707efdf80f714a3011c"
       }
     },
     "darwin_amd64": {
@@ -74,6 +94,10 @@
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_darwin_amd64.zip",
         "sha256": "c14b8d122bd12cc84aed5eb62cc0a965b5a9807b5a2257a51be5460d2f69b437"
+      },
+      "helmProvider": {
+        "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_darwin_amd64.zip",
+        "sha256": "2c057eafd1e4d8b50acdc676f9a3096e38fb7d30c3fab3d64af82fa04a2f767e"
       }
     },
     "windows_amd64": {
@@ -92,6 +116,10 @@
       "dockerProvider": {
         "url": "https://github.com/kreuzwerker/terraform-provider-docker/releases/download/v4.6.0/terraform-provider-docker_4.6.0_windows_amd64.zip",
         "sha256": "bad00d59d082dcad2be2582660aae6f7683ffb3bba226cc627fb910008f27411"
+      },
+      "helmProvider": {
+        "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_windows_amd64.zip",
+        "sha256": "eaa58edc8bb43aeb0fe6c0f99975cb24e2e9f5441e938a389fe848795a30b825"
       }
     }
   },
@@ -103,7 +131,11 @@
     "agent": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
     "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2",
     "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
-    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:bf4797b6c511f2d8ba02955dbba4bf76c1f0dd6d83531420c5408d5f1fb9d72f"
+    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:bf4797b6c511f2d8ba02955dbba4bf76c1f0dd6d83531420c5408d5f1fb9d72f",
+    "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:7a714bbbbcef7b5ed8dac599e89e89df12eb623fa4454d22f89df41d6f047e2a",
+    "developmentIssuer": "docker.io/nginxinc/nginx-unprivileged@sha256:5aea7cc516b419e3526f47dd1531be31a56a046cfe44754d94f9383e13e2ee99",
+    "kindNode": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
   },
-  "dockerProvider": "4.6.0"
+  "dockerProvider": "4.6.0",
+  "helmProvider": "3.3.0"
 }

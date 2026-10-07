@@ -4,16 +4,12 @@
 use super::{app::JourneyWizard, logo::BrandImage};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use nemoclaw_authoring::{
-    AuthoringFacts, Capabilities, DiscoveryEvidence, DiscoveryKey, EndpointEvidence,
-    GatewayEvidence, HardwareEvidence, JourneyQuestionKind, JourneyState,
-    discovery_key_for_document, inference_request_for_document,
+    Capabilities, JourneyQuestionKind, JourneyState, discovery_queries,
+    inference_request_for_document,
 };
+use nemoclaw_discovery::{Direct, DiscoveryObservations};
 use nemoclaw_sdk::{
-    CancellationToken, Error,
-    config::Document,
-    discovery::DiscoveryRequest,
-    discovery_session::{DiscoveryObservation, DiscoveryQuery, DiscoverySession},
-    inference_discovery::EndpointRequest,
+    CancellationToken, EnvironmentSecrets, Error, config::Document, discovery::DiscoveryQuery,
 };
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
 use std::{collections::VecDeque, io, time::Duration};
@@ -55,7 +51,7 @@ pub(crate) async fn run(
     capabilities: Capabilities,
     state: JourneyState,
     cancel: &CancellationToken,
-    bundle: Option<&std::path::Path>,
+    discover: bool,
 ) -> Result<Option<Document>, Box<dyn std::error::Error>> {
     let mut guard = TerminalGuard::enter()?;
     let area = crossterm::terminal::size().map(|(width, height)| Rect::new(0, 0, width, height))?;
@@ -68,44 +64,51 @@ pub(crate) async fn run(
             viewport: Viewport::Fixed(area),
         },
     )?;
-    let mut wizard = JourneyWizard::new(capabilities, state);
+    let mut wizard = JourneyWizard::new(capabilities, state)
+        .with_local_engine_candidates(nemoclaw_discovery::local_engine_candidates());
     let mut needs_render = true;
-    let mut attempted_requests = Vec::new();
     let mut queued_events = VecDeque::new();
     loop {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled.into());
         }
+        // Learn what this machine can run before the first question, so early
+        // choices can use it. Each read is attempted once, even when it fails.
+        if discover {
+            let queries = local_engine_probe(&wizard);
+            if !queries.is_empty() {
+                terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
+                if !ask_target(
+                    &mut wizard,
+                    read_target,
+                    queries,
+                    cancel,
+                    &mut queued_events,
+                    poll_pending_event,
+                )
+                .await?
+                {
+                    return Ok(None);
+                }
+                needs_render = true;
+            }
+        }
         // Resolver failures are rendered by the view; keep the loop alive so
         // the user can go back instead of exiting the TUI.
-        if let Some(bundle) = bundle
-            && wizard.question().is_ok_and(|question| {
-                question
-                    .is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
-            })
-            && let Ok(resolution) = wizard.state.resolve(&wizard.capabilities)
-            && let Some(document) = resolution.assessment().document()
-            && let Ok(request) =
-                inference_request_for_document(document, wizard.state.current_route())
-            && !attempted_requests.contains(&request)
-        {
-            attempted_requests.push(request.clone());
-            let discovery_cancel = cancel.child_token();
-            let Some(observed) = wait_for_discovery(
-                observe_models(bundle, request, &discovery_cancel),
+        if discover && let Some(query) = model_catalog_probe(&wizard) {
+            if !ask_target(
+                &mut wizard,
+                read_target,
+                vec![query],
                 cancel,
-                &discovery_cancel,
                 &mut queued_events,
                 poll_pending_event,
             )
             .await?
-            else {
+            {
                 return Ok(None);
-            };
-            if let Some(evidence) = observed {
-                wizard.facts.endpoint = Some(evidence);
-                needs_render = true;
             }
+            needs_render = true;
         }
         if needs_render {
             terminal.draw(|frame| wizard.render_with_brand(frame, brand))?;
@@ -154,15 +157,10 @@ pub(crate) async fn run(
                     .resolve(&wizard.capabilities)
                     .ok()
                     .and_then(|resolution| resolution.assessment().document().cloned());
-                if let (Some(bundle), Some(document)) = (bundle, document) {
+                if let (true, Some(document)) = (discover, document) {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
-                        observe_target(
-                            bundle,
-                            &document,
-                            wizard.state.current_route(),
-                            &discovery_cancel,
-                        ),
+                        observe_target(&document, wizard.state.current_route(), &discovery_cancel),
                         cancel,
                         &discovery_cancel,
                         &mut queued_events,
@@ -170,14 +168,12 @@ pub(crate) async fn run(
                     )
                     .await;
                     match observed {
-                        Ok(Some(Some((evidence, facts)))) => {
-                            wizard.discovery = Some(evidence);
-                            wizard.facts = facts;
-                            match wizard.state.delegate_remaining(
-                                &wizard.capabilities,
-                                wizard.discovery.as_ref(),
-                                &wizard.facts,
-                            ) {
+                        Ok(Some(observations)) => {
+                            wizard.remember(observations);
+                            match wizard
+                                .state
+                                .delegate_remaining(&wizard.capabilities, &wizard.observations)
+                            {
                                 Ok(delegated) => {
                                     wizard.history.push(wizard.state.clone());
                                     wizard.state = delegated;
@@ -185,12 +181,6 @@ pub(crate) async fn run(
                                 }
                                 Err(error) => wizard.error = Some(error.to_string()),
                             }
-                        }
-                        Ok(Some(None)) => {
-                            wizard.error = Some(
-                                "Target discovery is unavailable. Continue answering individually."
-                                    .into(),
-                            )
                         }
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
@@ -212,7 +202,7 @@ pub(crate) async fn run(
             KeyCode::Enter => {
                 if wizard.started
                     && matches!(wizard.question(), Ok(None))
-                    && let Some(bundle) = bundle
+                    && discover
                     && let Some(document) = wizard
                         .state
                         .resolve(&wizard.capabilities)
@@ -221,12 +211,7 @@ pub(crate) async fn run(
                 {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
-                        observe_target(
-                            bundle,
-                            &document,
-                            wizard.state.current_route(),
-                            &discovery_cancel,
-                        ),
+                        observe_target(&document, wizard.state.current_route(), &discovery_cancel),
                         cancel,
                         &discovery_cancel,
                         &mut queued_events,
@@ -234,11 +219,7 @@ pub(crate) async fn run(
                     )
                     .await;
                     match observed {
-                        Ok(Some(Some((evidence, facts)))) => {
-                            wizard.facts = facts;
-                            wizard.discovery = Some(evidence);
-                        }
-                        Ok(Some(None)) => {}
+                        Ok(Some(observations)) => wizard.remember(observations),
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),
                         Err(error) => {
@@ -322,188 +303,84 @@ async fn wait_for_discovery<T>(
     }
 }
 
-pub(super) async fn observe_models(
-    bundle: &std::path::Path,
-    request: EndpointRequest,
-    cancel: &CancellationToken,
-) -> Result<Option<EndpointEvidence>, Error> {
-    let Ok(mut session) = DiscoverySession::new(bundle) else {
-        return Ok(None);
-    };
-    let observations = match session
-        .batch(&[DiscoveryQuery::Inference(request.clone())], cancel)
-        .await
-    {
-        Ok(observations) => observations,
-        Err(Error::Cancelled) => return Err(Error::Cancelled),
-        Err(_) => return Ok(None),
-    };
-    Ok(observations
-        .into_iter()
-        .find_map(|observation| match observation {
-            DiscoveryObservation::Inference(observation) => Some(EndpointEvidence {
-                request: request.clone(),
-                observation,
-            }),
-            _ => None,
-        }))
+/// This machine's candidate engines, until each has been asked about once.
+pub(super) fn local_engine_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> {
+    let queries: Vec<DiscoveryQuery> = wizard
+        .local_engine_candidates
+        .iter()
+        .cloned()
+        .map(DiscoveryQuery::Engine)
+        .collect();
+    wizard.observations.missing(&queries)
 }
 
+/// The model catalog of the route being asked about, once the journey is at its
+/// model question and that catalog has not been read.
+pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQuery> {
+    if !wizard.question().is_ok_and(|question| {
+        question.is_some_and(|question| question.kind() == JourneyQuestionKind::InferenceModel)
+    }) {
+        return None;
+    }
+    let resolution = wizard.state.resolve(&wizard.capabilities).ok()?;
+    let document = resolution.assessment().document()?;
+    let request = inference_request_for_document(document, wizard.state.current_route()).ok()??;
+    let query = DiscoveryQuery::Inference(request);
+    (!wizard.observations.contains(&query)).then_some(query)
+}
+
+/// Ask the target with `read` and keep what it says. `false` means the user
+/// escaped while it was being read, which abandons the questionnaire.
+pub(super) async fn ask_target(
+    wizard: &mut JourneyWizard,
+    read: impl AsyncFnOnce(
+        Vec<DiscoveryQuery>,
+        &CancellationToken,
+    ) -> Result<DiscoveryObservations, Error>,
+    queries: Vec<DiscoveryQuery>,
+    cancel: &CancellationToken,
+    queued_events: &mut VecDeque<Event>,
+    poll: impl FnMut() -> io::Result<Option<Event>>,
+) -> Result<bool, Error> {
+    let discovery_cancel = cancel.child_token();
+    let Some(observed) = wait_for_discovery(
+        read(queries, &discovery_cancel),
+        cancel,
+        &discovery_cancel,
+        queued_events,
+        poll,
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    wizard.remember(observed);
+    Ok(true)
+}
+
+/// Read the target directly. A read that fails is an unknown observation,
+/// never absence, so it is not asked again on every pass.
+async fn read_target(
+    queries: Vec<DiscoveryQuery>,
+    cancel: &CancellationToken,
+) -> Result<DiscoveryObservations, Error> {
+    nemoclaw_discovery::observe(&queries, &Direct, &EnvironmentSecrets, cancel).await
+}
+
+/// Read again everything the journey needs about the target for `document`.
 async fn observe_target(
-    bundle: &std::path::Path,
     document: &Document,
     route: Option<&str>,
     cancel: &CancellationToken,
-) -> Result<Option<(DiscoveryEvidence, AuthoringFacts)>, Error> {
-    let Ok(mut session) = DiscoverySession::new(bundle) else {
-        return Ok(None);
-    };
-    let key = discovery_key_for_document(document)
+) -> Result<DiscoveryObservations, Error> {
+    let queries = discovery_queries(document, route)
         .map_err(|_| Error::State("invalid discovery selection"))?;
-    let request = inference_request_for_document(document, route)
-        .map_err(|_| Error::State("invalid inference selection"))?;
-    let mut evidence = DiscoveryEvidence {
-        key: key.clone(),
-        engine: None,
-        fabric: None,
-    };
-    let mut facts = AuthoringFacts {
-        credentials: nemoclaw_sdk::inference_discovery::observe_credentials(
-            document,
-            &nemoclaw_sdk::EnvironmentSecrets,
-        )?,
-        ..Default::default()
-    };
-    let queries = discovery_queries(&key, request);
-    match session.batch(&queries, cancel).await {
-        Ok(observations) => {
-            for (query, observation) in queries.into_iter().zip(observations) {
-                match (query, observation) {
-                    (DiscoveryQuery::Engine(_), DiscoveryObservation::Engine(observed)) => {
-                        evidence.engine = Some(observed)
-                    }
-                    (DiscoveryQuery::Fabric { .. }, DiscoveryObservation::Fabric(observed)) => {
-                        evidence.fabric = Some(observed)
-                    }
-                    (
-                        DiscoveryQuery::Hardware { engine },
-                        DiscoveryObservation::Hardware(observation),
-                    ) => {
-                        facts.hardware = Some(HardwareEvidence {
-                            engine,
-                            observation,
-                        })
-                    }
-                    (
-                        DiscoveryQuery::Inference(request),
-                        DiscoveryObservation::Inference(observation),
-                    ) => {
-                        facts.endpoint = Some(EndpointEvidence {
-                            request,
-                            observation,
-                        })
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Err(Error::Cancelled) => return Err(Error::Cancelled),
-        Err(_) => {}
-    }
-    match session
-        .gateway(&document.spec.gateway, &[key.compute_driver], cancel)
-        .await
-    {
-        Ok(observation) => {
-            facts.gateway = Some(GatewayEvidence {
-                gateway: document.spec.gateway.clone(),
-                compute_driver: key.compute_driver,
-                observation,
-            })
-        }
-        Err(Error::Cancelled) => return Err(Error::Cancelled),
-        Err(_) => {}
-    }
-    Ok(Some((evidence, facts)))
-}
-
-fn discovery_queries(
-    key: &DiscoveryKey,
-    request: nemoclaw_sdk::inference_discovery::EndpointRequest,
-) -> Vec<DiscoveryQuery> {
-    let mut queries = Vec::new();
-    // An external gateway's engine only stores images: read their metadata,
-    // but do not probe it as the gateway's engine or hardware.
-    if key.managed_gateway && !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Engine(DiscoveryRequest {
-            engine: key.engine.clone(),
-            compute_driver: key.compute_driver,
-        }));
-    }
-    if !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Fabric {
-            engine: key.engine.clone(),
-            image: key.image.clone(),
-        });
-    }
-    if key.managed_gateway && !key.engine.is_empty() {
-        queries.push(DiscoveryQuery::Hardware {
-            engine: key.engine.clone(),
-        });
-    }
-    if request.validate().is_ok() {
-        queries.push(DiscoveryQuery::Inference(request));
-    }
-    queries
+    read_target(queries, cancel).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn external_gateway_does_not_guess_a_local_engine_for_discovery() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spark/remote-vllm.yaml");
-        let document = Document::parse(std::fs::File::open(path).unwrap()).unwrap();
-        let key = discovery_key_for_document(&document).unwrap();
-        assert!(key.engine.is_empty());
-        let queries = discovery_queries(
-            &key,
-            inference_request_for_document(&document, None).unwrap(),
-        );
-        assert!(
-            queries
-                .iter()
-                .all(|query| matches!(query, DiscoveryQuery::Inference(_))),
-            "unresolved engine must not target the local daemon: {queries:?}"
-        );
-    }
-
-    #[test]
-    fn external_gateway_queries_its_image_store_without_gateway_or_hardware_probes() {
-        let mut document =
-            Document::parse(&include_bytes!("../../../onboarding/openclaw.yaml")[..]).unwrap();
-        document.spec.gateway = serde_json::from_value(serde_json::json!({
-            "management": "external",
-            "endpoint": "https://gateway.example:8080",
-            "engine": "ssh://images@example.com",
-        }))
-        .unwrap();
-        document.spec.gateway.runtime_mut().provider = nemoclaw_sdk::config::ComputeDriver::Podman;
-        let key = discovery_key_for_document(&document).unwrap();
-        let request = inference_request_for_document(&document, None).unwrap();
-        assert_eq!(
-            discovery_queries(&key, request.clone()),
-            vec![
-                DiscoveryQuery::Fabric {
-                    engine: "ssh://images@example.com".into(),
-                    image: key.image.clone(),
-                },
-                DiscoveryQuery::Inference(request),
-            ]
-        );
-    }
 
     #[tokio::test]
     async fn escape_cancels_discovery_and_restores_the_questionnaire() {

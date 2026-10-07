@@ -179,6 +179,11 @@ fn switching_runtime_preserves_the_selected_model() {
         .unwrap();
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     let before: Value = state.values().pointer(model).unwrap().clone();
+    let podman = "unix:///run/user/501/podman/podman.sock";
+    crate::support::found_local_engines(
+        &mut state,
+        &[(podman, nemoclaw_sdk::config::ComputeDriver::Podman)],
+    );
     state
         .answer(
             &capabilities,
@@ -189,7 +194,7 @@ fn switching_runtime_preserves_the_selected_model() {
     assert_eq!(state.values().pointer(model), Some(&before));
     assert_eq!(
         state.values().pointer("/spec/gateway/engine"),
-        Some(&json!("unix:///run/user/1000/podman/podman.sock"))
+        Some(&json!(podman))
     );
 }
 

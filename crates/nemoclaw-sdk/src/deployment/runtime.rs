@@ -1,13 +1,53 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod helm_recovery;
 mod teardown;
 #[cfg(all(test, unix))]
-mod tests;
+pub(super) mod tests;
 
 pub(super) use super::plan::check_plan as check_runtime_plan;
 use super::*;
 use crate::managed::{GATEWAY_KIND, Spec};
 const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
+const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
+const KUBERNETES_AUTH: &str = "nemoclaw_kubernetes_auth.runtime";
+
+fn kubernetes_binding(
+    target: &Target,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<(), Error> {
+    let Some(binding) = bindings.get(&target.address) else {
+        return Ok(());
+    };
+    let helm = crate::kubernetes::gateway::ADDRESS;
+    let prerequisites: &[&str] = match target.kind.as_str() {
+        crate::kubernetes::AUTH_KIND => &[KUBERNETES_STORAGE],
+        "helm_release" => &[KUBERNETES_STORAGE, KUBERNETES_AUTH],
+        crate::kubernetes::GATEWAY_KIND => &[KUBERNETES_STORAGE, KUBERNETES_AUTH, helm],
+        _ => &[],
+    };
+    if prerequisites
+        .iter()
+        .any(|address| !bindings.contains_key(*address))
+    {
+        return Err(Error::Conflict(
+            "Kubernetes runtime requires its independent prerequisite bindings; retain the original bundle and state for recovery",
+        ));
+    }
+    if target.address == helm
+        && (binding.id != target.values["name"]
+            || binding.name != target.values["name"]
+            || binding.namespace != target.values["namespace"]
+            || binding.chart != target.values["chart"]
+            || !binding.spec.is_empty()
+            || !binding.deposed.is_empty())
+    {
+        return Err(Error::Conflict(
+            "bound Helm release differs from retained intent",
+        ));
+    }
+    Ok(())
+}
 fn bound_spec(want: &Spec, binding: Option<&StateBinding>) -> Result<Spec, Error> {
     let Some(binding) = binding else {
         return Ok(want.clone());
@@ -46,6 +86,10 @@ fn runtime_bindings(
         ));
     }
     for target in targets {
+        kubernetes_binding(target, bindings)?;
+        if target.address == crate::kubernetes::gateway::ADDRESS {
+            continue;
+        }
         if target.kind == GATEWAY_KIND
             && bindings.contains_key(&target.address)
             && !bindings.contains_key(GATEWAY_STORAGE)
@@ -88,6 +132,16 @@ fn runtime_observations(
         expected: runtime_bindings(targets, bindings)?,
         gateway_running: document.spec.gateway.as_managed().is_none(),
     };
+    if let Some(gateway) = targets
+        .iter()
+        .find(|target| target.kind == crate::kubernetes::GATEWAY_KIND)
+    {
+        result.gateway_running = plan.resource_changes.iter().any(|change| {
+            change.address == gateway.address
+                && change.change.actions == ["no-op"]
+                && change.change.before["running"] == "true"
+        });
+    }
     if let Some(gateway) = targets
         .iter()
         .find(|target| target.kind == GATEWAY_KIND && plan::disposable(&target.address))
@@ -183,7 +237,7 @@ impl Deployment {
             return Ok((
                 changes,
                 !checked.gateway_running,
-                plan.discovery_deferred(),
+                plan.discovery_deferred(&discovery),
                 discovery,
             ));
         }

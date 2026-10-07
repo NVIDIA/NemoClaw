@@ -87,6 +87,14 @@ pub struct HardwareObservation {
 }
 
 impl HardwareObservation {
+    /// A read that could not be made, recorded as unknown with its reason.
+    pub fn unknown_because(reason: &str) -> Self {
+        Self {
+            reason: Some(reason.into()),
+            ..Self::unknown()
+        }
+    }
+
     pub fn unknown() -> Self {
         Self {
             status: ObservationStatus::Unknown,
