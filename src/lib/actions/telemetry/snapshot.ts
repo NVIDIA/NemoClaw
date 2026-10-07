@@ -407,7 +407,8 @@ export async function collectOperationSnapshot(options: {
             continue;
           }
           if (!isPublishedSandboxRegistration(entry)) continue;
-          entries.push(entry);
+          // Registry null/absence is the canonical default OpenClaw harness.
+          entries.push({ ...entry, agent: entry.agent ?? "openclaw" });
         }
       } catch {
         inventoryError = true;

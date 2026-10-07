@@ -373,6 +373,23 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.toolDisclosure).toBe("progressive");
     expect(entry.observabilityEnabled).toBe(false);
     expect(entry.dcodeAutoApprovalMode).toBeUndefined();
+
+    const sessionRead = vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "demo",
+      agent: "hermes",
+      messagingPlan: null,
+      checkpoint: { messaging: { kind: "declined" } },
+    });
+    const knownEmptyEntry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({ agent: { name: "hermes" } as any, hermesApiPort: 18793 }),
+    );
+    expect(knownEmptyEntry.messaging?.plan).toMatchObject({
+      sandboxName: "demo",
+      agent: "hermes",
+      channels: [],
+      credentialBindings: [],
+    });
+    sessionRead.mockRestore();
   });
 
   it("normalizes invalid preferred inference API values", () => {

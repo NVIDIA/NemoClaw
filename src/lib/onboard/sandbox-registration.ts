@@ -15,6 +15,7 @@ import {
 } from "../inference/selection";
 import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
@@ -199,7 +200,21 @@ export function buildCreatedSandboxRegistryEntry(
       : undefined;
   // A pending removal is command-owned recovery state. Registration must
   // preserve it until post-restore config cleanup and the registry update both succeed.
-  const messagingState = plannedMessagingState;
+  const requestedAgent = getRequestedSandboxAgentName(input.agent);
+  const knownEmptyMessaging =
+    session?.sandboxName === input.sandboxName &&
+    session.agent === requestedAgent &&
+    session.messagingPlan === null &&
+    session.checkpoint?.messaging.kind === "declined" &&
+    (requestedAgent === "openclaw" || requestedAgent === "hermes");
+  const messagingState =
+    plannedMessagingState ??
+    (knownEmptyMessaging
+      ? {
+          schemaVersion: 1 as const,
+          plan: MessagingSetupApplier.emptyPlan(input.sandboxName, requestedAgent),
+        }
+      : undefined);
   const workload = cloneSandboxWorkloadReceipt(input.workload);
   if (input.workload !== undefined && workload === undefined) {
     throw new RuntimeProviderSelectionError(

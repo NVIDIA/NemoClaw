@@ -350,7 +350,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
     applicationPlan: SandboxMessagingPlan = MessagingSetupApplier.readPlanFromEnv() ??
-      emptyMessagingPlan(),
+      MessagingSetupApplier.emptyPlan(),
   ): Promise<string[]> {
     const application = buildMessagingProviderApplication({
       tokenDefs,
@@ -517,7 +517,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     const runOpenshell = deps.runOpenshell;
     const applicationPlan =
       MessagingSetupApplier.readPlanFromEnv() ??
-      emptyMessagingPlan(input.sandboxName, agentNameForMessagingPlan(input.agent));
+      MessagingSetupApplier.emptyPlan(input.sandboxName, agentNameForMessagingPlan(input.agent));
     await preflightRequiredCredentialProviderBindings(
       input.requiredBindings,
       plannedTokenDefs,
@@ -556,26 +556,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     applyMessagingProviders,
     stageSandboxCredentialProviders,
     upsertProvider,
-  };
-}
-
-function emptyMessagingPlan(
-  sandboxName = "provider-application",
-  agent: SandboxMessagingPlan["agent"] = "openclaw",
-): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent,
-    workflow: "onboard",
-    channels: [],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 
