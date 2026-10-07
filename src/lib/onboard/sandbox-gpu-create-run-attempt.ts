@@ -335,7 +335,8 @@ async function checkSandboxExecutableReadiness(
     return "probe_failed";
   }
   if (result.outcome.exitCode === 0) return "ready";
-  return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
+  const output = normalizedOpenShellCommandOutput(result);
+  return output.trim().length === 0 || OPENSHELL_SANDBOX_NOT_READY.test(output)
     ? "not_ready"
     : "probe_failed";
 }

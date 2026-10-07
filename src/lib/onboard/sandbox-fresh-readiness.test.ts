@@ -132,6 +132,36 @@ describe("fresh sandbox executable readiness", () => {
     );
   });
 
+  it("retries an empty executable readiness response inside the bounded wait (#12698)", async () => {
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+      ]),
+    );
+    vi.mocked(deps.commandExecutor.runBuffered)
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 1 },
+        stdout: "",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("fails when the executable readiness probe is terminal (#9050)", async () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
