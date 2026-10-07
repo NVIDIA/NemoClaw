@@ -212,39 +212,33 @@ E2E_USERS=5 ./scripts/client.sh
 # Terminal A 
 E2E_USERS=5 ALLOW_INSECURE_HTTP=1 ./scripts/agentscaling_latency.sh
 ```
+<img width="849" height="466" alt="Screenshot 2026-10-06 at 9 02 49 PM" src="https://github.com/user-attachments/assets/1b2602a9-a8f4-482e-a071-9fb5f87e2ac1" />
+
+
 ```bash
 # Terminal B
 ./scripts/get-hpa.sh -n nemoclaw-gpu -w
 ```
+<img width="854" height="635" alt="Screenshot 2026-10-06 at 9 03 08 PM" src="https://github.com/user-attachments/assets/9797b59d-01f1-437c-baeb-775eb2c96977" />
+
+
 
 ```bash
 # Terminal C — from a remote terminal such as your laptop (HTTP)
 # Sends chats for DURATION_SEC. Does not drop queries at 8 GPUs.
 E2E_CLIENT_HOST=dgx-ip E2E_USERS=5 ./scripts/client.sh
+```
+<img width="671" height="288" alt="Screenshot 2026-10-06 at 8 59 44 PM" src="https://github.com/user-attachments/assets/1065ffe2-af3e-467b-9d66-e08a0472050d" />
 
 
+```bash
 # or a simpler option — from the same DGX in another terminal
 E2E_USERS=5 ./scripts/client.sh
 ```
 
-Validated on DGX 8×H100, HPA metric for autoscaling: GPU utilization (target 40%):
-<p align="center">
-<img width="818" height="561" alt="Screenshot 2026-09-30 at 2 28 52 PM" src="https://github.com/user-attachments/assets/f2152e25-bde8-4156-9391-db3bee85aa1b" />
-</p>
 
 
-Validated on DGX 8xH100, HPA metric for autoscaling: LLM latency (target 3000 ms):
-<p align="center">
-<img width="841" height="251" alt="Screenshot 2026-09-30 at 5 02 10 PM" src="https://github.com/user-attachments/assets/6235b4f9-9156-43d6-8196-c3e75ee1d7c9" />
-</p>
 
-
-Check the log to see the end users, sandboxes, and chats: 
-<p align="center">
-<img width="791" height="261" alt="Screenshot 2026-09-28 at 6 04 34 PM" src="https://github.com/user-attachments/assets/be06f646-84a8-49b9-889a-082ef1c73b5d" />
-</p>
-
-Remote laptop UI (simple Q&A, not `client.sh`): [OpenClaw simple test](#openclaw-simple-test).
 
 #### 6b. Hermes + vLLM
 
@@ -621,6 +615,10 @@ A non-empty answer plus the final `OK:` line is a pass. Wording varies; small mo
 | 2    | `http://dgx-ip:18791/u/0`               |
 | 3    | `http://dgx-ip:18792/u/0`               |
 | 4    | `http://dgx-ip:18793/u/0`               |
+
+Remote laptop UI 
+<img width="1458" height="854" alt="Screenshot 2026-10-02 at 9 54 48 PM" src="https://github.com/user-attachments/assets/95cac638-145d-4e86-a976-bf80522d4dcc" />
+
 
 
 ### Hermes simple test
