@@ -110,6 +110,18 @@ impl Run {
         panic!("fixture credential did not become ready");
     }
 
+    /// The cache contents, once the fixture container has written them.
+    fn model(&self) -> Vec<u8> {
+        for _ in 0..100 {
+            let output = self.docker_output(&["exec", &self.name, "cat", "/data/model"]);
+            if output.status.success() && !output.stdout.is_empty() {
+                return output.stdout;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("fixture cache did not become ready");
+    }
+
     fn state(&self) -> Vec<u8> {
         fs::read(self.root.join("terraform.tfstate")).unwrap()
     }
@@ -244,10 +256,7 @@ fn standalone_hcl_recovers_cache_and_guards_credentials_without_sdk_orchestratio
     run.docker(&["volume", "rm", &format!("{name}-data")]);
     run.apply(&["-var=revision=replaced"]);
     assert_eq!(run.key(), original);
-    assert_eq!(
-        run.docker(&["exec", &name, "cat", "/data/model"]),
-        b"reconstructed"
-    );
+    assert_eq!(run.model(), b"reconstructed");
     let unchanged = run.state();
 
     // Missing bound credentials must block a pending compute replacement.
