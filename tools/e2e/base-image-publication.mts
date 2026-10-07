@@ -109,6 +109,7 @@ const PUBLISHER_JOB_ALIASES = new Map<string, RequiredPublisherJob>([
 ]);
 
 class IneligibleManualManagedImagePromotionError extends Error {}
+class PaginationCapExceededError extends Error {}
 
 function requiredPublisherIneligibilityError(
   requiredName: RequiredPublisherJob,
@@ -725,7 +726,9 @@ async function collectPaginationAttempt(
     }
   }
 
-  throw new Error(`${label} pagination exceeded the ${maxPages}-page safety cap`);
+  throw new PaginationCapExceededError(
+    `${label} pagination exceeded the ${maxPages}-page safety cap`,
+  );
 }
 
 export async function collectPaginated(
@@ -749,6 +752,34 @@ export async function collectPaginated(
     if (result) return result;
   }
   throw new Error(`${label} total_count changed during ${PAGINATION_ATTEMPTS} pagination attempts`);
+}
+
+export async function collectPublicationRuns(
+  request: (path: string) => Promise<unknown>,
+  basePath: string,
+  history: FirstParentHistory,
+): Promise<JsonRecord> {
+  try {
+    return await collectPaginated(request, basePath, "workflow_runs");
+  } catch (error) {
+    if (!(error instanceof PaginationCapExceededError)) throw error;
+  }
+
+  const workflowRuns: unknown[] = [];
+  for (const headSha of history.distanceBySha.keys()) {
+    const response = await collectPaginated(
+      request,
+      `${basePath}&head_sha=${headSha}`,
+      "workflow_runs",
+    );
+    const runs = response.workflow_runs;
+    if (!Array.isArray(runs)) throw new Error("workflow run listing is incomplete");
+    for (const [index, value] of runs.entries()) {
+      exactString(asRecord(value).head_sha, headSha, `workflow run ${index} queried head SHA`);
+    }
+    workflowRuns.push(...runs);
+  }
+  return { total_count: workflowRuns.length, workflow_runs: workflowRuns };
 }
 
 function annotationValue(value: string): string {
@@ -830,7 +861,7 @@ export async function waitForBaseImagePublication(
   );
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&per_page=100`;
   while (true) {
-    const runs = await collectPaginated(request, runsPath, "workflow_runs");
+    const runs = await collectPublicationRuns(request, runsPath, options.history);
     const excludedRunIds = new Set<number>();
     const select = () =>
       selectPublicationRun(runs, options.history, workflowId, {

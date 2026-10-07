@@ -91,7 +91,7 @@ function launchOrphanGateway(options: {
     `const net=require("node:net");const fs=require("node:fs");` +
       `const server=net.createServer();` +
       `server.listen(${String(options.port)},"127.0.0.1",()=>fs.writeFileSync(${JSON.stringify(options.pidFile)},String(process.pid)));` +
-      `process.on("SIGTERM",()=>process.exit(0));`,
+      `process.on("SIGTERM",()=>server.close(()=>process.exit(0)));`,
   );
   const launcherScript =
     `const {spawn}=require("node:child_process");` +
