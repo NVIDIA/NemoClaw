@@ -5,6 +5,12 @@
 
 Domain modules contain pure policy and decision logic. They should not import oclif, spawn processes, read host state directly, or call Docker/OpenShell.
 
+`config/export-gateway.ts` admits verified external HTTP gateway evidence only for OpenClaw with
+hosted inference on Docker. Export preserves the `127.0.0.1` origin and omits gateway lifecycle
+settings and source ownership details. Missing authority or conflicting bindings prevent publication;
+HTTPS remains unsupported. Managed gateway exports keep their existing shape. Host observation additionally
+requires native Linux and rechecks the declared supervisor and listener after reading source state.
+
 Preferred layout:
 
 ```text

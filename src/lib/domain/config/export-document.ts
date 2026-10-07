@@ -275,8 +275,11 @@ export function buildExportConfig(
     metadata: { name: identity.documentName, uid: identity.documentUid },
     spec: {
       gateway: {
-        management: "managed",
-        endpoint: `http://127.0.0.1:${source.gateway.port}`,
+        management: "management" in source.gateway ? source.gateway.management : "managed",
+        endpoint:
+          "endpoint" in source.gateway
+            ? source.gateway.endpoint
+            : `http://127.0.0.1:${source.gateway.port}`,
       },
       ...(services ? { services } : {}),
       inferenceProviders: [inferenceProvider(source, providerName)],

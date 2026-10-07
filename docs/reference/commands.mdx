@@ -314,7 +314,82 @@ If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes or LangChain Deep Agents Code sandboxes in the default workspace.
-Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, and an explicit representable policy.
+Managed gateway exports require a NemoClaw-owned gateway.
+For OpenClaw on Docker with hosted inference, export also supports a verified externally supervised gateway on native Linux.
+The external gateway must use `http://127.0.0.1:<port>` without gateway credentials.
+Its declaration, retained onboarding authority, registration, and supervised listener must agree throughout the read.
+The exported gateway contains `management: external` and the verified `endpoint`, without gateway lifecycle settings or source state paths.
+If gateway evidence cannot be verified, export fails without publishing YAML.
+HTTPS and WSL external gateway exports remain unsupported.
+
+<AgentOnly variant="openclaw">
+
+The following complete example shows an external gateway export for an OpenClaw sandbox named `alpha`.
+Export your source sandbox to obtain its actual provider, model, identity, and policy values.
+This example is validated against [v1 revision `42a26d90f1f6`](https://github.com/NVIDIA/NemoClaw/commit/42a26d90f1f6207cc35b5053556db67c86ce759f).
+
+```yaml
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: alpha
+  uid: 018f47e2-9d93-7d15-9c41-3ecf70b2550f
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:8080
+  inferenceProviders:
+    - name: hosted-openai-api
+      provider: openai
+      api: openai-responses
+      endpoint: https://api.openai.com/v1
+      credential:
+        env: OPENAI_API_KEY
+  sandboxes:
+    - name: alpha
+      runtime:
+        provider: docker
+      harness:
+        kind: openclaw
+        interfaces:
+          dashboard:
+            port: 18789
+      agent:
+        name: primary
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted-openai-api
+              overrides:
+                model: gpt-5
+      network:
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "1000"
+              run_as_group: "1000"
+            filesystem_policy:
+              include_workdir: false
+              read_only: [/usr, /opt/fabric, /opt/nemoclaw, /app]
+              read_write: [/sandbox]
+            network_policies:
+              api:
+                name: api
+                endpoints:
+                  - host: api.openai.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/curl
+```
+
+</AgentOnly>
+
+For external gateway authority, endpoint, registration, or listener verification failures, the diagnostic gives a check to perform before retrying.
+NemoClaw publishes no YAML and omits raw gateway errors.
+If gateway evidence changes during export, stabilize the gateway configuration and listener before retrying.
+
 OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service with `image: null`.
 Replace only that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
 Other local inference and Podman exports remain deferred.

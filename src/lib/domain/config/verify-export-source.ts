@@ -21,8 +21,6 @@ import {
   isImmutableImageReference,
   isValidNemoClawBoundedText,
   isValidNemoClawInferenceEndpoint,
-  isValidNemoClawLocalResourceName,
-  isValidNemoClawPort,
   isValidNemoClawRuntimeProvider,
   isValidNemoClawSandboxName,
   isSupportedInferenceApi,
@@ -37,6 +35,7 @@ import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import { HERMES_PROVIDER_NAME } from "../../onboard/inference-providers/hermes-provider-identity";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { ExportSourceValuesSchema, exportWebSearchBinding } from "./export-evidence";
+import { projectExportGateway, validateExportGateway } from "./export-gateway";
 import { inspectAgentInterfaces } from "./verify-agent-interfaces";
 import { V1ALPHA1_RUNTIME_DEFAULTS } from "./v1alpha1-runtime-defaults";
 import type {
@@ -987,35 +986,6 @@ function validateWebSearchProvider(snapshot: QualifiedExportSnapshot): ExportFin
   return [];
 }
 
-function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
-  const { registry: entry, gateway } = snapshot;
-  const findings: ExportFinding[] = [];
-  if (gateway.management !== "nemoclaw" || !gateway.stateRootOwned)
-    findings.push(
-      finding(
-        "spec.gateway.management",
-        "drifted",
-        "Gateway lifecycle or state-root ownership is not NemoClaw-managed.",
-      ),
-    );
-  if (entry.gatewayName !== gateway.name || entry.gatewayPort !== gateway.port)
-    findings.push(finding("spec.gateway", "drifted", "Registry and live gateway bindings differ."));
-  if (
-    !isValidNemoClawLocalResourceName(gateway.name) ||
-    !isValidNemoClawPort(gateway.port) ||
-    gateway.port < 1024
-  ) {
-    findings.push(
-      finding(
-        "spec.gateway",
-        "unsupported",
-        "The gateway name or port cannot be represented by v1.",
-      ),
-    );
-  }
-  return findings;
-}
-
 function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { registry: entry, inference } = snapshot;
   const findings: ExportFinding[] = [];
@@ -1332,7 +1302,7 @@ function validateAgreement(
     ...validateSandboxIdentity(requestedSandboxName, snapshot),
     ...validateSandboxConfiguration(snapshot),
     ...validateWebSearchProvider(snapshot),
-    ...validateGateway(snapshot),
+    ...validateExportGateway(snapshot),
     ...validateInferenceSelection(snapshot),
     ...validateInferenceRepresentation(snapshot),
     ...validateEndpointEvidence(snapshot),
@@ -1469,7 +1439,7 @@ function completeVerifiedSource(
     ...projectVerifiedWebSearch(entry),
     ...verifiedHermesAuth(entry),
     runtime: { provider: entry.openshellDriver, imageRef: authority?.receipt.reference },
-    gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
+    gateway: projectExportGateway(snapshot.gateway),
     ...projectVerifiedTools(entry, authority),
     ...projectHostSettings(entry, authority),
     inference: projectVerifiedInference(snapshot, selected, settings),

@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync as defaultExistsSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+
+import { isWsl as detectWsl, type WslDetectionOptions } from "./core/wsl";
+export type { WslDetectionOptions } from "./core/wsl";
 
 import { dockerSpawnSync } from "./adapters/docker/exec";
 import { isSupportedDockerContextName, isSupportedGatewayDockerHost } from "./domain/docker-host";
 import { buildDockerSubprocessEnv } from "./subprocess-env";
+
+const isWsl = detectWsl;
 
 export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
 
@@ -16,14 +20,6 @@ export interface PlatformLookupOptions {
   home?: string;
   uid?: number;
   env?: NodeJS.ProcessEnv;
-}
-
-export interface WslDetectionOptions {
-  isWsl?: boolean;
-  platform?: NodeJS.Platform;
-  env?: NodeJS.ProcessEnv;
-  release?: string;
-  procVersion?: string;
 }
 
 export interface DockerHostDetectionOptions extends PlatformLookupOptions, WslDetectionOptions {
@@ -102,29 +98,6 @@ export function windowsProcessListensOnlyOnLoopback(
 
 const DOCKER_PROBE_TIMEOUT_MS = 3_000;
 const DOCKER_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
-
-function isWsl(opts: WslDetectionOptions = {}): boolean {
-  // Explicit override — lets tests pin behavior regardless of the host kernel.
-  // Useful because the WSL detection below consults `os.release()`, which
-  // returns a "microsoft"-tagged string on WSL2 hosts even when env vars are
-  // unset. Without this override, any test calling functions that consult
-  // `isWsl()` becomes non-deterministic on WSL2 dev machines.
-  if (typeof opts.isWsl === "boolean") return opts.isWsl;
-
-  const platform = opts.platform ?? process.platform;
-  if (platform !== "linux") return false;
-
-  const env = opts.env ?? process.env;
-  const release = opts.release ?? os.release();
-  const procVersion = opts.procVersion ?? "";
-
-  return (
-    Boolean(env.WSL_DISTRO_NAME) ||
-    Boolean(env.WSL_INTEROP) ||
-    /microsoft/i.test(release) ||
-    /microsoft/i.test(procVersion)
-  );
-}
 
 function inferContainerRuntime(info = ""): ContainerRuntime {
   const normalized = String(info).toLowerCase();

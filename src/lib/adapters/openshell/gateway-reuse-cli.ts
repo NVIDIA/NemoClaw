@@ -39,6 +39,7 @@ type GatewayRegistryEntry = Readonly<{
   name: string;
   endpoint: string;
   active: boolean;
+  auth?: string;
 }>;
 
 function parseGatewayRegistry(output: string): GatewayRegistryEntry[] | null {
@@ -66,13 +67,39 @@ function parseGatewayRegistry(output: string): GatewayRegistryEntry[] | null {
     }
     names.add(entry.name);
     if (entry.active) activeCount += 1;
-    entries.push({ name: entry.name, endpoint: entry.endpoint, active: entry.active });
+    entries.push({
+      name: entry.name,
+      endpoint: entry.endpoint,
+      active: entry.active,
+      ...(typeof entry.auth === "string" ? { auth: entry.auth } : {}),
+    });
   }
   return activeCount <= 1 ? entries : null;
 }
 
 function gatewayMetadataOutput(entry: GatewayRegistryEntry | undefined): string {
   return entry ? `Gateway: ${entry.name}\nGateway endpoint: ${entry.endpoint}` : "";
+}
+
+/** Read named registration metadata without contacting or selecting a gateway. */
+export async function observeOpenShellGatewayRegistration(
+  name: string,
+  capture: CaptureOpenShellCommand,
+): Promise<GatewayRegistryEntry> {
+  assertNoOpenShellGatewayEndpointOverride();
+  if (!isValidName(name)) throw new Error("Invalid gateway registration name.");
+  const result = await capture(["gateway", "list", "-o", "json"], {
+    ignoreError: true,
+    includeStderr: true,
+    includeStreams: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (result.status !== 0 || result.error) throw new Error("Gateway registration read failed.");
+  const entry = parseGatewayRegistry(result.stdout ?? result.output)?.find(
+    (row) => row.name === name,
+  );
+  if (!entry) throw new Error("Gateway registration is missing or invalid.");
+  return entry;
 }
 
 export function createCliOpenShellGatewayReuseObserver(

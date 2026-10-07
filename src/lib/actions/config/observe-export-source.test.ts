@@ -46,6 +46,44 @@ describe("stable config export source observation (#10938)", () => {
     mocks.verifyExportSource.mockReset();
   });
 
+  it.each([
+    "/private/secret-path\u001b[2J",
+    "nemoclaw-export-gateway-a1b2c3\n",
+    "nemoclaw-export-gateway-a1b2c3\nforged instruction",
+    "nemoclaw-export-gateway-" + "x".repeat(1024),
+  ])("does not echo an unsafe cleanup identifier: %j (#11861)", async (directoryName) => {
+    const sourceReader = reader([{ kind: "cleanup-failed", directoryName }]);
+    const result = await observeStableExportSource("alpha", sourceReader);
+    expect(result.ok).toBe(false);
+    expect(findings(result)[0]).toMatchObject({
+      field: "source.cleanup",
+      category: "live-verification-failed",
+    });
+    expect(findings(result)[0]!.diagnostic).not.toContain(directoryName);
+    expect(findings(result)[0]!.diagnostic).not.toContain("\u001b");
+    expect(sourceReader.read).toHaveBeenCalledTimes(1);
+    expect(mocks.verifyExportSource).not.toHaveBeenCalled();
+  });
+
+  it("refuses cleanup failure on the confirming read without retrying or verifying a source (#11861)", async () => {
+    const sourceReader = reader([
+      missing("alpha"),
+      {
+        kind: "cleanup-failed",
+        directoryName: "nemoclaw-export-gateway-a1b2c3",
+        readFailure: "inference-route",
+      },
+    ]);
+    const result = await observeStableExportSource("alpha", sourceReader);
+    expect(result).toMatchObject({ ok: false, attempts: 1 });
+    expect(findings(result)[0]!.diagnostic).toContain(
+      "The live gateway inference route could not be read or verified.",
+    );
+    expect(findings(result)[0]!.diagnostic).toContain("nemoclaw-export-gateway-a1b2c3");
+    expect(sourceReader.read).toHaveBeenCalledTimes(2);
+    expect(mocks.verifyExportSource).not.toHaveBeenCalled();
+  });
+
   it("verifies two equal observed snapshots on the first attempt", async () => {
     const observed = {
       kind: "observed",

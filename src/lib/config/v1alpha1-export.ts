@@ -133,7 +133,7 @@ export interface V1Alpha1Export {
   readonly kind: typeof NEMOCLAW_CONFIG_KIND;
   readonly metadata: Readonly<{ name: string; uid: string }>;
   readonly spec: Readonly<{
-    gateway: Readonly<{ management: "managed"; endpoint: string }>;
+    gateway: Readonly<{ management: "managed" | "external"; endpoint: string }>;
     services?: Readonly<Record<string, Readonly<V1Alpha1ExportService>>>;
     inferenceProviders: readonly Readonly<
       V1Alpha1HostedInferenceProvider | V1Alpha1ServiceInferenceProvider

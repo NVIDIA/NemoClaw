@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import os from "node:os";
 import { isDeepStrictEqual } from "node:util";
-import { isValidNemoClawPort } from "../../config/model";
+import {
+  observeExportGateway,
+  createExportGatewayConnection,
+  type ExportGatewayConnection,
+} from "./gateway-export";
 
 import { createProviders, type Provider } from "../openshell/providers";
 import { createSynchronousCliOpenShellInferenceRouteObserver } from "../openshell/inference-route-cli";
@@ -20,6 +23,7 @@ import type {
   ExportSnapshotReadStage,
   ExportSnapshotReader,
   ObservedExportGateway,
+  ObservedExportSnapshot,
   ObservedExportInference,
   ObservedExportWebSearchProvider,
   ObservedManagedVllmRuntime,
@@ -34,11 +38,6 @@ import { createOllamaExportProbe } from "../../inference/ollama/proxy";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { observeOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { normalizeInferenceSelection } from "../../inference/selection";
-import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
-import {
-  managedGatewayStateRootOwnershipFailure,
-  resolveGatewayStateDirForPort,
-} from "../../onboard/gateway/state-dir";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
@@ -51,39 +50,6 @@ function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry
     name: entry.name,
     ...Object.fromEntries(EXPORT_REGISTRY_EVIDENCE_KEYS.map((key) => [key, entry[key]])),
   } as ObservedExportRegistry;
-}
-
-function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; port: number } {
-  const port = entry.gatewayPort;
-  if (!isValidNemoClawPort(port)) {
-    throw new Error("The persisted gateway port is incomplete or invalid.");
-  }
-  const name = resolveGatewayName(port);
-  if (entry.gatewayName !== name) {
-    throw new Error("The persisted gateway name and port disagree.");
-  }
-  return { name, port };
-}
-
-function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
-  const { name, port } = resolveGatewayBinding(entry);
-  const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
-  const stateDir = resolveGatewayStateDirForPort({
-    configured: configuredStateDir,
-    home: os.homedir(),
-    port,
-  });
-  const stateRootOwned =
-    managedGatewayStateRootOwnershipFailure(
-      { gatewayName: name, gatewayPort: port, stateDir },
-      { allowLegacyManagedState: !configuredStateDir },
-    ) === null;
-  return {
-    name,
-    port,
-    management: stateRootOwned ? "nemoclaw" : "unknown",
-    stateRootOwned,
-  };
 }
 
 function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
@@ -100,10 +66,15 @@ function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
   };
 }
 
-async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
+async function readInferenceRoute(
+  entry: Readonly<SandboxEntry>,
+  gateway: ObservedExportGateway,
+  connection?: ExportGatewayConnection,
+) {
   const selected = getSandboxEntryInference(entry);
+  const capture = connection?.captureInferenceRoute ?? captureSanitizedResolvedOpenshell;
   const observer = createSynchronousCliOpenShellInferenceRouteObserver((args, options) =>
-    captureSanitizedResolvedOpenshell(args, {
+    capture(args, {
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
@@ -112,7 +83,7 @@ async function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: st
     }),
   );
   const result = observer.observeInferenceRoute({
-    target: namedOpenShellGateway(gatewayName),
+    target: namedOpenShellGateway(gateway.name),
     timeoutMs: CAPTURE_TIMEOUT_MS,
   });
   if (!result.ok || result.value.state !== "configured")
@@ -207,10 +178,11 @@ async function readProviderEvidence(
   gatewayName: string,
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
+  connection?: ExportGatewayConnection,
 ): Promise<ObservedExportEndpointEvidence> {
   const { configKey } = providerContract(normalized.preferredInferenceApi);
   const inspectOpenAiProfile = routeProvider === "ollama-local";
-  const provider = await createProviders().get({
+  const provider = await createProviders(connection?.connect).get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: routeProvider,
@@ -234,13 +206,14 @@ async function readProviderEvidence(
 
 async function inferenceFor(
   entry: Readonly<SandboxEntry>,
+  gateway: ObservedExportGateway,
   beforeRead: (stage: ExportSnapshotReadStage) => void,
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
+  connection?: ExportGatewayConnection,
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
-  const gateway = resolveGatewayBinding(entry);
-  const live = await readInferenceRoute(entry, gateway.name);
+  const live = await readInferenceRoute(entry, gateway, connection);
   beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,
@@ -248,6 +221,7 @@ async function inferenceFor(
     gateway.name,
     signal,
     managedServing,
+    connection,
   );
   let ollamaServing: ObservedExportInference["ollamaServing"];
   if (entry.provider === "ollama-local") {
@@ -271,8 +245,9 @@ async function readWebSearchProvider(
   binding: NonNullable<ReturnType<typeof exportWebSearchBinding>>,
   gatewayName: string,
   signal: AbortSignal,
+  connection?: ExportGatewayConnection,
 ): Promise<ObservedExportWebSearchProvider> {
-  const provider = await createProviders().get({
+  const provider = await createProviders(connection?.connect).get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: binding.name,
@@ -299,8 +274,13 @@ async function readWebSearchProvider(
   };
 }
 
-async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, signal: AbortSignal) {
-  const { policy, ...configuration } = await createSandboxConfig().get({
+async function effectivePolicy(
+  gateway: ObservedExportGateway,
+  row: Sandbox,
+  signal: AbortSignal,
+  connection?: ExportGatewayConnection,
+) {
+  const { policy, ...configuration } = await createSandboxConfig(connection?.connect).get({
     target: namedOpenShellGateway(gateway.name),
     workspace: row.workspace,
     sandboxId: row.id,
@@ -326,62 +306,101 @@ async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, sig
   };
 }
 
+async function recheckExternalGateway(
+  entry: Readonly<SandboxEntry>,
+  gateway: ObservedExportGateway,
+  beforeRead: (stage: ExportSnapshotReadStage) => void,
+) {
+  if (!gateway.external) return;
+  const confirmed = await observeExportGateway(entry, beforeRead);
+  beforeRead("gateway-stability");
+  if (!isDeepStrictEqual(gateway, confirmed)) {
+    throw new Error("External gateway changed during the source read.");
+  }
+}
+
+async function readGatewaySnapshot(
+  sandboxName: string,
+  entry: Readonly<SandboxEntry>,
+  gateway: ObservedExportGateway,
+  signal: AbortSignal,
+  connection: ExportGatewayConnection,
+  beforeRead: (stage: ExportSnapshotReadStage) => void,
+): Promise<ObservedExportSnapshot> {
+  const row = await createSandboxes(connection?.connect).get({
+    target: namedOpenShellGateway(gateway.name),
+    workspace: "default",
+    name: sandboxName,
+    signal,
+  });
+  if (!row) throw new Error("The live sandbox is missing.");
+  beforeRead("sandbox-identity");
+  const sandbox = sandboxIdentity(row);
+  beforeRead("managed-serving");
+  const managedServing =
+    entry.provider === "vllm-local"
+      ? observeManagedVllmForExport(entry.servingProfileProvenance)
+      : undefined;
+  beforeRead("inference-route");
+  const inference = await inferenceFor(
+    entry,
+    gateway,
+    beforeRead,
+    signal,
+    managedServing,
+    connection,
+  );
+  let webSearchProvider: ObservedExportWebSearchProvider | undefined;
+  const search = exportWebSearchBinding(entry);
+  if (search) {
+    beforeRead("web-search-provider");
+    webSearchProvider = await readWebSearchProvider(search, gateway.name, signal, connection);
+  }
+  beforeRead("effective-policy");
+  const { configuration, ...policy } = await effectivePolicy(gateway, row, signal, connection);
+  beforeRead("gateway-binding");
+  await recheckExternalGateway(entry, gateway, beforeRead);
+  return {
+    kind: "observed",
+    sandboxName,
+    registry: registryEvidence(entry),
+    gateway,
+    sandbox,
+    inference,
+    ...(webSearchProvider === undefined ? {} : { webSearchProvider }),
+    policy,
+    configuration,
+  };
+}
+
 async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
   let stage: ExportSnapshotReadStage = "registry";
+  let connection: ExportGatewayConnection;
+  let result: RawExportSnapshot;
+  const beforeRead = (nextStage: ExportSnapshotReadStage) => {
+    stage = nextStage;
+  };
   try {
     const entry = loadRegistry().sandboxes[sandboxName] ?? null;
-    if (!entry) {
-      return { kind: "not-found", sandboxName };
-    }
+    if (!entry) return { kind: "not-found", sandboxName };
     stage = "gateway-binding";
-    const gateway = gatewayFor(entry);
+    const gateway = await observeExportGateway(entry, beforeRead);
     stage = "sandbox-inventory";
     const signal = AbortSignal.timeout(CAPTURE_TIMEOUT_MS);
-    const row = await createSandboxes().get({
-      target: namedOpenShellGateway(gateway.name),
-      workspace: "default",
-      name: sandboxName,
-      signal,
-    });
-    if (!row) throw new Error("The live sandbox is missing.");
-    stage = "sandbox-identity";
-    const sandbox = sandboxIdentity(row);
-    stage = "managed-serving";
-    const managedServing =
-      entry.provider === "vllm-local"
-        ? observeManagedVllmForExport(entry.servingProfileProvenance)
-        : undefined;
-    stage = "inference-route";
-    const inference = await inferenceFor(
-      entry,
-      (nextStage) => {
-        stage = nextStage;
-      },
-      signal,
-      managedServing,
-    );
-    let webSearchProvider: ObservedExportWebSearchProvider | undefined;
-    const search = exportWebSearchBinding(entry);
-    if (search) {
-      stage = "web-search-provider";
-      webSearchProvider = await readWebSearchProvider(search, gateway.name, signal);
-    }
-    stage = "effective-policy";
-    const { configuration, ...policy } = await effectivePolicy(gateway, row, signal);
-    return {
-      kind: "observed",
-      sandboxName,
-      registry: registryEvidence(entry),
-      gateway,
-      sandbox,
-      inference,
-      ...(webSearchProvider === undefined ? {} : { webSearchProvider }),
-      policy,
-      configuration,
-    };
+    connection = createExportGatewayConnection(gateway, signal);
+    result = await readGatewaySnapshot(sandboxName, entry, gateway, signal, connection, beforeRead);
   } catch {
-    return { kind: "read-failed", stage };
+    result = { kind: "read-failed", stage };
   }
+  const directoryName = connection?.removeTemporaryHome();
+  if (directoryName) {
+    return {
+      kind: "cleanup-failed",
+      directoryName,
+      ...(result.kind === "read-failed" ? { readFailure: result.stage } : {}),
+    };
+  }
+  return result;
 }
 
 /** Concrete read-only bindings for one complete export snapshot. */

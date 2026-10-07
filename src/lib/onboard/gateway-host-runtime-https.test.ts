@@ -56,12 +56,12 @@ function createDeps(): GatewayHostRuntimeDeps {
   };
 }
 
-function declareHttpsExternalSupervision() {
+function declareExternalSupervision(protocol: "http" | "https") {
   process.env[GATEWAY_MANAGEMENT_ENV_VAR] = "/etc/nemoclaw/gateway-management.json";
   const declaration = JSON.stringify({
     version: 1,
     mode: "externally-supervised",
-    endpoint: "https://127.0.0.1:8080",
+    endpoint: `${protocol}://127.0.0.1:8080`,
     stateDir: STATE_DIR,
     supervisor: {
       kind: "systemd-system",
@@ -75,9 +75,39 @@ function declareHttpsExternalSupervision() {
   vi.spyOn(fs, "accessSync").mockImplementation(() => undefined);
 }
 
-describe("externally supervised HTTPS gateway readiness", () => {
+describe("externally supervised gateway readiness", () => {
+  it("uses the Health RPC for HTTP without reading TLS files or inherited credentials (#11861)", async () => {
+    declareExternalSupervision("http");
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/unrelated/tls";
+    process.env.OPENSHELL_GATEWAY_AUTH_TOKEN = "must-not-cross-readiness-boundary";
+    const runtime = createGatewayHostRuntime({ ...createDeps(), recordHttpReadinessTrace: false });
+
+    const probe = await runtime.probeGatewayAttachment(runtime.getGatewayOwner());
+
+    expect(probe.httpReady).toBe(true);
+    expect(readiness.http).not.toHaveBeenCalled();
+    expect(readiness.https).toHaveBeenCalledWith(
+      undefined,
+      "http://127.0.0.1:8080/openshell.v1.OpenShell/Health",
+      {},
+      { recordTrace: false },
+    );
+    expect(fs.statSync).not.toHaveBeenCalled();
+    expect(fs.accessSync).not.toHaveBeenCalled();
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/unrelated/tls");
+  });
+
+  it("keeps HTTP unready when the Health RPC fails (#11861)", async () => {
+    declareExternalSupervision("http");
+    readiness.https.mockResolvedValueOnce(false);
+    const runtime = createGatewayHostRuntime(createDeps());
+
+    expect((await runtime.probeGatewayAttachment(runtime.getGatewayOwner())).httpReady).toBe(false);
+    expect(readiness.http).not.toHaveBeenCalled();
+  });
+
   it("uses the production mTLS gRPC probe and the declared TLS bundle (#6576)", async () => {
-    declareHttpsExternalSupervision();
+    declareExternalSupervision("https");
     const originalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
     process.env.OPENSHELL_GATEWAY_AUTH_TOKEN = "must-not-cross-readiness-boundary";
     const runtime = createGatewayHostRuntime(createDeps());
@@ -100,7 +130,7 @@ describe("externally supervised HTTPS gateway readiness", () => {
   });
 
   it("exposes the authority-selected endpoint and TLS bundle for direct forwards", () => {
-    declareHttpsExternalSupervision();
+    declareExternalSupervision("https");
     const runtime = createGatewayHostRuntime(createDeps());
 
     expect(runtime.getGatewayForwardRuntimeAuthority()).toEqual({
@@ -112,7 +142,7 @@ describe("externally supervised HTTPS gateway readiness", () => {
   });
 
   it("disables both readiness trace spans for an observation-only probe (#7411)", async () => {
-    declareHttpsExternalSupervision();
+    declareExternalSupervision("https");
     const runtime = createGatewayHostRuntime({
       ...createDeps(),
       recordHttpReadinessTrace: false,
@@ -130,7 +160,7 @@ describe("externally supervised HTTPS gateway readiness", () => {
   });
 
   it("fails before probing when the declared client TLS bundle is unreadable (#6576)", async () => {
-    declareHttpsExternalSupervision();
+    declareExternalSupervision("https");
     const originalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
     vi.mocked(fs.accessSync).mockImplementation(() => {
       throw new Error("EACCES");

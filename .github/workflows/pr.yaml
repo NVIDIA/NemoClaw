@@ -161,11 +161,11 @@ jobs:
           cache: false
           rustflags: ""
 
-      - name: Verify exported defaults with the pinned v1 consumer
+      - name: Verify exported configurations with the pinned v1 consumer
         env:
           NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
           RUSTUP_TOOLCHAIN: 1.98.1
-        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts src/lib/domain/config/verify-external-gateway-export.test.ts
 
   hugging-face-models:
     needs: changes

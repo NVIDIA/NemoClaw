@@ -121,6 +121,12 @@ export interface ObservedExportGateway {
   readonly port: number;
   readonly management: "nemoclaw" | "external" | "unknown";
   readonly stateRootOwned: boolean;
+  readonly external?: Readonly<{
+    endpoint: string;
+    authorityFingerprint: string;
+    listenerPid: number;
+    listenerStartTime: string;
+  }>;
 }
 
 export interface ObservedExportEndpointEvidence {
@@ -206,6 +212,11 @@ export interface ObservedExportSandboxIdentity {
 export type ExportSnapshotReadStage =
   | "registry"
   | "gateway-binding"
+  | "gateway-authority"
+  | "gateway-configuration"
+  | "gateway-registration"
+  | "gateway-listener"
+  | "gateway-stability"
   | "sandbox-inventory"
   | "sandbox-identity"
   | "inference-route"
@@ -218,6 +229,11 @@ export type ExportSnapshotReadStage =
 /** One complete, untrusted read from all export evidence owners. */
 export type RawExportSnapshot =
   | Readonly<{ kind: "read-failed"; stage: ExportSnapshotReadStage }>
+  | Readonly<{
+      kind: "cleanup-failed";
+      directoryName: string;
+      readFailure?: ExportSnapshotReadStage;
+    }>
   | Readonly<{
       kind: "not-found";
       sandboxName: string;
@@ -321,7 +337,15 @@ const exportSourceFields = {
     provider: RuntimeProviderSchema,
     imageRef: ImmutableImageReferenceSchema,
   }),
-  gateway: Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+  gateway: Type.Union([
+    Type.Object({ name: LocalResourceNameSchema, port: TcpPortSchema }),
+    Type.Object({
+      name: LocalResourceNameSchema,
+      port: TcpPortSchema,
+      management: Type.Literal("external"),
+      endpoint: BoundedTextSchema,
+    }),
+  ]),
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),

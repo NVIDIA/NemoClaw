@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_sdk::{
-    compile::{Generations, targets},
-    config::Document,
+    compile::{Generations, runtime_targets, targets},
+    config::{Document, Gateway},
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, env, fs};
@@ -18,6 +18,14 @@ fn parses_export_and_generates_runtime_settings() {
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
     let compiled = targets(&document, &generations).expect("export must compile");
+    if matches!(&document.spec.gateway, Gateway::External(_)) {
+        assert!(
+            runtime_targets(&document, &generations)
+                .expect("external gateway runtime must compile")
+                .is_empty(),
+            "hosted external gateway export must not create managed runtime resources",
+        );
+    }
     let sandboxes: BTreeMap<String, Value> = compiled
         .iter()
         .filter(|target| target.kind == "sandbox")
