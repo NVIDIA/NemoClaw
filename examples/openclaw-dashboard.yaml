@@ -10,6 +10,8 @@ metadata:
 spec:
   gateway:
     management: external
+    # Replace with the Docker or Podman engine holding the sandbox image.
+    engine: unix:///var/run/docker.sock
     runtime:
       provider: docker
     endpoint: http://127.0.0.1:17671
