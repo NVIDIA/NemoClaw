@@ -6,6 +6,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock/inspection";
+import { resolveNemoclawHomeDir } from "../../state/paths";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   assertHermesPortableSandboxLifecycleAuthority,
@@ -62,16 +63,9 @@ export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
 
 const HERMES_PORTABLE_DASHBOARD_URL_COMMAND_ID = "sandbox:dashboard-url";
 
-/**
- * Name where the Hermes portable dashboard URL actually comes from so the
- * refusal stays actionable instead of a bare "not supported".
- *
- * The portable receipt persists the value onboarding resolved and printed as
- * `dashboardPort`, so the operator can recover the URL from the state dir
- * instead of scrolling back through the onboarding transcript.
- */
-export function hermesPortableDashboardUrlGuidance(stateDir: string): string {
-  return `The portable profile prints the dashboard URL during onboarding and persists it as 'dashboardPort' on the portable receipt in ${stateDir}; read it there instead.`;
+/** Point to the saved dashboard metadata used by the dashboard URL command. */
+export function hermesPortableDashboardUrlGuidance(registryFile: string): string {
+  return `After onboarding, find this sandbox's saved dashboard metadata in ${JSON.stringify(registryFile)}. Use 'dashboardExternalUrl' when set; otherwise open http://127.0.0.1:<dashboardPort>/.`;
 }
 
 /**
@@ -86,7 +80,8 @@ export function hermesPortableUnsupportedCommandMessage(
 ): string {
   const message = `${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`;
   if (commandId !== HERMES_PORTABLE_DASHBOARD_URL_COMMAND_ID) return message;
-  return `${message} ${hermesPortableDashboardUrlGuidance(defaultPortableDemoStateDir(env))}`;
+  const registryFile = path.join(resolveNemoclawHomeDir(env.HOME || "/tmp"), "sandboxes.json");
+  return `${message} ${hermesPortableDashboardUrlGuidance(registryFile)}`;
 }
 
 const HERMES_PORTABLE_COMMANDS = new Set([

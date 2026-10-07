@@ -696,7 +696,7 @@ describe("hermes portable command refusals (#11966)", () => {
     mocks.inspect.mockReturnValue(hermes("active"));
   });
 
-  it("appends receipt guidance when refusing dashboard-url on a Hermes portable sandbox", () => {
+  it("appends registry guidance when refusing dashboard-url on a Hermes portable sandbox", () => {
     const message = portableRefusalMessage(() =>
       assertHermesPortableCommandUnavailable("alpha", "sandbox:dashboard-url"),
     );
@@ -704,8 +704,8 @@ describe("hermes portable command refusals (#11966)", () => {
     expect(message).toContain(
       `${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: sandbox:dashboard-url`,
     );
-    expect(message).toContain("portable receipt");
-    expect(message).toContain("dashboardPort");
+    expect(message).toContain("sandboxes.json");
+    expect(message).toContain("dashboardExternalUrl");
   });
 
   it("appends the same guidance when the supported-command guard refuses dashboard-url", () => {
