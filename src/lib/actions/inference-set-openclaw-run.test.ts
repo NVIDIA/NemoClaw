@@ -250,8 +250,9 @@ describe("runInferenceSet OpenClaw routing", () => {
         name: "alpha",
         agent: "openclaw",
         gatewayName: "nemoclaw",
-        provider: "openai-api",
-        model: "gpt-5.4",
+        provider: "nvidia-prod",
+        model: "nvidia/previous-model",
+        nativeHostedProviderAttachment: gatewayAuthority,
       },
       getNativeNvidiaProviderAuthority: () => gatewayAuthority,
       providerAdapter,
@@ -264,6 +265,8 @@ describe("runInferenceSet OpenClaw routing", () => {
       /changed identity during its credential update.*No provider receipt was recorded/u,
     );
 
+    expect(providerAdapter.updateProvider).toHaveBeenCalledOnce();
+    expect(getProvider).toHaveBeenCalledTimes(2);
     expect(deps.calls.setNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
     expect(attachProvider).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
