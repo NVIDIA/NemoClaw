@@ -150,6 +150,17 @@ describe("findAvailableHermesApiPortFromObservations", () => {
       ),
     ).toBe(8643);
   });
+
+  it("requests restored ownership verification when every API port is unverified", () => {
+    const observations = Array.from({ length: 11 }, (_, index) =>
+      forwardObservation("beta", 8642 + index, "indeterminate"),
+    );
+    expect(() =>
+      findAvailableHermesApiPortFromObservations("beta", 8642, observations, new Map()),
+    ).toThrow(
+      "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.",
+    );
+  });
 });
 
 describe("reserveCreateSandboxHermesApiPort", () => {

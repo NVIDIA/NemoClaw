@@ -296,14 +296,43 @@ describe("typed OpenShell dashboard-port observation", () => {
     const observations = Array.from({ length: 11 }, (_, index) =>
       forwardObservation("cursor", 18789 + index, "indeterminate"),
     );
+    observations.push(forwardObservation("cursor", 19000, "foreign"));
     expect(() => findAvailableDashboardPortFromObservations("cursor", 18789, observations)).toThrow(
-      "All dashboard ports in range 18789-18799 are occupied:\n" +
+      "No dashboard port in range 18789-18799 has verified OpenShell forward ownership:\n" +
         Array.from(
           { length: 11 },
           (_, index) => `  ${18789 + index} → unverified OpenShell forward ownership`,
-        ).join("\n"),
+        ).join("\n") +
+        "\nRestore OpenShell forward ownership verification for these ports, then rerun onboarding.",
     );
   });
+
+  it.each([
+    ["foreign", 18789],
+    ["registered", 18789],
+    ["foreign", 19000],
+    ["registered", 19000],
+  ] as const)(
+    "preserves the occupied-port remedy with %s occupancy on preferred port %i",
+    (occupiedKind, preferredPort) => {
+      const candidatePorts = [
+        ...new Set([preferredPort, ...Array.from({ length: 11 }, (_, index) => 18789 + index)]),
+      ];
+      const observations = candidatePorts.map((port) =>
+        forwardObservation(
+          "cursor",
+          port,
+          port === preferredPort && occupiedKind === "foreign" ? "foreign" : "indeterminate",
+        ),
+      );
+      const registry = new Map(
+        occupiedKind === "registered" ? [[String(preferredPort), "other"]] : [],
+      );
+      expect(() =>
+        findAvailableDashboardPortFromObservations("cursor", preferredPort, observations, registry),
+      ).toThrow("Free a sandbox or use --control-ui-port <N> with a port outside this range.");
+    },
+  );
 
   it("still blocks allocation when a forward observation fails for another reason", () => {
     expect(() =>
@@ -792,7 +821,7 @@ describe("typed dashboard-port multi-gateway registry occupancy", () => {
           observations,
           registryOccupied,
         ),
-      /18799 → instance-z/,
+      /18799 → instance-z\nFree a sandbox or use --control-ui-port <N> with a port outside this range\./,
     );
   });
 });

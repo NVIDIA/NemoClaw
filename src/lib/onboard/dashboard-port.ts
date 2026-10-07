@@ -460,6 +460,23 @@ export function findAvailablePortInRangeFromObservations(
     .filter(([port]) => Number(port) >= range.start && Number(port) <= range.end)
     .map(([port, owner]) => `  ${port} → ${owner}`)
     .join("\n");
+  const ownershipUnverified = portsToScan.every(
+    (port) =>
+      !registryOccupiedPorts.has(String(port)) &&
+      observations.some(
+        (observation) =>
+          observation.state === "indeterminate" &&
+          "forward" in observation &&
+          observation.forward.port === port &&
+          observation.error.kind === "ownership",
+      ),
+  );
+  if (ownershipUnverified) {
+    throw new Error(
+      `No ${range.label} port in range ${range.start}-${range.end} has verified OpenShell forward ownership:\n${lines}\n` +
+        "Restore OpenShell forward ownership verification for these ports, then rerun onboarding.",
+    );
+  }
   throw new Error(
     `All ${range.label} ports in range ${range.start}-${range.end} are occupied:\n${lines}\n` +
       range.remedy,
