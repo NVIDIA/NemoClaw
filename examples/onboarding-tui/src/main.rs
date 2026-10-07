@@ -11,7 +11,7 @@ use std::{io::IsTerminal, path::PathBuf, process::ExitCode};
     name = "nemoclaw-onboarding",
     version,
     about = "Run an example NemoClaw authoring experience",
-    long_about = "Run an example terminal frontend over nemoclaw-authoring. This command generates desired-state YAML only; it does not resolve credentials, plan, or apply a deployment."
+    long_about = "Run an example terminal frontend over nemoclaw-authoring. This command generates desired-state YAML only; it does not plan or apply a deployment. With discovery enabled, onboarding checks referenced environment variables and may use their values to authenticate model catalog reads. It does not prompt for or retain credential values. The standalone example runs without discovery."
 )]
 struct Cli {
     /// Write generated YAML to a new file; existing files are never overwritten.

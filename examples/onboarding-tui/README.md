@@ -7,7 +7,7 @@ This crate provides the terminal questionnaire used by `nemoclaw onboard` and th
 It is a trial authoring flow over `nemoclaw-authoring`.
 The [authoring domain model](../../docs/design/authoring-domain.md) explains the shared resolver and the state this frontend consumes.
 It writes validated YAML and can read target observations through a verified native bundle.
-Review reminds you to set missing credential references before applying, without retaining their values.
+Credential availability appears as information while answering and reviewing. Interactive `nemoclaw plan` prompts for missing values; set the referenced variables first for a non-interactive run. Onboarding retains no credential values.
 Onboarding does not create deployment state or apply resources.
 
 With the [build prerequisites](../../docs/build.md) available, run from the repository root in a terminal:
@@ -35,7 +35,8 @@ After accepting a harness, **Ctrl+D** requests delegation of the remaining sugge
 When complete compatible evidence is available, delegation accepts the remaining suggestions for the selected route and retains the existing deployment fields.
 With one route this reaches review; with multiple routes the questionnaire still offers the other routes.
 Fabric validates the proposed public configuration against the observed canonical descriptors; missing contracts leave compatibility unverified and prevent delegation.
-The authoring library checks the suggestions together: image compatibility and any managed-gateway engine prerequisites must be established, the matching endpoint must advertise the selected model, and required credential references must be available.
+The authoring library checks the suggestions together: image compatibility and any managed-gateway engine prerequisites must be established, the matching endpoint must advertise the selected model. A missing local credential does not prevent delegation when those compatibility checks pass.
+If an endpoint requires a missing key to list models, onboarding shows a credential note and offers no model suggestions. Set the key to establish catalog compatibility for bulk acceptance, or enter a model identifier and continue individually. Other catalog failures still prevent bulk acceptance.
 A required adapter setting without a suggested value prevents delegation until answered.
 This shortcut preserves accepted answers and uses the current suggestions; it does not search for another engine, provider, image, or model.
 If you have edited the current answer, press Enter to accept it before delegating.
