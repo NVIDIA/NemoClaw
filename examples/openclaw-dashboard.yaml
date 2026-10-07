@@ -10,6 +10,10 @@ metadata:
 spec:
   gateway:
     management: external
+    # Replace with the Docker or Podman engine holding the sandbox image.
+    engine: unix:///var/run/docker.sock
+    runtime:
+      provider: docker
     endpoint: http://127.0.0.1:17671
   inferenceProviders:
     - name: local
@@ -21,8 +25,6 @@ spec:
       image:
         # Replace with the digest from a fresh OpenClaw image build; see docs/inference.md.
         ref: local-fabric-openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      runtime:
-        provider: docker
       network:
         tier: isolated
       harness:

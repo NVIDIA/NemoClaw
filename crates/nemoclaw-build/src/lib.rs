@@ -7,6 +7,11 @@ pub mod docker_provider;
 #[cfg(feature = "sdk")]
 pub mod docs;
 #[cfg(feature = "sdk")]
+pub mod fern;
+#[cfg(feature = "sdk")]
+pub mod helm_provider;
+pub mod images;
+#[cfg(feature = "sdk")]
 pub mod schema;
 mod source;
 pub use source::{hex, source_inputs, source_version};

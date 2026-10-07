@@ -204,7 +204,7 @@ fn container(target: &Target) -> Result<Value, Error> {
                 .map_err(|_| Error::State("invalid proxy settings"))?
         );
         return Ok(
-            json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":["python3","/opt/nemoclaw/ollama_proxy.py"],"command":[],"env":[environment],"network_mode":"host","mounts":[{"type":"volume","source":spec.volume(),"target":"/data"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":256,"memory_swap":256,"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":1}),
+            json!({"name":spec.name,"labels":[{"label":crate::managed::OWNER_LABEL,"value":spec.owner}],"entrypoint":["/usr/local/bin/nemoclaw-ollama-proxy"],"command":[],"env":[environment],"network_mode":"host","mounts":[{"type":"volume","source":spec.volume(),"target":"/data"}],"capabilities":[{"drop":["ALL"]}],"security_opts":["no-new-privileges"],"restart":"no","memory":256,"memory_swap":256,"must_run":true,"wait":false,"remove_volumes":false,"destroy_grace_seconds":1}),
         );
     }
     let spec = spec(target)?;
@@ -588,7 +588,7 @@ mod tests {
             .as_managed_mut()
             .unwrap()
             .image_pull_policy = Some(ImagePullPolicy::Always);
-        document.spec.sandboxes[0].runtime.provider = ComputeDriver::Podman;
+        document.spec.gateway.runtime_mut().provider = ComputeDriver::Podman;
         let generations = crate::state::Record::new(document.clone())
             .unwrap()
             .generations;
@@ -813,7 +813,3 @@ mod tests {
         }
     }
 }
-
-#[cfg(all(test, unix))]
-#[path = "docker_compute_live_tests.rs"]
-mod live_tests;

@@ -58,7 +58,8 @@ class AgentContract(unittest.TestCase):
             if PROFILE == "openclaw"
             else {"prompt": prompt, "model": "default"}
             if PROFILE == "pi"
-            else prompt
+            # Hermes service mode takes text; the bridge unwraps this form.
+            else {"text": prompt}
         )
         return config, invocation, "fabric-native-ok", inference
 
@@ -127,7 +128,7 @@ class AgentContract(unittest.TestCase):
         )
         health = advertised["health_checks"]
         self.assertEqual(health, ["live", "active", "ready"][: len(health)])
-        self.assertEqual(advertised["input_sources"], ["file", "stdin"])
+        self.assertEqual(set(advertised), {"interface_version", "operations", "health_checks"})
 
     def test_validation_without_a_host_reports_owner_rejection(self):
         config = self.file(

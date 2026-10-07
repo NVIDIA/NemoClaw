@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::hardware_observation::observe_hardware;
 use crate::provider::ConfiguredBackend;
 use async_trait::async_trait;
+use nemoclaw_discovery::observe_hardware;
 use nemoclaw_sdk::discovery::ObservationStatus;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use nemoclaw_e2e::{docker, openshell::Fixture, tofu::TofuWorkspace};
+use nemoclaw_e2e::{http_fixture as docker, openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
     fs,

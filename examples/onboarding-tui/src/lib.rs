@@ -18,21 +18,13 @@ pub enum Source<'a> {
 }
 
 /// Run the questionnaire and save to a new file. Cancellation writes nothing.
-/// Engine checks are read-only; this never creates deployment state or applies resources.
+/// With `discover`, the target's engines, image, gateway, model catalog, and
+/// credential references are read; without it, they remain explicitly
+/// unverified. Reads never create deployment state or apply resources.
 pub async fn author(
     source: Source<'_>,
     output: &Path,
-    cancel: &CancellationToken,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    author_with_bundle(source, output, None, cancel).await
-}
-
-/// Author using read-only provider discovery when a verified bundle is available.
-/// Without a bundle, target capabilities remain explicitly unverified.
-pub async fn author_with_bundle(
-    source: Source<'_>,
-    output: &Path,
-    bundle: Option<&Path>,
+    discover: bool,
     cancel: &CancellationToken,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if cancel.is_cancelled() {
@@ -46,7 +38,7 @@ pub async fn author_with_bundle(
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err("onboarding requires a terminal on stdin and stderr".into());
     }
-    let Some(document) = tui::run(capabilities, state, cancel, bundle).await? else {
+    let Some(document) = tui::run(capabilities, state, cancel, discover).await? else {
         return Ok(false);
     };
     if cancel.is_cancelled() {
@@ -80,7 +72,7 @@ fn load_journey(
         .ask([
             "/metadata/name",
             "/spec/sandboxes/0/harness/kind",
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             "inference:preset",
         ])
         .ask([JourneyScope::InferenceApi])
@@ -130,7 +122,7 @@ mod tests {
         assert!(resolution.question("inference:preset").is_some());
         assert!(
             resolution
-                .question("/spec/sandboxes/0/runtime/provider")
+                .question("/spec/gateway/runtime/provider")
                 .is_some()
         );
     }

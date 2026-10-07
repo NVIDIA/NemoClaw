@@ -10,18 +10,24 @@ FROM ${RUST_IMAGE} AS rust
 FROM ${UV_IMAGE} AS uv
 FROM ${OPENCLAW_IMAGE} AS openclaw-upstream
 FROM ${NODE_IMAGE} AS node
+# Only harnesses that run JavaScript copy this tree; the shared base has no Node.js.
+RUN mkdir -p /node/usr/local/bin /node/usr/local/lib \
+    && cp -a /usr/local/bin/node /node/usr/local/bin/ \
+    && cp -a /usr/local/lib/node_modules /node/usr/local/lib/ \
+    && ln -s ../lib/node_modules/npm/bin/npm-cli.js /node/usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /node/usr/local/bin/npx
 
 FROM ${PYTHON_IMAGE} AS base
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
-COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 USER root
+# Agents run as 10001:10001, the UID OpenShell's Kubernetes driver uses for
+# sandboxes; Docker and Podman use the image's own user, so one image fits all.
+# OpenShift instead runs sandboxes as the namespace's UID, which must be able
+# to read /sandbox: OpenShell copies it to a private workspace volume.
 RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 iproute2 nftables ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-    && groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
-    && python3 -m venv /opt/fabric \
-    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+    && groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
+    && python3 -m venv --without-pip /opt/fabric \
+    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
 ENV PYTHONDONTWRITEBYTECODE=1
 HEALTHCHECK NONE
 
@@ -41,7 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && mkdir -p /src/fabric /wheels \
     && tar -xzf /sources/fabric.tar.gz -C /src/fabric --strip-components=1 \
     && patch --batch --fuzz=0 -d /src/fabric -p1 < /build-patches/fabric-error-codes.patch
-RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/fabric/target \
+# Archive extraction gives every Fabric revision the same paths and timestamps,
+# so a shared Cargo target cache can link a newer binding against an older core.
+# Share downloads only; compiled artifacts stay in this source-specific layer.
+RUN --mount=type=cache,target=/root/.cache/uv --mount=type=cache,target=/usr/local/cargo/registry \
     uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels --config-setting build-args=--locked /src/fabric/sdk/python/nemo-fabric-runtime \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapter-contract/python \
     && uv build --python /usr/local/bin/python3 --wheel --out-dir /wheels /src/fabric/adapters/python/common
@@ -81,10 +90,12 @@ FROM runtime-base AS generic
 USER node
 
 FROM runtime-base AS interactive
+COPY --from=node /node/ /
 RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep && rm -rf /var/lib/apt/lists/*
 
 FROM interactive AS openclaw
-COPY --from=openclaw-upstream /app /app
+# Upstream owns /app as its own user; the sandbox only reads it.
+COPY --from=openclaw-upstream --chown=0:0 /app /app
 RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
 ADD --chown=node:node --checksum=sha256:2b403a4b2d2be7a793235a458e2d376f38588fd913f41b92e208e8421a2a1617 https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.4.tgz /tmp/brave.tgz
 ADD --chown=node:node --checksum=sha256:9b250b5ed8660247947701c4df3fb8b1c6b32fd7e30b7a186c7ae763e30c29e8 https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.9.4.tgz /tmp/tavily.tgz
@@ -97,14 +108,20 @@ RUN --network=none OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tm
     node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/brave.tgz \
     && OPENCLAW_STATE_DIR=/tmp/plugin-build OPENCLAW_CONFIG_PATH=/tmp/plugin-build/config.json \
     node /app/openclaw.mjs plugins install --force --accept-capabilities /tmp/tavily.tgz \
-    && mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
-    && rm -rf /tmp/plugin-build /tmp/brave.tgz /tmp/tavily.tgz
+    && rm -f /tmp/brave.tgz /tmp/tavily.tgz
+USER root
+RUN mv /tmp/plugin-build/extensions/brave /tmp/plugin-build/extensions/tavily /app/dist/extensions/ \
+    && chown -R 0:0 /app/dist/extensions/brave /app/dist/extensions/tavily \
+    && chmod -R u+rwX,go+rX,go-w /app/dist/extensions/brave /app/dist/extensions/tavily \
+    && rm -rf /tmp/plugin-build
 COPY image/fabric/BRAVE-LICENSE /app/dist/extensions/brave/LICENSE
 COPY image/fabric/BRAVE-NOTICE.md /app/dist/extensions/brave/NOTICE.md
 COPY image/fabric/TAVILY-LICENSE /app/dist/extensions/tavily/LICENSE
 COPY image/fabric/TAVILY-NOTICE.md /app/dist/extensions/tavily/NOTICE.md
+USER node
 
 FROM base AS hermes-assets
+COPY --from=node /node/ /
 ARG HERMES_REVISION=29112bef099274229cadff79cdff7bf7b99c4b77
 ARG HERMES_SHA256=76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
@@ -123,13 +140,15 @@ FROM interactive AS hermes
 COPY --from=hermes-assets /opt/hermes /opt/hermes
 COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/source/
 # Hermes resolves bundled assets relative to its source checkout.
-RUN /opt/fabric/bin/pip install --no-index --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv pip install --python /opt/fabric/bin/python --offline --no-deps --no-build-isolation -e /opt/hermes --config-settings editable_mode=compat
 COPY --from=common-wheels /src/fabric/adapters/python/hermes/src/nemo_fabric_adapters/hermes/plugins/tavily/ /opt/hermes/plugins/web/tavily/
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
 RUN printf '%s\n' '{"nvidia.fabric.hermes": ["/opt/hermes"]}' > /opt/nemoclaw/runtime-files.json
 USER node
 
 FROM common-wheels AS pi-build
+COPY --from=node /node/ /
 RUN mkdir -p /opt/fabric-source/adapter-contract /opt/fabric-source/adapters \
     && cp -a /src/fabric/adapter-contract/typescript /opt/fabric-source/adapter-contract/ \
     && cp -a /src/fabric/adapters/typescript /opt/fabric-source/adapters/
@@ -151,6 +170,7 @@ RUN mkdir -p /opt/pi/adapters/typescript \
     done
 
 FROM runtime-base AS pi
+COPY --from=node /node/ /
 COPY --from=pi-build /opt/pi /opt/fabric-source
 # Fabric discovery skips symlinked directories, so link only the descriptor.
 # Its runner script resolves beside the real file under /opt/fabric-source.
@@ -178,9 +198,9 @@ RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p '
 
 # A small executable specification with no native agent or model dependencies.
 FROM ${PYTHON_IMAGE} AS dummy
-RUN groupadd --gid 1000 node && useradd --uid 1000 --gid node --create-home node \
-    && python3 -m venv /opt/fabric \
-    && install -d -m 0700 -o 1000 -g 1000 /sandbox
+RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
+    && python3 -m venv --without-pip /opt/fabric \
+    && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
 COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent

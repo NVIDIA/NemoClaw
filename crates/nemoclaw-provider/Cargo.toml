@@ -5,8 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+# One integration-test binary links the crate and its dependencies once.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
 
 [dependencies]
+nemoclaw-discovery = { path = "../nemoclaw-discovery" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 bollard.workspace = true
@@ -35,10 +42,6 @@ nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f06
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["fs"] }
-
-[target.'cfg(unix)'.dependencies]
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
 
 [dev-dependencies]
 prost.workspace = true

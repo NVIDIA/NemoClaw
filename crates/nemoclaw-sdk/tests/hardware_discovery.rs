@@ -1,60 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
-#[path = "../../test-support/docker.rs"]
-mod transport;
+use crate::transport;
 use nemoclaw_provider::{
-    docker::Connections, docker::Engine, hardware::HostObservation, hardware::HostObserver,
-    hardware_observation::observe_hardware, hardware_observation::observe_host_hardware,
+    docker::Engine, hardware::HostObservation, hardware::HostObserver,
+    hardware_observation::observe_host_hardware,
 };
 use nemoclaw_runtime::{hardware::Capacity, hardware::GpuMemory};
 use nemoclaw_sdk::discovery::ObservationStatus;
 use serde_json::json;
-
-#[tokio::test]
-async fn passive_inventory_uses_selected_engine_only_and_never_invents_gpu_measurements() {
-    let fixture = transport::Fixture::start(|request| {
-        assert_eq!(request.method, "GET");
-        assert_eq!(request.path, "/info");
-        assert!(request.body.is_empty());
-        Some((200, serde_json::to_vec(&json!({
-            "ID":"remote-daemon", "Architecture":"s390x", "OSType":"linux", "MemTotal":16000000000_u64, "NCPU":7,
-            "GenericResources":[{"NamedResourceSpec":{"Kind":"NVIDIA-GPU","Value":"GPU-remote"}}]
-        })).unwrap()))
-    }).await;
-    let observed = observe_hardware(&Connections::default(), &fixture.endpoint).await;
-    assert_eq!(observed.status, ObservationStatus::Available);
-    assert_eq!(observed.architecture.as_deref(), Some("s390x"));
-    assert_eq!(observed.memory_bytes, Some(16000000000));
-    assert_eq!(observed.cpus, Some(7));
-    assert_eq!(observed.gpus.len(), 1);
-    assert_eq!(observed.gpus[0].id.as_deref(), Some("GPU-remote"));
-    assert!(observed.gpus[0].memory_total_bytes.is_none());
-    assert!(observed.gpus[0].driver_major.is_none());
-    assert!(observed.gpus[0].compute_capability.is_none());
-    assert!(!observed.gpu_inventory_complete);
-}
-
-#[tokio::test]
-async fn no_advertised_gpu_and_failed_target_are_unknown_not_zero_capacity() {
-    let fixture = transport::Fixture::start(|request| {
-        assert_eq!(request.path, "/info");
-        Some((
-            200,
-            br#"{"ID":"remote-daemon","Architecture":"arm64"}"#.to_vec(),
-        ))
-    })
-    .await;
-    let observed = observe_hardware(&Connections::default(), &fixture.endpoint).await;
-    assert_eq!(observed.gpu_status, ObservationStatus::Unknown);
-    assert!(observed.gpus.is_empty());
-    assert!(!observed.gpu_inventory_complete);
-    assert!(observed.memory_bytes.is_none());
-    let missing = observe_hardware(&Connections::default(), "unix:///missing-engine.sock").await;
-    assert_eq!(missing.status, ObservationStatus::Unknown);
-    assert!(missing.architecture.is_none());
-    assert!(missing.memory_bytes.is_none());
-}
 
 struct FixedHost {
     daemon: &'static str,

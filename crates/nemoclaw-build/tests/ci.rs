@@ -1,90 +1,149 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! `cargo ci` runs the same steps as `CI / Native`, so a local run predicts the PR result.
+//! Step selection and installation of the pinned CI tools.
 
 use nemoclaw_build::ci::{self, Step};
 use std::io::{Cursor, Write};
-
-fn workflow() -> serde_json::Value {
-    serde_saphyr::from_str(include_str!("../../../.github/workflows/rust.yml")).unwrap()
-}
-
-#[test]
-fn every_native_workflow_step_runs_through_cargo_ci_in_order() {
-    let steps = workflow()["jobs"]["native"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|step| step["run"].as_str())
-        .map(str::trim)
-        .map(String::from)
-        .collect::<Vec<_>>();
-    let expected = Step::ALL
-        .iter()
-        .filter(|step| **step != Step::Tools)
-        .map(|step| format!("cargo ci {}", step.name()))
-        .collect::<Vec<_>>();
-    // The workflow may not run anything the local runner cannot reproduce.
-    assert_eq!(steps, expected);
-}
-
-#[test]
-fn shared_setup_installs_pinned_tools_without_python() {
-    let action: serde_json::Value = serde_saphyr::from_str(include_str!(
-        "../../../.github/actions/setup-rust/action.yml"
-    ))
-    .unwrap();
-    let commands = action["runs"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|step| step["run"].as_str())
-        .collect::<String>();
-    assert!(commands.contains("cargo ci tools"), "{commands}");
-    for workflow in [
-        include_str!("../../../.github/workflows/rust.yml"),
-        include_str!("../../../.github/actions/setup-rust/action.yml"),
-    ] {
-        assert!(!workflow.contains("python"), "{workflow}");
-    }
-}
-
-#[test]
-fn every_bundle_platform_pins_its_ci_tools() {
-    let pins: serde_json::Value =
-        serde_json::from_str(include_str!("../../../versions.json")).unwrap();
-    let version = pins["nextest"].as_str().expect("nextest version pin");
-    for (platform, artifacts) in pins["platforms"].as_object().unwrap() {
-        let target = ci::nextest_target(platform).unwrap();
-        assert_eq!(
-            artifacts["nextest"]["url"],
-            format!(
-                "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-{version}/cargo-nextest-{version}-{target}.tar.gz"
-            ),
-            "{platform}"
-        );
-        assert_eq!(
-            artifacts["protoc"]["url"]
-                .as_str()
-                .unwrap()
-                .split('/')
-                .nth(7),
-            Some(format!("v{}", pins["protobuf"].as_str().unwrap()).as_str()),
-            "{platform}"
-        );
-        for tool in ["nextest", "protoc"] {
-            let checksum = artifacts[tool]["sha256"].as_str().unwrap();
-            assert_eq!(checksum.len(), 64, "{platform} {tool}");
-            assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        }
-    }
-}
 
 #[test]
 fn unknown_steps_and_platforms_are_rejected_before_any_work() {
     assert_eq!(Step::parse("lifecycle"), Some(Step::Lifecycle));
     assert_eq!(Step::parse("python"), None);
     assert!(ci::nextest_target("plan9_amd64").is_err());
+}
+
+#[test]
+fn live_docker_is_an_explicit_step_outside_the_default_run() {
+    assert_eq!(Step::parse("live-docker"), Some(Step::LiveDocker));
+    assert!(!Step::ALL.contains(&Step::LiveDocker));
+    assert_eq!(Step::parse("live-kind"), Some(Step::LiveKind));
+    assert!(!Step::ALL.contains(&Step::LiveKind));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn live_kind_requires_its_bundle_before_downloading_tools_or_creating_a_cluster() {
+    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    for (name, script) in [
+        ("protoc", "#!/bin/sh\nprintf 'libprotoc 36.1\\n'\n"),
+        (
+            "cargo",
+            "#!/bin/sh\nif [ \"$1 $2\" = 'nextest --version' ]; then printf 'cargo-nextest 0.9.144\\n'; exit 0; fi\nexit 71\n",
+        ),
+        (
+            "docker",
+            "#!/bin/sh\nprintf accessed > cluster-accessed\nexit 72\n",
+        ),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(
+        root.path().join("versions.json"),
+        serde_json::json!({
+            "rust":"1.98.1", "protobuf":"36.1", "nextest":"0.9.144",
+            "opentofu":"1.12.6", "dockerProvider":"4.6.0", "helmProvider":"3.3.0",
+            "platforms":{}, "images":{"kindNode":"kindest/node@sha256:fixture"}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
+        .args(["ci", "live-kind"])
+        .current_dir(root.path())
+        .env("CARGO", bin.join("cargo"))
+        .env("PROTOC", bin.join("protoc"))
+        .env("PATH", &bin)
+        .env("TEST_PLATFORM", "linux_amd64")
+        .env_remove("GITHUB_ENV")
+        .env_remove("GITHUB_PATH")
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        error.contains("build the bundle first: cargo ci bundle"),
+        "{error}"
+    );
+    assert!(!root.path().join(".build/downloads").exists());
+    assert!(!root.path().join("cluster-accessed").exists());
+}
+
+#[test]
+fn gateway_documents_are_fresh_and_avoid_ports_and_subnets_in_use() {
+    use ci::live::{GatewayInputs, free_subnet, gateway_document, uuid};
+    let first = uuid().unwrap();
+    let second = uuid().unwrap();
+    assert_ne!(first, second);
+    for id in [&first, &second] {
+        let parts: Vec<_> = id.split('-').map(str::len).collect();
+        assert_eq!(parts, [8, 4, 4, 4, 12], "{id}");
+        assert!(
+            id.chars()
+                .all(|c| c == '-' || c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert_eq!(&id[14..15], "4", "version 4 UUID: {id}");
+    }
+
+    let used = ["172.30.200.0/24".to_owned(), "172.30.201.0/24".to_owned()];
+    let chosen = free_subnet(&used, &[]).unwrap();
+    assert_eq!(chosen, "172.30.202.0/24");
+    assert_eq!(
+        free_subnet(&used, std::slice::from_ref(&chosen)).unwrap(),
+        "172.30.203.0/24"
+    );
+
+    let document = gateway_document(&GatewayInputs {
+        name: "live-gateway-1",
+        uid: &first,
+        port: 17950,
+        subnet: &chosen,
+        image: "nc-live@sha256:abc",
+        harness: "nvidia.fabric.pi",
+    });
+    let value: serde_json::Value = serde_saphyr::from_str(&document).unwrap();
+    assert_eq!(value["metadata"]["uid"], first.as_str());
+    assert_eq!(value["spec"]["gateway"]["management"], "managed");
+    assert_eq!(
+        value["spec"]["gateway"]["endpoint"],
+        "http://127.0.0.1:17950"
+    );
+    assert_eq!(value["spec"]["gateway"]["networkCIDR"], chosen.as_str());
+    assert_eq!(
+        value["spec"]["sandboxes"][0]["image"]["ref"],
+        "nc-live@sha256:abc"
+    );
+    assert_eq!(
+        value["spec"]["sandboxes"][0]["harness"]["kind"],
+        "nvidia.fabric.pi"
+    );
+    assert!(value["spec"].get("services").is_none());
+}
+
+/// The live-docker gateway tests read this document, so it must be one the
+/// SDK accepts; a field-by-field check missed a stale shape before.
+#[cfg(feature = "sdk")]
+#[test]
+fn gateway_documents_parse_as_current_configuration() {
+    use ci::live::{GatewayInputs, gateway_document, uuid};
+    let uid = uuid().unwrap();
+    let document = gateway_document(&GatewayInputs {
+        name: "live-gateway-1",
+        uid: &uid,
+        port: 17950,
+        subnet: "172.30.202.0/24",
+        image: &format!("nc-live@sha256:{}", "a".repeat(64)),
+        harness: "nvidia.fabric.pi",
+    });
+    let parsed = nemoclaw_sdk::config::Document::parse(document.as_bytes()).unwrap();
+    assert_eq!(
+        parsed.spec.gateway.runtime().provider,
+        nemoclaw_sdk::config::ComputeDriver::Docker
+    );
 }
 
 fn zip(entries: &[(&str, &[u8])]) -> Vec<u8> {

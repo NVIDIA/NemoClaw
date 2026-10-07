@@ -187,8 +187,8 @@ class ReferenceContract(unittest.IsolatedAsyncioTestCase):
 
 
 class StandaloneValidation(unittest.TestCase):
-    def test_invocation_accepts_text_from_files_and_stdin_but_configuration_stays_an_object(self):
-        prompt = "Hello\n世界"
+    def test_invocation_input_is_an_object_from_files_and_stdin(self):
+        prompt = {"text": "Hello\n世界"}
         encoded = json.dumps(prompt).encode()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prompt.json"
@@ -198,9 +198,7 @@ class StandaloneValidation(unittest.TestCase):
             with io.TextIOWrapper(io.BytesIO(encoded)) as stream, patch("sys.stdin", stream):
                 request = fabric.parse_command(["invoke", "--agent", "main", "--input", "-"])
             self.assertEqual(request["input"], prompt)
-            with self.assertRaises(fabric.ProtocolError):
-                fabric.parse_command(["validate", "--agent", "main", "--config", str(path)])
-            for value in ([], None, 42, True):
+            for value in ("Hello", [], None, 42, True):
                 path.write_text(json.dumps(value))
                 with self.subTest(value=value), self.assertRaises(fabric.ProtocolError):
                     fabric.parse_command(["invoke", "--agent", "main", "--input", str(path)])

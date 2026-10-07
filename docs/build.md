@@ -23,9 +23,10 @@ Run the bundle builder:
 cargo run -p nemoclaw-build -- bundle
 ```
 
-The builder downloads and verifies the OpenTofu archive, builds the CLI and production provider with the lockfile, and writes `dist/<platform>`.
-The manifest records each shipped file’s hash, including the OpenTofu license.
+The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and NemoClaw provider with the lockfile, and writes `dist/<platform>`.
+The manifest records each shipped file's hash, including the unchanged upstream licenses.
 The SDK verifies the bundle before use.
+Managed Kubernetes deployment uses the bundled Helm provider and requires no host Helm CLI.
 
 Each bundle includes `schemas/nemoclaw-v1alpha1.schema.json`, generated from its SDK contract and covered by the manifest hash.
 Use that file for [editor assistance](usage.md#editor-schema-assistance) with the bundled CLI.
@@ -35,13 +36,14 @@ The builder records its source fingerprint at compilation and rejects changed in
 If it reports `build tool source inputs changed`, rebuild and run it with the `cargo run` command above.
 The builder also rejects source changes during assembly.
 Bundles created before schema packaging must be rebuilt; the SDK rejects a manifest that omits the schema or a schema file that fails its recorded hash.
+It also rejects bundles missing the pinned Helm provider or its license, or whose recorded hashes fail verification.
 
 A source-derived provider version prevents reuse of a stale OpenTofu provider installation.
 
 To select a target, pass `bundle --platform PLATFORM`.
 The target names are `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64`.
 Building another target requires its Rust standard library, linker, and native SDK.
-[Native validation records](validation/rust-native-platforms.json) identify tested hosts; target selection alone does not qualify a runtime.
+Target selection alone does not qualify a runtime on that platform.
 
 Add the bundle’s `bin` directory to `PATH` and run `nemoclaw --help` to check CLI access.
 Continue with [deployment usage](usage.md).
@@ -62,7 +64,7 @@ Then remove that dedicated bundle directory using your host's file manager and r
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
 Do not delete deployment state, model volumes, unrelated tool installations, or shared caches as part of removing the local bundle.
-A complete supported purge of retained runtime data remains [TBD](state.md#deletion-and-retention).
+There is no supported way yet to purge retained runtime data ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
 
 ## Build Agent Images
@@ -72,7 +74,8 @@ Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image bui
 Direct Bake checks and proxy builds require the corresponding `AGENT_PLATFORM` environment variable.
 ARM64 selects all ten harnesses; AMD64 selects Deep Agents and OpenClaw.
 The remaining harnesses are ARM64-only until their pinned native dependencies have matching AMD64 artifacts and qualification.
-Agent images use Node.js 24.21.0 LTS and a shared Python 3.13.15 base.
+Agent images share a Python 3.13.15 base without pip.
+Only OpenClaw, Hermes, and Pi, whose harnesses run JavaScript, add Node.js 24.21.0 LTS.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
 Build stages use pinned Rust, Node, Python, and uv images, so the host needs no language toolchains for image assembly.
 Initial builds need network access to fetch the pinned base images, source archives, and package dependencies.
@@ -81,7 +84,7 @@ Digest-based sandbox use requires a Docker image store that retains repository d
 On a native Linux ARM64 host, run from the repository root:
 
 ```sh
-python3 image/build_fabric.py --platform linux/arm64 openclaw
+cargo images build --platform linux/arm64 openclaw
 docker image inspect nc-fabric:openclaw --format '{{index .RepoDigests 0}}'
 ```
 
@@ -92,34 +95,40 @@ The selected image must still exist on the compute daemon.
 The sandbox compute daemon must have access to that exact image.
 The builder starts a temporary process with networking disabled to read installed Fabric discovery metadata, then labels the final local image.
 It removes its temporary image tag after completion; it does not start an adapter or request model responses.
+Direct `docker buildx bake` builds omit these labels, so plan cannot select them.
 The commands build and load local images; they do not publish images or launch a deployment.
 
 Installed discovery also requires the image-owned runtime manifest and resolves descriptor-required executables inside the image.
 If catalog generation reports a missing runtime manifest, required path, or executable, correct the image recipe before retrying.
-See the [image metadata contract](../image/NOTICE.md) before changing the image layout.
+See the [image metadata contract](design/fabric-management.md#image-metadata) before changing the image layout.
 
 Plan requires the selected image's runtime metadata to supply its bridge command, environment, default policy, and executable grants.
 For an external gateway, also set `spec.gateway.engine` to the engine containing that same immutable sandbox image; NemoClaw does not assume the client host's Docker socket.
 This engine is used only for image inspection and does not authorize managing the external gateway.
 A missing image, missing metadata, or omitted external engine stops planning with a diagnostic; load a matching image or rebuild it, then retry.
-Keep the original bundle and state to operate or destroy deployments created before runtime metadata was retained; this change does not migrate their sandbox bindings.
 
 On a native Linux AMD64 host, build the general-purpose Deep Agents runtime with the platform selector:
 
 ```sh
-python3 image/build_fabric.py --platform linux/amd64 deepagents
+cargo images build --platform linux/amd64 deepagents
 docker image inspect nc-fabric:deepagents --format '{{index .RepoDigests 0}}'
 ```
 
 Use the printed immutable reference in `sandboxes[].image.ref`.
 Replace `deepagents` with `openclaw` to build the other qualified AMD64 harness.
-Run `python3 image/build_fabric.py --platform linux/amd64 agents` to build both.
+Run `cargo images build --platform linux/amd64 agents` to build both.
 The AMD64 builds and image tests do not establish successful gateway provisioning or an end-to-end agent response.
 
-On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `python3 image/build_fabric.py --platform linux/arm64 agents`.
+On ARM64, select `hermes`, `pi`, or another name from the [harness matrix](reference/fabric-harnesses.md), or build every agent with `cargo images build --platform linux/arm64 agents`.
 `AGENT_PLATFORM=linux/arm64 docker buildx bake ollama-proxy --load` builds the separate proxy image as `nc-fabric:ollama-proxy`; select `linux/amd64` on an AMD64 host.
 The proxy and its `proxy-tests` target use the same explicit platform selector.
+The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary from [its crate](../crates/nemoclaw-ollama-proxy) and its license, with no shell or interpreter.
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
+
+A Kubernetes or OpenShift sandbox names a metadata bundle in `image.metadata`, since no local engine can be inspected there.
+Write one for a local image with `cargo images export-metadata IMAGE --platform linux/arm64 --output PATH`, where `PATH` is a new file.
+The bundle holds the image's index, the manifest for that platform and its configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+Run it before pushing the image, and use the same digest in `image.ref`.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
@@ -129,7 +138,19 @@ The builder verifies archive and wheel hashes, retains upstream archives and loc
 The [source notice](../image/NOTICE.md) describes retained sources and licenses.
 Pinned archives and wheels do not make the whole image bit-reproducible: Debian packages still come from the configured repositories.
 
-Run [image checks](testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](testing/fixtures.md#inference-api-fixtures) for behavior qualification.
+Run [image checks](contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
+
+### Regenerate the Bundled Catalog
+
+The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
+Run `image/fabric/catalog.py` with a Python environment that has the pinned Fabric wheels installed, and pass that revision and checksum:
+
+```sh
+python image/fabric/catalog.py --revision REVISION --source-sha256 CHECKSUM --output image/fabric/catalog.json
+```
+
+Use the values of `FABRIC_REVISION` and `FABRIC_SHA256` from the [shared agent Dockerfile](../image/fabric/Dockerfile).
+The snapshot holds canonical descriptors and provenance only; it does not change any image.
 
 ### Reference Contract Image
 
@@ -139,8 +160,8 @@ It is a test fixture, excluded from the production `agents` target and SDK harne
 On Linux ARM64, run from the repository root:
 
 ```sh
-IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 dummy
-python3 image/qualify_contract.py nc-contract:dummy --lifecycle dummy --require-ready
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 dummy
+cargo images qualify nc-contract:dummy --lifecycle dummy --require-ready
 ```
 
 Use `linux/amd64` on a native AMD64 host.
@@ -152,19 +173,19 @@ The [contract description](design/fabric-management.md#image-contract-and-refere
 To roll the same interface into all ten production adapter images on a native Linux ARM64 host, run:
 
 ```sh
-IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/arm64 agents
-python3 image/qualify_contract.py nc-contract:openclaw --lifecycle openclaw
-python3 image/qualify_contract.py nc-contract:hermes --lifecycle hermes
-python3 image/qualify_contract.py nc-contract:pi --lifecycle pi
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
+cargo images qualify nc-contract:openclaw --lifecycle openclaw
+cargo images qualify nc-contract:hermes --lifecycle hermes
+cargo images qualify nc-contract:pi --lifecycle pi
 ```
 
 Pass each remaining built image to the same qualifier; CI runs it for every selected target.
 On a native Linux AMD64 host, build and qualify its two production targets instead:
 
 ```sh
-IMAGE_PREFIX=nc-contract python3 image/build_fabric.py --platform linux/amd64 agents
-python3 image/qualify_contract.py nc-contract:deepagents
-python3 image/qualify_contract.py nc-contract:openclaw --lifecycle openclaw
+IMAGE_PREFIX=nc-contract cargo images build --platform linux/amd64 agents
+cargo images qualify nc-contract:deepagents
+cargo images qualify nc-contract:openclaw --lifecycle openclaw
 ```
 
 The build adds a versioned `io.nemoclaw.fabric.bridge` label to every image, matching `/opt/nemoclaw/bridge.json`.
@@ -251,7 +272,6 @@ Model snapshots and prepared data belong to the deployment’s persistent volume
 The image contains `nemoclaw-runtime`.
 The inline recipe supplies preparation and verification tools; `kind: vllm` selects the service installer and serving behavior.
 Managed containers use `/usr/local/bin/nemoclaw-runtime` and `NEMOCLAW_RUNTIME_SPEC`.
-The former `nemoclaw-spark` entrypoint and `NEMOCLAW_SPARK_SPEC` environment alias are no longer accepted.
 
 The SDK checks a managed vLLM or Ollama image's runtime-spec label, required backend/recipe/authentication labels, and platform through the provider before creating runtime resources.
 An already loaded image with a missing or incompatible runtime-spec label fails plan and apply with rebuild guidance.

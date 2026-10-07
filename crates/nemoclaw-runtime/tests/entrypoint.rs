@@ -3,22 +3,16 @@
 #![cfg(all(target_os = "linux", feature = "execution"))]
 use std::process::Command;
 #[test]
-fn runtime_requires_current_configuration_and_validates_it_before_work() {
-    for (variable, expected) in [
-        (
-            "NEMOCLAW_RUNTIME_SPEC",
-            "invalid pinned runtime specification",
-        ),
-        ("NEMOCLAW_SPARK_SPEC", "missing runtime specification"),
-    ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-runtime"))
-            .env_remove("NEMOCLAW_RUNTIME_SPEC")
-            .env_remove("NEMOCLAW_SPARK_SPEC")
-            .env(variable, "not-json")
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        assert!(output.stdout.is_empty());
-        assert!(String::from_utf8(output.stderr).unwrap().contains(expected));
-    }
+fn runtime_validates_its_configuration_before_work() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-runtime"))
+        .env("NEMOCLAW_RUNTIME_SPEC", "not-json")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("invalid pinned runtime specification")
+    );
 }

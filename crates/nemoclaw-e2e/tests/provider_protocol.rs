@@ -221,7 +221,7 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
     assert!(provider.is_absolute());
     let mode = Arc::new(Mutex::new("normal"));
     let shared = mode.clone();
-    let fixture = nemoclaw_e2e::docker::Fixture::start(move |request| {
+    let fixture = nemoclaw_e2e::http_fixture::Fixture::start(move |request| {
         assert_eq!(request.method, "GET", "planning or rejected apply mutated Docker");
         let mode = *shared.lock().unwrap();
         let response = match request.path.split('?').next().unwrap() {

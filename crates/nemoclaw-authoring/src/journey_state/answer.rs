@@ -175,7 +175,9 @@ impl JourneyState {
                     role,
                     SdkFieldRole::RuntimeProvider | SdkFieldRole::GatewayManagement
                 ) {
-                    candidate.authored.sync_gateway_engine_for_runtime()?;
+                    candidate.authored.sync_gateway_engine_for_runtime(
+                        candidate.answered_engines.as_deref().unwrap_or_default(),
+                    )?;
                 }
                 if self
                     .definition

@@ -103,7 +103,6 @@ impl<'a> QuestionResolver<'a> {
                     reasons: vec![
                         "Target compatibility has not been observed for this desired state.".into(),
                     ],
-                    pending: Vec::new(),
                 }
             }),
         }

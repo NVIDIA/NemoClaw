@@ -27,8 +27,8 @@ MUTATIONS = ("prepare", "configure")
 
 MESSAGES = {
     "invalid_request": "The request is invalid.",
-    "invalid_file": "The input file must contain one bounded UTF-8 JSON value of the expected type.",
-    "invalid_input": "Standard input must be a pipe or file with one bounded UTF-8 JSON value of the expected type.",
+    "invalid_file": "The input file must contain one bounded UTF-8 JSON object.",
+    "invalid_input": "Standard input must be a pipe or file with one bounded UTF-8 JSON object.",
     "wrong_agent": "The request does not identify this agent.",
     "stale_generation": "The host generation has changed; observe state again.",
     "fabric_health_unsupported": "This Fabric revision does not support runtime health checks.",
@@ -36,6 +36,7 @@ MESSAGES = {
     "health_observation_changed": "The runtime changed during the health observation.",
     "operational_unsupported": "Operational checks are deferred; use explicit invocation.",
     "streaming_unsupported": "Streaming invocation is not supported.",
+    "text_input_required": 'This agent takes a text prompt; send {"text": "..."} as the input.',
     "host_unavailable": "The runtime host is unavailable.",
     "host_stopping": "The runtime host is shutting down.",
     "runtime_unavailable": "No active runtime is available.",
@@ -107,7 +108,7 @@ def encode(value):
     )
 
 
-def decode_object(encoded, *, allow_text=False):
+def decode_object(encoded):
     def reject_constant(_):
         raise ValueError("invalid JSON constant")
 
@@ -122,12 +123,12 @@ def decode_object(encoded, *, allow_text=False):
     value = json.loads(
         encoded.decode("utf-8"), parse_constant=reject_constant, object_pairs_hook=unique_object
     )
-    if not isinstance(value, dict) and not (allow_text and isinstance(value, str)):
+    if not isinstance(value, dict):
         raise ValueError("expected JSON object")
     return value
 
 
-def read_object(path, *, allow_text=False):
+def read_object(path):
     try:
         # A pipe or device can block forever or consume stdin through /dev/stdin.
         descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
@@ -137,12 +138,12 @@ def read_object(path, *, allow_text=False):
             encoded = stream.read(REQUEST_LIMIT + 1)
         if len(encoded) > REQUEST_LIMIT:
             raise ValueError("file exceeds limit")
-        return decode_object(encoded, allow_text=allow_text)
+        return decode_object(encoded)
     except (OSError, ValueError, RecursionError) as error:
         raise ProtocolError("invalid_file") from error
 
 
-def read_stdin(*, allow_text=False):
+def read_stdin():
     try:
         # Stdin is read only when a flag names it, never from a terminal that waits for a person.
         if sys.stdin is None or sys.stdin.isatty():
@@ -150,7 +151,7 @@ def read_stdin(*, allow_text=False):
         encoded = sys.stdin.buffer.read(REQUEST_LIMIT + 1)
         if len(encoded) > REQUEST_LIMIT:
             raise ValueError("stdin exceeds limit")
-        return decode_object(encoded, allow_text=allow_text)
+        return decode_object(encoded)
     except (OSError, ValueError, RecursionError) as error:
         raise ProtocolError("invalid_input") from error
 
@@ -202,15 +203,38 @@ def validate_request(request, name=None):
     if operation == "check" and request["level"] not in LEVELS:
         raise ProtocolError()
     if operation == "invoke":
-        if not isinstance(request["input"], (dict, str)):
+        if not isinstance(request["input"], dict):
             raise ProtocolError()
-        if isinstance(request["input"], dict) and (
-            request["input"].get("stream") or request["input"].get("streaming")
-        ):
+        if request["input"].get("stream") or request["input"].get("streaming"):
             raise ProtocolError("streaming_unsupported", "invoke", unsupported=True)
     if len(encode(request)) > REQUEST_LIMIT:
         raise ProtocolError("request_too_large")
     return operation
+
+
+def takes_text(config):
+    """Whether the configured adapter accepts only a text prompt. Fabric does
+    not declare an adapter's input type, so the bridge names the one that does."""
+    harness = config.get("harness") if isinstance(config, dict) else None
+    if not isinstance(harness, dict):
+        return False
+    settings = harness.get("settings")
+    return (
+        harness.get("adapter_id") == "nvidia.fabric.hermes"
+        and isinstance(settings, dict)
+        and settings.get("mode") == "service"
+    )
+
+
+def adapter_input(config, value):
+    """The input Fabric receives. A caller always sends an object; for an
+    adapter that takes text, the object must be exactly {"text": "..."} and
+    the bridge passes the string. Other adapters receive the object as sent."""
+    if not takes_text(config):
+        return value
+    if set(value) != {"text"} or not isinstance(value["text"], str):
+        raise ProtocolError("text_input_required", "invoke")
+    return value["text"]
 
 
 def parse_command(arguments):
@@ -250,11 +274,7 @@ def parse_command(arguments):
     for flag, field in (("--config", "config"), ("--input", "input")):
         if flag in flags:
             # Only an exact dash selects stdin; every other value names a file.
-            request[field] = (
-                read_stdin(allow_text=field == "input")
-                if flags[flag] == "-"
-                else read_object(flags[flag], allow_text=field == "input")
-            )
+            request[field] = read_stdin() if flags[flag] == "-" else read_object(flags[flag])
     if "--expected-generation" in flags:
         request["expected_generation"] = flags["--expected-generation"]
     if operation == "check":
@@ -405,9 +425,11 @@ class RuntimeHost:
                 stage = "invoke"
                 if self.snapshot()["runtime_state"] != "running":
                     raise ProtocolError("runtime_unavailable", stage)
+                # Refusing the input sends nothing, so its effects are none.
+                native_input = adapter_input(self.config, request["input"])
                 changed, effects = None, "unknown"
                 runtime_id = self.runtime.runtime_id
-                native_result = (await self.runtime.invoke(input=request["input"])).to_mapping()
+                native_result = (await self.runtime.invoke(input=native_input)).to_mapping()
                 result = {"runtime_id": runtime_id, "fabric_result": native_result}
                 if native_result.get("status") != "succeeded":
                     raise ProtocolError("fabric_invoke_failed", stage)

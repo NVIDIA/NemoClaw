@@ -36,6 +36,12 @@ enum Action {
         #[arg(long)]
         revision: Option<String>,
     },
+    /// Validate or publish documentation with the pinned Fern CLI.
+    #[cfg(feature = "sdk")]
+    Fern {
+        #[command(subcommand)]
+        action: FernAction,
+    },
     /// Generate the configuration schema and reference, or check them for drift.
     #[cfg(feature = "sdk")]
     Schema {
@@ -55,8 +61,83 @@ enum Action {
     /// Build this command without default features (`cargo ci`), so it can
     /// install the pinned Protocol Buffers compiler before anything needs it.
     Ci {
-        /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle.
+        /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
+        /// or live-docker, which runs only when named.
         step: Option<String>,
+    },
+    /// Build agent images with their installed Fabric metadata, or qualify them.
+    Images {
+        #[command(subcommand)]
+        action: ImageAction,
+    },
+}
+#[cfg(feature = "sdk")]
+#[derive(Subcommand)]
+enum FernAction {
+    /// Generate pages, check the schema and links, and validate Fern without publishing.
+    Check,
+    /// Check, then start Fern's local server.
+    Dev,
+    /// Publish an isolated preview; needs FERN_TOKEN.
+    Preview {
+        #[arg(long)]
+        id: String,
+    },
+    /// Delete an isolated preview; needs FERN_TOKEN.
+    Delete {
+        #[arg(long)]
+        id: String,
+    },
+    /// Delete previews of v1 pull requests merged by a commit; needs gh and FERN_TOKEN.
+    DeleteMerged {
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        commit: String,
+    },
+    /// Create or update a pull request's preview comment; needs gh.
+    Comment {
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        pull_request: u64,
+        #[arg(long)]
+        url: String,
+    },
+    /// Publish main and v1 from a tagged v1 release; needs FERN_TOKEN.
+    Public,
+}
+#[derive(Subcommand)]
+enum ImageAction {
+    /// Build Bake targets (for example `agents`, `dummy`, or `openclaw`) and label them.
+    Build {
+        /// linux/arm64 or linux/amd64; must match the Docker host.
+        #[arg(long)]
+        platform: String,
+        #[arg(required = true)]
+        targets: Vec<String>,
+    },
+    /// Run the command contract inside each labeled local image.
+    Qualify {
+        #[arg(required = true)]
+        images: Vec<String>,
+        /// Also run the shared configure, invoke and prepare assertions with this adapter's offline configuration.
+        #[arg(long, value_enum)]
+        lifecycle: Option<nemoclaw_build::images::Lifecycle>,
+        /// Fail when native readiness is unsupported instead of reporting it as skipped.
+        #[arg(long, requires = "lifecycle")]
+        require_ready: bool,
+    },
+    /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
+    ExportMetadata {
+        /// A local image, by tag or digest.
+        image: String,
+        /// linux/arm64 or linux/amd64.
+        #[arg(long)]
+        platform: String,
+        /// Where to write the bundle; refuses an existing file.
+        #[arg(long)]
+        output: PathBuf,
     },
 }
 #[derive(Deserialize)]
@@ -68,16 +149,19 @@ struct Artifact {
 struct Pins {
     rust: String,
     protobuf: String,
-    /// Required only by `cargo ci`; runtime builds read older pin files.
-    #[serde(default)]
-    nextest: Option<String>,
+    nextest: String,
     #[cfg(feature = "sdk")]
     opentofu: String,
     #[cfg(feature = "sdk")]
     #[serde(rename = "dockerProvider")]
     docker_provider: String,
-    #[serde(default)]
+    #[cfg(feature = "sdk")]
+    #[serde(rename = "helmProvider")]
+    helm_provider: String,
     platforms: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Artifact>>,
+    /// Pinned OpenShell images; the Docker live tests pull these.
+    #[serde(default)]
+    images: std::collections::BTreeMap<String, String>,
 }
 fn cargo() -> Command {
     Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
@@ -187,6 +271,13 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             .ok_or("missing Docker provider platform pin")?,
     )
     .await?;
+    let helm_archive = download(
+        pins.platforms
+            .get(platform)
+            .and_then(|p| p.get("helmProvider"))
+            .ok_or("missing Helm provider platform pin")?,
+    )
+    .await?;
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
@@ -257,6 +348,14 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             &pins.docker_provider,
             platform,
         )?);
+    manifest
+        .files
+        .extend(nemoclaw_build::helm_provider::install(
+            root,
+            &helm_archive,
+            &pins.helm_provider,
+            platform,
+        )?);
     nemoclaw_build::schema::add_to_bundle(root, &mut manifest)?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::write(
@@ -282,6 +381,27 @@ async fn main() -> Result<()> {
         return nemoclaw_build::docs::generate(Path::new("."), check, revision.as_deref());
     }
     #[cfg(feature = "sdk")]
+    if let Action::Fern { action } = cli.command {
+        use nemoclaw_build::fern;
+        let root = Path::new(".");
+        return match action {
+            FernAction::Check => fern::check(root),
+            FernAction::Dev => fern::dev(root),
+            FernAction::Preview { id } => fern::preview(root, &id).map(|url| println!("{url}")),
+            FernAction::Delete { id } => fern::delete(root, &id),
+            FernAction::DeleteMerged { repository, commit } => {
+                fern::delete_merged(root, &repository, &commit)
+            }
+            FernAction::Comment {
+                repository,
+                pull_request,
+                url,
+            } => fern::comment(&repository, pull_request, &url),
+            FernAction::Public => fern::public(root, &fern::Release::from_environment()),
+        }
+        .map_err(Into::into);
+    }
+    #[cfg(feature = "sdk")]
     if let Action::Schema { check } = cli.command {
         return nemoclaw_build::schema::generate(Path::new("."), check).map_err(Into::into);
     }
@@ -290,6 +410,28 @@ async fn main() -> Result<()> {
         && nemoclaw_build::source_version(&sources()?) != nemoclaw_build::BUILDER_SOURCE_VERSION
     {
         return Err("build tool source inputs changed; rebuild with cargo run --locked -p nemoclaw-build -- bundle".into());
+    }
+    if let Action::Images { action } = cli.command {
+        let root = Path::new(".");
+        return match action {
+            ImageAction::Build { platform, targets } => {
+                nemoclaw_build::images::build(root, &platform, &targets)
+            }
+            ImageAction::Qualify {
+                images,
+                lifecycle,
+                require_ready,
+            } => images.iter().try_for_each(|image| {
+                eprintln!("Qualifying {image}");
+                nemoclaw_build::images::qualify(root, image, lifecycle, require_ready)
+            }),
+            ImageAction::ExportMetadata {
+                image,
+                platform,
+                output,
+            } => nemoclaw_build::images::export_metadata(&image, &platform, &output),
+        }
+        .map_err(Into::into);
     }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
     if let Action::Ci { step } = cli.command {
@@ -303,10 +445,12 @@ async fn main() -> Result<()> {
     }
     match cli.command {
         #[cfg(feature = "sdk")]
-        Action::Schema { .. } | Action::Docs { .. } => {
+        Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
-        Action::Ci { .. } => unreachable!("CI steps returned before build tool checks"),
+        Action::Ci { .. } | Action::Images { .. } => {
+            unreachable!("CI and image commands returned before build tool checks")
+        }
         #[cfg(feature = "sdk")]
         Action::Bundle { platform } => {
             if !run_ci::protoc_matches(&run_ci::protoc_command(&pins.protobuf), &pins.protobuf) {

@@ -43,7 +43,7 @@ The same checks apply to inline harnesses and `harnessRef`, separately for every
 Selected-image assessment checks the Fabric descriptor's required files, the adapter's image-owned `runtime_files`, and the runtime manifest's `required_paths`.
 The packaged image declares `/opt/fabric` and `/opt/nemoclaw`; a relocated image declares its own paths.
 A missing grant makes compatibility `unsupported` and fails plan; `observation_json.compatibility` names the path.
-Images without runtime metadata, including older images and direct Bake builds, fail planning; follow [image rebuilding and selection](build.md#build-agent-images).
+Images without runtime metadata, such as direct Bake builds, fail planning; follow [image rebuilding and selection](build.md#build-agent-images).
 Document parsing validates policy syntax without assuming an image layout.
 These checks do not establish every path a harness reads; verify additional harness paths against the selected image before applying.
 
@@ -90,10 +90,6 @@ Configure an upstream corporate proxy through the external gateway's OpenShell c
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
 NemoClaw does not expose this driver setting for managed gateways.
 
-The former per-sandbox `network.proxy` field is rejected because it replaced OpenShell's policy-proxy environment.
-Keep the original bundle, configuration, and state to recover or destroy a deployment that retains that field.
-Use a fresh deployment with the field omitted; do not edit state to bypass rejection.
-
 ## Verify and Change the Configuration
 
 ```mermaid
@@ -114,6 +110,7 @@ This removes the upstream cause of suspected GPU false drift; live GPU export an
 Missing policy observations or drift do not produce a partial configuration.
 
 Policy changes require sandbox replacement, which ordinary apply rejects.
+External OpenShell policy edits conflict with the declared policy and stop export; they do not bypass that rejection.
 Back up sandbox files and conversation history before using the explicit [destroy and recreate procedure](usage.md#destroy).
 Destroy deletes those sandbox files; retained workspace and model storage follow the existing lifecycle rules.
 If an operation fails, preserve the state directory, resolve the reported observation or configuration problem, and retry with the retained configuration.
@@ -131,15 +128,6 @@ If the problem is an attached-provider or credential configuration that can be r
 Apply can deliver that repair; completion still requires OpenShell to accept the configuration.
 If the authored sandbox policy must change, use the [destroy and recreate procedure](usage.md#destroy); ordinary apply still refuses policy replacement.
 Destroy remains available after the failed first apply and does not require successful admission or readiness.
-See the [policy rejection results](validation/policy-rejection-linux-arm64.md) for tested recovery paths and live-test limits.
 
 Local fixture tests exercise creation, rejection, drift detection, and export/reapply behavior.
 They do not establish proxy reachability or kernel enforcement on a live host.
-
-## Earlier Policy Workflows
-
-V1 has no NemoClaw commands for named preset installation, interactive network-request approval, or explaining policy to an agent.
-Use the [isolated preset or complete explicit policy](#choose-a-policy) as declared intent.
-External OpenShell policy edits can conflict with that intent and stop export; they are not a supported bypass for refused replacement.
-Equivalent managed approval/explanation workflows remain **TBD** pending implementation.
-Integration-specific examples, including raw TLS applications, require their own endpoint, credential, and live enforcement qualification.

@@ -5,30 +5,9 @@ use nemoclaw_authoring::{
     Capabilities, DecisionStatus, JourneyDefinition, JourneyQuestionKind, JourneyQuestionReason,
     JourneyScope, PartialDocument,
 };
-use nemoclaw_sdk::fabric_catalog::{BridgeCapabilities, FabricCatalog};
+use nemoclaw_discovery::DiscoveryObservations;
+use nemoclaw_sdk::fabric_catalog::FabricCatalog;
 use serde_json::json;
-
-/// Observed images must advertise the Fabric bridge to be compatible.
-fn installed_catalog() -> FabricCatalog {
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-        input_sources: vec!["file".into(), "stdin".into()],
-    });
-    catalog
-}
 
 fn minimum() -> PartialDocument {
     PartialDocument::from_yaml(
@@ -529,12 +508,12 @@ fn invalid_optional_sdk_leaf_can_be_omitted_without_guidance() {
     let mut values: serde_json::Value =
         serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
-    values["spec"]["sandboxes"][0]["runtime"]["provider"] = json!("unsupported");
+    values["spec"]["gateway"]["runtime"]["provider"] = json!("unsupported");
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let mut state = JourneyDefinition::new("repair-optional", base)
         .start(&capabilities)
         .unwrap();
-    let path = "/spec/sandboxes/0/runtime/provider";
+    let path = "/spec/gateway/runtime/provider";
     let question = state
         .resolve(&capabilities)
         .unwrap()
@@ -1264,9 +1243,9 @@ fn invalid_native_settings_block_review_without_native_prompt_guidance() {
 
 #[test]
 fn discovered_models_extend_the_current_route_question_without_restricting_custom_answers() {
-    use nemoclaw_authoring::{AuthoringFacts, EndpointEvidence, inference_request_for_document};
+    use nemoclaw_authoring::inference_request_for_document;
     use nemoclaw_sdk::{
-        discovery::ObservationStatus,
+        discovery::{DiscoveryObservation, DiscoveryQuery, ObservationStatus},
         inference_discovery::{AuthenticationStatus, EndpointObservation},
     };
     let capabilities = Capabilities::available();
@@ -1284,24 +1263,27 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
         .document()
         .unwrap()
         .clone();
-    let facts = AuthoringFacts {
-        endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(&document, state.current_route()).unwrap(),
-            observation: EndpointObservation {
-                status: ObservationStatus::Available,
-                reason: None,
-                source: "fixture".into(),
-                reachable: Some(true),
-                authentication: AuthenticationStatus::Accepted,
-                models: vec!["vendor/discovered-model".into()],
-                api_verified: false,
-            },
-        }),
-        ..Default::default()
+    let request = inference_request_for_document(&document, state.current_route())
+        .unwrap()
+        .unwrap();
+    let catalog = |status| {
+        DiscoveryObservation::Inference(EndpointObservation {
+            status,
+            reason: None,
+            source: "fixture".into(),
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Accepted,
+            models: vec!["vendor/discovered-model".into()],
+            api_verified: false,
+        })
     };
+    let observations = DiscoveryObservations::new().with(
+        DiscoveryQuery::Inference(request.clone()),
+        catalog(ObservationStatus::Available),
+    );
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     let discovered = state
-        .resolve_with_evidence(&capabilities, &facts, None)
+        .resolve_with_observations(&capabilities, &observations)
         .unwrap();
     let question = discovered.question(model).unwrap();
     assert!(
@@ -1327,22 +1309,29 @@ fn discovered_models_extend_the_current_route_question_without_restricting_custo
             .unwrap()
             .allows_custom_answer()
     );
-    let mut stale = facts.clone();
-    stale.endpoint.as_mut().unwrap().request.endpoint = "https://other.example/v1".into();
+    // A catalog read for another endpoint does not describe this route.
+    let mut other = request.clone();
+    other.endpoint = "https://other.example/v1".into();
+    let stale = DiscoveryObservations::new().with(
+        DiscoveryQuery::Inference(other),
+        catalog(ObservationStatus::Available),
+    );
     assert!(
         !state
-            .resolve_with_evidence(&capabilities, &stale, None)
+            .resolve_with_observations(&capabilities, &stale)
             .unwrap()
             .question(model)
             .unwrap()
             .choices()
             .contains(&json!("vendor/discovered-model"))
     );
-    stale.endpoint.as_mut().unwrap().request = facts.endpoint.as_ref().unwrap().request.clone();
-    stale.endpoint.as_mut().unwrap().observation.status = ObservationStatus::Unknown;
+    let unknown = DiscoveryObservations::new().with(
+        DiscoveryQuery::Inference(request),
+        catalog(ObservationStatus::Unknown),
+    );
     assert!(
         !state
-            .resolve_with_evidence(&capabilities, &stale, None)
+            .resolve_with_observations(&capabilities, &unknown)
             .unwrap()
             .question(model)
             .unwrap()
@@ -1365,13 +1354,13 @@ fn runtime_question_uses_finite_sdk_schema_choices() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let state = JourneyDefinition::new("runtime", base)
-        .ask(["/spec/sandboxes/0/runtime/provider"])
+        .ask(["/spec/gateway/runtime/provider"])
         .start(&capabilities)
         .unwrap();
     let question = state
         .resolve(&capabilities)
         .unwrap()
-        .question("/spec/sandboxes/0/runtime/provider")
+        .question("/spec/gateway/runtime/provider")
         .unwrap()
         .clone();
     assert!(question.choices().contains(&json!("docker")));
@@ -1385,19 +1374,24 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
             .unwrap();
     let mut state = JourneyDefinition::new("runtime", base)
-        .ask(["/spec/sandboxes/0/runtime/provider"])
+        .ask(["/spec/gateway/runtime/provider"])
         .start(&capabilities)
         .unwrap();
+    let podman = "unix:///run/user/501/podman/podman.sock";
+    crate::support::found_local_engines(
+        &mut state,
+        &[(podman, nemoclaw_sdk::config::ComputeDriver::Podman)],
+    );
     state
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             Some(json!("podman")),
         )
         .unwrap();
     assert_eq!(
         state.values().pointer("/spec/gateway/engine"),
-        Some(&json!("unix:///run/user/1000/podman/podman.sock"))
+        Some(&json!(podman))
     );
     assert!(
         state
@@ -1410,7 +1404,307 @@ fn choosing_podman_updates_the_matching_managed_gateway_default() {
 }
 
 #[test]
-fn sparse_journey_delegation_requires_current_target_evidence() {
+fn a_runtime_no_local_engine_answered_for_gets_no_guessed_engine() {
+    use nemoclaw_sdk::config::ComputeDriver;
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("runtime", base)
+        .ask(["/spec/gateway/runtime/provider"])
+        .start(&capabilities)
+        .unwrap();
+    let docker = "unix:///home/me/.colima/docker.sock";
+    crate::support::found_local_engines(&mut state, &[(docker, ComputeDriver::Docker)]);
+    let runtime = "/spec/gateway/runtime/provider";
+    state
+        .answer(&capabilities, runtime, Some(json!("docker")))
+        .unwrap();
+    assert_eq!(
+        state.values().pointer("/spec/gateway/engine"),
+        Some(&json!(docker))
+    );
+    // Only Docker answered: Podman gets no engine, not Docker's.
+    state
+        .answer(&capabilities, runtime, Some(json!("podman")))
+        .unwrap();
+    assert_eq!(state.values().pointer("/spec/gateway/engine"), None);
+}
+
+/// A journey whose machine was asked about its engines and answered only for Docker.
+fn docker_only_journey(
+    capabilities: &Capabilities,
+    ask: &[&str],
+) -> (nemoclaw_authoring::JourneyState, DiscoveryObservations) {
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("runtime", base)
+        .ask(ask.iter().copied())
+        .start(capabilities)
+        .unwrap();
+    let observations = crate::support::found_local_engines(
+        &mut state,
+        &[(
+            "unix:///home/me/.colima/docker.sock",
+            nemoclaw_sdk::config::ComputeDriver::Docker,
+        )],
+    );
+    (state, observations)
+}
+
+fn first_target_reason(
+    state: &nemoclaw_authoring::JourneyState,
+    capabilities: &Capabilities,
+    observations: &DiscoveryObservations,
+) -> Option<String> {
+    state
+        .resolve_with_observations(capabilities, observations)
+        .unwrap()
+        .target_assessment()
+        .and_then(|assessment| assessment.reasons.first().cloned())
+}
+
+#[test]
+fn a_runtime_no_local_engine_answered_for_is_reported_first() {
+    let capabilities = Capabilities::available();
+    let (mut state, observations) =
+        docker_only_journey(&capabilities, &["/spec/gateway/runtime/provider"]);
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    assert_eq!(
+        first_target_reason(&state, &capabilities, &observations).as_deref(),
+        Some(
+            "No podman engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+        )
+    );
+}
+
+/// Answer `id` with whatever the journey suggests, as pressing Enter does.
+fn accept_suggestion(
+    state: &mut nemoclaw_authoring::JourneyState,
+    capabilities: &Capabilities,
+    observations: &DiscoveryObservations,
+    id: &str,
+) {
+    let suggestion = state
+        .resolve_with_observations(capabilities, observations)
+        .unwrap()
+        .question(id)
+        .unwrap()
+        .suggestion()
+        .cloned();
+    state.answer(capabilities, id, suggestion).unwrap();
+}
+
+#[test]
+fn accepting_suggestions_never_points_a_runtime_without_a_local_engine_at_dockers_socket() {
+    let capabilities = Capabilities::available();
+    let engine = "/spec/gateway/engine";
+    let (mut state, observations) =
+        docker_only_journey(&capabilities, &["/spec/gateway/runtime/provider", engine]);
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    accept_suggestion(&mut state, &capabilities, &observations, engine);
+    assert_eq!(state.values().pointer(engine), None);
+    assert_eq!(
+        first_target_reason(&state, &capabilities, &observations).as_deref(),
+        Some(
+            "No podman engine answered on this machine. Start it, or set spec.gateway.engine to its socket."
+        )
+    );
+}
+
+#[test]
+fn a_machine_that_was_never_asked_keeps_the_default_engine_suggestion() {
+    let capabilities = Capabilities::available();
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let state = JourneyDefinition::new("runtime", base)
+        .ask(["/spec/gateway/engine"])
+        .start(&capabilities)
+        .unwrap();
+    assert_eq!(
+        state
+            .resolve_with_observations(&capabilities, &DiscoveryObservations::new())
+            .unwrap()
+            .question("/spec/gateway/engine")
+            .unwrap()
+            .suggestion(),
+        Some(&json!("unix:///var/run/docker.sock"))
+    );
+}
+
+#[test]
+fn an_explicit_gateway_engine_is_not_reported_as_missing() {
+    let capabilities = Capabilities::available();
+    let (mut state, observations) = docker_only_journey(
+        &capabilities,
+        &["/spec/gateway/runtime/provider", "/spec/gateway/engine"],
+    );
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/runtime/provider",
+            Some(json!("podman")),
+        )
+        .unwrap();
+    state
+        .answer(
+            &capabilities,
+            "/spec/gateway/engine",
+            Some(json!("unix:///srv/podman.sock")),
+        )
+        .unwrap();
+    assert!(
+        first_target_reason(&state, &capabilities, &observations)
+            .is_some_and(|reason| !reason.starts_with("No podman engine"))
+    );
+}
+
+/// A journey that is ready to delegate, and the current facts that let it.
+/// Each fact is a field so a test can break exactly one before observing.
+struct DelegationFacts {
+    state: nemoclaw_authoring::JourneyState,
+    document: nemoclaw_sdk::config::Document,
+    engine: Option<nemoclaw_sdk::discovery::EngineObservation>,
+    image: Option<nemoclaw_sdk::discovery::FabricObservation>,
+    endpoint: Option<nemoclaw_sdk::inference_discovery::EndpointObservation>,
+    credentials: Vec<nemoclaw_sdk::inference_discovery::CredentialObservation>,
+}
+
+impl DelegationFacts {
+    fn query(&self) -> nemoclaw_sdk::discovery::DiscoveryQuery {
+        nemoclaw_sdk::discovery::DiscoveryQuery::Inference(
+            nemoclaw_authoring::inference_request_for_document(
+                &self.document,
+                self.state.current_route(),
+            )
+            .unwrap()
+            .unwrap(),
+        )
+    }
+
+    fn observations(&self) -> DiscoveryObservations {
+        use nemoclaw_sdk::discovery::{DiscoveryObservation, DiscoveryQuery};
+        let mut observations = crate::support::target_observations(
+            &self.document,
+            self.engine.clone(),
+            self.image.clone(),
+        );
+        if let Some(endpoint) = &self.endpoint {
+            observations.record(
+                self.query(),
+                DiscoveryObservation::Inference(endpoint.clone()),
+            );
+        }
+        for credential in &self.credentials {
+            observations.record(
+                DiscoveryQuery::Credential {
+                    reference: credential.reference.clone(),
+                },
+                DiscoveryObservation::Credential(credential.clone()),
+            );
+        }
+        observations
+    }
+
+    /// The refusal text, or "delegated" when nothing stopped it.
+    fn delegation_refusal(&self, capabilities: &Capabilities) -> String {
+        match self
+            .state
+            .delegate_remaining(capabilities, &self.observations())
+        {
+            Ok(_) => "delegated".into(),
+            Err(refusal) => refusal.to_string(),
+        }
+    }
+}
+
+fn delegation_facts(capabilities: &Capabilities) -> DelegationFacts {
+    use nemoclaw_sdk::{
+        discovery::ObservationStatus,
+        inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
+    };
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let mut state = JourneyDefinition::new("delegate", base)
+        .ask([
+            "/spec/sandboxes/0/harness/kind",
+            "/metadata/name",
+            "inference:preset",
+        ])
+        .ask([JourneyScope::RouteModels])
+        .ask([JourneyScope::InferenceApi])
+        .ask([JourneyScope::ActiveAdapterSettings])
+        .ask([JourneyScope::NativeSettings])
+        .ask([JourneyScope::DeploymentFields])
+        .start(capabilities)
+        .unwrap();
+    state
+        .answer(
+            capabilities,
+            "/spec/sandboxes/0/harness/kind",
+            Some(json!("nvidia.fabric.openclaw")),
+        )
+        .unwrap();
+    let document = state
+        .resolve(capabilities)
+        .unwrap()
+        .assessment()
+        .document()
+        .unwrap()
+        .clone();
+    let model = document.spec.sandboxes[0]
+        .agent
+        .inference
+        .as_ref()
+        .unwrap()
+        .routes[0]
+        .overrides
+        .model
+        .clone();
+    let credentials = document
+        .credential_names()
+        .into_iter()
+        .map(|reference| CredentialObservation {
+            reference: reference.into(),
+            status: ObservationStatus::Available,
+            reason: None,
+        })
+        .collect();
+    DelegationFacts {
+        engine: Some(crate::support::available_engine()),
+        image: Some(crate::support::installed_image(&document)),
+        endpoint: Some(EndpointObservation {
+            status: ObservationStatus::Available,
+            reason: None,
+            source: "fixture".into(),
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Accepted,
+            models: vec![model],
+            api_verified: false,
+        }),
+        credentials,
+        state,
+        document,
+    }
+}
+
+#[test]
+fn sparse_journey_delegation_requires_current_target_observations() {
     let capabilities = Capabilities::available();
     let base =
         PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
@@ -1426,10 +1720,12 @@ fn sparse_journey_delegation_requires_current_target_evidence() {
             Some(json!("nvidia.fabric.openclaw")),
         )
         .unwrap();
-    assert!(
-        state
-            .delegate_remaining(&capabilities, None, &Default::default())
-            .is_err()
+    let refusal = state
+        .delegate_remaining(&capabilities, &DiscoveryObservations::new())
+        .unwrap_err();
+    assert_eq!(
+        refusal.to_string(),
+        "delegation: Target engine and image compatibility is not verified."
     );
     assert!(
         state
@@ -1441,31 +1737,110 @@ fn sparse_journey_delegation_requires_current_target_evidence() {
 }
 
 #[test]
-fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
-    use nemoclaw_authoring::{
-        AuthoringFacts, DiscoveryEvidence, EndpointEvidence, discovery_key_for_document,
-        inference_request_for_document,
-    };
+fn sparse_journey_delegates_suggestions_with_compatible_current_observations() {
+    let capabilities = Capabilities::available();
+    let facts = delegation_facts(&capabilities);
+    let delegated = facts
+        .state
+        .delegate_remaining(&capabilities, &facts.observations())
+        .unwrap();
+    assert!(
+        delegated
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+    assert_eq!(
+        delegated.values().pointer("/metadata/name"),
+        facts.state.values().pointer("/metadata/name")
+    );
+}
+
+#[test]
+fn delegation_is_refused_with_the_diagnostic_of_the_one_fact_that_fails() {
     use nemoclaw_sdk::{
-        discovery::{EngineObservation, FabricObservation, ObservationStatus},
-        fabric_capabilities::ImageMetadata,
-        inference_discovery::{AuthenticationStatus, CredentialObservation, EndpointObservation},
+        discovery::ObservationStatus,
+        inference_discovery::{AuthenticationStatus, EndpointObservation},
     };
     let capabilities = Capabilities::available();
-    let base =
-        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
-            .unwrap();
+    // (row name, the one fact to break, the refusal it must produce)
+    type Row = (&'static str, fn(&mut DelegationFacts), &'static str);
+    let rows: [Row; 8] = [
+        (
+            "engine unavailable",
+            |facts| facts.engine = Some(crate::support::rejecting_engine()),
+            "Target engine and image compatibility is not verified.",
+        ),
+        (
+            "engine not observed",
+            |facts| facts.engine = None,
+            "Target engine and image compatibility is not verified.",
+        ),
+        (
+            "endpoint missing",
+            |facts| facts.endpoint = None,
+            "Model discovery is missing or stale.",
+        ),
+        (
+            "endpoint unknown",
+            |facts| facts.endpoint = Some(EndpointObservation::unknown("timed out")),
+            "The model catalog could not be verified.",
+        ),
+        (
+            "endpoint unreachable",
+            |facts| facts.endpoint.as_mut().unwrap().reachable = Some(false),
+            "The model catalog could not be verified.",
+        ),
+        (
+            "endpoint authentication denied",
+            |facts| facts.endpoint.as_mut().unwrap().authentication = AuthenticationStatus::Denied,
+            "The model catalog could not be verified.",
+        ),
+        (
+            "model not advertised",
+            |facts| facts.endpoint.as_mut().unwrap().models = vec!["another-model".into()],
+            "The selected model was not advertised by the endpoint.",
+        ),
+        (
+            "credential unavailable",
+            |facts| facts.credentials[0].status = ObservationStatus::Unavailable,
+            "Required credentials are unavailable or unverified.",
+        ),
+    ];
+    for (name, break_fact, message) in rows {
+        let mut facts = delegation_facts(&capabilities);
+        assert!(
+            !facts.credentials.is_empty(),
+            "{name}: no credential to break"
+        );
+        break_fact(&mut facts);
+        assert_eq!(
+            facts.delegation_refusal(&capabilities),
+            format!("delegation: {message}"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn delegation_is_refused_when_a_credential_was_never_observed() {
+    let capabilities = Capabilities::available();
+    let mut facts = delegation_facts(&capabilities);
+    facts.credentials.clear();
+    assert_eq!(
+        facts.delegation_refusal(&capabilities),
+        "delegation: Required credentials are unavailable or unverified."
+    );
+}
+
+#[test]
+fn delegation_is_refused_for_a_route_backed_by_a_managed_service() {
+    let capabilities = Capabilities::available();
+    let base = PartialDocument::from_yaml(include_bytes!("../../../examples/managed-ollama.yaml"))
+        .unwrap();
     let mut state = JourneyDefinition::new("delegate", base)
-        .ask([
-            "/spec/sandboxes/0/harness/kind",
-            "/metadata/name",
-            "inference:preset",
-        ])
-        .ask([JourneyScope::RouteModels])
-        .ask([JourneyScope::InferenceApi])
-        .ask([JourneyScope::ActiveAdapterSettings])
-        .ask([JourneyScope::NativeSettings])
-        .ask([JourneyScope::DeploymentFields])
+        .ask(["/spec/sandboxes/0/harness/kind"])
         .start(&capabilities)
         .unwrap();
     state
@@ -1482,81 +1857,37 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_evidence() {
         .document()
         .unwrap()
         .clone();
-    let key = discovery_key_for_document(&document).unwrap();
-    let evidence = DiscoveryEvidence {
-        key: key.clone(),
-        engine: Some(EngineObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "fixture".into(),
-            server_version: Some("1".into()),
-            architecture: Some("aarch64".into()),
-            operating_system: Some("linux".into()),
-            memory_bytes: None,
-            cpus: None,
-        }),
-        fabric: Some(FabricObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "fixture".into(),
-            image_id: Some("sha256:observed".into()),
-            catalog: Some(installed_catalog()),
-            image: ImageMetadata {
-                architecture: Some("arm64".into()),
-                operating_system: Some("linux".into()),
-                repo_digests: vec![key.image],
-                ..Default::default()
-            },
-            compatibility: None,
-        }),
-    };
-    let facts = AuthoringFacts {
-        endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(&document, state.current_route()).unwrap(),
-            observation: EndpointObservation {
-                status: ObservationStatus::Available,
-                reason: None,
-                source: "fixture".into(),
-                reachable: Some(true),
-                authentication: AuthenticationStatus::Accepted,
-                models: vec![
-                    document.spec.sandboxes[0]
-                        .agent
-                        .inference
-                        .as_ref()
-                        .unwrap()
-                        .routes[0]
-                        .overrides
-                        .model
-                        .clone(),
-                ],
-                api_verified: false,
-            },
-        }),
-        credentials: document
-            .credential_names()
-            .into_iter()
-            .map(|reference| CredentialObservation {
-                reference: reference.into(),
-                status: ObservationStatus::Available,
-                reason: None,
-            })
-            .collect(),
-        ..Default::default()
-    };
-    let delegated = state
-        .delegate_remaining(&capabilities, Some(&evidence), &facts)
-        .unwrap();
-    assert!(
-        delegated
-            .resolve(&capabilities)
-            .unwrap()
-            .materialized_document()
-            .is_some()
+    let observations = crate::support::target_observations(
+        &document,
+        Some(crate::support::available_engine()),
+        Some(crate::support::installed_image(&document)),
     );
+    let refusal = state
+        .delegate_remaining(&capabilities, &observations)
+        .unwrap_err();
     assert_eq!(
-        delegated.values().pointer("/metadata/name"),
-        state.values().pointer("/metadata/name")
+        refusal.to_string(),
+        "delegation: The selected route has no external model catalog to verify."
+    );
+}
+
+#[test]
+fn delegation_is_refused_before_a_harness_is_accepted() {
+    let capabilities = Capabilities::available();
+    let facts = delegation_facts(&capabilities);
+    let base =
+        PartialDocument::from_yaml(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    let state = JourneyDefinition::new("delegate", base)
+        .ask(["/spec/sandboxes/0/harness/kind"])
+        .start(&capabilities)
+        .unwrap();
+    let refusal = state
+        .delegate_remaining(&capabilities, &facts.observations())
+        .unwrap_err();
+    assert_eq!(
+        refusal.to_string(),
+        "delegation: Choose a harness before delegating settings."
     );
 }
 
@@ -2145,7 +2476,7 @@ fn existing_onboarding_fields_resolve_and_materialize_without_a_draft() {
     let fields = [
         "/metadata/name",
         "/spec/sandboxes/0/harness/kind",
-        "/spec/sandboxes/0/runtime/provider",
+        "/spec/gateway/runtime/provider",
         "/spec/inferenceProviders/0/provider",
         "/spec/inferenceProviders/0/api",
         "/spec/sandboxes/0/agent/inference/routes/0/overrides/model",
@@ -3154,10 +3485,7 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
     let base = PartialDocument::from_yaml(values.to_string().as_bytes()).unwrap();
     let capabilities = Capabilities::available();
     let mut journey = JourneyDefinition::new("switch-gateway", base)
-        .ask([
-            "/spec/sandboxes/0/runtime/provider",
-            "/spec/gateway/management",
-        ])
+        .ask(["/spec/gateway/runtime/provider", "/spec/gateway/management"])
         .omit([
             "adapter:nvidia.fabric.openclaw:/agent_name",
             "adapter:nvidia.fabric.openclaw:/cli",
@@ -3167,11 +3495,18 @@ fn switching_gateway_management_drops_fields_from_the_previous_branch() {
         ])
         .start(&capabilities)
         .unwrap();
-    let podman = json!("unix:///run/user/1000/podman/podman.sock");
+    let podman = json!("unix:///run/user/501/podman/podman.sock");
+    crate::support::found_local_engines(
+        &mut journey,
+        &[(
+            "unix:///run/user/501/podman/podman.sock",
+            nemoclaw_sdk::config::ComputeDriver::Podman,
+        )],
+    );
     journey
         .answer(
             &capabilities,
-            "/spec/sandboxes/0/runtime/provider",
+            "/spec/gateway/runtime/provider",
             Some(json!("podman")),
         )
         .unwrap();

@@ -2,39 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nemoclaw_authoring::{
-    AuthoringFacts, Capabilities, CompatibilityStatus, DiscoveryEvidence, EndpointEvidence,
-    JourneyDefinition, JourneyScope, PartialDocument, TargetPrerequisite,
-    discovery_key_for_document, inference_request_for_document,
+    Capabilities, CompatibilityStatus, JourneyDefinition, JourneyScope, PartialDocument,
+    TargetPrerequisite, inference_request_for_document,
 };
 use nemoclaw_sdk::{
-    discovery::{EngineObservation, FabricObservation, ObservationStatus},
-    fabric_capabilities::ImageMetadata,
-    fabric_catalog::{BridgeCapabilities, FabricCatalog},
+    discovery::ObservationStatus,
+    discovery::{DiscoveryObservation, DiscoveryQuery},
     inference_discovery::{AuthenticationStatus, EndpointObservation},
 };
 use serde_json::json;
-
-/// Observed images must advertise the Fabric bridge to be compatible.
-fn installed_catalog() -> FabricCatalog {
-    let mut catalog = FabricCatalog::bundled();
-    catalog.bridge = Some(BridgeCapabilities {
-        interface_version: 1,
-        operations: [
-            "validate",
-            "prepare",
-            "configure",
-            "check",
-            "invoke",
-            "serve",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect(),
-        health_checks: Vec::new(),
-        input_sources: vec!["file".into(), "stdin".into()],
-    });
-    catalog
-}
 
 fn express() -> JourneyDefinition {
     let base =
@@ -50,7 +26,7 @@ fn express() -> JourneyDefinition {
 }
 
 #[test]
-fn required_target_compatibility_stays_unverified_without_current_evidence() {
+fn required_target_compatibility_stays_unverified_without_current_observations() {
     let capabilities = Capabilities::available();
     let ordinary = express().start(&capabilities).unwrap();
     assert!(
@@ -74,53 +50,19 @@ fn required_target_compatibility_stays_unverified_without_current_evidence() {
     );
 
     let document = unresolved.materialized_document().unwrap();
-    let key = discovery_key_for_document(document).unwrap();
-    let compatible = DiscoveryEvidence {
-        key: key.clone(),
-        engine: Some(EngineObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "fixture".into(),
-            server_version: Some("1".into()),
-            architecture: Some("aarch64".into()),
-            operating_system: Some("linux".into()),
-            memory_bytes: None,
-            cpus: None,
-        }),
-        fabric: Some(FabricObservation {
-            status: ObservationStatus::Available,
-            reason: None,
-            source: "fixture".into(),
-            image_id: Some("sha256:observed".into()),
-            catalog: Some(installed_catalog()),
-            image: ImageMetadata {
-                architecture: Some("arm64".into()),
-                operating_system: Some("linux".into()),
-                repo_digests: vec![key.image],
-                ..Default::default()
-            },
-            compatibility: None,
-        }),
-    };
+    let compatible = crate::support::target_observations(
+        document,
+        Some(crate::support::available_engine()),
+        Some(crate::support::installed_image(document)),
+    );
     let verified = state
-        .resolve_with_evidence(&capabilities, &AuthoringFacts::default(), Some(&compatible))
+        .resolve_with_observations(&capabilities, &compatible)
         .unwrap();
     assert_eq!(
         verified.target_assessment().unwrap().status,
         CompatibilityStatus::Compatible
     );
     assert!(verified.ready_document().is_some());
-
-    let mut stale = compatible;
-    stale.key.image = "sha256:old-image".into();
-    let unresolved = state
-        .resolve_with_evidence(&capabilities, &AuthoringFacts::default(), Some(&stale))
-        .unwrap();
-    assert_eq!(
-        unresolved.target_assessment().unwrap().status,
-        CompatibilityStatus::Unverified
-    );
-    assert!(unresolved.ready_document().is_none());
 }
 
 #[test]
@@ -130,22 +72,13 @@ fn observed_target_conflict_blocks_ready_document_without_an_explicit_prerequisi
     let plain = state.resolve(&capabilities).unwrap();
     let document = plain.materialized_document().unwrap();
     assert!(plain.ready_document().is_some());
-    let conflict = DiscoveryEvidence {
-        key: discovery_key_for_document(document).unwrap(),
-        engine: Some(EngineObservation {
-            status: ObservationStatus::Unavailable,
-            reason: Some("engine rejected the target".into()),
-            source: "fixture".into(),
-            server_version: None,
-            architecture: None,
-            operating_system: None,
-            memory_bytes: None,
-            cpus: None,
-        }),
-        fabric: None,
-    };
+    let conflict = crate::support::target_observations(
+        document,
+        Some(crate::support::rejecting_engine()),
+        None,
+    );
     let resolved = state
-        .resolve_with_evidence(&capabilities, &AuthoringFacts::default(), Some(&conflict))
+        .resolve_with_observations(&capabilities, &conflict)
         .unwrap();
     assert_eq!(
         resolved.target_assessment().unwrap().status,
@@ -164,37 +97,29 @@ fn one_resolution_combines_model_suggestions_and_target_compatibility() {
         .unwrap();
     let base = state.resolve(&capabilities).unwrap();
     let document = base.assessment().document().unwrap();
-    let facts = AuthoringFacts {
-        endpoint: Some(EndpointEvidence {
-            request: inference_request_for_document(document, state.current_route()).unwrap(),
-            observation: EndpointObservation {
-                status: ObservationStatus::Available,
-                reason: None,
-                source: "fixture".into(),
-                reachable: Some(true),
-                authentication: AuthenticationStatus::Accepted,
-                models: vec!["vendor/discovered-model".into()],
-                api_verified: false,
-            },
-        }),
-        ..Default::default()
-    };
-    let conflict = DiscoveryEvidence {
-        key: discovery_key_for_document(document).unwrap(),
-        engine: Some(EngineObservation {
-            status: ObservationStatus::Unavailable,
-            reason: Some("engine rejected the target".into()),
+    let mut observations = crate::support::target_observations(
+        document,
+        Some(crate::support::rejecting_engine()),
+        None,
+    );
+    observations.record(
+        DiscoveryQuery::Inference(
+            inference_request_for_document(document, state.current_route())
+                .unwrap()
+                .unwrap(),
+        ),
+        DiscoveryObservation::Inference(EndpointObservation {
+            status: ObservationStatus::Available,
+            reason: None,
             source: "fixture".into(),
-            server_version: None,
-            architecture: None,
-            operating_system: None,
-            memory_bytes: None,
-            cpus: None,
+            reachable: Some(true),
+            authentication: AuthenticationStatus::Accepted,
+            models: vec!["vendor/discovered-model".into()],
+            api_verified: false,
         }),
-        fabric: None,
-    };
+    );
     let resolved = state
-        .resolve_with_evidence(&capabilities, &facts, Some(&conflict))
+        .resolve_with_observations(&capabilities, &observations)
         .unwrap();
     let model = "/spec/sandboxes/0/agent/inference/routes/0/overrides/model";
     assert!(

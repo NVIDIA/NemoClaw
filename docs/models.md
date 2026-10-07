@@ -21,8 +21,8 @@ For Ollama registry models, use [managed Ollama](inference.md#run-managed-ollama
 | Capacity and context | Weight size, runtime memory, KV cache, context length, and concurrency fit the configured host/GPU budget |
 | Agent limits and tools | Native agent context/output/reasoning settings agree with the server and model; parser acceptance is not a tool-use qualification |
 
-Start with a model/configuration covered by [recorded test results](validation/README.md), then verify it against your current images and host.
-Older test results do not establish support across an entire release.
+Start from a maintained example, then verify it against your current images and host.
+A result for one revision does not establish support across a release.
 For an external endpoint, its operator owns installation and capacity; use [external inference configuration](inference.md#prepare-an-external-endpoint) instead of the managed-model fields below.
 
 ## Pin and Serve the Model
@@ -62,9 +62,6 @@ hardware:
 This profile requires one NVIDIA GB10 with observed compute capability at least 12.1, at least 118 GiB host RAM, and driver major 580 or newer.
 For other hardware, select a [named profile](#choose-a-hardware-profile) or declare [dedicated GPU requirements](#configure-nemotron-on-an-amd64-gpu-host).
 An inline recipe supplies its own compatibility requirements and excludes `hardware`.
-
-Older YAML that omitted both fields or used `profile: spark` is rejected; use `profile: dgx-spark` when preserving that configuration's hardware contract.
-Retained intent is not migrated by editing input YAML; keep the matching previous bundle for existing deployments' export or teardown.
 
 Backend startup still establishes actual model compatibility.
 
@@ -180,8 +177,7 @@ All profiles retain the resident host-memory watchdog.
 
 The [profile catalog](../crates/nemoclaw-runtime/src/vllm/hardware_profile.rs) uses NVIDIA's [compute-capability table](https://developer.nvidia.com/cuda/gpus) and current [DGX Station specification](https://www.nvidia.com/en-us/products/workstations/dgx-station/), checked on 2026-09-18.
 [Profile tests](../crates/nemoclaw-sdk/tests/hardware_profiles.rs) cover schema/parser agreement, GPU-family mismatches, architecture selection, and memory checks using fixtures.
-One Qwen3-4B and OpenClaw lifecycle is retained in the [DGX Station test record](validation/dgx-station-qwen3-openclaw-linux-arm64.md).
-That result does not establish successful inference for another candidate, model, agent, GPU count, or host configuration; those qualification checks remain **TBD**.
+Inference has not been tested for every candidate, model, agent, GPU count and host ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Diagnose and Recover a Stopped Runtime
 
@@ -245,7 +241,7 @@ The example requires an existing OpenShell gateway and a Linux AMD64 Docker host
 That host must expose exactly one NVIDIA GPU with compute capability at least 9.0, at least 96,000,000,000 bytes of dedicated GPU memory, and driver major 580 or newer.
 Follow the [SSH placement prerequisites](remote-service.md), build the [AMD64 runtime image](build.md#build-a-runtime-image) on a matching host, and load it into the selected Docker daemon.
 Replace the zero image digest, SSH alias, gateway endpoint, private publication address, and deployment UID before applying.
-Build a compatible OpenClaw sandbox image using the [Fabric image procedure](inference.md#build-an-image-with-the-configuration-interface), replace `sandboxes[].image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
+Build a compatible OpenClaw sandbox image using the [agent image procedure](build.md#build-agent-images), replace `sandboxes[].image.ref` with its immutable digest, and load that image into the gateway's Podman daemon.
 
 `hardware` declares the dedicated-GPU requirements.
 `memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.

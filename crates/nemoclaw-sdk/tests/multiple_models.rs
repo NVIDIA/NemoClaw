@@ -6,7 +6,7 @@ use nemoclaw_sdk::{
 };
 use serde_json::{Value, json};
 fn input() -> Value {
-    serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap()
+    crate::support::example("fabric-openclaw.yaml")
 }
 fn choices() -> Value {
     let mut value = input();
