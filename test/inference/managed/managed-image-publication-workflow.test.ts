@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { OPENSHELL_V0116_QUALIFICATION } from "../../e2e/fixtures/openshell-v0116-qualification";
+import { OPENSHELL_V012_QUALIFICATION } from "../../e2e/fixtures/openshell-v0116-qualification";
 
 import {
   publicationAgents,
@@ -835,9 +835,9 @@ describe("complete managed-image publication workflow", () => {
       stableMcp.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
       "stable MCP job is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
     );
-    expect(stableSupervisorImage).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
+    expect(stableSupervisorImage).toBe(OPENSHELL_V012_QUALIFICATION.supervisorImage);
     expect(credentialWindow.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-      OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+      OPENSHELL_V012_QUALIFICATION.supervisorImage,
     );
   });
 
