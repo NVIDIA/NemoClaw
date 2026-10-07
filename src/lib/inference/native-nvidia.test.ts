@@ -212,12 +212,13 @@ describe("native NVIDIA OpenShell provider", () => {
     { state: "missing", readAuthority: () => undefined },
     {
       state: "mismatched",
-      readAuthority: () => ({
-        schemaVersion: 1 as const,
-        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-        providerId: "another-provider-id",
-      }),
+      readAuthority: () =>
+        ({
+          schemaVersion: 1 as const,
+          profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          providerId: "another-provider-id",
+        }) as const,
     },
     {
       state: "unreadable",
