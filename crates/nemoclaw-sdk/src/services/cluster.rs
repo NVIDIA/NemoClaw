@@ -37,9 +37,8 @@ pub(super) fn endpoint(
             "cluster service requires a managed Kubernetes gateway",
         ))?;
     Ok(format!(
-        "http://{}.{}.svc:{port}/v1",
-        name(document, service),
-        target.namespace
+        "http://{}:{port}/v1",
+        crate::kubernetes::services::service_host(&name(document, service), &target.namespace)
     ))
 }
 

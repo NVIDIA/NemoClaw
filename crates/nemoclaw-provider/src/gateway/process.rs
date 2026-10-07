@@ -24,7 +24,7 @@ pub(super) fn specification(encoded: &str) -> Result<Spec, Error> {
     Ok(spec)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Failure {
     Observation(ObservationError),
     Stopped {
@@ -50,7 +50,7 @@ impl Failure {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Phase {
     Running,
     Restarting,
@@ -137,12 +137,12 @@ impl ManagedGateway {
             let mut previous = None;
             loop {
                 let phase = self.phase().await?;
-                if let Phase::Stopped(error) = phase
-                    && (timeout.is_zero() || previous == Some(phase))
+                if let Phase::Stopped(error) = &phase
+                    && (timeout.is_zero() || previous.as_ref() == Some(&phase))
                 {
-                    return Err(error);
+                    return Err(error.clone());
                 }
-                previous = Some(phase);
+                previous = Some(phase.clone());
                 if phase == Phase::Running {
                     // Keep one in-flight gateway request while checking the engine.
                     // A stalled API cannot hide a process that exits during startup.

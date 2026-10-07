@@ -102,7 +102,7 @@ fn cluster_services_provision_before_agents_and_publish_their_cluster_endpoint()
         assert_eq!(
             provider.values["endpoint"],
             format!(
-                "http://{}.test-models.svc:{port}/v1",
+                "http://{}.test-models.svc.cluster.local:{port}/v1",
                 spec["name"].as_str().unwrap()
             )
         );

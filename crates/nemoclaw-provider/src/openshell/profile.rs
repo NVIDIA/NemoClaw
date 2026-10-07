@@ -291,34 +291,86 @@ pub(super) fn provider_row(
     ]);
     Ok(result)
 }
+async fn checked_profile_row_with<F>(
+    profile: proto::ProviderProfile,
+    workspace: &str,
+    name: &str,
+    catalog_entry: bool,
+    removing: bool,
+    check: impl FnOnce(nemoclaw_sdk::kubernetes::services::StorageSpec, String) -> F,
+) -> Result<Row, ObservationError>
+where
+    F: std::future::Future<Output = Result<Vec<std::net::IpAddr>, ObservationError>>,
+{
+    let fields = row(profile.clone(), workspace, name, catalog_entry)?;
+    if !removing && let Some(storage) = cluster_source(&fields)? {
+        let addresses = check(storage, fields["endpoint"].clone()).await?;
+        let mut current = fields.clone();
+        current.insert(
+            "cluster_addresses".into(),
+            serde_json::to_string(&addresses).map_err(|_| ObservationError::Incomplete)?,
+        );
+        if native_definition(&current)?.endpoints != profile.endpoints {
+            return Err(ObservationError::BindingMismatch);
+        }
+    }
+    Ok(fields)
+}
+
 impl ConnectedOpenShellGateway {
+    pub(super) async fn sandbox_cluster_grants(
+        &self,
+        want: &Row,
+    ) -> Result<network::ClusterGrants, ObservationError> {
+        let input = network::policy_input(want)?;
+        let mut grants = network::ClusterGrants::new();
+        for name in &input.cluster_grants {
+            let profile = self
+                .client
+                .raw_grpc()
+                .get_provider_profile(self.request(proto::GetProviderProfileRequest {
+                    id: name.clone(),
+                    workspace_scope: Some(proto::workspace_selector(&want["workspace"])),
+                }))
+                .await
+                .map_err(|error| remote_error(&error))?
+                .into_inner()
+                .profile
+                .ok_or(ObservationError::Incomplete)?;
+            let fields = self
+                .checked_profile_row(profile.clone(), &want["workspace"], name, true, false)
+                .await?;
+            grants.insert(name.clone(), cluster_grant(want, name, &profile, &fields)?);
+        }
+        network::granted_row_policy(want, &grants)?;
+        Ok(grants)
+    }
     async fn checked_profile_row(
         &self,
         profile: proto::ProviderProfile,
         workspace: &str,
         name: &str,
         catalog_entry: bool,
+        removing: bool,
     ) -> Result<Row, ObservationError> {
-        let fields = row(profile.clone(), workspace, name, catalog_entry)?;
-        if let Some(storage) = cluster_source(&fields)? {
-            let addresses =
-                crate::cluster_services::endpoint_addresses(&storage, &fields["endpoint"]).await?;
-            let mut current = fields.clone();
-            current.insert(
-                "cluster_addresses".into(),
-                serde_json::to_string(&addresses).map_err(|_| ObservationError::Incomplete)?,
-            );
-            if native_definition(&current)?.endpoints != profile.endpoints {
-                return Err(ObservationError::BindingMismatch);
-            }
-        }
-        Ok(fields)
+        checked_profile_row_with(
+            profile,
+            workspace,
+            name,
+            catalog_entry,
+            removing,
+            |storage, endpoint| async move {
+                crate::cluster_services::endpoint_addresses(&storage, &endpoint).await
+            },
+        )
+        .await
     }
 
     pub(super) async fn observe_profile(
         &self,
         workspace: &str,
         name: &str,
+        removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
         let response = authoritative(
             self.client
@@ -336,6 +388,7 @@ impl ConnectedOpenShellGateway {
                     workspace,
                     name,
                     true,
+                    removing,
                 )
                 .await
                 .map(Some),
@@ -386,6 +439,7 @@ impl ConnectedOpenShellGateway {
                 &want["workspace"],
                 &want["name"],
                 false,
+                false,
             )
             .await?;
         verify_identity(want, &row)?;
@@ -393,10 +447,331 @@ impl ConnectedOpenShellGateway {
     }
 }
 
+fn cluster_grant(
+    want: &Row,
+    name: &str,
+    profile: &proto::ProviderProfile,
+    fields: &Row,
+) -> Result<Vec<String>, ObservationError> {
+    if want.get("owner") != fields.get("owner")
+        || cluster_source(fields)?.is_none()
+        || profile.id != name
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let provider = name
+        .strip_prefix("nemoclaw-inference-")
+        .ok_or(ObservationError::BindingMismatch)?;
+    if !inference::provider_names(&want["provider_names_json"], &want["agent_runtime"])?
+        .iter()
+        .any(|name| name == provider)
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let policy = row_policy(want)?;
+    let rule = policy
+        .network_policies
+        .get(name)
+        .ok_or(ObservationError::BindingMismatch)?;
+    if rule.endpoints.len() != 1 || profile.endpoints.len() != 1 {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let mut endpoint = profile.endpoints[0].clone();
+    let addresses = std::mem::take(&mut endpoint.allowed_ips);
+    if endpoint != rule.endpoints[0] {
+        return Err(ObservationError::BindingMismatch);
+    }
+    Ok(addresses)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use prost::Message;
+
+    fn cluster_case(example: &[u8]) -> (Row, Row) {
+        let document = nemoclaw_sdk::config::Document::parse(example).unwrap();
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "kubernetes_storage",
+            "kubernetes_gateway",
+            "inference_service",
+            "ollama_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let targets = nemoclaw_sdk::compile::targets(&document, &generations).unwrap();
+        let mut sandbox = targets
+            .iter()
+            .find(|target| target.kind == "sandbox")
+            .unwrap()
+            .values
+            .clone();
+        let mut runtime: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../image/fabric/runtime.json")).unwrap();
+        runtime["binaries"] =
+            serde_json::json!({"org.fixture.openclaw": ["/opt/fabric/bin/python"]});
+        sandbox.insert(
+            "runtime_json".into(),
+            serde_json::json!({"runtime": runtime, "adapter_id": "org.fixture.openclaw"})
+                .to_string(),
+        );
+        let mut fields = targets
+            .iter()
+            .find(|target| target.kind == "provider_profile")
+            .unwrap()
+            .values
+            .clone();
+        fields.insert(
+            "binaries_json".into(),
+            r#"["/opt/fabric/bin/python"]"#.into(),
+        );
+        fields.insert(
+            "cluster_addresses".into(),
+            r#"["10.96.0.42","fd00::42"]"#.into(),
+        );
+        (sandbox, fields)
+    }
+
+    #[test]
+    fn cluster_sandbox_create_request_is_accepted_beside_its_provider_profile() {
+        for example in [
+            include_bytes!("../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let (sandbox, fields) = cluster_case(example);
+            let profile = native_definition(&fields).unwrap();
+            let grants = [(profile.id.clone(), profile.endpoints[0].allowed_ips.clone())].into();
+            let layer = openshell_policy::ProviderPolicyLayer {
+                rule_name: "_provider_fixture".into(),
+                rule: proto::NetworkPolicyRule {
+                    name: "_provider_fixture".into(),
+                    endpoints: profile.endpoints,
+                    binaries: profile.binaries,
+                },
+            };
+            let ungranted = openshell_policy::compose_effective_policy(
+                &row_policy(&sandbox).unwrap(),
+                std::slice::from_ref(&layer),
+            );
+            assert_eq!(
+                openshell_policy::find_endpoint_ambiguities(&ungranted).len(),
+                1
+            );
+            let request = connected::create_sandbox_request(&sandbox, &grants).unwrap();
+            let actual = request.spec.unwrap().policy.unwrap();
+            let effective = openshell_policy::compose_effective_policy(&actual, &[layer]);
+            let conflicts = openshell_policy::find_endpoint_ambiguities(&effective);
+            assert!(conflicts.is_empty(), "{conflicts:?}");
+        }
+    }
+
+    #[test]
+    fn owned_cluster_profiles_reject_non_service_addresses() {
+        let (_, fields) = cluster_case(include_bytes!(
+            "../../../../examples/kubernetes/local-ollama.yaml"
+        ));
+        for address in ["255.255.255.255", "::ffff:127.0.0.1", "::ffff:10.0.0.1"] {
+            let mut want = fields.clone();
+            want.insert(
+                "cluster_addresses".into(),
+                serde_json::json!([address]).to_string(),
+            );
+            assert!(native_definition(&want).is_err(), "{address}");
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_removal_validates_recorded_grants_when_the_service_is_absent() {
+        let (_, fields) = cluster_case(include_bytes!(
+            "../../../../examples/kubernetes/local-ollama.yaml"
+        ));
+        let mut profile = native_definition(&fields).unwrap();
+        profile.resource_version = 1;
+        profile.source = "user".into();
+        profile.scope = "workspace".into();
+        let absent_service = |_, _| async { Err(ObservationError::BindingMismatch) };
+        assert!(
+            checked_profile_row_with(
+                profile.clone(),
+                "workspace",
+                &profile.id,
+                true,
+                false,
+                absent_service
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            checked_profile_row_with(
+                profile.clone(),
+                "workspace",
+                &profile.id,
+                true,
+                true,
+                absent_service
+            )
+            .await
+            .is_ok()
+        );
+        profile.endpoints[0].allowed_ips = vec!["10.0.0.0/8".into()];
+        assert!(
+            checked_profile_row_with(
+                profile.clone(),
+                "workspace",
+                &profile.id,
+                true,
+                true,
+                absent_service
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cluster_sandbox_grants_require_the_matching_owned_profile_and_exact_host_addresses() {
+        let (sandbox, fields) = cluster_case(include_bytes!(
+            "../../../../examples/kubernetes/local-vllm.yaml"
+        ));
+        let profile = native_definition(&fields).unwrap();
+        let addresses = cluster_grant(&sandbox, &profile.id, &profile, &fields).unwrap();
+        let grants: network::ClusterGrants = [(profile.id.clone(), addresses)].into();
+        for replacement in [
+            vec![],
+            vec!["10.0.0.0/8".into()],
+            vec!["::ffff:10.0.0.1/128".into()],
+            vec!["255.255.255.255/32".into()],
+        ] {
+            let mut bad = grants.clone();
+            bad.insert(profile.id.clone(), replacement);
+            assert!(connected::create_sandbox_request(&sandbox, &bad).is_err());
+        }
+        assert!(connected::create_sandbox_request(&sandbox, &Default::default()).is_err());
+        let mut extra = grants.clone();
+        extra.insert("unexpected".into(), vec!["10.96.0.43/32".into()]);
+        assert!(connected::create_sandbox_request(&sandbox, &extra).is_err());
+        for field in ["owner", "cluster_source"] {
+            let mut wrong = fields.clone();
+            wrong.remove(field);
+            assert!(
+                cluster_grant(&sandbox, &profile.id, &profile, &wrong).is_err(),
+                "{field}"
+            );
+        }
+        for field in ["host", "port", "path"] {
+            let mut wrong = profile.clone();
+            match field {
+                "host" => wrong.endpoints[0].host = "foreign.example".into(),
+                "port" => wrong.endpoints[0].port += 1,
+                _ => wrong.endpoints[0].path = "/**".into(),
+            }
+            assert!(
+                cluster_grant(&sandbox, &profile.id, &wrong, &fields).is_err(),
+                "{field}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_refresh_verifies_current_grants_but_removal_uses_recorded_policy() {
+        let (sandbox, fields) = cluster_case(include_bytes!(
+            "../../../../examples/kubernetes/local-ollama.yaml"
+        ));
+        let profile = native_definition(&fields).unwrap();
+        let grants: network::ClusterGrants =
+            [(profile.id.clone(), profile.endpoints[0].allowed_ips.clone())].into();
+        let request = connected::create_sandbox_request(&sandbox, &grants).unwrap();
+        let response = proto::SandboxResponse {
+            sandbox: Some(proto::Sandbox {
+                metadata: Some(proto::ObjectMeta {
+                    id: "sandbox-id".into(),
+                    name: request.name,
+                    workspace: sandbox["workspace"].clone(),
+                    labels: request.labels,
+                    annotations: request.annotations,
+                    ..Default::default()
+                }),
+                spec: request.spec,
+                status: Some(proto::SandboxStatus {
+                    phase: proto::SandboxPhase::Ready as i32,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let current = checked_sandbox_row_with(
+            response.clone(),
+            &sandbox["workspace"],
+            &sandbox["name"],
+            false,
+            |_| async { Ok(grants.clone()) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(current.2, grants);
+        let mut moved = grants.clone();
+        moved.insert(profile.id, vec!["10.96.0.43/32".into()]);
+        assert!(
+            checked_sandbox_row_with(
+                response.clone(),
+                &sandbox["workspace"],
+                &sandbox["name"],
+                false,
+                |_| async { Ok(moved) }
+            )
+            .await
+            .is_err()
+        );
+        let absent = |_| async { Err(ObservationError::BindingMismatch) };
+        assert!(
+            checked_sandbox_row_with(
+                response.clone(),
+                &sandbox["workspace"],
+                &sandbox["name"],
+                false,
+                absent
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            checked_sandbox_row_with(
+                response.clone(),
+                &sandbox["workspace"],
+                &sandbox["name"],
+                true,
+                absent
+            )
+            .await
+            .is_ok()
+        );
+        let mut drift = response;
+        drift
+            .sandbox
+            .as_mut()
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .policy
+            .as_mut()
+            .unwrap()
+            .filesystem
+            .as_mut()
+            .unwrap()
+            .read_write
+            .push("/".into());
+        assert!(
+            checked_sandbox_row_with(drift, &sandbox["workspace"], &sandbox["name"], true, absent)
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn owned_cluster_profiles_preserve_exact_observed_addresses_and_reject_broader_grants() {

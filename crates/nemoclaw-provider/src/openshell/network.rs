@@ -2,6 +2,41 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 use nemoclaw_sdk::config::ExplicitPolicy;
+pub(super) use nemoclaw_sdk::image_runtime::ClusterGrants;
+
+pub(super) fn policy_input(
+    row: &Row,
+) -> Result<nemoclaw_sdk::image_runtime::PolicyInput, ObservationError> {
+    serde_json::from_str(row.get("policy_json").ok_or(ObservationError::Incomplete)?)
+        .map_err(|_| ObservationError::Query)
+}
+
+pub(super) fn granted_row_policy(
+    row: &Row,
+    grants: &ClusterGrants,
+) -> Result<proto::SandboxPolicy, ObservationError> {
+    agent::binding(row)?.granted_policy(&policy_input(row)?, grants)
+}
+
+pub(super) fn recorded_grants(
+    input: &nemoclaw_sdk::image_runtime::PolicyInput,
+    policy: &proto::SandboxPolicy,
+) -> Result<ClusterGrants, ObservationError> {
+    input
+        .cluster_grants
+        .iter()
+        .map(|name| {
+            let rule = policy
+                .network_policies
+                .get(name)
+                .ok_or(ObservationError::BindingMismatch)?;
+            if rule.endpoints.len() != 1 {
+                return Err(ObservationError::BindingMismatch);
+            }
+            Ok((name.clone(), rule.endpoints[0].allowed_ips.clone()))
+        })
+        .collect()
+}
 
 // Baseline grants follow NVIDIA/OpenShell crates/openshell-supervisor/src/lib.rs
 // at 7e7a8d5610f336f5f7f9f60da0951adbf295475d (Apache-2.0).
@@ -69,10 +104,7 @@ pub(super) fn loaded_policy_matches(
 }
 
 pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
-    let input: nemoclaw_sdk::image_runtime::PolicyInput =
-        serde_json::from_str(row.get("policy_json").ok_or(ObservationError::Incomplete)?)
-            .map_err(|_| ObservationError::Query)?;
-    agent::binding(row)?.policy(&input)
+    agent::binding(row)?.policy(&policy_input(row)?)
 }
 
 pub(super) fn validate_row_policy(row: &Row) -> Result<(), ObservationError> {

@@ -11,11 +11,27 @@ use super::transport::Fixture;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 #[derive(Clone, Default)]
-pub struct Objects(pub Arc<Mutex<BTreeMap<String, Value>>>);
+pub struct Objects(
+    pub Arc<Mutex<BTreeMap<String, Value>>>,
+    Arc<AtomicU64>,
+    Arc<Mutex<Controls>>,
+);
+
+#[derive(Default)]
+struct Controls {
+    create_failure: Option<(String, bool, u16)>,
+    denied_resource: Option<String>,
+    delete_delay: Option<(String, u32)>,
+    deleting: BTreeMap<String, u32>,
+    pod_identity: Option<u32>,
+}
 
 fn plural(kind: &str) -> String {
     let kind = kind.to_ascii_lowercase();
@@ -71,10 +87,34 @@ fn status(code: u16, reason: &str) -> Option<(u16, Vec<u8>)> {
 }
 
 impl Objects {
+    /// Fail the next create of this kind, optionally after committing it.
+    pub fn fail_create(&self, kind: &str, committed: bool) {
+        self.2.lock().unwrap().create_failure = Some((kind.into(), committed, 500));
+    }
+    pub fn reject_create(&self, kind: &str) {
+        self.2.lock().unwrap().create_failure = Some((kind.into(), false, 403));
+    }
+    pub fn deny_access(&self, resource: &str) {
+        self.2.lock().unwrap().denied_resource = Some(resource.into());
+    }
+    pub fn delay_deletion(&self, kind: &str, reads: u32) {
+        self.2.lock().unwrap().delete_delay = Some((kind.into(), reads));
+    }
+    pub fn deletion_reads(&self, name: &str) -> Option<u32> {
+        self.2
+            .lock()
+            .unwrap()
+            .deleting
+            .iter()
+            .find_map(|(path, remaining)| path.ends_with(&format!("/{name}")).then_some(*remaining))
+    }
+    pub fn require_pod_identity(&self, user: u32) {
+        self.2.lock().unwrap().pod_identity = Some(user);
+    }
     /// Store `object`, giving it a UID if it has none.
     pub fn insert(&self, mut object: Value) {
         if object.pointer("/metadata/uid").is_none() {
-            let uid = format!("uid-{}", self.0.lock().unwrap().len() + 1);
+            let uid = format!("uid-{}", self.1.fetch_add(1, Ordering::Relaxed) + 1);
             object["metadata"]["uid"] = json!(uid);
         }
         self.0.lock().unwrap().insert(path(&object), object);
@@ -96,6 +136,15 @@ impl Objects {
         let mut objects = self.0.lock().unwrap();
         match method {
             "GET" => {
+                let mut controls = self.2.lock().unwrap();
+                if let Some(reads) = controls.deleting.get_mut(path) {
+                    if *reads == 0 {
+                        objects.remove(path);
+                        controls.deleting.remove(path);
+                    } else {
+                        *reads -= 1;
+                    }
+                }
                 if let Some(object) = objects.get(path) {
                     return Some((200, object.to_string().into_bytes()));
                 }
@@ -133,13 +182,62 @@ impl Objects {
             }
             "POST" => {
                 let mut object: Value = serde_json::from_slice(body).ok()?;
+                if object["kind"] == "Pod"
+                    && self.2.lock().unwrap().pod_identity.is_some_and(|user| {
+                        ["runAsUser", "runAsGroup", "fsGroup"]
+                            .iter()
+                            .any(|field| object["spec"]["securityContext"][*field] != user)
+                    })
+                {
+                    return status(403, "NamespaceIdentityMismatch");
+                }
+                let dry_run = url::form_urlencoded::parse(query.as_bytes())
+                    .any(|(key, value)| key == "dryRun" && value == "All");
+                let failure = {
+                    let mut controls = self.2.lock().unwrap();
+                    let next = &mut controls.create_failure;
+                    if next.as_ref().is_some_and(|(kind, _, code)| {
+                        object["kind"] == kind.as_str() && (!dry_run || *code == 403)
+                    }) {
+                        next.take().map(|(_, committed, code)| (committed, code))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((false, code)) = failure {
+                    return Some((code, json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":code,"message":"exceeded quota: requested nvidia.com/gpu=1; token=secret-sentinel"}).to_string().into_bytes()));
+                }
+                if object["kind"] == "SelfSubjectAccessReview" {
+                    let denied =
+                        self.2
+                            .lock()
+                            .unwrap()
+                            .denied_resource
+                            .as_ref()
+                            .is_some_and(|resource| {
+                                object["spec"]["resourceAttributes"]["resource"]
+                                    == resource.as_str()
+                            });
+                    object["status"] = json!({"allowed": !denied});
+                    return Some((201, object.to_string().into_bytes()));
+                }
                 let name = object.pointer("/metadata/name")?.as_str()?.to_owned();
                 let key = format!("{path}/{name}");
+                if dry_run {
+                    object["metadata"]["uid"] = json!("dry-run");
+                    return Some((201, object.to_string().into_bytes()));
+                }
                 if objects.contains_key(&key) {
                     return status(409, "AlreadyExists");
                 }
-                object["metadata"]["uid"] = json!(format!("uid-{}", objects.len() + 1));
+                object["metadata"]["uid"] = json!(format!(
+                    "uid-{}",
+                    self.1.fetch_add(1, Ordering::Relaxed) + 1
+                ));
                 objects.insert(key, object.clone());
+                if failure.is_some_and(|(committed, _)| committed) {
+                    return status(500, "LostResponse");
+                }
                 Some((201, object.to_string().into_bytes()))
             }
             "DELETE" => {
@@ -155,7 +253,14 @@ impl Objects {
                 }) {
                     return status(409, "Conflict");
                 }
-                objects.remove(path);
+                let mut controls = self.2.lock().unwrap();
+                if let Some((kind, reads)) = controls.delete_delay.clone()
+                    && object["kind"] == kind
+                {
+                    controls.deleting.entry(path.into()).or_insert(reads);
+                } else {
+                    objects.remove(path);
+                }
                 Some((
                     200,
                     json!({"kind": "Status", "apiVersion": "v1", "status": "Success", "code": 200})

@@ -153,7 +153,11 @@ pub(crate) fn runtime_graph(
                 json!({"spec": target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
             attributes["lifecycle"] = json!({"postcondition": [{
                 "condition": "${self.running == \"true\"}",
-                "error_message": "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
+                "error_message": if target.kind == crate::kubernetes::services::SERVICE_KIND {
+                    "Managed cluster model reconciliation is incomplete; retain state and storage, correct only the model workload, then run apply again. Gateway, storage, and sandbox intent must remain unchanged."
+                } else {
+                    "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
+                }
             }]});
             if target.kind == crate::kubernetes::STORAGE_KIND
                 || crate::services::resource_behavior(&target.kind).retained_storage

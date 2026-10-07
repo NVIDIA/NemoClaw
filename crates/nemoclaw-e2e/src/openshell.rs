@@ -68,6 +68,9 @@ pub struct State {
     pub active_sandbox_creates: usize,
     pub peak_sandbox_creates: usize,
     pub fail_read: Option<(&'static str, tonic::Code)>,
+    /// Reject one RPC before its handler can mutate fixture state.
+    pub reject_rpc: Option<(&'static str, tonic::Code, String)>,
+    pub rejected_rpcs: Vec<String>,
 }
 impl State {
     fn created(&mut self, kind: &str) {
@@ -191,6 +194,20 @@ impl tower::Service<http::Request<Body>> for Service {
     fn call(&mut self, request: http::Request<Body>) -> Self::Future {
         let state = self.0.clone();
         Box::pin(async move {
+            let rejection = {
+                let mut state = state.lock().unwrap();
+                let rejection = state
+                    .reject_rpc
+                    .clone()
+                    .filter(|(rpc, _, _)| request.uri().path().rsplit('/').next() == Some(*rpc));
+                rejection.map(|(rpc, code, detail)| {
+                    state.rejected_rpcs.push(rpc.into());
+                    Status::new(code, detail)
+                })
+            };
+            if let Some(rejection) = rejection {
+                return Ok(rejection.into_http());
+            }
             if state
                 .lock()
                 .unwrap()

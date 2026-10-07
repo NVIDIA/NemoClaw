@@ -37,6 +37,8 @@ struct Receipt {
     specification: Option<Spec>,
     #[serde(default)]
     compute_bound: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending: Option<Owned>,
 }
 
 impl Operations {
@@ -60,6 +62,8 @@ impl Operations {
             .find(|owned| owned.kind == "Service")
             .ok_or(ObservationError::Incomplete)?;
         let observed = self.verify(spec, service).await?;
+        Self::verify_compute_spec(&receipt, &observed)?;
+        self.verify_endpoints(&receipt, service).await?;
         let expected = compute_objects(compute, None)
             .into_iter()
             .find(|object| object["kind"] == "Service")
@@ -93,22 +97,61 @@ impl Operations {
             .map(|text| {
                 let address: std::net::IpAddr =
                     text.parse().map_err(|_| ObservationError::Incomplete)?;
-                let link_local = match address {
-                    std::net::IpAddr::V4(ip) => ip.is_link_local() || ip.is_broadcast(),
-                    std::net::IpAddr::V6(ip) => {
-                        ip.is_unicast_link_local() || ip.to_ipv4_mapped().is_some()
-                    }
-                };
-                if address.is_unspecified()
-                    || address.is_loopback()
-                    || address.is_multicast()
-                    || link_local
-                {
+                if !super::service_address_allowed(&address) {
                     return Err(ObservationError::BindingMismatch);
                 }
                 Ok(address)
             })
             .collect()
+    }
+
+    async fn verify_endpoints(
+        &self,
+        receipt: &Receipt,
+        service: &Owned,
+    ) -> Result<(), ObservationError> {
+        use k8s_openapi::api::discovery::v1::EndpointSlice;
+        let pod = receipt
+            .compute
+            .iter()
+            .find(|owned| owned.kind == "Pod")
+            .ok_or(ObservationError::Incomplete)?;
+        let slices =
+            kube::Api::<EndpointSlice>::namespaced(self.client.clone(), &service.namespace)
+                .list(
+                    &kube::api::ListParams::default()
+                        .labels(&format!("kubernetes.io/service-name={}", service.name)),
+                )
+                .await
+                .map_err(|error| match error {
+                    kube::Error::Api(status) if status.code == 401 => {
+                        ObservationError::Authentication
+                    }
+                    kube::Error::Api(status) if status.code == 403 => ObservationError::Permission,
+                    kube::Error::Api(_) => ObservationError::Query,
+                    _ => ObservationError::Transport,
+                })?;
+        for slice in slices {
+            for endpoint in slice.endpoints.unwrap_or_default() {
+                if endpoint
+                    .conditions
+                    .as_ref()
+                    .and_then(|conditions| conditions.ready)
+                    == Some(false)
+                {
+                    continue;
+                }
+                if !endpoint.target_ref.as_ref().is_some_and(|target| {
+                    target.kind.as_deref() == Some("Pod")
+                        && target.namespace.as_deref() == Some(&pod.namespace)
+                        && target.name.as_deref() == Some(&pod.name)
+                        && target.uid.as_deref() == Some(&pod.uid)
+                }) {
+                    return Err(ObservationError::BindingMismatch);
+                }
+            }
+        }
+        Ok(())
     }
     fn directory(&self, spec: &StorageSpec) -> PathBuf {
         self.state.join("services").join(&spec.name)
@@ -135,6 +178,172 @@ impl Operations {
     }
     fn cluster(&self, spec: &StorageSpec) -> Cluster {
         Cluster::new(self.client.clone(), &spec.owner, &spec.generation)
+    }
+
+    async fn settle_pending(&self, receipt: &mut Receipt) -> Result<(), ObservationError> {
+        if let Some(pending) = &receipt.pending {
+            if self.cluster(&receipt.storage).get(pending).await?.is_some() {
+                return Err(ObservationError::UnrecordedResource {
+                    kind: pending.kind.clone(),
+                    namespace: pending.namespace.clone(),
+                    name: pending.name.clone(),
+                });
+            }
+            receipt.pending = None;
+            self.save(receipt)?;
+        }
+        Ok(())
+    }
+
+    async fn create_recorded(
+        &self,
+        receipt: &mut Receipt,
+        object: Value,
+        volume: bool,
+    ) -> Result<(), ObservationError> {
+        let cluster = self.cluster(&receipt.storage);
+        let address = Owned::new(&object, "");
+        if cluster.get(&address).await?.is_some() {
+            return Err(ObservationError::BindingMismatch);
+        }
+        receipt.pending = Some(address);
+        self.save(receipt)?;
+        let owned = match cluster.create_model(object).await {
+            Ok(owned) => owned,
+            Err(error) => {
+                // Keep the pending address unless an authoritative read proves no object exists.
+                let _ = self.settle_pending(receipt).await;
+                return Err(error);
+            }
+        };
+        if volume {
+            receipt.volumes.push(owned);
+        } else {
+            receipt.compute.push(owned);
+            receipt.compute_bound = true;
+        }
+        receipt.pending = None;
+        self.save(receipt)
+    }
+
+    fn verify_compute_spec(
+        receipt: &Receipt,
+        object: &kube::api::DynamicObject,
+    ) -> Result<(), ObservationError> {
+        let kind = object
+            .types
+            .as_ref()
+            .map(|types| types.kind.as_str())
+            .ok_or(ObservationError::Incomplete)?;
+        let fields: &[&str] = match kind {
+            "Service" => &["type", "selector", "ports"],
+            "NetworkPolicy" => &["podSelector", "policyTypes", "ingress"],
+            "ConfigMap" => &[],
+            _ => return Ok(()),
+        };
+        let spec = receipt
+            .specification
+            .as_ref()
+            .ok_or(ObservationError::Incomplete)?;
+        let expected = compute_objects(spec, None)
+            .into_iter()
+            .find(|value| value["kind"] == kind)
+            .ok_or(ObservationError::Incomplete)?;
+        for field in fields {
+            if object.data["spec"][field] != expected["spec"][field] {
+                return Err(ObservationError::BindingMismatch);
+            }
+        }
+        let extra = match kind {
+            "Service" => "externalIPs",
+            "NetworkPolicy" => "egress",
+            _ => "",
+        };
+        if !extra.is_empty()
+            && object.data["spec"].get(extra).is_some_and(|value| {
+                !value.is_null() && value.as_array().is_none_or(|values| !values.is_empty())
+            })
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        if kind == "ConfigMap"
+            && (object.data["data"] != expected["data"] || object.data["immutable"] != true)
+        {
+            return Err(ObservationError::BindingMismatch);
+        }
+        Ok(())
+    }
+
+    pub async fn preflight_workload(&self, spec: &Spec) -> Result<(), ObservationError> {
+        spec.validate().map_err(|_| ObservationError::Query)?;
+        self.preflight(&spec.storage(), spec.settings.runtime_class_name.as_deref())
+            .await?;
+        let identity = match self.load(&spec.storage())? {
+            Some(receipt) => self.verify_storage(&receipt, false).await?,
+            None if GatewayReceipt::load(&self.state, &spec.owner, &spec.gateway.name)?
+                .is_some_and(|receipt| receipt.storage_ready) =>
+            {
+                self.gateway(&spec.storage(), true).await?.2
+            }
+            None => None,
+        };
+        self.dry_run_missing(&spec.storage(), compute_objects(spec, identity))
+            .await
+    }
+
+    async fn dry_run_missing(
+        &self,
+        spec: &StorageSpec,
+        objects: Vec<Value>,
+    ) -> Result<(), ObservationError> {
+        let cluster = self.cluster(spec);
+        // The gateway creates this namespace later on a deployment's first plan.
+        let namespace = Owned {
+            api_version: "v1".into(),
+            kind: "Namespace".into(),
+            namespace: String::new(),
+            name: spec.namespace().into(),
+            uid: String::new(),
+        };
+        if cluster.get(&namespace).await?.is_none() {
+            return Ok(());
+        }
+        for object in objects {
+            if cluster.get(&Owned::new(&object, "")).await?.is_none() {
+                cluster.dry_run(object).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn preflight_access(&self, spec: &StorageSpec) -> Result<(), ObservationError> {
+        use k8s_openapi::api::authorization::v1::SelfSubjectAccessReview;
+        let reviews = kube::Api::<SelfSubjectAccessReview>::all(self.client.clone());
+        for (verb, group, resource, subresource) in [
+            ("create", "", "pods", ""),
+            ("create", "", "persistentvolumeclaims", ""),
+            ("create", "", "configmaps", ""),
+            ("create", "", "services", ""),
+            ("create", "networking.k8s.io", "networkpolicies", ""),
+            ("create", "", "pods", "exec"),
+            ("list", "discovery.k8s.io", "endpointslices", ""),
+        ] {
+            let review = serde_json::from_value(serde_json::json!({"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{"resourceAttributes":{"namespace":spec.namespace(),"verb":verb,"group":group,"resource":resource,"subresource":subresource}}})).map_err(|_| ObservationError::Query)?;
+            let response = reviews
+                .create(&kube::api::PostParams::default(), &review)
+                .await
+                .map_err(|error| match error {
+                    kube::Error::Api(status) if status.code == 401 => {
+                        ObservationError::Authentication
+                    }
+                    kube::Error::Api(status) if status.code == 403 => ObservationError::Permission,
+                    _ => ObservationError::Query,
+                })?;
+            if !response.status.is_some_and(|status| status.allowed) {
+                return Err(ObservationError::Permission);
+            }
+        }
+        Ok(())
     }
 
     /// Check authored class names without creating resources or requiring a new namespace.
@@ -179,13 +388,16 @@ impl Operations {
                     .and_then(|object| object.metadata.uid)
                     .is_none()
                 {
-                    return Err(ObservationError::Backend(
-                        "the selected model StorageClass or RuntimeClass does not exist; resources retained",
-                    ));
+                    return Err(ObservationError::Backend(if kind == "StorageClass" {
+                        "kubernetes.storageClass names a missing StorageClass; create it or select an existing class"
+                    } else {
+                        "kubernetes.runtimeClassName names a missing RuntimeClass; create it or select an existing class"
+                    }));
                 }
             }
         }
-        Ok(())
+        self.preflight_access(spec).await?;
+        self.dry_run_missing(spec, storage_objects(spec)).await
     }
 
     async fn gateway(
@@ -331,7 +543,9 @@ impl Operations {
             compute: Vec::new(),
             specification: None,
             compute_bound: false,
+            pending: None,
         });
+        self.settle_pending(&mut receipt).await?;
         self.save(&receipt)?;
         for object in storage_objects(spec) {
             let address = Owned::new(&object, "");
@@ -342,10 +556,7 @@ impl Operations {
             {
                 self.verify(spec, owned).await?;
             } else {
-                receipt
-                    .volumes
-                    .push(self.cluster(spec).create(object).await?);
-                self.save(&receipt)?;
+                self.create_recorded(&mut receipt, object, true).await?;
             }
         }
         receipt.storage_ready = true;
@@ -358,13 +569,20 @@ impl Operations {
         spec: &Spec,
         prior: Option<&str>,
         removing: bool,
+        executor: &dyn super::PodExec,
     ) -> Result<Response, ObservationError> {
         spec.validate().map_err(|_| ObservationError::Query)?;
         let Some(receipt) = self.load(&spec.storage())? else {
             return Self::bound(Response::default(), prior);
         };
         self.verify_storage(&receipt, true).await?;
-        if !receipt.compute_bound && receipt.compute.is_empty() {
+        let compute_bound = receipt.compute_bound
+            || !receipt.compute.is_empty()
+            || receipt
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.kind != "PersistentVolumeClaim");
+        if !compute_bound {
             return Ok(Response::default());
         }
         let cluster = self.cluster(&receipt.storage);
@@ -377,6 +595,9 @@ impl Operations {
                 return Err(ObservationError::BindingMismatch);
             };
             let object = self.verify(&receipt.storage, owned).await?;
+            if !removing {
+                Self::verify_compute_spec(&receipt, &object)?;
+            }
             if owned.kind == "Pod" {
                 Self::verify_pod(&receipt, &object)?;
             }
@@ -386,31 +607,24 @@ impl Operations {
                 && object.data.pointer("/status/phase").and_then(Value::as_str) == Some("Running")
             {
                 let started = super::status::started(&object)?;
-                let bytes = super::status::execute(
-                    self.client.clone(),
-                    spec.namespace(),
-                    &owned.name,
-                    false,
-                )
-                .await?;
+                let bytes = executor
+                    .read_file(spec.namespace(), &owned.name, super::RuntimeFile::Status)
+                    .await?;
+                self.verify_storage(&receipt, true).await?;
                 let after = self.verify(&receipt.storage, owned).await?;
+                Self::verify_pod(&receipt, &after)?;
                 if super::status::started(&after)? != started {
                     return Err(ObservationError::BindingMismatch);
                 }
-                running = super::status::phase(
-                    bytes.as_deref(),
-                    started,
-                    time::OffsetDateTime::now_utc(),
-                )? == "ready";
+                running = super::status::phase(bytes.as_deref(), started)? == "ready";
             }
         }
         Self::bound(
             Response {
-                id: receipt
-                    .compute_bound
+                id: compute_bound
                     .then(|| Self::compute_id(&receipt))
                     .transpose()?,
-                running: receipt.compute_bound.then_some(running),
+                running: compute_bound.then_some(running),
             },
             prior,
         )
@@ -478,14 +692,33 @@ impl Operations {
         spec: &Spec,
         prior: Option<&str>,
     ) -> Result<Response, ObservationError> {
-        self.observe(spec, prior, false).await
+        self.read_with_exec(
+            spec,
+            prior,
+            &super::status::KubernetesExec(self.client.clone()),
+        )
+        .await
+    }
+    pub async fn read_with_exec(
+        &self,
+        spec: &Spec,
+        prior: Option<&str>,
+        executor: &dyn super::PodExec,
+    ) -> Result<Response, ObservationError> {
+        self.observe(spec, prior, false, executor).await
     }
     pub async fn read_for_removal(
         &self,
         spec: &Spec,
         prior: Option<&str>,
     ) -> Result<Response, ObservationError> {
-        self.observe(spec, prior, true).await
+        self.observe(
+            spec,
+            prior,
+            true,
+            &super::status::KubernetesExec(self.client.clone()),
+        )
+        .await
     }
     pub async fn ensure(
         &self,
@@ -493,20 +726,29 @@ impl Operations {
         prior: Option<&str>,
     ) -> Result<Response, ObservationError> {
         spec.validate().map_err(|_| ObservationError::Query)?;
-        self.preflight(&spec.storage(), spec.settings.runtime_class_name.as_deref())
-            .await?;
+        self.preflight_workload(spec).await?;
         let mut receipt = self
             .load(&spec.storage())?
             .ok_or(ObservationError::Incomplete)?;
         let identity = self.verify_storage(&receipt, true).await?;
-        if let Some(recorded) = &receipt.specification {
+        self.settle_pending(&mut receipt).await?;
+        if let Some(recorded) = &receipt.specification
+            && (receipt.compute_bound || !receipt.compute.is_empty())
+        {
             self.read_for_removal(recorded, prior).await?;
+            // Validate retained network objects before stopping a workload for replacement.
+            for owned in &receipt.compute {
+                if matches!(owned.kind.as_str(), "Service" | "NetworkPolicy") {
+                    let object = self.verify(&receipt.storage, owned).await?;
+                    Self::verify_compute_spec(&receipt, &object)?;
+                }
+            }
             if recorded.port() != spec.port() {
                 return Err(ObservationError::Backend(
-                    "changing the model serving port requires destroy and apply; storage retained",
+                    "changing the model serving port requires whole-deployment destroy and apply; destroy deletes sandbox files and conversation history but retains model and credential PVCs",
                 ));
             }
-            if recorded != spec {
+            if compute_objects(recorded, identity) != compute_objects(spec, identity) {
                 self.clear_runtime(&mut receipt).await?;
             }
         } else if let Some(prior) = prior
@@ -525,9 +767,10 @@ impl Operations {
             if let Some(index) = recorded {
                 let owned = receipt.compute[index].clone();
                 let current = self.cluster(&receipt.storage).get(&owned).await?;
-                let recreate = owned.kind == "Pod"
-                    && (current.is_none()
-                        || current
+                let recreate = (matches!(owned.kind.as_str(), "Pod" | "ConfigMap")
+                    && current.is_none())
+                    || (owned.kind == "Pod"
+                        && current
                             .as_ref()
                             .and_then(|object| object.data.pointer("/status/phase"))
                             .and_then(Value::as_str)
@@ -543,19 +786,30 @@ impl Operations {
                 receipt.compute.remove(index);
                 self.save(&receipt)?;
             }
-            receipt
-                .compute
-                .push(self.cluster(&receipt.storage).create(object).await?);
-            receipt.compute_bound = true;
-            self.save(&receipt)?;
+            self.create_recorded(&mut receipt, object, false).await?;
         }
         self.read(spec, None).await
     }
 
     async fn delete(&self, spec: &StorageSpec, owned: &Owned) -> Result<(), ObservationError> {
         let cluster = self.cluster(spec);
+        let grace = if owned.kind == "Pod" {
+            cluster
+                .get(owned)
+                .await?
+                .and_then(|object| {
+                    object
+                        .data
+                        .pointer("/spec/terminationGracePeriodSeconds")
+                        .and_then(Value::as_u64)
+                })
+                .unwrap_or(60)
+        } else {
+            0
+        };
         cluster.delete(owned).await?;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(grace.saturating_add(30));
         while let Some(object) = cluster.get(owned).await? {
             if object.metadata.uid.as_deref() != Some(&owned.uid) {
                 return Err(ObservationError::BindingMismatch);
@@ -605,6 +859,7 @@ impl Operations {
         let Some(mut receipt) = self.load(&spec.storage())? else {
             return Ok(());
         };
+        self.settle_pending(&mut receipt).await?;
         self.clear_compute(&mut receipt).await
     }
     /// Explicit reconciliation recreates only missing or terminal disposable workloads.
@@ -613,48 +868,47 @@ impl Operations {
     }
 
     pub async fn wait_ready(&self, spec: &Spec) -> Result<Response, ObservationError> {
-        let seconds = match &spec.runtime {
-            nemoclaw_runtime::RuntimeSpec::Vllm(service) => service.serving.startup_timeout_seconds,
-            nemoclaw_runtime::RuntimeSpec::Ollama(service) => {
-                service.serving.startup_timeout_seconds
-            }
-        };
-        let wait = async {
-            loop {
-                let response = self.read(spec, None).await?;
-                if response.running == Some(true) {
-                    return Ok(response);
-                }
-                let receipt = self
-                    .load(&spec.storage())?
-                    .ok_or(ObservationError::Incomplete)?;
-                let pod = receipt
-                    .compute
-                    .iter()
-                    .find(|owned| owned.kind == "Pod")
-                    .ok_or(ObservationError::Incomplete)?;
-                let object = self.verify(&receipt.storage, pod).await?;
-                if object
-                    .data
-                    .pointer("/status/phase")
-                    .and_then(Value::as_str)
-                    .is_some_and(|phase| matches!(phase, "Failed" | "Succeeded"))
-                {
-                    return Err(ObservationError::Backend(
-                        "model runtime stopped before readiness; storage retained",
-                    ));
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-        };
-        tokio::time::timeout(std::time::Duration::from_secs(seconds as u64), wait)
+        self.wait_ready_with_exec(spec, &super::status::KubernetesExec(self.client.clone()))
             .await
-            .map_err(|_| {
-                ObservationError::Backend("model runtime readiness timed out; storage retained")
-            })?
+    }
+
+    pub async fn wait_ready_with_exec(
+        &self,
+        spec: &Spec,
+        executor: &dyn super::PodExec,
+    ) -> Result<Response, ObservationError> {
+        // The runtime applies startupTimeoutSeconds during model loading. Download
+        // and preparation retain the same overall readiness budget as Docker.
+        super::readiness::wait(|| async {
+            let receipt = self
+                .load(&spec.storage())?
+                .ok_or(ObservationError::Incomplete)?;
+            self.verify_storage(&receipt, true).await?;
+            let pod = receipt
+                .compute
+                .iter()
+                .find(|owned| owned.kind == "Pod")
+                .ok_or(ObservationError::Incomplete)?;
+            let object = self.verify(&receipt.storage, pod).await?;
+            Self::verify_pod(&receipt, &object)?;
+            if let Some(error) = super::status::terminal(&object) {
+                return Err(error);
+            }
+            self.read_with_exec(spec, None, executor).await
+        })
+        .await
     }
 
     pub async fn credential(&self, spec: &StorageSpec) -> Result<String, ObservationError> {
+        self.credential_with_exec(spec, &super::status::KubernetesExec(self.client.clone()))
+            .await
+    }
+
+    pub async fn credential_with_exec(
+        &self,
+        spec: &StorageSpec,
+        executor: &dyn super::PodExec,
+    ) -> Result<String, ObservationError> {
         if !spec.authenticated {
             return Err(ObservationError::BindingMismatch);
         }
@@ -664,7 +918,7 @@ impl Operations {
             .specification
             .as_ref()
             .ok_or(ObservationError::Incomplete)?;
-        if self.read(compute, None).await?.running != Some(true) {
+        if self.read_with_exec(compute, None, executor).await?.running != Some(true) {
             return Err(ObservationError::Incomplete);
         }
         let pod = receipt
@@ -672,11 +926,19 @@ impl Operations {
             .iter()
             .find(|owned| owned.kind == "Pod")
             .ok_or(ObservationError::Incomplete)?;
-        Self::verify_pod(&receipt, &self.verify(spec, pod).await?)?;
-        let bytes = super::status::execute(self.client.clone(), spec.namespace(), &pod.name, true)
+        let before = self.verify(spec, pod).await?;
+        Self::verify_pod(&receipt, &before)?;
+        let started = super::status::started(&before)?;
+        let bytes = executor
+            .read_file(spec.namespace(), &pod.name, super::RuntimeFile::Credential)
             .await?
             .ok_or(ObservationError::Incomplete)?;
-        Self::verify_pod(&receipt, &self.verify(spec, pod).await?)?;
+        self.verify_storage(&receipt, true).await?;
+        let after = self.verify(spec, pod).await?;
+        Self::verify_pod(&receipt, &after)?;
+        if super::status::started(&after)? != started {
+            return Err(ObservationError::BindingMismatch);
+        }
         let key = String::from_utf8(bytes).map_err(|_| ObservationError::Incomplete)?;
         if key.len() != 64
             || !key

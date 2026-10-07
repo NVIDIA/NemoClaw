@@ -414,12 +414,16 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Fabric runtime request | `harness.execution.timeoutSeconds` maps to public Fabric `runtime.timeout_seconds`; omitted values use Fabric defaults |
 | Managed service loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
 | Docker-managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
-| Managed cluster service readiness, including model preparation | `spec.services.<name>.serving.startupTimeoutSeconds`; expiration leaves the owned Pod and PVCs in place |
+| Managed cluster service readiness, including scheduling, image pull, download, and preparation | Fixed 9-hour wait; expiration leaves the owned Pod and PVCs in place; an unchanged apply resumes waiting |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
 | Sandbox/agent readiness | Fixed 300-second wait |
 
 These are phase limits, not a promised total duration for apply.
+For a cluster service, `startupTimeoutSeconds` bounds model loading inside the runtime after preparation; it does not shorten the SDK's overall readiness wait.
+Cluster readiness retries transient transport, query, or incomplete-status observations for at most 30 seconds of consecutive failures, resetting that allowance after a successful observation.
+Authentication, permission, ownership, permanent image-start failures, and reported runtime stops fail immediately.
+Model Pod termination allows 60 seconds of grace, and the provider waits up to another 30 seconds for API deletion to complete.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
 Use the [field reference](reference/configuration.md), [bound execution](../crates/nemoclaw-provider/src/openshell/transport.rs), [agent configuration](../crates/nemoclaw-provider/src/openshell/agent_configuration.rs), [agent readiness](../crates/nemoclaw-provider/src/openshell/agent.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.

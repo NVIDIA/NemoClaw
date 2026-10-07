@@ -60,7 +60,7 @@ pub fn cluster_definition(
         .validate()
         .map_err(|_| ObservationError::BindingMismatch)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
-    let host = format!("{}.{}.svc", storage.name, storage.namespace());
+    let host = crate::kubernetes::services::service_host(&storage.name, storage.namespace());
     if authenticated != storage.authenticated
         || url.scheme() != "http"
         || url.host_str() != Some(host.as_str())
@@ -70,15 +70,9 @@ pub fn cluster_definition(
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
-        || addresses.iter().any(|address| {
-            address.is_unspecified()
-                || address.is_loopback()
-                || address.is_multicast()
-                || match address {
-                    std::net::IpAddr::V4(ip) => ip.is_link_local(),
-                    std::net::IpAddr::V6(ip) => ip.is_unicast_link_local(),
-                }
-        })
+        || addresses
+            .iter()
+            .any(|address| !crate::kubernetes::services::service_address_allowed(address))
     {
         return Err(ObservationError::BindingMismatch);
     }
@@ -174,6 +168,87 @@ mod tests {
     use super::*;
 
     #[test]
+    fn host_inference_policy_input_bytes_do_not_name_cluster_grants() {
+        let document = crate::config::Document::parse(
+            include_bytes!("../../../../examples/spark/vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let input =
+            crate::image_runtime::PolicyInput::for_sandbox(&document, &document.spec.sandboxes[0])
+                .unwrap();
+        let prior_wire_format = format!(
+            "{{\"explicit\":{},\"managed\":{}}}",
+            serde_json::to_string(&input.explicit).unwrap(),
+            serde_json::to_string(&input.managed).unwrap()
+        );
+        assert_eq!(serde_json::to_string(&input).unwrap(), prior_wire_format);
+    }
+
+    #[test]
+    fn cluster_model_endpoints_resolve_without_pod_search_domains() {
+        for example in [
+            include_bytes!("../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let document = crate::config::Document::parse(example).unwrap();
+            let generations = [
+                "workspace",
+                "provider",
+                "sandbox",
+                "kubernetes_storage",
+                "kubernetes_gateway",
+                "inference_service",
+                "ollama_service",
+            ]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+            let runtime = crate::compile::runtime_targets(&document, &generations).unwrap();
+            let spec = crate::kubernetes::services::Spec::decode(
+                &runtime
+                    .iter()
+                    .find(|target| target.kind == crate::kubernetes::services::SERVICE_KIND)
+                    .unwrap()
+                    .values["spec"],
+            )
+            .unwrap();
+            let targets = crate::compile::targets(&document, &generations).unwrap();
+            let provider = &targets
+                .iter()
+                .find(|target| target.kind == "provider")
+                .unwrap()
+                .values;
+            assert_eq!(provider["endpoint"], spec.endpoint());
+            assert_eq!(
+                url::Url::parse(&provider["endpoint"])
+                    .unwrap()
+                    .host_str()
+                    .unwrap(),
+                format!("{}.{}.svc.cluster.local", spec.name, spec.namespace())
+            );
+            if spec.authenticated() {
+                crate::services::authentication::Source::parse(
+                    &provider["credential_source"],
+                    &document.metadata.uid,
+                    &provider["endpoint"],
+                )
+                .unwrap();
+            }
+            let short = spec.endpoint().replace(".svc.cluster.local:", ".svc:");
+            assert!(
+                cluster_definition(
+                    "model",
+                    &short,
+                    InferenceProviderKind::Openai,
+                    spec.authenticated(),
+                    &spec.storage(),
+                    &["10.96.0.42".parse().unwrap()]
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn cluster_model_projection_accepts_owned_dns_without_allowing_authored_http_dns() {
         assert!(
             crate::config::validate_endpoint("http://arbitrary.default.svc:8000/v1", false)
@@ -189,7 +264,7 @@ mod tests {
             projected["models"]["default"]["base_url"]
                 .as_str()
                 .unwrap()
-                .contains(".nemoclaw-local-vllm.svc:")
+                .contains(".nemoclaw-local-vllm.svc.cluster.local:")
         );
         assert_eq!(projected["models"]["default"]["api"], "openai-completions");
         let policy = crate::image_runtime::PolicyInput::for_sandbox(&document, sandbox).unwrap();

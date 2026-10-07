@@ -1051,7 +1051,7 @@
           "description": "Environment reference to an absolute local OCI metadata bundle for this service image. Plan and apply verify its digest, Linux architecture, and runtime labels before changing cluster resources. Destroy does not read it."
         },
         "memoryLimitGiB": {
-          "description": "Container memory limit in GiB; must be at least the request.",
+          "description": "Container memory limit in GiB; must cover the request, shared-memory size, and recipe preparation-memory requirement individually. Combined loading and serving demand needs additional headroom.",
           "format": "uint64",
           "maximum": 8589934591,
           "minimum": 1,
@@ -1088,10 +1088,10 @@
           "type": "string"
         },
         "storageGiB": {
-          "description": "Retained model-volume capacity in GiB.",
+          "description": "Retained model-volume capacity in GiB. Must cover prepared data plus a 16 GiB working reserve; model downloads and earlier snapshots need additional space.",
           "format": "uint64",
           "maximum": 8589934591,
-          "minimum": 1,
+          "minimum": 16,
           "type": "integer"
         },
         "tolerations": {
@@ -2488,7 +2488,8 @@
             },
             "kubernetes": {
               "$ref": "#/$defs/KubernetesService",
-              "description": "Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway."
+              "description": "Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway.",
+              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
             },
             "memory": {
               "$ref": "#/$defs/OllamaMemory",
@@ -2796,7 +2797,8 @@
             },
             "kubernetes": {
               "$ref": "#/$defs/KubernetesService",
-              "description": "Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway."
+              "description": "Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway.",
+              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
             },
             "memory": {
               "$ref": "#/$defs/Memory",

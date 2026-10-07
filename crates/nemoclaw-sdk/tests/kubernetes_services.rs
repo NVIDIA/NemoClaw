@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::kubernetes::services::{Spec, compute_objects, storage_objects};
 use serde_json::{Value, json};
+#[path = "kubernetes_service_exec.rs"]
+mod exec_boundary;
+#[path = "kubernetes_service_readiness.rs"]
+mod readiness;
 
 fn spec(backend: &str, authenticated: bool) -> Spec {
     let runtime: Value = if backend == "vllm" {
@@ -151,7 +155,7 @@ async fn refresh_keeps_missing_pod_binding_and_apply_recovers_only_compute() {
         .unwrap();
     let compute = operations.ensure(&spec, None).await.unwrap();
     let pod_path = format!("/api/v1/namespaces/agents/pods/{}", spec.name);
-    objects.0.lock().unwrap().remove(&pod_path);
+    let old_pod = objects.0.lock().unwrap().remove(&pod_path).unwrap();
     let before = objects.0.lock().unwrap().clone();
     let read = operations.read(&spec, compute.id.as_deref()).await.unwrap();
     assert_eq!(read.id, compute.id);
@@ -166,7 +170,26 @@ async fn refresh_keeps_missing_pod_binding_and_apply_recovers_only_compute() {
         .await
         .unwrap();
     assert_eq!(recovered.id, compute.id);
-    assert!(objects.get("v1", "Pod", "agents", &spec.name).is_some());
+    let new_pod = objects.get("v1", "Pod", "agents", &spec.name).unwrap();
+    assert_ne!(old_pod["metadata"]["uid"], new_pod["metadata"]["uid"]);
+    let receipt: Value = serde_json::from_slice(
+        &std::fs::read(
+            directory
+                .path()
+                .join("services")
+                .join(&spec.name)
+                .join("receipt.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        receipt["compute"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|owned| owned["kind"] == "Pod" && owned["uid"] == new_pod["metadata"]["uid"])
+    );
     assert_eq!(
         operations
             .read_storage(&spec.storage(), storage.id.as_deref())
@@ -447,6 +470,14 @@ async fn openshift_workloads_use_only_the_recorded_namespace_identity() {
         group: 1000720000,
     });
     gateway.save(directory.path()).unwrap();
+    objects.require_pod_identity(1000720000);
+    let before = objects.0.lock().unwrap().clone();
+    operations.preflight_workload(&spec).await.unwrap();
+    assert_eq!(
+        *objects.0.lock().unwrap(),
+        before,
+        "initial admission preflight must use the gateway identity before model storage exists"
+    );
     operations
         .ensure_storage(&spec.storage(), None)
         .await
@@ -522,4 +553,642 @@ async fn an_interrupted_update_keeps_the_binding_and_requires_intent_reconciliat
         "the old specification must not describe the replacement as applied"
     );
     assert_eq!(*objects.0.lock().unwrap(), before);
+}
+
+#[test]
+fn model_ingress_admits_only_openshell_supervisors_in_its_namespace() {
+    for backend in ["vllm", "ollama"] {
+        let spec = spec(backend, backend == "vllm");
+        let objects = compute_objects(&spec, None);
+        let service = objects.iter().find(|o| o["kind"] == "Service").unwrap();
+        let policy = objects
+            .iter()
+            .find(|o| o["kind"] == "NetworkPolicy")
+            .unwrap();
+        assert_eq!(
+            policy["spec"],
+            json!({
+                "podSelector": {"matchLabels": service["spec"]["selector"]},
+                "policyTypes": ["Ingress"],
+                "ingress": [{"from": [{"podSelector": {"matchLabels": {
+                    "openshell.ai/managed-by": "openshell",
+                    "openshell.ai/boundary-role": "supervisor"
+                }}}], "ports": [{"protocol": "TCP", "port": spec.port()}]}]
+            })
+        );
+    }
+}
+
+#[tokio::test]
+async fn metadata_reference_changes_preserve_the_running_workload() {
+    let mut spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    let first = operations.ensure(&spec, None).await.unwrap();
+    let before = objects.0.lock().unwrap().clone();
+    operations.ensure(&spec, first.id.as_deref()).await.unwrap();
+    assert_eq!(*objects.0.lock().unwrap(), before);
+    spec.settings.image_metadata.env = "RENAMED_METADATA".into();
+    operations.ensure(&spec, first.id.as_deref()).await.unwrap();
+    assert_eq!(*objects.0.lock().unwrap(), before);
+}
+
+#[tokio::test]
+async fn missing_classes_name_the_configuration_before_creating_objects() {
+    for (path, field) in [
+        (
+            "/apis/storage.k8s.io/v1/storageclasses/model-cache",
+            "kubernetes.storageClass",
+        ),
+        (
+            "/apis/node.k8s.io/v1/runtimeclasses/nvidia",
+            "kubernetes.runtimeClassName",
+        ),
+    ] {
+        let spec = spec("ollama", false);
+        let objects = crate::kube_api::Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+        objects.0.lock().unwrap().remove(path);
+        let before = objects.0.lock().unwrap().clone();
+        let error = operations
+            .preflight(&spec.storage(), spec.settings.runtime_class_name.as_deref())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains(field), "{error}");
+        assert!(!error.to_string().contains("retained"));
+        if field.ends_with("storageClass") {
+            assert!(
+                operations
+                    .ensure_storage(&spec.storage(), None)
+                    .await
+                    .is_err()
+            );
+        } else {
+            assert!(operations.ensure(&spec, None).await.is_err());
+        }
+        assert_eq!(*objects.0.lock().unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn a_failed_first_create_does_not_bind_the_serving_port() {
+    let mut spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    objects.fail_create("ConfigMap", false);
+    assert!(operations.ensure(&spec, None).await.is_err());
+    if let nemoclaw_runtime::RuntimeSpec::Ollama(runtime) = &mut spec.runtime {
+        runtime.serving.port += 1;
+    }
+    operations.ensure(&spec, None).await.unwrap();
+    assert_eq!(
+        objects.get("v1", "Service", "agents", &spec.name).unwrap()["spec"]["ports"][0]["port"],
+        spec.port()
+    );
+}
+
+#[tokio::test]
+async fn missing_network_objects_refuse_updates_before_stopping_the_pod() {
+    for (api, kind) in [("v1", "Service"), ("networking.k8s.io/v1", "NetworkPolicy")] {
+        let mut spec = spec("ollama", false);
+        let objects = crate::kube_api::Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+        operations
+            .ensure_storage(&spec.storage(), None)
+            .await
+            .unwrap();
+        let first = operations.ensure(&spec, None).await.unwrap();
+        let path = format!(
+            "{}/{}",
+            crate::kube_api::collection(api, kind, "agents"),
+            spec.name
+        );
+        objects.0.lock().unwrap().remove(&path);
+        let before = objects.0.lock().unwrap().clone();
+        spec.image = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+        assert_eq!(
+            operations.ensure(&spec, first.id.as_deref()).await,
+            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
+        );
+        assert_eq!(*objects.0.lock().unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn changed_network_specs_refuse_refresh_and_update_but_allow_explicit_removal() {
+    for (api, kind, field, replacement) in [
+        ("v1", "Service", "externalIPs", json!(["203.0.113.7"])),
+        ("v1", "Service", "selector", json!({"foreign": "true"})),
+        (
+            "networking.k8s.io/v1",
+            "NetworkPolicy",
+            "ingress",
+            json!([{}]),
+        ),
+    ] {
+        let mut spec = spec("ollama", false);
+        let objects = crate::kube_api::Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+        operations
+            .ensure_storage(&spec.storage(), None)
+            .await
+            .unwrap();
+        let first = operations.ensure(&spec, None).await.unwrap();
+        let mut object = objects.get(api, kind, "agents", &spec.name).unwrap();
+        object["spec"][field] = replacement;
+        objects.insert(object);
+        let before = objects.0.lock().unwrap().clone();
+        assert_eq!(
+            operations.read(&spec, first.id.as_deref()).await,
+            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
+        );
+        spec.image = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+        assert_eq!(
+            operations.ensure(&spec, first.id.as_deref()).await,
+            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
+        );
+        assert_eq!(*objects.0.lock().unwrap(), before);
+        operations.remove(&spec, first.id.as_deref()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_lost_create_response_blocks_cleanup_of_the_orphans_network_policy() {
+    let spec = spec("vllm", true);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    objects.fail_create("Pod", true);
+    assert!(operations.ensure(&spec, None).await.is_err());
+    let before = objects.0.lock().unwrap().clone();
+    let error = operations.ensure(&spec, None).await.unwrap_err();
+    assert!(error.to_string().contains(&spec.name), "{error}");
+    assert!(operations.remove(&spec, None).await.is_err());
+    assert_eq!(*objects.0.lock().unwrap(), before);
+    // An operator verifies and removes the unrecorded Pod. Retry can then finish.
+    let path = format!("/api/v1/namespaces/agents/pods/{}", spec.name);
+    objects.0.lock().unwrap().remove(&path);
+    operations.ensure(&spec, None).await.unwrap();
+    operations.remove(&spec, None).await.unwrap();
+    assert!(
+        objects
+            .get(
+                "networking.k8s.io/v1",
+                "NetworkPolicy",
+                "agents",
+                &spec.name
+            )
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn model_preflight_checks_admission_and_permissions_without_creating_resources() {
+    for kind in [
+        "Pod",
+        "PersistentVolumeClaim",
+        "permission",
+        "endpointslices",
+    ] {
+        let spec = spec("ollama", false);
+        let objects = crate::kube_api::Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+        let before = objects.0.lock().unwrap().clone();
+        if kind == "permission" {
+            objects.deny_access("pods");
+        } else if kind == "endpointslices" {
+            objects.deny_access("endpointslices");
+        } else {
+            objects.reject_create(kind);
+        }
+        let error = operations.preflight_workload(&spec).await.unwrap_err();
+        if !matches!(kind, "permission" | "endpointslices") {
+            assert!(error.to_string().contains("exceeded quota"), "{error}");
+            assert!(!error.to_string().contains("secret-sentinel"));
+        }
+        assert_eq!(*objects.0.lock().unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn foreign_service_backends_cannot_receive_the_managed_credential() {
+    let spec = spec("vllm", true);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    operations.ensure(&spec, None).await.unwrap();
+    let mut service = objects.get("v1", "Service", "agents", &spec.name).unwrap();
+    service["spec"]["clusterIP"] = json!("10.96.0.42");
+    objects.insert(service);
+    objects.insert(json!({"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice", "metadata":{"name":"injected-backend", "namespace":"agents", "labels":{"kubernetes.io/service-name":spec.name}}, "addressType":"IPv4", "endpoints":[{"addresses":["10.244.0.15"],"conditions":{"ready":true},"targetRef":{"kind":"Pod","namespace":"agents","name":"foreign","uid":"foreign"}}]}));
+    assert_eq!(
+        operations
+            .endpoint_addresses(&spec.storage(), &spec.endpoint())
+            .await,
+        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
+    );
+}
+
+#[tokio::test]
+async fn terminal_pods_are_replaced_only_by_explicit_apply_and_only_when_owned() {
+    for foreign in [false, true] {
+        let spec = spec("ollama", false);
+        let objects = crate::kube_api::Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+        operations
+            .ensure_storage(&spec.storage(), None)
+            .await
+            .unwrap();
+        let first = operations.ensure(&spec, None).await.unwrap();
+        let mut pod = objects.get("v1", "Pod", "agents", &spec.name).unwrap();
+        let old_uid = pod["metadata"]["uid"].clone();
+        pod["status"] = json!({"phase":"Failed"});
+        if foreign {
+            pod["metadata"]["uid"] = json!("foreign");
+        }
+        objects.insert(pod);
+        let before = objects.0.lock().unwrap().clone();
+        let read = operations.read(&spec, first.id.as_deref()).await;
+        assert_eq!(*objects.0.lock().unwrap(), before);
+        if foreign {
+            assert_eq!(read, Err(nemoclaw_sdk::ObservationError::BindingMismatch));
+            assert!(operations.ensure(&spec, first.id.as_deref()).await.is_err());
+            assert_eq!(*objects.0.lock().unwrap(), before);
+        } else {
+            assert_eq!(read.unwrap().running, Some(false));
+            operations.ensure(&spec, first.id.as_deref()).await.unwrap();
+            let after = objects.0.lock().unwrap().clone();
+            for (path, object) in before {
+                if object["kind"] == "Pod" {
+                    assert_ne!(after[&path]["metadata"]["uid"], old_uid);
+                } else {
+                    assert_eq!(after[&path], object);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn runtime_updates_replace_configuration_and_retry_after_interrupted_create() {
+    let mut spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    let first = operations.ensure(&spec, None).await.unwrap();
+    objects.insert(json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"unrelated","namespace":"agents"},"data":{"keep":"me"}}));
+    let foreign = objects.get("v1", "ConfigMap", "agents", "unrelated");
+    let config = objects
+        .get("v1", "ConfigMap", "agents", &spec.name)
+        .unwrap();
+    let service = objects.get("v1", "Service", "agents", &spec.name);
+    if let nemoclaw_runtime::RuntimeSpec::Ollama(runtime) = &mut spec.runtime {
+        runtime.model.digest = "b".repeat(64);
+    }
+    objects.fail_create("ConfigMap", false);
+    assert!(operations.ensure(&spec, first.id.as_deref()).await.is_err());
+    assert!(objects.get("v1", "Pod", "agents", &spec.name).is_none());
+    let before = objects.0.lock().unwrap().clone();
+    let read = operations
+        .read_for_removal(&spec, first.id.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(read.id, first.id);
+    assert_eq!(*objects.0.lock().unwrap(), before);
+    operations.ensure(&spec, first.id.as_deref()).await.unwrap();
+    let replaced = objects
+        .get("v1", "ConfigMap", "agents", &spec.name)
+        .unwrap();
+    assert_ne!(replaced["metadata"]["uid"], config["metadata"]["uid"]);
+    assert_ne!(replaced["data"], config["data"]);
+    assert_eq!(objects.get("v1", "Service", "agents", &spec.name), service);
+    assert_eq!(
+        objects.get("v1", "ConfigMap", "agents", "unrelated"),
+        foreign
+    );
+    operations.remove(&spec, first.id.as_deref()).await.unwrap();
+    assert_eq!(
+        objects.get("v1", "ConfigMap", "agents", "unrelated"),
+        foreign
+    );
+    assert!(
+        objects
+            .get(
+                "networking.k8s.io/v1",
+                "NetworkPolicy",
+                "agents",
+                &spec.name
+            )
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_bound_serving_port_change_preserves_all_live_objects() {
+    let mut spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    let first = operations.ensure(&spec, None).await.unwrap();
+    let before = objects.0.lock().unwrap().clone();
+    if let nemoclaw_runtime::RuntimeSpec::Ollama(runtime) = &mut spec.runtime {
+        runtime.serving.port += 1;
+    }
+    let error = operations
+        .ensure(&spec, first.id.as_deref())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("conversation history"));
+    assert_eq!(*objects.0.lock().unwrap(), before);
+}
+
+#[test]
+fn model_pods_allow_runtime_shutdown_and_preserve_failure_diagnostics() {
+    for backend in ["vllm", "ollama"] {
+        let objects = compute_objects(&spec(backend, backend == "vllm"), None);
+        let pod = objects
+            .iter()
+            .find(|object| object["kind"] == "Pod")
+            .unwrap();
+        assert_eq!(pod["spec"]["terminationGracePeriodSeconds"], 60);
+        assert_eq!(
+            pod["spec"]["containers"][0]["terminationMessagePolicy"],
+            "FallbackToLogsOnError"
+        );
+    }
+}
+
+#[tokio::test]
+async fn destroy_waits_for_pod_deletion_before_removing_its_network_boundary() {
+    let spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    let first = operations.ensure(&spec, None).await.unwrap();
+    objects.delay_deletion("Pod", 4);
+    let removal = operations.remove(&spec, first.id.as_deref());
+    tokio::pin!(removal);
+    tokio::select! {
+        result = &mut removal => panic!("delete must wait: {result:?}"),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {
+            assert!(objects.get("networking.k8s.io/v1", "NetworkPolicy", "agents", &spec.name).is_some());
+        }
+    }
+    removal.await.unwrap();
+    assert!(objects.get("v1", "Pod", "agents", &spec.name).is_none());
+    assert!(
+        objects
+            .get(
+                "networking.k8s.io/v1",
+                "NetworkPolicy",
+                "agents",
+                &spec.name
+            )
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn endpoint_grants_reject_service_drift_and_unroutable_addresses() {
+    let spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    operations.ensure(&spec, None).await.unwrap();
+    let mut service = objects.get("v1", "Service", "agents", &spec.name).unwrap();
+    service["spec"]["clusterIP"] = json!("10.96.0.42");
+    service["spec"]["clusterIPs"] = json!(["10.96.0.42"]);
+    for addresses in [
+        json!(["None"]),
+        json!(["127.0.0.1"]),
+        json!(["169.254.1.1"]),
+        json!(["255.255.255.255"]),
+        json!(["::ffff:10.0.0.1"]),
+        json!(["fe80::1"]),
+        json!(["::"]),
+        json!(["10.96.0.42", "fd00::42", "10.96.0.43"]),
+    ] {
+        let mut invalid = service.clone();
+        invalid["spec"]["clusterIP"] = addresses[0].clone();
+        invalid["spec"]["clusterIPs"] = addresses;
+        objects.insert(invalid);
+        assert!(
+            operations
+                .endpoint_addresses(&spec.storage(), &spec.endpoint())
+                .await
+                .is_err()
+        );
+    }
+    for (field, value) in [
+        ("selector", json!({"foreign":"pod"})),
+        ("ports", json!([])),
+        ("type", json!("NodePort")),
+    ] {
+        let mut invalid = service.clone();
+        invalid["spec"][field] = value;
+        objects.insert(invalid);
+        assert_eq!(
+            operations
+                .endpoint_addresses(&spec.storage(), &spec.endpoint())
+                .await,
+            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
+        );
+    }
+}
+
+#[tokio::test]
+async fn lost_first_creation_records_an_address_until_an_operator_resolves_it() {
+    for kind in ["PersistentVolumeClaim", "ConfigMap"] {
+        let spec = spec("ollama", false);
+        let objects = crate::kube_api::Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+        if kind == "ConfigMap" {
+            operations
+                .ensure_storage(&spec.storage(), None)
+                .await
+                .unwrap();
+        }
+        objects.fail_create(kind, true);
+        if kind == "ConfigMap" {
+            assert!(operations.ensure(&spec, None).await.is_err());
+            let partial = operations.read_for_removal(&spec, None).await.unwrap();
+            assert!(partial.id.is_some());
+            assert!(
+                operations
+                    .remove(&spec, partial.id.as_deref())
+                    .await
+                    .is_err()
+            );
+        } else {
+            assert!(
+                operations
+                    .ensure_storage(&spec.storage(), None)
+                    .await
+                    .is_err()
+            );
+        }
+        let before = objects.0.lock().unwrap().clone();
+        let error = if kind == "ConfigMap" {
+            operations.ensure(&spec, None).await.unwrap_err()
+        } else {
+            operations
+                .ensure_storage(&spec.storage(), None)
+                .await
+                .unwrap_err()
+        };
+        assert!(error.to_string().contains(kind), "{error}");
+        assert!(error.to_string().contains(&spec.name), "{error}");
+        assert_eq!(*objects.0.lock().unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn delete_timeout_keeps_the_network_boundary_and_can_be_retried() {
+    let spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    let first = operations.ensure(&spec, None).await.unwrap();
+    objects.delay_deletion("Pod", u32::MAX);
+    tokio::time::pause();
+    let mut removal = Box::pin(operations.remove(&spec, first.id.as_deref()));
+    let wall_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while objects
+        .deletion_reads(&spec.name)
+        .is_none_or(|reads| reads == u32::MAX)
+    {
+        tokio::select! {
+            biased;
+            result = &mut removal => panic!("delete returned before its first poll: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(
+            std::time::Instant::now() < wall_deadline,
+            "fixture did not receive delete/poll"
+        );
+    }
+    tokio::time::advance(std::time::Duration::from_secs(31)).await;
+    tokio::select! {
+        biased;
+        result = &mut removal => panic!("delete must allow the 60-second Pod grace period: {result:?}"),
+        _ = tokio::task::yield_now() => {}
+    }
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+    assert_eq!(
+        removal.await,
+        Err(nemoclaw_sdk::ObservationError::Incomplete)
+    );
+    tokio::time::resume();
+    assert!(
+        objects
+            .get(
+                "networking.k8s.io/v1",
+                "NetworkPolicy",
+                "agents",
+                &spec.name
+            )
+            .is_some()
+    );
+    objects
+        .0
+        .lock()
+        .unwrap()
+        .remove(&format!("/api/v1/namespaces/agents/pods/{}", spec.name));
+    operations.remove(&spec, first.id.as_deref()).await.unwrap();
+    assert!(
+        objects
+            .get(
+                "networking.k8s.io/v1",
+                "NetworkPolicy",
+                "agents",
+                &spec.name
+            )
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_replacement_during_delete_preserves_the_network_boundary() {
+    let spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    let first = operations.ensure(&spec, None).await.unwrap();
+    objects.delay_deletion("Pod", u32::MAX);
+    let mut removal = Box::pin(operations.remove(&spec, first.id.as_deref()));
+    let wall_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while objects.deletion_reads(&spec.name).is_none() {
+        tokio::select! {
+            biased;
+            result = &mut removal => panic!("delete returned before its first poll: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(std::time::Instant::now() < wall_deadline);
+    }
+    let mut pod = objects.get("v1", "Pod", "agents", &spec.name).unwrap();
+    pod["metadata"]["uid"] = json!("replacement");
+    objects.insert(pod.clone());
+    assert_eq!(
+        removal.await,
+        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
+    );
+    assert_eq!(objects.get("v1", "Pod", "agents", &spec.name), Some(pod));
+    assert!(
+        objects
+            .get(
+                "networking.k8s.io/v1",
+                "NetworkPolicy",
+                "agents",
+                &spec.name
+            )
+            .is_some()
+    );
 }

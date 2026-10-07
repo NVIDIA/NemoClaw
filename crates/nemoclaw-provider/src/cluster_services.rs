@@ -91,12 +91,11 @@ async fn operations(spec: &StorageSpec) -> Result<Operations, ObservationError> 
 #[async_trait::async_trait]
 impl Backend for ClusterServicesBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
-        let (storage, runtime_class) = match kind {
+        let (storage, runtime) = match kind {
             STORAGE_KIND => (storage(desired)?, None),
             SERVICE_KIND => {
                 let spec = specification(desired)?;
-                runtime_image(&spec)?;
-                (spec.storage(), spec.settings.runtime_class_name)
+                (spec.storage(), Some(spec))
             }
             _ => return Err(ObservationError::Query.into()),
         };
@@ -115,14 +114,22 @@ impl Backend for ClusterServicesBackend {
                 && specification(prior)?.port() != specification(desired)?.port()
             {
                 return Err(Error::Conflict(
-                    "changing the model serving port requires destroy and apply; storage retained",
+                    "changing the model serving port requires whole-deployment destroy and apply; destroy deletes sandbox files and conversation history but retains model and credential PVCs",
                 ));
             }
         }
-        operations(&storage)
-            .await?
-            .preflight(&storage, runtime_class.as_deref())
-            .await?;
+        if let Some(spec) = runtime {
+            runtime_image(&spec)?;
+            operations(&storage)
+                .await?
+                .preflight_workload(&spec)
+                .await?;
+        } else {
+            operations(&storage)
+                .await?
+                .preflight(&storage, None)
+                .await?;
+        }
         Ok(())
     }
     async fn read(
@@ -224,4 +231,49 @@ pub async fn endpoint_addresses(
         .await?
         .endpoint_addresses(storage, endpoint)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn plan_rejects_bound_port_changes_before_reading_metadata_or_cluster_credentials() {
+        for source in [
+            include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let document = nemoclaw_sdk::config::Document::parse(source).unwrap();
+            let generations = [
+                "workspace",
+                "provider",
+                "sandbox",
+                "kubernetes_storage",
+                "kubernetes_gateway",
+                "inference_service",
+                "ollama_service",
+            ]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+            let target = nemoclaw_sdk::compile::runtime_targets(&document, &generations)
+                .unwrap()
+                .into_iter()
+                .find(|target| target.kind == SERVICE_KIND)
+                .unwrap();
+            let mut changed = specification(&target.values).unwrap();
+            match &mut changed.runtime {
+                nemoclaw_runtime::RuntimeSpec::Vllm(service) => service.serving.port += 1,
+                nemoclaw_runtime::RuntimeSpec::Ollama(service) => service.serving.port += 1,
+            }
+            let desired = Row::from([("spec".into(), changed.encode().unwrap())]);
+            let error = ClusterServicesBackend::new()
+                .plan(SERVICE_KIND, &desired, Some(&target.values))
+                .await
+                .unwrap_err();
+            assert!(matches!(error, Error::Conflict(_)), "{error}");
+            let message = error.to_string();
+            assert!(message.contains("serving port"));
+            assert!(message.contains("sandbox files and conversation history"));
+        }
+    }
 }

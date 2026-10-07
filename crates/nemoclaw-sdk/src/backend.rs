@@ -58,7 +58,7 @@ impl Mutation {
         self.state.as_ref()
     }
     pub fn error(&self) -> Option<ObservationError> {
-        self.error
+        self.error.clone()
     }
     pub fn into_parts(self) -> (Option<Row>, Option<ObservationError>) {
         (self.state, self.error)

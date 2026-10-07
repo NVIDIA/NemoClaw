@@ -524,12 +524,12 @@ Paths:
 | `cpuLimitMillis` | integer | Yes | — | CPU limit in millicores; must be at least the request. Constraints: minimum 1. |
 | `cpuRequestMillis` | integer | Yes | — | Requested CPU capacity in millicores. Constraints: minimum 1. |
 | `imageMetadata` | [Credential](#credential) | Yes | — | Environment reference to an absolute local OCI metadata bundle for this service image. Plan and apply verify its digest, Linux architecture, and runtime labels before changing cluster resources. Destroy does not read it. |
-| `memoryLimitGiB` | integer | Yes | — | Container memory limit in GiB; must be at least the request. Constraints: minimum 1; maximum 8589934591. |
+| `memoryLimitGiB` | integer | Yes | — | Container memory limit in GiB; must cover the request, shared-memory size, and recipe preparation-memory requirement individually. Combined loading and serving demand needs additional headroom. Constraints: minimum 1; maximum 8589934591. |
 | `memoryRequestGiB` | integer | Yes | — | Requested container memory in GiB, independent of the model's GPU budget. Constraints: minimum 1; maximum 8589934591. |
 | `nodeSelector` | map of string | No | — | Required node labels in addition to the model's declared CPU architecture. Constraints: keys: pattern `^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\s\S])`; values: pattern `^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\s\S])`. |
 | `runtimeClassName` | string | No | — | Existing RuntimeClass to use for the model Pod. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\s\S])`; maximum characters 253. |
 | `storageClass` | string | No | — | StorageClass for retained volumes. Omission selects the cluster default. Constraints: pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\s\S])`; maximum characters 253. |
-| `storageGiB` | integer | Yes | — | Retained model-volume capacity in GiB. Constraints: minimum 1; maximum 8589934591. |
+| `storageGiB` | integer | Yes | — | Retained model-volume capacity in GiB. Must cover prepared data plus a 16 GiB working reserve; model downloads and earlier snapshots need additional space. Constraints: minimum 16; maximum 8589934591. |
 | `tolerations` | array of [ServiceToleration](#servicetoleration) | No | — | Node taints the model Pod may tolerate. |
 
 ## ManagedKubernetes
@@ -1060,7 +1060,7 @@ Managed Ollama daemon and selected model.
 | `image` | string | Yes | — | Immutable runtime image containing Ollama and the NemoClaw supervisor. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"ollama"`. |
-| `kubernetes` | [KubernetesService](#kubernetesservice) | No | — | Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway. |
+| `kubernetes` | [KubernetesService](#kubernetesservice) | With a managed Kubernetes or OpenShift gateway | — | Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway. |
 | `memory` | [OllamaMemory](#ollamamemory) | No | — | GPU budget and resident memory-protection thresholds. |
 | `model` | [OllamaModel](#ollamamodel) | Yes | — | Selected immutable Ollama registry model. |
 | `placement` | [ServicePlacement](#serviceplacement) | No | — | Optional remote Docker placement. Requires publication. |
@@ -1094,7 +1094,7 @@ Managed vLLM runtime and immutable model snapshot.
 | `image` | string | Yes | — | Immutable runtime image containing vLLM, the NemoClaw supervisor, and any declared recipe tools. Constraints: pattern `^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`. |
 | `imagePullPolicy` | [ImagePullPolicy](#imagepullpolicy) | No | — | Image acquisition before container creation. Omission means IfNotPresent. Constraints: `"IfNotPresent"` or `"Never"`. |
 | `kind` | string | Yes | — | Supported installer selected by this service definition. Constraints: `"vllm"`. |
-| `kubernetes` | [KubernetesService](#kubernetesservice) | No | — | Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway. |
+| `kubernetes` | [KubernetesService](#kubernetesservice) | With a managed Kubernetes or OpenShift gateway | — | Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway. |
 | `memory` | [Memory](#memory) | No | — | GPU budget and resident watchdog thresholds. Omission selects the SDK defaults. |
 | `model` | [Model](#model) | Yes | — | Public Hugging Face repository and immutable commit. |
 | `placement` | [ServicePlacement](#serviceplacement) | With external gateway or Podman; paired with publication | — | SSH Docker placement. Required with an external gateway or Podman sandbox; requires publication. |

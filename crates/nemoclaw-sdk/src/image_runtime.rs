@@ -4,7 +4,9 @@
 //! Image-owned launch and executable metadata, independent of Fabric descriptors.
 use crate::{config::ExplicitPolicy, fabric_catalog::FabricAdapter};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub type ClusterGrants = BTreeMap<String, Vec<String>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +101,9 @@ pub struct RuntimeBinding {
 pub struct PolicyInput {
     pub explicit: Option<ExplicitPolicy>,
     pub managed: BTreeMap<String, crate::config::PolicyRule>,
+    /// Managed rule names whose exact addresses must come from verified Services.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub cluster_grants: BTreeSet<String>,
 }
 impl PolicyInput {
     pub fn for_sandbox(
@@ -111,6 +116,7 @@ impl PolicyInput {
             NetworkPolicy::Explicit(policy) => Some(policy.clone()),
         };
         let mut managed = BTreeMap::new();
+        let mut cluster_grants = BTreeSet::new();
         if let Some(search) = document.web_search(sandbox)? {
             if explicit.as_ref().is_some_and(|policy| {
                 policy.network_policies.keys().any(|name| {
@@ -137,6 +143,15 @@ impl PolicyInput {
                 false,
             )
             .map_err(|_| ConfigError::new("invalid native inference policy"))?;
+            if provider
+                .definition
+                .service_ref
+                .as_ref()
+                .and_then(|name| document.spec.services.get(name))
+                .is_some_and(|service| service.kubernetes().is_some())
+            {
+                cluster_grants.insert(profile.id.clone());
+            }
             let policy = openshell_core::proto::SandboxPolicy {
                 version: 1,
                 network_policies: [(
@@ -165,10 +180,61 @@ impl PolicyInput {
                 "managed inference and search policy names are reserved",
             ));
         }
-        Ok(Self { explicit, managed })
+        Ok(Self {
+            explicit,
+            managed,
+            cluster_grants,
+        })
     }
 }
 impl RuntimeBinding {
+    /// Resolve only marked Service rules; all other authored policy bytes stay intact.
+    pub fn granted_policy(
+        &self,
+        input: &PolicyInput,
+        grants: &ClusterGrants,
+    ) -> Result<openshell_core::proto::SandboxPolicy, crate::ObservationError> {
+        if input.cluster_grants.len() != grants.len() {
+            return Err(crate::ObservationError::BindingMismatch);
+        }
+        let mut policy = self.policy(input)?;
+        for name in &input.cluster_grants {
+            let addresses = grants
+                .get(name)
+                .ok_or(crate::ObservationError::BindingMismatch)?;
+            if addresses.is_empty()
+                || addresses.len() > 2
+                || addresses.iter().collect::<BTreeSet<_>>().len() != addresses.len()
+            {
+                return Err(crate::ObservationError::BindingMismatch);
+            }
+            for address in addresses {
+                let (host, prefix) = address
+                    .split_once('/')
+                    .ok_or(crate::ObservationError::BindingMismatch)?;
+                let ip: std::net::IpAddr = host
+                    .parse()
+                    .map_err(|_| crate::ObservationError::BindingMismatch)?;
+                if prefix != if ip.is_ipv4() { "32" } else { "128" }
+                    || !crate::kubernetes::services::service_address_allowed(&ip)
+                {
+                    return Err(crate::ObservationError::BindingMismatch);
+                }
+            }
+            if !input.managed.contains_key(name) {
+                return Err(crate::ObservationError::BindingMismatch);
+            }
+            let rule = policy
+                .network_policies
+                .get_mut(name)
+                .ok_or(crate::ObservationError::BindingMismatch)?;
+            if rule.endpoints.len() != 1 || !rule.endpoints[0].allowed_ips.is_empty() {
+                return Err(crate::ObservationError::BindingMismatch);
+            }
+            rule.endpoints[0].allowed_ips.clone_from(addresses);
+        }
+        Ok(policy)
+    }
     pub fn from_json(encoded: &str) -> Result<Self, crate::ObservationError> {
         let binding: Self =
             serde_json::from_str(encoded).map_err(|_| crate::ObservationError::Incomplete)?;

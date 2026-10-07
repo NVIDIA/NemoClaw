@@ -86,6 +86,104 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
 }
 
 #[test]
+fn failed_kubernetes_model_rollout_accepts_only_revised_model_workloads() {
+    let working = Document::parse(
+        include_bytes!("../../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+    )
+    .unwrap();
+    let mut failed = serde_json::to_value(&working).unwrap();
+    failed["spec"]["services"]["qwen"]["model"]["digest"] = json!("a".repeat(64));
+    let failed = Document::parse(failed.to_string().as_bytes()).unwrap();
+    let mut record = Record::new(failed.clone()).unwrap();
+    record.begin_runtime_apply(&failed);
+    assert!(
+        record.validate_pending_intent(&working).is_ok(),
+        "a failed model rollout must permit restoring the working model"
+    );
+    for (path, value) in [
+        ("/spec/sandboxes/0/name", json!("renamed")),
+        (
+            "/spec/gateway/kubernetes/namespace",
+            json!("another-target"),
+        ),
+        ("/spec/services/qwen/kubernetes/storageGiB", json!(200)),
+    ] {
+        let mut revised = serde_json::to_value(&working).unwrap();
+        *revised.pointer_mut(path).unwrap() = value;
+        let revised = Document::parse(revised.to_string().as_bytes()).unwrap();
+        assert!(
+            record.validate_pending_intent(&revised).is_err(),
+            "unrelated change at {path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn plan_and_apply_warn_about_unauthenticated_cluster_network_boundaries_before_mutation() {
+    for (source, remove_authentication, needs_warning) in [
+        (
+            include_bytes!("../../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+            false,
+            true,
+        ),
+        (
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            false,
+            false,
+        ),
+        (
+            include_bytes!("../../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            true,
+            true,
+        ),
+        (
+            include_bytes!("../../../../../examples/managed-ollama-gpu.yaml").as_slice(),
+            false,
+            false,
+        ),
+    ] {
+        let mut document = Document::parse(source).unwrap();
+        if remove_authentication {
+            let crate::services::ServiceDefinition::Vllm(service) =
+                document.spec.services.get_mut("qwen").unwrap()
+            else {
+                unreachable!()
+            };
+            service.authentication = None;
+        }
+        for apply in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let saved = events.clone();
+            let deployment = Deployment::new(
+                &directory.path().join("state"),
+                &directory.path().join("missing-bundle"),
+            )
+            .with_progress(Arc::new(move |event| saved.lock().unwrap().push(event)));
+            let result = if apply {
+                deployment.apply(&document, &CancellationToken::new()).await
+            } else {
+                deployment.plan(&document, &CancellationToken::new()).await
+            };
+            assert!(result.is_err());
+            let events = events.lock().unwrap();
+            let warnings: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    Progress::Warning { message } => Some(message),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(warnings.len(), usize::from(needs_warning));
+            if needs_warning {
+                assert!(warnings[0].contains("qwen") && warnings[0].contains("NetworkPolicy"));
+            }
+            assert!(!events.contains(&Progress::MutationStarted));
+        }
+    }
+}
+
+#[test]
 fn interrupted_kubernetes_platform_apply_cannot_move_to_another_namespace() {
     let (document, _) = kubernetes_context();
     let mut record = Record::new(document.clone()).unwrap();

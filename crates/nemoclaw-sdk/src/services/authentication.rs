@@ -65,7 +65,8 @@ impl Source {
                 .validate()
                 .map_err(|_| ObservationError::BindingMismatch)?;
             let url = url::Url::parse(published).map_err(|_| ObservationError::BindingMismatch)?;
-            let host = format!("{}.{}.svc", storage.name, storage.namespace());
+            let host =
+                crate::kubernetes::services::service_host(&storage.name, storage.namespace());
             if storage.owner != owner
                 || !storage.authenticated
                 || !storage.name.starts_with(&format!("{prefix}model-"))

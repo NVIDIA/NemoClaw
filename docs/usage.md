@@ -292,8 +292,12 @@ If the error still reports an unfinished creation, preserve that resource's orig
 Reapply successfully before removing or changing that unresolved resource or requesting teardown; the server may have created it without returning its identity.
 Older unfinished records without per-resource recovery evidence still require the exact configuration from the unfinished operation.
 If managed gateway or inference runtime apply fails, revised intent or teardown can proceed using recorded bindings and the existing ownership checks.
+During an unfinished Kubernetes platform apply, revisions may change only model workloads: gateway prerequisites, retained storage, and the compiled OpenShell deployment must remain unchanged.
+This permits restoring a working model digest after a failed rollout; it does not permit renaming or replacing a sandbox, changing its policy, or moving the gateway.
 The same applies when an OpenShell-graph apply only observes resources, updates or deletes established bindings, or changes disposable compute.
 Runtime recovery does not clear pending OpenShell creations.
+An OpenShell create rejection without a saved resource identity still leaves the pending-creation guard in place; automatic cleanup after a definitive rejection is not implemented.
+Preserve that record and its original bundle rather than deleting state or attempting adoption from another state directory.
 Export remains unavailable during pending creation recovery, unfinished managed-runtime apply, or unfinished teardown.
 If an OpenShell-stage apply planned no non-disposable resource creations, a later export can verify its established bindings without another successful apply; incomplete or inconsistent observations still fail export.
 If readiness fails after resource creation, provider state and persistent data remain recorded.

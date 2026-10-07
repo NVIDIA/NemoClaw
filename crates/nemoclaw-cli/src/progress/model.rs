@@ -75,6 +75,13 @@ impl Model {
         now: Instant,
     ) -> Option<Milestone> {
         let update = match event {
+            Progress::Warning { message } => {
+                return Some(Milestone::new(
+                    format!("Warning: {message}"),
+                    Tone::Warning,
+                    true,
+                ));
+            }
             Progress::MutationStarted => return None,
             Progress::Waiting { operation, elapsed } => {
                 let label = operation_label(operation).or(verbose.then_some(operation));

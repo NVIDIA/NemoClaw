@@ -107,6 +107,8 @@ A nonempty `NO_COLOR` disables styling while preserving inline progress.
 Redirected streams and JSON/YAML results have no added styling; `--progress plain` also disables styling and the wordmark.
 Plain output reports stage changes and throttled waiting updates without cursor movement; use `--progress plain` for a terminal transcript or accessibility.
 Use `--progress off` to suppress progress while preserving results and errors.
+Warnings remain in final text and JSON output even when progress is off or the operation fails.
+Plan and apply warn when an unauthenticated cluster model service relies on NetworkPolicy enforcement that NemoClaw cannot verify through the Kubernetes API.
 Redirected stderr uses plain progress by default, so scripts requiring a quiet stream should explicitly select `off`.
 
 Resource operations come from OpenTofu's machine-readable events.
@@ -117,12 +119,13 @@ Default progress omits known implementation steps; unrecognized resources and er
 Verbose output adds implementation steps, internal addresses, timings, and outcomes.
 Progress is best-effort and never determines the operation's success.
 
-The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployment/mod.rs) and adds plan completeness for scripts:
+The CLI preserves the [SDK result fields](../../crates/nemoclaw-sdk/src/deployment/mod.rs) and adds plan completeness and collected warnings for scripts:
 
 | Field | Meaning |
 |---|---|
 | `outcome` | `planned`, `succeeded`, or `destroyed` |
 | `complete` | Whether a planned result has no deferred work; inspect this alongside the exit code |
+| `warnings` | Operator-action messages collected during the operation; also present on failures, omitted when empty; does not change `complete` |
 | `changes` | Resource addresses and planned/applied action lists; an empty list does not mean apply skipped readiness checks |
 | `connection` | Plan/apply gateway endpoint and UID-derived workspace selectors; does not establish access or configure OpenShell CLI credentials |
 | `deferred` | Unresolved planning prerequisites or resource stages; omitted when empty |

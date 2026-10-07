@@ -107,12 +107,26 @@ Recognized reasons are `ControlSupervisorExited`, `ContainerExited`, `IdentityRe
 `ControlSupervisorStartFailed` means the control supervisor could not start; inspect the sandbox policy and attached providers.
 These explanations are fixed text, not the gateway's condition message.
 Error, completed, stopped, and deleting phases fail immediately and retain resources.
-The SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
+For sandbox status conditions, the SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
+Synchronous OpenShell validation rejections for workspace creation, sandbox creation, and provider or provider-profile deletion preserve a sanitized printable-ASCII detail of at most 1024 characters.
+For example, a network endpoint ambiguity can report conflicting `allowed_ips` metadata, identifying a policy/profile address-grant disagreement.
+Credential-bearing provider creation and update requests, status reads, and exec failures retain category-only diagnostics.
+This rejection reporting applies to Docker, Podman, and cluster gateways.
 Use the OpenShell inspection and log collection procedure below before cleanup.
 If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); ordinary apply protects the existing sandbox from replacement.
-A failed first apply can be [destroyed](usage.md#destroy) with its retained state before a successful reapply.
+A failed first apply can be [destroyed](usage.md#destroy) when the retained state accounts for its resource identities.
+An unresolved creation without a saved identity still requires its original pending intent; a validation rejection alone does not retire that guard.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
+
+For a managed cluster model, readiness reports recognized Pod or container stop reasons and the exit code when available.
+Pod reasons such as eviction take precedence over a container's generic `Error`; permanent `ErrImageNeverPull` and `InvalidImageName` failures report that the runtime cannot start, since there may be no process logs.
+Transient status-read failures retry for up to 30 seconds; a temporary `CreateContainerConfigError` does not by itself trigger an immediate stop.
+Runtime-status freshness compares the Pod's start and update timestamps, without comparing them with the CLI host clock.
+The model Pod uses `FallbackToLogsOnError`, which can copy a raw log tail into Kubernetes Pod status.
+NemoClaw displays only the final runtime `stopped:` detail, bounded to 1024 printable-ASCII characters with credential and token-like content redacted.
+Raw Pod status and logs remain separate diagnostic sources; restrict their access and redact them before sharing.
+See [cluster model recovery](kubernetes.md#run-a-managed-model-service) and [timeout budgets](inference.md#understand-timeout-budgets) before changing the configuration.
 
 ## Inspect an OpenShell Sandbox Failure
 

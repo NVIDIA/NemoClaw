@@ -3,6 +3,7 @@
 //! Retained model storage and disposable inference workloads on the gateway cluster.
 
 mod operations;
+mod readiness;
 mod resources;
 mod status;
 use crate::{Error, config::ImagePullPolicy, services::KubernetesService};
@@ -10,9 +11,28 @@ use nemoclaw_runtime::RuntimeSpec;
 pub use operations::{Operations, Response};
 pub use resources::{compute_objects, storage_objects};
 use serde::{Deserialize, Serialize};
+pub use status::{PodExec, RuntimeFile};
 
 pub const SERVICE_KIND: &str = "kubernetes_service";
 pub const STORAGE_KIND: &str = "kubernetes_service_storage";
+
+/// OpenShell sandboxes resolve absolute DNS names without the Pod search list.
+pub fn service_host(name: &str, namespace: &str) -> String {
+    format!("{name}.{namespace}.svc.cluster.local")
+}
+
+/// Accept a unicast Service address, excluding local and mapped destinations.
+pub fn service_address_allowed(address: &std::net::IpAddr) -> bool {
+    !address.is_unspecified()
+        && !address.is_loopback()
+        && !address.is_multicast()
+        && match address {
+            std::net::IpAddr::V4(ip) => !ip.is_link_local() && !ip.is_broadcast(),
+            std::net::IpAddr::V6(ip) => {
+                !ip.is_unicast_link_local() && ip.to_ipv4_mapped().is_none()
+            }
+        }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -57,7 +77,7 @@ impl StorageSpec {
             || !regex::Regex::new(r"^[a-f0-9]{32}$")
                 .unwrap()
                 .is_match(&self.generation)
-            || self.storage_gib == 0
+            || self.storage_gib < 16
         {
             return Err(Error::Conflict(
                 "invalid Kubernetes model storage specification",
@@ -121,16 +141,16 @@ impl Spec {
     }
     pub fn endpoint(&self) -> String {
         format!(
-            "http://{}.{}.svc:{}{}",
-            self.name,
-            self.namespace(),
+            "http://{}:{}{}",
+            service_host(&self.name, self.namespace()),
             self.port(),
             "/v1"
         )
     }
     pub fn validate(&self) -> Result<(), Error> {
         self.storage().validate()?;
-        self.settings.validate()?;
+        self.settings
+            .validate_runtime(&self.runtime, self.shared_memory_gib)?;
         let architecture = match &self.runtime {
             RuntimeSpec::Vllm(service) => service.architecture()?,
             RuntimeSpec::Ollama(service) => service.architecture()?,

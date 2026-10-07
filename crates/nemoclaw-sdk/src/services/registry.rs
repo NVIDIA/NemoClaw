@@ -189,16 +189,29 @@ impl ServiceDefinition {
     fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
         let gateway = &document.spec.gateway;
         if let Some(settings) = self.kubernetes() {
-            settings.validate()?;
             crate::config::validation::require(
                 gateway.as_kubernetes().is_some(),
                 "cluster model services require a managed Kubernetes gateway",
             )?;
-            let (placement, container) = match self {
-                Self::Vllm(service) => (service.published_placement()?, &service.container),
-                Self::Ollama(service) => (service.published_placement()?, &service.container),
+            let (placement, container, runtime) = match self {
+                Self::Vllm(service) => (
+                    service.published_placement()?,
+                    &service.container,
+                    nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(service.runtime.clone())),
+                ),
+                Self::Ollama(service) => (
+                    service.published_placement()?,
+                    &service.container,
+                    nemoclaw_runtime::RuntimeSpec::Ollama(Box::new(service.runtime.clone())),
+                ),
                 Self::OllamaProxy(_) => unreachable!(),
             };
+            settings.validate_runtime(
+                &runtime,
+                container
+                    .as_ref()
+                    .map_or(8, |container| container.shared_memory_gi_b),
+            )?;
             return crate::config::validation::require(
                 placement.is_none()
                     && container.as_ref().is_none_or(|container| {

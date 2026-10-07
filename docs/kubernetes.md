@@ -17,6 +17,8 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, Services, Deployments, StatefulSets and NetworkPolicies.
   Managed inference also needs Pods, pod execution, and PersistentVolumeClaims in that namespace.
+  It lists `discovery.k8s.io/v1` EndpointSlices to verify that ready Service backends belong to the recorded model Pod.
+  The caller must be permitted to create SelfSubjectAccessReviews for model-resource permission preflight.
   The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces, plus RuntimeClasses when `runtimeClassName` is set.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
   OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
@@ -102,7 +104,10 @@ Before applying, the platform operator must provide:
 - A CSI provisioner with a usable `ReadWriteOnce` StorageClass and enough storage for model files and prepared data.
   Set `storageClass` to select it, or omit the field to use the cluster's default class.
 - A network plugin that enforces NetworkPolicies, working cluster DNS, and permitted outbound access for the selected public model registry.
+  The current cluster path requires the `cluster.local` DNS domain.
   Managed Ollama has no native bearer authentication; its access boundary depends on the cluster network policy.
+  Without enforcement, other Pods can use Ollama's full native API, including model-management operations; the Kubernetes API cannot prove that the network plugin enforces the policy.
+  Plan and apply warn about this dependency for each unauthenticated cluster service; JSON results include `warnings`, including when the operation fails.
 - Runtime and agent images the selected nodes can pull by digest.
   Build the hosted runtime from this checkout using [the runtime image procedure](build.md#build-a-runtime-image); bare upstream vLLM and Ollama images lack the required supervisor.
   The hosted runtime must run as UID/GID 1000 on Kubernetes or the namespace-assigned identity on OpenShift, and the storage driver must make its mounted directories writable by that identity.
@@ -139,9 +144,18 @@ CPU and memory requests must not exceed their limits.
 The required `storageGiB` field sizes the model PVC; optional `storageClass`, `runtimeClassName`, `nodeSelector`, and `tolerations` select the cluster resources.
 The [generated field reference](reference/configuration.md) defines accepted values.
 Pod memory limits include memory-backed shared memory; size them for the model's loading and serving needs as well as `container.sharedMemoryGiB`.
-The runtime's hardware, capacity, and resident memory checks still apply.
+Validation rejects a shared-memory size or recipe preparation-memory requirement larger than `memoryLimitGiB`.
+These are minimum checks; fitting each declared allocation does not establish that their combined peak fits the limit.
+The runtime's hardware and resident host/GPU memory checks still apply.
 Its resident monitor observes host memory through `/proc`; it does not measure cgroup memory pressure.
 A Pod can therefore reach its Kubernetes memory limit and be OOM-killed before the host-memory watchdog stops inference.
+
+Choose `storageGiB` for the pinned model download, recipe `preparedBytes` when present, a 16 GiB working reserve, and any earlier snapshots retained on the PVC.
+Validation requires at least 16 GiB and checks declared prepared data plus that reserve before mutation.
+The cluster path does not resolve the full model manifest or measure remaining PVC space before provisioning; it does not provide Docker's remaining-download disk-capacity check.
+Check the model registry's artifact sizes and the storage driver's usable capacity before the first apply.
+An undersized retained PVC cannot be resized through NemoClaw or replaced under the same binding.
+Preserve its state and data; provision a separately identified deployment with adequately sized storage instead of editing the receipt or deleting a bound claim.
 
 Each service has its own retained model PVC mounted at `/data`.
 For vLLM with `authentication: bearer`, a separate retained 1 GiB credential PVC mounts at `/credentials`; the runtime creates the key and the deployment registers it through the existing credential path.
@@ -150,21 +164,45 @@ Keep the deployment state and both PVCs together for recovery; deleting a bound 
 PVC resize, storage-class changes, changes to vLLM authentication mode, existing-volume adoption, and transfer between clusters are not supported.
 
 Use `serviceRef` to connect providers to the service, and `provider: openai` with `api: openai-completions` for the examples' OpenClaw adapter.
-The SDK derives an internal cluster DNS endpoint; do not set a provider endpoint or credential alongside `serviceRef`.
+The SDK derives the fully qualified internal host `<service>.<namespace>.svc.cluster.local`; do not set a provider endpoint or credential alongside `serviceRef`.
 Multiple agents and providers may share a service.
 The provider creates a ClusterIP Service and a NetworkPolicy; no host port, NodePort, or LoadBalancer is published.
-The NetworkPolicy allows inference connections from Pods in the gateway's namespace; workloads in that namespace share this access boundary.
-The imported inference profile grants only the verified Service's assigned IP addresses; general authored HTTP DNS endpoints remain rejected.
-Model, image, and resource changes preserve the Service and its addresses while replacing compute.
-Changing `serving.port` requires explicit destroy and reapply with the retained PVCs; ordinary apply rejects a port change before mutation.
+The NetworkPolicy admits only OpenShell supervisor Pods in the gateway's namespace on the model port.
+The supervisor proxy's inference grant limits sandbox traffic to `/v1/**`; admitted peers can still reach Ollama's full native API directly.
+Principals allowed to create or relabel Pods in that namespace remain inside the trust boundary.
+The imported inference profile and each sandbox's matching network rule grant only the verified Service's assigned IP addresses; refresh compares both with the live Service, and a sandbox created against other addresses must be replaced.
+General authored HTTP DNS endpoints remain rejected.
+Model, image, and workload-resource changes preserve the Service and its addresses while replacing compute.
+Renaming only the local image-metadata environment reference leaves compute unchanged.
+Changing `serving.port` requires whole-deployment destroy and reapply with the retained PVCs; ordinary apply rejects a bound port change before mutation.
+Destroy deletes every sandbox's files and conversation history while retaining model and credential PVCs; review [destroy consequences](usage.md#destroy) before choosing that path.
 Docker `placement` and `publication`, host IPC, `ollamaProxy`, CPU-only serving, CPU offload in Ollama, and distributed or multi-GPU serving are outside this cluster path.
 
 Use the same plan and apply commands as [the managed gateway procedure](#deploy-with-a-managed-gateway).
 Plan validates intent and observes bound resources without starting a model or changing cluster resources.
+Preflight checks the selected classes and API permissions and uses server-side dry runs to check admission before creating new resources.
+The first plan cannot dry-run namespace-scoped workloads when the managed namespace does not exist yet; apply repeats those checks before workload creation.
+Objects already present are not dry-run as duplicate creates: that would conflict with their names and count their quota allocation twice.
+Preflight therefore does not prove admission for every later replacement of an existing workload.
+Admission, quotas, and available capacity can still change after preflight.
 Apply creates retained storage and disposable service resources, starts the hosted runtime, and checks its bounded readiness before configuring dependent agents.
 The Pod does not automatically restart a stopped inference process.
 On failed model startup or protective shutdown, preserve the state and PVCs, correct the resource or runtime condition, and use [explicit recovery](usage.md#recover-an-interrupted-operation).
+An unfinished cluster runtime apply permits corrections limited to model workloads, including restoring the preceding model digest.
+Gateway prerequisites, retained service storage, and the compiled OpenShell deployment must remain unchanged; this does not authorize renaming a sandbox or changing its policy.
 Recovery can recreate compute only after verifying retained storage and ownership.
+If a create reply is lost after the API server accepts an object, recovery reports the unrecorded resource's kind, namespace, and name instead of adopting it or reporting successful cleanup.
+Preserve the pending receipt. An operator must inspect that exact object and verify its deployment owner and generation before deciding whether to remove it; a subsequent apply or destroy rechecks the pending address.
+Do not delete a PVC without accounting for its model data or credential identity, and do not erase the receipt to bypass the refusal.
+
+Refresh rejects changes to an owned Service or NetworkPolicy's expected specification.
+Endpoint grants also reject ready EndpointSlice members that do not identify the recorded model Pod.
+For a deployment from an earlier experimental build, inspect the retained object UID, owner, and generation before an operator repairs its policy to the current supervisor-only form.
+Replacing the object gives it a new UID that NemoClaw will not adopt; whole-deployment destroy is not a data-preserving policy migration.
+Older short-DNS endpoints and sandbox policies require the existing sandbox change procedure; revised policy bytes also cannot replace an unresolved pending creation's recorded intent.
+Keep the original bundle and entire state directory for such records.
+Automatic cleanup after a definitive rejected sandbox creation remains follow-up work; do not edit intent records or reuse their resources with a fresh state directory.
+Records accepted by earlier capacity rules require their original bundle for observation or teardown if storage is below 16 GiB or the Pod memory limit is smaller than declared preparation or shared memory; the new validation also applies when reading retained state.
 
 A ready model service does not establish a real agent reply.
 The current Fabric pin still reports agent health as unsupported, so apply stops at agent readiness even when model startup succeeds.

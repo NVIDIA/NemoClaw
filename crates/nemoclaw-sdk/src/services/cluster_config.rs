@@ -22,13 +22,13 @@ pub struct KubernetesService {
     #[serde(rename = "memoryRequestGiB")]
     #[schemars(range(min = 1))]
     pub memory_request_gib: u64,
-    /// Container memory limit in GiB; must be at least the request.
+    /// Container memory limit in GiB; must cover the request, shared-memory size, and recipe preparation-memory requirement individually. Combined loading and serving demand needs additional headroom.
     #[serde(rename = "memoryLimitGiB")]
     #[schemars(range(min = 1))]
     pub memory_limit_gib: u64,
-    /// Retained model-volume capacity in GiB.
+    /// Retained model-volume capacity in GiB. Must cover prepared data plus a 16 GiB working reserve; model downloads and earlier snapshots need additional space.
     #[serde(rename = "storageGiB")]
-    #[schemars(range(min = 1))]
+    #[schemars(range(min = 16))]
     pub storage_gib: u64,
     /// StorageClass for retained volumes. Omission selects the cluster default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,6 +45,47 @@ pub struct KubernetesService {
 }
 
 impl KubernetesService {
+    /// Check declared storage and memory against runtime budgets before mutation.
+    pub fn validate_runtime(
+        &self,
+        runtime: &nemoclaw_runtime::RuntimeSpec,
+        shared_memory_gib: u64,
+    ) -> Result<(), crate::config::ConfigError> {
+        self.validate()?;
+        let (prepared, preparation_memory) = match runtime {
+            nemoclaw_runtime::RuntimeSpec::Vllm(service) => {
+                service.recipe.as_ref().map_or((0, 0), |recipe| {
+                    (
+                        recipe.resources.prepared_bytes,
+                        recipe.resources.preparation_memory_gi_b,
+                    )
+                })
+            }
+            nemoclaw_runtime::RuntimeSpec::Ollama(_) => (0, 0),
+        };
+        crate::config::validation::require(
+            shared_memory_gib <= self.memory_limit_gib,
+            "cluster memoryLimitGiB must cover container.sharedMemoryGiB",
+        )?;
+        crate::config::validation::require(
+            preparation_memory <= self.memory_limit_gib,
+            "cluster memoryLimitGiB must cover recipe preparationMemoryGiB",
+        )?;
+        let invalid =
+            || crate::config::ConfigError::new("cluster storage capacity exceeds supported bounds");
+        let required = prepared
+            .checked_add(16 * nemoclaw_runtime::hardware::GIB)
+            .ok_or_else(invalid)?;
+        let capacity = self
+            .storage_gib
+            .checked_mul(nemoclaw_runtime::hardware::GIB)
+            .ok_or_else(invalid)?;
+        crate::config::validation::require(
+            capacity >= required,
+            "cluster storageGiB must cover recipe preparedBytes plus a 16 GiB working reserve; allow additional space for model downloads and retained snapshots",
+        )
+    }
+
     /// Check declared capacity and scheduling without contacting the cluster.
     pub fn validate(&self) -> Result<(), crate::config::ConfigError> {
         crate::config::schema::validate_definition("KubernetesService", self)?;

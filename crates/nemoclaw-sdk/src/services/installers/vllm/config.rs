@@ -13,6 +13,7 @@ pub struct Service {
     /// Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "crate::services::KubernetesService")]
+    #[schemars(extend("x-nemoclaw-required" = "With a managed Kubernetes or OpenShift gateway"))]
     pub kubernetes: Option<crate::services::KubernetesService>,
     /// Optional managed container IPC and shared-memory settings. Omission uses private IPC and 8 GiB of shared memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]

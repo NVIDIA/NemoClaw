@@ -82,9 +82,8 @@ pub enum Observation<T> {
     Absent,
 }
 
-/// Safe diagnostic categories. Raw backend messages can contain credentials and
-/// must not be copied into public errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Diagnostic categories and explicitly bounded, redacted backend rejections.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObservationError {
     Authentication,
     Permission,
@@ -95,6 +94,26 @@ pub enum ObservationError {
     BindingMismatch,
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
+    Rejected {
+        operation: &'static str,
+        code: &'static str,
+        detail: Box<str>,
+    },
+    ModelRuntimeStopped {
+        reason: &'static str,
+        exit_code: Option<i32>,
+        detail: Box<str>,
+    },
+    UnrecordedResource {
+        kind: String,
+        namespace: String,
+        name: String,
+    },
+    Admission {
+        kind: String,
+        name: String,
+        detail: Box<str>,
+    },
     Hardware(nemoclaw_runtime::hardware::HardwareDiagnostic),
     FabricConfiguration {
         stage: &'static str,
@@ -114,6 +133,44 @@ pub enum ObservationError {
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Rejected {
+                operation,
+                code,
+                detail,
+            } => write!(f, "OpenShell {operation} rejected ({code}): {detail}"),
+            Self::UnrecordedResource {
+                kind,
+                namespace,
+                name,
+            } => write!(
+                f,
+                "Kubernetes {kind} {namespace}/{name} may have been created before its identity was recorded; verify and remove that object before retrying; resources retained"
+            ),
+            Self::Admission { kind, name, detail } => {
+                write!(f, "Kubernetes rejected {kind} {name}: {detail}")
+            }
+            Self::ModelRuntimeStopped {
+                reason,
+                exit_code,
+                detail,
+            } => {
+                if matches!(*reason, "ErrImageNeverPull" | "InvalidImageName") {
+                    write!(
+                        f,
+                        "model runtime cannot start: reason {reason}; storage retained"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "model runtime stopped: reason {reason}, exit code {}",
+                        exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
+                    )?;
+                    if !detail.is_empty() {
+                        write!(f, "; {detail}")?;
+                    }
+                    f.write_str("; inspect the model Pod logs; storage retained")
+                }
+            }
             Self::SandboxConfigurationRejected { reason } => write!(
                 f,
                 "OpenShell configuration rejected: {reason}; resources retained"
@@ -152,6 +209,47 @@ impl fmt::Display for ObservationError {
 }
 
 impl std::error::Error for ObservationError {}
+
+impl ObservationError {
+    /// Bound backend diagnostics and remove credentials before they enter public errors.
+    pub fn sanitized_detail(detail: &str) -> Box<str> {
+        use std::sync::OnceLock;
+        static CREDENTIALS: OnceLock<regex::Regex> = OnceLock::new();
+        static BEARER: OnceLock<regex::Regex> = OnceLock::new();
+        static TOKENS: OnceLock<regex::Regex> = OnceLock::new();
+        let printable: String = detail
+            .chars()
+            .map(|character| {
+                if character.is_ascii_graphic() || character == ' ' {
+                    character
+                } else {
+                    ' '
+                }
+            })
+            .collect();
+        let bearer = BEARER.get_or_init(|| {
+            regex::Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
+                .expect("constant diagnostic bearer pattern")
+        });
+        let credentials = CREDENTIALS.get_or_init(|| {
+            regex::Regex::new(r#"(?i)["']?(?:authorization|api[_-]?key|token|password|secret)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}]+)"#)
+                .expect("constant diagnostic credential pattern")
+        });
+        let tokens = TOKENS.get_or_init(|| {
+            regex::Regex::new(r"[A-Za-z0-9_+/=-]{32,}").expect("constant diagnostic token pattern")
+        });
+        // Redact Bearer first: a key/value match alone would consume only the scheme.
+        let hidden = bearer.replace_all(&printable, "[REDACTED]");
+        let hidden = credentials.replace_all(&hidden, "[REDACTED]");
+        let hidden = tokens.replace_all(&hidden, "[REDACTED]");
+        let mut result = hidden.split_whitespace().collect::<Vec<_>>().join(" ");
+        if result.len() > 1024 {
+            result.truncate(1021);
+            result.push_str("...");
+        }
+        result.into_boxed_str()
+    }
+}
 
 /// Validate an observation against retained state without consuming that state.
 ///

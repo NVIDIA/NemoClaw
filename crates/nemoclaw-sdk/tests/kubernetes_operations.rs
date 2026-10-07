@@ -1056,7 +1056,7 @@ async fn release_storage_query_errors_stop_observation_and_issuer_cleanup() {
         let before = objects.0.lock().unwrap().clone();
         assert_eq!(
             failing.read(&spec(AUTH_KIND), auth.id.as_deref()).await,
-            Err(error)
+            Err(error.clone())
         );
         assert_eq!(
             failing.remove(&spec(AUTH_KIND), auth.id.as_deref()).await,

@@ -156,7 +156,7 @@ impl ConnectedOpenShellGateway {
     ) -> Result<Option<Row>, ObservationError> {
         let row = match kind {
             "workspace" => return self.workspace(name, removing).await,
-            "provider_profile" => self.observe_profile(workspace, name).await?,
+            "provider_profile" => self.observe_profile(workspace, name, removing).await?,
             "provider" => {
                 let response = authoritative(
                     self.client
@@ -184,8 +184,15 @@ impl ConnectedOpenShellGateway {
                 else {
                     return Ok(None);
                 };
-                let (row, ready) = sandbox_row(response, name, removing)?;
-                if ready {
+                let (row, ready, grants) = checked_sandbox_row_with(
+                    response,
+                    workspace,
+                    name,
+                    removing,
+                    |row| async move { self.sandbox_cluster_grants(&row).await },
+                )
+                .await?;
+                if ready && !removing {
                     let status = self
                         .client
                         .raw_grpc()
@@ -199,7 +206,10 @@ impl ConnectedOpenShellGateway {
                         .await
                         .map_err(|error| remote_error(&error))?
                         .into_inner();
-                    active_policy(status, &policy_json(&row_policy(&row)?)?)?;
+                    active_policy(
+                        status,
+                        &policy_json(&network::granted_row_policy(&row, &grants)?)?,
+                    )?;
                 }
                 Some(row)
             }
@@ -364,7 +374,7 @@ impl ConnectedOpenShellGateway {
             binding,
             &base(sandbox.metadata.clone(), row_value(binding, "name"), false)?,
         )?;
-        let (observed, _) = sandbox_row(
+        let (observed, _, _) = sandbox_row(
             proto::SandboxResponse {
                 sandbox: Some(sandbox.clone()),
                 ..Default::default()

@@ -36,6 +36,10 @@ pub use timing::StepOutcome;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
+    /// An authored deployment condition that requires operator attention.
+    Warning {
+        message: String,
+    },
     /// A mutating OpenTofu subprocess has launched. Emitted synchronously once
     /// per launch, before child output; this does not prove any change completed.
     MutationStarted,
@@ -252,6 +256,22 @@ impl Deployment {
         document.validate()?;
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
+        }
+        for (name, service) in &document.spec.services {
+            let unauthenticated = match service {
+                crate::services::ServiceDefinition::Ollama(service) => service.kubernetes.is_some(),
+                crate::services::ServiceDefinition::Vllm(service) => {
+                    service.kubernetes.is_some() && service.authentication.is_none()
+                }
+                crate::services::ServiceDefinition::OllamaProxy(_) => false,
+            };
+            if unauthenticated {
+                (self.progress)(Progress::Warning {
+                    message: format!(
+                        "Cluster service {name} has no bearer authentication; access depends on NetworkPolicy enforcement, which the Kubernetes API cannot verify. Verify that the network plugin enforces the supervisor-only policy."
+                    ),
+                });
+            }
         }
         let (bundle, store) = self.open()?;
         let prior = store.load()?;

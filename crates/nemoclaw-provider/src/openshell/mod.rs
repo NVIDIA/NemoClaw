@@ -159,7 +159,7 @@ fn sandbox_row(
     response: proto::SandboxResponse,
     name: &str,
     removing: bool,
-) -> Result<(Row, bool), ObservationError> {
+) -> Result<(Row, bool, network::ClusterGrants), ObservationError> {
     let sandbox = response.sandbox.ok_or(ObservationError::Incomplete)?;
     let meta = sandbox
         .metadata
@@ -195,9 +195,9 @@ fn sandbox_row(
     if !inference.is_empty() {
         expected_environment.insert(PROVIDERS_ENV.into(), inference.clone());
     }
-    if policy_json(spec.policy.as_ref().ok_or(ObservationError::Incomplete)?)?
-        != policy_json(&binding.policy(&input)?)?
-    {
+    let observed_policy = spec.policy.as_ref().ok_or(ObservationError::Incomplete)?;
+    let grants = network::recorded_grants(&input, observed_policy)?;
+    if policy_json(observed_policy)? != policy_json(&binding.granted_policy(&input, &grants)?)? {
         return Err(ObservationError::BindingMismatch);
     }
     let expected_providers = inference::provider_names(&inference, &runtime)?;
@@ -224,7 +224,7 @@ fn sandbox_row(
     row.insert("policy_json".into(), policy_input);
     row.insert("runtime_json".into(), runtime_json);
     // Phase is used by active checks, but is not a Terraform schema attribute.
-    Ok((row, ready))
+    Ok((row, ready, grants))
 }
 fn active_policy(
     response: proto::GetSandboxPolicyStatusResponse,
@@ -245,6 +245,24 @@ fn active_policy(
         return Err(ObservationError::Incomplete);
     }
     Ok(())
+}
+
+async fn checked_sandbox_row_with<F>(
+    response: proto::SandboxResponse,
+    workspace: &str,
+    name: &str,
+    removing: bool,
+    check: impl FnOnce(Row) -> F,
+) -> Result<(Row, bool, network::ClusterGrants), ObservationError>
+where
+    F: std::future::Future<Output = Result<network::ClusterGrants, ObservationError>>,
+{
+    let (mut row, ready, grants) = sandbox_row(response, name, removing)?;
+    row.insert("workspace".into(), workspace.into());
+    if !removing && check(row.clone()).await? != grants {
+        return Err(ObservationError::BindingMismatch);
+    }
+    Ok((row, ready, grants))
 }
 
 mod mutation;

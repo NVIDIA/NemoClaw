@@ -2,6 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+
+#[test]
+fn warnings_are_durable_without_marking_work_as_active() {
+    let mut model = Model::default();
+    let now = Instant::now();
+    let milestone = model
+        .observe(
+            Progress::Warning {
+                message: "Verify NetworkPolicy enforcement.".into(),
+            },
+            false,
+            now,
+        )
+        .unwrap();
+    assert!(milestone.durable);
+    assert!(milestone.text.contains("NetworkPolicy"));
+    assert!(model.lines(now).is_empty());
+}
 use crate::progress::tests::resource;
 use nemoclaw_sdk::ByteProgress;
 

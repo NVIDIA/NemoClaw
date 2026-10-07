@@ -109,7 +109,26 @@ impl Cluster {
 
     /// Create `object` with the owner and generation labels. Fails with
     /// `BindingMismatch` if an object already exists at that address.
-    pub async fn create(&self, mut object: Value) -> Result<Owned, ObservationError> {
+    pub async fn create(&self, object: Value) -> Result<Owned, ObservationError> {
+        self.create_with(object, false, false).await
+    }
+
+    /// Create a credential-free model object with bounded admission diagnostics.
+    pub async fn create_model(&self, object: Value) -> Result<Owned, ObservationError> {
+        self.create_with(object, false, true).await
+    }
+
+    /// Ask admission to validate an object without persisting it.
+    pub async fn dry_run(&self, object: Value) -> Result<(), ObservationError> {
+        self.create_with(object, true, true).await.map(|_| ())
+    }
+
+    async fn create_with(
+        &self,
+        mut object: Value,
+        dry_run: bool,
+        admission_detail: bool,
+    ) -> Result<Owned, ObservationError> {
         let labels = object
             .pointer_mut("/metadata")
             .and_then(Value::as_object_mut)
@@ -124,9 +143,26 @@ impl Cluster {
             serde_json::from_value(object).map_err(|_| ObservationError::Query)?;
         let created = self
             .api(&address.api_version, &address.kind, &address.namespace)
-            .create(&PostParams::default(), &object)
+            .create(
+                &PostParams {
+                    dry_run,
+                    ..PostParams::default()
+                },
+                &object,
+            )
             .await
-            .map_err(failure)?;
+            .map_err(|error| match error {
+                kube::Error::Api(status)
+                    if admission_detail && matches!(status.code, 400 | 403 | 422 | 429) =>
+                {
+                    ObservationError::Admission {
+                        kind: address.kind.clone(),
+                        name: address.name.clone(),
+                        detail: ObservationError::sanitized_detail(&status.message),
+                    }
+                }
+                other => failure(other),
+            })?;
         let uid = created.metadata.uid.ok_or(ObservationError::Incomplete)?;
         Ok(Owned { uid, ..address })
     }

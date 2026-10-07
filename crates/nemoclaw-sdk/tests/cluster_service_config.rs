@@ -82,6 +82,63 @@ fn cluster_service_metadata_is_included_in_provider_environment_references() {
 }
 
 #[test]
+fn cluster_storage_reserves_prepared_data_and_working_space() {
+    for kind in ["vllm", "ollama"] {
+        let mut input = cluster_document(kind);
+        input["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(15);
+        assert!(
+            Document::parse(input.to_string().as_bytes()).is_err(),
+            "{kind} requires working reserve"
+        );
+        input["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(16);
+        Document::parse(input.to_string().as_bytes()).unwrap();
+    }
+    let mut input = cluster_recipe_document();
+    input["spec"]["services"]["qwen"]["recipe"]["resources"]["preparedBytes"] = json!(30_u64 << 30);
+    input["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(45);
+    assert!(
+        Document::parse(input.to_string().as_bytes()).is_err(),
+        "30 GiB prepared data plus 16 GiB reserve"
+    );
+    input["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(46);
+    Document::parse(input.to_string().as_bytes()).unwrap();
+}
+
+fn cluster_recipe_document() -> Value {
+    let mut input = cluster_document("vllm");
+    let settings = input["spec"]["services"]["qwen"]["kubernetes"].clone();
+    let recipe: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/spark/spark-inline.yaml")).unwrap();
+    input["spec"]["services"]["qwen"] = recipe["spec"]["services"]["qwen"].clone();
+    input["spec"]["services"]["qwen"]["kubernetes"] = settings;
+    input
+}
+
+#[test]
+fn cluster_memory_limit_covers_shared_memory_and_recipe_preparation() {
+    for kind in ["vllm", "ollama"] {
+        let mut input = cluster_document(kind);
+        input["spec"]["services"]["qwen"]["kubernetes"]["memoryLimitGiB"] = json!(32);
+        input["spec"]["services"]["qwen"]["container"] = json!({"sharedMemoryGiB":33});
+        assert!(
+            Document::parse(input.to_string().as_bytes()).is_err(),
+            "{kind} shared memory exceeds the Pod limit"
+        );
+        input["spec"]["services"]["qwen"]["container"]["sharedMemoryGiB"] = json!(32);
+        Document::parse(input.to_string().as_bytes()).unwrap();
+    }
+    let mut input = cluster_recipe_document();
+    input["spec"]["services"]["qwen"]["kubernetes"]["memoryRequestGiB"] = json!(16);
+    input["spec"]["services"]["qwen"]["kubernetes"]["memoryLimitGiB"] = json!(19);
+    assert!(
+        Document::parse(input.to_string().as_bytes()).is_err(),
+        "20 GiB recipe preparation must fit the Pod limit"
+    );
+    input["spec"]["services"]["qwen"]["kubernetes"]["memoryLimitGiB"] = json!(20);
+    Document::parse(input.to_string().as_bytes()).unwrap();
+}
+
+#[test]
 fn cluster_capacity_requests_must_fit_their_limits() {
     for (request, limit) in [
         ("cpuRequestMillis", "cpuLimitMillis"),

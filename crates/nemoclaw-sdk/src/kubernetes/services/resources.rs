@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::{Spec, StorageSpec};
 use crate::kubernetes::{cluster::OWNER_LABEL, gateway::Identity};
+use openshell_core::driver_utils::{LABEL_MANAGED_BY, LABEL_MANAGED_BY_VALUE};
 use serde_json::{Value, json};
 
 /// Retained volumes are independent of the image, model revision and Pod identity.
@@ -34,9 +35,14 @@ pub fn compute_objects(spec: &Spec, identity: Option<Identity>) -> Vec<Value> {
     let service = json!({"apiVersion": "v1", "kind": "Service", "metadata": metadata,
         "spec": {"type": "ClusterIP", "selector": selector,
             "ports": [{"name": "inference", "port": spec.port(), "targetPort": spec.port(), "protocol": "TCP"}]}});
+    // Boundary role follows OpenShell crates/openshell-driver-kubernetes/src/isolation.rs
+    // at 6648bd0c290efbc41ba131ee9831ee45cd431f94 (Apache-2.0).
     let policy = json!({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": metadata,
         "spec": {"podSelector": {"matchLabels": selector}, "policyTypes": ["Ingress"],
-            "ingress": [{"from": [{"podSelector": {}}], "ports": [{"protocol": "TCP", "port": spec.port()}]}]}});
+            "ingress": [{"from": [{"podSelector": {"matchLabels": {
+                LABEL_MANAGED_BY: LABEL_MANAGED_BY_VALUE,
+                "openshell.ai/boundary-role": "supervisor"
+            }}}], "ports": [{"protocol": "TCP", "port": spec.port()}]}]}});
     let mut volumes = vec![
         json!({"name": "models", "persistentVolumeClaim": {"claimName": format!("{}-data", spec.name)}}),
         json!({"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": format!("{}Gi", spec.shared_memory_gib)}}),
@@ -60,12 +66,12 @@ pub fn compute_objects(spec: &Spec, identity: Option<Identity>) -> Vec<Value> {
     });
     let mut pod = json!({"apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": spec.name, "namespace": namespace, "labels": selector},
-        "spec": {"restartPolicy": "Never", "automountServiceAccountToken": false,
+        "spec": {"restartPolicy": "Never", "terminationGracePeriodSeconds": 60, "automountServiceAccountToken": false,
             "nodeSelector": node_selector, "tolerations": spec.settings.tolerations,
             "securityContext": {"runAsNonRoot": true, "runAsUser": identity.user, "runAsGroup": identity.group,
                 "fsGroup": identity.group, "fsGroupChangePolicy": "OnRootMismatch", "seccompProfile": {"type": "RuntimeDefault"}},
             "containers": [{"name": "runtime", "image": spec.image, "imagePullPolicy": spec.image_pull_policy.unwrap_or_default().as_str(),
-                "command": ["/usr/local/bin/nemoclaw-runtime"],
+                "command": ["/usr/local/bin/nemoclaw-runtime"], "terminationMessagePolicy": "FallbackToLogsOnError",
                 "envFrom": [{"configMapRef": {"name": spec.name}}],
                 "env": [{"name": "HOME", "value": "/data"}, {"name": "XDG_CACHE_HOME", "value": "/data/.cache"}],
                 "ports": [{"name": "inference", "containerPort": spec.port()}],

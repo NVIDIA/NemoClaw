@@ -7,7 +7,9 @@
 # AMD64 RTX 4090 service, not a requirement of the cluster implementation.
 # The cluster must enforce NetworkPolicies: managed Ollama has no bearer auth.
 # Build matching runtime and agent images from this checkout, make them available
-# to the cluster, and export the agent metadata bundle; see docs/kubernetes.md.
+# to the cluster, and export both metadata bundles; see docs/kubernetes.md.
+# NEMOCLAW_AGENT_IMAGE_METADATA selects the agent bundle;
+# NEMOCLAW_MODEL_IMAGE_METADATA selects the runtime bundle.
 apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
 metadata:
