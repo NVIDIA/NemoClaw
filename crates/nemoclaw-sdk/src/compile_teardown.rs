@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 pub struct CompiledTeardown {
     pub graph: Value,
     pub retained: BTreeSet<String>,
+    /// Observations the applied graph read; a destroy plan may only discard these.
+    pub observations: BTreeSet<String>,
 }
 
 /// Compile removal of workloads while keeping established storage tracked.
@@ -53,6 +55,7 @@ pub fn compile_teardown(
 
     // Reuse the compiler's literal escaping and provider aliases. Teardown has
     // no workload readiness prerequisites and must not create absent storage.
+    let observations = observations(&graph);
     graph
         .as_object_mut()
         .expect("compiled graph")
@@ -93,7 +96,11 @@ pub fn compile_teardown(
             .expect("compiled graph")
             .remove("resource");
     }
-    Ok(CompiledTeardown { graph, retained })
+    Ok(CompiledTeardown {
+        graph,
+        retained,
+        observations,
+    })
 }
 
 #[cfg(test)]

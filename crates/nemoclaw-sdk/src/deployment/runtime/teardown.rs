@@ -197,7 +197,10 @@ impl Deployment {
             }
             return Ok((Vec::new(), false));
         }
-        let expected = teardown_expected(record, &bindings, runtime)?;
+        let expected = with_observations(
+            &teardown_expected(record, &bindings, runtime)?,
+            &compiled.observations,
+        );
         self.prepare(bundle, store, &compiled.graph)?;
         self.tofu(
             bundle,

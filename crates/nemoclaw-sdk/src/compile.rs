@@ -8,7 +8,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
 pub use crate::artifact_pins::OPENTOFU_VERSION;
@@ -315,12 +315,21 @@ pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_cap
 pub(crate) const GATEWAY_APPLY_CAPABILITIES_ADDRESS: &str =
     "data.nemoclaw_gateway_capabilities.apply";
 
-pub(crate) fn is_gateway_observation(address: &str) -> bool {
-    [
-        GATEWAY_CAPABILITIES_ADDRESS,
-        GATEWAY_APPLY_CAPABILITIES_ADDRESS,
-    ]
-    .contains(&address)
+/// The data-source addresses a compiled graph reads, which are the only
+/// observations its plans may contain.
+pub(crate) fn observations(graph: &Value) -> BTreeSet<String> {
+    graph["data"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(kind, instances)| {
+            instances
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(move |(name, _)| format!("data.{kind}.{name}"))
+        })
+        .collect()
 }
 
 // Both graphs report the provider's observation through OpenTofu conditions.
