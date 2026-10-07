@@ -188,7 +188,12 @@ A successful complete preflight for `$$nemoclaw launch <sandbox-name>` can publi
 During the lease, `launch` still verifies the owning OpenShell gateway, exact live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
 
 <AgentOnly variant="openclaw,hermes">
-Configured inference must return HTTP 2xx from the semantic `inference.local` probe, which is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
+Shared-route providers use `inference.local`.
+Their models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
+NVIDIA Endpoints verifies its sandbox-attached provider at `integrate.api.nvidia.com` and runs the bounded model request without the shared-route models probe.
+A failed required probe or model request rejects launch readiness.
+This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
@@ -256,7 +261,9 @@ Custom Dockerfile rebuilds use the recorded Dockerfile source.
 
 <AgentOnly variant="openclaw,hermes">
 A sandbox created with `--from-image` rebuilds from its recorded digest instead.
-Before backup or deletion, NemoClaw makes that digest available in Docker and validates its platform, runtime metadata, tool disclosure mode, and immutable local content identity.
+Before backup or deletion, NemoClaw makes that digest available in its selected Docker or rootless
+Podman runtime and validates its platform, runtime metadata, tool disclosure mode, and immutable
+local content identity.
 If a pull or validation fails, rebuild keeps the existing sandbox and stops before replacement.
 </AgentOnly>
 

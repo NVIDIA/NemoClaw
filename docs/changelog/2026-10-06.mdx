@@ -1,0 +1,90 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.131
+
+NemoClaw v0.0.131 preserves the complete OpenShell native agent home and workspace during rebuilds, improves local and routed inference reliability, and hardens lifecycle diagnostics.
+It also adds Tavily to managed OpenClaw images, expands configuration export coverage, and fixes sandbox-specific command selection.
+
+- Rebuild transfers the complete native agent home and workspace instead of a selected file inventory.
+  NemoClaw rejects a transfer that contains credentials, fails inspection, or fails integrity validation before it replaces the sandbox.
+  The retired selective snapshot commands are no longer available.
+  Use an independent host backup when you need a user-controlled recovery point; `backup-all` remains an installer-facing pre-upgrade safeguard.
+  Related change: [PR #12340](https://github.com/NVIDIA/NemoClaw/pull/12340).
+  Refer to [Persist Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- The managed N1x Qwen vLLM profile allows one corrective retry when OpenClaw rejects a compaction summary.
+  The quality guard remains enabled, and a repeated rejection or failed retry does not replace the conversation history.
+  Other compaction profiles retain zero corrective retries.
+  Related change: [PR #12516](https://github.com/NVIDIA/NemoClaw/pull/12516).
+  Refer to [Understand Context Compaction](/user-guide/openclaw/configure-agents/understand-context-compaction).
+- The 64 GB DGX Spark Qwen vLLM recipe uses lazy `safetensors` loading instead of `fastsafetensors`.
+  This change reduces startup memory pressure on the Experimental 64 GB profile without changing its model, context, concurrency, or memory limits.
+  Physical qualification remains pending.
+  Related change: [PR #12633](https://github.com/NVIDIA/NemoClaw/pull/12633).
+  Refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+- Operator-attached llama.cpp onboarding now checks sandbox reachability before it accepts a host service.
+  A confirmed TCP failure stops fresh or resumed onboarding with binding and firewall guidance.
+  Related change: [PR #11709](https://github.com/NVIDIA/NemoClaw/pull/11709).
+  Refer to [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp).
+- OpenRouter model changes now verify the selected model through the target sandbox before NemoClaw commits agent configuration.
+  A failed verification restores the previous route when possible.
+  Launch readiness and status also require a bounded inference request because the OpenRouter adapter does not expose `/v1/models`.
+  Related changes: [PR #12625](https://github.com/NVIDIA/NemoClaw/pull/12625) and [PR #12685](https://github.com/NVIDIA/NemoClaw/pull/12685).
+  Refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers).
+- OpenAI-compatible probes use `max_completion_tokens` for GPT-6 models, including `gpt-6-astra`.
+  The existing GPT-5 and `o1`, `o3`, and `o4` compatibility handling remains unchanged.
+  Related change: [PR #12691](https://github.com/NVIDIA/NemoClaw/pull/12691).
+  Refer to [Choose a Compatible Inference API](/user-guide/openclaw/inference/custom-endpoints/choose-compatible-inference-api).
+- `nemoclaw inference set` accepts recognized underscore spellings such as `ollama_local`, `nvidia_prod`, and `open_router`.
+  NemoClaw normalizes each recognized spelling to its canonical OpenShell provider ID.
+  Related change: [PR #11700](https://github.com/NVIDIA/NemoClaw/pull/11700).
+  Refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers).
+- `nemoclaw config export` now accepts native NVIDIA provider bindings from the current workspace or an unscoped binding and emits YAML that passes the pinned v1 parser.
+  When retained corporate CA state is present, a successful export reports the omission on standard error and directs you to review destination trust requirements.
+  Related change: [PR #12451](https://github.com/NVIDIA/NemoClaw/pull/12451).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-config-export-sandbox).
+- SDK-backed commands accept an externally supervised gateway's declared mTLS state directory when its ownership and permissions pass validation.
+  The directory does not need a NemoClaw-managed ownership marker.
+  Related change: [PR #12535](https://github.com/NVIDIA/NemoClaw/pull/12535).
+  Refer to [Understand Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority).
+- Managed OpenClaw images preinstall the verified Tavily plugin in a disabled state.
+  Selecting Tavily during onboarding enables it, and configuration export preserves admitted OpenClaw and Hermes Tavily sources without exporting credential values.
+  Managed-image publication requires the exact supported Tavily package version and disabled default configuration.
+  Related changes: [PR #12225](https://github.com/NVIDIA/NemoClaw/pull/12225) and [PR #12624](https://github.com/NVIDIA/NemoClaw/pull/12624).
+  Refer to the [OpenClaw Quickstart](/user-guide/openclaw/get-started/quickstart#configure-web-search-optional) and [Hermes Quickstart](/user-guide/hermes/get-started/quickstart#configure-web-search-optional).
+- Skill install, list, and remove commands select the agent from the target sandbox's registry record.
+  Onboarding another Hermes or Deep Agents sandbox no longer changes skill command routing for a registered OpenClaw sandbox.
+  Related change: [PR #12607](https://github.com/NVIDIA/NemoClaw/pull/12607).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands#nemoclaw-name-skill).
+- `nemoclaw policy list` labels the Deep Agents Code `observability-otlp-local` preset as `[from dcode agent]`.
+  This change corrects displayed provenance without changing sandbox permissions or preset application.
+  Related change: [PR #12635](https://github.com/NVIDIA/NemoClaw/pull/12635).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands#nemoclaw-name-policy-list).
+- `nemoclaw-acp` preserves a remote `hermes-acp` exit status, including status `255`, and reports SSH transport failures separately.
+  If temporary SSH configuration cleanup fails, NemoClaw reports the retained directory without replacing an existing remote failure status.
+  Related change: [PR #11774](https://github.com/NVIDIA/NemoClaw/pull/11774).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands#nemoclaw-acp).
+- Managed cloud onboarding waits up to 5 seconds for Docker to expose the exact container after OpenShell returns a verified sandbox identity.
+  Ambiguous ownership, identity changes, stopped containers, and inspection mismatches still fail immediately.
+  Related change: [PR #12606](https://github.com/NVIDIA/NemoClaw/pull/12606).
+- Portable onboarding checks that its managed registry responds before it builds the sandbox image.
+  An unreachable registry produces a bounded failure before the build starts.
+  Related change: [PR #11874](https://github.com/NVIDIA/NemoClaw/pull/11874).
+- Brev CPU bootstrap removes the older bundled npm tree before it extracts the pinned Node archive.
+  This prevents files from the previous npm installation from remaining beside the new bundled npm.
+  Related change: [PR #12239](https://github.com/NVIDIA/NemoClaw/pull/12239).
+- Tunnel startup and cleanup verify the recorded `cloudflared` process identity before they act on it.
+  An inconclusive identity check preserves the process and PID record and reports recovery guidance.
+  Related change: [PR #12491](https://github.com/NVIDIA/NemoClaw/pull/12491).
+  Refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Legacy DNS proxy repair now requires an exact sandbox pod name or a valid generated suffix.
+  Repairing a sandbox such as `box1` no longer selects an unrelated pod such as `box10-xyz12`.
+  Related change: [PR #12556](https://github.com/NVIDIA/NemoClaw/pull/12556).
+- Docker GPU failure diagnostics use typed OpenShell observations when they are available.
+  A collection or artifact-write failure remains best effort and cannot hide the original GPU failure or cleanup guidance.
+  Related change: [PR #12560](https://github.com/NVIDIA/NemoClaw/pull/12560).
+- Managed runtime dependency graphs and the installed official Slack bundle now use `proxy-addr` 2.0.8.
+  Documentation validation also checks internal links across every published page.
+  Related change: [PR #12656](https://github.com/NVIDIA/NemoClaw/pull/12656).

@@ -96,10 +96,7 @@ describe("runInferenceSet local-provider verification", () => {
       session: baseSession(),
     });
 
-    await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
-      deps,
-    );
+    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4-mini" }, deps);
 
     expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();

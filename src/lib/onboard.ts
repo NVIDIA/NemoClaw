@@ -62,6 +62,7 @@ const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const {
+  createCompatibleEndpointSmoke,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   verifyCompatibleEndpointSandboxSmoke,
@@ -672,6 +673,9 @@ const {
   redactDiagnostic: runner.redactFullWithUrls,
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
+
+const compatibleSmoke = createCompatibleEndpointSmoke(runOpenshell, sandboxExec, redact);
+
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
   isLinuxDockerDriverGatewayEnabled,
@@ -1132,10 +1136,12 @@ const preflightGateway = preflightGatewayAuthority.createOnboardPreflightGateway
 async function preflight(
   preflightOpts: PreflightOptions = {},
   sandboxName: string | null = null,
+  onReadinessReport?: (report: import("./readiness/types").SystemReadinessReport) => void,
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
-  const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection } =
+  const { gpu, host, sandboxGpuConfig, gpuTrustGateRejection, readinessReport } =
     await preflightGateway.runRuntimePreflight(preflightOpts);
+  onReadinessReport?.(readinessReport);
 
   await preflightUtils.checkContainerRuntimeResources(host, {
     ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
@@ -2315,7 +2321,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     unloadOllamaModels,
     hermesProviderAuth,
     getHermesToolGatewayBroker,
-    providerExistsInGateway,
+    ...onboardProviders.setupInferenceProviderDeps(runOpenshell),
     normalizeHermesAuthMethod,
     resolveHermesNousApiKey,
     checkHermesProviderStoreReachable,
@@ -2568,6 +2574,7 @@ async function preflightAuthoritativeRebuildTarget(
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  let currentRunReadinessReport: import("./readiness/types").SystemReadinessReport | undefined;
   const hostMountScope = onboardSessionBootstrap.beginHostMountScope(opts.hostMounts);
   const hermesApiPortReservationScope = agentOnboard.createHermesApiPortReservationScope();
   resetGatewayOwnerBinding();
@@ -2850,14 +2857,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           detectGpuForReadiness: () => nim.detectGpu({ proveArm64ContainerGpu: null }),
           detectGpu: fatalRuntimePreflight.detectGpuWithRuntimeProviderProof,
           runPreflight: (preflightOptions) =>
-            preflight({ ...opts, ...preflightOptions }, preflightSandboxName),
+            preflight({ ...opts, ...preflightOptions }, preflightSandboxName, (report) => {
+              currentRunReadinessReport = report;
+            }),
           assessHost,
           providerNameToOptionKey: providerKey,
-          assertOnboardHostReadiness: (host, gpu, options) =>
-            fatalRuntimePreflight.assertOnboardHostReadiness(host, gpu ?? null, {
-              ...options,
-              allowStorageRemediation: !isGatewayExternallySupervised(),
-            }),
+          assertOnboardHostReadiness: (host, gpu, options) => {
+            currentRunReadinessReport = fatalRuntimePreflight.assertOnboardHostReadiness(
+              host,
+              gpu ?? null,
+              { ...options, allowStorageRemediation: !isGatewayExternallySupervised() },
+            );
+          },
           assertRuntimeProviderHealthy,
           resolveSandboxGpuConfig,
           validateSandboxGpuPreflight,
@@ -2966,29 +2977,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
-            setupNim: (
-              g,
-              s,
-              a,
-              recover,
-              gateway,
-              assertRouteCompatible,
-              canProbeRoute,
-              recoverySessionId,
-              revalidateSandboxIdentity,
-            ) =>
-              setupNim(
-                g,
-                s,
-                a,
-                recover,
-                opts.rebuildRegistryInferenceRoute,
-                gateway,
-                assertRouteCompatible,
-                canProbeRoute,
-                recoverySessionId,
-                revalidateSandboxIdentity,
-              ),
+            setupNim: setupNimFlow.bindSetupNimForRun(
+              setupNim,
+              opts.rebuildRegistryInferenceRoute,
+              () => currentRunReadinessReport,
+            ),
             setupInference,
             ...setupNimFlow.createHermesPortableOllamaInferenceBindings({
               runtimeContext: lockedRuntime.portableRuntimeContext,
@@ -3217,12 +3210,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelSetup.detectUnconfiguredMessagingChannels,
           inspectGatewayCredential: registration.inspectGatewayCredential,
           verifyCompatibleEndpointSandboxSmoke: (options) =>
-            verifyCompatibleEndpointSandboxSmoke({
-              ...options,
-              runOpenshell: runCoreGatewayOpenshell,
-              sandboxCommandExecutor: sandboxExec,
-              redact,
-            }),
+            compatibleSmoke.verify(options, runCoreGatewayOpenshell),
           preparePolicyPresetResumeSelection,
           arePolicyPresetsApplied,
           skippedStepMessage,
@@ -3273,7 +3261,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     agent?.name,
                   ),
                 inferenceRouteContext: {
-                  agentName: agent?.name,
                   provider: liveFinalFlowContext.provider,
                 },
               },
@@ -3458,4 +3445,5 @@ module.exports = {
   fetchGatewayAuthTokenFromSandbox,
   getProbeAuthMode,
   verifyCompatibleEndpointSandboxSmoke,
+  verifyRebuiltOpenClawCompatibleEndpoint: compatibleSmoke.verifyRebuilt,
 };

@@ -134,7 +134,7 @@ navigation:
                   - page: "Use Shared Gateway Routes"
                     path: _build/agent-variants/inference/use-shared-gateway-routes.openclaw.generated.mdx
                     slug: use-shared-gateway-routes
-                  - page: "View the Active Inference Route"
+                  - page: "View the Selected Inference Path"
                     path: _build/agent-variants/inference/view-active-inference-route.openclaw.generated.mdx
                     slug: view-active-inference-route
                   - page: "Switch Models"
@@ -603,7 +603,7 @@ navigation:
                   - page: "Use Shared Gateway Routes"
                     path: _build/agent-variants/inference/use-shared-gateway-routes.deepagents.generated.mdx
                     slug: use-shared-gateway-routes
-                  - page: "View the Active Inference Route"
+                  - page: "View the Selected Inference Path"
                     path: _build/agent-variants/inference/view-active-inference-route.deepagents.generated.mdx
                     slug: view-active-inference-route
                   - page: "Switch Models"
@@ -952,7 +952,7 @@ navigation:
                   - page: "Use Shared Gateway Routes"
                     path: _build/agent-variants/inference/use-shared-gateway-routes.hermes.generated.mdx
                     slug: use-shared-gateway-routes
-                  - page: "View the Active Inference Route"
+                  - page: "View the Selected Inference Path"
                     path: _build/agent-variants/inference/view-active-inference-route.hermes.generated.mdx
                     slug: view-active-inference-route
                   - page: "Switch Models"

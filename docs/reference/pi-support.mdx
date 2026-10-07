@@ -33,7 +33,7 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Host platform       | Linux AMD64 or Linux ARM64               |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
-| Sandbox route       | `https://inference.local/v1`             |
+| Sandbox route       | Shared: `https://inference.local/v1`; NVIDIA: `https://integrate.api.nvidia.com/v1` |
 | Qualification model | `nvidia/nemotron-3-super-120b-a12b`      |
 | Interactive command | `pi`                                     |
 | Headless command    | `pi --no-approve --print`                |
@@ -60,7 +60,11 @@ Each receipt must match the protected inputs and an image digest in the candidat
 
 Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route placeholder. It does not contain the upstream provider credential.
 
-The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Pi reaches the provider through `inference.local`; direct provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
+The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Most providers give Pi the managed `inference.local` route. NVIDIA Endpoints instead uses the least-privilege OpenShell provider attached to the sandbox for `integrate.api.nvidia.com`. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
+
+When Pi uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
+NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
+If that request fails, the expected catalog response does not make the route ready.
 
 The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3-super-120b-a12b`.
 

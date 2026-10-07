@@ -909,7 +909,7 @@ podman --url 'unix://<qualified-current-user-socket>' run --rm --device nvidia.c
 
 A diagnostic result includes one successful CUDA sample invocation and one `NEMOCLAW_GPU_DEVICE=<uuid>, <index>, <name>, <total>, <free>` row for every provider-visible GPU. For Podman, replace `<qualified-current-user-socket>` with the exact socket accepted by [Podman preflight](#podman); do not omit `--url`, because a bare command can select another rootful, remote, or named connection. Manual output does not qualify onboarding. Only the proof that NemoClaw runs through its provider-bound authority validates the row structure, binds every workload to its stable GPU UUID, and supplies the capacity evidence used for model selection.
 
-The run is bounded to 3 minutes by default. Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive integer number of milliseconds to change that bound; values above 15 minutes are capped at 15 minutes. A passing workload with confirmed container reconciliation lets onboarding treat the detected GPU as eligible for GPU passthrough during that run. On Windows-on-Arm, only the documented N1x WSL path can use this proof for platform qualification; other GPU routes remain unsupported. A failed, interrupted, or timed-out workload leaves the GPU unproven and does not enable GPU passthrough. After every completed capture, NemoClaw immediately reconciles the proof container by its exact name and ownership label. After an interrupted capture, it continues that exact check for up to 15 seconds. If the resource appears, NemoClaw removes only its immutable container ID. If an interrupted capture remains absent through that deadline, or removal fails after any capture, NemoClaw invalidates the proof, reports unresolved cleanup, and names the exact resource to verify or remove before retrying. The names-only unified-memory fallback does not run this workload and rejects denylisted names. WSL uses Docker Desktop by default; a qualification-backed rootless Podman provider can run the same proof for WSL-local Ollama.
+The run is bounded to 3 minutes by default. Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive integer number of milliseconds to change that bound; values above 15 minutes are capped at 15 minutes. A passing workload with confirmed container reconciliation lets onboarding treat the detected GPU as eligible for GPU passthrough during that run. On Windows-on-Arm, only the documented N1x and Station GB300 WSL paths can use this proof for platform qualification; other GPU routes remain unsupported. A failed, interrupted, or timed-out workload leaves the GPU unproven and does not enable GPU passthrough. After every completed capture, NemoClaw immediately reconciles the proof container by its exact name and ownership label. After an interrupted capture, it continues that exact check for up to 15 seconds. If the resource appears, NemoClaw removes only its immutable container ID. If an interrupted capture remains absent through that deadline, or removal fails after any capture, NemoClaw invalidates the proof, reports unresolved cleanup, and names the exact resource to verify or remove before retrying. The names-only unified-memory fallback does not run this workload and rejects denylisted names. WSL uses Docker Desktop by default; a qualification-backed rootless Podman provider can run the same proof for WSL-local Ollama.
 
 When GPU detection rejects the `nvidia-smi` report, preflight prints the failed check under the `Local NIM unavailable — no GPU detected` line, for example an absent `/proc/driver/nvidia` interface or a failed bounded CUDA proof. If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
@@ -1280,13 +1280,14 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw,hermes,deepagents">
 
-### Onboarding fails because the inference route served no model catalog
+### Onboarding reports a model-catalog HTTP 404
 
-Onboarding verifies the sandbox inference route before it reports the deployment healthy.
-When `https://inference.local/v1/models` keeps returning `HTTP 404`, the route answered but served no model catalog, so nothing validated your selected model against the provider.
-Onboarding retries for the usual startup budget, then marks the `inference` check failed and exits nonzero instead of reporting a verified deployment.
+NemoClaw's OpenRouter adapter serves Chat Completions but does not serve a model catalog.
+An `HTTP 404` response from `https://inference.local/v1/models` is expected when the recorded provider is `openrouter-api`.
+NemoClaw accepts that response only after a bounded inference request serves the selected model.
+Onboarding and `status` report the route ready when that request succeeds.
 
 Re-check the route and the recorded provider and model:
 
@@ -1294,10 +1295,16 @@ Re-check the route and the recorded provider and model:
 $$nemoclaw <name> status
 ```
 
-`$$nemoclaw <name> status` applies the same HTTP 404 rule, so onboarding and status agree about the model catalog.
+If the inference request fails, `status` reports that failure instead of accepting the catalog response.
+Confirm the OpenRouter credential and selected model, then continue the recorded session:
 
-Confirm the provider and model are configured for this sandbox and that the endpoint serves `/v1/models`.
-This result is resumable, so correct the endpoint and continue the recorded session:
+```bash
+$$nemoclaw onboard --resume
+```
+
+For other providers, an `HTTP 404` response still means that the route served no supported model catalog.
+Confirm the recorded provider and model, and confirm that the endpoint serves `/v1/models`.
+Then continue the recorded session:
 
 ```bash
 $$nemoclaw onboard --resume
@@ -1988,7 +1995,7 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends an inference request over the same route, so it reflects the route the agent uses. When that request returns a transient gateway status, `status` repeats both probes up to three total attempts before it reports a failure. It prints the HTTP status, next attempt, and two-second delay to stderr before each retry; the configured timeout envelope for three complete probe pairs and two delays is about 124 seconds. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, it verifies the recorded sandbox attachment and sends the request directly to `https://integrate.api.nvidia.com/v1/chat/completions`; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while NVIDIA Endpoints retries only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. If a local-backend diagnostic fails, start the backend. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. Docker Desktop on Windows Subsystem for Linux (WSL) reaches host loopback directly, so its auth-proxy diagnostic is non-authoritative. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration, then rerun onboarding.
 
@@ -2140,7 +2147,7 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 
 [Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`; for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
 
-NemoClaw restores the complete credential-sanitized native OpenClaw configuration across rebuilds, but those edits do not change the OpenShell route, credential binding, or network policy.
+NemoClaw transfers the complete native OpenClaw configuration across rebuilds, but those edits do not change the OpenShell route, credential binding, or network policy.
 Use `$$nemoclaw inference set` when the provider change requires those host-side resources to stay aligned.
 
 Ask the agent to perform an action that requires a tool, then confirm that the TUI does not show a JSON blob as assistant text, the gateway log shows tool dispatch followed by an answer, and `$$nemoclaw <name> status` reports the intended local vLLM or compatible provider. If JSON still appears as text, confirm that vLLM started with automatic tool choice and the parser required by the model family.
@@ -2207,7 +2214,7 @@ NemoClaw freezes the messaging channel list into the sandbox image during `$$nem
 NemoClaw compiles the selected channel configuration into `NEMOCLAW_MESSAGING_PLAN_B64` for that build.
 The build applies the selected agent configuration to `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes, writes reduced runtime metadata to `/usr/local/share/nemoclaw/messaging-runtime-plan.json`, and removes the full build plan from the runtime environment.
 Credential bindings remain OpenShell credential placeholders, so raw messaging credentials do not enter the sandbox image or agent configuration.
-NemoClaw restores the complete credential-sanitized native OpenClaw configuration across rebuilds, but an in-sandbox config change cannot create the matching OpenShell credential binding or policy.
+NemoClaw transfers the complete native OpenClaw configuration across rebuilds, but an in-sandbox config change cannot create the matching OpenShell credential binding or policy.
 NemoClaw's sandbox entrypoint intercepts `openclaw channels <add|remove>` and points to the host-side commands below.
 
 Run the equivalent host-side command instead:
@@ -2970,7 +2977,8 @@ It accepts Podman's standard rootless layout: a `0660` current-user socket in a 
 It rejects a world-writable socket, a group-writable socket without a private current-user directory in its path, and a path component writable by another user or group.
 If `lsof` is unavailable, install it through the host's package-management policy and retry; NemoClaw does not install it.
 Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
-Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
+Native Podman supports stock managed-image onboarding and digest-pinned OpenClaw or Hermes images through `--from-image`.
+Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
 
 <AgentOnly variant="hermes">
 

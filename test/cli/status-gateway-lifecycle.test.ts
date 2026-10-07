@@ -70,7 +70,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
     testTimeout(20_000),
   );
 
-  it("prints the recorded route and healthy inference after verification (#6315)", () => {
+  it("exits nonzero when verified inference uses a different live route (#6315)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-healthy-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
@@ -137,7 +137,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(1);
     expect(result.out).toContain("Sandbox: alpha");
     expect(result.out).toContain("Model:    configured-model");
     expect(result.out).toContain("Provider: nvidia-prod");
