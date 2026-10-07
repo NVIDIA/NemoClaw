@@ -24,7 +24,11 @@ import {
   recoverCredentialGatewayTargetOrExit,
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
-import { clearNativeNvidiaProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
+import {
+  clearNativeNvidiaProviderAuthority,
+  listNativeNvidiaProviderAttachmentSandboxNames,
+} from "../../state/registry/native-nvidia-provider-authority";
 import { forgetExtraProvider } from "../global";
 
 export type CredentialsResetInput = {
@@ -41,6 +45,8 @@ export type CredentialsResetResult = {
 export type CredentialsResetDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
   clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
+  listNativeNvidiaProviderAttachmentSandboxNames?: typeof listNativeNvidiaProviderAttachmentSandboxNames;
+  withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
 }>;
 
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
@@ -92,6 +98,36 @@ function detachedSandboxGuidance(key: string, sandboxes: readonly string[]): str
       ];
 }
 
+function nativeNvidiaResetBlockers(
+  deps: CredentialsResetDeps,
+  gatewayName: string,
+): { ok: true; sandboxes: readonly string[] } | { ok: false } {
+  try {
+    return {
+      ok: true,
+      sandboxes: (
+        deps.listNativeNvidiaProviderAttachmentSandboxNames ??
+        listNativeNvidiaProviderAttachmentSandboxNames
+      )(gatewayName),
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function nativeNvidiaResetBlockedResult(sandboxes: readonly string[]): CredentialsResetResult {
+  return fail([
+    `  Could not remove provider '${NVIDIA_HOSTED_LOGICAL_PROVIDER}'.`,
+    "",
+    `  '${NVIDIA_HOSTED_LOGICAL_PROVIDER}' is recorded by sandbox(es): ${sandboxes.join(", ")}.`,
+    "  No provider or ownership authority was changed.",
+    `  To rotate the credential in place, set ${NVIDIA_HOSTED_CREDENTIAL_ENV} and rerun '${CLI_NAME} onboard --name <sandbox>'.`,
+    "  To remove the provider completely, preserve any required sandbox state, destroy every recorded sandbox,",
+    `  then rerun '${CLI_NAME} credentials reset ${NVIDIA_HOSTED_LOGICAL_PROVIDER}'.`,
+    ...sandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} destroy`),
+  ]);
+}
+
 export async function runCredentialsResetAction(
   input: CredentialsResetInput,
   deps: CredentialsResetDeps = {},
@@ -131,41 +167,63 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
-    detachAttached: !nativeNvidiaProvider,
-  });
+  const resetProvider = async (): Promise<CredentialsResetResult> => {
+    if (nativeNvidiaProvider) {
+      const blockers = nativeNvidiaResetBlockers(deps, target.gatewayName);
+      if (!blockers.ok) {
+        return fail([
+          `  Could not safely inspect native NVIDIA inference ownership on gateway '${target.gatewayName}'.`,
+          "  No provider or ownership authority was changed.",
+          "  Repair the existing NemoClaw state and retry.",
+        ]);
+      }
+      if (blockers.sandboxes.length > 0) {
+        return nativeNvidiaResetBlockedResult(blockers.sandboxes);
+      }
+    }
 
-  if (
-    !recovery.ok &&
-    !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
-    recovery.error?.kind === "command" &&
-    recovery.error.reason === "not_found"
-  ) {
+    const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
+      detachAttached: !nativeNvidiaProvider,
+    });
+
+    if (
+      !recovery.ok &&
+      !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
+      recovery.error?.kind === "command" &&
+      recovery.error.reason === "not_found"
+    ) {
+      if (nativeNvidiaProvider) {
+        (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+          target.gatewayName,
+        );
+      }
+      const removedLocal = forgetExtraProvider(key);
+      return ok([
+        removedLocal
+          ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
+          : `  Provider '${key}' is already absent from the OpenShell gateway.`,
+        `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
+        ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
+      ]);
+    }
+
+    const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
+    if (!outcome.ok) return fail(outcome.lines);
+
+    forgetExtraProvider(publicKey);
     if (nativeNvidiaProvider) {
       (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
         target.gatewayName,
       );
     }
-    const removedLocal = forgetExtraProvider(key);
-    return ok([
-      removedLocal
-        ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
-        : `  Provider '${key}' is already absent from the OpenShell gateway.`,
-      `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
-      ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
-    ]);
-  }
+    return ok(outcome.lines);
+  };
 
-  const outcome = formatResetOutcome(publicKey, recovery, target.gatewayName);
-  if (!outcome.ok) return fail(outcome.lines);
-
-  forgetExtraProvider(publicKey);
-  if (nativeNvidiaProvider) {
-    (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
-      target.gatewayName,
-    );
-  }
-  return ok(outcome.lines);
+  if (!nativeNvidiaProvider) return resetProvider();
+  return (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
+    target.gatewayName,
+    resetProvider,
+  );
 }
 
 /** Build the user-facing result after a provider delete attempt. */

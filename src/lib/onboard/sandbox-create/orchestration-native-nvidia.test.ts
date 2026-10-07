@@ -10,6 +10,7 @@ const recordedProviderId = "11111111-2222-4333-8444-555555555555";
 
 function providerAdapter(providerId: string): OpenShellProviderAdapter {
   return {
+    importProviderProfile: vi.fn(() => ({ ok: true })),
     getProvider: vi.fn(async () => ({
       ok: true,
       value: {

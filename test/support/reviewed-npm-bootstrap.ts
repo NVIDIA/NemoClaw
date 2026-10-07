@@ -55,10 +55,20 @@ export function prepareReviewedNpmBootstrap(options: FixtureOptions = {}) {
   const bin = path.join(root, "bin");
   const installMarker = path.join(root, "install-called");
   const npmLog = path.join(root, "npm.log");
+  const tarLog = path.join(root, "tar.log");
   fs.mkdirSync(bin);
   options.prepare?.(root);
 
   const { archive, archiveFile } = createArchive(root, options.archiveManifest ?? "matching");
+  fs.writeFileSync(
+    path.join(bin, "tar"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$PWD|$*" >> "$NEMOCLAW_TEST_TAR_LOG"
+exec /usr/bin/tar "$@"
+`,
+    { mode: 0o755 },
+  );
   const identity: ReviewedNpmIdentity = {
     npmArchiveSha256: createHash("sha256").update(archive).digest("hex"),
     npmIntegrity: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
@@ -109,6 +119,7 @@ case "$1" in
     while [ "$#" -gt 1 ]; do
       if [ "$1" = "--pack-destination" ]; then
         [ "$pack_args" = "pack npm@12.0.2 --pack-destination $2 --userconfig /dev/null --registry https://registry.npmjs.org/ --logs-dir $2/npm-logs --logs-max 1 --ignore-scripts --no-audit --no-fund" ]
+        [ -d "$2/npm-logs" ]
         cp "$NEMOCLAW_TEST_ARCHIVE_FILE" "$2/npm-12.0.2.tgz"
         exit 0
       fi
@@ -129,6 +140,7 @@ esac
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
     installMarker,
     npmLog,
+    tarLog,
     spawnOptions: {
       cwd: root,
       encoding: "utf8",
@@ -139,6 +151,7 @@ esac
         NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
         NEMOCLAW_TEST_INSTALLED_VERSION: options.installedVersion ?? "12.0.2",
         NEMOCLAW_TEST_NPM_LOG: npmLog,
+        NEMOCLAW_TEST_TAR_LOG: tarLog,
         NEMOCLAW_TEST_PACK_FAILURE: options.packFailure ? "1" : "0",
         NEMOCLAW_TEST_PACK_FAILURE_DEBUG_LOG: options.packFailureDebugLog ? "1" : "0",
         PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -156,6 +169,9 @@ export function runReviewedNpmBootstrap(options: FixtureOptions = {}) {
     installCalled: fs.existsSync(fixture.installMarker),
     npmInvocations: fs.existsSync(fixture.npmLog)
       ? fs.readFileSync(fixture.npmLog, "utf8").trim().split("\n")
+      : [],
+    tarInvocations: fs.existsSync(fixture.tarLog)
+      ? fs.readFileSync(fixture.tarLog, "utf8").trim().split("\n")
       : [],
     result,
   };

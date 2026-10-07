@@ -14,14 +14,15 @@ Reading the active route confirms configuration, but it does not authenticate a 
 
 ## Confirm the Configured Route
 
-Read the live gateway route first.
+Read the selected inference path first.
 
 ```bash
 $$nemoclaw inference get
 ```
 
-Confirm that the provider, model, and endpoint match the route you intended to configure.
-NVIDIA Endpoints reports `https://integrate.api.nvidia.com/v1` instead of `inference.local`.
+For a selected sandbox with a valid native NVIDIA attachment, the command returns that sandbox's recorded provider, model, and `https://integrate.api.nvidia.com/v1` endpoint.
+For other providers, the command reads the live shared gateway route.
+Confirm that the provider, model, and endpoint match the path you intended to configure.
 
 ## Check Sandbox Inference Health
 
