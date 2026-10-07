@@ -24,6 +24,18 @@ import {
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
 const VERSION_ONE_REQUEST_ID = "12345678-1234-1123-8123-123456789abc";
+const EXPECTED_OPENSHELL_ARGS = [
+  "sandbox",
+  "exec",
+  "--name",
+  "e2e-issue-4462",
+  "-g",
+  "nemoclaw",
+  "--tty",
+  "--",
+  "/bin/bash",
+  "-i",
+];
 const EXPECTED_PUBLIC_KEY_BYTES = Buffer.from(Array.from({ length: 32 }, (_value, index) => index));
 const EXPECTED_PUBLIC_KEY = EXPECTED_PUBLIC_KEY_BYTES.toString("base64url");
 const EXPECTED_DEVICE_ID = createHash("sha256").update(EXPECTED_PUBLIC_KEY_BYTES).digest("hex");
@@ -149,6 +161,7 @@ function runAdminApprovalScript(
 ): {
   commands: string[];
   capturedApprovalBytes: number;
+  openshellArgs: string[];
   stagedScriptRetained: boolean;
   result: SpawnSyncReturns<string>;
 } {
@@ -158,6 +171,7 @@ function runAdminApprovalScript(
   const openclawPath = path.join(root, "openclaw");
   const devicesPath = path.join(root, "devices.json");
   const commandLogPath = path.join(root, "openclaw.log");
+  const openshellArgvLogPath = path.join(root, "openshell-argv.log");
   const mktempCounterPath = path.join(root, "mktemp-counter");
   const stagedScriptReceipt = path.join(root, "staged-script");
   const stateRoot = writeLocalIdentity(root);
@@ -247,6 +261,7 @@ esac
     FAKE_DEVICES_STATE: devicesPath,
     FAKE_OPENCLAW_FAIL: failureCommand ?? "",
     FAKE_OPENCLAW_LOG: commandLogPath,
+    FAKE_OPENSHELL_ARGV_LOG: openshellArgvLogPath,
     FAKE_FAILURE_OUTPUT_PADDING_BYTES: String(failureOutputPaddingBytes),
     FAKE_MKTEMP_COUNTER: mktempCounterPath,
     FAKE_MKTEMP_ROOT: root,
@@ -291,10 +306,13 @@ esac
     const capturedApprovalBytes = fs.existsSync(approvalCapturePath)
       ? fs.statSync(approvalCapturePath).size
       : 0;
+    const openshellArgs = fs.existsSync(openshellArgvLogPath)
+      ? fs.readFileSync(openshellArgvLogPath, "utf8").trim().split("\n")
+      : [];
     const stagedScriptRetained =
       fs.existsSync(stagedScriptReceipt) &&
       fs.existsSync(fs.readFileSync(stagedScriptReceipt, "utf8"));
-    return { capturedApprovalBytes, commands, result, stagedScriptRetained };
+    return { capturedApprovalBytes, commands, openshellArgs, result, stagedScriptRetained };
   } finally {
     removeStagedAdminScript(stagedScriptReceipt);
     fs.rmSync(root, { recursive: true, force: true });
@@ -391,14 +409,20 @@ describe("prepared connect-shell administrative approval", () => {
 
   it("approves the captured request when another request remains pending", () => {
     const staleRequestId = "87654321-4321-4321-8321-cba987654321";
-    const { commands, result } = runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
-      expectedRequestId: EXPECTED_REQUEST_ID,
-      pendingRequestIds: [staleRequestId, EXPECTED_REQUEST_ID],
-      selectExpectedRequest: true,
-      verifyCronConsumer: false,
-    });
+    const { commands, openshellArgs, result } = runAdminApprovalScript(
+      undefined,
+      0,
+      EXPECTED_REQUEST_ID,
+      {
+        expectedRequestId: EXPECTED_REQUEST_ID,
+        pendingRequestIds: [staleRequestId, EXPECTED_REQUEST_ID],
+        selectExpectedRequest: true,
+        verifyCronConsumer: false,
+      },
+    );
 
     expect(result.status, result.stderr).toBe(0);
+    expect(openshellArgs).toEqual(EXPECTED_OPENSHELL_ARGS);
     expect(commands).toEqual(["devices list --json", `devices approve ${EXPECTED_REQUEST_ID}`]);
     expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(staleRequestId);
@@ -498,12 +522,19 @@ describe("prepared connect-shell administrative approval", () => {
   ] as const)(
     "binds feature approval to request %s without running cron",
     (expectedRequestId, status) => {
-      const { commands, result } = runAdminApprovalScript("cron:add", 0, EXPECTED_REQUEST_ID, {
-        expectedRequestId,
-        verifyCronConsumer: false,
-      });
+      const { commands, openshellArgs, result } = runAdminApprovalScript(
+        "cron:add",
+        0,
+        EXPECTED_REQUEST_ID,
+        {
+          expectedRequestId,
+          verifyCronConsumer: false,
+          selectExpectedRequest: true,
+        },
+      );
 
       expect(result.status, result.stderr).toBe(status);
+      expect(openshellArgs).toEqual(EXPECTED_OPENSHELL_ARGS);
       expect(commands).toEqual([
         "devices list --json",
         ...(status === 0 ? [`devices approve ${EXPECTED_REQUEST_ID}`] : []),

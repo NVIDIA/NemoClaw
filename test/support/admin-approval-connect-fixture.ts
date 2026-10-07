@@ -33,6 +33,10 @@ esac
 
 export const ADMIN_APPROVAL_TEST_OPENSHELL_SH = `#!/bin/sh
 set -eu
+if [ -n "\${FAKE_OPENSHELL_ARGV_LOG:-}" ]; then
+  : >"$FAKE_OPENSHELL_ARGV_LOG"
+  for arg in "$@"; do printf '%s\\n' "$arg" >>"$FAKE_OPENSHELL_ARGV_LOG"; done
+fi
 [ "$1" = sandbox ]
 [ "$2" = exec ]
 shift 2
