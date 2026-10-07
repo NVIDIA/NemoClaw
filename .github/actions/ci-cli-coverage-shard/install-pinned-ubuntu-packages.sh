@@ -4,6 +4,18 @@
 
 set -euo pipefail
 
+update_attempts=1
+update_timeout=300s
+install_timeout=300s
+acquire_timeout=30
+if [ "${1:-}" = --retry-transient-update ]; then
+  update_attempts=3
+  update_timeout=120s
+  install_timeout=180s
+  acquire_timeout=20
+  shift
+fi
+
 if [ "$#" -eq 0 ]; then
   echo "::error title=Missing APT packages::Provide pinned package=version specifications." >&2
   exit 2
@@ -45,17 +57,23 @@ apt_options=(
   -o "Dir::Etc::sourcelist=$ubuntu_sources"
   -o "Dir::Etc::sourceparts=-"
   -o "Dir::State::lists=$apt_lists"
-  -o "Acquire::http::Timeout=30"
-  -o "Acquire::https::Timeout=30"
+  -o "Acquire::http::Timeout=$acquire_timeout"
+  -o "Acquire::https::Timeout=$acquire_timeout"
 )
+if [ "$update_attempts" -gt 1 ]; then
+  apt_options+=(-o "Acquire::Retries=2")
+fi
 
 run_apt() {
   local operation="$1"
-  shift
+  local duration="$2"
+  local attempt="$3"
+  local total="$4"
+  shift 4
   local log status
   log="$(mktemp "$RUNNER_TEMP/nemoclaw-apt-${operation}.XXXXXXXX")"
-  echo "Installing pinned Pi tools: APT $operation started."
-  if timeout -k 10s 300s sudo apt-get "${apt_options[@]}" "$@" >"$log" 2>&1; then
+  echo "Installing pinned Pi tools: APT $operation started (attempt $attempt/$total)."
+  if timeout -k 10s "$duration" sudo apt-get "${apt_options[@]}" "$@" >"$log" 2>&1; then
     rm -f -- "$log"
     echo "Installing pinned Pi tools: APT $operation completed."
     return 0
@@ -63,16 +81,29 @@ run_apt() {
     status=$?
   fi
   if [ "$status" -eq 124 ]; then
-    echo "::error title=APT $operation timed out::Ubuntu package $operation exceeded 300 seconds." >&2
+    if [ "$operation" = update ] && [ "$attempt" -lt "$total" ]; then
+      echo "::warning title=APT update timed out::Ubuntu package update exceeded $duration on attempt $attempt/$total; retrying the idempotent metadata update." >&2
+    else
+      echo "::error title=APT $operation timed out::Ubuntu package $operation exceeded $duration on attempt $attempt/$total." >&2
+    fi
   elif [ "$status" -eq 137 ]; then
-    echo "::error title=APT $operation was force-killed::Ubuntu package $operation exited with status 137; it may have exceeded 300 seconds and been killed by timeout." >&2
+    echo "::error title=APT $operation was force-killed::Ubuntu package $operation exited with status 137 on attempt $attempt/$total; it may have exceeded $duration and been killed by timeout." >&2
   else
-    echo "::error title=APT $operation failed::Ubuntu package $operation exited with status $status." >&2
+    echo "::error title=APT $operation failed::Ubuntu package $operation exited with status $status on attempt $attempt/$total." >&2
   fi
   tail -c 8192 "$log" | tail -n 60 >&2
   rm -f -- "$log"
   return "$status"
 }
 
-run_apt update update
-run_apt install install -y --no-install-recommends "$@"
+for ((attempt = 1; attempt <= update_attempts; attempt++)); do
+  if run_apt update "$update_timeout" "$attempt" "$update_attempts" update; then
+    break
+  else
+    status=$?
+  fi
+  if [ "$status" -ne 124 ] || [ "$attempt" -eq "$update_attempts" ]; then
+    exit "$status"
+  fi
+done
+run_apt install "$install_timeout" 1 1 install -y --no-install-recommends "$@"
