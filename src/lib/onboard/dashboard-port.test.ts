@@ -183,7 +183,11 @@ describe("typed OpenShell dashboard-port observation", () => {
       forwardObservation("cursor", 18789 + index, "indeterminate"),
     );
     expect(() => findAvailableDashboardPortFromObservations("cursor", 18789, observations)).toThrow(
-      /All dashboard ports in range 18789-18799 are occupied:\n {2}18789 → unverified OpenShell forward ownership/,
+      "All dashboard ports in range 18789-18799 are occupied:\n" +
+        Array.from(
+          { length: 11 },
+          (_, index) => `  ${18789 + index} → unverified OpenShell forward ownership`,
+        ).join("\n"),
     );
   });
 
