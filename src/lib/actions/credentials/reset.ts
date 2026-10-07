@@ -100,6 +100,7 @@ function detachedSandboxGuidance(key: string, sandboxes: readonly string[]): str
 
 function nativeNvidiaResetBlockers(
   deps: CredentialsResetDeps,
+  gatewayName: string,
 ): { ok: true; sandboxes: readonly string[] } | { ok: false } {
   try {
     return {
@@ -107,7 +108,7 @@ function nativeNvidiaResetBlockers(
       sandboxes: (
         deps.listNativeNvidiaProviderAttachmentSandboxNames ??
         listNativeNvidiaProviderAttachmentSandboxNames
-      )(),
+      )(gatewayName),
     };
   } catch {
     return { ok: false };
@@ -168,7 +169,7 @@ export async function runCredentialsResetAction(
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
   const resetProvider = async (): Promise<CredentialsResetResult> => {
     if (nativeNvidiaProvider) {
-      const blockers = nativeNvidiaResetBlockers(deps);
+      const blockers = nativeNvidiaResetBlockers(deps, target.gatewayName);
       if (!blockers.ok) {
         return fail([
           `  Could not safely inspect native NVIDIA inference ownership on gateway '${target.gatewayName}'.`,
