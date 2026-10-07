@@ -10,7 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isMcpLifecycleLockHeld } from "../state/mcp-lifecycle-lock-acquisition";
 import type { CloudflaredState } from "./services";
-import { migrateLegacyCloudflaredState, resolveTunnelPidDir } from "./services";
+import {
+  getServiceStatuses,
+  migrateLegacyCloudflaredState,
+  resolveTunnelPidDir,
+  showStatus,
+  type ProcessControl,
+} from "./services";
 
 describe("legacy tunnel state migration (#11628)", () => {
   const gatewayPort = 18_080;
@@ -52,6 +58,14 @@ describe("legacy tunnel state migration (#11628)", () => {
         },
       }),
     );
+  }
+
+  function liveCloudflaredProcess(pid: number): ProcessControl {
+    return {
+      isAlive: (candidate) => candidate === pid,
+      commandLine: () => "cloudflared tunnel --url http://localhost:18789",
+      signalCloudflared: () => "signaled",
+    };
   }
 
   it("adopts one live legacy record when process identity cannot be inspected", () => {
@@ -171,6 +185,58 @@ describe("legacy tunnel state migration (#11628)", () => {
       ),
     ).toBe(true);
 
+    expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
+    expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("migrates legacy state before tunnel status without contaminating stdout", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    writeRegistry(gatewayPort, "legacy");
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    showStatus(
+      {
+        sandboxName: "legacy",
+        processControl: liveCloudflaredProcess(4242),
+        unmanagedCloudflaredPids: () => [],
+      },
+      {
+        legacyPidDirs: () => [legacyPidDir],
+        readState: (pidDir): CloudflaredState =>
+          pidDir === legacyPidDir ? { kind: "running", pid: 4242 } : { kind: "stopped" },
+      },
+    );
+
+    expect(stdout.mock.calls.flat().join("\n")).toContain("PID 4242");
+    expect(stdout.mock.calls.flat().join("\n")).not.toContain("Adopted legacy");
+    expect(stderr.mock.calls.flat().join("\n")).toContain("Adopted legacy");
+    expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
+    expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
+  });
+
+  it("migrates legacy state before programmatic root status", () => {
+    const legacyPidDir = createLegacyState("legacy", 4242);
+    writeRegistry(gatewayPort, "legacy");
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const statuses = getServiceStatuses(
+      {
+        sandboxName: "legacy",
+        processControl: liveCloudflaredProcess(4242),
+        unmanagedCloudflaredPids: () => [],
+      },
+      {
+        legacyPidDirs: () => [legacyPidDir],
+        readState: (pidDir): CloudflaredState =>
+          pidDir === legacyPidDir ? { kind: "running", pid: 4242 } : { kind: "stopped" },
+      },
+    );
+
+    expect(statuses).toEqual([{ name: "cloudflared", running: true, pid: 4242 }]);
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).not.toHaveBeenCalled();
     expect(fs.readFileSync(path.join(targetPidDir, "cloudflared.pid"), "utf8")).toBe("4242");
     expect(fs.existsSync(path.join(legacyPidDir, "cloudflared.pid"))).toBe(false);
   });

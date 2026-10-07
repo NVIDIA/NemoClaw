@@ -232,13 +232,18 @@ export function findUnmanagedCloudflaredPids(
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 1000,
     }),
+  failOnInspectionError = false,
 ): number[] {
   if (process.platform === "win32") return [];
   let output: string;
   try {
     output = captureProcessList();
-  } catch {
-    return [];
+  } catch (error) {
+    if (!failOnInspectionError) return [];
+    throw new Error(
+      "Cannot inspect current-user cloudflared processes; refusing to continue tunnel operation.",
+      { cause: error },
+    );
   }
 
   const managedPids = new Set(
@@ -285,17 +290,23 @@ function nemoClawManagedCloudflaredPids(): number[] {
 export function findHostUnmanagedCloudflaredPids(
   managedPid: number | null,
   captureProcessList?: () => string,
+  failOnInspectionError = false,
 ): number[] {
   const ownedPids = nemoClawManagedCloudflaredPids();
   return findUnmanagedCloudflaredPids(
     [...(managedPid === null ? [] : [managedPid]), ...ownedPids],
     captureProcessList,
+    failOnInspectionError,
   );
 }
 
-function unmanagedCloudflaredPids(opts: ServiceOptions, managedPid: number | null): number[] {
+function unmanagedCloudflaredPids(
+  opts: ServiceOptions,
+  managedPid: number | null,
+  failOnInspectionError = false,
+): number[] {
   if (opts.unmanagedCloudflaredPids) return opts.unmanagedCloudflaredPids(managedPid);
-  return findHostUnmanagedCloudflaredPids(managedPid);
+  return findHostUnmanagedCloudflaredPids(managedPid, undefined, failOnInspectionError);
 }
 
 // Process operations behind a small seam so lifecycle tests can model PID
@@ -1055,6 +1066,7 @@ export interface LegacyCloudflaredMigrationDeps {
   legacyPidDirs?: () => string[];
   readState?: (pidDir: string) => CloudflaredState;
   registeredSandboxNames?: () => readonly string[];
+  reportAdoption?: boolean;
   /** Selected destroy recovery authority when its registry row is already absent. */
   recoverySandboxName?: string;
 }
@@ -1131,7 +1143,11 @@ function migrateLegacyCloudflaredStateLocked(
   removePid(targetPidDir, "cloudflared");
   writePid(targetPidDir, "cloudflared", candidate.pid);
   removePid(candidate.pidDir, "cloudflared");
-  info(`Adopted legacy cloudflared state from ${candidate.pidDir}.`);
+  if (deps.reportAdoption !== false) {
+    console.error(
+      `${GREEN}[services]${NC} Adopted legacy cloudflared state from ${candidate.pidDir}.`,
+    );
+  }
   return true;
 }
 
@@ -1153,7 +1169,11 @@ function resolveSandboxServicePidDir(opts: ServiceOptions): string {
   return `/tmp/nemoclaw-services-${sandbox}`;
 }
 
-export function showStatus(opts: ServiceOptions = {}): void {
+export function showStatus(
+  opts: ServiceOptions = {},
+  migrationDeps: LegacyCloudflaredMigrationDeps = {},
+): void {
+  if (opts.pidDir === undefined) migrateLegacyCloudflaredState(opts, migrationDeps);
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
 
@@ -1500,6 +1520,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       const unmanagedPids = unmanagedCloudflaredPids(
         opts,
         recordedState.kind === "stale-pid-process" ? recordedState.pid : null,
+        true,
       );
       if (unmanagedPids.length > 0) {
         throw new Error(
@@ -1705,7 +1726,13 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
 // Exported status helper (useful for programmatic access)
 // ---------------------------------------------------------------------------
 
-export function getServiceStatuses(opts: ServiceOptions = {}): ServiceStatus[] {
+export function getServiceStatuses(
+  opts: ServiceOptions = {},
+  migrationDeps: LegacyCloudflaredMigrationDeps = {},
+): ServiceStatus[] {
+  if (opts.pidDir === undefined) {
+    migrateLegacyCloudflaredState(opts, { ...migrationDeps, reportAdoption: false });
+  }
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
   return SERVICE_NAMES.map((name) => {

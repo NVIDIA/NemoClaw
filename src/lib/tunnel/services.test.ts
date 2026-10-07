@@ -1453,7 +1453,12 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     vi.stubEnv("PATH", emptyBin);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" });
+    await startAll({
+      pidDir,
+      dashboardPort: 12345,
+      sandboxName: "my-sandbox",
+      unmanagedCloudflaredPids: () => [],
+    });
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();
 

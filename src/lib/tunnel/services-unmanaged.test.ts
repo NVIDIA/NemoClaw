@@ -1,15 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { findHostUnmanagedCloudflaredPids, findUnmanagedCloudflaredPids } from "./services";
+import {
+  findHostUnmanagedCloudflaredPids,
+  findUnmanagedCloudflaredPids,
+  startAll,
+} from "./services";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
@@ -28,12 +33,26 @@ describe("findUnmanagedCloudflaredPids", () => {
     expect(pids).toEqual([100]);
   });
 
-  it("returns no unmanaged processes when the process list is unavailable", () => {
+  it("reports no unmanaged process when optional inspection is unavailable", () => {
     expect(
       findUnmanagedCloudflaredPids(null, () => {
         throw new Error("ps unavailable");
       }),
     ).toEqual([]);
+  });
+
+  it("fails closed when required process inspection is unavailable", () => {
+    expect(() =>
+      findUnmanagedCloudflaredPids(
+        null,
+        () => {
+          throw new Error("ps unavailable");
+        },
+        true,
+      ),
+    ).toThrow(
+      "Cannot inspect current-user cloudflared processes; refusing to continue tunnel operation.",
+    );
   });
 
   it("fails closed when NemoClaw PID ownership is unreadable", () => {
@@ -51,6 +70,26 @@ describe("findUnmanagedCloudflaredPids", () => {
       );
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to start a tunnel when unmanaged-process inspection fails", async () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-unmanaged-inspection-"));
+    vi.stubEnv("PATH", "");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        startAll({
+          pidDir,
+          unmanagedCloudflaredPids: () => {
+            throw new Error("process inspection unavailable");
+          },
+        }),
+      ).rejects.toThrow("process inspection unavailable");
+      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
     }
   });
 });
