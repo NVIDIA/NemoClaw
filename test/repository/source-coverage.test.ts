@@ -25,7 +25,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function createFixture(mode: string, floor?: number) {
+function createFixture(mode: string, floor?: number, project = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-coverage-"));
   roots.push(root);
   fs.mkdirSync(path.join(root, "src"));
@@ -76,10 +76,12 @@ it("executes only the selected loader paths", () => {
     `
 import {defineConfig} from "vitest/config";
 import {sourceCoveragePlugin} from ${JSON.stringify(path.join(repositoryRoot, "test/helpers/source-coverage-plugin.ts"))};
+${project ? `import repositoryConfig from ${JSON.stringify(path.join(repositoryRoot, "vitest.config.ts"))};` : ""}
 export default defineConfig({
  root: ${JSON.stringify(root)},
- plugins: [sourceCoveragePlugin()],
+ plugins: ${project ? "[]" : "[sourceCoveragePlugin()]"},
  test: {
+  ${project ? `server: repositoryConfig.test.server, projects: [{plugins: [sourceCoveragePlugin()], test: {name: "nested", include: ["*.test.ts"], setupFiles: [${JSON.stringify(SOURCE_REQUIRE_HOOK)}]}}],` : ""}
   include: ["*.test.ts"],
   setupFiles: [${JSON.stringify(SOURCE_REQUIRE_HOOK)}],
   coverage: {
@@ -121,7 +123,7 @@ function functions(coverage: Coverage) {
 }
 
 function createShardFixture() {
-  const root = createFixture("both");
+  const root = createFixture("both", undefined, true);
   fs.copyFileSync(path.join(root, "probe.test.ts"), path.join(root, "second.test.ts"));
   return root;
 }
@@ -132,6 +134,158 @@ function expectShardSuccess(root: string, shard: string) {
 }
 
 describe("original-source coverage across loaders", () => {
+  it.each([
+    ["source inside root", "/repo/src/a.ts", {}, true],
+    ["nested source inside root", "/repo/src/nested/a.ts", {}, true],
+    ["similarly named folder", "/repo/foo-src/a.ts", {}, false],
+    ["nested source outside selected folder", "/repo/tools/src/a.ts", {}, false],
+    ["dependency source", "/repo/node_modules/pkg/src/a.ts", {}, false],
+    [
+      "dependency with broad include",
+      "/repo/node_modules/pkg/src/a.ts",
+      {
+        include: ["**"],
+      },
+      false,
+    ],
+    [
+      "dependency with absolute include",
+      "/repo/node_modules/pkg/src/a.ts",
+      {
+        include: ["/repo/node_modules/pkg/src/a.ts"],
+      },
+      false,
+    ],
+    [
+      "relative exclusion",
+      "/repo/src/a.ts",
+      {
+        exclude: ["src/a.ts"],
+      },
+      false,
+    ],
+    [
+      "relative exclusion with broad include",
+      "/repo/src/a.ts",
+      {
+        include: ["**"],
+        exclude: ["src/a.ts"],
+      },
+      false,
+    ],
+    [
+      "absolute inclusion",
+      "/repo/src/a.ts",
+      {
+        include: ["/repo/src/a.ts"],
+      },
+      true,
+    ],
+    [
+      "absolute exclusion",
+      "/repo/src/a.ts",
+      {
+        exclude: ["/repo/src/a.ts"],
+      },
+      false,
+    ],
+    [
+      "second configured root",
+      "/other/src/a.ts",
+      {
+        roots: ["/repo", "/other"],
+      },
+      true,
+    ],
+    [
+      "outside root denied",
+      "/outside/src/a.ts",
+      {
+        include: ["**/src/**/*.ts"],
+      },
+      false,
+    ],
+    [
+      "root name prefix denied",
+      "/repo-other/src/a.ts",
+      {
+        include: ["**/src/**/*.ts"],
+      },
+      false,
+    ],
+    [
+      "external source allowed",
+      "/outside/src/a.ts",
+      {
+        include: ["**/src/**/*.ts"],
+        allowExternal: true,
+      },
+      true,
+    ],
+    [
+      "external source explicit relative pattern",
+      "/outside/src/a.ts",
+      {
+        include: ["../outside/src/**/*.ts"],
+        allowExternal: true,
+      },
+      true,
+    ],
+    [
+      "external source excluded",
+      "/outside/src/a.ts",
+      {
+        include: ["**/src/**/*.ts"],
+        exclude: ["**/outside/**"],
+        allowExternal: true,
+      },
+      false,
+    ],
+    [
+      "external unchanged file",
+      "/outside/src/a.ts",
+      {
+        include: ["**/src/**/*.ts"],
+        allowExternal: true,
+        changedFiles: ["/outside/src/b.ts"],
+      },
+      false,
+    ],
+    [
+      "changed file included",
+      "/repo/src/a.ts",
+      {
+        changedFiles: ["/repo/src/a.ts"],
+      },
+      true,
+    ],
+    [
+      "unchanged file excluded",
+      "/repo/src/a.ts",
+      {
+        changedFiles: ["/repo/src/b.ts"],
+      },
+      false,
+    ],
+    ["query suffix normalized", "/repo/src/a.ts?mode=source", {}, true],
+    ["file URL normalized", "file:///repo/src/a.ts", {}, true],
+  ] as const)("respects source selection: %s", (_label, filename, options, expected) => {
+    const script = `
+const coverage = require(${JSON.stringify(path.join(repositoryRoot, "test/helpers/source-coverage.cts"))});
+coverage.enableSourceCoverage(${JSON.stringify({ roots: ["/repo"], include: ["src/**/*.ts"], exclude: [], allowExternal: false, ...options })});
+console.log(JSON.stringify(coverage.shouldInstrumentSource(${JSON.stringify(filename)})));
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout)).toBe(expected);
+  });
   it(
     "collects native counters from a warm disk cache without loading the instrumenter",
     testTimeoutOptions(35_000),
@@ -141,17 +295,17 @@ describe("original-source coverage across loaders", () => {
       expect(warmup.status, `${warmup.stdout}\n${warmup.stderr}`).toBe(0);
       const filename = path.join(root, "src/probe.ts");
       const script = `
-require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
-const coverage = require(${JSON.stringify(path.join(repositoryRoot, "test/helpers/source-coverage.cts"))});
-coverage.enableSourceCoverage({roots:[${JSON.stringify(root)}],include:[${JSON.stringify(filename)}],exclude:[],allowExternal:false});
 const Module = require("node:module"), load = Module._load;
 Module._load = function(request, ...args) {
   if (request === "@babel/core" || request === "istanbul-lib-instrument") throw new Error("Warm native cache attempted instrumentation");
   return load.call(this, request, ...args);
 };
+require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
+const coverage = require(${JSON.stringify(path.join(repositoryRoot, "test/helpers/source-coverage.cts"))});
+coverage.enableSourceCoverage({roots:[${JSON.stringify(root)}],include:[${JSON.stringify(filename)}],exclude:[],allowExternal:false});
 const probe = require(${JSON.stringify(filename)});
 const value = probe.nativeBranch(true);
-console.log(JSON.stringify({value,coverage:globalThis[coverage.COVERAGE_KEY][${JSON.stringify(filename)}]}));
+console.log(JSON.stringify({value,coverage:globalThis[coverage.COVERAGE_KEY][${JSON.stringify(filename)}],instrumenters:Object.keys(require.cache).filter(filename => /(?:@babel.core|istanbul-lib-instrument)/.test(filename))}));
 `;
       const result = spawnSync(process.execPath, ["-e", script], {
         env: {
@@ -164,6 +318,7 @@ console.log(JSON.stringify({value,coverage:globalThis[coverage.COVERAGE_KEY][${J
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const output = JSON.parse(result.stdout);
       expect(output.value).toBe("native-true");
+      expect(output.instrumenters).toEqual([]);
       expect(functions(output.coverage)).toEqual({ nativeBranch: 1, ssrBranch: 0, neverCalled: 0 });
       expect(Object.values(output.coverage.b)).toEqual([
         [1, 0],
@@ -276,11 +431,11 @@ try {
     );
   });
 
-  it.each(["both", "omit-native", "omit-ssr"])(
+  it.each(["both", "project", "omit-native", "omit-ssr"])(
     "counts %s execution without duplicate source entries",
     testTimeoutOptions(35_000),
     (mode) => {
-      const root = createFixture(mode);
+      const root = createFixture(mode, undefined, mode === "project");
       const result = runFixture(root);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const report = JSON.parse(

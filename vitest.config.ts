@@ -9,7 +9,10 @@ import { defineConfig, defineProject } from "vitest/config";
 import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
 import { shouldRunLiveE2E } from "./test/e2e/fixtures/live-project-gate.ts";
 import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
-import { sourceCoveragePlugin } from "./test/helpers/source-coverage-plugin";
+import {
+  sourceCoverageExternal,
+  sourceCoveragePlugin,
+} from "./test/helpers/source-coverage-plugin";
 import {
   resolveCliCoverageShardScheduling,
   resolveIntegrationProjectScheduling,
@@ -136,6 +139,7 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    server: { deps: { external: [sourceCoverageExternal] } },
     ...cliCoverageShardScheduling,
     globalSetup: "test/helpers/vitest-temp-root.ts",
     tags: [

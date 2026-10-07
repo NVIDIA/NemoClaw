@@ -29,6 +29,8 @@ import { qualifyPendingSandboxCreateReservation } from "../../../state/registry/
 import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
 
 beforeEach(async () => {
+  vi.stubEnv("HOME", home);
+  expect(process.env.HOME).toBe(home);
   await fs.mkdir(home, { recursive: true });
 });
 afterEach(async () => {

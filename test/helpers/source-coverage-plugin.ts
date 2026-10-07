@@ -3,6 +3,8 @@
 
 import type { Plugin } from "vite";
 
+export const sourceCoverageExternal = /[/\\]test[/\\]helpers[/\\]source-coverage\.cts$/;
+
 export function sourceCoveragePlugin(): Plugin {
   return {
     name: "nemoclaw-source-coverage",
@@ -19,7 +21,7 @@ export function sourceCoveragePlugin(): Plugin {
         test: {
           // The shared CommonJS collector is typed, but Vite parses .cts as
           // JavaScript. Node strips its types and preserves the native cache.
-          server: { deps: { external: [/[/\\]test[/\\]helpers[/\\]source-coverage\.cts$/] } },
+          server: { deps: { external: [sourceCoverageExternal] } },
           ...(merging ? { experimental: { viteModuleRunner: false } } : {}),
         },
       };

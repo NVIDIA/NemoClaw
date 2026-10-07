@@ -29,7 +29,7 @@ type InstrumentedSource = { code: string; map?: unknown; coverage?: FileCoverage
 type CoverageState = {
   options: CoverageOptions;
   cache: Map<string, { source: string; result: InstrumentedSource }>;
-  matcher: (filename: string) => boolean;
+  matcher: (filename: string, absolute: string) => boolean;
   isEnabled: () => boolean;
   instrument: typeof instrumentSourceForCoverageImpl;
   fingerprint?: string;
@@ -64,11 +64,10 @@ export declare const sourceCoverageCacheIdentity: typeof sourceCoverageCacheIden
 function enableSourceCoverageImpl(options: CoverageOptions, isEnabled = () => true) {
   // Compile once before enabling the hook that examines every native import.
   const picomatch = require("picomatch");
-  const matcher = picomatch(options.include ?? "**", {
-    contains: true,
-    dot: true,
-    ignore: options.exclude,
-  });
+  const include = picomatch(options.include ?? "**", { dot: true });
+  const exclude = picomatch(options.exclude ?? [], { dot: true });
+  const matcher = (relative: string, absolute: string) =>
+    (include(relative) || include(absolute)) && !exclude(relative) && !exclude(absolute);
   coverageGlobal[STATE_KEY] = {
     options,
     cache: new Map(),
@@ -103,19 +102,17 @@ function canonicalFilename(id: string) {
 function isIncluded(
   filename: string,
   options: CoverageOptions,
-  matcher: (filename: string) => boolean,
+  matcher: (filename: string, absolute: string) => boolean,
 ) {
-  if (
-    options.allowExternal === false &&
-    !options.roots.some((root) => {
-      const relative = path.relative(root, filename);
-      return (
-        !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`)
-      );
-    })
-  )
-    return false;
-  return matcher(filename) && (!options.changedFiles || options.changedFiles.includes(filename));
+  if (filename.split("/").includes("node_modules")) return false;
+  if (options.changedFiles && !options.changedFiles.includes(filename)) return false;
+  return options.roots.some((root) => {
+    const relative = path.relative(root, filename);
+    const outside =
+      path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`);
+    if (outside && options.allowExternal === false) return false;
+    return matcher(relative.replaceAll("\\", "/"), filename);
+  });
 }
 
 function guardSerializedCounters(program: ProgramPath, types: BabelTypes) {

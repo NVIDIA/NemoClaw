@@ -378,11 +378,13 @@ describe("stopAll gateway-stop wiring", () => {
     ["not-scoped", "managed gateway was not released"],
     ["unconfirmed", "managed gateway release was not confirmed"],
   ] as const)(
-    "preserves incomplete cloudflared cleanup when gateway release is %s",
+    "does not release the gateway when cloudflared cleanup is incomplete (%s)",
     (gatewayOutcome, gatewayMessage) => {
       const pidDir = mkdtempSync(join(tmpdir(), `nemoclaw-${gatewayOutcome}-cloudflared-stop-`));
       writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
-      vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => gatewayOutcome);
+      const releaseGatewayPort = vi
+        .spyOn(gatewayStop, "releaseGatewayPortForStop")
+        .mockImplementation(() => gatewayOutcome);
       vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
       const signalCloudflared = vi.fn(() => "unavailable" as const);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -408,8 +410,9 @@ describe("stopAll gateway-stop wiring", () => {
       expect(signalCloudflared).not.toHaveBeenCalled();
       expect(logged).toContain("Host service cleanup remains incomplete");
       expect(logged).toContain("cloudflared was not stopped");
-      expect(logged).toContain(gatewayMessage);
+      expect(logged).not.toContain(gatewayMessage);
       expect(logged).not.toContain("Host services stopped");
+      expect(releaseGatewayPort).not.toHaveBeenCalled();
     },
   );
 });
