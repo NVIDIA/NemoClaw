@@ -49,7 +49,7 @@ describe("native NVIDIA credential reset ownership", () => {
         return deleteResult;
       });
       const clearNativeNvidiaProviderAuthority = vi.fn(() => operations.push("clear-authority"));
-      const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName: string) =>
+      const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName?: string) =>
         gatewayName === "nemoclaw" ? ["alpha"] : [],
       );
 
@@ -112,7 +112,7 @@ describe("native NVIDIA credential reset ownership", () => {
       ok: true,
     }));
     const clearNativeNvidiaProviderAuthority = vi.fn();
-    const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName: string) =>
+    const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName?: string) =>
       gatewayName === "other-gateway" ? ["beta"] : [],
     );
 
