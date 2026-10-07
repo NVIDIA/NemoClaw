@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn, type SpawnOptions } from "node:child_process";
+import { captureOpenshellCommandAsyncResult } from "../openshell/command-execution";
+
 import type {
   OpenShellSandboxBufferedCommandExecutor,
   OpenShellSandboxCommandError,
@@ -148,4 +151,47 @@ export async function executeSandboxExecCommand(
       ...(runtimeEnv ? { runtimeEnv } : {}),
     },
   );
+}
+
+/** Keep bounded readers and their descendants inside the foreground supervisor's process group. */
+export function createSupervisedSandboxCommandReader(signal: AbortSignal): {
+  executor: OpenShellSandboxBufferedCommandExecutor;
+  dispose: () => void;
+} {
+  const listeners = { SIGTERM: new Set<() => void>(), SIGINT: new Set<() => void>() };
+  const forwardTerm = () => {
+    for (const listener of listeners.SIGTERM) listener();
+  };
+  const forwardInt = () => {
+    for (const listener of listeners.SIGINT) listener();
+  };
+  signal.addEventListener("abort", forwardTerm, { once: true });
+  process.on("SIGTERM", forwardTerm);
+  process.on("SIGINT", forwardInt);
+  const executor = createCliOpenShellSandboxCommandExecutor({
+    signalSource: {
+      add: (signalName, listener) => {
+        listeners[signalName].add(listener);
+        if (signal.aborted) queueMicrotask(listener);
+      },
+      remove: (signalName, listener) => listeners[signalName].delete(listener),
+    },
+    runBuffered: (binary, args, request) =>
+      captureOpenshellCommandAsyncResult(binary, args, {
+        ...request,
+        cwd: request.hostCwd,
+        killGraceMs: 0,
+        // The capture owner always invokes the three-argument spawn signature.
+        spawnImpl: ((binary: string, args: readonly string[] = [], options?: SpawnOptions) =>
+          spawn(binary, [...args], { ...options, detached: false })) as typeof spawn,
+      }),
+  });
+  return {
+    executor,
+    dispose: () => {
+      signal.removeEventListener("abort", forwardTerm);
+      process.removeListener("SIGTERM", forwardTerm);
+      process.removeListener("SIGINT", forwardInt);
+    },
+  };
 }

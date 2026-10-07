@@ -83,6 +83,11 @@ import {
   createDefaultInferenceSetProviderAdapter,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
+  inferenceSetModelProvenance,
+  recordInferenceSetFailure,
+  recordInferenceSetResult,
+  recordInferenceSetChange,
+  completeInferenceSetTelemetry,
   probeInferenceSetSandboxRouteUntilConverged,
   providerCommitMayHaveChangedBinding,
   type RuntimeProviderBundleRegistry,
@@ -1576,6 +1581,7 @@ async function runInferenceSetWithoutHostLock(
   let appliedInferenceSelection = false;
   let ambiguousInferenceSelection = false;
   let restoredSelectionAfterProviderFailure = false;
+  let providerCommitResidual = false;
   let providerMutation: Awaited<ReturnType<typeof prepareInferenceSetProviderBinding>> | null =
     null;
   let assertProviderCurrentBeforeSelection: (() => Promise<void>) | null = null;
@@ -1698,6 +1704,7 @@ async function runInferenceSetWithoutHostLock(
         await providerMutation.commit();
         appliedProvider = true;
       } catch (providerError) {
+        providerCommitResidual = providerCommitMayHaveChangedBinding(providerError);
         const restoreFailure = await restorePreviousInferenceSelection();
         restoredSelectionAfterProviderFailure = restoreFailure === null;
         throw providerCommitFailureAfterSelection({
@@ -1788,6 +1795,12 @@ async function runInferenceSetWithoutHostLock(
       ...inferenceSelectionRegistryFields({
         provider,
         model,
+        modelSelectionProvenance: inferenceSetModelProvenance({
+          model,
+          provider,
+          endpointUrl: registryMetadata.endpointUrl ?? null,
+          preferredInferenceApi,
+        }),
         endpointUrl: registryMetadata.endpointUrl ?? null,
         endpointSource: registryMetadata.endpointSource ?? null,
         credentialEnv: registryMetadata.credentialEnv ?? null,
@@ -1995,11 +2008,27 @@ async function runInferenceSetWithoutHostLock(
           `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
       );
     }
+    recordInferenceSetChange(sandboxName, [
+      patched.changed,
+      retryingOpenClawConfigSync,
+      appliedProvider,
+      rollbackRoute?.provider !== provider,
+      rollbackRoute?.model !== model,
+      previousProvider !== provider,
+      previousModel !== model,
+      previousInferenceApi !== preferredInferenceApi,
+      (entry.endpointUrl ?? null) !== (registryMetadata.endpointUrl ?? null),
+    ]);
     return {
       ...mutation,
       openClawConfigSyncPending: inSandboxConfigSynced && openClawConfigSyncPending,
     };
   } catch (error) {
+    recordInferenceSetFailure(
+      sandboxName,
+      Boolean(appliedInferenceSelection || appliedProvider || providerCommitResidual),
+      Boolean(ambiguousInferenceSelection || providerMutation),
+    );
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
     await restorePreviousNativeNvidiaAfterFailedPublish({
       detached: previousNativeNvidiaDetached,
@@ -2028,7 +2057,9 @@ async function runInferenceSetWithoutHostLock(
       if (providerMutation.action === "create") {
         try {
           await providerMutation.rollback();
+          recordInferenceSetResult(sandboxName, "failed", "unchanged");
         } catch (rollbackError) {
+          recordInferenceSetResult(sandboxName, "failed", "partial");
           const rollbackDetail =
             rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
           throw new InferenceSetError(`${detail}\n  ${rollbackDetail}`, exitCode);
@@ -2109,12 +2140,18 @@ export async function runInferenceSet(
     // Retain the outer sandbox lifecycle lock so another process cannot replace
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.
-    await completeInferencePostCommit(mutation, deps);
-    // The agent config has converged once post-commit work succeeds. Do not
-    // leave its recovery marker pending if later provider cleanup fails.
-    if (mutation.openClawConfigSyncPending) {
-      clearOpenClawConfigSyncPending(selected.sandboxName, deps);
+    try {
+      await completeInferencePostCommit(mutation, deps);
+      // The agent config has converged once post-commit work succeeds. Do not
+      // leave its recovery marker pending if later provider cleanup fails.
+      if (mutation.openClawConfigSyncPending) {
+        clearOpenClawConfigSyncPending(selected.sandboxName, deps);
+      }
+    } catch (error) {
+      recordInferenceSetResult(selected.sandboxName, "failed", "partial");
+      throw error;
     }
+    completeInferenceSetTelemetry(selected.sandboxName);
     return mutation.result;
   });
 }

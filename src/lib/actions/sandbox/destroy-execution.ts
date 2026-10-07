@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { finishTelemetryOperation, recordTelemetryTarget } from "../telemetry/operation";
+
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -1076,4 +1078,16 @@ export async function executeSandboxDestroy({
       ...(commonLlamaCppAuthorityRetired ? { commonLlamaCppAuthorityRetired: true as const } : {}),
     };
   });
+}
+
+/** The destroy owner records its terminal result after cleanup, including explicit exits. */
+export async function recordDestroyCompletion(
+  sandboxName: string,
+  outcome: "completed" | "cancelled" | "failed",
+  exitCode?: number,
+): Promise<void> {
+  const state =
+    outcome === "completed" ? "applied" : outcome === "cancelled" ? "unchanged" : "partial";
+  recordTelemetryTarget({ scope: "sandbox", sandboxName, outcome, state });
+  if (exitCode !== undefined) await finishTelemetryOperation(exitCode);
 }

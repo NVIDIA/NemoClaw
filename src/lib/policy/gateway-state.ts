@@ -3,6 +3,18 @@
 
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import { getTelemetryTarget, recordTelemetryTarget } from "../actions/telemetry/operation";
+import type {
+  TelemetryOutcome,
+  TelemetryState,
+  ValueStatus,
+  TelemetryMetadataError,
+} from "../domain/telemetry/event";
+import type { AppliedPolicySelection } from "../domain/telemetry/provenance";
+import {
+  readSandboxTelemetryEntry,
+  updateSandboxTelemetrySelections,
+} from "../state/registry/telemetry-selections";
 
 export type PresetContentSource = { name: string; content: string | null };
 export type PresetContentGatewayState = "match" | "absent" | "drift" | null;
@@ -99,4 +111,41 @@ export function inspectPresetContentGatewayState(
   } catch {
     return "drift";
   }
+}
+
+export function recordPolicyResult(
+  sandboxName: string,
+  outcome: TelemetryOutcome,
+  state: TelemetryState,
+  verificationStatus?: ValueStatus,
+  metadataErrors?: TelemetryMetadataError[],
+): void {
+  const previous = getTelemetryTarget(sandboxName);
+  if (outcome === "no_change" && previous?.outcome === "completed") return;
+  recordTelemetryTarget({
+    scope: "configuration",
+    sandboxName,
+    outcome,
+    state,
+    ...(verificationStatus ? { verificationStatus } : {}),
+    ...(metadataErrors ? { metadataErrors } : {}),
+  });
+}
+
+/** Store only the verified tier receipt without delaying or changing product success. */
+export function persistAppliedPolicySelection(
+  sandboxName: string,
+  receipt: AppliedPolicySelection,
+): boolean {
+  try {
+    const entry = readSandboxTelemetryEntry(sandboxName);
+    if (entry && updateSandboxTelemetrySelections(entry, { appliedPolicySelection: receipt }))
+      return true;
+  } catch {
+    /* The policy is applied; only its selection receipt could not be stored. */
+  }
+  recordPolicyResult(sandboxName, "completed", "applied", "collection_error", [
+    { category: "policy_tier" },
+  ]);
+  return false;
 }

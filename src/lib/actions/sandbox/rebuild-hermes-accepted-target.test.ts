@@ -137,6 +137,7 @@ describe("Hermes accepted replacement recovery", () => {
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
     phaseMocks.recordSandboxStopIntent.mockReturnValue(true);
     phaseMocks.runPostRestore.mockResolvedValue({
+      complete: true,
       mutableConfigPermissionsVerified: true,
     });
     phaseMocks.retireRemovedImmutabilityStateRecord.mockReturnValue(true);
@@ -219,7 +220,7 @@ describe("Hermes accepted replacement recovery", () => {
     });
     phaseMocks.runPostRestore.mockImplementation(async () => {
       events.push("post-restore");
-      return { mutableConfigPermissionsVerified: true };
+      return { complete: true, mutableConfigPermissionsVerified: true };
     });
     phaseMocks.enforceRemovedImmutabilityMigrationBoundary.mockReturnValue({
       stateRecord: "/tmp/shields-alpha.json",
@@ -340,6 +341,7 @@ describe("Hermes accepted replacement recovery", () => {
       recoveryArtifacts: [],
     });
     phaseMocks.runPostRestore.mockResolvedValue({
+      complete: false,
       mutableConfigPermissionsVerified: false,
     });
 

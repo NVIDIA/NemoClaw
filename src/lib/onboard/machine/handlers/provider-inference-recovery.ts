@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  selectedModelProvenance,
+  readModelSelectionProvenance,
+  type ModelSelectionProvenance,
+} from "../../../domain/telemetry/provenance";
 import type { Session } from "../../../state/onboard-session";
 import type {
   createProviderRecoveryReceiptLedger,
@@ -99,4 +104,37 @@ export function createRecovery(
       };
     },
   };
+}
+
+/** Carry selection origin only while the current route matches the selected model and provider. */
+export function providerModelProvenanceUpdate(
+  provenance: ModelSelectionProvenance | null,
+  route: Parameters<typeof selectedModelProvenance>[0],
+): { modelSelectionProvenance?: ModelSelectionProvenance } {
+  if (!provenance || provenance.model !== route.model || provenance.provider !== route.provider)
+    return {};
+  const bound = selectedModelProvenance({ ...route, modelSource: provenance.modelSource });
+  return bound ? { modelSelectionProvenance: bound } : {};
+}
+
+export { readModelSelectionProvenance };
+
+/** A recovered selection may retain its receipt only while the exact model/provider still matches. */
+export function selectedOrRecoveredModelProvenance(
+  selection: {
+    model: string | null;
+    provider: string;
+    modelSelectionProvenance?: ModelSelectionProvenance;
+    recoveredFromSandbox?: boolean;
+  },
+  previous: ModelSelectionProvenance | null,
+): ModelSelectionProvenance | null {
+  return (
+    readModelSelectionProvenance(selection.modelSelectionProvenance) ??
+    (selection.recoveredFromSandbox &&
+    previous?.model === selection.model &&
+    previous.provider === selection.provider
+      ? previous
+      : null)
+  );
 }

@@ -161,6 +161,9 @@ export function selection(
   return inferenceSelectionRegistryFields({
     provider,
     model,
+    ...(sessionMatches && session.modelSelectionProvenance
+      ? { modelSelectionProvenance: session.modelSelectionProvenance }
+      : {}),
     endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
     endpointSource: sessionMatches ? endpointSource : null,
     credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,

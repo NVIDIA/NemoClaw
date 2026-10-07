@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import {
+  createUpgradeTelemetry,
+  finishTelemetryOperation,
+  setTelemetryOutcome,
+} from "./telemetry/upgrade";
 import { B, D, G, R, YW } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
 import { getVersion } from "../core/version";
@@ -296,12 +301,17 @@ export async function upgradeSandboxes(
   const normalized = normalizeUpgradeSandboxesOptions(options);
   const checkOnly = normalized.check === true;
   const skipConfirm = shouldSkipUpgradeConfirmation(normalized);
-
   const sandboxes = registry
     .listSandboxes()
     .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox));
+  const { recordTarget, recordUntargeted, verifyTarget, finish } = createUpgradeTelemetry(
+    sandboxes,
+    resolveSandboxGatewayName,
+  );
+
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
+    setTelemetryOutcome(checkOnly ? "checked" : "no_change", "unchanged");
     return;
   }
 
@@ -315,7 +325,11 @@ export async function upgradeSandboxes(
     .sort();
   if (incompatibleSandboxNames.length > 0) {
     printIncompatibleRegisteredSandboxNames(incompatibleSandboxNames);
+    for (const name of incompatibleSandboxNames)
+      recordTarget(name, checkOnly ? "checked" : "failed", "unavailable");
+    setTelemetryOutcome(checkOnly ? "checked" : "failed", "unchanged");
     if (checkOnly) return;
+    await finishTelemetryOperation(1);
     process.exit(1);
   }
 
@@ -490,6 +504,11 @@ export async function upgradeSandboxes(
   const orphanNames = new Set(unobservedOwnGatewaySandboxes.map((sandbox) => sandbox.name));
   const unknownWithoutOrphans = unknown.filter((sandbox) => !orphanNames.has(sandbox.name));
   printPinnedExternalImageSandboxes(externalImageSandboxes);
+  const reconciliationNames = new Set(stoppedIntentReconciliations.map((sandbox) => sandbox.name));
+  recordUntargeted(
+    [staleNames, unknownNames, orphanNames, assessedRecoveryNames, reconciliationNames],
+    checkOnly,
+  );
 
   if (
     stale.length === 0 &&
@@ -504,7 +523,13 @@ export async function upgradeSandboxes(
       // rather than parsing output. An orphan is actionable — it needs
       // `upgrade-sandboxes` to reconcile — so it must not report the same
       // exit code as a clean run.
-      if (checkOnly) process.exit(1);
+      for (const sandbox of unobservedOwnGatewaySandboxes)
+        recordTarget(sandbox.name, checkOnly ? "checked" : "skipped", "unavailable");
+      setTelemetryOutcome(checkOnly ? "checked" : "skipped", "unchanged");
+      if (checkOnly) {
+        await finishTelemetryOperation(1);
+        process.exit(1);
+      }
       return;
     }
     console.log(
@@ -512,6 +537,9 @@ export async function upgradeSandboxes(
         ? "  No automatically managed sandboxes require an upgrade."
         : "  All sandboxes are up to date.",
     );
+    if (checkOnly)
+      for (const sandbox of sandboxes) recordTarget(sandbox.name, "checked", "unchanged");
+    setTelemetryOutcome(checkOnly ? "checked" : "no_change", "unchanged");
     return;
   }
 
@@ -581,6 +609,14 @@ export async function upgradeSandboxes(
     // #10211: reached only when stale, unknown, a prepared recovery, or a
     // rejected recovery was found — never the "all up to date" case above.
     // `--check` is read-only, so scripts gate on the exit code.
+    for (const sandbox of sandboxes)
+      recordTarget(
+        sandbox.name,
+        "checked",
+        orphanNames.has(sandbox.name) ? "unavailable" : "unchanged",
+      );
+    setTelemetryOutcome("checked", "unchanged");
+    await finishTelemetryOperation(1);
     process.exit(1);
   }
 
@@ -591,6 +627,16 @@ export async function upgradeSandboxes(
   const notObservedReadyOrNonReady = stopped.filter(
     (sandbox) => !assessedRecoveryNames.has(sandbox.name),
   );
+  const unattemptedNames = new Set([
+    ...notObservedReadyOrNonReady.map((sandbox) => sandbox.name),
+    ...unknown
+      .filter((sandbox) => !assessedRecoveryNames.has(sandbox.name))
+      .map((sandbox) => sandbox.name),
+    ...unobservedOwnGatewaySandboxes
+      .filter((sandbox) => !assessedRecoveryNames.has(sandbox.name))
+      .map((sandbox) => sandbox.name),
+  ]);
+  for (const name of unattemptedNames) recordTarget(name, "skipped", "unavailable");
   if (notObservedReadyOrNonReady.length > 0) {
     console.log(
       `  ${D}Skipping ${notObservedReadyOrNonReady.length} sandbox(es) not observed on the selected gateway — verify their recorded gateway or start them first.${R}`,
@@ -604,12 +650,17 @@ export async function upgradeSandboxes(
   ) {
     printOrphanedRegistrySandboxes(unobservedOwnGatewaySandboxes);
     console.log("  No running stale sandboxes to rebuild.");
+    setTelemetryOutcome("skipped", "unchanged");
     return;
   }
 
   let rebuilt = 0;
   let stoppedReconciled = 0;
   let failed = rejectedRecoveries.length;
+  let skipped = unattemptedNames.size;
+  let unverified = 0;
+  for (const recovery of rejectedRecoveries)
+    recordTarget(recovery.sandbox.name, "failed", "unavailable");
   const recoveredNames = new Set<string>();
   const work = [
     ...ordinaryRebuildable.map((sandbox) => ({ sandbox, manifest: null })),
@@ -628,6 +679,8 @@ export async function upgradeSandboxes(
       const answer = await askPrompt(`  ${verb} '${sandbox.name}'? [y/N]: `);
       if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
         console.log(`  Skipped '${sandbox.name}'.`);
+        skipped++;
+        recordTarget(sandbox.name, "skipped", "unchanged");
         continue;
       }
     }
@@ -656,11 +709,13 @@ export async function upgradeSandboxes(
       }
       rebuilt++;
       recoveredNames.add(sandbox.name);
+      if (!verifyTarget(sandbox.name)) unverified++;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const verb = manifest ? "recover" : "rebuild";
       console.error(`  ${YW}⚠${R} Failed to ${verb} '${sandbox.name}': ${errorMessage}`);
       failed++;
+      recordTarget(sandbox.name, "failed", "partial");
     }
   }
   for (const sandbox of stoppedIntentReconciliations) {
@@ -668,6 +723,8 @@ export async function upgradeSandboxes(
       const answer = await askPrompt(`  Return '${sandbox.name}' to its stopped state? [y/N]: `);
       if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
         console.log(`  Skipped '${sandbox.name}'.`);
+        skipped++;
+        recordTarget(sandbox.name, "skipped", "unchanged");
         continue;
       }
     }
@@ -680,12 +737,14 @@ export async function upgradeSandboxes(
         );
       }
       stoppedReconciled++;
+      recordTarget(sandbox.name, "completed", "applied");
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(
         `  ${YW}⚠${R} Failed to reconcile stopped state for '${sandbox.name}': ${errorMessage}`,
       );
       failed++;
+      recordTarget(sandbox.name, "failed", "partial");
     }
   }
 
@@ -698,5 +757,9 @@ export async function upgradeSandboxes(
     console.log(`  ${G}✓${R} ${stoppedReconciled} sandbox(es) reconciled to stopped state.`);
   }
   if (failed > 0) console.log(`  ${YW}⚠${R} ${failed} sandbox(es) failed — see errors above.`);
-  if (failed > 0) process.exit(1);
+  finish(failed, unverified, skipped, rebuilt + stoppedReconciled);
+  if (failed > 0) {
+    await finishTelemetryOperation(1);
+    process.exit(1);
+  }
 }

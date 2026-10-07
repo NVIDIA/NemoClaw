@@ -10,14 +10,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  readModelSelectionProvenance,
+  type ModelSelectionProvenance,
+  parseServingProfileProvenance,
+  type ServingProfileProvenance,
+} from "./onboard-session/selection-provenance";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
-import {
-  parseServingProfileProvenance,
-  type ServingProfileProvenance,
-} from "../inference/serving/profile-provenance";
 import {
   normalizeWebSearchConfig,
   webSearchEnvFor,
@@ -286,6 +288,7 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
   vllmInstallModel: string | null;
   /** GPU exposed to the host-side managed vLLM container for this onboarding attempt. */
@@ -368,6 +371,7 @@ export interface SessionUpdates {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
@@ -1011,6 +1015,13 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    ...(readModelSelectionProvenance(overrides.modelSelectionProvenance)
+      ? {
+          modelSelectionProvenance: readModelSelectionProvenance(
+            overrides.modelSelectionProvenance,
+          ),
+        }
+      : {}),
     vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
     vllmGpuDevice: parseVllmGpuDevice(overrides.vllmGpuDevice),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
@@ -1157,6 +1168,9 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    ...(readModelSelectionProvenance(data.modelSelectionProvenance)
+      ? { modelSelectionProvenance: readModelSelectionProvenance(data.modelSelectionProvenance) }
+      : {}),
     vllmInstallModel,
     vllmGpuDevice,
     servingProfileProvenance,
@@ -1705,6 +1719,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "sandboxName", updates.sandboxName);
   assignNullableString(safe, "provider", updates.provider);
   assignNullableString(safe, "model", updates.model);
+  if (updates.modelSelectionProvenance === null) safe.modelSelectionProvenance = null;
+  else {
+    const provenance = readModelSelectionProvenance(updates.modelSelectionProvenance);
+    if (provenance) safe.modelSelectionProvenance = provenance;
+  }
   if (updates.servingProfileProvenance === null) {
     safe.servingProfileProvenance = null;
   } else {

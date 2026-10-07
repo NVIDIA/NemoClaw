@@ -59,6 +59,7 @@ import {
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  recordDestroyCompletion,
   preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
   retirePortableLifecycleAuthority,
@@ -702,7 +703,14 @@ export async function destroySandbox(
       );
     });
   } catch (error) {
-    if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
+    await recordDestroyCompletion(
+      sandboxName,
+      "failed",
+      error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
+    );
+    if (error instanceof SandboxDestroyExitRequest) {
+      process.exit(error.exitCode);
+    }
     throw error;
   }
 }
@@ -721,7 +729,10 @@ async function destroySandboxUnlocked(
   const listRegisteredSandboxes = registryAuthority.listSandboxes;
   const registeredSandbox = registryAuthority.entry;
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
-  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
+  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) {
+    await recordDestroyCompletion(sandboxName, "cancelled");
+    return;
+  }
   if (registeredSandbox) {
     onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(registeredSandbox);
   }
@@ -1424,4 +1435,5 @@ async function destroySandboxUnlocked(
     console.warn(`  ${YW}⚠${R}${m}`),
   );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
+  await recordDestroyCompletion(sandboxName, "completed");
 }
