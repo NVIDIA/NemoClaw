@@ -101,6 +101,12 @@ function stateRoot(host: ReturnType<typeof scope>): string {
   return host.stateDir;
 }
 
+function mutateJsonFile(file: string, mutate: (value: Record<string, unknown>) => void): void {
+  const value = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  mutate(value);
+  fs.writeFileSync(file, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+}
+
 function failedPreflightSession(host: ReturnType<typeof scope>): void {
   const session = createSession({ sessionId: "interrupted-at-preflight" });
   session.status = "failed";
@@ -301,6 +307,17 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
+  it("does not require unrelated historical session fields to validate Portable retirement (#11541)", async () => {
+    const host = scope("nemoclaw-uninstall-stale-ordinary-session-");
+    completedOpenClawAuthority(host, "default");
+    mutateJsonFile(path.join(host.stateDir, "onboard-session.json"), (session) => {
+      session.compatibleEndpointReasoningEffort = "unrecognized-legacy-value";
+    });
+
+    expect(hasPortableRuntimeCleanup(host.stateDir)).toBe(false);
+    await expectOrdinaryUninstall(host);
+  });
+
   it("preserves abandoned Portable configuration after completed ordinary onboarding (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-completed-config-");
     completedOpenClawAuthority(host, "default");
@@ -387,6 +404,50 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.rmSync).not.toHaveBeenCalled();
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
+
+  it("refuses a default-profile session when the selected registry row uses Podman", async () => {
+    const host = scope("nemoclaw-uninstall-default-podman-registry-");
+    completedOpenClawAuthority(host, "default");
+    mutateJsonFile(path.join(host.stateDir, "sandboxes.json"), (registry) => {
+      const row = (registry.sandboxes as Record<string, Record<string, unknown>>)[
+        "openclaw-sandbox"
+      ];
+      row.openshellDriver = "podman";
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Portable lifecycle state is unsafe"),
+    );
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it.each(["unset", "unknown"])(
+    "refuses a completed session with an %s onboarding profile",
+    async (kind) => {
+      const host = scope("nemoclaw-uninstall-ambiguous-profile-");
+      completedOpenClawAuthority(host, "default");
+      mutateJsonFile(path.join(host.stateDir, "onboard-session.json"), (session) => {
+        (session.checkpoint as Record<string, unknown>).profile = { kind };
+      });
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      const result = await uninstall(host);
+
+      expect(result.exitCode).toBe(1);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("Portable lifecycle state is unsafe"),
+      );
+      expect(host.runModelCleanup).not.toHaveBeenCalled();
+      expect(host.rmSync).not.toHaveBeenCalled();
+      expect(host.runPortableCleanup).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses completed portable authority after its lifecycle receipt disappears", async () => {
     const host = scope("nemoclaw-uninstall-completed-portable-");
