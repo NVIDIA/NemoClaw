@@ -68,6 +68,7 @@ describe("policy state handler", () => {
     const result = await handlePoliciesState({
       ...basePolicyHandlerOptions(deps),
       preserveRebuildLivePolicy: true,
+      provider: "compatible-endpoint",
     });
 
     expect(calls.smoke).not.toHaveBeenCalled();
@@ -88,6 +89,19 @@ describe("policy state handler", () => {
       expect.objectContaining({ forceCanonicalRoute: true }),
     );
   });
+
+  it.each(["compatible-anthropic-endpoint", "nvidia-prod"])(
+    "retains the earlier rebuild check for provider %s",
+    async (provider) => {
+      const { deps, calls } = createPolicyHandlerDeps();
+      await handlePoliciesState({
+        ...basePolicyHandlerOptions(deps),
+        preserveRebuildLivePolicy: true,
+        provider,
+      });
+      expect(calls.smoke).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ provider }));
+    },
+  );
 
   it("retains compatible endpoint verification during ordinary onboarding", async () => {
     const failure = new Error("compatible endpoint smoke failed");

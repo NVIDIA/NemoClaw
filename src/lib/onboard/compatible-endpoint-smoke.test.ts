@@ -328,6 +328,42 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   });
 
   it.each([
+    { label: "missing provider", status: 1, exitCode: 0, output: "", expected: 1 },
+    { label: "failed proof", status: 0, exitCode: 7, output: "", expected: 7 },
+    { label: "missing proof marker", status: 0, exitCode: 0, output: "", expected: 1 },
+  ])("rejects rebuilt verification without exiting for $label", async (testCase) => {
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`unexpected process.exit(${code})`);
+    });
+    const executor = {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: testCase.exitCode },
+        stdout: testCase.output,
+        stderr: "",
+      })),
+    };
+    const smoke = createCompatibleEndpointSmoke(
+      () => ({ status: testCase.status, stdout: providerMetadata("compatible-endpoint") }),
+      executor,
+      (value) => value,
+    );
+    try {
+      await expect(
+        smoke.verifyRebuilt({
+          sandboxName: "rebuilt-sandbox",
+          provider: "compatible-endpoint",
+          model: "baseline",
+          environment: {},
+        }),
+      ).rejects.toThrow(`Compatible endpoint verification failed (exit ${testCase.expected}).`);
+      expect(exit).not.toHaveBeenCalled();
+      expect(executor.runBuffered).toHaveBeenCalledTimes(testCase.status === 0 ? 1 : 0);
+    } finally {
+      exit.mockRestore();
+    }
+  });
+
+  it.each([
     { agent: { name: "hermes" as const }, provider: "compatible-endpoint" },
     { agent: { name: "openclaw" as const }, provider: "nvidia-prod" },
   ])("skips sandbox smoke for $agent.name with $provider", async ({ agent, provider }) => {

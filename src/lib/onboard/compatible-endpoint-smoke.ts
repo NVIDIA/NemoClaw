@@ -116,7 +116,10 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
   /** Recheck sandbox identity after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
+  /** Let lifecycle callers report failure through their own recovery boundary. */
+  onFailure?: (exitCode: number) => never;
 }): Promise<void> {
+  const fail: (exitCode: number) => never = options.onFailure ?? process.exit;
   const agentName = options.agent?.name || "openclaw";
   if (
     options.forceCanonicalRoute !== true &&
@@ -161,7 +164,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     );
     console.error("  The sandbox inference.local route cannot reach the selected model provider.");
     console.error(`  ${compactText(options.redact(providerResult.error.message)).slice(0, 800)}`);
-    process.exit(1);
+    fail(1);
   }
   if (
     options.credentialEnv &&
@@ -202,7 +205,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       );
     }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
-    process.exit(smokeStatus || 1);
+    fail(smokeStatus || 1);
   }
 
   options.beforeSuccess?.();
@@ -247,6 +250,9 @@ export function createCompatibleEndpointSmoke(
       const { environment, gatewayName, ...selection } = options;
       return verifyCompatibleEndpointSandboxSmoke({
         ...selection,
+        onFailure: (exitCode) => {
+          throw new Error(`Compatible endpoint verification failed (exit ${exitCode}).`);
+        },
         runOpenshell: (args, runOptions) => runOpenshell(args, { ...runOptions, env: environment }),
         sandboxCommandExecutor: {
           runBuffered: (request) =>

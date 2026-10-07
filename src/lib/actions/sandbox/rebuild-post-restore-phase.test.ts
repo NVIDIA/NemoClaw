@@ -252,19 +252,33 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("does not report rebuild success when the restored compatible route fails", async () => {
-    vi.mocked(registry.getSandbox).mockReturnValue({
-      agent: null,
-      provider: "compatible-endpoint",
-      model: "baseline",
-    } as never);
-    const failure = new Error("restored route failed");
-    vi.mocked(rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint).mockRejectedValue(
-      failure,
-    );
-    await expect(runRebuildPostRestorePhase(input())).rejects.toBe(failure);
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("rebuild completed");
-  });
+  it.each([null, { backupPath: "/tmp/rebuild-backup" }])(
+    "reports recovery when the restored compatible route fails with backup %j",
+    async (backupManifest) => {
+      vi.mocked(registry.getSandbox).mockReturnValue({
+        agent: null,
+        provider: "compatible-endpoint",
+        model: "baseline",
+      } as never);
+      const failure = new Error("restored route failed");
+      vi.mocked(
+        rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint,
+      ).mockRejectedValue(failure);
+      const args = { ...input(), backupManifest: backupManifest as never };
+      await runRebuildPostRestorePhase(args);
+      expect(args.bail).toHaveBeenCalledExactlyOnceWith(
+        "OpenClaw inference verification failed after rebuild.",
+      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(errors).toContain("nemoclaw alpha rebuild --yes");
+      expect(errors.includes("Backup is preserved at: /tmp/rebuild-backup")).toBe(
+        backupManifest !== null,
+      );
+      expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+        "rebuild completed",
+      );
+    },
+  );
 
   it("does not probe compatible inference after an incomplete restore", async () => {
     vi.mocked(registry.getSandbox).mockReturnValue({

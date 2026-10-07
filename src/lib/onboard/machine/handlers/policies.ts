@@ -198,6 +198,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     // inner onboarding returns. Verify that route in the post-restore phase.
     if (
       hostLocalInferenceRouteOnly ||
+      provider !== "compatible-endpoint" ||
       normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name) !== "openclaw"
     ) {
       await verifySandboxInferenceRoute();

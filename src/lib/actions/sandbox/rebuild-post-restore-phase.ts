@@ -588,15 +588,25 @@ export async function runRebuildPostRestorePhase(
     targetAgentName === "openclaw" &&
     recreatedEntry.provider === "compatible-endpoint"
   ) {
-    await rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint({
-      sandboxName,
-      provider: recreatedEntry.provider,
-      model: recreatedEntry.model ?? "",
-      endpointUrl: recreatedEntry.endpointUrl,
-      credentialEnv: recreatedEntry.credentialEnv,
-      environment: buildSandboxCommandEnvironment(mcpRuntimeSelection),
-      gatewayName: mcpRuntimeSelection?.gatewayName,
-    });
+    try {
+      await rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint({
+        sandboxName,
+        provider: recreatedEntry.provider,
+        model: recreatedEntry.model ?? "",
+        endpointUrl: recreatedEntry.endpointUrl,
+        credentialEnv: recreatedEntry.credentialEnv,
+        environment: buildSandboxCommandEnvironment(mcpRuntimeSelection),
+        gatewayName: mcpRuntimeSelection?.gatewayName,
+      });
+    } catch {
+      console.error(`  OpenClaw inference verification failed after rebuilding '${sandboxName}'.`);
+      if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+      console.error(
+        `  Correct the provider or route configuration, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
+      );
+      bail("OpenClaw inference verification failed after rebuild.");
+      return;
+    }
   }
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
