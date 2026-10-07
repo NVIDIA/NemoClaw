@@ -1393,7 +1393,7 @@ function transactionBoundHermesPortableInferenceProvider(
   portableLifecycle: boolean,
   inferenceProvider: string | null,
 ): string | null {
-  if (!portableLifecycle) return null;
+  if (!portableLifecycle || inferenceProvider !== "ollama-local") return null;
   return inferenceProvider;
 }
 

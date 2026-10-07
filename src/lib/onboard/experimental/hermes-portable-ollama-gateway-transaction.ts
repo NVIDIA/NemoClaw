@@ -878,7 +878,7 @@ function exactGatewayMutation(
             const authority = createdAuthority(existing);
             if (!authority)
               throw portableGatewayStateConflict("Native provider creation is indeterminate.");
-            active = journalStore.transition(active, "created", authority);
+            journalStore.transition(active, "created", authority);
           }
           const binding = portableNativeBinding(
             expectedGatewayName,

@@ -145,7 +145,7 @@ async function expectSandboxInference42(
     [
       "sh",
       "-lc",
-      `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${chatRequest(model)}' | ${parseReplyCommand()}`,
+      `curl -fsS --max-time 120 http://host.openshell.internal:${PROXY_PORT}/v1/chat/completions -H 'Authorization: Bearer openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN' -H 'Content-Type: application/json' --data '${chatRequest(model)}' | ${parseReplyCommand()}`,
     ],
     {
       artifactName,
@@ -192,7 +192,7 @@ test(
         "the persisted Ollama auth-proxy token works after first onboard",
         "nemoclaw onboard --non-interactive --yes recreates the sandbox",
         "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
-        "sandbox inference.local reaches Ollama after re-onboard",
+        "sandbox native endpoint reaches Ollama after re-onboard",
       ],
     });
 

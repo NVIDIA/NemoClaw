@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
@@ -718,15 +719,16 @@ test
 );
 
 test(
-  "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
+  "TC-INF-09 native local inference stays isolated between sibling sandboxes (#12558)",
   {
-    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    timeout: 2 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm compatible-endpoint prerequisites",
         "start the local compatible endpoint",
         "onboard to the compatible endpoint",
-        "request sandbox chat through inference.local",
+        "run a fresh native agent turn",
+        "verify sibling endpoint denial",
       ],
     },
   },
@@ -766,7 +768,8 @@ test(
       id: "inference-routing-compatible-endpoint",
       contract: [
         "a custom OpenAI-compatible endpoint onboards",
-        "sandbox inference.local routes chat to compatible endpoint",
+        "a fresh agent process reaches its selected native endpoint",
+        "a sibling provider grants no access to the first sandbox",
       ],
       endpointUrl: fake.baseUrl,
       model,
@@ -788,15 +791,30 @@ test(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
     expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
-    progress.phase("request sandbox chat through inference.local");
+    progress.phase("run a fresh native agent turn");
     const sandboxRequestOffset = fake.requests().length;
-    await expectOpenAiChatThroughSandbox(
-      sandbox,
+    const turn = await sandbox.exec(
       sandboxName,
-      model,
-      [apiKey],
-      "compatible-endpoint-inference-local-chat",
+      [
+        "openclaw",
+        "agent",
+        "--local",
+        "--agent",
+        "main",
+        "--session-id",
+        randomUUID(),
+        "--message",
+        "Reply with PONG. Do not use tools.",
+        "--json",
+      ],
+      {
+        artifactName: "tc-inf-09-native-agent",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
     );
+    expect(turn.exitCode, resultText(turn)).toBe(0);
     expect(
       fake
         .requests()
@@ -805,9 +823,66 @@ test(
           (request) =>
             request.auth === "ok" &&
             request.method === "POST" &&
-            request.path === "/v1/chat/completions",
+            request.path === "/v1/chat/completions" &&
+            request.model === model,
         ),
     ).toBe(true);
+    progress.phase("verify sibling endpoint denial");
+    const siblingName = inferenceSandboxName("e2e-compat-peer");
+    const sibling = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      chatContent: "PONG",
+      host: "0.0.0.0",
+      model,
+      port: 11434,
+      progress,
+      publicHost: "localhost",
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanup.add("close sibling compatible endpoint", () => sibling.close());
+    cleanup.add("remove sibling native inference sandbox", () =>
+      cleanupSandbox(host, sandbox, siblingName, { strict: true }),
+    );
+    const siblingOnboard = await onboardSandbox(
+      artifacts,
+      siblingName,
+      {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_ENDPOINT_URL: sibling.baseUrl,
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      [apiKey],
+      "tc-inf-09-onboard-sibling",
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(siblingOnboard, "TC-INF-09 sibling onboard");
+    const denied = await sandbox.exec(
+      sandboxName,
+      [
+        "curl",
+        "-sS",
+        "--max-time",
+        "15",
+        "http://host.openshell.internal:11434/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        "Authorization: Bearer openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        "--data-raw",
+        JSON.stringify({ model, messages: [{ role: "user", content: "PONG" }] }),
+      ],
+      {
+        artifactName: "tc-inf-09-sibling-denial",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 30_000,
+      },
+    );
+    expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
   },
 );
 

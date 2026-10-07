@@ -33,11 +33,15 @@ function commandForGateway(gatewayName: string, run?: PolicyCommand): PolicyComm
     )(scopeGatewayOpenshellArgs(args, gatewayName, 2));
 }
 
-function document(result: PolicyCommandResult): Record<string, unknown> {
+function requireSuccessfulCommand(result: PolicyCommandResult): void {
   if (result.status !== 0 || result.error)
     throw new Error(
       "Could not inspect OpenShell provider-policy prerequisites. No inference selection was changed.",
     );
+}
+
+function document(result: PolicyCommandResult): Record<string, unknown> {
+  requireSuccessfulCommand(result);
   const text = String(result.stdout ?? "");
   if (Buffer.byteLength(text) > 65_536)
     throw new Error("OpenShell provider-policy response exceeded its limit.");
@@ -52,16 +56,16 @@ function document(result: PolicyCommandResult): Record<string, unknown> {
 }
 
 async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> {
-  const result = await run(["policy", "get", "--global", "--output", "json"]);
-  // The pinned CLI reports absence on stderr even with JSON output requested.
+  const result = await run(["policy", "list", "--global", "--limit", "1"]);
+  requireSuccessfulCommand(result);
+  // The pinned server returns NotFound for get when no revision exists.
+  // Only a successful history read proves absence without treating errors as permission.
   if (
-    result.status === 0 &&
-    !result.error &&
     !String(result.stdout ?? "").trim() &&
     String(result.stderr ?? "").trim() === "No global policy history found"
   )
     return;
-  const policy = document(result);
+  const policy = document(await run(["policy", "get", "--global", "--output", "json"]));
   if (policy.scope === "global" && policy.status === "superseded") return;
   throw new Error(
     "Native local inference requires sandbox-owned policy. This gateway has a global policy override; ask its administrator to prepare the gateway before retrying.",

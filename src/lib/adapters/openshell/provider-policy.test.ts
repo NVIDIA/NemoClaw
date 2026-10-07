@@ -13,7 +13,7 @@ describe("native provider policy prerequisites", () => {
     await requireNativeProviderPolicy("selected", run);
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["settings", "get", "-g", "selected", "--global", "--json"],
-      ["policy", "get", "-g", "selected", "--global", "--output", "json"],
+      ["policy", "list", "-g", "selected", "--global", "--limit", "1"],
     ]);
   });
   it.each(["false", "<unset>"])(
@@ -35,7 +35,7 @@ describe("native provider policy prerequisites", () => {
     await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(
       /global policy override/,
     );
-    expect(run.mock.calls.every(([args]) => args[1] === "get")).toBe(true);
+    expect(run.mock.calls.map(([args]) => args[1])).toEqual(["get", "list", "get"]);
   });
   it("accepts deleted global policy history (#12558)", async () => {
     const run = fixture("true", {
@@ -44,6 +44,43 @@ describe("native provider policy prerequisites", () => {
       stderr: "",
     });
     await expect(requireNativeProviderPolicy("selected", run)).resolves.toBeUndefined();
+  });
+  it.each([
+    { status: 1, stdout: "", stderr: "No global policy history found" },
+    {
+      status: 1,
+      stdout: "",
+      stderr: 'status: NotFound, message: "no global policy revision found"',
+    },
+    { status: 1, stdout: "", stderr: "permission denied" },
+    { status: null, stdout: "", stderr: "connection lost" },
+  ])(
+    "stops fresh initialization when policy history cannot be verified (#12558)",
+    async (response) => {
+      const run = vi.fn(async () => response);
+      await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(
+        /prerequisites/,
+      );
+      expect(run).toHaveBeenCalledExactlyOnceWith([
+        "policy",
+        "list",
+        "-g",
+        "selected",
+        "--global",
+        "--limit",
+        "1",
+      ]);
+    },
+  );
+  it("does not accept policy history without a verified current revision (#12558)", async () => {
+    const run = fixture();
+    run.mockResolvedValueOnce({
+      status: 0,
+      stdout: "VERSION HASH STATUS CREATED ERROR\n",
+      stderr: "",
+    });
+    await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(/prerequisites/);
+    expect(run.mock.calls.map(([args]) => args[1])).toEqual(["list", "get"]);
   });
   it("initializes a fresh gateway once and verifies applied settings (#12558)", async () => {
     const run = fixture("<unset>");
