@@ -257,7 +257,12 @@ function endpointSourceFor(
   builtin: boolean,
   configKey: "ANTHROPIC_BASE_URL" | "OPENAI_BASE_URL",
 ): ObservedExportEndpointEvidence["source"] {
-  if (nativeReceipt) return { kind: "managed-profile", profileId: nativeReceipt.profileId };
+  if (nativeReceipt) {
+    const profile = exportNativeHostedProfile(nativeReceipt);
+    if (!profile)
+      throw new Error("The native hosted export receipt does not match a managed profile.");
+    return { kind: "managed-profile", profileId: profile.profileId };
+  }
   if (builtin) return { kind: "builtin-profile", profileId: "nvidia" };
   return { kind: "provider-config", key: configKey };
 }
