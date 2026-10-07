@@ -728,6 +728,38 @@ function createCreatedSandboxFixture(options = {}) {
   const capture = (command) => observe(command, false);
 
   const run = (command) => {
+    const args = exactOpenShellArgs(command);
+    if (args?.[0] === "provider" && args[1] === "profile") {
+      const { NATIVE_HOSTED_PROFILES } = require(
+        path.resolve(__dirname, "../../src/lib/inference/native-hosted/profiles.ts"),
+      );
+      const profile = NATIVE_HOSTED_PROFILES.find(
+        (candidate) =>
+          (attachedProviders.includes(candidate.providerName) ||
+            options.nativeHostedProfileId === candidate.profileId) &&
+          args[5] === candidate.profileId,
+      );
+      if (
+        isCreated() &&
+        profile &&
+        args.length === 8 &&
+        args[2] === "-g" &&
+        args[3] === state.gatewayName &&
+        args[4] === "export" &&
+        args[6] === "--output" &&
+        args[7] === "json"
+      ) {
+        const { nativeHostedProviderProfilePath } = require(
+          path.resolve(__dirname, "../../src/lib/inference/native-hosted/index.ts"),
+        );
+        const source = require("node:fs").readFileSync(
+          nativeHostedProviderProfilePath(profile),
+          "utf8",
+        );
+        return { status: 0, stdout: JSON.stringify(require("yaml").parse(source)), stderr: "" };
+      }
+      return null;
+    }
     const output = observe(command, true);
     if (output === null) return null;
     if (output === "") {

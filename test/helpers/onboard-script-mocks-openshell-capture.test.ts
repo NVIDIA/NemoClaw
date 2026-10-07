@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import { nativeHostedProviderProfilePath } from "../../src/lib/inference/native-hosted";
+import { nativeHostedProfile } from "../../src/lib/inference/native-hosted/profiles";
+import {
+  exportedProviderProfileMatchesContract,
+  parseCheckedInProviderProfileContract,
+} from "../../src/lib/adapters/openshell/provider-profile";
 import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -192,3 +199,49 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
     ).toBe("");
   });
 });
+
+it.each(["attached", "prepared"])(
+  "exports only the created sandbox's %s native profile on its gateway",
+  (mode) => {
+    const profile = nativeHostedProfile("nvidia-prod")!;
+    const fixture = createCreatedSandboxFixture({
+      gatewayName: "nemoclaw-test",
+      nativeHostedProfileId: mode === "prepared" ? profile.profileId : undefined,
+    });
+    const command = [
+      "openshell",
+      "provider",
+      "profile",
+      "-g",
+      "nemoclaw-test",
+      "export",
+      profile.profileId,
+      "--output",
+      "json",
+    ];
+    expect(fixture.run(command)).toBeNull();
+    fixture.create(
+      mode === "attached"
+        ? [...exactCreateCommand, "--provider", profile.providerName]
+        : exactCreateCommand,
+    );
+    const exported = fixture.run(command)!;
+    const contract = parseCheckedInProviderProfileContract(
+      fs.readFileSync(nativeHostedProviderProfilePath(profile), "utf8"),
+    )!;
+    expect(exported.status).toBe(0);
+    expect(exportedProviderProfileMatchesContract(String(exported.stdout), contract)).toBe(true);
+    expect(
+      fixture.run(command.map((arg) => (arg === "nemoclaw-test" ? "other-gateway" : arg))),
+    ).toBeNull();
+    expect(
+      fixture.run(
+        command.map((arg) => (arg === profile.profileId ? "nemoclaw-openai-inference-v1" : arg)),
+      ),
+    ).toBeNull();
+    expect(fixture.run([...command, "--unexpected"])).toBeNull();
+    expect(
+      fixture.run(command.map((arg) => (arg === profile.profileId ? "nemoclaw-mcp-v1" : arg))),
+    ).toBeNull();
+  },
+);

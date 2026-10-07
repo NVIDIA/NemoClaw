@@ -49,13 +49,16 @@ describe("native NVIDIA credential reset ownership", () => {
         return deleteResult;
       });
       const clearNativeNvidiaProviderAuthority = vi.fn(() => operations.push("clear-authority"));
+      const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName: string) =>
+        gatewayName === "nemoclaw" ? ["alpha"] : [],
+      );
 
       const result = await runCredentialsResetAction(
         { provider: "nvidia-prod", confirmed: true },
         {
           providerAdapter: adapter(deleteProvider),
           clearNativeNvidiaProviderAuthority,
-          listNativeNvidiaProviderAttachmentSandboxNames: () => ["alpha"],
+          listNativeNvidiaProviderAttachmentSandboxNames,
           withGatewayRouteMutationLock: async (_gatewayName, operation) => {
             operations.push("lock");
             return operation();
@@ -65,6 +68,9 @@ describe("native NVIDIA credential reset ownership", () => {
 
       expect(result.exitCode).toBe(1);
       expect(operations).toEqual(["lock"]);
+      expect(listNativeNvidiaProviderAttachmentSandboxNames).toHaveBeenCalledExactlyOnceWith(
+        "nemoclaw",
+      );
       expect(deleteProvider).not.toHaveBeenCalled();
       expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
       expect(result.failureLines).toContain("  'nvidia-prod' is recorded by sandbox(es): alpha.");
@@ -99,6 +105,33 @@ describe("native NVIDIA credential reset ownership", () => {
     expect(deleteProvider).not.toHaveBeenCalled();
     expect(clearNativeHostedProviderAuthority).not.toHaveBeenCalled();
     expect(result.failureLines).toContain("  'openai-api' is recorded by sandbox(es): alpha.");
+  });
+
+  it("does not let another gateway's attachment block the selected gateway reset", async () => {
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
+      ok: true,
+    }));
+    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName: string) =>
+      gatewayName === "other-gateway" ? ["beta"] : [],
+    );
+
+    const result = await runCredentialsResetAction(
+      { provider: "nvidia-prod", confirmed: true },
+      {
+        providerAdapter: adapter(deleteProvider),
+        clearNativeNvidiaProviderAuthority,
+        listNativeNvidiaProviderAttachmentSandboxNames,
+        withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(listNativeNvidiaProviderAttachmentSandboxNames).toHaveBeenCalledExactlyOnceWith(
+      "nemoclaw",
+    );
+    expect(deleteProvider).toHaveBeenCalledOnce();
+    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledExactlyOnceWith("nemoclaw");
   });
 
   it("fails closed before reset when registry ownership cannot be read", async () => {

@@ -37,8 +37,20 @@ type ProviderBoundaryResult = {
   result: string;
 };
 
+const expectedProfileCheck = [
+  "provider",
+  "profile",
+  "-g",
+  "nemoclaw",
+  "export",
+  "nemoclaw-nvidia-inference-v1",
+  "--output",
+  "json",
+];
 const expectedAttachmentCalls = [
+  expectedProfileCheck,
   ["provider", "list", "-g", "nemoclaw", "my-assistant"],
+  expectedProfileCheck,
   ["provider", "get", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
   ["provider", "list", "-g", "nemoclaw", "my-assistant"],
 ];
@@ -147,6 +159,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName,
   sandboxId: "sbx-hermes-provider-boundary",
   gatewayName,
+  nativeHostedProfileId: inferenceProvider === "nvidia-prod" ? "nemoclaw-nvidia-inference-v1" : undefined,
 });
 createdSandbox.installRuntimeObservation();
 
@@ -301,6 +314,7 @@ require.cache[sandboxGpuCreateFlowId].exports = {
             input.createRequest.source.reference,
             "--name",
             input.createRequest.sandboxName,
+            ...(input.createRequest.providers ?? []).flatMap((provider) => ["--provider", provider]),
             ...Object.entries(input.createRequest.labels ?? {}).flatMap(([name, value]) => [
               "--label",
               name + "=" + value,
