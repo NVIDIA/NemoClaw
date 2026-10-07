@@ -561,6 +561,7 @@ if _nemoclaw_original_create_deep_agent is not None:
 
 def create_cli_agent(model, assistant_id, *args, **kwargs):
     """Keep managed graph posture, disclosure, and observability boundaries."""
+    kwargs["async_subagents"] = None
     from deepagents_code.progressive_tool_disclosure import (
         assert_unique_callable_tool_names,
     )
@@ -617,6 +618,12 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         "callbacks": new_metadata_only_callback_manager(),
     }
     return agent, backend
+
+
+def load_async_subagents(config_path=None):
+    """Disable mutable remote subagents and their arbitrary HTTP headers."""
+    del config_path
+    return []
 
 
 _nemoclaw_original_build_model_identity_section = build_model_identity_section

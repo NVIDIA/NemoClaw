@@ -16,17 +16,20 @@ export async function captureSandboxFailureDiagnostics(
     artifactPrefix: string;
     redactionValues: string[];
     captureGatewayLog?: boolean;
+    captureAgentGatewayLog?: boolean;
+    env?: NodeJS.ProcessEnv;
     expectedExitCode?: number;
   },
 ): Promise<void> {
   if (result.exitCode === (options.expectedExitCode ?? 0) && !result.timedOut) return;
+  const env = { ...buildAvailabilityProbeEnv(), ...options.env };
   await host
     .command(
       host.openshellCommandPath,
       ["logs", options.sandboxName, "-n", "200", "--source", "all", "--since", "2m"],
       {
         artifactName: `${options.artifactPrefix}-supervisor-logs`,
-        env: buildAvailabilityProbeEnv(),
+        env,
         redactionValues: options.redactionValues,
         captureLimitBytes: 32_768,
         timeoutMs: 30_000,
@@ -39,14 +42,14 @@ export async function captureSandboxFailureDiagnostics(
         "cat",
         [
           resolveGatewayLogPathForPort({
-            configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-            home: os.homedir(),
+            configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+            home: env.HOME ?? os.homedir(),
             port: GATEWAY_PORT,
           }),
         ],
         {
           artifactName: `${options.artifactPrefix}-gateway-log`,
-          env: buildAvailabilityProbeEnv(),
+          env,
           redactionValues: options.redactionValues,
           captureLimitBytes: 32_768,
           timeoutMs: 5_000,
@@ -58,8 +61,9 @@ export async function captureSandboxFailureDiagnostics(
   // Read the stopped container through the existing runtime owner instead of
   // depending on an exec service that died with the supervisor.
   try {
-    const runtime = new RuntimeProviderPrerequisite(host);
+    const runtime = new RuntimeProviderPrerequisite(host, undefined, { ...process.env, ...env });
     const diagnosticOptions = {
+      env,
       redactionValues: options.redactionValues,
       captureLimitBytes: 32_768,
       timeoutMs: 30_000,
@@ -69,11 +73,9 @@ export async function captureSandboxFailureDiagnostics(
       ...diagnosticOptions,
       artifactName: `${prefix}-container-identity`,
     });
-    const startupLog = runtime.hostInvocation([
-      "cp",
-      `${containerId}:/tmp/nemoclaw-start.log`,
-      "-",
-    ]);
+    const logFiles = options.captureAgentGatewayLog
+      ? ["nemoclaw-start.log", "gateway.log"]
+      : ["nemoclaw-start.log"];
     await Promise.allSettled([
       runtime.command(
         [
@@ -90,23 +92,26 @@ export async function captureSandboxFailureDiagnostics(
       }),
       // The managed entrypoint records its output in this file. Stream only
       // its contents from the stopped container; never unpack files on the host.
-      host.command(
-        "bash",
-        [
-          "-o",
-          "pipefail",
-          "-c",
-          '"$@" | tar -xOf - nemoclaw-start.log',
-          prefix,
-          startupLog.command,
-          ...startupLog.args,
-        ],
-        {
-          ...diagnosticOptions,
-          env: buildAvailabilityProbeEnv(),
-          artifactName: `${prefix}-startup-log`,
-        },
-      ),
+      ...logFiles.map((file) => {
+        const copiedLog = runtime.hostInvocation(["cp", `${containerId}:/tmp/${file}`, "-"]);
+        return host.command(
+          "bash",
+          [
+            "-o",
+            "pipefail",
+            "-c",
+            'file="$1"; shift; "$@" | tar -xOf - "$file"',
+            prefix,
+            file,
+            copiedLog.command,
+            ...copiedLog.args,
+          ],
+          {
+            ...diagnosticOptions,
+            artifactName: `${prefix}-${file === "gateway.log" ? "agent-gateway-log" : "startup-log"}`,
+          },
+        );
+      }),
     ]);
   } catch {
     // Failure-only evidence must preserve the original lifecycle assertion.

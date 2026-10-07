@@ -16,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -1179,6 +1180,14 @@ test(
         timeoutMs: INSTALL_TIMEOUT_MS,
       },
     );
+    await captureSandboxFailureDiagnostics(host, onboard, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "onboard-openclaw-switch-failure",
+      redactionValues,
+      captureGatewayLog: true,
+      captureAgentGatewayLog: true,
+      env: commandEnv(home),
+    });
     const onboardText = resultText(onboard);
     if (onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText)) {
       await artifacts.target.complete({

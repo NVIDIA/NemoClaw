@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { type CleanupHost, CleanupRegistry } from "../fixtures/cleanup.ts";
 import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import {
@@ -351,3 +352,83 @@ describe("cleanup resources", () => {
     expect(kill).toHaveBeenLastCalledWith(1234, "SIGKILL");
   });
 });
+
+it.each(["docker", "podman"])(
+  "retains startup and native gateway logs through the selected %s owner after failed onboarding",
+  async (provider) => {
+    const containerId = "a".repeat(64);
+    const command = vi.fn().mockImplementation(async (_command, args: string[]) => ({
+      exitCode: 0,
+      stdout: args.includes("ps") ? `${containerId}\n` : "",
+    }));
+    const env = {
+      HOME: "/tmp/isolated-switch-home",
+      NEMOCLAW_GATEWAY_RUNTIME: provider,
+      OPENSHELL_PODMAN_SOCKET: "/tmp/selected-owner.sock",
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/tmp/selected-gateway",
+    };
+    const options = {
+      sandboxName: "owned-openclaw",
+      artifactPrefix: "onboard-failure",
+      redactionValues: ["fixture-credential"],
+      captureGatewayLog: true,
+      captureAgentGatewayLog: true,
+      env,
+    };
+    const host = { command, openshellCommandPath: "/reviewed/openshell" };
+    await captureSandboxFailureDiagnostics(host, { exitCode: 0, timedOut: false }, options);
+    expect(command).not.toHaveBeenCalled();
+    await captureSandboxFailureDiagnostics(host, { exitCode: 1, timedOut: false }, options);
+    const enginePrefix = provider === "podman" ? ["--url", "unix:///tmp/selected-owner.sock"] : [];
+    expect(command).toHaveBeenCalledWith(
+      "bash",
+      [
+        "-o",
+        "pipefail",
+        "-c",
+        expect.any(String),
+        "onboard-failure",
+        "nemoclaw-start.log",
+        provider,
+        ...enginePrefix,
+        "cp",
+        `${containerId}:/tmp/nemoclaw-start.log`,
+        "-",
+      ],
+      expect.objectContaining({
+        env: expect.objectContaining(env),
+        redactionValues: ["fixture-credential"],
+        captureLimitBytes: 32_768,
+        timeoutMs: 30_000,
+      }),
+    );
+    expect(command).toHaveBeenCalledWith(
+      "bash",
+      [
+        "-o",
+        "pipefail",
+        "-c",
+        expect.any(String),
+        "onboard-failure",
+        "gateway.log",
+        provider,
+        ...enginePrefix,
+        "cp",
+        `${containerId}:/tmp/gateway.log`,
+        "-",
+      ],
+      expect.objectContaining({
+        env: expect.objectContaining(env),
+        redactionValues: ["fixture-credential"],
+        captureLimitBytes: 32_768,
+        timeoutMs: 30_000,
+      }),
+    );
+    expect(command).toHaveBeenCalledWith(
+      "cat",
+      ["/tmp/selected-gateway/openshell-gateway.log"],
+      expect.objectContaining({ env: expect.objectContaining(env) }),
+    );
+    expect(command).toHaveBeenCalledTimes(7);
+  },
+);

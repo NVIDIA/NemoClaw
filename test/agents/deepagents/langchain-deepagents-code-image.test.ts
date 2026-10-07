@@ -452,7 +452,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "patch-managed-quickjs.py",
         "validate-read-only-mcp-call.py",
         "validate-nemotron-ultra-profile.py",
-        "validate-native-subagents.py",
         "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
         "LANGSMITH_TRACING=false",
         "DEEPAGENTS_CODE_OFFLINE=1",
@@ -474,7 +473,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'from quickjs_rs import Runtime; runtime = Runtime(); context = runtime.new_context(); assert context.eval("20 + 22") == 42',
         "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
-        "timeout 90 /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-native-subagents.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
       ].every((s) => dockerfile.includes(s)),
     ).toBe(true);

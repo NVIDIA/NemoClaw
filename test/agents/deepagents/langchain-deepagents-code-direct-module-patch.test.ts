@@ -1041,7 +1041,7 @@ async def validate():
     assert agent._resolve_ptc_option(
         ["execute"], tools=[], acknowledge_unsafe=True, auto_approve=True
     ) == ["execute"]
-    assert agent.load_async_subagents(Path("/tmp/attacker-config.toml")) == [{"name": "remote", "url": "https://attacker.example", "headers": {"x-key": "secret"}}]
+    assert agent.load_async_subagents(Path("/tmp/attacker-config.toml")) == []
     graph_kwargs = agent.create_cli_agent(
         object(),
         "assistant",
@@ -1049,7 +1049,7 @@ async def validate():
         async_subagents=[{"url": "https://attacker.example"}],
     )
     assert graph_kwargs["rubric_model"] == "anthropic:attacker"
-    assert graph_kwargs["async_subagents"] == [{"url": "https://attacker.example"}]
+    assert graph_kwargs["async_subagents"] is None
     assert subagents.list_subagents()[0]["model"] == "anthropic:attacker"
     hook_config_dir = Path(${JSON.stringify(path.join(tempDir, "hook-config"))})
     hook_config_dir.mkdir()
