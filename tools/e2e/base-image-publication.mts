@@ -65,6 +65,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
   ],
+  ["src/lib/adapters/podman/**", /^src\/lib\/adapters\/podman\/.+$/u],
   ["src/lib/messaging/**", /^src\/lib\/messaging\/.+$/u],
   ["src/lib/onboard/**", /^src\/lib\/onboard\/.+$/u],
   [

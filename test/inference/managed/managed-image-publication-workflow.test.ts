@@ -504,9 +504,6 @@ describe("complete managed-image publication workflow", () => {
 
     expect(prBuilder.needs).toEqual(["pr-reviewed-npm-audit", "publication-identity"]);
     expect(publicationIdentity.if).toBeUndefined();
-    expect(publicationIdentity.outputs).toEqual({
-      cohort: "${{ steps.identity.outputs.cohort }}",
-    });
     expect(prBuilder.if).toBe("github.event_name == 'pull_request'");
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
@@ -514,7 +511,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const auditVerifierCheckout = step(prBuilder, "Checkout trusted mcporter audit verifier");
@@ -778,9 +775,12 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/actions/sandbox/**",
+        "src/lib/adapters/container-engine.ts",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
+        "src/lib/adapters/podman/**",
         ...approvalFixturePaths,
+        "test/e2e/fixtures/docker-build-guard.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
@@ -796,7 +796,7 @@ describe("complete managed-image publication workflow", () => {
     expect(baseImagePaths.join("\n")).not.toMatch(
       /admin-(?:approval-connect|request-selector)|issue-4462-(?:admin-approval-evidence|admin-request-selector|fresh-agent-gateway-snapshot)/u,
     );
-    expect(activation.needs).toBe("pr-build-and-entrypoint");
+    expect(activation.needs).toEqual(["pr-build-and-entrypoint", "publication-identity"]);
     expect(activation.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
@@ -1077,7 +1077,7 @@ fi
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
     expect(dependencies.run).toContain("npm ci --ignore-scripts --no-audit --no-fund");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
+    expect(releaseIdentity.env?.RELEASE).toBe(needsOutput("publication-identity", "release"));
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('--build-arg "TARGETARCH=${target_arch}"');
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
@@ -1214,7 +1214,10 @@ fi
         String(candidate.with?.name ?? "").startsWith("managed-image-"),
     );
 
-    expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
+    expect(identity?.outputs).toEqual({
+      cohort: "${{ steps.identity.outputs.cohort }}",
+      release: "${{ steps.release.outputs.value }}",
+    });
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
     expect(JSON.stringify(workflow)).not.toContain('rm -rf -- "$ANONYMOUS_CONFIG"');

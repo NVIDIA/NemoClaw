@@ -110,7 +110,11 @@ describe("Google Chat tunnel runtime", () => {
     const options = createDefaultGooglechatTunnelGateOptions({
       loadServices: () => ({
         getTunnelUrl: () => "https://restricted.trycloudflare.com",
-        readCloudflaredState: () => ({ kind: "unverified-pid-process", pid: 4242 }),
+        readCloudflaredState: () => ({
+          kind: "unverified-pid-process",
+          pid: 4242,
+          reason: "inspection-unavailable",
+        }),
         resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
         startAll: async () => undefined,
         stopCloudflared: () => false,
@@ -139,7 +143,11 @@ describe("Google Chat tunnel runtime", () => {
     const options = createDefaultGooglechatTunnelGateOptions({
       loadServices: () => ({
         getTunnelUrl: () => "",
-        readCloudflaredState: () => ({ kind: "unverified-pid-process", pid: 4242 }),
+        readCloudflaredState: () => ({
+          kind: "unverified-pid-process",
+          pid: 4242,
+          reason: "inspection-unavailable",
+        }),
         resolveServicePidDir: () => "/tmp/nemoclaw-services-test",
         startAll,
         stopCloudflared: () => false,
