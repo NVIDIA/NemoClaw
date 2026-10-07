@@ -349,3 +349,221 @@ describe.each(GUARDS)("%s exact startup argv", (name, guardPath) => {
     expect(proof.openshell_empty_argument_spoof).toBe(false);
   });
 });
+
+const CAPABILITY_FREE_IDENTITY_HARNESS = String.raw`
+import importlib.util
+import json
+import os
+import sys
+import tempfile
+from types import SimpleNamespace
+
+spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+case = sys.argv[2]
+driver, separator, variant = case.partition(":")
+if separator: case = variant
+uid, gid = 998, 999
+guard.pwd.getpwnam = lambda _name: SimpleNamespace(pw_uid=uid, pw_gid=gid)
+
+with tempfile.TemporaryDirectory() as root:
+    guard.PROC_ROOT = root
+    namespace = os.path.join(root, "namespace")
+    with open(namespace, "wb") as stream:
+        stream.write(b"fixture")
+    argv = [b"/opt/openshell/bin/openshell-sandbox", b"launch-capability-free",
+            b"998", b"999", b"/.openshell/channel/sandbox/bootstrap.json", b"/sandbox"]
+    if case == "foreign-executable": argv[0] = b"/tmp/openshell-sandbox"
+    if case == "foreign-mode": argv[1] = b"--bootstrap"
+    if case == "wrong-argv-uid": argv[2] = b"999"
+    if case == "wrong-argv-gid": argv[3] = b"998"
+    if case == "foreign-bootstrap": argv[4] = b"/tmp/bootstrap.json"
+    if case == "foreign-workspace": argv[5] = b"/tmp"
+    if case == "extra-argv": argv.append(b"nemoclaw-start")
+    if driver in ("docker", "rootful-podman"):
+        executable = (b"/.openshell/runtime/openshell-sandbox" if driver == "docker"
+                      else b"/opt/openshell/bin/openshell-sandbox")
+        argv = [executable, b"--bootstrap", b"/.openshell/channel/sandbox/bootstrap.json"]
+        if case == "foreign-bootstrap": argv[2] = b"/tmp/bootstrap.json"
+        if case == "extra-argv": argv.append(b"nemoclaw-start")
+        if case == "foreign-executable": argv[0] = b"/tmp/openshell-sandbox"
+    status = {
+        "Uid": "998 998 998 998", "Gid": "999 999 999 999", "Groups": "",
+        "NSpid": "1", "NoNewPrivs": "1",
+        "CapInh": "0000000000000000", "CapPrm": "0000000000000000",
+        "CapEff": "0000000000000000", "CapBnd": "0000000000000000",
+        "CapAmb": "0000000000000000",
+    }
+    if case == "saved-root": status["Uid"] = "998 998 0 998"
+    if case == "wrong-uid": status["Uid"] = "999 999 999 999"
+    if case == "wrong-gid": status["Gid"] = "998 998 998 998"
+    if case == "supplementary-groups": status["Groups"] = "0"
+    if case == "can-gain-privileges": status["NoNewPrivs"] = "0"
+    if case.startswith("retained-"): status[case.removeprefix("retained-")] = "1"
+    if case == "missing-capability": del status["CapEff"]
+    if case == "non-init": status["NSpid"] = "2"
+
+    def write_process(pid, parent, command, process_status):
+        directory = os.path.join(root, str(pid))
+        os.makedirs(os.path.join(directory, "ns"))
+        fields = ["S", str(parent)] + ["0"] * 17 + [str(111111 + pid)]
+        with open(os.path.join(directory, "stat"), "w") as stream:
+            stream.write(str(pid) + " (fixture) " + " ".join(fields))
+        with open(os.path.join(directory, "cmdline"), "wb") as stream:
+            stream.write(b"\0".join(command) + b"\0")
+        with open(os.path.join(directory, "status"), "w") as stream:
+            stream.write("".join(key + ":\t" + value + "\n" for key, value in process_status.items()))
+            if pid == 1 and case == "duplicate-field": stream.write("CapEff:\t0\n")
+        os.link(namespace, os.path.join(directory, "ns", "pid"))
+    write_process(1, 2 if case == "foreign-parent" else 0, argv, status)
+    child_status = {"Uid": "998 998 998 998", "NSpid": "412"}
+    if case == "root-child": child_status["Uid"] = "0 0 0 0"
+    child_argv = [b"bash", b"/usr/local/bin/nemoclaw-start"]
+    if case == "spoofed-child": child_argv = [b"python3", b"/usr/local/bin/nemoclaw-start"]
+    write_process(412, 77 if case == "indirect-child" else 1, child_argv, child_status)
+    if case == "duplicate-child":
+        write_process(413, 1, child_argv, {"Uid": "998 998 998 998", "NSpid": "413"})
+    if case == "missing-child": os.unlink(os.path.join(root, "412", "cmdline"))
+    # Fixture proc directories cannot acquire Linux's nondumpable ownership on
+    # macOS. Model only that kernel metadata; parse real fixture file bytes and
+    # exercise the production identity, uniqueness and parent checks unchanged.
+    original_fstat = os.fstat
+    init_stat = os.stat(os.path.join(root, "1"))
+    def fixture_fstat(fd):
+        value = original_fstat(fd)
+        if (value.st_dev, value.st_ino) == (init_stat.st_dev, init_stat.st_ino):
+            return SimpleNamespace(st_dev=value.st_dev, st_ino=value.st_ino,
+                                   st_uid=uid if case == "dumpable-owner" else 0,
+                                   st_gid=gid if case == "dumpable-owner" else 0)
+        return value
+    guard.os.fstat = fixture_fstat
+    if case == "namespace-inaccessible": guard._proc_pid_namespace_inode = lambda _fd: None
+    original_read = guard._read_proc_pid_file
+    reads = 0
+    def read_process(fd, name, display):
+        global reads
+        value = original_read(fd, name, display)
+        if display == root + "/1/status":
+            reads += 1
+            if ((case == "raced-status" and reads >= 4)
+                or (case == "raced-final-status" and reads >= 5)):
+                return value.replace(b"NoNewPrivs:\t1", b"NoNewPrivs:\t0")
+        return value
+    guard._read_proc_pid_file = read_process
+    try:
+        if case.startswith(("startup-", "host-", "reconciliation-")):
+            guard.__file__ = guard.INSTALLED_RUNTIME_CONFIG_GUARD
+            guard.HERMES_STARTUP_READY_FILE = os.path.join(root, "ready")
+            guard.os.getppid = lambda: 413 if case == "startup-wrong-parent" else 412
+            if case.endswith("stale-marker"):
+                with open(guard.HERMES_STARTUP_READY_FILE, "w") as stream:
+                    stream.write("invalid\n")
+            if case.startswith("reconciliation-"):
+                accepted = guard._managed_nonroot_reconciliation_is_allowed()
+            else:
+                try:
+                    guard._validate_action_readiness(
+                        "ensure-api-key" if case.startswith("startup-") else "seal-restart",
+                        case.startswith("startup-") and case != "startup-missing-owner",
+                    )
+                    accepted = True
+                except guard.UnsafePathError:
+                    accepted = False
+            print(json.dumps(accepted))
+        else:
+            print(json.dumps(guard._openshell_supervised_nonroot_start_is_live(
+                0, uid, 413 if case == "wrong-required-parent" else 412)))
+    finally:
+        guard.os.fstat = original_fstat
+`;
+
+describe("Hermes capability-free OpenShell startup identity", () => {
+  it.each([
+    "valid",
+    "namespace-inaccessible",
+    "startup-authorized",
+    "host-authorized",
+    "reconciliation-authorized",
+    "docker:valid",
+    "docker:startup-authorized",
+    "docker:host-authorized",
+    "docker:reconciliation-authorized",
+    "rootful-podman:valid",
+  ])("accepts the pinned boundary: %s", (scenario) => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        CAPABILITY_FREE_IDENTITY_HARNESS,
+        path.resolve("agents/hermes/runtime-config-guard.py"),
+        scenario,
+      ],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toBe(true);
+  });
+
+  it.each([
+    "foreign-executable",
+    "foreign-mode",
+    "wrong-argv-uid",
+    "wrong-argv-gid",
+    "foreign-bootstrap",
+    "foreign-workspace",
+    "extra-argv",
+    "saved-root",
+    "wrong-uid",
+    "wrong-gid",
+    "supplementary-groups",
+    "can-gain-privileges",
+    "retained-CapInh",
+    "retained-CapPrm",
+    "retained-CapEff",
+    "retained-CapBnd",
+    "retained-CapAmb",
+    "missing-capability",
+    "duplicate-field",
+    "non-init",
+    "foreign-parent",
+    "dumpable-owner",
+    "root-child",
+    "spoofed-child",
+    "indirect-child",
+    "duplicate-child",
+    "missing-child",
+    "wrong-required-parent",
+    "raced-status",
+    "raced-final-status",
+    "startup-missing-owner",
+    "startup-wrong-parent",
+    "startup-stale-marker",
+    "host-stale-marker",
+    "reconciliation-stale-marker",
+    "docker:foreign-executable",
+    "docker:foreign-bootstrap",
+    "docker:extra-argv",
+    "docker:saved-root",
+    "docker:retained-CapEff",
+    "docker:dumpable-owner",
+    "docker:startup-wrong-parent",
+    "rootful-podman:extra-argv",
+    "rootful-podman:saved-root",
+    "rootful-podman:can-gain-privileges",
+  ])("rejects an untrusted boundary without mutation: %s", (scenario) => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        CAPABILITY_FREE_IDENTITY_HARNESS,
+        path.resolve("agents/hermes/runtime-config-guard.py"),
+        scenario,
+      ],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toBe(false);
+  });
+});
