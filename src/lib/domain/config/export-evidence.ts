@@ -164,12 +164,7 @@ export interface ObservedExportEndpointEvidence {
     readonly profileWorkspace?: string;
     /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
-      readonly id:
-        | "brave"
-        | "openai"
-        | "tavily"
-        | "tavily-hermes-v1"
-        | NativeHostedProfile["profileId"];
+      readonly id: NativeHostedProfile["profileId"];
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;

@@ -54,7 +54,7 @@ export type Provider = Readonly<
     profileWorkspace?: string;
     // null records a successful not-found read at the OpenAI provider's profile binding.
     managedProfile?: Readonly<{
-      id: ManagedProfileContract | NativeHostedProfile["profileId"];
+      id: NativeHostedProfile["profileId"];
       source: "builtin" | "user";
       scope: "" | "platform" | "workspace";
       resourceVersion: string;
