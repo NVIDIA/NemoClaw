@@ -51,6 +51,7 @@ import {
   strictHashPerms,
 } from "./hermes-inference-switch-helpers.ts";
 import {
+  PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
@@ -161,7 +162,9 @@ test(
             NEMOCLAW_PREFERRED_API: "openai-completions",
             NEMOCLAW_PROVIDER: "custom",
           }
-        : {}),
+        : publicApiKey
+          ? { NEMOCLAW_PROVIDER: "build", NEMOCLAW_MODEL: PUBLIC_NVIDIA_SWITCH_MODEL }
+          : {}),
     };
 
     progress.phase("install baseline Hermes runtime");
@@ -310,12 +313,12 @@ test(
     expect(state.session).toEqual(baselineSession);
     const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
     const durableEndpointUrl = publicSwitch
-      ? null
+      ? expectedBaseUrl()
       : (switchEndpointUrl ??
         process.env.NEMOCLAW_ENDPOINT_URL ??
         DEFAULT_HOSTED_INFERENCE_BASE_URL);
     const durableCredentialEnv = publicSwitch
-      ? null
+      ? "NVIDIA_INFERENCE_API_KEY"
       : switchEndpointUrl
         ? "COMPATIBLE_ANTHROPIC_API_KEY"
         : "COMPATIBLE_API_KEY";
@@ -324,7 +327,7 @@ test(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? null : RUNTIME_SWITCH_API,
+      RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");

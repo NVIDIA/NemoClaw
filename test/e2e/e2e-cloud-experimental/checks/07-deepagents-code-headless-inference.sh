@@ -382,7 +382,7 @@ configured_inference_route_contract() {
   local config
   config="$(cat)"
   if printf '%s\n' "$config" | references_native_nvidia_route \
-    && printf '%s\n' "$config" | references_managed_placeholder_key \
+    && printf '%s\n' "$config" | grep -Eq 'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"' \
     && ! printf '%s\n' "$config" | references_managed_inference_route; then
     printf '%s\n' native-nvidia
     return 0
@@ -805,8 +805,14 @@ DCODE_EXIT:${direct_exit}"
     && [ "$fail_closed_connect_exit" -ne 0 ] \
     && grep -Fq NEMOCLAW_DCODE_IMAGE_PROBE_USED <<<"$fail_closed_connect_output" \
     && grep -Fq NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED <<<"$fail_closed_connect_output" \
-    && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
-    && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; then
+    && {
+      if [ "$route_contract" = "native-nvidia" ]; then
+        ! grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output"
+      else
+        grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
+          && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"
+      fi
+    }; then
     pass "connect rejects untrusted image-backed route evidence before session attach"
   else
     fail_test "connect did not fail closed before session attach for untrusted image-backed route evidence"

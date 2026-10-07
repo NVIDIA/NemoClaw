@@ -304,7 +304,7 @@ function getPersistedEndpoint(
   return { endpointUrl: matchingEndpoints[0].display };
 }
 
-/** Read the live route and add safe persisted endpoint evidence when applicable. */
+/** Read the recorded native NVIDIA selection or the live managed route with safe endpoint evidence. */
 export async function runInferenceGet(
   options: InferenceGetOptions = {},
   deps: InferenceGetDeps = defaultDeps(),

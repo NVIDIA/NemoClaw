@@ -970,7 +970,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
     "references_native_nvidia_route",
     "https://integrate\\.api\\.nvidia\\.com/v1",
-    'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"',
     "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
@@ -1105,7 +1105,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "native-nvidia",
       [
         'base_url = "https://integrate.api.nvidia.com/v1"',
-        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+        'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
   ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
@@ -1118,6 +1118,19 @@ describe("LangChain Deep Agents Code image contracts", () => {
     [
       "native endpoint without placeholder",
       ['base_url = "https://integrate.api.nvidia.com/v1"', 'api_key_env = "UNTRUSTED_KEY"'].join(
+        "\n",
+      ),
+    ],
+    [
+      "native endpoint with managed-route key",
+      [
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "managed endpoint with native key",
+      ['base_url = "https://inference.local/v1"', 'api_key_env = "NVIDIA_INFERENCE_API_KEY"'].join(
         "\n",
       ),
     ],

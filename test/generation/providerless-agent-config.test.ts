@@ -141,15 +141,15 @@ const expectAbsent: Record<Agent, (config: any) => void> = {
     expect(config.platforms.api_server.enabled).toBe(true);
   },
 };
-const expectConfigured: Record<Agent, (config: any) => void> = {
+const expectConfigured: Record<Agent, (config: any, credential: string) => void> = {
   openclaw(config) {
     expect(config.agents.defaults.model.primary).toBe("inference/fixture/model");
     expect(config.models.providers.inference.models[0].id).toBe("fixture/model");
   },
-  hermes(config) {
+  hermes(config, credential) {
     expect(config.model.default).toBe("fixture/model");
     expect(config.model.provider).toBe("custom");
-    expect(config.model.api_key).toBe("sk-OPENSHELL-PROXY-REWRITE");
+    expect(config.model.api_key).toBe(credential);
   },
 };
 type InferenceSetCalls = ReturnType<typeof createDeps>["calls"];
@@ -230,7 +230,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
     expect(environment.NEMOCLAW_UPSTREAM_PROVIDER).toBe("nvidia-prod");
     const generated = generate(agent, environment);
     expect(generated.result.status, generated.result.stderr).toBe(0);
-    expectConfigured[agent](generated.read());
+    expectConfigured[agent](generated.read(), "${NVIDIA_INFERENCE_API_KEY}");
   });
   it("supplies a model later through the existing managed inference configuration updater", () => {
     const generated = generate(agent, dockerEnvironment(agent));
@@ -240,7 +240,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
     expect(
       patch(config, "nvidia-prod", "fixture/model", "openai-completions", 131072).changed,
     ).toBe(true);
-    expectConfigured[agent](config);
+    expectConfigured[agent](config, "${NVIDIA_INFERENCE_API_KEY}");
     expect(
       patch(config, "nvidia-prod", "fixture/model", "openai-completions", 131072).changed,
     ).toBe(false);
@@ -260,7 +260,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
       deps,
     );
     expect(result.inSandboxConfigSynced).toBe(true);
-    expectConfigured[agent](config);
+    expectConfigured[agent](config, "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY");
     expectCommitted[agent](deps.calls);
     expect(
       deps.calls.captureOpenshell.mock.calls.some(

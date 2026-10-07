@@ -91,6 +91,81 @@ print("managed-ultra-template-argument-ok")
     expect(output).toContain("managed-ultra-template-argument-ok");
   });
 
+  it("uses only workload-scoped NVIDIA credentials in the native request constructor", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const routePath = path.join(tempDir, "managed-inference-base-url");
+    fs.chmodSync(routePath, 0o644);
+    fs.writeFileSync(routePath, "https://integrate.api.nvidia.com/v1\n");
+    fs.chmodSync(routePath, 0o444);
+    const validation = `
+import os
+from pathlib import Path
+from deepagents_code import config
+from deepagents_code.model_config import ModelConfig, ModelConfigError
+
+name = "NVIDIA_INFERENCE_API_KEY"
+scoped = "openshell:resolve:env:s" + "a" * 64 + "_" + name
+os.environ[name] = scoped
+for adapter in ("openai", "openrouter"):
+    actual = config._get_provider_kwargs(adapter, model_name="nvidia/nemotron-3-ultra-550b-a55b")
+    assert actual["base_url"] == "https://integrate.api.nvidia.com/v1"
+    assert actual["api_key"] == scoped, "native constructor replaced the scoped credential"
+    if adapter == "openai":
+        assert actual["use_responses_api"] is False
+        assert actual["extra_body"] == {"chat_template_kwargs": {"force_nonempty_content": True}}
+    for invalid in (
+        "", "nvapi-" + "x" * 24, "nemoclaw-managed-inference",
+        "openshell:resolve:env:" + name,
+        "openshell:resolve:env:v" + "1" * 21 + "_" + name,
+        scoped.replace("a" * 64, "a" * 63),
+        scoped.replace(name, "OTHER_API_KEY"),
+        scoped + "\\n",
+    ):
+        os.environ[name] = invalid
+        try:
+            config._get_provider_kwargs(adapter)
+        except ModelConfigError as exc:
+            assert str(exc) == "Native NVIDIA inference requires a workload-scoped OpenShell credential"
+        else:
+            raise AssertionError("native constructor accepted an invalid credential")
+    os.environ[name] = "openshell:resolve:env:v1_" + name
+    assert config._get_provider_kwargs(adapter)["api_key"] == os.environ[name]
+    del os.environ[name]
+    try:
+        config._get_provider_kwargs(adapter)
+    except ModelConfigError:
+        pass
+    else:
+        raise AssertionError("missing native credential was accepted")
+    os.environ[name] = scoped
+# The trusted route, not mutable config or ambient endpoint variables, selects
+# credential transport. Managed routes must never consume the native credential.
+route_path = Path(${JSON.stringify(routePath)})
+route_path.chmod(0o644)
+route_path.write_text("https://inference.local/v1\\n")
+route_path.chmod(0o444)
+os.environ["OPENAI_BASE_URL"] = "https://integrate.api.nvidia.com/v1"
+ModelConfig.base_url = "https://integrate.api.nvidia.com/v1"
+assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"
+assert config._get_provider_kwargs("openai")["base_url"] == "https://inference.local/v1"
+# Even a valid native credential cannot rescue a writable route authority file.
+route_path.chmod(0o644)
+try:
+    config._get_provider_kwargs("openai")
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("unsafe route authority was accepted")
+print("native-nvidia-constructor-ok")
+`;
+    const output = execFileSync("python3", ["-c", validation], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+      encoding: "utf8",
+    });
+    expect(output).toContain("native-nvidia-constructor-ok");
+  });
+
   it("binds the live Ultra E2E test to the installed resolver, not the configuration round trip (#7441)", () => {
     // The managed resolver never consumes the configuration params table, so a
     // ModelConfig.get_kwargs assertion passes with or without the fix. Keep the

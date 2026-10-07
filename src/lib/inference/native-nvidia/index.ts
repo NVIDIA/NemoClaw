@@ -119,6 +119,15 @@ async function inspectNativeProvider(
   );
 }
 
+/** Inspect the native provider boundary without creating or changing a provider. */
+export async function inspectNativeNvidiaProviderIdentity(
+  adapter: OpenShellProviderAdapter,
+  target: OpenShellGatewayTarget,
+): Promise<NativeNvidiaProviderAttachment | null> {
+  const provider = await inspectNativeProvider(adapter, target);
+  return provider ? attachmentFromMetadata(provider) : null;
+}
+
 function mutationOutcomeMayBeAmbiguous(error: OpenShellProviderError): boolean {
   return (
     error.kind === "timeout" ||

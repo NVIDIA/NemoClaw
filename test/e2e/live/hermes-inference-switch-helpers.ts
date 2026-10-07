@@ -235,7 +235,10 @@ export async function prepareProxyResolutionRoute({
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
-    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+    mockBaseline?.baseUrl ??
+    (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+      : (process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL));
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
@@ -759,8 +762,16 @@ export function expectedApiMode(): string | undefined {
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
 
-export function apiKeyShapeCommand(): string[] {
-  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+const NATIVE_CREDENTIAL_SCALAR =
+  "openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY";
+export const NATIVE_API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("${NATIVE_CREDENTIAL_SCALAR}"|'${NATIVE_CREDENTIAL_SCALAR}'|${NATIVE_CREDENTIAL_SCALAR})[[:space:]]*$`;
+
+export function apiKeyShapeCommand(provider = SWITCH_PROVIDER): string[] {
+  const pattern =
+    provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NATIVE_API_KEY_SHAPE_PATTERN
+      : API_KEY_SHAPE_PATTERN;
+  return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {

@@ -18,13 +18,17 @@ import {
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
+  inspectNativeNvidiaProviderIdentity,
 } from "../../inference/native-nvidia";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
-import { clearNativeNvidiaProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
+import {
+  clearNativeNvidiaProviderAuthority,
+  getNativeNvidiaProviderAuthority,
+} from "../../state/registry/native-nvidia-provider-authority";
 import { forgetExtraProvider } from "../global";
 
 export type CredentialsResetInput = {
@@ -41,6 +45,7 @@ export type CredentialsResetResult = {
 export type CredentialsResetDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
   clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
+  getNativeNvidiaProviderAuthority?: typeof getNativeNvidiaProviderAuthority;
 }>;
 
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
@@ -131,9 +136,9 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
-    detachAttached: !nativeNvidiaProvider,
-  });
+  const recovery = nativeNvidiaProvider
+    ? await resetNativeNvidiaProvider(target, providerAdapter, deps)
+    : await deleteProviderWithRecovery(providerName, target, providerAdapter);
 
   if (
     !recovery.ok &&
@@ -166,6 +171,76 @@ export async function runCredentialsResetAction(
     );
   }
   return ok(outcome.lines);
+}
+
+async function resetNativeNvidiaProvider(
+  target: Extract<OpenShellGatewayTarget, { kind: "named" }>,
+  adapter: OpenShellProviderAdapter,
+  deps: CredentialsResetDeps,
+): Promise<CredentialsProviderDeleteWithRecoveryResult> {
+  const unchanged = { detachedSandboxes: [], recoveryFailures: [] } as const;
+  try {
+    const observed = await inspectNativeNvidiaProviderIdentity(adapter, target);
+    if (!observed) {
+      return {
+        ...unchanged,
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "Provider is already absent." },
+      };
+    }
+    const expected = (deps.getNativeNvidiaProviderAuthority ?? getNativeNvidiaProviderAuthority)(
+      target.gatewayName,
+    );
+    if (!expected || expected.providerId !== observed.providerId) {
+      return {
+        ...unchanged,
+        ok: false,
+        error: {
+          kind: "validation",
+          message:
+            "Native NVIDIA provider ownership could not be verified. No provider was changed.",
+        },
+      };
+    }
+    const result = await deleteProviderWithRecovery(
+      NVIDIA_HOSTED_NATIVE_PROVIDER,
+      target,
+      adapter,
+      {
+        detachAttached: false,
+      },
+    );
+    if (!result.ok && result.error?.kind === "command" && result.error.reason === "attached") {
+      return result;
+    }
+    const remaining = await inspectNativeNvidiaProviderIdentity(adapter, target);
+    if (!remaining) return { ...unchanged, ok: true };
+    if (!result.ok && !(result.error?.kind === "command" && result.error.reason === "not_found")) {
+      return result;
+    }
+    return {
+      ...unchanged,
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "uncertain",
+        message:
+          "Native NVIDIA provider removal was not confirmed. Its ownership receipt was retained.",
+      },
+    };
+  } catch (error) {
+    return {
+      ...unchanged,
+      ok: false,
+      error: {
+        kind: "validation",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not verify native NVIDIA provider ownership.",
+      },
+    };
+  }
 }
 
 /** Build the user-facing result after a provider delete attempt. */

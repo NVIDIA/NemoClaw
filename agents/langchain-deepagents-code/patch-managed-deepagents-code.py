@@ -478,10 +478,22 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     # path, but do not consume mutable provider classes, credentials, params, or
     # endpoints from it.
     ModelConfig.load()
-    kwargs = {
-        "api_key": "nemoclaw-managed-inference",
-        "base_url": managed_inference_base_url(),
-    }
+    base_url = managed_inference_base_url()
+    api_key = "nemoclaw-managed-inference"
+    if base_url == "https://integrate.api.nvidia.com/v1":
+        import re
+
+        # Only the image-owned native route may consume the opaque credential
+        # OpenShell supplied to this process. Never read it from mutable TOML.
+        api_key = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
+        if re.fullmatch(
+            r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY",
+            api_key,
+        ) is None:
+            raise ModelConfigError(
+                "Native NVIDIA inference requires a workload-scoped OpenShell credential"
+            )
+    kwargs = {"api_key": api_key, "base_url": base_url}
     if provider == "openai":
         kwargs["use_responses_api"] = False
         extra_body = {}
