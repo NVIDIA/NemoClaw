@@ -249,7 +249,13 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
       signal: AbortSignal.timeout(MODEL_PROBE_TIMEOUT_MS),
     });
     const json = await responseJsonOrThrow(response, "model probe");
-    await this.artifacts.writeJson(`${artifactName}.json`, json);
+    // The mock reply is asserted by the caller. Keep a success marker in the
+    // artifact without copying network-controlled response content to disk.
+    await this.artifacts.writeJson(`${artifactName}.json`, {
+      mode: "mock",
+      probe: "models",
+      responseReceived: true,
+    });
     return json;
   }
 
@@ -281,10 +287,11 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
       signal: AbortSignal.timeout(DIRECT_CHAT_TIMEOUT_MS),
     });
     const json = await responseJsonOrThrow(response, "direct chat");
-    await this.artifacts.writeJson(
-      `${options.artifactName ?? "direct-compatible-chat"}.json`,
-      json,
-    );
+    await this.artifacts.writeJson(`${options.artifactName ?? "direct-compatible-chat"}.json`, {
+      mode: "mock",
+      probe: "direct-chat",
+      responseReceived: true,
+    });
     return json;
   }
 

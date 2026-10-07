@@ -499,7 +499,22 @@ ${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cr
     }
   });
 
-  it("retains a fixed diagnostic without approval output secrets when approval fails", () => {
+  it.each([
+    ["operator.admin: approval denied by policy", "authorization-rejected"],
+    [
+      "scope upgrade pending; Gateway requires device pairing, but local fallback pairing state does not contain the gateway request.",
+      "approval-state-mismatch",
+    ],
+    ["scope upgrade pending; forced pairing pinned state is rejected", "approval-context-rejected"],
+    ["scope upgrade pending; No pending device request matches", "approval-not-pending"],
+    ["This device can't approve its own scope upgrade.", "self-approval-rejected"],
+    [
+      "operator.admin: Admin approval completed, but its token handoff could not read the local device identity.",
+      "approval-token-handoff-failed",
+    ],
+    ["scope upgrade pending approval", "scope-upgrade-pending"],
+    ["operator.admin command returned an unexplained error", "command-failed"],
+  ])("redacts native approval failure %s as a fixed diagnostic", (message, diagnostic) => {
     const fixture = createHostProcessWorkspace("nemoclaw-managed-admin-approval-");
     const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
     const secret = "approval-diagnostic-secret-value";
@@ -508,7 +523,7 @@ ${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cr
       "openclaw",
       `#!/bin/sh
 if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
-printf 'approval denied by policy token=%s\n' "$APPROVAL_DIAGNOSTIC_SECRET" >&2
+printf '%s token=%s requestId=%s\n' "$APPROVAL_DIAGNOSTIC_MESSAGE" "$APPROVAL_DIAGNOSTIC_SECRET" "$APPROVAL_DIAGNOSTIC_REQUEST" >&2
 exit 91
 `,
     );
@@ -526,6 +541,8 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requ
           env: fixture.environment({
             ...prepareManagedAdminState(fixture.root, requestId),
             APPROVAL_DIAGNOSTIC_SECRET: secret,
+            APPROVAL_DIAGNOSTIC_MESSAGE: message,
+            APPROVAL_DIAGNOSTIC_REQUEST: requestId,
             OPENCLAW_GATEWAY_PORT: "18789",
             OPENCLAW_GATEWAY_TOKEN: "fixture-token",
           }),
@@ -536,7 +553,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", requ
 
       expect(result.status).toBe(27);
       expect(result.stderr).toContain("ADMIN_APPROVE_FAILED");
-      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=authorization-rejected");
+      expect(result.stderr).toContain(`ADMIN_DIAGNOSTIC=${diagnostic}`);
       expect(result.stderr).not.toContain(secret);
       expect(result.stderr).not.toContain(requestId);
     } finally {

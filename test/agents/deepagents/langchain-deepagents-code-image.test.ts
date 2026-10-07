@@ -113,7 +113,7 @@ const TARGETED_ADVISORY_VERSIONS = [
   ["cryptography", "50.0.0"],
   ["uv", "0.11.33"],
   ["langgraph-checkpoint-sqlite", "3.1.1"],
-  ["mcp", "1.28.1"],
+  ["mcp", "2.0.0"],
   ["pillow", "12.3.0"],
   ["pyasn1", "0.6.4"],
 ] as const;
@@ -582,7 +582,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(patcher).toContain("_nemoclaw_skip_launch_model");
     expect(managedRuntime).toContain("if not servers:\n        return None");
     expect(managedRuntime).toContain("or descriptor != _MANAGED_MCP_FD");
-    expect(patcher).toContain("def discover_mcp_configs(");
+    expect(patcher).toContain("def discover_mcp_config_sources(");
     expect(patcher).toContain("return []");
     expect(agent.userManagedFiles).toContain(".deepagents/.mcp.json");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
@@ -1327,7 +1327,7 @@ print(json.dumps(values, sort_keys=True))`,
   it.each([
     ["aiohttp", "3.14.3"],
     ["cryptography", "50.0.0"],
-    ["deepagents-code", "0.1.55"],
+    ["deepagents-code", "0.1.71"],
     ["langgraph-checkpoint-sqlite", "3.1.1"],
   ] as const)(
     "records dependency advisory review for the lockfile [case %#]",
@@ -1346,19 +1346,17 @@ print(json.dumps(values, sort_keys=True))`,
         "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
       );
       expect(review).toMatch(/Targeted audit result:.*no known vulnerabilities/is);
-      expect(review).toMatch(
-        /Complete-lock audit result:.*2 duplicate records.*1 unrelated package/is,
-      );
+      expect(review).toMatch(/Complete-lock audit result:.*No known vulnerabilities found/is);
       expect(review).toContain("`GHSA-cq5v-8q36-5273`");
       expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
-      expect(review).toContain("Deep Agents Code `0.1.55`");
-      expect(review).toContain("semantic migration through `0.1.55`");
+      expect(review).toContain("Deep Agents Code `0.1.71`");
+      expect(review).toContain("semantic migration from `0.1.55` through `0.1.71`");
       expect(requirementsLock).toContain("uv==0.11.33");
       expect(requirementsLock).toContain("aiohttp==3.14.3");
       expect(requirementsLock).toContain("cryptography==50.0.0");
       expect(requirementsLock).not.toContain("aiohttp==3.14.1");
       expect(requirementsLock).not.toContain("cryptography==49.0.0");
-      expect(requirementsLock).toContain("mcp==1.28.1");
+      expect(requirementsLock).toContain("mcp==2.0.0");
       expect(requirementsLock).toContain("pillow==12.3.0");
       expect(requirementsLock).toContain("pyasn1==0.6.4");
       expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.1");

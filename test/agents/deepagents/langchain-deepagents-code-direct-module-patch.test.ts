@@ -44,7 +44,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     'getattr(args, "auto_approve", False)',
     "_nemoclaw_assert_safe_runtime()",
     'os.environ.pop("PYTHONPATH", None)',
-  ])("patches every 0.1.55 mutation and credential boundary idempotently [case %#]", (expected) => {
+  ])("patches every 0.1.71 mutation and credential boundary idempotently [case %#]", (expected) => {
     const tempDir = createPatchedPackageFixture();
     patchFixture(tempDir);
 
@@ -731,7 +731,7 @@ assert _server_config._normalize_path(snapshot_path, None, "MCP config") == snap
 assert app.DeepAgentsApp._absolutize_launch_relative_path(
     snapshot_path, Path.cwd()
 ) == snapshot_path
-assert mcp_tools.discover_mcp_configs() == []
+assert mcp_tools.discover_mcp_config_sources() == []
 expected_config = json.loads(managed.managed_mcp_config_bytes(snapshot_path))
 
 class RejectingProjectContext:
@@ -1065,6 +1065,7 @@ async def validate():
         "assistant",
         startup_cmd="touch /tmp/unsafe",
         model_params={"api_key": "secret"},
+        cli_max_retries=2,
         profile_override={"attacker": True},
         sandbox_type="modal",
         mcp_config_path="mcp.json",
@@ -1076,6 +1077,7 @@ async def validate():
     )
     assert headless_kwargs["startup_cmd"] is None
     assert headless_kwargs["model_params"] is None
+    assert headless_kwargs["cli_max_retries"] == 2
     assert headless_kwargs["profile_override"] is None
     assert headless_kwargs["sandbox_type"] == "none"
     assert headless_kwargs["mcp_config_path"] is None
@@ -1084,7 +1086,7 @@ async def validate():
     assert headless_kwargs["enable_interpreter"] is False
     assert headless_kwargs["interpreter_ptc"] is None
     assert headless_kwargs["rubric_model"] is None
-    assert non_interactive.settings.shell_allow_list is None
+    assert non_interactive._resolve_shell_allow_list() is None
     assert not headless_hook_marker.exists()
     os.environ.pop("DCODE_FIXTURE_HOOK_MARKER")
     if sys.platform == "linux":
@@ -1353,7 +1355,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.55");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.71");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");

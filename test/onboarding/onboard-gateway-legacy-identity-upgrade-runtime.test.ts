@@ -25,6 +25,8 @@ import {
 import { buildOwnedHostGatewayArgv0 } from "../../src/lib/onboard/gateway-process-identity";
 import { stopHostGatewayProcesses } from "../../src/lib/onboard/host-gateway-process";
 
+import { isAlive } from "./onboard-gateway-legacy-identity-upgrade-support";
+
 const posix = process.platform !== "win32";
 const hasLsof = posix && !spawnSync("lsof", ["-v"], { stdio: "ignore" }).error;
 
@@ -37,15 +39,6 @@ function killQuietly(pid: number): void {
     process.kill(pid, "SIGKILL");
   } catch {
     // Already stopped.
-  }
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
   }
 }
 

@@ -4,6 +4,13 @@
 import assert from "node:assert/strict";
 
 export function selectPreparedGatewayRuntime(source: string): string {
+  // Keep this historical preparation fixture on its already trusted executable reader.
+  const historicalSource = source
+    .replace('import { readGatewayProcEntry } from "./gateway/process-proc-entry";\n', "")
+    .replace(
+      '  function readProcessExe(pid: number): string | null {\n    return readGatewayProcEntry(pid, "exe");\n  }',
+      "  function readProcessExe(pid: number): string | null {\n    try {\n      const procExePath = `/proc/${pid}/exe`;\n      if (!fs.existsSync(procExePath)) return null;\n      return fs.readlinkSync(procExePath);\n    } catch {\n      return null;\n    }\n  }",
+    );
   return [
     [
       "  getDockerDriverGatewayPid(): number | null;",
@@ -51,5 +58,5 @@ export function selectPreparedGatewayRuntime(source: string): string {
   ].reduce((result, [expected, replacement]) => {
     assert.ok(result.includes(expected), `preparation fixture must contain ${expected}`);
     return result.replaceAll(expected, replacement);
-  }, source);
+  }, historicalSource);
 }

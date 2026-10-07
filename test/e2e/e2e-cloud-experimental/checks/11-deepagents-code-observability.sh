@@ -24,13 +24,13 @@ CAPTURE_DIR="$(mktemp -d /tmp/nemoclaw-otlp-live.XXXXXX)"
 COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
 OBSERVABILITY_POLICY_DIRTY=0
-REDACTION_PROBE_STARTED=0
+OBSERVABILITY_PROMPTS=()
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
 SERVICE_NAME="nemoclaw-langchain-deepagents-code"
 ALLOWED_PROBE="NEMOCLAW_OTLP_ALLOWED_PROBE"
-DIRECT_PROMPT="NEMOCLAW_OTLP_DIRECT_PROMPT_SENTINEL_${CAPTURE_DIR##*/}"
+DIRECT_PROMPT="NEMOCLAW_OTLP_DIRECT_PROMPT_SENTINEL"
 DIRECT_RESPONSE="NEMOCLAW_OTLP_DIRECT_RESPONSE_SENTINEL"
 LOGIN_PROMPT="NEMOCLAW_OTLP_LOGIN_PROMPT_SENTINEL"
 LOGIN_RESPONSE="NEMOCLAW_OTLP_LOGIN_RESPONSE_SENTINEL"
@@ -40,7 +40,6 @@ TOOL_RESULT="NEMOCLAW_OTLP_TOOL_RESULT_SENTINEL"
 AMBIENT_CANARY="NEMOCLAW_OTLP_AMBIENT_EXPORTER_CANARY"
 REDACTION_PROBE="sk-EXAMPLE0000000000000000000000"
 REDACTION_MARKER="<redacted-secret>"
-DIRECT_INPUT="My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}."
 
 fail() {
   printf '%s: FAIL: %s\n' "$PREFIX" "$1" >&2
@@ -82,50 +81,43 @@ restore_observability_policy() {
   OBSERVABILITY_POLICY_DIRTY=0
 }
 
-cleanup_redaction_probe() {
-  [ "$REDACTION_PROBE_STARTED" -eq 1 ] || return 0
-  local source
-  source="$(
-    cat <<'PY'
-import asyncio
-import sys
-
-from deepagents_code import sessions
-
-async def main():
-    threads = await sessions.list_threads(limit=1001)
-    if len(threads) > 1000:
-        raise RuntimeError("Too many threads to identify the test-owned redaction probe")
-    await sessions.populate_thread_checkpoint_details(
-        threads, include_message_count=False, include_initial_prompt=True
-    )
-    owned = [t["thread_id"] for t in threads if t.get("initial_prompt") == sys.argv[1]]
-    if len(owned) > 1 or (not owned and sys.argv[2] == "required"):
-        raise RuntimeError("Expected exactly one test-owned redaction probe thread")
-    for thread_id in owned:
-        if not await sessions.delete_thread(thread_id) or await sessions.thread_exists(thread_id):
-            raise RuntimeError("Could not remove the test-owned redaction probe thread")
-
-asyncio.run(main())
-PY
-  )"
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
-    /opt/venv/bin/python3 -I -c "$source" "$DIRECT_INPUT" "${1:-optional}" || return 1
-  REDACTION_PROBE_STARTED=0
+cleanup_sandbox_exec() {
+  local timeout_command
+  timeout_command="$(command -v timeout || command -v gtimeout)" || return 127
+  # Bound the client as well as remote execution: a stalled gateway may never
+  # deliver the remote timeout result. Match the adjacent TUI check's bounds.
+  "$timeout_command" --signal=TERM --kill-after=5s 45s \
+    openshell sandbox exec --name "$SANDBOX_NAME" --timeout 45 -- "$@" </dev/null
 }
 
 cleanup() {
   local exit_status="$?"
   trap - EXIT
-  if ! cleanup_redaction_probe; then
-    printf '%s: redaction probe thread cleanup failed\n' "$PREFIX" >&2
-    exit_status=1
-  fi
   if ! restore_observability_policy; then
     printf '%s: policy cleanup failed; run: nemoclaw %q policy-add observability-otlp-local --yes\n' \
       "$PREFIX" "$SANDBOX_NAME" >&2
     exit_status=1
   fi
+  # These conversations include the synthetic redaction credential. Remove
+  # only conversations with our unique exact prompts, even if turn JSON failed.
+  # DCode 0.1.71 has no pagination/all flag and clamps nonpositive limits to 1.
+  # SQLite's largest signed limit includes every stored thread. The parser
+  # rejects listings over 1 MiB before JSON parsing; the native and host
+  # deadlines still bound execution. An incomplete listing never permits deletion.
+  local prompt thread deletion_output
+  for prompt in ${OBSERVABILITY_PROMPTS[@]+"${OBSERVABILITY_PROMPTS[@]}"}; do
+    if ! thread="$(cleanup_sandbox_exec \
+      dcode threads list --verbose --limit 9223372036854775807 --json \
+      | "$TSX" "$CONTRACT_HELPER" thread-for-prompt "$prompt")" \
+      || ! deletion_output="$(cleanup_sandbox_exec \
+        dcode threads delete "$thread" --json)" \
+      || ! printf '%s\n' "$deletion_output" | "$TSX" "$CONTRACT_HELPER" thread-deleted "$thread" \
+      || ! cleanup_sandbox_exec dcode threads delete "$thread" --dry-run --json \
+      | "$TSX" "$CONTRACT_HELPER" thread-absent "$thread"; then
+      printf '%s: could not remove an observability test conversation\n' "$PREFIX" >&2
+      exit_status=1
+    fi
+  done
   if [ -n "$COLLECTOR_PID" ] && kill -0 "$COLLECTOR_PID" 2>/dev/null; then
     kill "$COLLECTOR_PID" 2>/dev/null || true
     wait "$COLLECTOR_PID" 2>/dev/null || true
@@ -319,15 +311,13 @@ run_dcode_direct() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- \
     env OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
-    dcode -n "$DIRECT_INPUT" 2>&1
+    dcode --json -n \
+    "$DIRECT_TURN_PROMPT"
 }
 
 run_dcode_login() {
-  local prompt
-  prompt="Reply with exactly ${LOGIN_RESPONSE}. Do not repeat the input marker ${LOGIN_PROMPT}."
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -lc \
-    "OTEL_SERVICE_NAME=${AMBIENT_CANARY@Q} OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode -n ${prompt@Q}" \
-    2>&1
+    "OTEL_SERVICE_NAME=${AMBIENT_CANARY@Q} OTEL_RESOURCE_ATTRIBUTES=$(printf '%q' "ambient.canary=${AMBIENT_CANARY}") dcode --json -n ${LOGIN_TURN_PROMPT@Q}"
 }
 
 tool_trace_source() {
@@ -424,12 +414,17 @@ marker_output="$(observability_marker_value)" \
 [ "$marker_output" = "1" ] || fail "managed observability marker changed while restoring policy"
 pass "host observability policy is restored before positive trace checks"
 
-REDACTION_PROBE_STARTED=1
+# Register unique ownership before executing either turn, not after parsing it.
+run_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+DIRECT_TURN_PROMPT="[${run_id}:direct] My key is ${REDACTION_PROBE}. Reply with exactly ${DIRECT_RESPONSE}. Do not repeat the key or the input marker ${DIRECT_PROMPT}."
+LOGIN_TURN_PROMPT="[${run_id}:login] Reply with exactly ${LOGIN_RESPONSE}. Do not repeat the input marker ${LOGIN_PROMPT}."
+OBSERVABILITY_PROMPTS+=("$DIRECT_TURN_PROMPT")
 direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
   || fail "direct-exec dcode response omitted its requested marker"
 pass "direct-exec dcode completed with observability enabled"
 
+OBSERVABILITY_PROMPTS+=("$LOGIN_TURN_PROMPT")
 login_output="$(run_dcode_login)" || fail "login-shell dcode observability turn failed: $login_output"
 printf '%s\n' "$login_output" | grep -Fq "$LOGIN_RESPONSE" \
   || fail "login-shell dcode response omitted its requested marker"
@@ -473,9 +468,4 @@ done
   || fail "captured OTLP contract did not become valid: $validation_output"
 
 pass "decoded OTLP associates model/tool content and excludes ambient exporter configuration"
-# The synthetic key must remain in native history until the trace assertion.
-# Then remove only this run's probe through native session deletion, so later
-# rebuild/export checks still reject credentials instead of our test fixture.
-cleanup_redaction_probe required || fail "could not remove the test-owned redaction probe thread"
-pass "test-owned redaction probe thread is removed before rebuild and export"
-printf '%s: 15 passed, 0 failed\n' "$PREFIX"
+printf '%s: 14 passed, 0 failed\n' "$PREFIX"

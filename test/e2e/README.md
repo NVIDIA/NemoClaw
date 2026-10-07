@@ -509,7 +509,14 @@ unchanged because this contract replaces a redundant nonempty-log assertion in t
 
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
-the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
+the disabled baseline. Observability turns register unique prompts before execution. Cleanup identifies
+only the exact matching native conversation from the complete listing and requires confirmation of its
+deletion, including when turn output is malformed or the command fails after persisting state. Listing and deletion
+each have a 45-second host and remote limit, with a five-second host kill grace. A timeout fails cleanup
+and preserves the failure diagnostic while allowing capture cleanup to continue. The native listing
+parser accepts at most 1 MiB before decoding JSON. An oversized listing closes the input pipe, fails
+cleanup with its diagnostic, and permits no deletion from incomplete ownership evidence.
+The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
 On Docker, the fixture compares the registry before and after export. State validation confirms that the
@@ -590,6 +597,8 @@ Changes to shared catalogue execution paths select every catalogue target.
 
 The `openclaw-inference-switch` target owns fresh custom-image route initialization.
 Its fixture contains only a different baked model and stale limits.
+Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
+restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.

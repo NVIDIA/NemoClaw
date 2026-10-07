@@ -77,7 +77,7 @@ function readinessDeps(
       { status: 0, stdout: `${String(UID)}\n`, stderr: "" },
     ],
     [
-      ["ps", "-p", String(PID), "-o", "stat="].join("\0"),
+      ["ps", "-p", String(PID), "-o", "stat=", "-L"].join("\0"),
       { status: 0, stdout: `${processState}\n`, stderr: "" },
     ],
   ]);
@@ -276,6 +276,34 @@ describe("native Podman gateway readiness", () => {
       observeNativePodmanGatewayReadiness(input(), readinessDeps({ openshellVersion: "0.0.115" }))
         .versionCompatibility,
     ).toBe("drift");
+  });
+
+  it("retains a target-bound listener when the leader exits and a sibling thread runs", () => {
+    const deps = readinessDeps({}, "Z\nS");
+    expect(observeNativePodmanGatewayReadiness(input(), deps).targetBoundListenerPids).toEqual([
+      PID,
+    ]);
+  });
+
+  it.each(["Z\nX", "S\n?", "", "Z\nT"])("rejects an unverified thread scan %j", (processState) => {
+    const deps = readinessDeps({}, processState);
+    expect(observeNativePodmanGatewayReadiness(input(), deps).targetBoundListenerPids).toEqual([]);
+  });
+
+  it("rejects a failed thread scan even when its partial output contains a running thread", () => {
+    const deps = readinessDeps();
+    const run = deps.runHost;
+    const failed = {
+      ...deps,
+      runHost: vi.fn((command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+        args.includes("stat=")
+          ? { status: 1, stdout: "S\n", stderr: "scan failed" }
+          : run(command, args, env),
+      ),
+    };
+    expect(observeNativePodmanGatewayReadiness(input(), failed).targetBoundListenerPids).toEqual(
+      [],
+    );
   });
 
   it.each(["T", "t"])("rejects a stopped process in state %s (#10984)", (processState) => {

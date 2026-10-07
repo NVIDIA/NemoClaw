@@ -70,7 +70,7 @@ function psResponses(
 ): [string, RunResponse][] {
   return [
     [
-      `ps -p ${pid} -o stat=`,
+      `ps -p ${pid} -o stat=${process.platform === "linux" ? " -L" : ""}`,
       () => (opts.exited.has(pid) ? notFound() : (opts.processStatus ?? ok("S\n"))),
     ],
     [`ps -p ${pid} -o uid=`, staticResponse(ok(`${String(process.getuid?.() ?? 501)}\n`))],

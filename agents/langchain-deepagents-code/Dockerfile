@@ -198,7 +198,7 @@ RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-dee
     && cmp -s /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
     && chmod -R a+rX /opt/nemoclaw-blueprint \
     && test "$(find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort)" = "$(printf '%s\n' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py')" \
-    && printf '%s  %s\n' '97eaed5781f9c7df4478c96263b0742fb545b322846fe0c73c39a3bfba4553a9' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
+    && printf '%s  %s\n' 'd7bd880d47d423f27dee2997a96271f5f1c67b88fdafaf771e29b82c0ac8b947' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '6d1ac1371076821f13728008bfd47c5aaad25af5268a0c2e7c784b193642650e' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
     && /opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin \
     && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True)' \
     && /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py \
