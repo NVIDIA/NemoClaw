@@ -3,7 +3,8 @@
 
 use super::*;
 use async_trait::async_trait;
-use nemoclaw_sdk::backend::{Backend, Mutation, OpenShellLifecycle, openshell_lifecycle};
+use nemoclaw_backend::{Backend, Mutation};
+use nemoclaw_openshell::{OpenShellLifecycle, openshell_lifecycle};
 use std::time::Duration;
 
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
@@ -94,10 +95,7 @@ impl Backend for OpenShell {
         kind: &str,
         desired: &Row,
         prior: Option<&Row>,
-    ) -> Result<(), nemoclaw_sdk::Error> {
-        if kind == "agent_configuration" {
-            return self.plan_configuration(desired).await;
-        }
+    ) -> Result<(), nemoclaw_backend::Error> {
         // Bound resources were refreshed by OpenTofu. New resources still need
         // an ownership check: their names may already exist in the gateway.
         if prior.is_none()
@@ -120,9 +118,6 @@ impl Backend for OpenShell {
         prior: &Row,
         removing: bool,
     ) -> Result<Option<Row>, ObservationError> {
-        if kind == "agent_configuration" {
-            return self.read_configuration(prior, removing).await;
-        }
         let observed = self
             .observe(
                 kind,
@@ -144,14 +139,11 @@ impl Backend for OpenShell {
             verify_identity(prior, row)?;
             self.check_sandbox_phase(row)
                 .await
-                .map_err(nemoclaw_sdk::Error::into_observation)?;
+                .map_err(nemoclaw_backend::Error::into_observation)?;
         }
         Ok(observed)
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        if kind == "agent_configuration" {
-            return self.ensure_configuration(desired).await;
-        }
         let fields: &[&str] = match kind {
             "workspace" => &["name", "owner", "generation"],
             "provider_profile" => &["name", "owner", "generation", "workspace"],
@@ -185,9 +177,6 @@ impl Backend for OpenShell {
         prior: &Row,
         destroying: bool,
     ) -> Result<(), ObservationError> {
-        if kind == "agent_configuration" {
-            return self.remove_configuration(prior, destroying).await;
-        }
         if !matches!(
             openshell_lifecycle(kind),
             Some(OpenShellLifecycle::Reconstructible)

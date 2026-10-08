@@ -14,7 +14,7 @@ pub(super) fn provider_names(text: &str, runtime: &str) -> Result<Vec<String>, O
         || unique.len() != names.len()
         || names
             .iter()
-            .any(|name| !nemoclaw_sdk::config::valid_name(name))
+            .any(|name| !nemoclaw_openshell::valid_name(name))
     {
         return Err(ObservationError::Query);
     }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::fabric::AgentConfigurationBackend;
 use crate::openshell::{EnvironmentSecrets, OpenShell};
 use crate::{Backend, Definition, Mutation, ResourceAdapter, Row};
 use crate::{docker::Connections, services::BackendRegistry};
@@ -78,7 +79,13 @@ impl Backend for ConfiguredBackend {
         {
             return Ok(());
         }
-        self.client()?.plan(kind, desired, prior).await
+        let client = self.client()?;
+        if kind == "agent_configuration" {
+            return AgentConfigurationBackend(client)
+                .plan(kind, desired, prior)
+                .await;
+        }
+        client.plan(kind, desired, prior).await
     }
 
     async fn read(
@@ -90,7 +97,13 @@ impl Backend for ConfiguredBackend {
         if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, prior)? {
             return backend.read(kind, prior, removing).await;
         }
-        self.client()?.read(kind, prior, removing).await
+        let client = self.client()?;
+        if kind == "agent_configuration" {
+            return AgentConfigurationBackend(client)
+                .read(kind, prior, removing)
+                .await;
+        }
+        client.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
         // Image and model downloads during a mutation report progress to the SDK.
@@ -103,6 +116,11 @@ impl Backend for ConfiguredBackend {
                     Ok(None) => {}
                 }
                 match self.client() {
+                    Ok(client) if kind == "agent_configuration" => {
+                        AgentConfigurationBackend(client)
+                            .ensure(kind, desired)
+                            .await
+                    }
                     Ok(client) => client.ensure(kind, desired).await,
                     Err(error) => Mutation::failed(error),
                 }
@@ -119,7 +137,13 @@ impl Backend for ConfiguredBackend {
         if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, prior)? {
             return backend.remove(kind, prior, destroying).await;
         }
-        self.client()?.remove(kind, prior, destroying).await
+        let client = self.client()?;
+        if kind == "agent_configuration" {
+            return AgentConfigurationBackend(client)
+                .remove(kind, prior, destroying)
+                .await;
+        }
+        client.remove(kind, prior, destroying).await
     }
 }
 #[derive(Default)]
@@ -383,6 +407,7 @@ pub(crate) fn definitions() -> Vec<Definition> {
     definitions.extend(crate::services::definitions());
     definitions.extend(crate::managed::definitions());
     definitions.extend(crate::openshell::definitions());
+    definitions.extend(crate::fabric::definitions());
     definitions
 }
 

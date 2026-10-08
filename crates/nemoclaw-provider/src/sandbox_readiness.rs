@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::provider::ConfiguredBackend;
+use crate::{fabric::AgentBridge, provider::ConfiguredBackend};
 use async_trait::async_trait;
 use nemoclaw_sdk::{CancellationToken, Error, backend::Row};
 use serde::{Deserialize, Serialize};

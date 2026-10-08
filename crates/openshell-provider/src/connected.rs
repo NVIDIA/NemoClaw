@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_sdk::config::SearchProvider;
+use nemoclaw_openshell::search::SearchProvider;
 use std::{collections::HashMap, time::Duration};
 
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
@@ -18,10 +18,10 @@ fn labels(want: &Row) -> HashMap<String, String> {
 }
 
 impl ConnectedOpenShellGateway {
-    pub(in crate::openshell) async fn gateway_capabilities(
+    pub(crate) async fn gateway_capabilities(
         &self,
-    ) -> Result<nemoclaw_sdk::discovery::GatewayCapabilities, ObservationError> {
-        nemoclaw_discovery::gateway::capabilities(&self.client).await
+    ) -> Result<nemoclaw_openshell::GatewayCapabilities, ObservationError> {
+        nemoclaw_openshell::capabilities(&self.client).await
     }
 
     async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
@@ -32,12 +32,12 @@ impl ConnectedOpenShellGateway {
             "brave" | "tavily"
                 if search.is_some_and(|provider| {
                     value(want, "name")
-                        == nemoclaw_sdk::config::search_provider_name(
+                        == nemoclaw_openshell::search::search_provider_name(
                             provider,
                             value(want, "credential_env"),
                             value(want, "profile_name"),
                         )
-                        && nemoclaw_sdk::config::SearchProvider::from_profile(value(
+                        && nemoclaw_openshell::search::SearchProvider::from_profile(value(
                             want,
                             "profile_name",
                         )) == Some(provider)
@@ -84,13 +84,11 @@ impl ConnectedOpenShellGateway {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
             }
-            crate::services::authentication::resolve(
-                &nemoclaw_sdk::services::authentication::Source::parse(
-                    source,
-                    value(want, "owner"),
-                    value(want, "endpoint"),
-                )?,
-            )
+            nemoclaw_docker::credentials::resolve(&nemoclaw_docker::credentials::Source::parse(
+                source,
+                value(want, "owner"),
+                value(want, "endpoint"),
+            )?)
             .await?
         } else {
             match value(want, "credential_env") {
@@ -129,10 +127,7 @@ impl ConnectedOpenShellGateway {
         })
     }
 
-    pub(in crate::openshell) async fn create_workspace(
-        &self,
-        want: &Row,
-    ) -> Result<String, ObservationError> {
+    pub(crate) async fn create_workspace(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let response = self
             .client
@@ -150,10 +145,7 @@ impl ConnectedOpenShellGateway {
         Ok(row["id"].clone())
     }
 
-    pub(in crate::openshell) async fn create_provider(
-        &self,
-        want: &Row,
-    ) -> Result<String, ObservationError> {
+    pub(crate) async fn create_provider(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         let response = self
@@ -172,10 +164,7 @@ impl ConnectedOpenShellGateway {
         Ok(row["id"].clone())
     }
 
-    pub(in crate::openshell) async fn create_sandbox(
-        &self,
-        want: &Row,
-    ) -> Result<String, ObservationError> {
+    pub(crate) async fn create_sandbox(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         if value(want, "agent_runtime") != "fabric" {
@@ -225,7 +214,7 @@ impl ConnectedOpenShellGateway {
         Ok(row["id"].clone())
     }
 
-    pub(in crate::openshell) async fn update_provider(
+    pub(crate) async fn update_provider(
         &self,
         want: &Row,
         live: &Row,
@@ -280,10 +269,7 @@ impl ConnectedOpenShellGateway {
         Ok(())
     }
 
-    pub(in crate::openshell) async fn delete_bound_sandbox(
-        &self,
-        want: &Row,
-    ) -> Result<(), ObservationError> {
+    pub(crate) async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         let client = self.client.workspace(workspace);
@@ -319,7 +305,7 @@ impl ConnectedOpenShellGateway {
             .map_err(sdk_error)
     }
 
-    pub(in crate::openshell) async fn delete(
+    pub(crate) async fn delete(
         &self,
         kind: &str,
         workspace: &str,
@@ -362,7 +348,6 @@ impl ConnectedOpenShellGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nemoclaw_sdk::config::Gateway;
     use std::sync::Arc;
 
     struct SearchSecrets;
@@ -378,13 +363,14 @@ mod tests {
 
     #[tokio::test]
     async fn search_creation_resolves_only_the_reference_and_observation_drops_the_value() {
-        let mut gateway = Gateway::default();
-        *gateway.endpoint_mut() = "http://127.0.0.1:1".into();
+        let connection = nemoclaw_openshell::Connection {
+            endpoint: "http://127.0.0.1:1".into(),
+            ..Default::default()
+        };
         let client =
-            ConnectedOpenShellGateway::connect(&gateway.connection(), Arc::new(SearchSecrets))
-                .unwrap();
+            ConnectedOpenShellGateway::connect(&connection, Arc::new(SearchSecrets)).unwrap();
         for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
-            let name = nemoclaw_sdk::config::search_provider_name(
+            let name = nemoclaw_openshell::search::search_provider_name(
                 provider,
                 "SEARCH_KEY",
                 provider.profile(),
