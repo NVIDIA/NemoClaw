@@ -351,4 +351,16 @@ impl Gateway {
             Self::External(gateway) => gateway.tls.as_ref(),
         }
     }
+    /// Settings to reach this gateway's API.
+    pub fn connection(&self) -> nemoclaw_openshell::Connection {
+        nemoclaw_openshell::Connection {
+            endpoint: self.endpoint().into(),
+            credential_env: self.credential().map(|credential| credential.env.clone()),
+            tls: self.tls().map(|tls| nemoclaw_openshell::TlsFiles {
+                ca_env: tls.ca.env.clone(),
+                certificate_env: tls.certificate.env.clone(),
+                key_env: tls.key.env.clone(),
+            }),
+        }
+    }
 }

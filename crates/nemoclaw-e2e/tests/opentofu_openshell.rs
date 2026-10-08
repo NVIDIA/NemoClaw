@@ -239,7 +239,8 @@ async fn gateway_capability_observations_preserve_metadata_and_fail_closed_witho
         &Gateway::External(nemoclaw_sdk::config::ExternalGateway {
             endpoint: fixture.endpoint.clone(),
             ..Default::default()
-        }),
+        })
+        .connection(),
         std::sync::Arc::new(EnvironmentSecrets),
     )
     .unwrap();

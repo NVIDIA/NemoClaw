@@ -2266,6 +2266,7 @@ dependencies = [
  "async-trait",
  "nemoclaw-runtime",
  "thiserror 2.0.20",
+ "url",
 ]
 
 [[package]]
@@ -2318,6 +2319,7 @@ dependencies = [
  "futures-util",
  "hyper",
  "hyper-util",
+ "nemoclaw-openshell",
  "nemoclaw-sdk",
  "openshell-sdk",
  "reqwest 0.13.5",
@@ -2395,6 +2397,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-openshell"
+version = "0.1.0"
+dependencies = [
+ "nemoclaw-backend",
+ "openshell-sdk",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "nemoclaw-provider"
 version = "0.1.0"
 dependencies = [
@@ -2407,6 +2422,7 @@ dependencies = [
  "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-discovery",
+ "nemoclaw-openshell",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
  "nemoclaw-tofu",
@@ -2474,6 +2490,7 @@ dependencies = [
  "kube",
  "nemo-fabric-core",
  "nemoclaw-backend",
+ "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "openshell-core",

@@ -280,7 +280,11 @@ async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
         }),
         ..Default::default()
     });
-    let client = OpenShell::connect(&gateway, Arc::new(Values(connection.environment()))).unwrap();
+    let client = OpenShell::connect(
+        &gateway.connection(),
+        Arc::new(Values(connection.environment())),
+    )
+    .unwrap();
     client
         .verify_gateway(ComputeDriver::Kubernetes)
         .await
@@ -298,7 +302,7 @@ async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
     .token(time::OffsetDateTime::now_utc().unix_timestamp());
     let mut forged = connection.environment();
     forged.insert(TOKEN_ENV.into(), foreign);
-    let client = OpenShell::connect(&gateway, Arc::new(Values(forged))).unwrap();
+    let client = OpenShell::connect(&gateway.connection(), Arc::new(Values(forged))).unwrap();
     assert!(
         matches!(
             client.gateway_capabilities().await,

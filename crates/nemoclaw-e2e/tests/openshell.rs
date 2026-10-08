@@ -15,7 +15,11 @@ async fn sandbox_teardown_requires_owned_identity_but_not_its_previous_configura
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), format!("{key}-generation")))
         .into();
@@ -107,7 +111,7 @@ async fn owning_api_reconciles_lost_create_reply_and_checks_conditional_updates(
     document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
     document.spec.inference_providers[0].credential =
         Some(serde_json::from_value(serde_json::json!({"env":"FIRST_KEY"})).unwrap());
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(Keys)).unwrap();
+    let client = OpenShell::connect(&document.spec.gateway.connection(), Arc::new(Keys)).unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -190,7 +194,11 @@ async fn sandbox_launch_policy_and_provider_identity_survive_read_failures() {
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -300,7 +308,11 @@ async fn sandbox_exec_uses_the_bound_workspace_and_rejects_substituted_identity(
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), format!("{key}-generation")))
         .into();
@@ -376,7 +388,11 @@ async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .into_iter()
         .map(|k| (k.into(), format!("{k}-generation")))
@@ -420,7 +436,8 @@ async fn incomplete_desired_ownership_is_rejected_before_any_create() {
                 endpoint: fixture.endpoint.clone(),
                 ..Default::default()
             });
-        let client = OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)).unwrap();
+        let client =
+            OpenShell::connect(&gateway.connection(), Arc::new(EnvironmentSecrets)).unwrap();
         let mut desired: nemoclaw_sdk::backend::Row = [
             ("name".into(), "workspace".into()),
             ("owner".into(), "owner".into()),
@@ -446,8 +463,11 @@ async fn failed_readback_retains_each_created_identity_until_explicit_recovery()
         )
         .unwrap();
         *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-        let client =
-            OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+        let client = OpenShell::connect(
+            &document.spec.gateway.connection(),
+            Arc::new(EnvironmentSecrets),
+        )
+        .unwrap();
         let generations = ["workspace", "provider", "sandbox"]
             .into_iter()
             .map(|kind| (kind.into(), format!("{kind}-generation")))
@@ -500,7 +520,11 @@ async fn explicit_policy_reaches_the_gateway_and_detects_drift() {
         Document::parse(include_bytes!("../../../examples/explicit-policy.yaml").as_slice())
             .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
@@ -606,7 +630,11 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
     document.spec.sandboxes[0].agent.tools = Some(nemoclaw_sdk::config::AgentTools {
         allow: vec!["read".into()],
     });
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
@@ -733,7 +761,11 @@ async fn native_provider_union_is_attached_and_attachment_drift_is_rejected() {
     inference["default"] = serde_json::json!("primary");
     inference["routes"].as_array_mut().unwrap().push(serde_json::json!({"name":"smart","providerRef":"hosted","overrides":{"model":"smart-model"}}));
     let document = Document::parse(value.to_string().as_bytes()).unwrap();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), "a".repeat(32)))
         .into();
@@ -788,7 +820,11 @@ async fn terminal_startup_reports_phase_and_exit_without_echoing_backend_text() 
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|key| (key.into(), format!("{key}-generation")))
         .into();
@@ -858,7 +894,11 @@ async fn rejected_configuration_stops_startup_without_exec_and_preserves_binding
     )
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     let generations = ["workspace", "provider", "sandbox"]
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();

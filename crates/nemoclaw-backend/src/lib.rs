@@ -4,11 +4,14 @@
 //! attribute rows, mutation outcomes, bindings, and safe diagnostics.
 
 mod contract;
+mod endpoint;
 mod error;
 mod observation;
 mod secrets;
 
 pub use contract::{Backend, Mutation, Row};
+pub use endpoint::validate_endpoint;
 pub use error::Error;
+pub use nemoclaw_runtime::config::ConfigError;
 pub use observation::{Binding, Bound, Observation, ObservationError, refresh};
 pub use secrets::{EnvironmentSecrets, Secrets};
