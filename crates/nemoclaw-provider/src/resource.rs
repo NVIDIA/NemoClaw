@@ -139,6 +139,16 @@ impl ResourceAdapter {
         {
             return Some(());
         }
+        // Omitted identity is generated during apply, so the backend cannot
+        // observe the binding this plan would create.
+        if self
+            .definition
+            .generated
+            .iter()
+            .any(|(name, _)| matches!(proposed.get(*name), Some(Value::Unknown)))
+        {
+            return Some(());
+        }
         let result = async {
             let desired = self.row(proposed, true)?;
             let prior = prior.map(|state| self.row(state, false)).transpose()?;
@@ -275,7 +285,7 @@ impl Resource for ResourceAdapter {
                         attr_type: AttributeType::String,
                         constraint: if name == "id" || self.definition.is_computed(name) {
                             AttributeConstraint::Computed
-                        } else if self.optional(name) {
+                        } else if self.optional(name) || self.definition.is_generated(name) {
                             AttributeConstraint::OptionalComputed
                         } else {
                             AttributeConstraint::Required
@@ -354,6 +364,11 @@ impl Resource for ResourceAdapter {
                 proposed.insert((*field).into(), Value::Value(String::new()));
             }
         }
+        for (name, _) in &self.definition.generated {
+            if matches!(config.get(*name), Some(Value::Null) | None) {
+                proposed.insert((*name).into(), Value::Unknown);
+            }
+        }
         self.check_plan(diags, &proposed, &config, None).await?;
         Some((proposed, Value::Null))
     }
@@ -427,6 +442,21 @@ impl Resource for ResourceAdapter {
         if self.destroying.load(Ordering::Acquire) {
             diags.root_error_short("Creation forbidden during destroy");
             return None;
+        }
+        let mut planned = planned;
+        for (name, generate) in &self.definition.generated {
+            if matches!(
+                planned.get(*name),
+                Some(Value::Unknown | Value::Null) | None
+            ) {
+                match generate() {
+                    Ok(value) => planned.insert((*name).into(), Value::Value(value)),
+                    Err(error) => {
+                        diags.root_error_short(error.to_string());
+                        return None;
+                    }
+                };
+            }
         }
         let row = match self.row(&planned, true) {
             Ok(row) => row,

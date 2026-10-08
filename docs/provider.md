@@ -74,15 +74,21 @@ None of them exposes ephemeral resources or provider functions.
 
 Generated graphs place vLLM and Ollama model caches in `docker_volume` resources and do not declare `nemoclaw_ollama_service_storage`.
 
-`nemoclaw_inference_storage` and `nemoclaw_ollama_service_storage` take `name`, `owner`, `generation`, and `engine`.
+`nemoclaw_inference_storage` and `nemoclaw_ollama_service_storage` take `name` and `engine`, and optionally `owner` and `generation`.
 The provider creates a local volume with that name on that engine and labels it with the owner and generation.
 It rejects a same-named volume with other labels, and never recreates a bound volume that disappears.
 Validation reports an invalid value at its attribute:
 
-- `name` is `nc-`, 16 lowercase hexadecimal characters, a service name, and `-data` or `-auth`.
+- `name` is 2 to 255 letters, digits, underscores, periods, or hyphens, starting with a letter or digit.
 - `owner` is a lowercase UUID.
 - `generation` is 32 lowercase hexadecimal characters.
 - `engine` is a supported engine endpoint.
+
+When `owner` or `generation` is omitted, the provider generates it during apply and keeps it in state.
+Generated graphs supply both values, which the SDK records before apply.
+If a create succeeds but its reply is lost, OpenTofu state has no record of a generated identity.
+The next apply generates another, finds the volume labelled with the lost one, and stops.
+To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid` and `nemoclaw.nvidia.com/generation` labels and apply again.
 
 ### NemoClaw Data Sources
 

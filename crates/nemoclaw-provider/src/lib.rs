@@ -21,6 +21,9 @@ pub type ValidateSpec = fn(kind: &str, encoded: &str) -> Result<(), nemoclaw_sdk
 /// Checks one known input attribute, explaining a rejection without echoing the value.
 pub type ValidateAttribute = fn(attribute: &str, value: &str) -> Result<(), &'static str>;
 
+/// Generates a value for an omitted identity attribute when a resource is created.
+pub type Generate = fn() -> Result<String, nemoclaw_sdk::Error>;
+
 /// Adds resource context to a diagnostic from the resource's known attributes.
 pub type Describe = fn(error: String, attributes: &Row) -> String;
 
@@ -49,6 +52,9 @@ pub struct Definition {
     pub reset_when_omitted: Vec<&'static str>,
     /// Attributes the backend observes, with their update planning rule.
     pub computed: Vec<(&'static str, PlanComputed)>,
+    /// Optional inputs the provider generates on create when omitted, then
+    /// keeps in state.
+    pub generated: Vec<(&'static str, Generate)>,
     pub protection: Protection,
     /// Refuse replacement because it would discard retained identity or files.
     pub refuse_replacement: bool,
@@ -70,6 +76,7 @@ impl Definition {
             optional: Vec::new(),
             reset_when_omitted: Vec::new(),
             computed: Vec::new(),
+            generated: Vec::new(),
             protection: Protection::None,
             refuse_replacement: false,
             keep_running_during_destroy: false,
@@ -89,6 +96,10 @@ impl Definition {
     }
     pub fn computed(mut self, name: &'static str, plan: PlanComputed) -> Self {
         self.computed.push((name, plan));
+        self
+    }
+    pub fn generated(mut self, name: &'static str, generate: Generate) -> Self {
+        self.generated.push((name, generate));
         self
     }
     pub fn protect(mut self, protection: Protection) -> Self {
@@ -121,6 +132,9 @@ impl Definition {
     }
     pub fn is_optional(&self, field: &str) -> bool {
         self.optional.contains(&field)
+    }
+    pub fn is_generated(&self, field: &str) -> bool {
+        self.generated.iter().any(|(name, _)| *name == field)
     }
     pub fn is_computed(&self, field: &str) -> bool {
         self.computed.iter().any(|(name, _)| *name == field)
