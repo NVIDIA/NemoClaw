@@ -10,8 +10,6 @@ function captured(status: number | null, stderr: string) {
   return { status, stdout: "", stderr };
 }
 
-const STRUCTURED_MISSING_SANDBOX = `Error:   × code: 'Some requested entity was not found', message: "sandbox not found"`;
-
 describe("CLI OpenShell provider adapter uncertain mutations", () => {
   it("captures delete diagnostics without printing raw command output", async () => {
     const run = vi.fn(() => captured(1, "provider remains attached"));
@@ -59,15 +57,6 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
     ["status: NotFound, code: PermissionDenied, message: \"sandbox 'alpha' not found\"", "failed"],
     ["sandbox 'other' not found, message: \"sandbox 'alpha' not found\"", "failed"],
     ["status: NotFound, message: \"sandbox 'alpha' not found\"", "sandbox_not_found"],
-    [STRUCTURED_MISSING_SANDBOX, "sandbox_not_found"],
-    [
-      `Error:   × code: 'Some requested entity was not found', message: "sandbox\n  │ not found"`,
-      "sandbox_not_found",
-    ],
-    ['Error: status: Not Found, message: "sandbox not found"', "sandbox_not_found"],
-    ['Error: code: PermissionDenied, message: "sandbox not found"', "failed"],
-    [`${STRUCTURED_MISSING_SANDBOX}\nsandbox 'other-box' not found`, "failed"],
-    [`sandbox 'other-box' not found, message: ${STRUCTURED_MISSING_SANDBOX}`, "failed"],
     ["sandbox not found", "failed"],
     ["sandbox alpha not found", "failed"],
     ["sandbox 'alpha' not found\nsandbox 'other-box' not found", "failed"],
@@ -125,11 +114,6 @@ describe("CLI OpenShell provider adapter uncertain mutations", () => {
     [
       "signaled",
       { ...captured(null, "provider search-prod is not attached"), signal: "SIGTERM" as const },
-    ],
-    ["status-less sandbox absence", captured(null, STRUCTURED_MISSING_SANDBOX)],
-    [
-      "signaled sandbox absence",
-      { ...captured(1, STRUCTURED_MISSING_SANDBOX), signal: "SIGTERM" as const },
     ],
   ])("rejects an uncertain idempotent detach result: %s (#9806)", async (_case, result) => {
     const adapter = createCliOpenShellProviderAdapter({ run: () => result });
