@@ -70,7 +70,7 @@ function fixture(): {
     entry: path.join(openClawRoot, "runtime", "openclaw.mjs"),
     gateway: path.join(openShellRoot, "openshell-gateway.exe"),
     node: path.join(openClawRoot, "node", "node.exe"),
-    openClawArchive: path.join(distributionDirectory, "openclaw-2026.7.1-windows.zip"),
+    openClawArchive: path.join(distributionDirectory, "openclaw-2026.9.2-windows.zip"),
     relay: path.join(openShellRoot, "openshell-supervisor-relay.exe"),
     wxc: path.join(mxcRoot, "wxc-exec.exe"),
   };
@@ -88,7 +88,7 @@ function fixture(): {
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY: paths.entry,
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256: sha256File(paths.entry),
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT: openClawRoot,
-      NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION: "2026.7.1",
+      NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION: "2026.9.2",
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ARTIFACT: paths.artifact,
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ROOT: openShellRoot,
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_SHA256: sha256File(paths.artifact),
@@ -426,7 +426,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     const { environment } = fixture();
     const parsed = parseFixtureEnvironment(environment);
 
-    expect(parsed.openClaw.version).toBe("2026.7.1");
+    expect(parsed.openClaw.version).toBe("2026.9.2");
     expect(parsed.openShell.packageVersion).toBe("0.0.12");
     expect(parsed.expected.openShellDistributionSha256).toBe(
       environment.NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_SHA256,
@@ -631,8 +631,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
   it("selects the combined upstream package for the live relay configuration without credentials (#8178)", () => {
     const input = {
-      distributionRevision: "b2840421ba2b4115f91a4be657a0eefedd83e8e6",
-      distributionVersion: "0.0.117-dev.250+gb2840421b",
+      distributionRevision: "d89e4359b810d3d7205bb7d4a706f3c773a59e1f",
+      distributionVersion: "0.0.117-dev.185+gd89e4359b",
       egressProxyPort: 18080,
       relayPath: "C:\\probe\\share\\openshell-supervisor-relay.exe",
       shareDirectory: "C:\\probe\\share",
@@ -641,8 +641,9 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     };
     const { content: config, distributionAuthority } = createWindowsMxcGatewayConfiguration(input);
     expect(config).toMatch(/^\[openshell\]\nversion = 2\n/u);
+    expect(config).not.toContain("default_configuration_id");
     expect(distributionAuthority).toMatchObject({
-      profileId: "openshell-windows-tip-b2840421-mxc-v0-8-0-qualification",
+      profileId: "openshell-windows-tip-d89e4359-mxc-7cd00d1-qualification",
       acceptance: "qualification",
       nativeArchitecture: "arm64",
     });
@@ -675,6 +676,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
   it("grants the required filesystem and restricted UI policy for OpenClaw (#8178)", () => {
     const policy = renderWindowsMxcFilesystemPolicy({
+      openClawNodePath: "C:\\artifact\\node.exe",
       openClawRoot: "C:\\artifact",
       shareDirectory: "C:\\probe\\share",
     });
@@ -683,6 +685,10 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(policy).toContain('read_write:\n    - "C:/probe/share"');
     expect(policy).toContain("include_workdir: false");
     expect(policy).toContain("ui:\n  allow_graphical_ui: true");
+    expect(policy).toContain(
+      "network_policies:\n  qualification_allowed:\n    name: qualification-allowed",
+    );
+    expect(policy).toContain('binaries:\n      - path: "C:/artifact/node.exe"');
     expect(policy).toContain("clipboard: none");
     expect(policy).toContain("allow_input_injection: false");
   });
@@ -692,20 +698,18 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_TOKEN")');
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_COMPAT_PRELOAD")');
-    expect(agent).toContain('"--import"');
+    expect(agent).toContain("await import(compatibilityPreloadUrl)");
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_MOCK_PORT")');
     expect(agent).toContain('body?.model !== "mock-chat"');
     expect(agent).toContain('message.role === "user"');
-    expect(agent).toContain("if (gateway.pid !== undefined)");
-    expect(agent).toContain('gateway.once("error"');
+    expect(agent).toContain("writeFileSync(openClawPidPath, String(process.pid)");
     expect(agent).toContain("writeFileSync(outcomePath");
-    expect(agent).toContain("/\\[gateway\\] ready(?:\\r?\\n|$)/u");
+    expect(agent).toContain("/\\[gateway\\][\\s\\S]{0,256}ready/u");
     expect(agent).toContain("startupReadyObserved");
     expect(agent).toContain("const deadline = Date.now() + 300000");
     expect(agent).not.toContain('getJson("http://127.0.0.1:" + port + "/readyz")');
-    expect(agent).toContain("await Promise.race([");
-    expect(agent).toContain('openSync(gatewayOutputPath, "w", 0o600)');
-    expect(agent).toContain('stdio: ["ignore", gatewayOutput, gatewayOutput]');
+    expect(agent).toContain("wrapOutput(process.stdout");
+    expect(agent).toContain("await import(pathToFileURL(entry).href)");
     expect(agent).toContain('readFileSync(join(dirname(entry), "package.json"), "utf8")');
     expect(agent).toContain('OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1"');
     expect(agent).toContain('OPENCLAW_NO_AUTO_UPDATE: "1"');
@@ -717,10 +721,14 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).toContain("TEMP: temp");
     expect(agent).toContain("TMP: temp");
     expect(agent).toContain('NODE_OPTIONS: "--import=" + compatibilityPreloadUrl');
-    expect(agent).toContain('"--import",\n    compatibilityPreloadUrl');
+    expect(agent).toContain("Object.assign(process.env, env)");
+    expect(agent).not.toContain('import { spawn } from "node:child_process"');
     expect(agent).not.toContain("execFile");
     expect(agent).not.toContain('"--dev"');
     expect(agent).not.toContain('"--allow-unconfigured"');
+    expect(agent).toContain('reload: { mode: "off" }');
+    expect(agent).not.toContain("allowInsecureAuth");
+    expect(agent).not.toContain("dangerouslyDisableDeviceAuth");
     expect(agent).not.toContain('"--token"');
     expect(agent).not.toMatch(/[A-Za-z0-9_-]{40,}/u);
   });
@@ -768,7 +776,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
   it("copies and pins one OpenClaw archive in a single source pass (#8178)", async () => {
     const { root } = fixture();
-    const source = path.join(root, "packages", "openclaw-2026.7.1-windows.zip");
+    const source = path.join(root, "packages", "openclaw-2026.9.2-windows.zip");
     const destination = path.join(root, "copied-openclaw.zip");
     const expected = sha256File(source);
 
@@ -780,7 +788,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
   it("removes a copied OpenClaw archive when its pinned digest is wrong (#8178)", async () => {
     const { root } = fixture();
-    const source = path.join(root, "packages", "openclaw-2026.7.1-windows.zip");
+    const source = path.join(root, "packages", "openclaw-2026.9.2-windows.zip");
     const destination = path.join(root, "rejected-openclaw.zip");
 
     await expect(
@@ -915,7 +923,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     90_000,
   );
 
-  it("serializes a generated probe spawn failure without raw diagnostics (#8178)", async () => {
+  it("serializes a generated probe startup failure without raw diagnostics (#8178)", async () => {
     const { root } = fixture();
     const agentPath = path.join(root, "probe-agent.mjs");
     const home = path.join(root, "probe-home");
@@ -963,10 +971,10 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       versionExitCode: 0,
     });
     expect(result).not.toHaveProperty("gatewaySpawnError");
-    expect(Number.isSafeInteger(result.gatewayExitCode)).toBe(true);
+    expect(result.gatewayExitCode).toBeNull();
     expect(classifyWindowsMxcOpenClawStartupObservation(result)).toEqual({
       outcome: "spawn-failed",
-      gatewayExitCode: result.gatewayExitCode,
+      gatewayExitCode: null,
       versionExitCode: 0,
     });
     expect(outcomeText).toBe(resultText);
@@ -1496,9 +1504,10 @@ setInterval(() => {}, 1000);
     const { root } = fixture();
     const artifact = path.join(root, "linked-artifact");
     fs.mkdirSync(artifact);
-    const target = path.join(artifact, "target.txt");
-    fs.writeFileSync(target, "content", "utf8");
-    fs.symlinkSync(target, path.join(artifact, "link.txt"));
+    const target = path.join(artifact, "target");
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, "content.txt"), "content", "utf8");
+    fs.symlinkSync(target, path.join(artifact, "link"), "junction");
 
     expect(() => sha256WindowsOpenClawArtifactTree(artifact)).toThrow(/must not contain links/u);
   });

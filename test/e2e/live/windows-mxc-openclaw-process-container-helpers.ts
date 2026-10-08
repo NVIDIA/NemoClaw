@@ -9,14 +9,13 @@ import os from "node:os";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { pathToFileURL } from "node:url";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { assessWindowsMxcProcessContainerCandidate } from "../../../src/lib/onboard/windows-mxc/host-qualification.ts";
 import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
-  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID,
   createMxcOpenShellQualificationGatewayConfiguration,
   type MxcOpenShellAttachmentReceipt,
   type MxcOpenShellDistributionAuthority,
@@ -184,10 +183,7 @@ export interface WindowsProcessIdentity {
   readonly processId: number;
 }
 
-export type TrustedOpenClawProcessIdentity = {
-  readonly child: WindowsProcessIdentity;
-  readonly parent: WindowsProcessIdentity;
-};
+export type TrustedOpenClawProcessIdentity = WindowsProcessIdentity;
 
 type QualificationChecks = {
   readonly attachmentObserved: boolean;
@@ -910,27 +906,14 @@ export function sameWindowsProcessIdentity(
 export function assertExpectedOpenClawProcessIdentity(
   identity: TrustedOpenClawProcessIdentity,
   expected: {
-    readonly compatibilityPreloadPath: string;
-    readonly entryPath: string;
     readonly nodePath: string;
-    readonly port: number;
     readonly probeAgentPath: string;
   },
 ): void {
   const nodePath = normalizeWindowsIdentityValue(expected.nodePath);
   if (
-    normalizeWindowsIdentityValue(identity.child.executablePath) !== nodePath ||
-    normalizeWindowsIdentityValue(identity.parent.executablePath) !== nodePath ||
-    identity.child.parentProcessId !== identity.parent.processId ||
-    !commandLineHasExactArgument(identity.child.commandLine, expected.entryPath) ||
-    !commandLineHasExactArgumentPair(
-      identity.child.commandLine,
-      "--import",
-      pathToFileURL(expected.compatibilityPreloadPath, { windows: true }).href,
-    ) ||
-    !commandLineHasExactArgument(identity.child.commandLine, "gateway") ||
-    !commandLineHasExactArgumentPair(identity.child.commandLine, "--port", String(expected.port)) ||
-    !commandLineHasExactArgument(identity.parent.commandLine, expected.probeAgentPath)
+    normalizeWindowsIdentityValue(identity.executablePath) !== nodePath ||
+    !commandLineHasExactArgument(identity.commandLine, expected.probeAgentPath)
   ) {
     throw new Error(
       "sandbox-reported PID does not match the host-observed OpenClaw process identity",
@@ -1013,11 +996,12 @@ export function createWindowsMxcGatewayConfiguration(input: {
 }): MxcOpenShellQualificationGatewayConfiguration {
   return createMxcOpenShellQualificationGatewayConfiguration({
     ...input,
-    distributionProfileId: MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+    distributionProfileId: MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID,
   });
 }
 
 export function renderWindowsMxcFilesystemPolicy(input: {
+  readonly openClawNodePath: string;
   readonly openClawRoot: string;
   readonly shareDirectory: string;
 }): string {
@@ -1036,12 +1020,21 @@ export function renderWindowsMxcFilesystemPolicy(input: {
     "  clipboard: none",
     "  allow_input_injection: false",
     "",
+    "network_policies:",
+    "  qualification_allowed:",
+    "    name: qualification-allowed",
+    "    endpoints:",
+    "      - host: example.com",
+    "        port: 443",
+    "        protocol: tcp",
+    "    binaries:",
+    `      - path: ${JSON.stringify(input.openClawNodePath.replaceAll("\\", "/"))}`,
+    "",
   ].join("\n");
 }
 
 export function renderWindowsMxcOpenClawProbeAgent(): string {
-  return `import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+  return `import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1159,6 +1152,7 @@ const mockEndpoint = "127.0.0.1:" + mock.address().port;
 // The mock is in this sandbox. Other destinations retain the injected proxy.
 env.NO_PROXY = mockEndpoint;
 env.no_proxy = mockEndpoint;
+Object.assign(process.env, env);
 
 const configDirectory = dirname(openClawConfigPath);
 mkdirSync(configDirectory, { recursive: true });
@@ -1196,13 +1190,11 @@ writeFileSync(openClawConfigPath, JSON.stringify({
     mode: "local",
     port: Number(port),
     controlUi: {
-      allowInsecureAuth: true,
-      dangerouslyDisableDeviceAuth: false,
       allowedOrigins: ["http://127.0.0.1:" + port],
     },
     trustedProxies: ["127.0.0.1", "::1"],
     auth: { token: "" },
-    reload: { mode: "hot" },
+    reload: { mode: "off" },
   },
 }), "utf8");
 
@@ -1220,12 +1212,79 @@ const version = {
   stdout: typeof packageVersion === "string" ? packageVersion : "",
 };
 const gatewayOutputPath = join(home, "gateway-output.log");
-const gatewayOutput = openSync(gatewayOutputPath, "w", 0o600);
-const gateway = spawn(
-  node,
-  [
-    "--import",
-    compatibilityPreloadUrl,
+writeFileSync(gatewayOutputPath, "", { encoding: "utf8", mode: 0o600 });
+writeFileSync(openClawPidPath, String(process.pid), "utf8");
+let gatewayExitedBeforeReadiness = false;
+let gatewaySpawnFailed = false;
+let startupReadyObserved = false;
+let readinessWindow = "";
+const appendGatewayOutput = (label, value) => {
+  try {
+    appendFileSync(gatewayOutputPath, "[" + label + "] " + String(value), "utf8");
+  } catch {
+    // Logging is evidence only and must not alter the workload lifecycle.
+  }
+};
+const wrapOutput = (stream, label) => {
+  const original = stream.write.bind(stream);
+  stream.write = (chunk, encoding, callback) => {
+    const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    appendGatewayOutput(label, text);
+    readinessWindow = (readinessWindow + text).slice(-512);
+    if (/\\[gateway\\][\\s\\S]{0,256}ready/u.test(readinessWindow)) {
+      startupReadyObserved = true;
+    }
+    return original(chunk, encoding, callback);
+  };
+};
+wrapOutput(process.stdout, "stdout");
+wrapOutput(process.stderr, "stderr");
+process.on("uncaughtExceptionMonitor", (error) => {
+  gatewayExitedBeforeReadiness = !startupReadyObserved;
+  appendGatewayOutput("uncaught", String(error?.stack || error) + "\\n");
+});
+process.on("unhandledRejection", (error) => {
+  gatewayExitedBeforeReadiness = !startupReadyObserved;
+  appendGatewayOutput("rejection", String(error?.stack || error) + "\\n");
+});
+
+const monitorGateway = async () => {
+// A newly extracted, uniquely named artifact has a cold Defender path. On the
+// Windows ARM64 qualification host OpenClaw can spend nearly two minutes
+// loading its dependency graph before it begins gateway initialization.
+  const deadline = Date.now() + 300000;
+  while (Date.now() < deadline && !startupReadyObserved && !gatewayExitedBeforeReadiness) {
+    await sleep(250);
+  }
+
+  const result = {
+    controlWrite: true,
+    deniedWrite,
+    gatewayExitCode: null,
+    gatewayExitedBeforeReadiness,
+    gatewaySpawnFailed,
+    startupReadyObserved,
+    openClawVersion: version.stdout.trim(),
+    versionExitCode: version.exitCode,
+  };
+  writeFileSync(resultPath, JSON.stringify(result), "utf8");
+  writeFileSync(outcomePath, JSON.stringify(result), "utf8");
+  if (startupReadyObserved) writeFileSync(readyPath, JSON.stringify(result), "utf8");
+
+  while (startupReadyObserved && !existsSync(stopPath)) {
+    writeFileSync(heartbeatPath, String(Date.now()), "utf8");
+    await sleep(250);
+  }
+
+  await new Promise((resolve) => mock.close(() => resolve()));
+  process.exit(startupReadyObserved && deniedWrite ? 0 : 1);
+};
+
+const monitor = monitorGateway();
+try {
+  await import(compatibilityPreloadUrl);
+  process.argv = [
+    node,
     entry,
     "gateway",
     "run",
@@ -1235,60 +1294,14 @@ const gateway = spawn(
     "loopback",
     "--port",
     port,
-  ],
-  { env, stdio: ["ignore", gatewayOutput, gatewayOutput], windowsHide: true },
-);
-closeSync(gatewayOutput);
-let gatewaySpawnFailed = false;
-gateway.once("error", () => {
+  ];
+  await import(pathToFileURL(entry).href);
+} catch (error) {
   gatewaySpawnFailed = true;
-});
-if (gateway.pid !== undefined) writeFileSync(openClawPidPath, String(gateway.pid), "utf8");
-
-let startupReadyObserved = false;
-// A newly extracted, uniquely named artifact has a cold Defender path. On the
-// Windows ARM64 qualification host OpenClaw can spend nearly two minutes
-// loading its dependency graph before it begins gateway initialization.
-const deadline = Date.now() + 300000;
-while (Date.now() < deadline && gateway.exitCode === null && !gatewaySpawnFailed) {
-  if (
-    existsSync(gatewayOutputPath) &&
-    /\\[gateway\\] ready(?:\\r?\\n|$)/u.test(readFileSync(gatewayOutputPath, "utf8"))
-  ) {
-    startupReadyObserved = true;
-    break;
-  }
-  await sleep(250);
+  gatewayExitedBeforeReadiness = !startupReadyObserved;
+  appendGatewayOutput("startup", String(error?.stack || error) + "\\n");
 }
-
-const result = {
-  controlWrite: true,
-  deniedWrite,
-  gatewayExitCode: Number.isInteger(gateway.exitCode) ? gateway.exitCode : null,
-  gatewayExitedBeforeReadiness: gateway.exitCode !== null,
-  gatewaySpawnFailed,
-  startupReadyObserved,
-  openClawVersion: version.stdout.trim(),
-  versionExitCode: version.exitCode,
-};
-writeFileSync(resultPath, JSON.stringify(result), "utf8");
-writeFileSync(outcomePath, JSON.stringify(result), "utf8");
-if (startupReadyObserved) writeFileSync(readyPath, JSON.stringify(result), "utf8");
-
-while (startupReadyObserved && gateway.exitCode === null && !existsSync(stopPath)) {
-  writeFileSync(heartbeatPath, String(Date.now()), "utf8");
-  await sleep(250);
-}
-
-if (gateway.exitCode === null && !gatewaySpawnFailed) {
-  gateway.kill();
-  await Promise.race([
-    new Promise((resolve) => gateway.once("exit", resolve)),
-    sleep(5000),
-  ]);
-}
-await new Promise((resolve) => mock.close(() => resolve()));
-process.exit(startupReadyObserved && deniedWrite ? 0 : 1);
+await monitor;
 `;
 }
 
@@ -1547,33 +1560,21 @@ function writeStopMarkerOnce(file: string): void {
 }
 
 async function observeTrustedOpenClawProcessIdentity(input: {
-  readonly compatibilityPreloadPath: string;
-  readonly entryPath: string;
   readonly nodePath: string;
-  readonly port: number;
   readonly powershellPath: string;
   readonly probeAgentPath: string;
   readonly processId: number;
   readonly environment: NodeJS.ProcessEnv;
   readonly progress: ChildProcessProgress;
 }): Promise<TrustedOpenClawProcessIdentity | null> {
-  const child = await observeWindowsProcessIdentity(
+  const identity = await observeWindowsProcessIdentity(
     input.processId,
     input.powershellPath,
     input.environment,
     input.progress,
     "command: windows-mxc-openclaw-process-identity",
   );
-  if (child === null) return null;
-  const parent = await observeWindowsProcessIdentity(
-    child.parentProcessId,
-    input.powershellPath,
-    input.environment,
-    input.progress,
-    "command: windows-mxc-openclaw-parent-identity",
-  );
-  if (parent === null) throw new Error("OpenClaw parent process identity is unavailable");
-  const identity = { child, parent };
+  if (identity === null) return null;
   assertExpectedOpenClawProcessIdentity(identity, input);
   return identity;
 }
@@ -2152,7 +2153,10 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
   // extracted tree so it is never exposed through the sandbox filesystem
   // policy.
   const artifactRoot = preparedRoot;
-  const archiveCopyPath = `${preparedRoot}.zip`;
+  const archiveCopyPath = path.join(
+    inputs.artifactDirectory,
+    `nemoclaw-mxc-openclaw-archive-${randomBytes(12).toString("hex")}.zip`,
+  );
   let released = false;
   try {
     await copyWindowsMxcOpenClawArchiveWithSha256(
@@ -2377,6 +2381,7 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
       fs.writeFileSync(
         policyPath,
         renderWindowsMxcFilesystemPolicy({
+          openClawNodePath: stagedOpenClaw.nodePath,
           openClawRoot: stagedOpenClaw.root,
           shareDirectory,
         }),
@@ -2599,7 +2604,6 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   const {
     clientEnvironment,
     clientHomeDirectory,
-    compatibilityPreloadPath,
     configDirectory,
     controlEnvironment,
     distributionAuthority,
@@ -2876,11 +2880,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     openClawProcessId = readProcessId(openClawPidPath);
     if (openClawProcessId !== null) {
       trustedOpenClawProcess = await observeTrustedOpenClawProcessIdentity({
-        compatibilityPreloadPath,
-        entryPath: stagedOpenClaw.entryPath,
         environment: controlEnvironment,
         nodePath: stagedOpenClaw.nodePath,
-        port: openClawPort,
         powershellPath,
         probeAgentPath,
         processId: openClawProcessId,
@@ -3043,7 +3044,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       workloadTerminatedByDelete:
         trustedOpenClawProcess !== null &&
         (await waitForTrustedProcessExit(
-          trustedOpenClawProcess.child,
+          trustedOpenClawProcess,
           powershellPath,
           controlEnvironment,
           progress,
@@ -3144,7 +3145,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       if (
         trustedOpenClawProcess !== null &&
         (await trustedProcessIsAlive(
-          trustedOpenClawProcess.child,
+          trustedOpenClawProcess,
           powershellPath,
           controlEnvironment,
           progress,
@@ -3153,7 +3154,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         emergencyProcessTerminationNeeded = true;
         const terminate = await runCommand(
           taskkillPath,
-          ["/PID", String(trustedOpenClawProcess.child.processId), "/T", "/F"],
+          ["/PID", String(trustedOpenClawProcess.processId), "/T", "/F"],
           controlEnvironment,
           progress,
           "command: windows-mxc-openclaw-emergency-termination",
@@ -3161,7 +3162,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         if (
           terminate.exitCode !== 0 &&
           (await trustedProcessIsAlive(
-            trustedOpenClawProcess.child,
+            trustedOpenClawProcess,
             powershellPath,
             controlEnvironment,
             progress,
@@ -3176,7 +3177,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         trustedOpenClawProcess === null
           ? !sandboxCreateStarted
           : await waitForTrustedProcessExit(
-              trustedOpenClawProcess.child,
+              trustedOpenClawProcess,
               powershellPath,
               controlEnvironment,
               progress,

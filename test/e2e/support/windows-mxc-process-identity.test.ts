@@ -26,10 +26,7 @@ const child = {
   processId: 42,
 };
 const expectedOpenClaw = {
-  compatibilityPreloadPath: "C:\\probe\\openclaw-appcontainer-preload.mjs",
-  entryPath: "C:\\artifact\\openclaw.mjs",
   nodePath: "C:\\artifact\\node.exe",
-  port: 23456,
   probeAgentPath: "C:\\probe\\probe-agent.mjs",
 };
 const gateway = {
@@ -68,64 +65,24 @@ describe("Windows MXC process identity", () => {
     ).toBe(true);
   });
 
-  it("accepts the expected OpenClaw parent and child processes (#8178)", () => {
-    expect(() =>
-      assertExpectedOpenClawProcessIdentity({ child, parent }, expectedOpenClaw),
-    ).not.toThrow();
+  it("accepts the expected directly supervised OpenClaw process (#8178)", () => {
+    expect(() => assertExpectedOpenClawProcessIdentity(parent, expectedOpenClaw)).not.toThrow();
   });
 
   it.each([
     {
-      field: "child executable",
-      childChange: { executablePath: "C:\\Windows\\System32\\svchost.exe" },
-      parentChange: {},
+      field: "executable",
+      replacement: { executablePath: "C:\\Windows\\System32\\svchost.exe" },
     },
     {
-      field: "parent executable",
-      childChange: {},
-      parentChange: { executablePath: "C:\\other\\node.exe" },
-    },
-    { field: "parent-child PID", childChange: { parentProcessId: 40 }, parentChange: {} },
-    {
-      field: "entrypoint",
-      childChange: {
-        commandLine: child.commandLine.replace('openclaw.mjs"', 'openclaw.mjs.extra"'),
-      },
-      parentChange: {},
-    },
-    {
-      field: "preload pair",
-      childChange: {
-        commandLine: child.commandLine.replace(
-          "--import file:///C:/probe/openclaw-appcontainer-preload.mjs",
-          "file:///C:/probe/openclaw-appcontainer-preload.mjs --import",
-        ),
-      },
-      parentChange: {},
-    },
-    {
-      field: "gateway argument",
-      childChange: { commandLine: child.commandLine.replace(" gateway ", " gateway-extra ") },
-      parentChange: {},
-    },
-    {
-      field: "port pair",
-      childChange: { commandLine: child.commandLine.replace("--port 23456", "23456 --port") },
-      parentChange: {},
-    },
-    {
-      field: "parent probe",
-      childChange: {},
-      parentChange: {
+      field: "probe",
+      replacement: {
         commandLine: parent.commandLine.replace("probe-agent.mjs", "other-probe.mjs"),
       },
     },
-  ])("rejects a changed OpenClaw $field (#8178)", ({ childChange, parentChange }) => {
+  ])("rejects a changed OpenClaw $field (#8178)", ({ replacement }) => {
     expect(() =>
-      assertExpectedOpenClawProcessIdentity(
-        { child: { ...child, ...childChange }, parent: { ...parent, ...parentChange } },
-        expectedOpenClaw,
-      ),
+      assertExpectedOpenClawProcessIdentity({ ...parent, ...replacement }, expectedOpenClaw),
     ).toThrow(/does not match/u);
   });
 

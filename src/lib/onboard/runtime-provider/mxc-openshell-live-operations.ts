@@ -12,7 +12,7 @@ import type {
   RuntimeProviderNativeArtifactVerifyAndCreateOutcome,
 } from "./contract";
 import {
-  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID,
   type MxcOpenShellAttachmentReceipt,
 } from "./mxc-openshell-attachment";
 import {
@@ -309,7 +309,7 @@ function listCommand(
       "sandbox",
       "list",
       attachment.distributionProfileId ===
-      MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID
+      MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID
         ? "--page-size"
         : "--limit",
       "2",
@@ -398,7 +398,8 @@ function parseSandboxListing(
   const label = `sandbox recovery ${operation === "list" ? "listing" : "confirmation"}`;
   let value = parseJson(result, label, operation);
   if (
-    attachment.distributionProfileId === MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID
+    attachment.distributionProfileId ===
+    MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID
   ) {
     const page = record(value, label, operation);
     // A partial page cannot prove absence or authorize deletion of a unique match.

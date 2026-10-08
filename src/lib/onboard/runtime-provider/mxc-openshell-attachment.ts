@@ -12,8 +12,8 @@ export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 3 as const;
 export const MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION = 1 as const;
 export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID =
   "openshell-v0-0-24-mxc-v0-7-0-rc1-qualification" as const;
-export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID =
-  "openshell-windows-tip-b2840421-mxc-v0-8-0-qualification" as const;
+export const MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID =
+  "openshell-windows-tip-d89e4359-mxc-7cd00d1-qualification" as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -51,7 +51,7 @@ export type MxcOpenShellDistributionAcceptance = "qualification" | "accepted";
 
 export type MxcOpenShellDistributionProfileId =
   | typeof MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID
-  | typeof MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID;
+  | typeof MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID;
 
 export interface MxcOpenShellQualificationGatewayConfiguration {
   readonly content: string;
@@ -157,25 +157,25 @@ export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE = cloneA
 });
 
 /** Qualification-only repaired Windows-tip runtime and tooling package. */
-export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE = cloneAndDeepFreeze({
-  profileId: MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+export const MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE = cloneAndDeepFreeze({
+  profileId: MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID,
   acceptance: "qualification" as const,
   compatibility: {
     nativeArchitecture: "arm64" as const,
     backend: "process_container" as const,
-    mxcVersion: "0.8.0",
+    mxcVersion: "1.0.0+7cd00d1",
     networkMode: "egress-proxy" as const,
   },
   expectation: {
     distribution: {
-      version: "0.0.117-dev.250+gb2840421b",
-      revision: "b2840421ba2b4115f91a4be657a0eefedd83e8e6",
-      sha256: "d52e07fb90b6a47caab4ca258da0476f237ecabc3f101c67a4c3abb05d48812c",
+      version: "0.0.117-dev.185+gd89e4359b",
+      revision: "d89e4359b810d3d7205bb7d4a706f3c773a59e1f",
+      sha256: "714059b2cdc77f0f657beb68aff0c10fec534217689166c33191ab9ff00f1588",
     },
     components: {
-      cliSha256: "24523648cee1314a17fa71716e468b277f852e4aad0f8fdb3363ca2c7c36ee83",
-      gatewaySha256: "2d435903112fcbaf533a0d2ae7a4eb30e924cf5e740984fa084b0a61fe391d98",
-      wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+      cliSha256: "7e723944189973c198f89c9e0eb1897746013e9926c8eff31a8934855aaf180b",
+      gatewaySha256: "d3b7722eebe30578c9ba7039721ae764a0cd659df811f707365fae9d9faff76b",
+      wxcExecSha256: "5b648cb316ba02860e8b88468505c3e2febdd66e7fba9e0b516d6d42de20ba7c",
     },
     gateway: {
       configSha256: "6f5113f2b5d976d52da159d725f73660352f6b7108119b41d892deb5f2e2661c",
@@ -188,8 +188,8 @@ export const MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE = cloneAndD
 const DISTRIBUTION_PROFILES = {
   [MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID]:
     MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
-  [MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID]:
-    MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE,
+  [MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID]:
+    MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE,
 } as const;
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -546,7 +546,6 @@ export function createMxcOpenShellQualificationGatewayConfiguration(
     "[openshell.drivers.mxc]",
     `wxc_exec_path = ${tomlWindowsPath(wxcExecPath)}`,
     'backend = "process_container"',
-    'default_configuration_id = "composable"',
     "pc_least_privilege = false",
     'pc_capabilities = ["privateNetworkClientServer"]',
     ...(profile.compatibility.networkMode === "egress-proxy"

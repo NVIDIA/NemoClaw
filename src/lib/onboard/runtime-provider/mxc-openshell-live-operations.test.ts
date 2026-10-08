@@ -17,7 +17,7 @@ import {
   qualifyMxcOpenShellAttachment,
   createMxcOpenShellDistributionAuthority,
   resolveMxcOpenShellDistributionAuthority,
-  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE,
+  MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE,
 } from "./mxc-openshell-attachment";
 import {
   projectMxcOpenShellCreateRequest,
@@ -51,7 +51,7 @@ async function request(lifecycleGeneration = "generation-7") {
   const workload = nativeArtifactWorkloadReceiptFixture(
     // Keep this protocol fixture independent of changing live E2E startup defaults.
     encodeManagedStartupProfile({
-      schemaVersion: 1,
+      schemaVersion: 2,
       agent: "openclaw",
       inference: {
         routeProvider: "inference",
@@ -86,7 +86,6 @@ async function request(lifecycleGeneration = "generation-7") {
         agentTimeoutSeconds: 600,
         heartbeatEvery: null,
         extraAgents: { agents: [], defaults: {}, main: {} },
-        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
         minimalBootstrap: true,
       },
       dashboard: {
@@ -131,7 +130,7 @@ async function request(lifecycleGeneration = "generation-7") {
 
 function fixture(combined = false) {
   const source = mxcOpenShellAttachmentFixture();
-  const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
+  const profile = MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE;
   return qualifyMxcOpenShellAttachment(
     combined
       ? resolveMxcOpenShellDistributionAuthority(
@@ -419,9 +418,18 @@ describe("inactive OpenShell MXC live operations", () => {
   });
 
   it("makes leading-symbol digest labels valid for create and recovery (#10585)", async () => {
-    const liveRequest = await request("leading-symbol-15");
-    const rawRequestLabel = Buffer.from(liveRequest.requestSha256, "hex").toString("base64url");
-    expect(rawRequestLabel).toMatch(/^[-_]/u);
+    let liveRequest: Awaited<ReturnType<typeof request>> | undefined;
+    let rawRequestLabel = "";
+    for (let index = 0; index < 256; index += 1) {
+      const candidate = await request(`leading-symbol-${String(index)}`);
+      const candidateLabel = Buffer.from(candidate.requestSha256, "hex").toString("base64url");
+      if (/^[-_]/u.test(candidateLabel)) {
+        liveRequest = candidate;
+        rawRequestLabel = candidateLabel;
+        break;
+      }
+    }
+    if (!liveRequest) throw new Error("could not produce a leading-symbol request digest fixture");
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
       async () => ({ status: "create-rejected" }),
     );

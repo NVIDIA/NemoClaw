@@ -9,8 +9,8 @@ import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
   MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
   MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE,
+  MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID,
   MxcOpenShellAttachmentError,
   createMxcOpenShellDistributionAuthority,
   createMxcOpenShellQualificationGatewayConfiguration,
@@ -97,7 +97,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   });
 
   it("binds the combined qualification package to provider-rendered run-local configuration (#10585)", () => {
-    const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
+    const profile = MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
       distributionRevision: profile.expectation.distribution.revision,
       distributionProfileId: profile.profileId,
@@ -126,7 +126,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
 
     expect(configured.distributionAuthority).toMatchObject({
       acceptance: "qualification",
-      profileId: MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+      profileId: MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID,
     });
     expect(receipt.gateway.configSha256).toBe(configSha256);
     expect(receipt.acceptance).toBe("qualification");
@@ -136,24 +136,24 @@ describe("inactive OpenShell MXC installation attachment", () => {
   describe.each([
     {
       name: "combined upstream",
-      profileId: "openshell-windows-tip-b2840421-mxc-v0-8-0-qualification",
-      previousProfileId: "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
+      profileId: "openshell-windows-tip-d89e4359-mxc-7cd00d1-qualification",
+      previousProfileId: "openshell-windows-tip-d1ae20a0-mxc-v0-8-0-qualification",
       previousDistribution: {
-        version: "0.0.59-dev.925+g28fc07191",
-        revision: "28fc0719168dbc1698ee4701d6a7af2c19262be1",
-        sha256: "0".repeat(64),
+        version: "0.0.117-dev.182+gd1ae20a0b",
+        revision: "d1ae20a0b6718a8a78d18397e5ccd175471ff388",
+        sha256: "2f26a7c80e2c93b246d1425f25e92e08dea9f1327f51d7c2a951e4dca50a5a7c",
       },
       observation: {
         ...mxcOpenShellAttachmentFixture().observation,
         distribution: {
-          version: "0.0.117-dev.250+gb2840421b",
-          revision: "b2840421ba2b4115f91a4be657a0eefedd83e8e6",
-          sha256: "d52e07fb90b6a47caab4ca258da0476f237ecabc3f101c67a4c3abb05d48812c",
+          version: "0.0.117-dev.185+gd89e4359b",
+          revision: "d89e4359b810d3d7205bb7d4a706f3c773a59e1f",
+          sha256: "714059b2cdc77f0f657beb68aff0c10fec534217689166c33191ab9ff00f1588",
         },
         components: {
-          cliSha256: "24523648cee1314a17fa71716e468b277f852e4aad0f8fdb3363ca2c7c36ee83",
-          gatewaySha256: "2d435903112fcbaf533a0d2ae7a4eb30e924cf5e740984fa084b0a61fe391d98",
-          wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+          cliSha256: "7e723944189973c198f89c9e0eb1897746013e9926c8eff31a8934855aaf180b",
+          gatewaySha256: "d3b7722eebe30578c9ba7039721ae764a0cd659df811f707365fae9d9faff76b",
+          wxcExecSha256: "5b648cb316ba02860e8b88468505c3e2febdd66e7fba9e0b516d6d42de20ba7c",
         },
         gateway: {
           configSha256: "6f5113f2b5d976d52da159d725f73660352f6b7108119b41d892deb5f2e2661c",
@@ -221,7 +221,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   );
 
   it("rejects caller configuration hashes instead of letting observations mint authority (#10585)", () => {
-    const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
+    const profile = MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE;
     expect(() =>
       createMxcOpenShellQualificationGatewayConfiguration({
         distributionRevision: profile.expectation.distribution.revision,
@@ -238,7 +238,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   });
 
   it("rejects drift from provider-rendered configuration before attachment (#10585)", () => {
-    const profile = MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE;
+    const profile = MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
       distributionRevision: profile.expectation.distribution.revision,
       distributionProfileId: profile.profileId,
@@ -274,7 +274,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   it.each([
     ["openshell-not-provider-owned", /profile is not provider-owned/u],
     [
-      MXC_OPENSHELL_COMBINED_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+      MXC_OPENSHELL_WINDOWS_TIP_MXC_7CD00D1_QUALIFICATION_PROFILE_ID,
       /does not match the provider-owned profile/u,
     ],
   ])(
