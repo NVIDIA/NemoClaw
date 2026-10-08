@@ -466,6 +466,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     """Return only the NemoClaw-managed inference constructor contract."""
     from deepagents_code.model_config import ModelConfig, ModelConfigError
     from deepagents_code._nemoclaw_managed import (
+        managed_inference_api_key,
         managed_inference_base_url,
         managed_reasoning_effort,
     )
@@ -478,9 +479,10 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     # path, but do not consume mutable provider classes, credentials, params, or
     # endpoints from it.
     ModelConfig.load()
+    base_url = managed_inference_base_url()
     kwargs = {
-        "api_key": "nemoclaw-managed-inference",
-        "base_url": managed_inference_base_url(),
+        "api_key": managed_inference_api_key(base_url),
+        "base_url": base_url,
     }
     if provider == "openai":
         kwargs["use_responses_api"] = False

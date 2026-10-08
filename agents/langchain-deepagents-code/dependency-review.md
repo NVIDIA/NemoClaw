@@ -64,6 +64,18 @@ Remove this patch when a reviewed `quickjs-rs` or Deep Agents Code release
 provides an equivalent non-memfd Wasmtime configuration and the live check
 passes through that upstream path.
 
+## Native NVIDIA Model Credentials
+
+The hardened DCode model constructor ignores mutable `config.toml` credentials.
+For the root-owned `https://integrate.api.nvidia.com/v1` route, it reads the
+supervisor-provided `NVIDIA_INFERENCE_API_KEY` placeholder and requires that the
+complete placeholder names that environment variable. Missing values, real keys,
+and placeholders for other variables fail before constructing the model.
+OpenShell resolves the placeholder at its proxy; the model process receives no
+real inference key. Other managed routes retain the synthetic inference token.
+The constructor regression test exercises this installed package patch, including
+versioned placeholders, instead of relying on a configuration round trip.
+
 ## Progressive MCP Tool Catalog Compatibility
 
 Deep Agents Code `0.1.55` with LangChain `1.3.14` can supply `search_tools` with a `ToolRuntime.tools` view that omits loaded MCP tools.
