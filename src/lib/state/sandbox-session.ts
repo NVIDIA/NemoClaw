@@ -4,10 +4,10 @@
 /**
  * Active sandbox session detection.
  *
- * Provides typed, testable utilities for detecting active SSH connections
- * to OpenShell sandboxes. Used by destructive operations (destroy, rebuild,
- * stop) to warn users before terminating sessions, and by informational
- * commands (status, list, connect) to show connection state.
+ * Provides typed, testable utilities for detecting active SSH and interactive
+ * OpenShell exec connections to sandboxes. Used by destructive operations
+ * (destroy, rebuild, stop) to warn users before terminating sessions, and by
+ * informational commands (status, list, connect) to show connection state.
  *
  * Design follows gateway-state.ts pattern: pure classifiers that parse
  * CLI output are separated from the I/O layer that invokes those commands.
@@ -24,15 +24,20 @@ import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host"
 // Types
 // ---------------------------------------------------------------------------
 
-/** A single detected SSH session to a sandbox. */
-export interface SandboxSession {
-  /** The sandbox name this session connects to. */
-  sandboxName: string;
-  /** PID of the SSH process on the host. */
-  pid: number;
-  /** SSH target host (current `.default` or legacy upgrade-window alias). */
-  sshHost: string;
-}
+/** A detected session to a sandbox, over SSH or OpenShell's native exec transport. */
+export type SandboxSession =
+  | {
+      sandboxName: string;
+      pid: number;
+      /** SSH target host (current `.default` or legacy upgrade-window alias). */
+      sshHost: string;
+    }
+  | {
+      sandboxName: string;
+      pid: number;
+      /** Native OpenShell interactive TTY exec session. */
+      transport: "openshell-exec";
+    };
 
 /** Result of detecting active sessions for a sandbox. */
 export interface ActiveSessionsResult {
@@ -60,9 +65,9 @@ function isInteractiveSshCommand(command: string): boolean {
 }
 
 /**
- * Parse process list output to find SSH processes targeting a specific sandbox.
+ * Parse process-list output to find SSH or interactive native exec sessions for a sandbox.
  *
- * Two shapes are recognized. OpenShell used to place the sandbox in the SSH
+ * SSH detection recognizes multiple shapes. OpenShell used to place the sandbox in the SSH
  * host itself (`openshell-<sandboxName>.default`, and the legacy
  * `openshell-<sandboxName>` from the v0.0.85 to v0.0.99 upgrade window); those
  * are matched as complete tokens so one sandbox name cannot match another it is
@@ -70,17 +75,18 @@ function isInteractiveSshCommand(command: string): boolean {
  * through the fixed `sandbox` alias and identifies the target with
  * `--sandbox-id <id>` on its proxy command instead, which left interactive
  * sessions invisible to every session-reporting surface (#9316). When the
- * caller knows the durable sandbox ID, that form is matched too.
+ * caller knows the durable sandbox ID, that form is matched too. Native exec
+ * sessions require an exact `--name`, `--tty`, and interactive `/bin/bash -i`.
  *
- * Input format: one line per process — `<PID> <full command line>`
- * (compatible with both `pgrep -a` on Linux and `ps -axo pid,command`)
+ * Input format: one line per process — `<PID> <full command line>` from
+ * `ps -axo pid,command`.
  */
 export function parseSshProcesses(
-  pgrepOutput: string | null | undefined,
+  processOutput: string | null | undefined,
   sandboxName: string,
   sandboxId?: string | null,
 ): SandboxSession[] {
-  if (!pgrepOutput || typeof pgrepOutput !== "string") return [];
+  if (!processOutput || typeof processOutput !== "string") return [];
   if (!sandboxName) return [];
 
   const sshHosts = [openshellSandboxSshHost(sandboxName), `openshell-${sandboxName}`] as const;
@@ -91,8 +97,9 @@ export function parseSshProcesses(
     sandboxId && sandboxId.trim()
       ? new RegExp(`--sandbox-id[=\\s]+${escapeRegExp(sandboxId.trim())}(?:\\s|$)`)
       : null;
+  const execNamePattern = new RegExp(`--name(?:=|\\s+)${escapeRegExp(sandboxName)}(?:\\s|$)`);
   const sessions: SandboxSession[] = [];
-  const lines = pgrepOutput.split("\n").filter(Boolean);
+  const lines = processOutput.split("\n").filter(Boolean);
 
   for (const line of lines) {
     const pidMatch = line.match(/^\s*(\d+)\s+(.+)/);
@@ -110,6 +117,18 @@ export function parseSshProcesses(
     // when the caller resolved the sandbox's durable ID.
     if (idPattern?.test(command) && isInteractiveSshCommand(command)) {
       sessions.push({ sandboxName, pid, sshHost: openshellSandboxSshHost(sandboxName) });
+      continue;
+    }
+    // `connect` may use OpenShell's native TTY exec transport rather than SSH.
+    // Require the interactive shell command and exact sandbox name; ordinary
+    // exec commands and dashboard forwards must not be reported as sessions.
+    if (
+      /^(?:\S*\/)?openshell\s+sandbox\s+exec\b/.test(command) &&
+      execNamePattern.test(command) &&
+      /(?:^|\s)--tty(?:\s|$)/.test(command) &&
+      /(?:^|\s)--\s+\/bin\/bash\s+-i(?:\s|$)/.test(command)
+    ) {
+      sessions.push({ sandboxName, pid, transport: "openshell-exec" });
     }
   }
 
@@ -126,7 +145,7 @@ function escapeRegExp(value: string): string {
 // ---------------------------------------------------------------------------
 
 export interface SessionDetectionDeps {
-  /** Run `pgrep -a ssh` and return stdout. Null if unavailable. */
+  /** Return candidate SSH and OpenShell exec process lines. Null if unavailable. */
   getSshProcesses: () => string | null;
   /**
    * Resolve the sandbox's durable OpenShell ID, or null when it cannot be
@@ -137,13 +156,12 @@ export interface SessionDetectionDeps {
 }
 
 /**
- * Detect active SSH sessions for a named sandbox.
+ * Detect active SSH or interactive OpenShell exec sessions for a named sandbox.
  *
  * This is the high-level entry point used by consumers (destroy, rebuild, etc.).
  * It invokes system commands through the deps interface for testability.
- *
- * Detection relies on `pgrep -a ssh` to find SSH processes targeting the
- * sandbox's SSH host.
+ * Process lines are collected with `ps` so both SSH and native exec transports
+ * can be attributed to their target sandbox.
  */
 export function getActiveSandboxSessions(
   sandboxName: string,
@@ -153,33 +171,33 @@ export function getActiveSandboxSessions(
     return { detected: false, sessions: [] };
   }
 
-  const pgrepOutput = deps.getSshProcesses();
+  const processOutput = deps.getSshProcesses();
 
-  if (pgrepOutput === null) {
+  if (processOutput === null) {
     return { detected: false, sessions: [] };
   }
 
   // Resolving the ID costs an OpenShell call, so only pay it for the proxied
   // shape that cannot be attributed from the SSH host alone (#9316).
-  const sandboxId = pgrepOutput.includes("--sandbox-id")
+  const sandboxId = processOutput.includes("--sandbox-id")
     ? (deps.resolveSandboxId?.(sandboxName) ?? null)
     : null;
-  const sshSessions = parseSshProcesses(pgrepOutput, sandboxName, sandboxId);
+  const sessions = parseSshProcesses(processOutput, sandboxName, sandboxId);
 
   return {
     detected: true,
-    sessions: sshSessions,
+    sessions,
   };
 }
 
 /**
- * Query SSH processes using `ps` (portable across macOS and Linux).
+ * Query candidate session processes using `ps` (portable across macOS and Linux).
  *
  * `pgrep -a` on macOS only prints PIDs (no command line), making it useless
- * for matching SSH target hosts. `ps -axo pid,command` works on both platforms
- * and returns full command lines in pgrep-compatible format (`PID COMMAND`).
+ * for matching session targets. `ps -axo pid,command` works on both platforms
+ * and returns full command lines in a simple `PID COMMAND` format.
  */
-function querySshProcesses(runCommand: typeof spawnSync = spawnSync): string | null {
+function queryCandidateSessionProcesses(runCommand: typeof spawnSync = spawnSync): string | null {
   try {
     const result = runCommand("ps", ["-axo", "pid,command"], {
       encoding: "utf-8",
@@ -187,10 +205,11 @@ function querySshProcesses(runCommand: typeof spawnSync = spawnSync): string | n
       timeout: 5000,
     });
     if (result.status !== 0) return null;
-    // Filter to only SSH lines to reduce noise and match pgrep -a output format
+    // Keep SSH transports and native OpenShell exec connects; the parser applies
+    // the stricter target and interactivity checks for each shape.
     const lines = (result.stdout || "")
       .split("\n")
-      .filter((line) => /\bssh\b/.test(line))
+      .filter((line) => /\bssh\b|(?:^|\s)(?:\S*\/)?openshell\s+sandbox\s+exec\b/.test(line))
       .join("\n");
     return lines;
   } catch {
@@ -214,7 +233,7 @@ export function createSystemDeps(
     ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
     : undefined;
   return {
-    getSshProcesses: () => querySshProcesses(runCommand),
+    getSshProcesses: () => queryCandidateSessionProcesses(runCommand),
     ...(openshellBinary
       ? {
           resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {

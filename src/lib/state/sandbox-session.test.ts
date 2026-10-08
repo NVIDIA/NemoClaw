@@ -55,6 +55,47 @@ describe("parseSshProcesses", () => {
   const interactiveLine = `12345 ${PROXY(SANDBOX_ID)} -tt -o RequestTTY=force -o SetEnv=TERM=xterm-256color sandbox`;
   const forwardLine = `12300 ${PROXY(SANDBOX_ID)} -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18789:127.0.0.1:18789 sandbox`;
 
+  it("detects an interactive OpenShell exec session scoped to its sandbox (#12665)", () => {
+    const interactiveExec =
+      "45678 /usr/local/bin/openshell sandbox exec --name my-sandbox --tty -- /bin/bash -i";
+    expect(parseSshProcesses(interactiveExec, "my-sandbox")).toEqual([
+      {
+        sandboxName: "my-sandbox",
+        pid: 45678,
+        transport: "openshell-exec",
+      },
+    ]);
+    expect(
+      parseSshProcesses(
+        "45679 openshell sandbox exec --name my-sandbox -g nemoclaw-9090 --tty -- /bin/bash -i",
+        "my-sandbox",
+      ),
+    ).toEqual([{ sandboxName: "my-sandbox", pid: 45679, transport: "openshell-exec" }]);
+    expect(
+      parseSshProcesses(
+        "45681 openshell sandbox exec --name=my-sandbox --tty -- /bin/bash -i",
+        "my-sandbox",
+      ),
+    ).toEqual([{ sandboxName: "my-sandbox", pid: 45681, transport: "openshell-exec" }]);
+    expect(parseSshProcesses(interactiveExec, "other-sandbox")).toEqual([]);
+    expect(
+      parseSshProcesses(
+        "45680 openshell sandbox exec --name my-sandbox-extended --tty -- /bin/bash -i",
+        "my-sandbox",
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not count noninteractive exec or dashboard forwards (#12665)", () => {
+    const noninteractiveExec = "45678 openshell sandbox exec --name my-sandbox -- id -un";
+    const ttyNoninteractiveExec = "45680 openshell sandbox exec --name my-sandbox --tty -- id -un";
+    const dashboardForward =
+      "45679 /usr/local/bin/openshell --gateway nemoclaw-9090 --gateway-endpoint https://127.0.0.1:32665 --workspace default forward service my-sandbox --target-port 32760 --target-host 127.0.0.1 --local 127.0.0.1:32760";
+    expect(parseSshProcesses(noninteractiveExec, "my-sandbox")).toEqual([]);
+    expect(parseSshProcesses(ttyNoninteractiveExec, "my-sandbox")).toEqual([]);
+    expect(parseSshProcesses(dashboardForward, "my-sandbox")).toEqual([]);
+  });
+
   it("detects a proxied interactive session by sandbox ID (#9316)", () => {
     expect(parseSshProcesses(interactiveLine, "my-sandbox", SANDBOX_ID)).toEqual([
       {
@@ -148,6 +189,34 @@ describe("parseSshProcesses", () => {
 });
 
 describe("getActiveSandboxSessions", () => {
+  it("includes interactive native exec processes in the system probe (#12665)", () => {
+    mocks.resolveOpenshell.mockReturnValue(null);
+    const spawn = vi.fn().mockReturnValue({
+      status: 0,
+      stdout:
+        " 45678 /usr/local/bin/openshell sandbox exec --name my-sandbox --tty -- /bin/bash -i\n" +
+        " 45679 openshell sandbox exec --name my-sandbox -- id -un\n" +
+        " 45680 /usr/local/bin/openshell --gateway nemoclaw-9090 --gateway-endpoint https://127.0.0.1:32665 --workspace default forward service my-sandbox --target-port 32760 --target-host 127.0.0.1 --local 127.0.0.1:32760\n",
+      stderr: "",
+    });
+
+    const result = getActiveSandboxSessions(
+      "my-sandbox",
+      createSystemDeps(undefined, { spawnSync: spawn as never }),
+    );
+
+    expect(result).toEqual({
+      detected: true,
+      sessions: [
+        {
+          sandboxName: "my-sandbox",
+          pid: 45678,
+          transport: "openshell-exec",
+        },
+      ],
+    });
+  });
+
   it("uses the default OpenShell resolver for proxied session lookup", () => {
     const sandboxId = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
     mocks.resolveOpenshell.mockReturnValue("/resolved/openshell");

@@ -222,7 +222,7 @@ function printActiveSessions(sandboxName: string): void {
     if (!sessionResult.detected) return;
     const count = sessionResult.sessions.length;
     const sessions = count > 0 ? `${G}${count}${R}` : "none";
-    console.log(`    SSH sessions: ${sessions}`);
+    console.log(`    Active sessions: ${sessions}`);
   } catch {
     // Session detection is informational; an unavailable OpenShell client must
     // not suppress the primary sandbox and gateway health report.
