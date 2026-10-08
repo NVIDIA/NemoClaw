@@ -193,7 +193,7 @@ fn explicit_filesystem_policy_must_allow_the_image_runtime_directory() {
 fn rejected_model_limit_identifies_the_field_and_authored_route_without_values() {
     use nemoclaw_sdk::{
         config::Document,
-        fabric_capabilities::{FabricRequirements, Support, assess_fabric},
+        fabric_capabilities::{Support, assess_fabric},
     };
     let mut input: serde_json::Value =
         serde_saphyr::from_str(include_str!("fixtures/config/local.yaml")).unwrap();
@@ -202,8 +202,11 @@ fn rejected_model_limit_identifies_the_field_and_authored_route_without_values()
     input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["maxTokens"] =
         256.into();
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
-    let mut request =
-        FabricRequirements::for_sandbox(&document, &document.spec.sandboxes[0]).unwrap();
+    let mut request = nemoclaw_sdk::fabric_capabilities::requirements_for_sandbox(
+        &document,
+        &document.spec.sandboxes[0],
+    )
+    .unwrap();
     let report = assess_fabric(&FabricCatalog::bundled(), &request);
     assert_eq!(report.status, Support::Unsupported);
     let text = serde_json::to_string(&report).unwrap();

@@ -3,11 +3,10 @@
 
 //! Verify image-owned metadata without contacting a registry or container engine.
 use crate::{
-    ObservationError, Secrets,
-    discovery::{FabricObservation, ObservationStatus},
-    fabric_capabilities::ImageMetadata,
-    fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
+    capabilities::{FabricObservation, ImageMetadata},
+    catalog::{FabricCatalog, IMAGE_CATALOG_LABEL},
 };
+use nemoclaw_backend::{ObservationError, ObservationStatus, Secrets};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};

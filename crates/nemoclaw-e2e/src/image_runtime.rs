@@ -40,9 +40,8 @@ pub fn targets(
                 .iter()
                 .find(|sandbox| sandbox.name == target.values["name"])
                 .unwrap();
-            let requirements = nemoclaw_sdk::fabric_capabilities::FabricRequirements::for_sandbox(
-                document, sandbox,
-            )?;
+            let requirements =
+                nemoclaw_sdk::fabric_capabilities::requirements_for_sandbox(document, sandbox)?;
             let adapter = requirements.configuration["harness"]["adapter_id"]
                 .as_str()
                 .unwrap();

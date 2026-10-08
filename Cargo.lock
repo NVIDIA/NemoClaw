@@ -2406,6 +2406,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-fabric"
+version = "0.1.0"
+dependencies = [
+ "nemo-fabric-core",
+ "nemoclaw-backend",
+ "nemoclaw-openshell",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "nemoclaw-ollama-proxy"
 version = "0.1.0"
 dependencies = [
@@ -2543,6 +2557,7 @@ dependencies = [
  "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-docker",
+ "nemoclaw-fabric",
  "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",

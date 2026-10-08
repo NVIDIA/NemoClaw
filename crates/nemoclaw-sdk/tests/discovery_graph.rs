@@ -9,7 +9,6 @@ use nemoclaw_sdk::{
     config::{ComputeDriver, Document, ExternalGateway, Gateway},
     discovery::DiscoveryRequest,
     discovery::{DiscoveryQuery, FabricRequest, GatewayRequest, HardwareRequest, plan_queries},
-    fabric_capabilities::FabricRequirements,
     inference_discovery::endpoint_requests,
     services::{
         ServiceDefinition,
@@ -160,7 +159,10 @@ fn plan_queries_list_the_reads_of_a_managed_gateway_with_a_hosted_route() {
         DiscoveryQuery::Fabric(FabricRequest {
             engine: engine.into(),
             image: sandbox.image.ref_.clone(),
-            requirements: FabricRequirements::for_sandbox(&document, sandbox).unwrap(),
+            requirements: nemoclaw_sdk::fabric_capabilities::requirements_for_sandbox(
+                &document, sandbox
+            )
+            .unwrap(),
             platform: Some(platform),
             metadata_env: None,
         })

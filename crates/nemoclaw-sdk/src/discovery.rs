@@ -6,7 +6,6 @@ pub use crate::gateway_observation::{GatewayCapabilities, GatewayObservation};
 use crate::{
     config::{ComputeDriver, ConfigError, Document, Gateway},
     fabric_capabilities::FabricRequirements,
-    fabric_catalog::FabricCatalog,
     hardware_discovery::HardwareObservation,
     inference_discovery::{CredentialObservation, EndpointObservation, EndpointRequest},
 };
@@ -105,7 +104,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
         queries.push(DiscoveryQuery::Fabric(FabricRequest {
             engine: engine.into(),
             image: sandbox.image.ref_.clone(),
-            requirements: FabricRequirements::for_sandbox(document, sandbox)?,
+            requirements: crate::fabric_capabilities::requirements_for_sandbox(document, sandbox)?,
             platform: platform.clone(),
             metadata_env: sandbox
                 .image
@@ -315,33 +314,7 @@ impl EngineObservation {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FabricObservation {
-    pub status: ObservationStatus,
-    pub reason: Option<String>,
-    pub source: String,
-    pub image_id: Option<String>,
-    pub catalog: Option<FabricCatalog>,
-    #[serde(default)]
-    pub image: crate::fabric_capabilities::ImageMetadata,
-    #[serde(default)]
-    pub compatibility: Option<crate::fabric_capabilities::CompatibilityReport>,
-}
-
-impl FabricObservation {
-    /// A read that could not be made, recorded as unknown rather than absent.
-    pub fn unknown(reason: &str) -> Self {
-        Self {
-            status: ObservationStatus::Unknown,
-            reason: Some(reason.into()),
-            source: "engine_image_inspect".into(),
-            image_id: None,
-            catalog: None,
-            image: Default::default(),
-            compatibility: None,
-        }
-    }
-}
+pub use nemoclaw_fabric::FabricObservation;
 
 /// Compatibility of a managed inference image with the compiled runtime contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
