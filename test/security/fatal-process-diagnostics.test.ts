@@ -27,6 +27,33 @@ const OPENCLAW_NPM_REMEDIATION = path.join(
 );
 const CREDENTIAL_CANARY = "OPENAI_API_KEY=process-boundary-canary-0123456789";
 
+function writeNpmFailureHook(root: string, unavailable: boolean): string {
+  const hookPath = path.join(root, "npm-remediation-failure-hook.mjs");
+  fs.writeFileSync(
+    hookPath,
+    [
+      'import childProcess from "node:child_process";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "const originalSpawnSync = childProcess.spawnSync;",
+      "childProcess.spawnSync = function (command, args, options) {",
+      '  if (!Array.isArray(args) || !args.some((arg) => String(arg).includes("proxy-addr@2.0.8"))) {',
+      "    return originalSpawnSync.call(this, command, args, options);",
+      "  }",
+      `  if (${unavailable}) {`,
+      '    const error = Object.assign(new Error(process.env.NEMOCLAW_FATAL_DIAGNOSTIC_CANARY), { code: "ENOENT" });',
+      "    return { error, output: [null, null, null], pid: undefined, signal: null, status: null, stderr: null, stdout: null };",
+      "  }",
+      '  const output = Buffer.from(process.env.NEMOCLAW_FATAL_DIAGNOSTIC_CANARY ?? "");',
+      "  return { error: undefined, output: [null, output, output], pid: process.pid, signal: null, status: 1, stderr: output, stdout: output };",
+      "};",
+      "syncBuiltinESMExports();",
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+  return hookPath;
+}
+
 function encodedMessagingPlan(renderTarget: string | null): string {
   return Buffer.from(
     JSON.stringify({
@@ -73,60 +100,72 @@ describe("fatal process diagnostics", () => {
     {
       failure: "tar failure",
       executable: "tar",
-      npmExecutable: undefined,
+      npmFailure: undefined,
       diagnostic: "Official OpenClaw plugin 'slack' remediation operation 'list archive' failed.",
     },
     {
       failure: "unavailable tar",
       executable: "unused-tar",
-      npmExecutable: undefined,
+      npmFailure: undefined,
       diagnostic:
         "Official OpenClaw plugin 'slack' remediation operation 'list archive' could not start a required command.",
     },
     {
       failure: "npm failure",
-      executable: "replacement-npm",
-      npmExecutable: "replacement-npm",
+      executable: undefined,
+      npmFailure: "exit",
       diagnostic:
         "Official OpenClaw plugin 'slack' remediation operation 'fetch replacement' failed.",
     },
     {
       failure: "unavailable npm",
-      executable: "unused-npm",
-      npmExecutable: "missing-npm",
+      executable: undefined,
+      npmFailure: "unavailable",
       diagnostic:
         "Official OpenClaw plugin 'slack' remediation operation 'fetch replacement' could not start a required command.",
     },
   ])(
     "identifies Slack remediation $failure without exposing child output",
-    async ({ executable, npmExecutable, diagnostic }) => {
+    async ({ executable, npmFailure, diagnostic }) => {
       const fixture = await createSlackRemediationFixture();
       try {
-        fs.writeFileSync(
-          path.join(fixture.bin, executable),
-          [
-            "#!/bin/sh",
-            'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY"',
-            'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY" >&2',
-            "exit 1",
-            "",
-          ].join("\n"),
-          { mode: 0o700 },
-        );
+        executable &&
+          fs.writeFileSync(
+            path.join(fixture.bin, executable),
+            [
+              "#!/bin/sh",
+              'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY"',
+              'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY" >&2',
+              "exit 1",
+              "",
+            ].join("\n"),
+            { mode: 0o700 },
+          );
+        const hookPath = npmFailure
+          ? writeNpmFailureHook(fixture.root, npmFailure === "unavailable")
+          : undefined;
         const result = spawnSync(
           process.execPath,
-          [MESSAGING_BUILD_APPLIER, "--agent", "openclaw", "--phase", "agent-install"],
+          [
+            ...(hookPath ? ["--import", pathToFileURL(hookPath).href] : []),
+            MESSAGING_BUILD_APPLIER,
+            "--agent",
+            "openclaw",
+            "--phase",
+            "agent-install",
+          ],
           {
             cwd: REPOSITORY_ROOT,
             encoding: "utf8",
             env: {
               ...fixture.env,
               PATH: fixture.bin,
-              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: npmExecutable
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: npmFailure
                 ? undefined
                 : fixture.env.NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR,
-              NEMOCLAW_REVIEWED_NPM_EXECUTABLE:
-                npmExecutable && path.join(fixture.bin, npmExecutable),
+              NEMOCLAW_REVIEWED_NPM_EXECUTABLE: npmFailure
+                ? path.join(fixture.bin, "npm")
+                : undefined,
               NEMOCLAW_FATAL_DIAGNOSTIC_CANARY: CREDENTIAL_CANARY,
             },
             timeout: 10_000,

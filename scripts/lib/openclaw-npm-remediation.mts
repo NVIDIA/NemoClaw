@@ -71,14 +71,25 @@ export type RemediatedArchive = Readonly<
 
 export class OpenClawNpmPackageRecoveryError extends Error {
   readonly packageName: string;
+  readonly recoveryPath: string;
+  readonly replacementActive: boolean;
 
-  constructor(packageName: string, cause: unknown) {
+  constructor(
+    packageName: string,
+    cause: unknown,
+    recoveryPath: string,
+    replacementActive = false,
+  ) {
     super(
-      `Replacement of ${packageName} failed; the original package remains in a recovery directory beside it.`,
+      replacementActive
+        ? `Replacement of ${packageName} is active, but recovery-directory cleanup failed at ${recoveryPath}.`
+        : `Replacement of ${packageName} failed; the original package is preserved at ${recoveryPath}.`,
       { cause },
     );
     this.name = "OpenClawNpmPackageRecoveryError";
     this.packageName = packageName;
+    this.recoveryPath = recoveryPath;
+    this.replacementActive = replacementActive;
   }
 }
 
@@ -1177,6 +1188,11 @@ function patchFsSafePackageGraph(packageDirectory: string): void {
 function copyReplacementPackage(source: string, destination: string): void {
   const targetDirectory = dirname(resolve(destination));
   mkdirSync(targetDirectory, { recursive: true, mode: 0o755 });
+  const sourceMetadata = readJson(join(source, "package.json"));
+  if (typeof sourceMetadata.name !== "string" || sourceMetadata.name.length === 0) {
+    throw new Error("Replacement package identity has no valid name");
+  }
+  const packageName = sourceMetadata.name;
   const replacementRoot = mkdtempSync(
     join(targetDirectory, `.${basename(destination)}-replacement-`),
   );
@@ -1187,13 +1203,40 @@ function copyReplacementPackage(source: string, destination: string): void {
 
   try {
     cpSync(source, stagedReplacement, { recursive: true, force: true });
-    const sourceMetadata = readJson(join(source, "package.json"));
     const stagedMetadata = readJson(join(stagedReplacement, "package.json"));
     if (
       sourceMetadata.name !== stagedMetadata.name ||
       sourceMetadata.version !== stagedMetadata.version
     ) {
       throw new Error("Staged replacement package identity does not match its source");
+    }
+
+    const recoveryDirectories = findReplacementRecoveryDirectories(
+      targetDirectory,
+      destination,
+      packageName,
+    );
+    const recoveryCleanupDirectories = [
+      ...recoveryDirectories,
+      ...findReplacementRecoveryDirectories(
+        targetDirectory,
+        destination,
+        packageName,
+        "replacement",
+      ),
+    ];
+    if (pathIsMissing(destination) && recoveryDirectories.length > 0) {
+      const recoveryDirectory = recoveryDirectories[0]!;
+      const previousPackage = join(recoveryDirectory, "previous");
+      try {
+        renameSync(previousPackage, destination);
+      } catch (error) {
+        throw new OpenClawNpmPackageRecoveryError(
+          packageName,
+          error,
+          relative(targetDirectory, previousPackage),
+        );
+      }
     }
 
     try {
@@ -1211,12 +1254,12 @@ function copyReplacementPackage(source: string, destination: string): void {
       if (previousPackageMoved) {
         try {
           renameSync(previousPackage, destination);
-          previousPackageMoved = false;
         } catch (restoreError) {
           preserveRecoveryDirectory = true;
           throw new OpenClawNpmPackageRecoveryError(
-            basename(destination),
+            packageName,
             new AggregateError([replacementError, restoreError]),
+            relative(targetDirectory, previousPackage),
           );
         }
       }
@@ -1225,13 +1268,77 @@ function copyReplacementPackage(source: string, destination: string): void {
 
     if (previousPackageMoved) {
       rmSync(previousPackage, { recursive: true, force: true });
-      previousPackageMoved = false;
+    }
+
+    let recoveryCleanupFailure: unknown;
+    let failedRecoveryPath: string | undefined;
+    for (const recoveryDirectory of new Set(recoveryCleanupDirectories)) {
+      try {
+        rmSync(recoveryDirectory, { recursive: true, force: true });
+      } catch (error) {
+        recoveryCleanupFailure ??= error;
+        failedRecoveryPath ??= relative(targetDirectory, recoveryDirectory);
+      }
+    }
+    if (recoveryCleanupFailure !== undefined && failedRecoveryPath) {
+      throw new OpenClawNpmPackageRecoveryError(
+        packageName,
+        recoveryCleanupFailure,
+        failedRecoveryPath,
+        true,
+      );
     }
   } finally {
     if (!preserveRecoveryDirectory) {
       rmSync(replacementRoot, { recursive: true, force: true });
     }
   }
+}
+
+function pathIsMissing(path: string): boolean {
+  try {
+    lstatSync(path);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+function findReplacementRecoveryDirectories(
+  targetDirectory: string,
+  destination: string,
+  packageName: string,
+  packageDirectoryName = "previous",
+): string[] {
+  const prefix = `.${basename(destination)}-replacement-`;
+  return readdirSync(targetDirectory, { withFileTypes: true })
+    .filter((entry) => entry.name.startsWith(prefix) && entry.isDirectory())
+    .map((entry) => join(targetDirectory, entry.name))
+    .filter((recoveryDirectory) => {
+      try {
+        const recoveryStats = lstatSync(recoveryDirectory);
+        const recoveryPackage = join(recoveryDirectory, packageDirectoryName);
+        const packageStats = lstatSync(recoveryPackage);
+        const packageMetadata = join(recoveryPackage, "package.json");
+        const metadataStats = lstatSync(packageMetadata);
+        if (
+          !recoveryStats.isDirectory() ||
+          recoveryStats.isSymbolicLink() ||
+          !packageStats.isDirectory() ||
+          packageStats.isSymbolicLink() ||
+          !metadataStats.isFile() ||
+          metadataStats.isSymbolicLink()
+        ) {
+          return false;
+        }
+        return readJson(packageMetadata).name === packageName;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+    })
+    .sort((left, right) => lstatSync(right).mtimeMs - lstatSync(left).mtimeMs);
 }
 
 function packReplacement(

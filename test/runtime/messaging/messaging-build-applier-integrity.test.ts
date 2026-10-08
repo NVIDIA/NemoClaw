@@ -101,7 +101,7 @@ function renameFailureHook(root: string, destination: string, failRestore: boole
       "let failedPromotion = false;",
       "let failedRestore = false;",
       "fs.renameSync = (source, destination) => {",
-      "  fs.appendFileSync(trace, `${source}\\t${destination}\\n`);",
+      '  fs.appendFileSync(trace, source + "\\t" + destination + "\\n");',
       "  const targetMatches = path.resolve(destination) === target;",
       '  if (!failedPromotion && path.basename(source) === "replacement" && targetMatches) {',
       "    failedPromotion = true;",
@@ -330,7 +330,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             : "Messaging build applier failed.",
         );
         failRestore &&
-          expect(result.stderr).toContain("preserved in a recovery directory beside it");
+          expect(result.stderr).toContain(
+            "The previous package is preserved at '.proxy-addr-replacement-",
+          );
         failRestore &&
           expect(result.stderr).toContain("Rerun the plugin installation before retrying.");
         expect(result.stderr).not.toContain(fixture.root);
@@ -343,6 +345,77 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       }
     },
     testTimeout(30_000),
+  );
+
+  it(
+    "reconciles a preserved Slack dependency after a successful retry",
+    async () => {
+      const fixture = await createSlackRemediationFixture();
+      const renameHook = renameFailureHook(fixture.root, fixture.proxyAddrDirectory, true);
+
+      try {
+        const failedAttempt = spawnSync(
+          process.execPath,
+          ["--import", renameHook, SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...fixture.env,
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined,
+            },
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+
+        expect(failedAttempt.error).toBeUndefined();
+        expect(failedAttempt.status).toBe(2);
+        const packageParent = path.dirname(fixture.proxyAddrDirectory);
+        const recoveryDirectories = fs
+          .readdirSync(packageParent)
+          .filter((entry) => entry.startsWith(".proxy-addr-replacement-"));
+        expect(recoveryDirectories).toHaveLength(1);
+        verifyOriginalSlackDependencyBytes(
+          fixture,
+          path.join(packageParent, recoveryDirectories[0]!, "previous"),
+        );
+
+        const retry = spawnSync(
+          process.execPath,
+          [SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...fixture.env,
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined,
+            },
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+
+        expect(retry.error).toBeUndefined();
+        expect(retry.status, retry.stderr).toBe(0);
+        expect(
+          createHash("sha256")
+            .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "package.json")))
+            .digest("hex"),
+        ).toBe("b2e305ca817ae4e8b088e07f38c5df1d7ad77aa3473809e4c37a9a1c83600225");
+        expect(
+          createHash("sha256")
+            .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "index.js")))
+            .digest("hex"),
+        ).toBe("aa7efd29bbd61cbcc1bdafde9e674db28ead077864f33bfad3cdd19bb5a3778c");
+        expect(
+          fs
+            .readdirSync(packageParent)
+            .filter((entry) => entry.startsWith(".proxy-addr-replacement-")),
+        ).toEqual([]);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(45_000),
   );
 
   it(
