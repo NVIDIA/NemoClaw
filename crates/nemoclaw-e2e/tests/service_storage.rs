@@ -93,7 +93,6 @@ fn success(workspace: &TofuWorkspace, args: &[&str]) -> std::process::Output {
     output
 }
 
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn authored_service_storage_applies_refreshes_and_names_invalid_attributes() {
