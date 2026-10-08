@@ -962,23 +962,82 @@ describe("rebuild post-restore phase", () => {
     expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
       "Sandbox 'alpha' rebuild completed",
     );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain(
+      "Hermes config write permissions could not be verified",
+    );
   });
 
-  it("does not claim mutable Hermes posture without the exact sandbox proof", async () => {
+  it.each([false, true])(
+    "reports the failed Hermes write check and retry command with prepared recovery %s",
+    async (preparedBackupRecovery) => {
+      agentName = "hermes";
+      vi.mocked(mutableConfigPerms.inspectMutableHermesConfigPerms).mockReturnValue({
+        verified: false,
+        errors: ["config.yaml remains read-only"],
+      });
+      const args = { ...input(), preparedBackupRecovery };
+
+      const verification = await runRebuildPostRestorePhase(args);
+
+      expect(args.bail).toHaveBeenCalledTimes(Number(preparedBackupRecovery));
+      expect(verification).toEqual(
+        preparedBackupRecovery ? undefined : { mutableConfigPermissionsVerified: false },
+      );
+      expect(args.log).toHaveBeenCalledWith(
+        "Hermes mutable config posture was not verified: config.yaml remains read-only",
+      );
+      const errors = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(errors).toContain(
+        "Hermes config write permissions could not be verified: config.yaml remains read-only",
+      );
+      expect(errors).toContain("Correct the reported problem, then run `nemoclaw alpha rebuild`");
+      expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+        "rebuild completed",
+      );
+    },
+  );
+
+  it("redacts credentials and escapes terminal controls in failed Hermes write diagnostics", async () => {
     agentName = "hermes";
     vi.mocked(mutableConfigPerms.inspectMutableHermesConfigPerms).mockReturnValue({
       verified: false,
-      errors: ["config.yaml remains read-only"],
+      errors: [
+        "config.yaml remains read-only\nMSTEAMS_APP_PASSWORD=diagnostic-test-secret",
+        "https://diagnostic-user:diagnostic-password@example.test/?token=diagnostic-token",
+        "\u001b[2J\u009b\u202euntrusted output",
+      ],
     });
     const args = input();
 
-    const verification = await runRebuildPostRestorePhase(args);
+    await runRebuildPostRestorePhase(args);
 
-    expect(args.bail).not.toHaveBeenCalled();
-    expect(verification).toEqual({ mutableConfigPermissionsVerified: false });
-    expect(args.log).toHaveBeenCalledWith(
-      "Hermes mutable config posture was not verified: config.yaml remains read-only",
-    );
+    const output = [
+      ...vi.mocked(console.error).mock.calls.flat(),
+      ...args.log.mock.calls.flat(),
+    ].join(" ");
+    expect(output).toContain("config.yaml remains read-only");
+    expect(output).toContain("<REDACTED>");
+    expect(output).not.toMatch(/diagnostic-(?:test-secret|user|password|token)/);
+    expect(output).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    expect(output).toContain("\\u{001b}[2J");
+  });
+
+  it.each([
+    { kind: "missing", errors: [] },
+    { kind: "oversized", errors: ["x".repeat(5000)] },
+  ])("keeps $kind Hermes write diagnostics actionable and bounded", async ({ errors }) => {
+    agentName = "hermes";
+    vi.mocked(mutableConfigPerms.inspectMutableHermesConfigPerms).mockReturnValue({
+      verified: false,
+      errors,
+    });
+
+    await runRebuildPostRestorePhase(input());
+
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("nemoclaw alpha rebuild");
+    expect(output).toContain(errors.length ? "x".repeat(4096) : "No diagnostic was returned.");
+    expect(output.length).toBeLessThan(4300);
   });
 
   it.each(["langchain-deepagents-code", "pi"] as const)(
