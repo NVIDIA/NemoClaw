@@ -37,19 +37,17 @@ if [ -z "${RUNNER_TEMP:-}" ] || [ ! -d "$RUNNER_TEMP" ]; then
   exit 1
 fi
 
-runner_temp_mode="$(stat -c '%a' "$RUNNER_TEMP")"
-apt_lists="$(mktemp -d "$RUNNER_TEMP/nemoclaw-apt-lists.XXXXXXXX")"
+# RUNNER_TEMP can have private ancestors that APT's _apt user cannot traverse.
+apt_lists="$(mktemp -d /tmp/nemoclaw-apt-lists.XXXXXXXX)"
 cleanup() {
   local status=$?
   trap - EXIT
   sudo rm -rf -- "$apt_lists" || status=1
-  sudo chmod "$runner_temp_mode" "$RUNNER_TEMP" || status=1
   exit "$status"
 }
 trap cleanup EXIT
 
 # APT's _apt user needs traversal into the isolated package-list directory.
-sudo chmod o+x "$RUNNER_TEMP"
 sudo chmod 0755 "$apt_lists"
 sudo install -d -o _apt -g root -m 0700 "$apt_lists/partial"
 

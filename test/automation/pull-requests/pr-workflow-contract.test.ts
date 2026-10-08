@@ -111,8 +111,8 @@ function runPinnedAptFixture(
     join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$APT_CALLS"
-if [[ "$1" == chmod && "$3" == "$RUNNER_TEMP" ]]; then
-  command chmod "$2" "$3" || exit $?
+if [[ "$1" == rm && "$2" == -rf && "$3" == -- && "$4" == /tmp/nemoclaw-apt-lists.* ]]; then
+  command rm -rf -- "$4" || exit $?
 fi
 if [[ "$1" == test && "$FAKE_APT_MODE" == missing-source ]]; then exit 1; fi
 if [[ "$1" == timeout ]]; then shift; timeout "$@"; exit $?; fi
