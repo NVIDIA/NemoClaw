@@ -83,13 +83,16 @@ jobs:
       - name: Build candidate OCI archive
         env:
           AGENT_PLATFORM: linux/amd64
+          BUILDX_BUILDER: brev
         run: |
           mkdir candidate-image
           docker buildx create --name brev --driver docker-container \
             --driver-opt image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
-          docker buildx bake --builder brev openclaw \
-            --set 'openclaw.output=type=oci,dest=candidate-image/image.tar' \
-            --metadata-file candidate-image/metadata.json
+          # The export rebuilds from cache with the installed discovery labels, so
+          # the archive's digest covers them.
+          cargo images build --platform "$AGENT_PLATFORM" \
+            --output type=oci,dest=candidate-image/image.tar \
+            --metadata-file candidate-image/metadata.json openclaw
           python3 tools/ci/brev_image.py record candidate-image "$GITHUB_SHA"
       - name: Upload candidate image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

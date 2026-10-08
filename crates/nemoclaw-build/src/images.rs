@@ -251,8 +251,51 @@ pub fn labels(name: &str, bridge: Value, catalog: Option<Value>) -> Result<Vec<(
 
 /// Build each target under a temporary tag, read its metadata, then publish
 /// the labeled image under its real tags. The temporary tag is always removed.
+/// The `docker buildx bake` arguments that rebuild `name` from cache with
+/// `labels` and write it to a Buildx `output`, such as an OCI archive.
+pub fn export_arguments(
+    name: &str,
+    labels: &[(String, String)],
+    output: &str,
+    metadata_file: Option<&Path>,
+) -> Vec<String> {
+    let mut arguments = vec!["buildx".into(), "bake".into(), name.to_owned()];
+    for (label, value) in labels {
+        arguments.extend(["--set".into(), format!("{name}.labels.{label}={value}")]);
+    }
+    arguments.extend(["--set".into(), format!("{name}.output={output}")]);
+    if let Some(path) = metadata_file {
+        arguments.extend(["--metadata-file".into(), path.display().to_string()]);
+    }
+    arguments
+}
+
+/// Where `build` puts an image: loaded and tagged locally, or exported.
+pub enum Destination<'a> {
+    Local,
+    /// One target, written to a Buildx output with its labels in the image
+    /// configuration, so the exported digest covers them.
+    Export {
+        output: &'a str,
+        metadata_file: Option<&'a Path>,
+    },
+}
+
 pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
-    for (name, tags) in plan(root, platform, selection)? {
+    build_to(root, platform, selection, &Destination::Local)
+}
+
+pub fn build_to(
+    root: &Path,
+    platform: &str,
+    selection: &[String],
+    destination: &Destination<'_>,
+) -> Result<()> {
+    let planned = plan(root, platform, selection)?;
+    if matches!(destination, Destination::Export { .. }) && planned.len() != 1 {
+        return Err("--output requires exactly one image target".into());
+    }
+    for (name, tags) in planned {
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).map_err(|_| "cannot name a temporary image")?;
         let temporary = format!("nemoclaw-build:{}", crate::hex(&nonce));
@@ -286,6 +329,19 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
                 })
                 .transpose()?;
             let labels = labels(&name, bridge, catalog)?;
+            if let Destination::Export {
+                output,
+                metadata_file,
+            } = destination
+            {
+                return status(
+                    docker()
+                        .current_dir(root)
+                        .env("AGENT_PLATFORM", platform)
+                        .args(export_arguments(&name, &labels, output, *metadata_file)),
+                    &format!("export {name}"),
+                );
+            }
             let context = tempfile::tempdir().map_err(|_| "cannot create a label context")?;
             fs::write(
                 context.path().join("Dockerfile"),

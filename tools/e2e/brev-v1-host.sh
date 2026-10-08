@@ -7,13 +7,29 @@ set -euo pipefail
 # Reject a broader target before any remote operation.
 [[ "${INSTANCE_NAME}" =~ ^nclaw-v1-[0-9]+-[0-9]+$ ]] || exit 1
 
+# Refresh can fail transiently while an existing SSH route still works. Retry
+# only this read: replaying a disconnected lifecycle command could run it twice.
+read_remote_home() {
+  local attempt home
+  for attempt in $(seq 1 6); do
+    brev refresh >&2 || true
+    if home="$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" 'printf %s "$HOME"')"; then
+      [[ "${home}" == /* ]] || { echo "Invalid remote home" >&2; return 1; }
+      printf '%s' "${home}"
+      return 0
+    fi
+    if test "${attempt}" -lt 6; then sleep 10; fi
+  done
+  echo "Brev SSH home read failed after 6 attempts" >&2
+  return 1
+}
+
 prepare() {
   revision="$(git rev-parse HEAD)"
   [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || exit 1
   echo "::group::Provision Brev workspace ${INSTANCE_NAME}"
   brev search cpu --arch x86_64 --min-vcpu 8 --min-ram 32 --min-disk 100 --sort price \
-    | brev create "${INSTANCE_NAME}" \
-        --startup-script @tools/e2e/brev-v1-startup.sh --detached
+    | brev create "${INSTANCE_NAME}" --detached
   brev refresh || true
   echo "::endgroup::"
   echo "Waiting for Brev SSH"
@@ -23,15 +39,14 @@ prepare() {
     if test $((attempt % 5)) -eq 0; then brev refresh || true; fi
     sleep 10
   done
-  echo "Brev SSH is ready; waiting for host prerequisites"
-  for attempt in $(seq 1 120); do
-    if ssh -T "${INSTANCE_NAME}" 'test -f /var/run/nemoclaw-brev-v1-ready'; then break; fi
-    if test $((attempt % 10)) -eq 0; then
-      ssh -T "${INSTANCE_NAME}" 'tail -20 /tmp/nemoclaw-brev-v1-startup.log 2>/dev/null || true' || true
-    fi
-    if test "${attempt}" -eq 120; then echo "Brev startup did not become ready" >&2; exit 1; fi
-    sleep 10
-  done
+  echo "Brev SSH is ready; installing host prerequisites"
+  # Run the checked-in bootstrap synchronously: a provider may accept a startup
+  # hook without executing it. Do not run both paths or replay a disconnected
+  # install; cleanup owns any partially prepared VM.
+  ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" 'bash -s' \
+    < tools/e2e/brev-v1-startup.sh
+  ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${INSTANCE_NAME}" \
+    'test -f /var/run/nemoclaw-brev-v1-ready'
   echo "Host prerequisites are ready"
   # The startup script can run as root without knowing which account Brev
   # will use for SSH. Brev may also multiplex SSH connections, so explicitly
@@ -39,7 +54,7 @@ prepare() {
   ssh -T "${INSTANCE_NAME}" 'sudo usermod -aG docker "$(id -un)"'
   ssh -T "${INSTANCE_NAME}" 'sg docker -c "docker info >/dev/null"'
   # shellcheck disable=SC2029
-  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_home="$(read_remote_home)"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   # shellcheck disable=SC2029
   ssh -T "${INSTANCE_NAME}" "install -d -m 700 '${remote_root}/source' '${remote_root}/bundle'"
@@ -49,8 +64,7 @@ prepare() {
 }
 
 load_image() {
-  brev refresh
-  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_home="$(read_remote_home)"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   rsync -a candidate-image/ "${INSTANCE_NAME}:${remote_root}/image-candidate/"
   ssh -T "${INSTANCE_NAME}" "sg docker -c \"NEMOCLAW_BREV_ROOT='${remote_root}' bash '${remote_root}/source/tools/e2e/brev-v1-guest.sh' load-image\""
@@ -58,8 +72,7 @@ load_image() {
 
 qualify() {
   test -n "${NVIDIA_INFERENCE_API_KEY:?set NVIDIA_INFERENCE_API_KEY}"
-  brev refresh
-  remote_home="$(ssh -T "${INSTANCE_NAME}" 'printf %s "$HOME"')"
+  remote_home="$(read_remote_home)"
   remote_root="${remote_home}/${INSTANCE_NAME}"
   rsync -a candidate/bundle/ "${INSTANCE_NAME}:${remote_root}/bundle/"
   rsync -a candidate/brev-test "${INSTANCE_NAME}:${remote_root}/brev-test"

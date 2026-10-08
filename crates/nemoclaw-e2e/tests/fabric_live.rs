@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#[path = "support/fabric.rs"]
+mod fabric;
+use fabric::{bindings, runtime_id};
+
 use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{
     CancellationToken, Deployment, OperationResult, Outcome,
@@ -54,38 +58,6 @@ fn invocation_input(variable: &str) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
-fn bindings(directory: &Path) -> (Value, Row) {
-    let state: Value =
-        serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
-    let mut ids = serde_json::Map::new();
-    let mut sandbox = None;
-    let resources = state["resources"].as_array().unwrap();
-    for resource in resources {
-        if resource["mode"] == "data" {
-            continue;
-        }
-        let instances = resource["instances"].as_array().unwrap();
-        assert_eq!(instances.len(), 1);
-        let attributes = &instances[0]["attributes"];
-        ids.insert(
-            format!(
-                "{}.{}",
-                resource["type"].as_str().unwrap(),
-                resource["name"].as_str().unwrap()
-            ),
-            attributes["id"].clone(),
-        );
-        if resource["type"] == "nemoclaw_sandbox" {
-            assert!(
-                sandbox
-                    .replace(serde_json::from_value(attributes.clone()).unwrap())
-                    .is_none(),
-                "expected one sandbox binding"
-            );
-        }
-    }
-    (Value::Object(ids), sandbox.unwrap())
-}
 fn managed_bindings(directory: &Path) -> Value {
     let path = directory.join("runtime/terraform.tfstate");
     if !path.exists() {
@@ -121,12 +93,6 @@ async fn invoke(client: &OpenShell, binding: &Row, name: &str, input: &Value) ->
     assert_eq!(binding["agent_name"], name);
     let result = client.invoke_agent(binding, input).await.unwrap();
     serde_json::to_vec(&result["fabric_result"]).unwrap()
-}
-
-async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
-    let snapshot = client.agent_snapshot(binding).await.unwrap();
-    assert_eq!(snapshot.runtime_state, "running");
-    snapshot.runtime_id.unwrap()
 }
 
 #[tokio::test]

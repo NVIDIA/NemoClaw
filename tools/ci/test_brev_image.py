@@ -12,6 +12,9 @@ from unittest.mock import patch
 import brev_image
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
 class CandidateImage(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -23,8 +26,13 @@ class CandidateImage(unittest.TestCase):
             json.dumps({"openclaw": {"containerimage.digest": "sha256:" + "b" * 64}})
         )
         self.digest = "nc-fabric@sha256:" + "b" * 64
+        self.catalog = {"runtime": {
+            "command": ["/usr/local/bin/fabric-agent"],
+            "binaries": {"nvidia.fabric.openclaw": ["/usr/local/bin/openclaw"]},
+        }}
         self.inspection = [
-            {"RepoDigests": [self.digest], "Os": "linux", "Architecture": "amd64"}
+            {"RepoDigests": [self.digest], "Os": "linux", "Architecture": "amd64",
+             "Config": {"Labels": {"io.nemoclaw.fabric.catalog": json.dumps(self.catalog)}}}
         ]
         self.docker = patch.object(
             brev_image.subprocess,
@@ -41,6 +49,18 @@ class CandidateImage(unittest.TestCase):
         with patch.object(brev_image.subprocess, "run") as load:
             self.assertEqual(brev_image.load(self.root, self.revision), self.digest)
             load.assert_called_once()
+
+    def test_loaded_image_requires_openclaw_runtime_metadata(self):
+        self.record()
+        for catalog in (None, "invalid json", "{}", '{"runtime":{"binaries":{}}}'):
+            with self.subTest(catalog=catalog):
+                self.inspection[0]["Config"]["Labels"] = (
+                    {} if catalog is None else {"io.nemoclaw.fabric.catalog": catalog}
+                )
+                self.docker.return_value = json.dumps(self.inspection).encode()
+                with patch.object(brev_image.subprocess, "run"), self.assertRaises(ValueError):
+                    brev_image.load(self.root, self.revision)
+                self.assertFalse((self.root / "image-ref").exists())
 
     def test_corrupt_archive_is_rejected_before_docker_load(self):
         self.record()

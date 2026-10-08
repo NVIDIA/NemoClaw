@@ -116,6 +116,12 @@ enum ImageAction {
         platform: String,
         #[arg(required = true)]
         targets: Vec<String>,
+        /// Write the one labelled image to this Buildx output, such as type=oci,dest=image.tar, instead of loading it.
+        #[arg(long)]
+        output: Option<String>,
+        /// Write Buildx metadata for the exported image here.
+        #[arg(long, requires = "output")]
+        metadata_file: Option<PathBuf>,
     },
     /// Run the command contract inside each labeled local image.
     Qualify {
@@ -414,8 +420,21 @@ async fn main() -> Result<()> {
     if let Action::Images { action } = cli.command {
         let root = Path::new(".");
         return match action {
-            ImageAction::Build { platform, targets } => {
-                nemoclaw_build::images::build(root, &platform, &targets)
+            ImageAction::Build {
+                platform,
+                targets,
+                output,
+                metadata_file,
+            } => {
+                use nemoclaw_build::images::Destination;
+                let destination = match &output {
+                    Some(output) => Destination::Export {
+                        output,
+                        metadata_file: metadata_file.as_deref(),
+                    },
+                    None => Destination::Local,
+                };
+                nemoclaw_build::images::build_to(root, &platform, &targets, &destination)
             }
             ImageAction::Qualify {
                 images,
