@@ -10,8 +10,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { extractInstallerPins } from "../../scripts/checks/extract-installer-pins.mts";
-
 import {
   INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS,
   V0099_ASSET_DIGESTS,
@@ -41,6 +39,7 @@ import {
   addV00106OperationalTrust,
   alterRequiredReleaseValue,
   brevMutationFixtures,
+  npmReplacementFixtureVersion,
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
@@ -834,16 +833,7 @@ function expectTrustedRelease(
 }
 
 function parseNpmReplacement(source: string, digest: string, trustedDigest = digest) {
-  const versions = new Set(
-    extractInstallerPins(source, {
-      functionName: "openshell_cli_pinned_sha256",
-      sourceLabel: "Brev launchable",
-    }).map((pin) => pin.releaseVersion),
-  );
-  assert.equal(versions.size, 1, "npm replacement fixture must select one OpenShell release");
-  const [version] = versions;
-  assert.ok(version);
-  const root = createFixture(version);
+  const root = createFixture(npmReplacementFixtureVersion(source));
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
   fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));

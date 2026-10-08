@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { SANDBOX, GATEWAY, GENERATION, POLICY } from "./hermes-portable-lifecycle.test-fixture";
 import { createHermesPortablePairFixture } from "./hermes-portable-pair.test-fixture";
@@ -21,7 +22,12 @@ import { publishHermesPortableSuccessorReceipt } from "./hermes-portable-receipt
 let stateDir: string;
 let policyPath: string;
 function pairedStopFixture(initiallyRunning: boolean) {
-  return createHermesPortablePairFixture(stateDir, policyPath, initiallyRunning);
+  return createHermesPortablePairFixture(
+    stateDir,
+    policyPath,
+    initiallyRunning,
+    loadAgent("hermes"),
+  );
 }
 async function publishSuccessor(): Promise<void> {
   await withMcpLifecycleLock(

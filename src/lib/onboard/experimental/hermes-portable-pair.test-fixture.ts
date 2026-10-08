@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { loadAgent } from "../../agent/defs";
 import {
   createHermesPortableLifecycleTestReceipt,
   createHermesPortableLifecycleTestDeps,
@@ -19,10 +18,11 @@ export function createHermesPortablePairFixture(
   stateDir: string,
   policyPath: string,
   initiallyRunning: boolean,
+  agent: Parameters<typeof createHermesPortableLifecycleTestReceipt>[0]["agent"],
 ) {
   const labels = { ...LABELS, "openshell.ai/isolation-role": "sandbox" };
   const receipt = createHermesPortableLifecycleTestReceipt({
-    agent: loadAgent("hermes"),
+    agent,
     stateDir,
     policyPath,
     homeDir: "/home/test",

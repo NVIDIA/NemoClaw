@@ -4,7 +4,21 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { extractInstallerPins } from "../../scripts/checks/extract-installer-pins.mts";
 import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
+
+export function npmReplacementFixtureVersion(source: string): string {
+  const versions = new Set(
+    extractInstallerPins(source, {
+      functionName: "openshell_cli_pinned_sha256",
+      sourceLabel: "Brev launchable",
+    }).map((pin) => pin.releaseVersion),
+  );
+  assert.equal(versions.size, 1, "npm replacement fixture must select one OpenShell release");
+  const [version] = versions;
+  assert.ok(version);
+  return version;
+}
 
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,

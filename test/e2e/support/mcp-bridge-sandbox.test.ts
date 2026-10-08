@@ -173,15 +173,16 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     });
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.116", () => {
-    const commit = "d1155aa70042d3e2ee49dbfa15346b108b7c1d92";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.1.2", () => {
+    const commit = "6648bd0c290efbc41ba131ee9831ee45cd431f94";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
+    const sourceUrl = `https://github.com/NVIDIA/OpenShell/blob/${commit}/${sourcePath}`;
     const citations = [
-      `${sourcePath}:3857-3886`,
-      `${sourcePath}:3911-3951`,
-      `${sourcePath}:3983-4043`,
-      `${sourcePath}:3998-4031`,
-      `${sourcePath}:5613-5655`,
+      `${sourceUrl}#L4201-L4230`,
+      `${sourceUrl}#L4255-L4295`,
+      `${sourceUrl}#L4327-L4388`,
+      `${sourceUrl}#L4342-L4375`,
+      `${sourceUrl}#L5967-L6037`,
     ];
 
     const docsPath = "docs/deployment/set-up-mcp-bridge.mdx";
