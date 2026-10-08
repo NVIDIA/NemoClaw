@@ -333,7 +333,11 @@ describe("handleProviderInferenceState", () => {
   });
 
   it("stops an authoritative rebuild before inference state when route persistence throws", async () => {
-    const session = createSession({ provider: "openai-api", model: "gpt-test" });
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "gpt-test",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+    });
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
     calls.reserveRoute.mockImplementation(() => {
       throw new Error("registry save failed");
@@ -600,10 +604,10 @@ describe("handleProviderInferenceState", () => {
 
   it("reserves the prompted sandbox route when resume skips already-ready inference (#6562)", async () => {
     const session = createSession({
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-test",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      provider: "compatible-endpoint",
+      model: "compatible/test",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-responses",
     });
     session.steps.provider_selection.status = "complete";
@@ -622,11 +626,11 @@ describe("handleProviderInferenceState", () => {
     expect(calls.setupNim).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(calls.reserveRoute).toHaveBeenCalledWith("tm", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-test",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      provider: "compatible-endpoint",
+      model: "compatible/test",
+      endpointUrl: "http://127.0.0.1:8000/v1",
       endpointSource: "inference-set",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-responses",
       gatewayName: "nemoclaw",
       reservationSessionId: session.sessionId,
@@ -642,10 +646,10 @@ describe("handleProviderInferenceState", () => {
     async (_label, identity) => {
       const session = createSession({
         sandboxName: "stale-sandbox",
-        provider: "nvidia-prod",
-        model: "nvidia/nemotron-test",
-        endpointUrl: "https://integrate.api.nvidia.com/v1",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        provider: "compatible-endpoint",
+        model: "compatible/test",
+        endpointUrl: "http://127.0.0.1:8000/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-responses",
       });
       session.steps.provider_selection.status = "complete";
@@ -674,10 +678,10 @@ describe("handleProviderInferenceState", () => {
   it("does not reserve a route when resume skips inference after sandbox completion (#6562)", async () => {
     const session = createSession({
       sandboxName: "completed-sandbox",
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-test",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      provider: "compatible-endpoint",
+      model: "compatible/test",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-responses",
     });
     session.steps.provider_selection.status = "complete";
@@ -702,6 +706,13 @@ describe("handleProviderInferenceState", () => {
     const completedSelection = createSession({ sessionId: "resume-selection-session" });
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
     calls.complete.mockResolvedValueOnce(completedSelection);
+    calls.setupNim.mockResolvedValueOnce({
+      ...baseSelection,
+      provider: "compatible-endpoint",
+      model: "compatible/test",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
     calls.promptName.mockResolvedValue("tm");
 
     const result = await handleProviderInferenceState({
@@ -714,11 +725,11 @@ describe("handleProviderInferenceState", () => {
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.reserveRoute).toHaveBeenCalledWith("tm", {
-      provider: "nvidia-prod",
-      model: "nvidia/test",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      provider: "compatible-endpoint",
+      model: "compatible/test",
+      endpointUrl: "http://127.0.0.1:8000/v1",
       endpointSource: null,
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-responses",
       gatewayName: "nemoclaw",
       reservationSessionId: "resume-selection-session",

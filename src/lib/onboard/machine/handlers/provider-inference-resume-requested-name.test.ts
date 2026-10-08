@@ -16,10 +16,10 @@ import { baseOptions, createDeps } from "./provider-inference.test-support";
 
 function interruptedResumeSession() {
   const session = createSession({
-    provider: "nvidia-prod",
-    model: "nvidia/nemotron-test",
-    endpointUrl: "https://integrate.api.nvidia.com/v1",
-    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    provider: "compatible-endpoint",
+    model: "compatible/test",
+    endpointUrl: "http://127.0.0.1:8000/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
     preferredInferenceApi: "openai-responses",
   });
   session.steps.provider_selection.status = "complete";

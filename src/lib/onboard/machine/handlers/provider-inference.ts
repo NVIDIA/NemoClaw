@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
-import { resolveAgentProviderInferenceApi } from "../../../inference/config";
+import { nativeHostedProfile, resolveAgentProviderInferenceApi } from "../../../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../../../inference/endpoint-ssrf-preflight";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
@@ -532,7 +532,7 @@ function canResumeInferenceRoute(input: {
 }): boolean {
   return (
     !input.needsBedrockRuntimeAdapter &&
-    input.provider !== OPENROUTER_PROVIDER_NAME &&
+    !nativeHostedProfile(input.provider) &&
     !input.hasHostLocalInference &&
     !input.forceProviderSelection &&
     !input.forceInferenceSetup &&
