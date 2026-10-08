@@ -149,6 +149,23 @@ exit 2
     expect(runRestoration()).toEqual({ status: 1, stdout: "" });
   });
 
+  describe("empty restored markers", () => {
+    beforeEach(() => {
+      for (const marker of RESTORED_MARKERS) {
+        fs.writeFileSync(path.join(directory, marker), "");
+      }
+    });
+
+    it("accepts matching empty markers", () => {
+      expect(runRestoration()).toEqual({ status: 0, stdout: "\n119\n" });
+    });
+
+    it("rejects an unreadable target even when the expected marker is empty", () => {
+      fs.rmSync(path.join(directory, RESTORED_MARKERS[1]));
+      expect(runRestoration()).toEqual({ status: 1, stdout: "" });
+    });
+  });
+
   it.each(RESTORED_MARKERS.slice(1))("rejects a mismatched %s", (marker) => {
     fs.writeFileSync(path.join(directory, marker), "wrong");
     expect(runRestoration()).toEqual({ status: 1, stdout: "" });
