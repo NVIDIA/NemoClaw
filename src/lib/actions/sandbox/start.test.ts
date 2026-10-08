@@ -17,6 +17,8 @@ import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provi
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type SandboxStartDeps, startSandbox } from "./start";
+import { buildSandboxInferenceInvocationCommand } from "./inference-invocation-probe";
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -347,6 +349,80 @@ describe("startSandbox native lifecycle", () => {
     );
     expect(h.probeGatewayProcess).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["openai-api", "nativeHostedProviderAttachment", "https://api.openai.com/v1/chat/completions"],
+    [
+      "nvidia-prod",
+      "nativeNvidiaProviderAttachment",
+      "https://integrate.api.nvidia.com/v1/chat/completions",
+    ],
+    ["openai-api", undefined, "https://inference.local/v1/chat/completions"],
+  ] as const)(
+    "probes the recorded restart route for %s via %s",
+    async (provider, field, endpoint) => {
+      const profile = nativeHostedProfile(provider)!;
+      const commands: string[] = [];
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async (input) => {
+        commands.push(buildSandboxInferenceInvocationCommand(input));
+        return { ok: true };
+      });
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          provider,
+          model: "model",
+          preferredInferenceApi: "openai-completions",
+          ...(field
+            ? {
+                [field]: {
+                  schemaVersion: 1,
+                  profileId: profile.profileId,
+                  providerName: profile.providerName,
+                  providerId: "provider-owned",
+                },
+              }
+            : {}),
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(commands).toEqual([expect.stringContaining(endpoint)]);
+      expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
+        h.verifyGateway.mock.invocationCallOrder[0],
+      );
+    },
+  );
+
+  it.each(["malformed", "mismatched"] as const)(
+    "refuses %s restart receipt without a probe",
+    async (state) => {
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-nvidia-inference-v1" as const,
+        providerName: "nemoclaw-nvidia-prod-v1" as const,
+        providerId: "provider-owned",
+      };
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async () => ({ ok: true }));
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          provider: state === "malformed" ? "nvidia-prod" : "openai-api",
+          model: "model",
+          nativeHostedProviderAttachment:
+            state === "malformed" ? { ...receipt, providerId: "" } : receipt,
+          nativeNvidiaProviderAttachment: receipt,
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+        "Native hosted provider attachment is invalid for the recorded inference provider",
+      );
+      expect(probeInferenceInvocation).not.toHaveBeenCalled();
+    },
+  );
 
   it("waits for the Hermes gateway process to settle before checking gateway health", async () => {
     const probeGatewayProcess = vi

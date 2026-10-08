@@ -19,13 +19,18 @@ export class NativeHostedProviderError extends Error {
 
 export function normalizeNativeHostedProviderAttachment(
   value: unknown,
+  expectedProvider?: string,
 ): NativeHostedProviderAttachment | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const receipt = value as Record<string, unknown>;
   const profile = NATIVE_HOSTED_PROFILES.find(
     (entry) => entry.profileId === receipt.profileId && entry.providerName === receipt.providerName,
   );
-  if (!profile) return undefined;
+  if (
+    !profile ||
+    (expectedProvider !== undefined && profile.logicalProvider !== expectedProvider.trim())
+  )
+    return undefined;
   if (
     receipt.schemaVersion !== 1 ||
     receipt.profileId !== profile.profileId ||
