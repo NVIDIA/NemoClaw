@@ -245,6 +245,10 @@ export function prepareRebuildResumeConfig(
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     sb.nativeNvidiaProviderAttachment,
   );
+  if (sb.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+    bail("Malformed native NVIDIA provider attachment; sandbox is untouched");
+    return null;
+  }
   return {
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     agent: rebuildAgent,

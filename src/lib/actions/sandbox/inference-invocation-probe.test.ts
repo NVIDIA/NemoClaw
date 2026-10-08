@@ -648,21 +648,35 @@ describe("native inference transport failures", () => {
   });
 });
 
-it.each(["", "opaque-real-token"])(
-  "rejects non-placeholder native probe credentials before use (%s)",
-  (value) => {
-    const result = spawnSync("sh", ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf used`], {
-      encoding: "utf8",
-      env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value },
-    });
-    expect(result.status).toBe(2);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("");
-  },
-);
+it.each([
+  "",
+  "opaque-real-token",
+  "openshell:resolve:env:OTHER_API_KEY",
+  "openshell:resolve:env:v123_OTHER_API_KEY",
+  "openshell:resolve:env:v_NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v123x_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:v${"1".repeat(21)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"a".repeat(63)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"A".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY_suffix",
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY\nother",
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY\n",
+])("rejects non-placeholder native probe credentials before use (%s)", (value) => {
+  const result = spawnSync("sh", ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf used`], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value },
+  });
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("");
+});
 
-it("uses the current supervisor credential generation for native probes", () => {
-  const value = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+it.each([
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:v${"1".repeat(20)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+])("uses the exact supervisor NVIDIA placeholder %s for native probes", (value) => {
   const result = spawnSync(
     "sh",
     ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf '%s' "$AUTH_HEADER"`],
