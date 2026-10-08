@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { GATEWAY_PORT, resolveGatewayName } from "../../onboard/gateway-binding/identity";
 import type {
   TelemetryOperation,
@@ -34,7 +35,7 @@ const active = new AsyncLocalStorage<Context>();
 function privateDescriptor(directory: string, file: string, limit: number, flags: number): number {
   const descriptor = fs.openSync(
     path.join(directory, file),
-    flags | (fs.constants.O_NOFOLLOW ?? 0),
+    flags | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
   );
   try {
     const stat = fs.fstatSync(descriptor);
@@ -53,11 +54,14 @@ function privateDescriptor(directory: string, file: string, limit: number, flags
   }
 }
 function privateFile(directory: string, file: string, limit: number): string {
-  const descriptor = privateDescriptor(directory, file, limit, fs.constants.O_RDONLY);
+  const opened = openRegularFileNoFollow(path.join(directory, file));
   try {
-    return fs.readFileSync(descriptor, "utf8");
+    const stat = opened.stat();
+    if ((stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid()))
+      throw new Error("Invalid telemetry receipt");
+    return opened.readBytes(limit).toString("utf8");
   } finally {
-    fs.closeSync(descriptor);
+    opened.close();
   }
 }
 function readMetadata(

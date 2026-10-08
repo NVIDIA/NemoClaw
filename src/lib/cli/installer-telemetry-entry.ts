@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import type { TelemetryOutcome, TelemetryScope, TelemetryState } from "../domain/telemetry/event";
 import {
   beginInstallerTelemetry,
@@ -40,16 +40,12 @@ function installedVersion(): string | undefined {
 
 function readBuildVersion(identityPath: string): string | undefined {
   try {
-    const fd = fs.openSync(identityPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const file = openRegularFileNoFollow(identityPath);
     let raw: string;
     try {
-      if (!fs.fstatSync(fd).isFile()) return undefined;
-      const bytes = Buffer.alloc(16 * 1024 + 1);
-      const length = fs.readSync(fd, bytes, 0, bytes.length, null);
-      if (length > 16 * 1024) return undefined;
-      raw = bytes.toString("utf8", 0, length);
+      raw = file.readBytes(16_384).toString("utf8");
     } finally {
-      fs.closeSync(fd);
+      file.close();
     }
     const identity = JSON.parse(raw) as { nemoclawVersion?: unknown };
     return typeof identity.nemoclawVersion === "string" &&

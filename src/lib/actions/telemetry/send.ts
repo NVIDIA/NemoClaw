@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import type {
   TelemetryOperationContext,
   TelemetryOperationEvent,
@@ -37,8 +37,12 @@ function publicVersion(
 function installedVersion(): unknown {
   try {
     const filename = path.resolve(__dirname, "../../../../dist/build-identity.json");
-    if (fs.statSync(filename).size > 16_384) return undefined;
-    return JSON.parse(fs.readFileSync(filename, "utf8")).nemoclawVersion;
+    const file = openRegularFileNoFollow(filename);
+    try {
+      return JSON.parse(file.readBytes(16_384).toString("utf8")).nemoclawVersion;
+    } finally {
+      file.close();
+    }
   } catch {
     return undefined;
   }
