@@ -46,10 +46,10 @@ Existing beta sandboxes without an attachment receipt require recreation. Status
 and launch readiness must refuse missing or mismatched ownership; they must not substitute the shared
 route. Native probes preserve the selected API protocol and the recorded gateway.
 Custom endpoints and local providers retain their existing routing behavior.
-V1alpha1 configuration export supports native NVIDIA attachments. Other native hosted
-profiles require an exporter follow-up and are refused before publication. Exporting an
-older shared-route sandbox continues to verify its original image endpoint without
-implicitly migrating it.
+V1alpha1 configuration export supports native NVIDIA, OpenAI, Anthropic, OpenRouter,
+and Hermes Provider attachments. Gemini export is refused before publication because
+V1 cannot consume that provider. Exporting an older shared-route sandbox continues to
+verify its original image endpoint without implicitly migrating it.
 
 Agent configuration preserves the provider's API protocol and native base URL.
 OpenRouter attribution comes from `native-hosted/openrouter-headers.ts` and is configured in each supported agent.

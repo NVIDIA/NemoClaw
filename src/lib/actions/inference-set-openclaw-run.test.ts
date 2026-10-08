@@ -176,11 +176,6 @@ describe("runInferenceSet OpenClaw routing", () => {
         model: "",
       },
       getNativeHostedProviderAuthority: () => gatewayAuthority,
-      getNativeNvidiaProviderAuthority: () => ({
-        ...gatewayAuthority,
-        profileId: "nemoclaw-nvidia-inference-v1",
-        providerName: "nemoclaw-nvidia-prod-v1",
-      }),
       providerAdapter,
       resolveCredentialValue: () => "",
     });
@@ -190,10 +185,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       deps,
     );
 
-    const recordAuthority =
-      profile.logicalProvider === "nvidia-prod"
-        ? deps.calls.setNativeNvidiaProviderAuthority
-        : deps.calls.setNativeHostedProviderAuthority;
+    const recordAuthority = deps.calls.setNativeHostedProviderAuthority;
     expect(recordAuthority).toHaveBeenCalledWith("nemoclaw", gatewayAuthority);
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "alpha",
@@ -252,7 +244,7 @@ describe("runInferenceSet OpenClaw routing", () => {
         model: "nvidia/previous-model",
         nativeHostedProviderAttachment: gatewayAuthority,
       },
-      getNativeNvidiaProviderAuthority: () => gatewayAuthority,
+      getNativeHostedProviderAuthority: () => gatewayAuthority,
       providerAdapter,
       resolveCredentialValue: () => "replacement-credential",
     });
@@ -265,7 +257,7 @@ describe("runInferenceSet OpenClaw routing", () => {
 
     expect(providerAdapter.updateProvider).toHaveBeenCalledOnce();
     expect(getProvider).toHaveBeenCalledTimes(2);
-    expect(deps.calls.setNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+    expect(deps.calls.setNativeHostedProviderAuthority).not.toHaveBeenCalled();
     expect(attachProvider).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
@@ -367,8 +359,8 @@ describe("runInferenceSet OpenClaw routing", () => {
           providerId: "previous-openai-id",
         },
       },
-      getNativeNvidiaProviderAuthority: () => undefined,
-      setNativeNvidiaProviderAuthority: () => {
+      getNativeHostedProviderAuthority: () => undefined,
+      setNativeHostedProviderAuthority: () => {
         throw new Error("state directory is read-only");
       },
       providerAdapter,
@@ -948,7 +940,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       },
       entry,
       updateSandbox,
-      getNativeNvidiaProviderAuthority: () => attachment,
+      getNativeHostedProviderAuthority: () => attachment,
       resolveCredentialValue: (key) => (key === "OPENAI_API_KEY" ? "synthetic-openai-key" : ""),
     });
 
@@ -1004,7 +996,7 @@ describe("runInferenceSet OpenClaw routing", () => {
         provider: "ollama-local",
         model: "gpt-5.4",
       },
-      getNativeNvidiaProviderAuthority: () => ({
+      getNativeHostedProviderAuthority: () => ({
         schemaVersion: 1,
         profileId: "nemoclaw-nvidia-inference-v1",
         providerName: "nemoclaw-nvidia-prod-v1",

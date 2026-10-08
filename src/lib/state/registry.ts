@@ -70,11 +70,6 @@ export {
   listExtraProviders,
   removeExtraProvider,
 } from "./registry/extra-providers";
-export {
-  clearNativeNvidiaProviderAuthority,
-  getNativeNvidiaProviderAuthority,
-  setNativeNvidiaProviderAuthority,
-} from "./registry/native-nvidia-provider-authority";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";

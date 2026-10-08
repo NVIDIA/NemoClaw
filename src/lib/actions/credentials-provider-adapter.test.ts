@@ -116,7 +116,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     });
     const providerId = "11111111-2222-4333-8444-555555555555";
     const adapter = nativeNvidiaProviderAdapter();
-    const setNativeNvidiaProviderAuthority = vi.fn();
+    const setNativeHostedProviderAuthority = vi.fn();
 
     const result = await runCredentialsAddAction(
       {
@@ -128,8 +128,8 @@ describe("credential actions use typed OpenShell provider results", () => {
       },
       {
         providerAdapter: adapter,
-        getNativeNvidiaProviderAuthority: () => undefined,
-        setNativeNvidiaProviderAuthority,
+        getNativeHostedProviderAuthority: () => undefined,
+        setNativeHostedProviderAuthority,
       },
     );
 
@@ -146,7 +146,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       config: [],
       fromExisting: false,
     });
-    expect(setNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw", {
+    expect(setNativeHostedProviderAuthority).toHaveBeenCalledWith("nemoclaw", {
       schemaVersion: 1,
       profileId: "nemoclaw-nvidia-inference-v1",
       providerName: "nemoclaw-nvidia-prod-v1",
@@ -170,8 +170,8 @@ describe("credential actions use typed OpenShell provider results", () => {
       },
       {
         providerAdapter: adapter,
-        getNativeNvidiaProviderAuthority: () => undefined,
-        setNativeNvidiaProviderAuthority: () => {
+        getNativeHostedProviderAuthority: () => undefined,
+        setNativeHostedProviderAuthority: () => {
           throw new Error("state directory is read-only");
         },
       },
@@ -202,7 +202,7 @@ describe("credential actions use typed OpenShell provider results", () => {
         },
       })),
     });
-    const setNativeNvidiaProviderAuthority = vi.fn();
+    const setNativeHostedProviderAuthority = vi.fn();
 
     const result = await runCredentialsAddAction(
       {
@@ -214,20 +214,20 @@ describe("credential actions use typed OpenShell provider results", () => {
       },
       {
         providerAdapter: adapter,
-        getNativeNvidiaProviderAuthority: () => ({
+        getNativeHostedProviderAuthority: () => ({
           schemaVersion: 1,
           profileId: "nemoclaw-nvidia-inference-v1",
           providerName: "nemoclaw-nvidia-prod-v1",
           providerId: "11111111-2222-4333-8444-555555555555",
         }),
-        setNativeNvidiaProviderAuthority,
+        setNativeHostedProviderAuthority,
       },
     );
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines.join("\n")).toContain("changed identity");
     expect(adapter.updateProvider).not.toHaveBeenCalled();
-    expect(setNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+    expect(setNativeHostedProviderAuthority).not.toHaveBeenCalled();
   });
 
   it("lists the native NVIDIA provider only by its logical credential name", async () => {
@@ -1042,7 +1042,7 @@ describe("credential actions use typed OpenShell provider results", () => {
   );
 
   it("clears native NVIDIA gateway authority only after provider deletion is confirmed", async () => {
-    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const clearNativeHostedProviderAuthority = vi.fn();
     const adapter = providerAdapter({
       getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
         ok: false,
@@ -1055,18 +1055,21 @@ describe("credential actions use typed OpenShell provider results", () => {
       { provider: "nvidia-prod", confirmed: true },
       {
         providerAdapter: adapter,
-        clearNativeNvidiaProviderAuthority,
+        clearNativeHostedProviderAuthority,
         listNativeNvidiaProviderAttachmentSandboxNames: () => [],
         withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
       },
     );
 
     expect(result.exitCode).toBe(0);
-    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
+    expect(clearNativeHostedProviderAuthority).toHaveBeenCalledWith(
+      "nemoclaw",
+      "nemoclaw-nvidia-inference-v1",
+    );
   });
 
   it("clears native NVIDIA authority when the provider is already absent", async () => {
-    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const clearNativeHostedProviderAuthority = vi.fn();
     const adapter = providerAdapter({
       getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
         ok: false,
@@ -1086,14 +1089,17 @@ describe("credential actions use typed OpenShell provider results", () => {
       { provider: "nvidia-prod", confirmed: true },
       {
         providerAdapter: adapter,
-        clearNativeNvidiaProviderAuthority,
+        clearNativeHostedProviderAuthority,
         listNativeNvidiaProviderAttachmentSandboxNames: () => [],
         withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
       },
     );
 
     expect(result.exitCode).toBe(0);
-    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
+    expect(clearNativeHostedProviderAuthority).toHaveBeenCalledWith(
+      "nemoclaw",
+      "nemoclaw-nvidia-inference-v1",
+    );
   });
 
   it("reports recovery for sandboxes detached before final deletion fails (#9806)", async () => {

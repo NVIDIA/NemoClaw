@@ -283,8 +283,6 @@ export function createDeps(options: {
   settleOpenClawPairing?: InferenceSetDeps["settleOpenClawPairing"];
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
   getNativeHostedProviderAuthority?: InferenceSetDeps["getNativeHostedProviderAuthority"];
-  getNativeNvidiaProviderAuthority?: InferenceSetDeps["getNativeNvidiaProviderAuthority"];
-  setNativeNvidiaProviderAuthority?: InferenceSetDeps["setNativeNvidiaProviderAuthority"];
   setNativeHostedProviderAuthority?: InferenceSetDeps["setNativeHostedProviderAuthority"];
 }): InferenceSetDeps & {
   calls: {
@@ -310,7 +308,6 @@ export function createDeps(options: {
     restartSandboxGateway: ReturnType<typeof vi.fn>;
     settleOpenClawPairing: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
-    setNativeNvidiaProviderAuthority: ReturnType<typeof vi.fn>;
     setNativeHostedProviderAuthority: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
@@ -394,7 +391,6 @@ export function createDeps(options: {
         (async (_gatewayName: string, operation: () => Promise<unknown> | unknown) =>
           await operation()),
     ),
-    setNativeNvidiaProviderAuthority: vi.fn(),
     setNativeHostedProviderAuthority: vi.fn(),
   };
   const providerAdapter =
@@ -448,9 +444,6 @@ export function createDeps(options: {
     getNativeHostedProviderAuthority: options.getNativeHostedProviderAuthority,
     setNativeHostedProviderAuthority:
       options.setNativeHostedProviderAuthority ?? calls.setNativeHostedProviderAuthority,
-    getNativeNvidiaProviderAuthority: options.getNativeNvidiaProviderAuthority,
-    setNativeNvidiaProviderAuthority:
-      options.setNativeNvidiaProviderAuthority ?? calls.setNativeNvidiaProviderAuthority,
     updateSandbox: calls.updateSandbox,
     getRequestedAgent: () => options.requestedAgent,
     loadSession: () => session,

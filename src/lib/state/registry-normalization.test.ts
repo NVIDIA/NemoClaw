@@ -57,7 +57,7 @@ describe("sandbox registry normalization", () => {
     ).toEqual(document);
   });
 
-  it("migrates NVIDIA ownership to one durable authority and shares compatibility API cleanup", async () => {
+  it("migrates legacy NVIDIA ownership alongside another hosted authority through the generic API", async () => {
     const receipt = {
       schemaVersion: 1 as const,
       profileId: "nemoclaw-nvidia-inference-v1",
@@ -77,18 +77,37 @@ describe("sandbox registry normalization", () => {
     );
     expect(disk).not.toHaveProperty("nativeNvidiaProviderAuthorities");
     expect(disk.gatewayNativeHostedProviderAuthorities).toEqual({ first: [receipt] });
-    expect(() =>
-      registry.setNativeNvidiaProviderAuthority("first", { ...receipt, providerId: "foreign" }),
-    ).toThrow("Conflicting native provider ownership receipts");
+    const hostedReceipt = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "openai-owned",
+    };
+    registry.setNativeHostedProviderAuthority("first", hostedReceipt);
+    expect(registry.getNativeHostedProviderAuthority("first", hostedReceipt.profileId)).toEqual(
+      hostedReceipt,
+    );
+    expect(registry.load().gatewayNativeHostedProviderAuthorities?.first).toEqual([
+      receipt,
+      hostedReceipt,
+    ]);
     expect(() =>
       registry.setNativeHostedProviderAuthority("first", { ...receipt, providerId: "foreign" }),
     ).toThrow("Conflicting native provider ownership receipts");
-    expect(registry.getNativeNvidiaProviderAuthority("first")).toEqual(receipt);
+    expect(
+      registry.getNativeHostedProviderAuthority("first", "nemoclaw-nvidia-inference-v1"),
+    ).toEqual(receipt);
     registry.clearNativeHostedProviderAuthority("first", receipt.profileId);
-    expect(registry.getNativeNvidiaProviderAuthority("first")).toBeUndefined();
-    registry.setNativeNvidiaProviderAuthority("first", receipt);
+    expect(
+      registry.getNativeHostedProviderAuthority("first", "nemoclaw-nvidia-inference-v1"),
+    ).toBeUndefined();
+    registry.setNativeHostedProviderAuthority("first", receipt);
     expect(registry.getNativeHostedProviderAuthority("first", receipt.profileId)).toEqual(receipt);
-    registry.clearNativeNvidiaProviderAuthority("first");
+    registry.clearNativeHostedProviderAuthority("first", "nemoclaw-nvidia-inference-v1");
+    expect(registry.getNativeHostedProviderAuthority("first", hostedReceipt.profileId)).toEqual(
+      hostedReceipt,
+    );
+    registry.clearNativeHostedProviderAuthority("first", hostedReceipt.profileId);
     expect(registry.load().gatewayNativeHostedProviderAuthorities).toBeUndefined();
   });
 
@@ -107,9 +126,9 @@ describe("sandbox registry normalization", () => {
       },
     };
     const { home, registry } = await loadRegistryDocument(document);
-    expect(() => registry.getNativeNvidiaProviderAuthority("first")).toThrow(
-      "Conflicting native provider ownership receipts",
-    );
+    expect(() =>
+      registry.getNativeHostedProviderAuthority("first", "nemoclaw-nvidia-inference-v1"),
+    ).toThrow("Conflicting native provider ownership receipts");
     expect(
       JSON.parse(fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8")),
     ).toEqual(document);
@@ -260,9 +279,13 @@ describe("sandbox registry normalization", () => {
       },
     });
 
-    expect(registry.getNativeNvidiaProviderAuthority("broken")).toBeUndefined();
-    expect(registry.getNativeNvidiaProviderAuthority("nemoclaw-19080")).toEqual(receipt);
-    registry.setNativeNvidiaProviderAuthority("nemoclaw-19081", {
+    expect(
+      registry.getNativeHostedProviderAuthority("broken", "nemoclaw-nvidia-inference-v1"),
+    ).toBeUndefined();
+    expect(
+      registry.getNativeHostedProviderAuthority("nemoclaw-19080", "nemoclaw-nvidia-inference-v1"),
+    ).toEqual(receipt);
+    registry.setNativeHostedProviderAuthority("nemoclaw-19081", {
       ...receipt,
       providerId: "22222222-3333-4444-8555-666666666666",
     });
@@ -270,8 +293,10 @@ describe("sandbox registry normalization", () => {
       "nemoclaw-19080": [receipt],
       "nemoclaw-19081": [{ ...receipt, providerId: "22222222-3333-4444-8555-666666666666" }],
     });
-    registry.clearNativeNvidiaProviderAuthority("nemoclaw-19080");
-    expect(registry.getNativeNvidiaProviderAuthority("nemoclaw-19080")).toBeUndefined();
+    registry.clearNativeHostedProviderAuthority("nemoclaw-19080", "nemoclaw-nvidia-inference-v1");
+    expect(
+      registry.getNativeHostedProviderAuthority("nemoclaw-19080", "nemoclaw-nvidia-inference-v1"),
+    ).toBeUndefined();
     expect(registry.getSandbox("alpha")).not.toHaveProperty("nativeHostedProviderAuthorities");
     expect(registry.getSandbox("beta")).not.toHaveProperty("nativeNvidiaProviderAuthority");
     expect(registry.getSandbox("beta")?.nativeHostedProviderAttachment).toEqual(receipt);

@@ -214,7 +214,6 @@ describe("native NVIDIA onboarding", () => {
     } as unknown as OpenShellProviderAdapter;
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
     const updateSandbox = vi.fn(() => true);
-    const setNativeNvidiaProviderAuthority = vi.fn(() => true);
     const setNativeHostedProviderAuthority = vi.fn();
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
@@ -228,7 +227,6 @@ describe("native NVIDIA onboarding", () => {
       getGatewayName: () => "onboarding-gateway",
       runOpenshell,
       updateSandbox,
-      setNativeNvidiaProviderAuthority,
       setNativeHostedProviderAuthority,
       getSandbox: () => null,
       upsertProvider: vi.fn(async () => ({ ok: true })),
@@ -296,36 +294,12 @@ describe("native NVIDIA onboarding", () => {
         },
       }),
     );
-    expect(setNativeHostedProviderAuthority.mock.calls).toEqual(
-      profile.logicalProvider === "nvidia-prod"
-        ? []
-        : [
-            [
-              "onboarding-gateway",
-              {
-                schemaVersion: 1,
-                profileId: profile.profileId,
-                providerName: profile.providerName,
-                providerId: "provider-id",
-              },
-            ],
-          ],
-    );
-    expect(setNativeNvidiaProviderAuthority.mock.calls).toEqual(
-      profile.logicalProvider === "nvidia-prod"
-        ? [
-            [
-              "onboarding-gateway",
-              {
-                schemaVersion: 1,
-                profileId: profile.profileId,
-                providerName: profile.providerName,
-                providerId: "provider-id",
-              },
-            ],
-          ]
-        : [],
-    );
+    expect(setNativeHostedProviderAuthority).toHaveBeenCalledExactlyOnceWith("onboarding-gateway", {
+      schemaVersion: 1,
+      profileId: profile.profileId,
+      providerName: profile.providerName,
+      providerId: "provider-id",
+    });
   });
 
   it("removes a new provider when gateway authority persistence fails (#12562)", async () => {
@@ -373,8 +347,8 @@ describe("native NVIDIA onboarding", () => {
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
       updateSandbox,
       getSandbox: () => null,
-      getNativeNvidiaProviderAuthority: () => undefined,
-      setNativeNvidiaProviderAuthority: () => {
+      getNativeHostedProviderAuthority: () => undefined,
+      setNativeHostedProviderAuthority: () => {
         throw new Error("state directory is read-only");
       },
       upsertProvider: vi.fn(async () => ({ ok: true })),
@@ -440,7 +414,7 @@ describe("native NVIDIA onboarding", () => {
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
       updateSandbox,
       getSandbox: () => null,
-      getNativeNvidiaProviderAuthority: () => ({
+      getNativeHostedProviderAuthority: () => ({
         schemaVersion: 1,
         profileId: "nemoclaw-nvidia-inference-v1",
         providerName: "nemoclaw-nvidia-prod-v1",

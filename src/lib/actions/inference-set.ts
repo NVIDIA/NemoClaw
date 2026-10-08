@@ -22,7 +22,6 @@ import {
   ensureNativeHostedProviderAttached,
   isNativeHostedProvider,
   normalizeNativeHostedProviderAttachment,
-  normalizeNativeNvidiaProviderAttachment,
   resolveGatewayNativeHostedProviderAuthority,
   resolveAgentInferenceApi,
   type NativeHostedProviderAttachment,
@@ -183,8 +182,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     defaultSandbox: string | null;
   };
   getNativeHostedProviderAuthority?: typeof registry.getNativeHostedProviderAuthority;
-  getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
-  setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
   setNativeHostedProviderAuthority: typeof registry.setNativeHostedProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
@@ -319,8 +316,6 @@ function defaultDeps(): InferenceSetDeps {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
     getNativeHostedProviderAuthority: registry.getNativeHostedProviderAuthority,
-    getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
-    setNativeNvidiaProviderAuthority: registry.setNativeNvidiaProviderAuthority,
     setNativeHostedProviderAuthority: registry.setNativeHostedProviderAuthority,
     updateSandbox: registry.updateSandbox,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
@@ -1329,12 +1324,10 @@ function readRegisteredNativeAuthority(
   gatewayName: string,
   provider: string,
 ) {
-  return provider === "nvidia-prod"
-    ? deps.getNativeNvidiaProviderAuthority?.(gatewayName)
-    : deps.getNativeHostedProviderAuthority?.(
-        gatewayName,
-        nativeHostedProfile(provider)!.profileId,
-      );
+  return deps.getNativeHostedProviderAuthority?.(
+    gatewayName,
+    nativeHostedProfile(provider)!.profileId,
+  );
 }
 
 function recordNativeProviderAuthority(
@@ -1343,9 +1336,7 @@ function recordNativeProviderAuthority(
   attachment?: NativeHostedProviderAttachment,
 ): void {
   if (!attachment) return;
-  const nvidiaAuthority = normalizeNativeNvidiaProviderAttachment(attachment);
-  if (nvidiaAuthority) deps.setNativeNvidiaProviderAuthority(gatewayName, nvidiaAuthority);
-  else deps.setNativeHostedProviderAuthority(gatewayName, attachment);
+  deps.setNativeHostedProviderAuthority(gatewayName, attachment);
 }
 
 function inferenceSelectionRecoveryDetail(

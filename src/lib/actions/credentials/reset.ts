@@ -28,7 +28,6 @@ import {
 } from "../../credentials/command-support";
 import { prompt as askPrompt, KNOWN_CREDENTIAL_ENV_KEYS } from "../../credentials/store";
 import { clearNativeHostedProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
-import { clearNativeNvidiaProviderAuthority } from "../../state/registry/native-nvidia-provider-authority";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import {
   listNativeNvidiaProviderAttachmentSandboxNames,
@@ -53,7 +52,6 @@ export type CredentialsResetDeps = Readonly<{
   listNativeHostedProviderAttachmentSandboxNames?: typeof listNativeHostedProviderAttachmentSandboxNames;
   withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   clearNativeHostedProviderAuthority?: typeof clearNativeHostedProviderAuthority;
-  clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
 }>;
 
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
@@ -228,12 +226,7 @@ export async function runCredentialsResetAction(
       recovery.error?.kind === "command" &&
       recovery.error.reason === "not_found"
     ) {
-      if (nativeProfile?.logicalProvider === "nvidia-prod") {
-        (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
-          target.gatewayName,
-        );
-      }
-      if (nativeProfile && nativeProfile.logicalProvider !== "nvidia-prod") {
+      if (nativeProfile) {
         (deps.clearNativeHostedProviderAuthority ?? clearNativeHostedProviderAuthority)(
           target.gatewayName,
           nativeProfile.profileId,
@@ -253,15 +246,10 @@ export async function runCredentialsResetAction(
     if (!outcome.ok) return fail(outcome.lines);
 
     forgetExtraProvider(publicKey);
-    if (nativeProfile && nativeProfile.logicalProvider !== "nvidia-prod") {
+    if (nativeProfile) {
       (deps.clearNativeHostedProviderAuthority ?? clearNativeHostedProviderAuthority)(
         target.gatewayName,
         nativeProfile.profileId,
-      );
-    }
-    if (nativeProfile?.logicalProvider === "nvidia-prod") {
-      (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
-        target.gatewayName,
       );
     }
     return ok(outcome.lines);

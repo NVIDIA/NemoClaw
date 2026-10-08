@@ -20,8 +20,6 @@ const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/pro
 const {
   getNativeHostedProviderAuthority,
   setNativeHostedProviderAuthority,
-  getNativeNvidiaProviderAuthority,
-  setNativeNvidiaProviderAuthority,
 } = require("../state/registry/native-nvidia-provider-authority");
 const {
   LLAMA_CPP_CREDENTIAL_ENV,
@@ -401,8 +399,6 @@ function setupInferenceProviderDeps(runOpenshell) {
     providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
     getNativeHostedProviderAuthority,
     setNativeHostedProviderAuthority,
-    getNativeNvidiaProviderAuthority,
-    setNativeNvidiaProviderAuthority,
   };
 }
 

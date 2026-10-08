@@ -55,7 +55,7 @@ describe("native NVIDIA credential reset ownership", () => {
         operations.push("delete");
         return deleteResult;
       });
-      const clearNativeNvidiaProviderAuthority = vi.fn(() => operations.push("clear-authority"));
+      const clearNativeHostedProviderAuthority = vi.fn(() => operations.push("clear-authority"));
       const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName?: string) =>
         gatewayName === "nemoclaw" ? ["alpha"] : [],
       );
@@ -64,7 +64,7 @@ describe("native NVIDIA credential reset ownership", () => {
         { provider: "nvidia-prod", confirmed: true },
         {
           providerAdapter: adapter(deleteProvider),
-          clearNativeNvidiaProviderAuthority,
+          clearNativeHostedProviderAuthority,
           listNativeNvidiaProviderAttachmentSandboxNames,
           withGatewayRouteMutationLock: async (_gatewayName, operation) => {
             operations.push("lock");
@@ -79,7 +79,7 @@ describe("native NVIDIA credential reset ownership", () => {
         "nemoclaw",
       );
       expect(deleteProvider).not.toHaveBeenCalled();
-      expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+      expect(clearNativeHostedProviderAuthority).not.toHaveBeenCalled();
       expect(result.failureLines).toContain("  'nvidia-prod' is recorded by sandbox(es): alpha.");
       expect(result.failureLines).toContain("  No provider or ownership authority was changed.");
       expect(result.failureLines).toContain("    nemoclaw alpha destroy");
@@ -99,7 +99,7 @@ describe("native NVIDIA credential reset ownership", () => {
       const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
         ok: true,
       }));
-      const clearNativeNvidiaProviderAuthority = vi.fn();
+      const clearNativeHostedProviderAuthority = vi.fn();
       const providerAdapter = adapter(deleteProvider);
       providerAdapter.getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
         state === "present"
@@ -121,8 +121,7 @@ describe("native NVIDIA credential reset ownership", () => {
         { provider: profile.logicalProvider, confirmed: true },
         {
           providerAdapter,
-          clearNativeNvidiaProviderAuthority,
-          clearNativeHostedProviderAuthority: clearNativeNvidiaProviderAuthority,
+          clearNativeHostedProviderAuthority,
           listNativeHostedProviderAttachmentSandboxNames: () => [],
           listNativeNvidiaProviderAttachmentSandboxNames: () => [],
           withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
@@ -135,7 +134,7 @@ describe("native NVIDIA credential reset ownership", () => {
         timeoutMs: 30_000,
       });
       expect(deleteProvider).not.toHaveBeenCalled();
-      expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+      expect(clearNativeHostedProviderAuthority).not.toHaveBeenCalled();
       expect(result.failureLines.join("\n")).toContain("ownership conflict");
     },
   );
@@ -199,7 +198,7 @@ describe("native NVIDIA credential reset ownership", () => {
     const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
       ok: true,
     }));
-    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const clearNativeHostedProviderAuthority = vi.fn();
     const listNativeNvidiaProviderAttachmentSandboxNames = vi.fn((gatewayName?: string) =>
       gatewayName === "other-gateway" ? ["beta"] : [],
     );
@@ -208,7 +207,7 @@ describe("native NVIDIA credential reset ownership", () => {
       { provider: "nvidia-prod", confirmed: true },
       {
         providerAdapter: adapter(deleteProvider),
-        clearNativeNvidiaProviderAuthority,
+        clearNativeHostedProviderAuthority,
         listNativeNvidiaProviderAttachmentSandboxNames,
         withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
       },
@@ -221,7 +220,10 @@ describe("native NVIDIA credential reset ownership", () => {
     expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
       "nemoclaw-nvidia-prod-v1",
     ]);
-    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledExactlyOnceWith("nemoclaw");
+    expect(clearNativeHostedProviderAuthority).toHaveBeenCalledExactlyOnceWith(
+      "nemoclaw",
+      "nemoclaw-nvidia-inference-v1",
+    );
   });
 
   it.each(NATIVE_HOSTED_PROFILES)(
@@ -235,7 +237,6 @@ describe("native NVIDIA credential reset ownership", () => {
         { provider: profile.providerName, confirmed: true },
         {
           providerAdapter,
-          clearNativeNvidiaProviderAuthority: vi.fn(),
           clearNativeHostedProviderAuthority: vi.fn(),
           listNativeHostedProviderAttachmentSandboxNames: () => [],
           listNativeNvidiaProviderAttachmentSandboxNames: () => [],
@@ -264,12 +265,12 @@ describe("native NVIDIA credential reset ownership", () => {
             }
           : { ok: true },
       );
-      const clearNativeNvidiaProviderAuthority = vi.fn();
+      const clearNativeHostedProviderAuthority = vi.fn();
       const result = await runCredentialsResetAction(
         { provider: "nvidia-prod", confirmed: true },
         {
           providerAdapter: adapter(deleteProvider),
-          clearNativeNvidiaProviderAuthority,
+          clearNativeHostedProviderAuthority,
           listNativeNvidiaProviderAttachmentSandboxNames: () => [],
           withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
         },
@@ -278,20 +279,20 @@ describe("native NVIDIA credential reset ownership", () => {
       expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
         "nemoclaw-nvidia-prod-v1",
       ]);
-      expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+      expect(clearNativeHostedProviderAuthority).not.toHaveBeenCalled();
       expect(result.failureLines.join("\n")).toContain("delete failed");
     },
   );
 
   it("fails closed before reset when registry ownership cannot be read", async () => {
     const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
-    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const clearNativeHostedProviderAuthority = vi.fn();
 
     const result = await runCredentialsResetAction(
       { provider: "nvidia-prod", confirmed: true },
       {
         providerAdapter: adapter(deleteProvider),
-        clearNativeNvidiaProviderAuthority,
+        clearNativeHostedProviderAuthority,
         listNativeNvidiaProviderAttachmentSandboxNames: () => {
           throw new Error("opaque registry failure");
         },
@@ -301,7 +302,7 @@ describe("native NVIDIA credential reset ownership", () => {
 
     expect(result.exitCode).toBe(1);
     expect(deleteProvider).not.toHaveBeenCalled();
-    expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+    expect(clearNativeHostedProviderAuthority).not.toHaveBeenCalled();
     expect(result.failureLines).toEqual([
       "  Could not safely inspect native NVIDIA inference ownership on gateway 'nemoclaw'.",
       "  No provider or ownership authority was changed.",

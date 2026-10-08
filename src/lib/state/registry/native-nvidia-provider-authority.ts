@@ -11,34 +11,9 @@ import {
 } from "../../inference/native-hosted/authority";
 import { isValidNativeProviderGateway as isValidName } from "./native-nvidia-provider-authority-state";
 
-import {
-  normalizeNativeNvidiaProviderAttachment,
-  type NativeNvidiaProviderAttachment,
-} from "../../inference/native-nvidia/contract";
 import type { SandboxRegistry } from "./types";
 import { withLock } from "./lock";
 import { load, save } from "./persistence";
-
-export function getNativeNvidiaProviderAuthority(
-  gatewayName: string,
-): NativeNvidiaProviderAttachment | undefined {
-  return normalizeNativeNvidiaProviderAttachment(
-    getNativeHostedProviderAuthority(gatewayName, "nemoclaw-nvidia-inference-v1"),
-  );
-}
-
-export function setNativeNvidiaProviderAuthority(
-  gatewayName: string,
-  receipt: NativeNvidiaProviderAttachment,
-): void {
-  if (receipt.profileId !== "nemoclaw-nvidia-inference-v1")
-    throw new Error("Invalid native NVIDIA gateway provider authority");
-  setNativeHostedProviderAuthority(gatewayName, receipt);
-}
-
-export function clearNativeNvidiaProviderAuthority(gatewayName: string): void {
-  clearNativeHostedProviderAuthority(gatewayName, "nemoclaw-nvidia-inference-v1");
-}
 
 export function getNativeHostedProviderAuthority(
   gatewayName: string,
