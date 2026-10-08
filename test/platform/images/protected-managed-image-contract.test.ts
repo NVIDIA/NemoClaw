@@ -223,6 +223,63 @@ describe("protected managed-image build contract", () => {
     ).toThrow("activation contract is invalid");
   });
 
+  it("accepts an immutable isolated candidate base for DCode", () => {
+    const localBase = `localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code@sha256:${"d".repeat(64)}`;
+    const valid = contracts("linux/amd64").map((entry) =>
+      entry.agent === "langchain-deepagents-code" ? { ...entry, baseReference: localBase } : entry,
+    );
+    expect(parseProtectedManagedImageContracts(valid, "linux/amd64")).toEqual(valid);
+  });
+
+  it.each(["openclaw", "hermes"])("rejects a candidate DCode base for %s", (agent) => {
+    const localBase = `localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code@sha256:${"d".repeat(64)}`;
+    const wrongAgent = contracts("linux/amd64").map((entry) =>
+      entry.agent === agent ? { ...entry, baseReference: localBase } : entry,
+    );
+    expect(() => parseProtectedManagedImageContracts(wrongAgent, "linux/amd64")).toThrow(
+      /base reference/,
+    );
+  });
+
+  it.each([
+    `example.com/nemoclaw-managed-protected-base/langchain-deepagents-code@sha256:${"d".repeat(64)}`,
+    "localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code:latest",
+  ])("rejects an untrusted or mutable candidate base %s", (invalid) => {
+    const wrongReference = contracts("linux/amd64").map((entry) =>
+      entry.agent === "langchain-deepagents-code" ? { ...entry, baseReference: invalid } : entry,
+    );
+    expect(() => parseProtectedManagedImageContracts(wrongReference, "linux/amd64")).toThrow(
+      /base reference/,
+    );
+  });
+
+  it("accepts candidate-base activation with the explicit version 2 contract", () => {
+    const activation = {
+      agents: PROTECTED_MANAGED_IMAGE_AGENTS,
+      contractVersion: 2,
+      dcodeBaseSource: "candidate",
+      jobId: PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
+      platforms: PROTECTED_MANAGED_IMAGE_PLATFORMS,
+    };
+    expect(parseProtectedManagedImageActivation(activation)).toEqual(activation);
+  });
+
+  it.each([
+    { contractVersion: "2", dcodeBaseSource: "candidate" },
+    { contractVersion: 1, dcodeBaseSource: "candidate" },
+    { contractVersion: 2, dcodeBaseSource: "latest" },
+    { contractVersion: 2, dcodeBaseSource: undefined },
+  ])("rejects invalid candidate-base activation %j", (invalid) => {
+    expect(() =>
+      parseProtectedManagedImageActivation({
+        agents: PROTECTED_MANAGED_IMAGE_AGENTS,
+        jobId: PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
+        platforms: PROTECTED_MANAGED_IMAGE_PLATFORMS,
+        ...invalid,
+      }),
+    ).toThrow();
+  });
+
   it("ships the exact activation contract consumed by the trusted lane (#7744)", () => {
     const activation = JSON.parse(
       readFileSync(PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, "utf8"),
@@ -230,7 +287,8 @@ describe("protected managed-image build contract", () => {
 
     expect(parseProtectedManagedImageActivation(activation)).toEqual({
       agents: PROTECTED_MANAGED_IMAGE_AGENTS,
-      contractVersion: 1,
+      contractVersion: 2,
+      dcodeBaseSource: "candidate",
       jobId: PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
       platforms: PROTECTED_MANAGED_IMAGE_PLATFORMS,
     });

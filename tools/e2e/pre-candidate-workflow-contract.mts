@@ -61,6 +61,8 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
   "Install reviewed npm for trusted E2E planning": {},
   "Install trusted E2E planner dependencies": {},
   "Generate E2E target matrix": {
+    NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE:
+      "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",
     NEMOCLAW_GATEWAY_RUNTIMES:
       "${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}",

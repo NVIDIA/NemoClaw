@@ -85,6 +85,15 @@ Each consumer runs the pinned preparation action with `build-cli: "false"` to in
 The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
+The trusted controller accepts both the original v1 multiarch activation and v2
+candidate Deep Agents base activation. Version 2 builds the candidate's
+`agents/langchain-deepagents-code/Dockerfile.base` on the native CPU runner,
+using the candidate checkout's pins and lockfile. It exports the base as OCI
+content plus a receipt bound to the source SHA, trusted workflow SHA, platform,
+run ID, and attempt. The protected runtime controller verifies the receipt and
+every config, manifest, and layer digest before using that base offline.
+It does not substitute the published main base when verification fails.
+Version 1 retains its published-base behavior.
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -169,6 +178,17 @@ It binds every artifact to the workflow run, attempt, candidate commit, artifact
 It requires every shipped agent once, one candidate revision, one release, and one cohort before it assembles the candidate catalog.
 No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
 Manual PR E2E does not fall back to local Dockerfile builds.
+
+Routine changes to existing dependency pins, lockfiles, and image digests use
+this path policy; they do not need a new dependency registry or per-version
+workflow edits. Regression cases exercise the real policy for OpenClaw, Hermes,
+Deep Agents, Pi, OpenShell, and shared npm inputs. These are artifact-selection
+tests, not live qualification. OpenShell's gateway-only jobs select the candidate
+release through the existing trusted installer verifier. New release trust
+records, controller protocols, permissions, and unsupported platforms still need
+their own review. Historical upgrade fixtures keep their historical versions.
+Pi retains its separate candidate contract and qualification receipts below;
+selecting a shipped-agent catalog does not qualify Pi.
 
 Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
 Changed-input runs pass the authenticated candidate catalog separately to those consumers.

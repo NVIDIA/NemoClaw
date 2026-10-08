@@ -81,6 +81,7 @@ export type E2eWorkflowPlan = {
 };
 
 type WorkflowPlanOptions = {
+  includeStagingBrevLaunchable?: boolean;
   changedFiles?: readonly string[];
   gatewayRuntimes?: readonly E2eGatewayRuntime[];
 };
@@ -769,7 +770,10 @@ export function buildE2eWorkflowPlan(
     if (
       changedFiles.some((file) => FULL_SUITE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
     ) {
-      const plan = buildE2eWorkflowPlan(selectors, { gatewayRuntimes });
+      const plan = buildE2eWorkflowPlan(selectors, {
+        gatewayRuntimes,
+        includeStagingBrevLaunchable: options.includeStagingBrevLaunchable,
+      });
       const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
       const selectedJobs = [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])];
       return withCoverageMatrix(
@@ -814,7 +818,9 @@ export function buildE2eWorkflowPlan(
     selectedJobSet.add(JETSON_DISPATCH_TARGET);
     const selectedJobs = [...selectedJobSet];
     const runtimeSelectedJobs = selectedJobs.filter(
-      (job) => workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
+      (job) =>
+        (job !== "staging-brev-launchable" || options.includeStagingBrevLaunchable !== false) &&
+        workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
     );
     const selectedTests = credentialFreeTestMatrix(
       credentialFreeTests.filter((row) => changedFiles.includes(row.file)),
@@ -869,6 +875,7 @@ export function buildE2eWorkflowPlan(
   const selectedJobs = inventory.workflowJobs.filter(
     (job) =>
       !inventory.explicitOnlyJobs.includes(job) &&
+      (job !== "staging-brev-launchable" || options.includeStagingBrevLaunchable !== false) &&
       (job !== SHARED_E2E_JOB_ID || testMatrix.length > 0) &&
       workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
   );
@@ -1155,7 +1162,12 @@ export function writeE2eWorkflowPlanCiOutput(
   );
   const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
-  const planned = buildE2eWorkflowPlan(selectors, { changedFiles, gatewayRuntimes });
+  const planned = buildE2eWorkflowPlan(selectors, {
+    changedFiles,
+    gatewayRuntimes,
+    includeStagingBrevLaunchable:
+      environment.NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE === "true",
+  });
   const plan = validateE2eWorkflowPlan(planned);
   const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {

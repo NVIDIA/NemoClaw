@@ -31,7 +31,8 @@ export type ProtectedManagedImageContract = {
 
 export type ProtectedManagedImageActivation = {
   readonly agents: readonly ShippedManagedImageAgent[];
-  readonly contractVersion: 1;
+  readonly contractVersion: 1 | 2;
+  readonly dcodeBaseSource?: "candidate";
   readonly jobId: typeof PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
   readonly platforms: readonly ProtectedManagedImagePlatform[];
 };
@@ -137,8 +138,16 @@ function parseEntry(
   const basePrefix = `${BASE_REPOSITORIES[entry.agent as ShippedManagedImageAgent]}@`;
   if (
     typeof entry.baseReference !== "string" ||
-    !entry.baseReference.startsWith(basePrefix) ||
-    !DIGEST_PATTERN.test(entry.baseReference.slice(basePrefix.length))
+    (!(
+      entry.baseReference.startsWith(basePrefix) &&
+      DIGEST_PATTERN.test(entry.baseReference.slice(basePrefix.length))
+    ) &&
+      !(
+        entry.agent === "langchain-deepagents-code" &&
+        /^localhost:5000\/nemoclaw-managed-protected-base\/langchain-deepagents-code@sha256:[a-f0-9]{64}$/u.test(
+          entry.baseReference,
+        )
+      ))
   ) {
     throw new Error("protected managed-image contract entry has an invalid base reference");
   }
@@ -180,11 +189,14 @@ export function parseProtectedManagedImageActivation(
   const activation = record(value);
   requireExactKeys(
     activation,
-    ["agents", "contractVersion", "jobId", "platforms"],
+    activation.contractVersion === 2
+      ? ["agents", "contractVersion", "dcodeBaseSource", "jobId", "platforms"]
+      : ["agents", "contractVersion", "jobId", "platforms"],
     "protected managed-image activation",
   );
   if (
-    activation.contractVersion !== 1 ||
+    (activation.contractVersion !== 1 && activation.contractVersion !== 2) ||
+    (activation.contractVersion === 2 && activation.dcodeBaseSource !== "candidate") ||
     activation.jobId !== PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID ||
     JSON.stringify(activation.agents) !== JSON.stringify(PROTECTED_MANAGED_IMAGE_AGENTS) ||
     JSON.stringify(activation.platforms) !== JSON.stringify(PROTECTED_MANAGED_IMAGE_PLATFORMS)
@@ -193,7 +205,8 @@ export function parseProtectedManagedImageActivation(
   }
   return {
     agents: PROTECTED_MANAGED_IMAGE_AGENTS,
-    contractVersion: 1,
+    contractVersion: activation.contractVersion as 1 | 2,
+    ...(activation.contractVersion === 2 ? { dcodeBaseSource: "candidate" as const } : {}),
     jobId: PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
     platforms: PROTECTED_MANAGED_IMAGE_PLATFORMS,
   };
