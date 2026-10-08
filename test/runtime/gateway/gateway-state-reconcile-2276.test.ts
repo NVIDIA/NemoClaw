@@ -185,12 +185,24 @@ if (args[0] === "inference" && args[1] === "get") {
 }
 
 if (args[0] === "provider" && args[1] === "get") {
-  process.stdout.write("Name: nemoclaw-nvidia-prod-v1\\nType: nemoclaw-nvidia-inference-v1\\nId: 11111111-2222-4333-8444-555555555555\\nResource version: 1\\nCredential keys: NVIDIA_INFERENCE_API_KEY\\nConfig keys: <none>\\n");
-  process.exit(0);
+  if (args.at(-1) === "nvidia-prod") {
+    process.stdout.write("Name: nvidia-prod\\nType: openai\\nId: 11111111-2222-4333-8444-555555555555\\nResource version: 1\\nCredential keys: NVIDIA_INFERENCE_API_KEY\\nConfig keys: OPENAI_BASE_URL\\n");
+    process.exit(0);
+  }
+  process.stderr.write("Error: provider '" + args.at(-1) + "' not found\\n");
+  process.exit(1);
 }
 
 if (args[0] === "provider" && args[1] === "list") {
-  process.stdout.write('[{"name":"nemoclaw-nvidia-prod-v1","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
+  process.stdout.write('[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
+  process.exit(0);
+}
+
+if (args[0] === "settings" && args[1] === "get") {
+  process.stdout.write(JSON.stringify({
+    scope: "global",
+    settings: { providers_v2_enabled: "true" },
+  }));
   process.exit(0);
 }
 
@@ -304,7 +316,7 @@ if (a[0] === "image" && a[1] === "inspect") {
   const formatIndex = a.indexOf("--format");
   const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
   if (format === "{{.Id}}") process.stdout.write("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n");
-  if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  if (format === "{{json .RepoDigests}}") process.stdout.write('[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
   process.exit(0);
 }
 if (a[0] === "tag" || a[0] === "rmi") process.exit(0);
