@@ -239,6 +239,81 @@ impl Backend for ClusterServicesBackend {
     }
 }
 
+/// Keep SDK-owned cluster identities at the platform boundary while OpenShell
+/// reconciliation operates on its existing registration and profile rows.
+pub struct OpenShellServices;
+
+#[async_trait::async_trait]
+impl openshell_provider::Services for OpenShellServices {
+    fn validate_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<(), ObservationError> {
+        nemoclaw_sdk::services::authentication::Source::parse(source, owner, endpoint).map(|_| ())
+    }
+
+    async fn resolve_credential_source(
+        &self,
+        source: &str,
+        owner: &str,
+        endpoint: &str,
+    ) -> Result<String, ObservationError> {
+        let source =
+            nemoclaw_sdk::services::authentication::Source::parse(source, owner, endpoint)?;
+        crate::services::authentication::resolve(&source).await
+    }
+
+    fn validate_cluster_source(&self, row: &Row) -> Result<(), ObservationError> {
+        profile_storage(row).map(|_| ())
+    }
+
+    async fn cluster_addresses(
+        &self,
+        row: &Row,
+    ) -> Result<Vec<std::net::IpAddr>, ObservationError> {
+        endpoint_addresses(&profile_storage(row)?, &row["endpoint"]).await
+    }
+}
+
+fn profile_storage(row: &Row) -> Result<StorageSpec, ObservationError> {
+    let storage = StorageSpec::decode(
+        row.get("cluster_source")
+            .ok_or(ObservationError::Incomplete)?,
+    )
+    .map_err(|_| ObservationError::BindingMismatch)?;
+    if row.get("owner") != Some(&storage.owner) {
+        return Err(ObservationError::BindingMismatch);
+    }
+    let name = row
+        .get("name")
+        .and_then(|name| name.strip_prefix("nemoclaw-inference-"))
+        .ok_or(ObservationError::Query)?;
+    let authenticated = match row.get("authenticated").map(String::as_str) {
+        Some("true") => true,
+        Some("false") => false,
+        _ => return Err(ObservationError::Query),
+    };
+    let kind = if row
+        .get("provider_type")
+        .is_some_and(|kind| kind == "anthropic")
+    {
+        nemoclaw_sdk::config::InferenceProviderKind::Anthropic
+    } else {
+        nemoclaw_sdk::config::InferenceProviderKind::Openai
+    };
+    nemoclaw_sdk::config::cluster_inference_profile(
+        name,
+        row.get("endpoint").ok_or(ObservationError::Incomplete)?,
+        kind,
+        authenticated,
+        &storage,
+        &[],
+    )?;
+    Ok(storage)
+}
+
 pub async fn resolve_credential(storage: &StorageSpec) -> Result<String, ObservationError> {
     operations(storage).await?.credential(storage).await
 }
@@ -255,6 +330,62 @@ pub async fn endpoint_addresses(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openshell_service_adapter_validates_compiled_cluster_profile_identity() {
+        use openshell_provider::Services as _;
+
+        for source in [
+            include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let document = nemoclaw_sdk::config::Document::parse(source).unwrap();
+            let generations = [
+                "workspace",
+                "provider",
+                "sandbox",
+                "kubernetes_storage",
+                "kubernetes_gateway",
+                "inference_service",
+                "ollama_service",
+            ]
+            .map(|kind| (kind.into(), "a".repeat(32)))
+            .into();
+            let profile = nemoclaw_sdk::compile::targets(&document, &generations)
+                .unwrap()
+                .into_iter()
+                .find(|target| target.kind == "provider_profile")
+                .unwrap()
+                .values;
+            assert_eq!(OpenShellServices.validate_cluster_source(&profile), Ok(()));
+
+            let storage = StorageSpec::decode(&profile["cluster_source"]).unwrap();
+            for (field, value) in [
+                ("owner", "foreign-owner".into()),
+                (
+                    "endpoint",
+                    profile["endpoint"].replacen(&storage.name, "foreign-model", 1),
+                ),
+                (
+                    "authenticated",
+                    if profile["authenticated"] == "true" {
+                        "false"
+                    } else {
+                        "true"
+                    }
+                    .into(),
+                ),
+            ] {
+                let mut changed = profile.clone();
+                changed.insert(field.into(), value);
+                assert_eq!(
+                    OpenShellServices.validate_cluster_source(&changed),
+                    Err(ObservationError::BindingMismatch),
+                    "{field}"
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn plan_rejects_bound_port_changes_before_reading_metadata_or_cluster_credentials() {

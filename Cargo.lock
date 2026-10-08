@@ -2266,6 +2266,8 @@ dependencies = [
  "async-trait",
  "nemoclaw-runtime",
  "regex",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "url",
 ]
@@ -2456,6 +2458,7 @@ dependencies = [
  "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",
+ "openshell-provider",
  "openshell-sdk",
  "prost",
  "regex",
@@ -2836,6 +2839,28 @@ dependencies = [
  "noyalib",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "openshell-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-backend",
+ "nemoclaw-docker",
+ "nemoclaw-openshell",
+ "nemoclaw-sdk",
+ "nemoclaw-tofu",
+ "openshell-core",
+ "openshell-policy",
+ "openshell-sdk",
+ "prost",
+ "serde",
+ "serde_json",
+ "tf-provider",
+ "tokio",
+ "tokio-util",
+ "tonic",
 ]
 
 [[package]]

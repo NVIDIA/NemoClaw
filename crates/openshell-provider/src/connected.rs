@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use nemoclaw_sdk::config::SearchProvider;
+use nemoclaw_openshell::search::SearchProvider;
 use std::{collections::HashMap, time::Duration};
 
 fn value<'a>(row: &'a Row, field: &str) -> &'a str {
@@ -56,10 +56,10 @@ pub(super) fn create_sandbox_request(
 }
 
 impl ConnectedOpenShellGateway {
-    pub(in crate::openshell) async fn gateway_capabilities(
+    pub(crate) async fn gateway_capabilities(
         &self,
-    ) -> Result<nemoclaw_sdk::discovery::GatewayCapabilities, ObservationError> {
-        nemoclaw_discovery::gateway::capabilities(&self.client).await
+    ) -> Result<nemoclaw_openshell::GatewayCapabilities, ObservationError> {
+        nemoclaw_openshell::capabilities(&self.client).await
     }
 
     async fn provider(&self, want: &Row) -> Result<proto::Provider, ObservationError> {
@@ -70,12 +70,12 @@ impl ConnectedOpenShellGateway {
             "brave" | "tavily"
                 if search.is_some_and(|provider| {
                     value(want, "name")
-                        == nemoclaw_sdk::config::search_provider_name(
+                        == nemoclaw_openshell::search::search_provider_name(
                             provider,
                             value(want, "credential_env"),
                             value(want, "profile_name"),
                         )
-                        && nemoclaw_sdk::config::SearchProvider::from_profile(value(
+                        && nemoclaw_openshell::search::SearchProvider::from_profile(value(
                             want,
                             "profile_name",
                         )) == Some(provider)
@@ -97,13 +97,16 @@ impl ConnectedOpenShellGateway {
                 .await?
                 .ok_or(ObservationError::BindingMismatch)?;
             let authenticated = !source.is_empty() || !value(want, "credential_env").is_empty();
-            let profile = if let Some(storage) = profile::cluster_source(&bound)? {
-                nemoclaw_sdk::config::cluster_inference_profile(
+            let mut profile_fields = bound.clone();
+            profile_fields.insert("endpoint".into(), value(want, "endpoint").into());
+            profile_fields.insert("provider_type".into(), value(want, "provider_type").into());
+            profile_fields.insert("authenticated".into(), authenticated.to_string());
+            let profile = if profile::cluster_source(&profile_fields, self.services.as_ref())? {
+                nemoclaw_openshell::profile::cluster_definition(
                     value(want, "name"),
                     value(want, "endpoint"),
                     kind.parse().map_err(|_| ObservationError::Query)?,
                     authenticated,
-                    &storage,
                     &[],
                 )?
             } else {
@@ -134,14 +137,9 @@ impl ConnectedOpenShellGateway {
             if !value(want, "credential_env").is_empty() {
                 return Err(ObservationError::BindingMismatch);
             }
-            crate::services::authentication::resolve(
-                &nemoclaw_sdk::services::authentication::Source::parse(
-                    source,
-                    value(want, "owner"),
-                    value(want, "endpoint"),
-                )?,
-            )
-            .await?
+            self.services
+                .resolve_credential_source(source, value(want, "owner"), value(want, "endpoint"))
+                .await?
         } else {
             match value(want, "credential_env") {
                 "" => "empty".into(),
@@ -179,10 +177,7 @@ impl ConnectedOpenShellGateway {
         })
     }
 
-    pub(in crate::openshell) async fn create_workspace(
-        &self,
-        want: &Row,
-    ) -> Result<String, ObservationError> {
+    pub(crate) async fn create_workspace(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let response = self
             .client
@@ -193,19 +188,14 @@ impl ConnectedOpenShellGateway {
                 ..Default::default()
             }))
             .await
-            .map_err(|error| {
-                nemoclaw_discovery::gateway::remote_rejection("CreateWorkspace", &error)
-            })?
+            .map_err(|error| nemoclaw_openshell::remote_rejection("CreateWorkspace", &error))?
             .into_inner();
         let row = base(response.workspace.and_then(|w| w.metadata), name, false)?;
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
     }
 
-    pub(in crate::openshell) async fn create_provider(
-        &self,
-        want: &Row,
-    ) -> Result<String, ObservationError> {
+    pub(crate) async fn create_provider(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         let response = self
@@ -224,10 +214,7 @@ impl ConnectedOpenShellGateway {
         Ok(row["id"].clone())
     }
 
-    pub(in crate::openshell) async fn create_sandbox(
-        &self,
-        want: &Row,
-    ) -> Result<String, ObservationError> {
+    pub(crate) async fn create_sandbox(&self, want: &Row) -> Result<String, ObservationError> {
         let name = value(want, "name");
         let grants = self.sandbox_cluster_grants(want).await?;
         let response = self
@@ -235,16 +222,14 @@ impl ConnectedOpenShellGateway {
             .raw_grpc()
             .create_sandbox(self.request(create_sandbox_request(want, &grants)?))
             .await
-            .map_err(|error| {
-                nemoclaw_discovery::gateway::remote_rejection("CreateSandbox", &error)
-            })?
+            .map_err(|error| nemoclaw_openshell::remote_rejection("CreateSandbox", &error))?
             .into_inner();
         let row = base(response.sandbox.and_then(|s| s.metadata), name, false)?;
         verify_identity(want, &row)?;
         Ok(row["id"].clone())
     }
 
-    pub(in crate::openshell) async fn update_provider(
+    pub(crate) async fn update_provider(
         &self,
         want: &Row,
         live: &Row,
@@ -299,10 +284,7 @@ impl ConnectedOpenShellGateway {
         Ok(())
     }
 
-    pub(in crate::openshell) async fn delete_bound_sandbox(
-        &self,
-        want: &Row,
-    ) -> Result<(), ObservationError> {
+    pub(crate) async fn delete_bound_sandbox(&self, want: &Row) -> Result<(), ObservationError> {
         let name = value(want, "name");
         let workspace = value(want, "workspace");
         let client = self.client.workspace(workspace);
@@ -338,7 +320,7 @@ impl ConnectedOpenShellGateway {
             .map_err(sdk_error)
     }
 
-    pub(in crate::openshell) async fn delete(
+    pub(crate) async fn delete(
         &self,
         kind: &str,
         workspace: &str,
@@ -377,9 +359,7 @@ impl ConnectedOpenShellGateway {
             } else {
                 "DeleteProvider"
             };
-            return Err(nemoclaw_discovery::gateway::remote_rejection(
-                operation, &status,
-            ));
+            return Err(nemoclaw_openshell::remote_rejection(operation, &status));
         }
         Ok(())
     }
@@ -388,7 +368,6 @@ impl ConnectedOpenShellGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nemoclaw_sdk::config::Gateway;
     use std::sync::Arc;
 
     struct SearchSecrets;
@@ -404,13 +383,18 @@ mod tests {
 
     #[tokio::test]
     async fn search_creation_resolves_only_the_reference_and_observation_drops_the_value() {
-        let mut gateway = Gateway::default();
-        *gateway.endpoint_mut() = "http://127.0.0.1:1".into();
-        let client =
-            ConnectedOpenShellGateway::connect(&gateway.connection(), Arc::new(SearchSecrets))
-                .unwrap();
+        let connection = nemoclaw_openshell::Connection {
+            endpoint: "http://127.0.0.1:1".into(),
+            ..Default::default()
+        };
+        let client = ConnectedOpenShellGateway::connect(
+            &connection,
+            Arc::new(SearchSecrets),
+            Arc::new(crate::DockerServices),
+        )
+        .unwrap();
         for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
-            let name = nemoclaw_sdk::config::search_provider_name(
+            let name = nemoclaw_openshell::search::search_provider_name(
                 provider,
                 "SEARCH_KEY",
                 provider.profile(),
@@ -446,6 +430,7 @@ mod tests {
                 },
                 &name,
                 false,
+                &crate::DockerServices,
             )
             .unwrap();
             assert_eq!(observed["credential_env"], "SEARCH_KEY");

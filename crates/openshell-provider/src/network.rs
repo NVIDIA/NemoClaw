@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nemoclaw_sdk::config::ExplicitPolicy;
-pub(super) use nemoclaw_sdk::image_runtime::ClusterGrants;
+use nemoclaw_openshell::policy::ExplicitPolicy;
+pub(super) use nemoclaw_openshell::runtime::ClusterGrants;
 
 pub(super) fn policy_input(
     row: &Row,
-) -> Result<nemoclaw_sdk::image_runtime::PolicyInput, ObservationError> {
+) -> Result<nemoclaw_openshell::runtime::PolicyInput, ObservationError> {
     serde_json::from_str(row.get("policy_json").ok_or(ObservationError::Incomplete)?)
         .map_err(|_| ObservationError::Query)
 }
@@ -19,7 +19,7 @@ pub(super) fn granted_row_policy(
 }
 
 pub(super) fn recorded_grants(
-    input: &nemoclaw_sdk::image_runtime::PolicyInput,
+    input: &nemoclaw_openshell::runtime::PolicyInput,
     policy: &proto::SandboxPolicy,
 ) -> Result<ClusterGrants, ObservationError> {
     input

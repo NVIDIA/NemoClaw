@@ -28,7 +28,8 @@ pub fn resource_definition(kind: &str) -> Option<Definition> {
 }
 
 /// OpenShell resource operations owned by this provider.
-pub mod openshell;
+pub mod fabric;
+pub use openshell_provider as openshell;
 
 pub mod docker;
 pub mod hardware_observation;
