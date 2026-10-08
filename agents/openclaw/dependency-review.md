@@ -37,7 +37,7 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `reviewed-npm-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` audits the WeChat locked graph with the shared reviewed npm implementation.
-  The pull request workflow resolves the implementation and policy from the PR base SHA and applies them to the proposed manifest and lockfile.
+  The pull request workflow loads the audit implementation, policy, manifest, and lockfile from the candidate checkout.
   The shared gate uses Node.js `24.18.1` and verified `npm@12.0.2`.
   It installs the exact lock with lifecycle scripts disabled and legacy peer resolution, rejects any low-or-higher production advisory, and verifies registry signatures.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
@@ -66,7 +66,7 @@ The lock records the exact version, registry URL, and integrity for every transi
   They do not attest that trusted CI verified registry signatures.
 - `enforcementBoundary`: any nonzero `npm audit signatures` status fails the required CI check.
   The PR workflow requires this check before merge.
-  The `pr-reviewed-npm-audit` job loads its audit implementation from the base branch revision and evaluates the dependency files from the commit under review.
+  The `pr-reviewed-npm-audit` job loads its audit implementation, policy, and dependency files from the commit under review.
   The managed-image build job requires that result before local builds and same-repository digest publication.
   The base-image workflow requires its audit result before it builds or publishes any base image.
   It also requires the result before it invokes managed-image publication.
@@ -75,6 +75,50 @@ The lock records the exact version, registry URL, and integrity for every transi
   A matching marker from a local base or mutable tag is package metadata without independent CI attestation.
   It cannot authorize reuse; the existing version checks reinstall the locked runtime or reject a newer base.
 - `regressionTest`: `test/security/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, image-build audit boundary, `reviewed-npm-audit` CI check, and this review synchronized.
-  `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
+  `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the candidate checkout supplies the audit action and inputs, and that publication depends on the audit.
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
+
+## OpenClaw 2026.9.5 staged transition
+
+[PR #12380](https://github.com/NVIDIA/NemoClaw/pull/12380) prepares trusted audit policy for
+[PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382), which updates the runtime.
+The CI and managed-image PR audits load their action, policy, and dependency inputs from the
+candidate checkout. A passing audit checks that candidate's declared policy; independent review
+of the package identities and policy changes remains necessary.
+The two stages separate that review from the production runtime cutover.
+
+During the trust stage, production manifests, locks, lifecycle approvals, and image archives remain
+on OpenClaw 2026.9.2. The existing locked graph remains the primary audit identity.
+The replacement admits only the reviewed 2026.9.5 lock digest, package integrity, and registry URL.
+It does not select a second runtime or permit an arbitrary lock.
+The compressed 2026.9.5 lock fixture records the migration input without changing production selection.
+The replacement audit test consumes that fixture and the checked-in policy, then verifies the emitted
+provenance and npm identity requests.
+
+The trust-stage audit checks the selected 2026.9.2 production lock. It does not qualify the staged
+2026.9.5 lock. Before approving the trust stage, reviewers must also inspect the runtime PR's retained
+audit evidence and match its `packageLockSha256` to the replacement identity and decompressed fixture.
+[CI run 37677060608](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/job/112983299250)
+audited the 2026.9.5 graph at commit `754d187fa833f6198e7a3d808ddf88dc2944025d`.
+Its [reviewed-npm-audit artifact](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/artifacts/11507039810)
+contains the receipt, raw report, and scanner provenance for lock SHA-256
+`b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7`.
+The receipt reports no blocking advisories at the `high` threshold; the policy report records three
+moderate advisories. The audit job also completed signature verification before emitting the receipt.
+This evidence qualifies those lock bytes, not a different lock or a future advisory database.
+Require a fresh matching audit when its receipt expires.
+
+The audit workflow, action, and implementation are unchanged from the trust PR's base,
+`b430d4d2495de65cbd1151d8fd6bff3def0cd58a`. Their candidate-checkout execution is existing repository
+behavior. Reviewers must independently inspect this PR's policy diff; a passing candidate audit does
+not authorize changes to its own policy.
+
+The runtime stage completes the transition by moving all production version owners to 2026.9.5,
+promoting its lock identity to primary, and removing the replacement and superseded archive records.
+For these two PRs, the maintainer requested green CI and managed-image checks, PR Advisor clearance,
+and full E2E qualification. These are acceptance criteria for this upgrade; full E2E is manually
+dispatched and is not an automatically enforced PR check. The runtime CI also executes the
+actual-package patch harness.
+Prekshi Vyas owns completion of these two PRs. Retain the old archive records only while production
+still selects them; remove this transition section when the runtime cutover is complete.

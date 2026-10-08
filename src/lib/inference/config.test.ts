@@ -29,6 +29,7 @@ import {
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 
 describe("resolveAgentDefaultCloudModel", () => {
   it("uses the Deep Agents manifest default", () => {
@@ -379,7 +380,7 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  it("maps NVIDIA Endpoints to the routed inference provider", () => {
+  it("maps NVIDIA Endpoints to its native endpoint while preserving the agent provider key (#12558)", () => {
     expect(
       getSandboxInferenceConfig(
         "nvidia/nemotron-3-super-120b-a12b",
@@ -389,9 +390,9 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       inferenceApi: "openai-completions",
-      inferenceCompat: null,
+      inferenceCompat: { supportsStore: false },
     });
   });
 
@@ -411,9 +412,9 @@ describe("getSandboxInferenceConfig", () => {
     ).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceBaseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
       inferenceApi: "openai-completions",
-      inferenceCompat: null,
+      inferenceCompat: { supportsStore: false },
     });
   });
 

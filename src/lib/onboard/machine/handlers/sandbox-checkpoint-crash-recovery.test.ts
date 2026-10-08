@@ -26,14 +26,17 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 vi.mocked(detectMessagingChannelsFromEnv).mockReturnValue([]);
 
-function defaultCreateFingerprint(builtFingerprint = "my-assistant"): string {
+function defaultCreateFingerprint(
+  builtFingerprint = "my-assistant",
+  sandboxGpuSettings: object = { sandboxGpuEnabled: false, mode: "0" },
+): string {
   return [
     builtFingerprint,
     "provider",
     "model",
     "openai-completions",
     "",
-    JSON.stringify({ sandboxGpuEnabled: false, mode: "0" }),
+    JSON.stringify(sandboxGpuSettings),
     "",
   ].join("|");
 }
@@ -61,6 +64,26 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
     sandboxRecreate: null,
     ...overrides,
   };
+}
+
+function checkpointWithLegacyGpuProof(): OnboardCheckpoint {
+  return crashedCheckpoint({
+    effectGroups: {
+      sandbox_create: {
+        completedAt: "2026-01-01T00:00:00.000Z",
+        fingerprint: defaultCreateFingerprint("my-assistant", {
+          sandboxGpuEnabled: true,
+          mode: "auto",
+          sandboxGpuProof: {
+            status: "failed",
+            cudaVerified: false,
+            at: "2026-01-01T00:00:00.000Z",
+            detail: "probe output: {}|",
+          },
+        }),
+      },
+    },
+  });
 }
 
 type StubbedRunOpenshellResult = { status: number; stdout: string; stderr: string };
@@ -290,6 +313,38 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.recordSkip).toHaveBeenCalled();
+  });
+
+  it("reuses a surviving sandbox when the recorded create receipt contains a GPU proof with the field separator", async () => {
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+    const session = sessionWithCheckpoint(checkpointWithLegacyGpuProof());
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "auto" },
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.recordSkip).toHaveBeenCalled();
+  });
+
+  it("rejects reuse when the recorded create receipt contains the GPU proof and the sandbox GPU mode changed", async () => {
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+    const session = sessionWithCheckpoint(checkpointWithLegacyGpuProof());
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "1" },
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
   it("recreates only under the recorded durable identity when the sandbox is gone", async () => {
