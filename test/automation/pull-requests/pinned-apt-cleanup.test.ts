@@ -26,7 +26,7 @@ if [[ "$1" == rm ]]; then "$@"; fi
   writeFileSync(
     join(fakeBin, "mktemp"),
     `#!/usr/bin/env bash
-if [[ "$1" == -d && "$2" == "$RUNNER_TEMP"/nemoclaw-ubuntu-sources.* ]]; then exit 73; fi
+if [[ "$1" == -d && "$2" == /tmp/nemoclaw-ubuntu-sources.* ]]; then exit 73; fi
 exec /usr/bin/mktemp "$@"
 `,
     { mode: 0o755 },

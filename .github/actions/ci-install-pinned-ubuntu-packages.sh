@@ -50,7 +50,7 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-isolated_sources_dir="$(mktemp -d "$RUNNER_TEMP/nemoclaw-ubuntu-sources.XXXXXXXX")"
+isolated_sources_dir="$(mktemp -d /tmp/nemoclaw-ubuntu-sources.XXXXXXXX)"
 isolated_sources="$isolated_sources_dir/ubuntu.sources"
 
 # APT cannot reliably fetch a mirror+file auxiliary list from a custom lists
