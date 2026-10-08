@@ -154,6 +154,40 @@ function recoveryCleanupFailureHook(root: string, recoveryDirectory: string): st
   return hookPath;
 }
 
+function previousPackageCleanupFailureHook(root: string, packageParent: string): string {
+  const hookPath = path.join(root, "previous-package-cleanup-failure-hook.mjs");
+  const canonicalPackageParent = path.join(
+    fs.realpathSync(root),
+    path.relative(root, packageParent),
+  );
+  fs.writeFileSync(
+    hookPath,
+    [
+      'import { createRequire, syncBuiltinESMExports } from "node:module";',
+      'import path from "node:path";',
+      'const fs = createRequire(import.meta.url)("node:fs");',
+      "const originalRmSync = fs.rmSync;",
+      `const packageParent = ${JSON.stringify(canonicalPackageParent)};`,
+      `const trace = ${JSON.stringify(path.join(root, "previous-package-cleanup.trace"))};`,
+      "let failed = false;",
+      "fs.rmSync = (target, options) => {",
+      "  const resolved = path.resolve(target);",
+      '  fs.appendFileSync(trace, resolved + "\\n");',
+      "  const recoveryRoot = path.dirname(resolved);",
+      '  if (!failed && path.basename(resolved) === "previous" && path.dirname(recoveryRoot) === packageParent && path.basename(recoveryRoot).startsWith(".proxy-addr-replacement-")) {',
+      "    failed = true;",
+      '    throw Object.assign(new Error("simulated prior package cleanup failure"), { code: "EACCES" });',
+      "  }",
+      "  return originalRmSync(target, options);",
+      "};",
+      "syncBuiltinESMExports();",
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+  return hookPath;
+}
+
 function verifyOriginalSlackDependencyBytes(
   fixture: Awaited<ReturnType<typeof createSlackRemediationFixture>>,
   installedDirectory = fixture.proxyAddrDirectory,
@@ -523,6 +557,78 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(retry.error).toBeUndefined();
         expect(retry.status, retry.stderr).toBe(0);
         expect(fs.existsSync(staleRecoveryDirectory)).toBe(false);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(45_000),
+  );
+
+  it(
+    "reports and reconciles prior-package cleanup failure after replacement promotion",
+    async () => {
+      const fixture = await createSlackRemediationFixture();
+      const packageParent = path.dirname(fixture.proxyAddrDirectory);
+      const cleanupHook = previousPackageCleanupFailureHook(fixture.root, packageParent);
+
+      try {
+        const failedAttempt = spawnSync(
+          process.execPath,
+          ["--import", cleanupHook, SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...fixture.env,
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined,
+              NEMOCLAW_FATAL_DIAGNOSTIC_CANARY: "OPENAI_API_KEY=prior-package-cleanup-canary",
+            },
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+
+        expect(failedAttempt.error).toBeUndefined();
+        expect(failedAttempt.status, failedAttempt.stderr).toBe(2);
+        expect(failedAttempt.stderr).toContain(
+          "OpenClaw dependency 'proxy-addr' was replaced, but recovery-directory cleanup failed",
+        );
+        expect(failedAttempt.stderr).toContain(
+          "Rerun the original onboarding or rebuild command so the managed plugin-install phase can reconcile recovery state.",
+        );
+        expect(failedAttempt.stderr).not.toContain("OPENAI_API_KEY=prior-package-cleanup-canary");
+        expect(failedAttempt.stderr).not.toContain(fixture.root);
+
+        const recoveryDirectories = fs
+          .readdirSync(packageParent)
+          .filter((entry) => entry.startsWith(".proxy-addr-replacement-"));
+        expect(recoveryDirectories).toHaveLength(1);
+        const retainedPreviousPackage = path.join(
+          packageParent,
+          recoveryDirectories[0]!,
+          "previous",
+        );
+        expect(fs.existsSync(retainedPreviousPackage)).toBe(true);
+        expect(
+          createHash("sha256")
+            .update(fs.readFileSync(path.join(fixture.proxyAddrDirectory, "index.js")))
+            .digest("hex"),
+        ).toBe("aa7efd29bbd61cbcc1bdafde9e674db28ead077864f33bfad3cdd19bb5a3778c");
+
+        const retry = spawnSync(
+          process.execPath,
+          [SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+          {
+            cwd: REPO_ROOT,
+            env: { ...fixture.env, NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined },
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+
+        expect(retry.error).toBeUndefined();
+        expect(retry.status, retry.stderr).toBe(0);
+        expect(fs.existsSync(retainedPreviousPackage)).toBe(false);
+        expect(fs.existsSync(path.dirname(retainedPreviousPackage))).toBe(false);
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }

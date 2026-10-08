@@ -1267,7 +1267,17 @@ function copyReplacementPackage(source: string, destination: string): void {
     }
 
     if (previousPackageMoved) {
-      rmSync(previousPackage, { recursive: true, force: true });
+      try {
+        rmSync(previousPackage, { recursive: true, force: true });
+      } catch (error) {
+        preserveRecoveryDirectory = true;
+        throw new OpenClawNpmPackageRecoveryError(
+          packageName,
+          error,
+          relative(targetDirectory, previousPackage),
+          true,
+        );
+      }
     }
 
     let recoveryCleanupFailure: unknown;
