@@ -23,6 +23,7 @@ import { withLock } from "./registry/lock";
 import { load, save } from "./registry/persistence";
 import {
   normalizeNativeLocalProviderAttachment,
+  retainedNativeLocalProviderAttachment,
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
   normalizeSandboxInferenceRouteSelection,
@@ -772,9 +773,11 @@ export function reserveSandboxInferenceRoute(
       preferredInferenceApi: normalized.preferredInferenceApi,
       nativeLocalProviderAttachment:
         nativeLocalProviderAttachment ??
-        (normalized.provider === existing?.provider
-          ? existing?.nativeLocalProviderAttachment
-          : undefined),
+        retainedNativeLocalProviderAttachment(existing, {
+          provider: normalized.provider,
+          endpointUrl: normalized.endpointUrl,
+          gatewayName: route.gatewayName,
+        }),
       nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
         ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
         : undefined,

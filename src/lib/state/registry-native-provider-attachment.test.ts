@@ -120,3 +120,76 @@ it("lists registered sandboxes that retain native NVIDIA provider ownership", as
     vi.unstubAllEnvs();
   }
 });
+
+it.each([
+  ["native resume", "http://127.0.0.1:11434/v1", "nemoclaw", false, true],
+  ["hosted compatible switch", "https://api.example.com/v1", "nemoclaw", false, false],
+  ["different local endpoint", "http://127.0.0.1:8000/v1", "nemoclaw", false, false],
+  ["different gateway", "http://127.0.0.1:11434/v1", "other-gateway", false, false],
+  ["explicit native replacement", "http://127.0.0.1:8000/v1", "nemoclaw", true, true],
+] as const)(
+  "retains only matching native route attachments during %s",
+  async (_scenario, endpointUrl, gatewayName, replacement, retained) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-local-attachment-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const authority = await import("./registry/native-local-provider-authority");
+      const { nativeLocalIdentity } = await import("../inference/native-local/contract");
+      const binding = {
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated",
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      } as const;
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "original-provider",
+      };
+      authority.setNativeLocalProviderAuthority(receipt);
+      registry.registerSandbox({
+        name: "alpha",
+        provider: binding.provider,
+        model: "model-a",
+        endpointUrl: "http://127.0.0.1:11434/v1",
+        gatewayName: binding.gatewayName,
+        nativeLocalProviderAttachment: receipt,
+      });
+      const nextBinding = {
+        ...binding,
+        endpointUrl: endpointUrl.replace("127.0.0.1", "host.openshell.internal"),
+        gatewayName,
+      };
+      const nextReceipt = replacement
+        ? {
+            ...nextBinding,
+            ...nativeLocalIdentity(nextBinding),
+            schemaVersion: 1 as const,
+            providerId: "replacement-provider",
+          }
+        : undefined;
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: binding.provider,
+        model: "model-b",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        endpointUrl,
+        gatewayName,
+        ...(nextReceipt ? { nativeLocalProviderAttachment: nextReceipt } : {}),
+      });
+      const entry = registry.getSandbox("alpha")!;
+      expect(entry.nativeLocalProviderAttachment).toEqual(
+        retained ? (nextReceipt ?? receipt) : undefined,
+      );
+      expect(authority.getNativeLocalProviderAuthority(receipt.providerName)).toEqual(receipt);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

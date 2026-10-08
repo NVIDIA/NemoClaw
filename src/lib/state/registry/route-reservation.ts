@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/contract";
+import {
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInference,
+} from "../../inference/native-local/contract";
 
 import { isDeepStrictEqual } from "node:util";
 
@@ -360,3 +363,17 @@ export function sandboxRegistrationMatchesInferenceRouteReservation(
 }
 
 export { normalizeNativeLocalProviderAttachment };
+
+/** Keep a native attachment only when reusing its recorded route and gateway. */
+export function retainedNativeLocalProviderAttachment(
+  existing: SandboxEntry | undefined,
+  selection: Pick<InferenceSelection, "provider" | "endpointUrl"> & { gatewayName: string },
+): SandboxEntry["nativeLocalProviderAttachment"] {
+  return existing &&
+    usesNativeLocalInference(selection.provider, selection.endpointUrl) &&
+    selection.provider === existing.provider &&
+    selection.endpointUrl === existing.endpointUrl &&
+    selection.gatewayName === existing.gatewayName
+    ? existing.nativeLocalProviderAttachment
+    : undefined;
+}
