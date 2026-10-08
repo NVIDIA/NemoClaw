@@ -737,6 +737,13 @@ async function destroySandboxUnlocked(
         {
           session: onboardSession,
           registry,
+          ...(retireRemovedImmutabilityState
+            ? {
+                retireRemovedImmutabilityState: () => {
+                  retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
+                },
+              }
+            : {}),
         },
       )
     ) {

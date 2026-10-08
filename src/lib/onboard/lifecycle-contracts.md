@@ -140,6 +140,8 @@ For an unpublished recovery record without a sandbox identity, native Linux Dock
 The owning gateway must report sandbox absence, and the default Docker daemon must report no matching containers or managed state volumes.
 An existing reservation must match its recovery-only session; a retry after reservation removal preserves unrelated sessions.
 This path requires an owned gateway runtime marker and preserves runtime resources.
+When legacy Shields state exists, its retirement must succeed before registry and recovery metadata are removed.
+A retirement failure keeps recovery metadata available for retry.
 Conflicting state, recorded sandbox-scoped providers, or additional resource ownership in the reservation keeps recovery blocked.
 `actions/sandbox/lifecycle/retained-recovery.test.ts` covers these transitions, including interrupted metadata retirement.
 

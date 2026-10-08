@@ -28,6 +28,7 @@ type Recovery = OnboardSession.RetainedSandboxRecoveryRecord;
 type RecoveryState = {
   observeSandbox(gatewayName: string): DestroySandboxPresence;
   registryEntryGatewayPort: typeof registryEntryGatewayPort;
+  retireRemovedImmutabilityState?: () => void;
   timeoutMs: number;
   session: Pick<
     typeof OnboardSession,
@@ -196,8 +197,10 @@ export function reconcileIdentityFreeRecovery(
     if (!isDeepStrictEqual(currentRecords, candidates)) {
       refuse(sandboxName, "the recovery record changed during absence verification");
     }
+    if (entry) requireReservationOwner(record, entry, sessionState.loadSession(), state);
+    // Legacy state retirement must succeed while the recovery authority is still available for retry.
+    state.retireRemovedImmutabilityState?.();
     if (entry) {
-      requireReservationOwner(record, entry, sessionState.loadSession(), state);
       if (!registry.removeSandboxRouteReservationIfCurrent(entry)) {
         refuse(sandboxName, "the registry changed during absence verification");
       }

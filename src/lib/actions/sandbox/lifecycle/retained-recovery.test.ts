@@ -19,7 +19,7 @@ const emptyDockerResult = {
 
 beforeAll(async () => {
   // Load the shared CLI graph before timing recovery operations in each isolated state root.
-  await import("../destroy-preflight");
+  await import("../destroy");
 });
 
 beforeEach(() => {
@@ -117,7 +117,121 @@ async function setup(port = 19260) {
   };
 }
 
+async function setupDestroy() {
+  const h = await setup();
+  const preflight = await import("../destroy-preflight");
+  const reconcile = preflight.reconcileIdentityFreeRecovery;
+  vi.spyOn(preflight, "reconcileIdentityFreeRecovery").mockImplementation(
+    (name, records, port, state) =>
+      reconcile(name, records, port, { ...state, captureOpenshell: h.capture }),
+  );
+  const ordinaryDestroy = vi
+    .spyOn(preflight, "prepareSandboxDestroy")
+    .mockRejectedValue(new Error("Unexpected resource cleanup during metadata recovery"));
+  const confirmation = await import("../destroy-confirmation");
+  vi.spyOn(confirmation, "confirmSandboxDestroy").mockResolvedValue(true);
+  const exit = vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+    throw new Error(`process.exit(${code})`);
+  }) as never);
+  const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const { destroySandbox } = await import("../destroy");
+  const { resolveNemoclawStateDir } = await import("../../../state/paths");
+  const { enforceRemovedImmutabilityMigrationBoundary } =
+    await import("../../../state/migrations/removed-immutability");
+  const stateDir = resolveNemoclawStateDir();
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  return {
+    ...h,
+    destroy: () => destroySandbox("alpha", { yes: true }),
+    ordinaryDestroy,
+    exit,
+    log,
+    legacyState: path.join(stateDir, "shields-alpha.json"),
+    assertMigrationClear: () => enforceRemovedImmutabilityMigrationBoundary("alpha"),
+  };
+}
+
 describe.skipIf(process.platform !== "linux")("identity-free retained recovery", () => {
+  it("releases the retained name through destroy without entering resource cleanup (#12260)", async () => {
+    const h = await setupDestroy();
+
+    await expect(h.destroy()).resolves.toBeUndefined();
+
+    expect(h.capture).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", h.record.gatewayName, "--output", "json"],
+      expect.objectContaining({ ignoreError: true, includeStreams: true }),
+    );
+    expect(h.registry.getSandbox("alpha")).toBeNull();
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.session.loadSession()?.cancellationRecovery).toBeNull();
+    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+    expect(h.exit).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(
+      "  Cleared retained recovery for 'alpha'. No sandbox resources were removed.",
+    );
+  });
+
+  it("retires removed Shields state when destroy clears identity-free recovery (#12260)", async () => {
+    const h = await setupDestroy();
+    fs.writeFileSync(h.legacyState, "{}\n", { mode: 0o600 });
+    expect(h.assertMigrationClear).toThrow(/state record from the removed Shields feature/u);
+
+    await expect(h.destroy()).resolves.toBeUndefined();
+
+    expect(fs.existsSync(h.legacyState)).toBe(false);
+    expect(h.registry.getSandbox("alpha")).toBeNull();
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+    expect(h.exit).not.toHaveBeenCalled();
+    expect(h.assertMigrationClear).not.toThrow();
+  });
+
+  it("preserves recovery for retry when removed Shields state retirement fails (#12260)", async () => {
+    const h = await setupDestroy();
+    fs.writeFileSync(h.legacyState, "{}\n", { mode: 0o600 });
+    expect(h.assertMigrationClear).toThrow(/state record from the removed Shields feature/u);
+    const before = h.snapshot();
+    const rename = fs.renameSync;
+    const failure = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(source) === h.legacyState
+        ? (() => {
+            throw new Error("legacy state retirement unavailable");
+          })()
+        : rename(source, destination),
+    );
+
+    await expect(h.destroy()).rejects.toThrow("process.exit(1)");
+
+    expect(h.snapshot()).toEqual(before);
+    expect(fs.existsSync(h.legacyState)).toBe(true);
+    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+    expect(h.log).not.toHaveBeenCalledWith(expect.stringContaining("Cleared retained recovery"));
+    failure.mockRestore();
+
+    await expect(h.destroy()).resolves.toBeUndefined();
+
+    expect(fs.existsSync(h.legacyState)).toBe(false);
+    expect(h.registry.getSandbox("alpha")).toBeNull();
+    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+  });
+
+  it("preserves legacy state and recovery when destroy cannot verify gateway absence (#12260)", async () => {
+    const h = await setupDestroy();
+    fs.writeFileSync(h.legacyState, "{}\n", { mode: 0o600 });
+    expect(h.assertMigrationClear).toThrow(/state record from the removed Shields feature/u);
+    const before = h.snapshot();
+    h.capture.mockReturnValue({ status: 1, output: "", stdout: "", stderr: "gateway unavailable" });
+
+    await expect(h.destroy()).rejects.toThrow("process.exit(1)");
+
+    expect(fs.existsSync(h.legacyState)).toBe(true);
+    expect(h.snapshot()).toEqual(before);
+    expect(h.volumes).not.toHaveBeenCalled();
+    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+  });
+
   it.each([8080, 19260])(
     "releases the retained sandbox name after verified absence on gateway port %s (#12260)",
     async (port) => {
