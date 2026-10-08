@@ -3504,7 +3504,7 @@ $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-A valid native attachment adds the recorded endpoint to the provider-and-model output. NVIDIA uses its fixed endpoint, hosted compatible providers use their validated HTTPS endpoint, and Bedrock uses its verified adapter endpoint.
+A valid native attachment adds the recorded endpoint to the provider-and-model output. NVIDIA uses its fixed endpoint and hosted compatible providers use their validated HTTPS endpoint. Bedrock verifies its recorded host-adapter attachment and reports the recorded original AWS endpoint.
 Other managed providers keep the provider-and-model output.
 Legacy shared-route compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information.
 Refer to [View the Selected Inference Path](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
