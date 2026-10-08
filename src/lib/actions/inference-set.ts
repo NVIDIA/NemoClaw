@@ -2009,18 +2009,22 @@ async function runInferenceSetWithoutHostLock(
           `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
       );
     }
-    recordInferenceSetChange(sandboxName, [
-      patched.changed,
-      retryingOpenClawConfigSync,
-      appliedProvider,
-      rollbackRoute?.provider !== provider,
-      rollbackRoute?.model !== model,
-      previousProvider !== provider,
-      previousModel !== model,
-      previousInferenceApi !== preferredInferenceApi,
-      (entry.endpointUrl ?? null) !== (registryMetadata.endpointUrl ?? null),
-    ]);
-    retireNativeConfigurationTelemetry(sandboxName);
+    recordInferenceSetChange(
+      sandboxName,
+      [
+        patched.changed,
+        retryingOpenClawConfigSync,
+        appliedProvider,
+        rollbackRoute?.provider !== provider,
+        rollbackRoute?.model !== model,
+        previousProvider !== provider,
+        previousModel !== model,
+        previousInferenceApi !== preferredInferenceApi,
+        (entry.endpointUrl ?? null) !== (registryMetadata.endpointUrl ?? null),
+      ],
+      expectedGatewayName,
+    );
+    retireNativeConfigurationTelemetry(sandboxName, expectedGatewayName);
     return {
       ...mutation,
       openClawConfigSyncPending: inSandboxConfigSynced && openClawConfigSyncPending,
@@ -2030,6 +2034,7 @@ async function runInferenceSetWithoutHostLock(
       sandboxName,
       Boolean(appliedInferenceSelection || appliedProvider || providerCommitResidual),
       Boolean(ambiguousInferenceSelection || providerMutation),
+      expectedGatewayName,
     );
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
     await restorePreviousNativeNvidiaAfterFailedPublish({
@@ -2059,9 +2064,9 @@ async function runInferenceSetWithoutHostLock(
       if (providerMutation.action === "create") {
         try {
           await providerMutation.rollback();
-          recordInferenceSetResult(sandboxName, "failed", "unchanged");
+          recordInferenceSetResult(sandboxName, "failed", "unchanged", expectedGatewayName);
         } catch (rollbackError) {
-          recordInferenceSetResult(sandboxName, "failed", "partial");
+          recordInferenceSetResult(sandboxName, "failed", "partial", expectedGatewayName);
           const rollbackDetail =
             rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
           throw new InferenceSetError(`${detail}\n  ${rollbackDetail}`, exitCode);
@@ -2150,10 +2155,10 @@ export async function runInferenceSet(
         clearOpenClawConfigSyncPending(selected.sandboxName, deps);
       }
     } catch (error) {
-      recordInferenceSetResult(selected.sandboxName, "failed", "partial");
+      recordInferenceSetResult(selected.sandboxName, "failed", "partial", gatewayName);
       throw error;
     }
-    completeInferenceSetTelemetry(selected.sandboxName);
+    completeInferenceSetTelemetry(selected.sandboxName, gatewayName);
     return mutation.result;
   });
 }

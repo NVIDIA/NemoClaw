@@ -12,6 +12,7 @@ import {
   selectedModelProvenance,
 } from "../domain/telemetry/provenance";
 import { CLI_NAME } from "../cli/branding";
+import { resolveSandboxGatewayName } from "../onboard/gateway-binding/identity";
 import { isConfigObject, type ConfigObject } from "../security/credential-filter";
 import type { AgentConfigTarget } from "./agent-config";
 import {
@@ -81,12 +82,14 @@ export function persistConfigurationTelemetry(
 }
 
 /** Retire native selection evidence only after the command proved its native route sync. */
-export function retireNativeConfigurationTelemetry(sandboxName: string): void {
+export function retireNativeConfigurationTelemetry(sandboxName: string, gatewayName: string): void {
   if (!isTelemetryOperationActive()) return;
-  const target = getTelemetryTarget(sandboxName);
+  const target = getTelemetryTarget(sandboxName, gatewayName);
   if (!target) return;
   try {
     const entry = readSandboxTelemetryEntry(sandboxName);
+    if (entry && resolveSandboxGatewayName(entry) !== gatewayName)
+      throw new Error("Native selection metadata owner changed");
     if (entry && entry.nativeModelSelectionProvenance === undefined) return;
     if (
       entry &&

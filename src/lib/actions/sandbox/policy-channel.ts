@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   getTelemetryTarget,
+  isTelemetryOperationActive,
   recordTelemetryTarget,
   finishTelemetryOperation,
 } from "../telemetry/operation";
@@ -96,7 +97,7 @@ import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import { getKnownSandboxTargetGatewayName, getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
@@ -105,12 +106,23 @@ import { SandboxCommandTransportError } from "../../adapters/sandbox/command-tra
 
 const isNonInteractive = () => isNonInteractiveSession();
 
+function telemetryGatewayName(sandboxName: string): string {
+  if (!isTelemetryOperationActive()) return "";
+  try {
+    return getKnownSandboxTargetGatewayName(sandboxName) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function recordConfigurationResult(
   sandboxName: string,
   outcome: TelemetryOutcome,
   state: TelemetryState,
 ): void {
-  const previous = getTelemetryTarget(sandboxName);
+  if (!isTelemetryOperationActive()) return;
+  const gatewayName = telemetryGatewayName(sandboxName);
+  const previous = getTelemetryTarget(sandboxName, gatewayName);
   if (outcome === "no_change" && previous?.outcome === "completed") return;
   if (
     outcome !== "completed" &&
@@ -119,7 +131,7 @@ function recordConfigurationResult(
     ["applied", "pending", "partial"].includes(previous.state)
   )
     state = "partial";
-  recordTelemetryTarget({ scope: "configuration", sandboxName, outcome, state });
+  recordTelemetryTarget({ scope: "configuration", sandboxName, gatewayName, outcome, state });
 }
 
 async function exitConfigurationFailure(sandboxName: string): Promise<never> {
@@ -221,7 +233,7 @@ function withSandboxMutationLockUnlessPreview<T>(
     try {
       return await operation();
     } catch (error) {
-      const previous = getTelemetryTarget(sandboxName);
+      const previous = getTelemetryTarget(sandboxName, telemetryGatewayName(sandboxName));
       recordConfigurationResult(
         sandboxName,
         "failed",
@@ -1187,8 +1199,9 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
     );
     return false;
   }
+  const gatewayName = telemetryGatewayName(sandboxName);
   await policyChannelDependencies.rebuildSandbox(sandboxName, ["--yes"]);
-  const rebuilt = getTelemetryTarget(sandboxName);
+  const rebuilt = getTelemetryTarget(sandboxName, gatewayName);
   if (rebuilt && (rebuilt.outcome !== "completed" || rebuilt.state !== "applied")) {
     recordTelemetryTarget({ ...rebuilt, scope: "configuration" });
     return false;
@@ -1756,6 +1769,7 @@ async function rollbackChannelAdd(
   recordTelemetryTarget({
     scope: "configuration",
     sandboxName,
+    gatewayName: telemetryGatewayName(sandboxName),
     outcome: "failed",
     state: result.ok ? "unchanged" : "partial",
   });

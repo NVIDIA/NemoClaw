@@ -3,7 +3,11 @@
 
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
-import { getTelemetryTarget, recordTelemetryTarget } from "../actions/telemetry/operation";
+import {
+  getTelemetryTarget,
+  isTelemetryOperationActive,
+  recordTelemetryTarget,
+} from "../actions/telemetry/operation";
 import type {
   TelemetryOutcome,
   TelemetryState,
@@ -125,11 +129,20 @@ export function recordPolicyResult(
   verificationStatus?: ValueStatus,
   metadataErrors?: TelemetryMetadataError[],
 ): void {
-  const previous = getTelemetryTarget(sandboxName);
+  if (!isTelemetryOperationActive()) return;
+  let gatewayName = "";
+  try {
+    const entry = readSandboxTelemetryEntry(sandboxName);
+    if (entry) gatewayName = resolveSandboxGatewayName(entry);
+  } catch {
+    /* Missing owner evidence must not change the product action. */
+  }
+  const previous = getTelemetryTarget(sandboxName, gatewayName);
   if (outcome === "no_change" && previous?.outcome === "completed") return;
   recordTelemetryTarget({
     scope: "configuration",
     sandboxName,
+    gatewayName,
     outcome,
     state,
     ...(verificationStatus ? { verificationStatus } : {}),
