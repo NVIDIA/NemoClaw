@@ -31,6 +31,7 @@ struct Controls {
     delete_delay: Option<(String, u32)>,
     deleting: BTreeMap<String, u32>,
     pod_identity: Option<u32>,
+    dry_runs: Vec<Value>,
 }
 
 fn plural(kind: &str) -> String {
@@ -110,6 +111,9 @@ impl Objects {
     }
     pub fn require_pod_identity(&self, user: u32) {
         self.2.lock().unwrap().pod_identity = Some(user);
+    }
+    pub fn dry_runs(&self) -> Vec<Value> {
+        self.2.lock().unwrap().dry_runs.clone()
     }
     /// Store `object`, giving it a UID if it has none.
     pub fn insert(&self, mut object: Value) {
@@ -223,12 +227,13 @@ impl Objects {
                 }
                 let name = object.pointer("/metadata/name")?.as_str()?.to_owned();
                 let key = format!("{path}/{name}");
-                if dry_run {
-                    object["metadata"]["uid"] = json!("dry-run");
-                    return Some((201, object.to_string().into_bytes()));
-                }
                 if objects.contains_key(&key) {
                     return status(409, "AlreadyExists");
+                }
+                if dry_run {
+                    self.2.lock().unwrap().dry_runs.push(object.clone());
+                    object["metadata"]["uid"] = json!("dry-run");
+                    return Some((201, object.to_string().into_bytes()));
                 }
                 object["metadata"]["uid"] = json!(format!(
                     "uid-{}",

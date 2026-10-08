@@ -52,7 +52,20 @@ No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDI
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-Native gateway configuration and request semantics belong to the OpenClaw adapter.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py) accepts an object with exactly `agent` and `message` for an explicit native-agent request.
+A request can incur inference charges and affect retained conversation history.
+With a configured runtime, run this from any directory inside the target sandbox when its YAML `agent.name` is `assistant` and its native OpenClaw agent is the default `main`:
+
+```sh
+fabric-agent invoke --agent assistant --input - <<'JSON'
+{"agent":"main","message":"Reply with exactly READY."}
+JSON
+```
+
+The command's `--agent` selects the deployment's YAML `agent.name`; the JSON `agent` selects OpenClaw's native agent, set by `harness.settings.agent_name` and defaulting to `main`.
+The bridge passes this JSON unchanged to OpenClaw; `{"text":"..."}` is not this adapter's request format.
+On success, inspect `result.fabric_result.status` and `result.fabric_result.output.response`; a successful command does not establish general model compatibility.
+Host-side invocation tooling and malformed-input recovery remain follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 For browser access, see [agent interfaces](interfaces.md#openclaw-dashboard).
 
 ## Native Controls at Initialization

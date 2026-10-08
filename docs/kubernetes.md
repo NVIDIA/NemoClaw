@@ -27,7 +27,8 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
 - **Inference:** an endpoint reachable from inside the sandboxes, or a [managed model service](#run-a-managed-model-service) in the managed gateway's namespace.
-  Managed services require a GPU node, a compatible runtime image, and persistent storage; the [reported GB300 run](design/cluster-inference-compatibility.md#openclaw-context-budget) does not qualify other GPU/model combinations ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
+  Managed services require a GPU node, a compatible runtime image, and persistent storage; real-cluster inference qualification remains open ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
+  The [kind GB300 operator report](design/cluster-inference-compatibility.md#openclaw-context-budget) informs example context budgets; it is not deployment qualification.
 
 NemoClaw installs nothing cluster-wide and never selects a context for you.
 
@@ -120,10 +121,7 @@ Models, image digests, hardware profiles, serving budgets, and storage sizes rem
 There is no cluster-specific model allowlist.
 
 Both examples set `serving.contextTokens` and the route's `settings.model_metadata.contextWindow` to `32768` to leave room for OpenClaw's initial prompt and a reply.
-Keep those settings aligned and size the model, KV cache, and GPU memory for the selected context; `32768` does not establish that every model or GPU can serve it.
-Plan and apply warn when an OpenClaw route selects a managed vLLM or Ollama service with `contextTokens` below `20000`, on Docker as well as Kubernetes.
-This is an advisory based on the [measured prompt budget](design/cluster-inference-compatibility.md#openclaw-context-budget), not a validation error or a measurement of the current prompt.
-The warning appears in text output and the JSON result's `warnings` field.
+Follow [OpenClaw context budgeting](inference.md#tune-openclaws-primary-route) to keep those limits aligned, size memory, and interpret the advisory emitted by plan and apply.
 
 The cluster settings below reserve CPU and memory and limit their use for one service:
 
@@ -186,11 +184,13 @@ Docker `placement` and `publication`, host IPC, `ollamaProxy`, CPU-only serving,
 
 Use the same plan and apply commands as [the managed gateway procedure](#deploy-with-a-managed-gateway).
 Plan validates intent and observes bound resources without starting a model or changing cluster resources.
-Preflight checks the selected classes and API permissions and uses server-side dry runs to check admission before creating new resources.
+Preflight checks the selected classes and API permissions and uses [server-side dry runs](https://kubernetes.io/docs/reference/using-api/api-concepts/#dry-run) to check admission before creating new resources.
 The first plan cannot dry-run namespace-scoped workloads when the managed namespace does not exist yet; apply repeats those checks before workload creation.
-Objects already present are not dry-run as duplicate creates: that would conflict with their names and count their quota allocation twice.
-Preflight therefore does not prove admission for every later replacement of an existing workload.
-Admission, quotas, and available capacity can still change after preflight.
+For a changed existing workload, preflight checks the replacement Pod and ConfigMap under temporary names without persisting them, before stopping the current Pod.
+Rejection preserves the current Pod, configuration, and saved service receipt.
+The check can reject a replacement at full namespace quota because the existing Pod still counts toward usage.
+Temporary names and existing referenced objects can affect admission; a successful check does not reserve quota or capacity, and admission can change before the real create.
+After preflight passes, replacement stops the old Pod; a later create failure can leave the service down until a corrected apply completes recovery from the saved state.
 Apply creates retained storage and disposable service resources, starts the hosted runtime, and checks its bounded readiness before configuring dependent agents.
 The Pod does not automatically restart a stopped inference process.
 On failed model startup or protective shutdown, preserve the state and PVCs, correct the resource or runtime condition, and use [explicit recovery](usage.md#recover-an-interrupted-operation).

@@ -4,6 +4,8 @@ use nemoclaw_sdk::kubernetes::services::{Spec, compute_objects, storage_objects}
 use serde_json::{Value, json};
 #[path = "kubernetes_service_exec.rs"]
 mod exec_boundary;
+#[path = "kubernetes_service_idempotence.rs"]
+mod idempotence;
 #[path = "kubernetes_service_readiness.rs"]
 mod readiness;
 
@@ -789,6 +791,106 @@ async fn model_preflight_checks_admission_and_permissions_without_creating_resou
 }
 
 #[tokio::test]
+async fn replacement_admission_rejection_preserves_the_running_model_and_its_receipt() {
+    for backend in ["vllm", "ollama"] {
+        for rejected_kind in ["Pod", "ConfigMap"] {
+            let original = spec(backend, backend == "vllm");
+            let objects = crate::kube_api::Objects::default();
+            let directory = tempfile::tempdir().unwrap();
+            let (_fixture, operations) = operations(&objects, directory.path(), &original).await;
+            operations
+                .ensure_storage(&original.storage(), None)
+                .await
+                .unwrap();
+            let first = operations.ensure(&original, None).await.unwrap();
+            let mut pod = objects.get("v1", "Pod", "agents", &original.name).unwrap();
+            pod["status"] = json!({"phase":"Running"});
+            objects.insert(pod);
+            let before = objects.0.lock().unwrap().clone();
+            let receipt = directory
+                .path()
+                .join("services")
+                .join(&original.name)
+                .join("receipt.json");
+            let recorded = std::fs::read(&receipt).unwrap();
+            let mut desired = original.clone();
+            desired.image = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+            objects.reject_create(rejected_kind);
+
+            let error = operations
+                .ensure(&desired, first.id.as_deref())
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("exceeded quota"), "{error}");
+            assert_eq!(
+                *objects.0.lock().unwrap(),
+                before,
+                "{backend} {rejected_kind}"
+            );
+            assert_eq!(
+                std::fs::read(&receipt).unwrap(),
+                recorded,
+                "{backend} {rejected_kind}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn replacement_admission_uses_temporary_names_without_changing_the_workload() {
+    use nemoclaw_sdk::kubernetes::cluster::{GENERATION_LABEL, OWNER_LABEL};
+    for backend in ["vllm", "ollama"] {
+        let original = spec(backend, backend == "vllm");
+        let objects = crate::kube_api::Objects::default();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path(), &original).await;
+        operations
+            .ensure_storage(&original.storage(), None)
+            .await
+            .unwrap();
+        operations.ensure(&original, None).await.unwrap();
+        let before = objects.0.lock().unwrap().clone();
+        let receipt = directory
+            .path()
+            .join("services")
+            .join(&original.name)
+            .join("receipt.json");
+        let recorded = std::fs::read(&receipt).unwrap();
+        let initial_checks = objects.dry_runs().len();
+        let mut desired = original.clone();
+        desired.image = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+        operations.preflight_workload(&desired).await.unwrap();
+        let checks = objects.dry_runs();
+        let replacements = &checks[initial_checks..];
+        assert_eq!(replacements.len(), 2);
+        for check in replacements {
+            let name = check["metadata"]["name"].as_str().unwrap();
+            assert!(name.len() <= 63);
+            assert_ne!(name, original.name);
+            assert!(
+                name.bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            );
+            let mut expected = compute_objects(&desired, None)
+                .into_iter()
+                .find(|object| object["kind"] == check["kind"])
+                .unwrap();
+            expected["metadata"]["labels"][OWNER_LABEL] = json!(original.owner);
+            expected["metadata"]["labels"][GENERATION_LABEL] = json!(original.generation);
+            expected["metadata"]["name"] = json!(name);
+            assert_eq!(&expected, check);
+        }
+        assert_eq!(*objects.0.lock().unwrap(), before);
+        assert_eq!(std::fs::read(&receipt).unwrap(), recorded);
+
+        // An unchanged apply needs no replacement admission or spare quota.
+        objects.reject_create("Pod");
+        operations.preflight_workload(&original).await.unwrap();
+        assert_eq!(objects.dry_runs().len(), checks.len());
+    }
+}
+
+#[tokio::test]
 async fn foreign_service_backends_cannot_receive_the_managed_credential() {
     let spec = spec("vllm", true);
     let objects = crate::kube_api::Objects::default();
@@ -863,6 +965,13 @@ async fn runtime_updates_replace_configuration_and_retry_after_interrupted_creat
         .await
         .unwrap();
     let first = operations.ensure(&spec, None).await.unwrap();
+    let receipt_path = directory
+        .path()
+        .join("services")
+        .join(&spec.name)
+        .join("receipt.json");
+    let original_receipt: Value =
+        serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
     objects.insert(json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"unrelated","namespace":"agents"},"data":{"keep":"me"}}));
     let foreign = objects.get("v1", "ConfigMap", "agents", "unrelated");
     let config = objects
@@ -875,6 +984,34 @@ async fn runtime_updates_replace_configuration_and_retry_after_interrupted_creat
     objects.fail_create("ConfigMap", false);
     assert!(operations.ensure(&spec, first.id.as_deref()).await.is_err());
     assert!(objects.get("v1", "Pod", "agents", &spec.name).is_none());
+    let interrupted: Value =
+        serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
+    assert_eq!(
+        interrupted["specification"],
+        serde_json::to_value(&spec).unwrap()
+    );
+    for field in [
+        "storage",
+        "cluster",
+        "namespaceUid",
+        "volumes",
+        "storageReady",
+        "computeBound",
+    ] {
+        assert_eq!(interrupted[field], original_receipt[field], "{field}");
+    }
+    assert!(
+        interrupted.get("pending").is_none(),
+        "the failed create was confirmed absent"
+    );
+    let retained_network: Vec<_> = original_receipt["compute"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|owned| matches!(owned["kind"].as_str(), Some("Service" | "NetworkPolicy")))
+        .cloned()
+        .collect();
+    assert_eq!(interrupted["compute"], json!(retained_network));
     let before = objects.0.lock().unwrap().clone();
     let read = operations
         .read_for_removal(&spec, first.id.as_deref())
@@ -882,7 +1019,21 @@ async fn runtime_updates_replace_configuration_and_retry_after_interrupted_creat
         .unwrap();
     assert_eq!(read.id, first.id);
     assert_eq!(*objects.0.lock().unwrap(), before);
-    operations.ensure(&spec, first.id.as_deref()).await.unwrap();
+    let recovered = operations.ensure(&spec, first.id.as_deref()).await.unwrap();
+    assert_eq!(recovered.id, first.id);
+    let recovered_receipt: Value =
+        serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
+    for field in [
+        "storage",
+        "cluster",
+        "namespaceUid",
+        "volumes",
+        "storageReady",
+        "computeBound",
+    ] {
+        assert_eq!(recovered_receipt[field], original_receipt[field], "{field}");
+    }
+    assert!(recovered_receipt.get("pending").is_none());
     let replaced = objects
         .get("v1", "ConfigMap", "agents", &spec.name)
         .unwrap();

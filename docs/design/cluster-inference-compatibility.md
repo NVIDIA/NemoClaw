@@ -53,12 +53,12 @@ The cluster implementation does not replace those contracts with cluster-specifi
 ## OpenClaw Context Budget
 
 The [cluster examples](../kubernetes.md#run-a-managed-model-service) use a `32768`-token service context and matching OpenClaw `model_metadata.contextWindow`.
-An operator reported real OpenClaw turns at NemoClaw revision `4dedf0a82`, using images built from that revision on a kind cluster with one GB300 GPU, through OpenShell `ExecSandbox` and `fabric-agent invoke`.
+An operator reported real OpenClaw turns at NemoClaw revision `3c94fda7b`, using images built from revision `377912705` on a kind cluster with one GB300 GPU, through OpenShell `ExecSandbox` and `fabric-agent invoke`.
 With Ollama `qwen3:0.6b` at `32768`, its log recorded `n_tokens=19947` and `truncated=0`, and the reply followed the instruction.
 At `8192`, the turn reported success but the reply ignored the instruction; context truncation is an inference from the changed behavior, not a confirmed truncation log from that run.
 With vLLM `Qwen/Qwen3-4B`, the `8192` setting produced context-overflow HTTP 400 responses and failed automatic compaction; `32768` produced three HTTP 200 chat-completion responses through the supervisor.
 That vLLM run retained `kvCacheGiB: 6` and `maxSequences: 1`.
-These observations explain the example budget; they do not qualify other models, GPUs, revisions, or longer conversations, and they do not resolve the pinned Fabric health limitation.
+This operator report explains the example budget; it is not deployment qualification, does not change Docker-path limits, and does not resolve the pinned Fabric health limitation.
 
 ## Remaining Compatibility and Qualification Work
 
@@ -70,7 +70,7 @@ These observations explain the example budget; they do not qualify other models,
 - [#12692](https://github.com/NVIDIA/NemoClaw/issues/12692) owns managed-gateway OIDC.
   Generated vLLM bearer storage and the gateway's development issuer have separate owners and lifetimes; neither establishes production gateway authentication.
 - [#12733](https://github.com/NVIDIA/NemoClaw/issues/12733) and [#12734](https://github.com/NVIDIA/NemoClaw/issues/12734) track real-cluster qualification and E2E/CI coverage.
-  Deterministic fixtures establish lifecycle behavior only; the [reported GB300 run](#openclaw-context-budget) covers one revision and model pair.
-  Other GPU/model combinations, OpenShift admission, GPU device isolation, and the selected CSI driver's retention behavior still need qualification.
+  Deterministic fixtures establish lifecycle behavior only; the [kind GB300 operator report](#openclaw-context-budget) does not establish deployment qualification.
+  Live inference qualification, OpenShift admission, GPU device isolation, and the selected CSI driver's retention behavior remain open.
 - Team approval of the baseline and service boundary remains an acceptance item under [#12730](https://github.com/NVIDIA/NemoClaw/issues/12730) and [#12732](https://github.com/NVIDIA/NemoClaw/issues/12732).
   This implementation does not claim full issue closure.

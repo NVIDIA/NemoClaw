@@ -28,12 +28,15 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | Distributed inference across several Sparks or Stations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Podman beyond a local rootless Linux gateway: managed inference, rootful operation and remote engines | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | OpenShift admitting the gateway and sandbox pods; kind runs the OpenShift profile but does not enforce its security constraints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
-| [Managed vLLM and Ollama on Kubernetes or OpenShift](kubernetes.md#run-a-managed-model-service) have no general inference qualification beyond the [reported GB300 run](design/cluster-inference-compatibility.md#openclaw-context-budget); external gateways, host IPC, PVC adoption/resize, and distributed serving are unsupported | [#12732](https://github.com/NVIDIA/NemoClaw/issues/12732) |
+| [Managed vLLM and Ollama on Kubernetes or OpenShift](kubernetes.md#run-a-managed-model-service) still need real-cluster inference qualification; external gateways, host IPC, PVC adoption/resize, and distributed serving are unsupported | [#12732](https://github.com/NVIDIA/NemoClaw/issues/12732) |
 | A managed Kubernetes gateway authenticating through an existing identity provider; only the development profile exists | [#12692](https://github.com/NVIDIA/NemoClaw/issues/12692) |
 | Images from private registries; every runtime pulls anonymously, so images must be public or already present | [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709) |
-| Managed Ollama tool execution and GPU/model combinations beyond the [reported GB300 OpenClaw reply](design/cluster-inference-compatibility.md#openclaw-context-budget) | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+| Qualification of live GPU inference, tools, and replies through Docker-managed Ollama | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | Gated repositories, custom remote-code models, GGUF in vLLM, and nested Hugging Face checkpoints | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
 | A tested matrix of harness, model, provider and platform combinations | [#12641](https://github.com/NVIDIA/NemoClaw/issues/12641) |
+
+The [kind GB300 operator report](design/cluster-inference-compatibility.md#openclaw-context-budget) informs the examples' context budgets.
+It is not deployment qualification and does not change the Docker-path limits above.
 
 ## Inference
 

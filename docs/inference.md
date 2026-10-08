@@ -184,7 +184,7 @@ services:
       name: qwen3:0.6b
       digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
     serving:
-      contextTokens: 8192
+      contextTokens: 32768
       maxSequences: 1
     memory:
       gpuMemoryGiB: 16
@@ -196,6 +196,7 @@ inferenceProviders:
 ```
 
 Set the route's `overrides.model` to the same `model.name`.
+For OpenClaw, also set `overrides.settings.model_metadata.contextWindow` to `32768`, as in both managed Ollama examples; see [context budgeting](#tune-openclaws-primary-route).
 The model digest is the SHA-256 of the registry manifest, not the GPU runtime image or an individual weight blob.
 For a different public library model, obtain and inspect its registry manifest and license before pinning its digest.
 The resolver accepts exactly one model layer plus optional template, license, parameters, and system layers.
@@ -233,7 +234,7 @@ Verified cached snapshots can be reused without querying a subsequently changed 
 There is no automatic migration or adoption of storage from the older `ollama` resource form; use a fresh deployment and retain the old bundle/state for its teardown.
 
 Configuration, registry download, startup protocol, memory checks, and removal behavior are covered by deterministic fixtures.
-Live image builds, GPU inference, tools and agent replies with this adapter have not been tested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
+Live image builds, GPU inference, tools and agent replies through this Docker procedure still need qualification ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Authenticate a Managed vLLM Service
 
@@ -342,6 +343,13 @@ The selected adapter's canonical model schema and implementation own the meaning
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
+The managed Ollama examples and [cluster examples](kubernetes.md#run-a-managed-model-service) set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
+This leaves room for an initial prompt and a reply; the [operator-reported prompt](design/cluster-inference-compatibility.md#openclaw-context-budget) used 19,947 tokens in one setup.
+Keep the two limits aligned and size the model, KV cache, and GPU memory for the selected context.
+Plan and apply warn when an OpenClaw route selects a managed vLLM or Ollama service with `contextTokens` below `20000`, on Docker as well as Kubernetes.
+The advisory appears in text output and the JSON result's `warnings` field; it neither rejects the configuration nor measures the current prompt or available memory.
+These budgets do not qualify a model, GPU, or deployment path.
+
 Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
 Nested null values remain intact in opaque native settings.
 ## Authenticate Hermes through the Provider
@@ -412,7 +420,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Phase | Current budget and setting |
 |---|---|
 | Fabric runtime request | `harness.execution.timeoutSeconds` maps to public Fabric `runtime.timeout_seconds`; omitted values use Fabric defaults |
-| Managed service loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
+| Managed backend loading and readiness after preparation | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
 | Docker-managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
 | Managed cluster service readiness, including scheduling, image pull, download, and preparation | Fixed 9-hour wait; expiration leaves the owned Pod and PVCs in place; an unchanged apply resumes waiting |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
@@ -420,7 +428,8 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Sandbox/agent readiness | Fixed 300-second wait |
 
 These are phase limits, not a promised total duration for apply.
-For a cluster service, `startupTimeoutSeconds` bounds model loading inside the runtime after preparation; it does not shorten the SDK's overall readiness wait.
+For both managed backends, the runtime starts its `startupTimeoutSeconds` deadline after preparation, when supervising the launched backend's loading and readiness.
+Scheduling, image pulls, model downloads, and recipe preparation are outside that deadline; the separate cluster readiness wait still includes them.
 Cluster readiness retries transient transport, query, or incomplete-status observations for at most 30 seconds of consecutive failures, resetting that allowance after a successful observation.
 Authentication, permission, ownership, permanent image-start failures, and reported runtime stops fail immediately.
 Model Pod termination allows 60 seconds of grace, and the provider waits up to another 30 seconds for API deletion to complete.

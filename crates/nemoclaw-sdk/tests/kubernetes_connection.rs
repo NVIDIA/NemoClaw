@@ -15,17 +15,15 @@ fn kubeconfig(directory: &std::path::Path, server: &str) -> std::path::PathBuf {
         "#!/bin/sh\nprintf '%s' '{\"apiVersion\":\"client.authentication.k8s.io/v1\",\"kind\":\"ExecCredential\",\"status\":{\"token\":\"from-plugin\"}}'\n",
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&plugin, std::fs::Permissions::from_mode(0o700)).unwrap();
     let path = directory.join("kubeconfig");
     std::fs::write(
         &path,
         format!(
             "apiVersion: v1\nkind: Config\ncurrent-context: other\n\
              clusters:\n- name: selected\n  cluster:\n    server: {server}\n- name: other\n  cluster:\n    server: http://127.0.0.1:9\n\
-             users:\n- name: plugin\n  user:\n    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: {}\n      interactiveMode: Never\n\
+             users:\n- name: plugin\n  user:\n    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: /bin/sh\n      args: [{}]\n      interactiveMode: Never\n\
              contexts:\n- name: selected\n  context:\n    cluster: selected\n    user: plugin\n- name: other\n  context:\n    cluster: other\n    user: plugin\n",
-            plugin.display()
+            serde_json::to_string(&plugin).unwrap()
         ),
     )
     .unwrap();

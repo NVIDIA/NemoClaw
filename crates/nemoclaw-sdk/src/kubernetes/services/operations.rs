@@ -278,8 +278,9 @@ impl Operations {
         spec.validate().map_err(|_| ObservationError::Query)?;
         self.preflight(&spec.storage(), spec.settings.runtime_class_name.as_deref())
             .await?;
-        let identity = match self.load(&spec.storage())? {
-            Some(receipt) => self.verify_storage(&receipt, false).await?,
+        let receipt = self.load(&spec.storage())?;
+        let identity = match &receipt {
+            Some(receipt) => self.verify_storage(receipt, false).await?,
             None if GatewayReceipt::load(&self.state, &spec.owner, &spec.gateway.name)?
                 .is_some_and(|receipt| receipt.storage_ready) =>
             {
@@ -287,8 +288,51 @@ impl Operations {
             }
             None => None,
         };
-        self.dry_run_missing(&spec.storage(), compute_objects(spec, identity))
-            .await
+        let desired = compute_objects(spec, identity);
+        self.dry_run_missing(&spec.storage(), desired.clone())
+            .await?;
+        if let Some(receipt) = &receipt
+            && receipt
+                .specification
+                .as_ref()
+                .is_some_and(|recorded| compute_objects(recorded, identity) != desired)
+        {
+            // CREATE admission cannot use a live object's name. Validate only
+            // the replacements, under unique names, before deleting runtime
+            // objects. This can conservatively reject at full namespace quota:
+            // dry-run cannot simulate the old Pod's deletion without mutation.
+            for mut object in desired
+                .into_iter()
+                .filter(|object| matches!(object["kind"].as_str(), Some("Pod" | "ConfigMap")))
+            {
+                let address = Owned::new(&object, "");
+                if self
+                    .cluster(&receipt.storage)
+                    .get(&address)
+                    .await?
+                    .is_none()
+                {
+                    continue;
+                }
+                let owned = receipt
+                    .compute
+                    .iter()
+                    .find(|owned| owned.kind == address.kind && owned.name == address.name)
+                    .ok_or(ObservationError::BindingMismatch)?;
+                let observed = self.verify(&receipt.storage, owned).await?;
+                if owned.kind == "Pod" {
+                    Self::verify_pod(receipt, &observed)?;
+                } else {
+                    Self::verify_compute_spec(receipt, &observed)?;
+                }
+                let mut suffix = [0u8; 6];
+                getrandom::fill(&mut suffix).map_err(|_| ObservationError::Incomplete)?;
+                let suffix: String = suffix.iter().map(|byte| format!("{byte:02x}")).collect();
+                object["metadata"]["name"] = format!("{}-check-{suffix}", address.name).into();
+                self.cluster(&receipt.storage).dry_run(object).await?;
+            }
+        }
+        Ok(())
     }
 
     async fn dry_run_missing(
