@@ -527,6 +527,7 @@ function deepAgentsObservability(
 function preserveLegacyExportEndpoint(
   entry: ObservedExportRegistry,
   inference: ReturnType<typeof resolveManagedStartupInferenceRoute>,
+  retainedProfile: ManagedStartupProfile,
 ): void {
   // Export verifies the retained image contract; older hosted sandboxes were
   // built for the shared route and do not acquire native access by inspection.
@@ -535,14 +536,21 @@ function preserveLegacyExportEndpoint(
     entry.provider !== "nvidia-prod" &&
     nativeHostedProfile(entry.provider)
   ) {
-    inference.inferenceBaseUrl =
+    const legacyEndpoint =
       inference.inferenceApi === "anthropic-messages"
         ? "https://inference.local"
         : "https://inference.local/v1";
+    if (retainedProfile.inference?.routedBaseUrl !== legacyEndpoint) {
+      throw new Error("Native hosted export requires its provider ownership receipt.");
+    }
+    inference.inferenceBaseUrl = legacyEndpoint;
   }
 }
 
-function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedStartupProfile {
+function expectedManagedStartupProfile(
+  entry: ObservedExportRegistry,
+  retainedProfile: ManagedStartupProfile,
+): ManagedStartupProfile {
   if (!isSupportedExportAgent(entry.agent)) {
     throw new Error("The agent is unsupported.");
   }
@@ -562,7 +570,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.model,
     selected.preferredInferenceApi,
   );
-  preserveLegacyExportEndpoint(entry, inference);
+  preserveLegacyExportEndpoint(entry, inference, retainedProfile);
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
   const search = exportWebSearchBinding(entry);
   return buildManagedStartupProfile({
@@ -767,7 +775,7 @@ function expectedProfileWithObservedHostSettings(
   profile: ManagedStartupProfile,
 ): ManagedStartupProfile | null {
   try {
-    let expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry));
+    let expected = supportedHostProfile(profile, expectedManagedStartupProfile(entry, profile));
     const servingPreset = profile.inference?.servingPreset;
     if (
       expected.inference &&
@@ -1530,7 +1538,7 @@ function projectHostSettings(
   const proxy = authority.profile.proxy;
   return {
     ...(interfaces ? { interfaces } : {}),
-    ...(!hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry).proxy)
+    ...(!hasEqualJsonStructure(proxy, expectedManagedStartupProfile(entry, authority.profile).proxy)
       ? { proxy: { host: proxy.managedHost, port: proxy.managedPort } }
       : {}),
   };

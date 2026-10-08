@@ -615,6 +615,29 @@ describe("config export source verification (#10938)", () => {
     },
   );
 
+  it.each([
+    ["https://inference.local/v1", true],
+    ["https://api.openai.com/v1", false],
+  ] as const)(
+    "requires retained legacy routing or a native receipt for %s",
+    async (routedBaseUrl, legacy) => {
+      const observed = changeRetainedProfile(
+        hermesSnapshot({ endpointUrl: "https://api.openai.com/v1" }),
+        (profile) => {
+          profile.inference!.routedBaseUrl = routedBaseUrl;
+        },
+      );
+      const result = await exportSnapshots([observed]);
+      expect(result.outcome.ok).toBe(legacy);
+      expect(result.publish).not.toHaveBeenCalled();
+      expect(
+        result.writeStdout.mock.calls.map(
+          ([yaml]) => asExportedConfig(YAML.parse(yaml)).spec.inferenceProviders[0]!.endpoint,
+        ),
+      ).toEqual(legacy ? ["https://api.openai.com/v1"] : []);
+    },
+  );
+
   it("rejects a credential-bearing HTTP inference route that v1 cannot consume (#11977)", () => {
     const endpoint = "http://host.openshell.internal:35271/v1";
     const observed = hermesSnapshot({ toolDisclosure: "progressive", endpointUrl: endpoint });
