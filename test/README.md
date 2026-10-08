@@ -95,7 +95,11 @@ A request to repair CI does not itself authorize increasing the assertion budget
 The independent check reads paginated comments from GitHub and verifies each author's current maintain
 or admin role. Bot comments and candidate-defined approvals cannot authorize that check.
 The last matching maintainer record wins. Deleting a record removes it from subsequent evaluations.
-After recording a decision, rerun the growth workflow on the unchanged candidate. No policy PR is required.
+Creating, editing, or deleting an approval record automatically refreshes the growth check for the current PR commit.
+The refresh first marks the matching `codebase-growth-guardrails` commit status pending, then runs trusted-base checks.
+A failure or incomplete refresh cannot reuse the earlier green status. GitHub requires both the workflow check and
+its matching commit status to pass. Refreshes run serially per PR and read current comments instead of replaying old decisions.
+No policy PR or manual rerun is required for an approval change.
 Normal code review and the assertion census still apply. This record authorizes only the stated budget delta.
 
 Local hooks and candidate CI may use the matching branch entry for preliminary validation.

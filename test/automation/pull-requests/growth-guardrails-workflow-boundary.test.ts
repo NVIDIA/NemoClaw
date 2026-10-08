@@ -63,6 +63,29 @@ describe("codebase growth guardrails workflow trust boundary", () => {
     ],
     ["permissions", (workflow: Value) => (workflow.permissions.contents = "write")],
     [
+      "approval deletion trigger",
+      (workflow: Value) => (workflow.on.issue_comment.types = ["created"]),
+    ],
+    [
+      "approval refresh permission",
+      (workflow: Value) => delete workflow.jobs["refresh-budget-approval"].permissions.statuses,
+    ],
+    [
+      "approval refresh cancellation",
+      (workflow: Value) =>
+        (workflow.jobs["refresh-budget-approval"].concurrency["cancel-in-progress"] = true),
+    ],
+    [
+      "approval refresh checkout",
+      (workflow: Value) =>
+        (workflow.jobs["refresh-budget-approval"].steps[1].with.ref =
+          "${{ steps.approval.outputs.head_sha }}"),
+    ],
+    [
+      "approval refresh failure reporting",
+      (workflow: Value) => delete workflow.jobs["refresh-budget-approval"].steps.at(-1).if,
+    ],
+    [
       "default branch scope",
       (workflow: Value) => delete workflow.jobs["codebase-growth-guardrails"].if,
     ],

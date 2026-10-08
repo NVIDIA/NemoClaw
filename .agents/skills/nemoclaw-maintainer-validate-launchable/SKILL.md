@@ -143,7 +143,7 @@ When the credential is available, pass it through the process environment withou
 Require the baked full E2E success sentinel and retain only redacted logs.
 The test must remove its `e2e-` sandbox and verify the expected cleanup result even after a test failure.
 After the local and remote test processes exit, unset any shell variable created for the run and verify that no temporary credential file remains.
-Unless the approved waiver applies, rotate or revoke the inference API key after the authorized run or bounded validation session. Record non-sensitive confirmation.
+Unless the approved waiver applies, rotate or revoke the inference API key in the issuing NVIDIA service after the authorized run or bounded validation session. Record non-sensitive confirmation.
 When the waiver applies, record its approver, candidate commit SHA, selected automated Launchable run ID, and the accepted period of later API-key access without recording the key.
 
 ## Finish the Instance Handoff

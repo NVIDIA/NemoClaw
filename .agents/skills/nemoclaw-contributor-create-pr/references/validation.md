@@ -63,6 +63,16 @@ can access credentials or change host state. Keep unchanged trusted-base checks 
 Record the candidate checks separately; they cannot independently approve their own policy changes.
 Independent CI and maintainer review remain required before merge.
 
+The isolation requirement includes the installed `pre-push` hook and every child it launches.
+`language: system` runs on the contributor host; a normal `git push` does not isolate it.
+An isolated standalone test does not establish that a later host hook is safe.
+Use a verified isolation boundary for the actual hook process, with no inherited secret environment,
+credential files, SSH agent socket, or credential helper access. Keep Git transport authentication
+outside that boundary. Preserve the installed hook, its arguments and input, and its failure status.
+Record the boundary and verify credential access is denied before executing changed validators.
+If the actual hook cannot run safely, stop before the push and report the missing isolation capability.
+Do not disable hooks or replace them with a successful no-op. Reading and reviewing the diff needs no approval.
+
 For Pi image-input changes, normal local hooks may report pending qualification. Publish the candidate
 through normal hooks, collect genuine AMD64 and ARM64 receipts from the same successful qualification
 run, verify source parity, and update the receipt authority. Continue without another bootstrap waiver.
@@ -76,7 +86,7 @@ The shared compiler-check runner may reuse a successful local result only when t
 
 Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
-When a required trusted validator cannot evaluate an intentional validator change, record the base and candidate SHAs, isolated environment, resolved executables, command, result, and independent checks still pending. Existing authorization to prepare the PR covers draft publication. It does not waive required CI or independent acceptance of the changed policy.
+When a required trusted validator cannot evaluate an intentional validator change, record the base and candidate SHAs, isolated environment, resolved executables, command, result, and independent checks still pending. Existing authorization to prepare the PR covers draft publication only after the actual publication hooks can run safely. It does not waive hook isolation, required CI, or independent acceptance of the changed policy.
 
 `nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior. Record its command and result in the PR body. Do not select a test in this workflow or rerun a reported test because hooks passed. If this evidence is missing, route the change set back to that skill. Do not open the PR with an unselected tests line. For documentation-only changes, require `npm run docs` to pass before publication.
 

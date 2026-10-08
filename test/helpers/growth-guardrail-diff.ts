@@ -208,7 +208,7 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
     files: parseChangedFiles(changed),
     pullRequestNumber: Number(prNumber),
     exceptionPolicySource: pullRequestExceptionPolicySource(process.env.GITHUB_EVENT_NAME),
-    ...(process.env.GITHUB_EVENT_NAME === "pull_request_target" &&
+    ...(["pull_request_target", "issue_comment"].includes(process.env.GITHUB_EVENT_NAME ?? "") &&
     process.env.GITHUB_REPOSITORY === "NVIDIA/NemoClaw"
       ? {
           async readBudgetApproval(digest: string) {
