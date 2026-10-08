@@ -93,7 +93,7 @@ describe("native NVIDIA credential reset ownership", () => {
       }));
       const clearNativeNvidiaProviderAuthority = vi.fn();
       const providerAdapter = adapter(deleteProvider);
-      providerAdapter.getProvider = vi.fn(async () =>
+      providerAdapter.getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
         state === "present"
           ? {
               ok: true,
