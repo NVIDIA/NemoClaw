@@ -10,6 +10,7 @@ import {
   hasMaintainerBudgetApproval,
 } from "../../helpers/e2e-budget-approval";
 import { e2eAssertionBudgetGrowthViolations } from "../../helpers/growth-guardrail-checks";
+import { loadGrowthGuardrailDiff } from "../../helpers/growth-guardrail-diff";
 
 import {
   APPROVAL_REFRESH_START,
@@ -24,6 +25,12 @@ const source = readFileSync(
 );
 const PR = 123;
 const HASH = "a".repeat(64);
+
+const processReads = vi.hoisted(() => ({
+  execFileSync: vi.fn<(command: string, args: string[]) => string>(),
+  spawnSync: vi.fn(),
+}));
+vi.mock("node:child_process", () => processReads);
 
 function changedBudget(increase = 1) {
   const budget = JSON.parse(source);
@@ -133,6 +140,67 @@ describe("E2E budget change approval", () => {
         readBase: async () => new Map([[BUDGET, source]]),
       }),
     ).not.toEqual([]);
+  });
+});
+
+describe("Maintainer approval through the production diff loader", () => {
+  function load(event: string, repository = "NVIDIA/NemoClaw") {
+    vi.stubEnv("PR_NUMBER", String(PR));
+    vi.stubEnv("BASE_SHA", BASE);
+    vi.stubEnv("HEAD_SHA", HEAD);
+    vi.stubEnv("GITHUB_EVENT_NAME", event);
+    vi.stubEnv("GITHUB_REPOSITORY", repository);
+    const head = JSON.stringify(changedBudget());
+    const digest = e2eBudgetChangeDigest(source, head)!;
+    const comments = [record("approve", digest)];
+    const api = "gh api --hostname github.com --method GET repos/NVIDIA/NemoClaw";
+    const responses = new Map<string, () => string>([
+      [`git fetch --no-tags --depth=1 origin refs/pull/${PR}/head`, () => ""],
+      ["git rev-parse FETCH_HEAD", () => HEAD],
+      [`git diff --name-status -z -M ${BASE} ${HEAD} --`, () => `M\0${BUDGET}\0`],
+      [`${api}/issues/${PR}/comments?per_page=100&page=1`, () => JSON.stringify(comments)],
+      [
+        `${api}/collaborators/maintainer/permission`,
+        () => JSON.stringify({ permission: "write", role_name: "maintain" }),
+      ],
+    ]);
+    processReads.execFileSync.mockImplementation((command, args) => {
+      const invocation = `${command} ${args.join(" ")}`;
+      const response = responses.get(invocation);
+      expect(response, `Unexpected command: ${invocation}`).toBeDefined();
+      return response!();
+    });
+    const contents = new Map([
+      [`git show ${BASE}:${BUDGET}`, source],
+      [`git show ${HEAD}:${BUDGET}`, head],
+    ]);
+    processReads.spawnSync.mockImplementation((command, args) => {
+      const content = contents.get(`${command} ${args.join(" ")}`);
+      return { status: Number(content === undefined), stdout: content ?? "" };
+    });
+    return { diff: loadGrowthGuardrailDiff(), comments };
+  }
+
+  it.each(["pull_request_target", "issue_comment"])(
+    "accepts a current maintainer approval from %s and rejects its removal",
+    async (event) => {
+      const fixture = load(event);
+      const diff = await fixture.diff;
+      expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
+      fixture.comments.length = 0;
+      expect(await e2eAssertionBudgetGrowthViolations(diff)).not.toEqual([]);
+    },
+  );
+
+  it.each([
+    ["pull_request", "NVIDIA/NemoClaw"],
+    ["issue_comment", "contributor/NemoClaw"],
+  ])("rejects comment approval for %s in %s", async (event, repository) => {
+    const { diff } = load(event, repository);
+    const loaded = await diff;
+    expect(loaded.readBudgetApproval).toBeUndefined();
+    expect(await e2eAssertionBudgetGrowthViolations(loaded)).not.toEqual([]);
+    expect(processReads.execFileSync.mock.calls.some(([command]) => command === "gh")).toBe(false);
   });
 });
 
