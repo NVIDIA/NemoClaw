@@ -52,7 +52,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
         types: ["opened", "reopened", "synchronize", "ready_for_review", "edited"],
       },
     },
-    permissions: { contents: "read" },
+    permissions: { contents: "read", "pull-requests": "read" },
     jobs: {
       "codebase-growth-guardrails": {
         name: "codebase-growth-guardrails",
@@ -84,6 +84,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
           {
             name: "Test codebase growth guardrails",
             env: {
+              GH_TOKEN: "${{ github.token }}",
               PR_NUMBER: "${{ github.event.pull_request.number }}",
               BASE_SHA: "${{ github.event.pull_request.base.sha }}",
               HEAD_SHA: "${{ github.event.pull_request.head.sha }}",

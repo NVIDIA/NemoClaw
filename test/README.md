@@ -76,12 +76,30 @@ distinct quality value. Do not move assertions into helpers, aggregate objects, 
 After a valid reduction, run `npm run e2e:assertions:update` and include the lower baseline in the
 same change. The ratchet rejects growth and stale baselines.
 
-Maintainer-approved exceptions are recorded in `ci/e2e-assertion-growth-exceptions.json`.
-Each entry binds a PR number to SHA-256 digests of the exact base and candidate budget files.
-Local hooks and candidate CI use the branch policy. The independent GitHub growth check uses only trusted-base
-policy and the event's PR number; a candidate cannot authorize its own independent check.
-A new exception must either land on `main` first or have its expected independent-check failure
-explicitly waived by a maintainer. Remove the entry after its PR merges.
+Maintainer-approved exceptions can use `changeSha256` in `ci/e2e-assertion-growth-exceptions.json`.
+This digest binds every assertion-count and file-inventory change, including reductions, to a PR.
+Formatting and unrelated base changes do not invalidate it. Changed deltas, paths, or reference metadata do.
+Legacy entries with exact `baseBudgetSha256` and `headBudgetSha256` remain supported and retain their original scope.
+Do not convert a legacy approval without maintainer acceptance of the new scope.
+
+The failed growth check prints the change digest. A maintainer can authorize it on the affected PR:
+
+```text
+NemoClaw-E2E-Growth: approve <change-sha256>
+```
+
+Post the command as the entire comment, without a code fence or explanatory text.
+Inspect the reported budget changes before recording approval.
+A request to repair CI does not itself authorize increasing the assertion budget. Use `revoke` instead of `approve` to revoke it.
+The independent check reads paginated comments from GitHub and verifies each author's current maintain
+or admin role. Bot comments and candidate-defined approvals cannot authorize that check.
+The last matching maintainer record wins. Deleting a record removes it from subsequent evaluations.
+After recording a decision, rerun the growth workflow on the unchanged candidate. No policy PR is required.
+Normal code review and the assertion census still apply. This record authorizes only the stated budget delta.
+
+Local hooks and candidate CI may use the matching branch entry for preliminary validation.
+Independent CI accepts trusted-base entries or the GitHub maintainer record, never a candidate's own exception.
+Preserve reference metadata and every retained file's budget. Remove branch entries after their PR merges.
 
 New test files must use TypeScript. Each plugin test must execute at least one Vitest `expect`
 assertion. The repository test configuration owns automatic mock and environment cleanup; restore

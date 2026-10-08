@@ -129,6 +129,15 @@ change has repository-wide impact or targeted validation cannot prove the outcom
 
 Most focused changes do not require both. Record only checks that actually ran and their results.
 
+### Pi qualification during publication
+
+Local hooks permit publication with pending Pi qualification when image inputs change.
+They still reject missing or malformed receipts and inconsistent receipt authority.
+Publish through normal hooks, then collect genuine AMD64 and ARM64 receipts from the same successful
+managed-image qualification run. Verify the image inputs match the receipt source and commit the receipts
+with their matching authority digests. Existing PR authorization covers this sequence across in-scope repairs.
+CI enforces the strict check; pending qualification does not establish readiness or merge approval.
+
 ### Reviewed SDK archives in PR CI
 
 `CI / Main Branch` packages the approved OpenShell SDK and any approved replacement without executing PR code.
