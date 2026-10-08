@@ -6,7 +6,7 @@ import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/prov
 import {
   NVIDIA_HOSTED_NATIVE_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-} from "../../inference/native-nvidia";
+} from "../../inference/native-nvidia/contract";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
