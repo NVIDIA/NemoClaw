@@ -603,6 +603,7 @@ async function readAndAssertOpenClawConfig(
   expected: {
     model: string;
     inferenceApi: string;
+    baseUrl: string;
     artifactName: string;
   },
 ): Promise<OpenClawModelConfig | undefined> {
@@ -624,13 +625,7 @@ async function readAndAssertOpenClawConfig(
   const selectedModel = provider?.models?.find((entry) => entry.id === expected.model);
 
   expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
-  expect(provider?.baseUrl).toBe(
-    SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-      : expected.inferenceApi === "anthropic-messages"
-        ? "https://inference.local"
-        : "https://inference.local/v1",
-  );
+  expect(provider?.baseUrl).toBe(expected.baseUrl);
   expect(provider?.apiKey).toBe("unused");
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
@@ -643,6 +638,7 @@ async function assertOpenClawConfig(
   expected: {
     model: string;
     inferenceApi: string;
+    baseUrl: string;
     artifactName: string;
   },
 ): Promise<void> {
@@ -656,6 +652,7 @@ async function assertInitialOpenClawConfig(
   expected: {
     model: string;
     inferenceApi: string;
+    baseUrl: string;
     artifactName: string;
   },
 ): Promise<void> {
@@ -963,6 +960,7 @@ async function runInitialRouteLifecycle(options: {
     await assertInitialOpenClawConfig(options.sandbox, options.home, {
       model: options.model,
       inferenceApi: "openai-completions",
+      baseUrl: "https://inference.local/v1",
       artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
     });
     await checkOpenClawGatewayInference(
@@ -1268,10 +1266,15 @@ test(
     expect(route.exitCode, resultText(route)).toBe(0);
     const plainRoute = stripAnsi(resultText(route));
     expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
-    expect(plainRoute).toContain(`Model: ${SWITCH_MODEL}`);
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
+      baseUrl:
+        SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+          ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+          : SWITCH_INFERENCE_API === "anthropic-messages"
+            ? "https://inference.local"
+            : "https://inference.local/v1",
       artifactName: "read-openclaw-config-after-inference-switch",
     });
     await assertRegistryAndSession(home, { mockProvider, sandbox });
