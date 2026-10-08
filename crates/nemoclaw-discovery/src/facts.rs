@@ -28,10 +28,8 @@ pub async fn observe_engine(
         cpus: None,
     };
     let work = async {
-        engines
-            .engine(&request.engine)?
-            .gateway_engine_info(request.compute_driver)
-            .await
+        let engine = engines.engine(&request.engine)?;
+        crate::gateway_engine_info(&engine, request.compute_driver).await
     };
     match tokio::time::timeout(Duration::from_secs(5), work).await {
         Ok(Ok(info)) => {

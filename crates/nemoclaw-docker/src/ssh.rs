@@ -3,7 +3,7 @@
 
 //! Reach an engine through `ssh … docker system dial-stdio`, one connection per request.
 use crate::engine::Engine;
-use nemoclaw_sdk::Error;
+use nemoclaw_backend::Error;
 
 pub(crate) fn connect(endpoint: &str) -> Result<Engine, Error> {
     #[cfg(unix)]

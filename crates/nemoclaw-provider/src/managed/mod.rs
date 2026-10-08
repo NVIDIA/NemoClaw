@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 mod podman;
+pub use nemoclaw_docker::{ensure_storage, observe_storage};
 pub use nemoclaw_sdk::managed::*;
-mod storage;
-pub use storage::{ensure_storage, observe_storage};
 mod observation;
 pub use observation::*;
 mod backend;

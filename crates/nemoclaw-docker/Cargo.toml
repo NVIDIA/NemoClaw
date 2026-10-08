@@ -1,0 +1,46 @@
+[package]
+name = "nemoclaw-docker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["client"]
+# The engine client and the operations that use it. Without it, the crate
+# provides only the endpoint policy and the identity types graphs carry.
+client = [
+    "dep:bollard",
+    "dep:futures-util",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:reqwest",
+    "dep:tar",
+    "dep:tokio",
+]
+
+[dependencies]
+nemoclaw-backend = { path = "../nemoclaw-backend" }
+bollard = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+getrandom.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["process", "io-util", "time"], optional = true }
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "macros", "rt-multi-thread"] }
+
+[target.'cfg(unix)'.dependencies]
+hyper = { version = "1", features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
