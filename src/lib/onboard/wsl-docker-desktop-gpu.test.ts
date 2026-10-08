@@ -191,18 +191,24 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
   it("fails closed when the selected provider has no NVIDIA container capability", () => {
     const base = proofProvider("docker");
     const { nvidiaContainer: _capability, ...containerEngine } = base.containerEngine;
+    const logs: string[] = [];
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
       arch: "arm64",
       resolveRuntimeProvider: () => ({ ...base, containerEngine }),
-      log: () => undefined,
+      log: (message) => logs.push(message),
     });
 
     expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
       providerId: "docker",
       passed: false,
+      failurePhase: "provider",
       diagnostic: "configured runtime provider has no NVIDIA container proof capability",
     });
+    expect(logs.join("\n")).toContain(
+      "The configured provider has no NVIDIA container proof capability.",
+    );
+    expect(logs.join("\n")).not.toContain("Container capture did not return an exit status.");
   });
 
   it("proves a denylisted GPU name on native Linux ARM64 (#8096)", () => {
