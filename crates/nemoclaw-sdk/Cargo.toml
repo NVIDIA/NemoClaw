@@ -29,6 +29,7 @@ tokio = { workspace = true, features = ["test-util"] }
 
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
+nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
 jsonschema.workspace = true

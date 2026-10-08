@@ -224,22 +224,19 @@ impl DataSource for GatewayReadinessDataSource {
             }
         };
         // Generated managed gateways permit unauthenticated calls.
-        let gateway =
-            nemoclaw_sdk::config::Gateway::External(nemoclaw_sdk::config::ExternalGateway {
-                endpoint: endpoint.into(),
-                ..Default::default()
-            });
-        let result = match nemoclaw_discovery::gateway::client(
-            &gateway,
-            &crate::openshell::EnvironmentSecrets,
-        ) {
-            Ok(client) => {
-                managed
-                    .observe(timeout, || nemoclaw_discovery::gateway::health(&client))
-                    .await
-            }
-            Err(error) => Err(error.into()),
+        let connection = nemoclaw_openshell::Connection {
+            endpoint: endpoint.into(),
+            ..Default::default()
         };
+        let result =
+            match nemoclaw_openshell::client(&connection, &crate::openshell::EnvironmentSecrets) {
+                Ok(client) => {
+                    managed
+                        .observe(timeout, || nemoclaw_openshell::health(&client))
+                        .await
+                }
+                Err(error) => Err(error.into()),
+            };
         match result {
             Ok(()) => {
                 config.ready = Value::Value(true);

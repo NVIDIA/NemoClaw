@@ -1,0 +1,21 @@
+[package]
+name = "nemoclaw-openshell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+nemoclaw-backend = { path = "../nemoclaw-backend" }
+openshell-sdk.workspace = true
+schemars.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tonic.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true

@@ -81,7 +81,7 @@ async fn imported_profile_revisions_survive_repeated_reads_and_gateway_restart()
         "management": "external", "endpoint": spec.gateway.endpoint
     }))
     .unwrap();
-    let backend = OpenShell::connect(&gateway, Arc::new(FixtureSecrets)).unwrap();
+    let backend = OpenShell::connect(&gateway.connection(), Arc::new(FixtureSecrets)).unwrap();
     let mut base: Row = [
         ("name".into(), "profile-revision".into()),
         ("owner".into(), spec.owner.clone()),

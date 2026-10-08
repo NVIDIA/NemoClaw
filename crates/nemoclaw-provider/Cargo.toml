@@ -15,6 +15,7 @@ path = "tests/main.rs"
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
+nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-discovery = { path = "../nemoclaw-discovery" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
