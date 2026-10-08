@@ -545,6 +545,30 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
+  it.each(["startup-timeout", "startup-gateway-exited"] as const)(
+    "reports %s before treating missing canonical pairing as a pairing failure",
+    async (state) => {
+      const scope = ordinaryPairingDeps({
+        observePairing: vi.fn(() => {
+          throw new Error("not published");
+        }),
+        readWatcherStatus: vi.fn(() => ({
+          schemaVersion: 1 as const,
+          state,
+          watcherActive: false,
+        })),
+      });
+      await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+        kind: "incomplete",
+        reason: state,
+      });
+      expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+      expect(ordinaryOpenClawPairingIncompleteMessage("alpha", state)).toContain(
+        "gateway-persistent.log",
+      );
+    },
+  );
+
   it("reports when the request producer never creates the exact upgrade (#10269)", async () => {
     const scope = ordinaryPairingDeps({ observePairing: vi.fn(() => PAIRING_ONLY) });
 

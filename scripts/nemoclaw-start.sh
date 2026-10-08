@@ -1908,8 +1908,12 @@ wait_for_openclaw_auto_pair_startup() {
   # competes for state-lifecycle ownership. The native startup probe excludes
   # downstream channel health and does not require device pairing.
   local deadline=$((SECONDS + 330)) status
+  OPENCLAW_AUTO_PAIR_STARTUP_FAILURE="startup-timeout"
   while [ "$SECONDS" -lt "$deadline" ]; do
-    openclaw_supervised_pid_is_live "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY" || return 1
+    if ! openclaw_supervised_pid_is_live "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"; then
+      OPENCLAW_AUTO_PAIR_STARTUP_FAILURE="startup-gateway-exited"
+      return 1
+    fi
     status="$(curl -q --noproxy '*' --proxy '' --silent --output /dev/null \
       --max-time 1 --write-out '%{http_code}' \
       "http://127.0.0.1:${_DASHBOARD_PORT}/startupz")" || status=""
@@ -1920,6 +1924,46 @@ wait_for_openclaw_auto_pair_startup() {
   done
   echo "[auto-pair] gateway startup deadline reached" >&2
   return 1
+}
+
+record_openclaw_auto_pair_startup_failure() {
+  # The existing persistent gateway log survives replacement of /tmp. Append
+  # only a fixed diagnostic through verified descriptors, without creating paths.
+  python3 - "$OPENCLAW_AUTO_PAIR_STARTUP_FAILURE" <<'PYAUTOSTARTUP'
+import json
+import os
+import stat
+import sys
+
+state = sys.argv[1]
+if state not in ('startup-timeout', 'startup-gateway-exited'):
+    sys.exit(1)
+directory_fd = log_fd = None
+try:
+    directory_fd = os.open('/sandbox/.openclaw/logs', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = os.fstat(directory_fd)
+    if directory.st_uid != os.geteuid() or stat.S_IMODE(directory.st_mode) != 0o755:
+        raise OSError('unsafe persistent log directory')
+    log_fd = os.open('gateway-persistent.log', os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=directory_fd)
+    metadata = os.fstat(log_fd)
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o644):
+        raise OSError('unsafe persistent log file')
+    message = ('[auto-pair-status] ' + json.dumps({'schemaVersion': 1, 'state': state},
+               separators=(',', ':')) + '\n').encode('utf-8')
+    if os.write(log_fd, message) != len(message):
+        raise OSError('incomplete persistent diagnostic')
+    os.fsync(log_fd)
+except OSError:
+    print('[auto-pair] could not preserve startup diagnostic in the managed gateway log', file=sys.stderr)
+    sys.exit(1)
+finally:
+    if log_fd is not None:
+        os.close(log_fd)
+    if directory_fd is not None:
+        os.close(directory_fd)
+PYAUTOSTARTUP
 }
 
 start_auto_pair() {
@@ -1941,7 +1985,11 @@ start_auto_pair() {
       # shellcheck source=/dev/null
       builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
     fi
-    wait_for_openclaw_auto_pair_startup || exit $?
+    export NEMOCLAW_AUTO_PAIR_STARTUP_STATUS="ready"
+    if ! wait_for_openclaw_auto_pair_startup; then
+      record_openclaw_auto_pair_startup_failure || true
+      export NEMOCLAW_AUTO_PAIR_STARTUP_STATUS="$OPENCLAW_AUTO_PAIR_STARTUP_FAILURE"
+    fi
     export OPENCLAW_BIN="$OPENCLAW"
     exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
   ) <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
@@ -2000,6 +2048,11 @@ def publish_status(state):
         if status_fd is not None:
             os.close(status_fd)
 
+
+startup_status = os.environ.pop('NEMOCLAW_AUTO_PAIR_STARTUP_STATUS', 'ready')
+if startup_status in ('startup-timeout', 'startup-gateway-exited'):
+    publish_status(startup_status)
+    sys.exit(1)
 
 print('[auto-pair] watcher started', flush=True)
 publish_status('running')

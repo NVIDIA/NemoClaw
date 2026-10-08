@@ -20,7 +20,10 @@ import {
   runPortableOpenClawPairingApproval,
   runPortableOpenClawPairingRequestProducer,
 } from "../auto-pair-approval";
-import { settlePortableOpenClawPairing } from "../launch-readiness";
+import {
+  settlePortableOpenClawPairing,
+  portableOpenClawPairingIncompleteMessage,
+} from "../launch-readiness";
 import { buildTrustedProxyEnvSourceShell } from "../trusted-proxy-env";
 import {
   OpenClawPairingObservationRetryableError,
@@ -96,6 +99,7 @@ function settlementDeps(overrides: Parameters<typeof settlePortableOpenClawPairi
       loadAgent: vi.fn(() => AGENT),
       observeOpenClawPairingRepairSettlement: observePairing,
       observeOpenClawPairingSettlement: observeFinalPairing,
+      observeOpenClawStartupFailure: vi.fn(() => null),
       runPortablePairingProducer: runProducer,
       runPortablePairingApproval: runApproval,
       now: () => now,
@@ -408,6 +412,27 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
+
+  it.each(["startup-timeout", "startup-gateway-exited"] as const)(
+    "reports %s when Portable canonical pairing never appears",
+    async (state) => {
+      const scope = settlementDeps({
+        observeOpenClawStartupFailure: vi.fn(() => state),
+      });
+      scope.observePairing.mockImplementation(() => {
+        throw new OpenClawPairingObservationRetryableError();
+      });
+      await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+        kind: "incomplete",
+        reason: state,
+      });
+      expect(scope.runProducer).not.toHaveBeenCalled();
+      expect(scope.runApproval).not.toHaveBeenCalled();
+      expect(portableOpenClawPairingIncompleteMessage("alpha", state)).toContain(
+        "gateway-persistent.log",
+      );
+    },
+  );
 
   it("repairs pairing-only state with one producer, one approval, and one final observation (#9207)", async () => {
     const scope = settlementDeps();

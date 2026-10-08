@@ -7,7 +7,11 @@ import path from "node:path";
 import { resolveOpenshellBinary } from "../../../adapters/openshell/command-argv";
 import type { LaunchReadinessOpenClawSessionQualification } from "../../../state/launch-readiness-lease";
 import { ROOT } from "../../../state/paths";
-import { WARMUP_TIMEOUT_MS, WATCHER_STATUS_TIMEOUT_MS } from "../auto-pair-warmup";
+import {
+  readSandboxAutoPairWatcherStatus,
+  WARMUP_TIMEOUT_MS,
+  WATCHER_STATUS_TIMEOUT_MS,
+} from "../auto-pair-warmup";
 import {
   readAutoPairApprovalPolicyModule,
   readOpenClawPairingStateModule,
@@ -50,6 +54,15 @@ export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
 ] as const;
 
 export type OpenClawPairingQualification = LaunchReadinessOpenClawSessionQualification;
+
+/** Diagnose native startup only; canonical pairing remains the success authority. */
+export function observeOpenClawStartupFailure(
+  sandboxName: string,
+  gatewayName: string,
+): "startup-timeout" | "startup-gateway-exited" | null {
+  const state = readSandboxAutoPairWatcherStatus(sandboxName, gatewayName)?.state;
+  return state === "startup-timeout" || state === "startup-gateway-exited" ? state : null;
+}
 
 export function parseOpenClawVersionFromText(value: string): string | null {
   return value.match(OPENCLAW_VERSION_RE)?.[1] ?? null;
