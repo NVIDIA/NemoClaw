@@ -144,9 +144,9 @@ const stagingReferenceVariants = [
 ];
 
 const actionMutations: Array<[string, (source: string) => string]> = [
-  ["artifact-id", (source) => source.replace('artifact-ids: "11328287341"', 'artifact-ids: "1"')],
+  ["artifact-id", (source) => source.replace('artifact-ids: "11528275310"', 'artifact-ids: "1"')],
   ["digest", (source) => source.replace(/sha256:[a-f0-9]{64}/, "sha256:" + "0".repeat(64))],
-  ["source-run", (source) => source.replace('run-id: "37270402516"', 'run-id: "1"')],
+  ["source-run", (source) => source.replace('run-id: "37725998591"', 'run-id: "1"')],
   [
     "verification-order",
     (source) => {
