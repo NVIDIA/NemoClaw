@@ -12,6 +12,7 @@ import { shellQuote } from "../core/shell-quote";
 import {
   acquireProcessBoundLockAt,
   releaseProcessBoundLock,
+  tryAcquireProcessBoundLockAt,
   type ProcessBoundLockHandle,
 } from "./registry/lock";
 
@@ -220,9 +221,91 @@ export async function withPortableHostFence<T>(
   }
 }
 
+/**
+ * Run a short critical operation only if the host fence is immediately
+ * available. This is for callers that already hold narrower lifecycle locks:
+ * waiting here could invert the host -> sandbox lock order. Contention fails
+ * closed so the caller can release its locks and retry the command.
+ */
+export async function withPortableHostFenceTry<T>(
+  homeDir: string,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  const lockPath = portableHostFencePath(homeDir);
+  const inherited = owners.getStore();
+  if (inherited?.path === lockPath) {
+    if (!inherited.active) throw new Error("Portable host fence owner is inactive");
+    inherited.references += 1;
+    try {
+      return await operation();
+    } finally {
+      releaseFenceReference(inherited);
+    }
+  }
+  if (tails.has(lockPath)) {
+    throw new Error("Host maintenance is in progress. Retry this command after it completes.");
+  }
+
+  let finish!: () => void;
+  const turn = new Promise<void>((resolve) => (finish = resolve));
+  tails.set(lockPath, turn);
+  let owner: FenceOwner | null = null;
+  let onExit: (() => void) | null = null;
+  try {
+    const handle = tryAcquireProcessBoundLockAt(lockPath);
+    if (!handle) {
+      throw new Error("Host maintenance is in progress. Retry this command after it completes.");
+    }
+    let resolveDrained!: () => void;
+    const drained = new Promise<void>((resolve) => (resolveDrained = resolve));
+    owner = {
+      active: true,
+      handle,
+      path: lockPath,
+      references: 1,
+      released: false,
+      drained,
+      resolveDrained,
+    };
+    onExit = () => {
+      if (!owner?.active) return;
+      owner.active = false;
+      owner.released = true;
+      try {
+        releaseProcessBoundLock(owner.handle);
+      } catch {
+        // Exit cannot recover; generation-safe release preserves ambiguity.
+      }
+    };
+    process.once("exit", onExit);
+    return await owners.run(owner, operation);
+  } finally {
+    try {
+      if (owner?.active) owner.active = false;
+      if (owner) {
+        releaseFenceReference(owner);
+        await owner.drained;
+      }
+      if (onExit) process.removeListener("exit", onExit);
+      if (owner && !owner.released) {
+        owner.released = true;
+        releaseProcessBoundLock(owner.handle);
+      }
+    } finally {
+      if (tails.get(lockPath) === turn) tails.delete(lockPath);
+      finish();
+    }
+  }
+}
+
 /** Hold the portable host fence for the current process home without a second state owner. */
 export function withCurrentPortableHostFence<T>(operation: () => Promise<T> | T): Promise<T> {
   return withPortableHostFence(process.env.HOME || os.homedir(), operation);
+}
+
+/** Try the portable host fence for the current process home without waiting. */
+export function withCurrentPortableHostFenceTry<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withPortableHostFenceTry(process.env.HOME || os.homedir(), operation);
 }
 
 const root = (homeDir: string): string => path.join(homeDir, ".nemoclaw");

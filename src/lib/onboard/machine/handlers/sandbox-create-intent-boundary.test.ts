@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveMessagingPlanAuthority } from "../../../messaging/plan-authority";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
@@ -25,6 +29,18 @@ const resourceProfiles: [string, { cpu: string; memory: string } | null][] = [
 ];
 
 describe("sandbox create intent machine boundary", () => {
+  beforeEach(() => {
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-intent-")),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
+    vi.unstubAllEnvs();
+  });
+
   it("attaches the internal native NVIDIA provider while retaining the logical selection", async () => {
     const session = createSession({ sandboxName: "native-nvidia" });
     const nativeNvidiaProviderAttachment = {

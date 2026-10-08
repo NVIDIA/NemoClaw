@@ -50,7 +50,7 @@ async function forwardListenerAuthority(env: NodeJS.ProcessEnv): Promise<{
 }> {
   const [ports, gatewayEnv, gatewayIdentity, gatewayManagement] = await Promise.all([
     import("../../../../src/lib/core/ports.ts"),
-    import("../../../../src/lib/onboard/docker-driver-gateway-env.ts"),
+    import("../../../../src/lib/core/gateway-address.ts"),
     import("../../../../src/lib/onboard/gateway-binding/identity.ts"),
     import("../../../../src/lib/onboard/gateway-management.ts"),
   ]);
