@@ -141,7 +141,7 @@ To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid
 
 `nemoclaw_ollama_proxy_storage` takes `name` and `engine`, and keeps the proxy credential in a volume named `<name>-auth`.
 `nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
-Both take optional `owner` and `generation`, generated the same way; set the external model's to its proxy storage's values to bind them.
+Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
 
 ### NemoClaw Data Sources
 
