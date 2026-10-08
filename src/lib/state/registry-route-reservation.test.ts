@@ -4,7 +4,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
 import type { InferenceSelection } from "../inference/selection";
 import { createSandboxHostLocalInferenceProvenance } from "./registry/host-local-inference";
@@ -203,52 +203,64 @@ describe("sandbox inference route reservation", () => {
       await fs.rm(home, { recursive: true, force: true });
     }
   });
-  it.each([
-    [
-      "fresh Model Router route",
-      "model-router",
-      "nvidia-router",
-      "nvidia-routed",
-      "http://host.openshell.internal:4000/v1",
-      "NVIDIA_INFERENCE_API_KEY",
-      false,
-    ],
-    [
-      "fresh Amazon Bedrock adapter route",
-      "bedrock",
-      "compatible-anthropic-endpoint",
-      "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      "https://bedrock-runtime.us-east-1.amazonaws.com/model/test/invoke",
-      "COMPATIBLE_API_KEY",
-      false,
-    ],
-    [
-      "interrupted custom-endpoint resume",
-      "resume",
-      "compatible-endpoint",
-      "test-model",
-      "http://host.openshell.internal:19001/v1",
-      "COMPATIBLE_API_KEY",
-      true,
-    ],
-    [
-      "missing-sandbox repair",
-      "repair",
-      "compatible-endpoint",
-      "test-model",
-      "http://host.openshell.internal:19002/v1",
-      "COMPATIBLE_API_KEY",
-      true,
-    ],
-  ] as const)(
-    "stages %s from the durable route",
-    async (_label, sandboxName, provider, model, endpointUrl, credentialEnv, existing) => {
-      const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-registration-"));
+  describe("creation registration", () => {
+    let home: string | undefined;
+    let registry: typeof import("./registry");
+    let registerCreatedSandbox: typeof import("../onboard/sandbox-registration").registerCreatedSandbox;
+
+    beforeEach(async () => {
+      home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-registration-"));
       vi.stubEnv("HOME", home);
       vi.resetModules();
-      try {
-        const registry = await import("./registry");
-        const { registerCreatedSandbox } = await import("../onboard/sandbox-registration");
+      registry = await import("./registry");
+      ({ registerCreatedSandbox } = await import("../onboard/sandbox-registration"));
+    });
+
+    afterEach(async () => {
+      await (home ? fs.rm(home, { recursive: true, force: true }) : Promise.resolve());
+      home = undefined;
+    });
+
+    it.each([
+      [
+        "fresh Model Router route",
+        "model-router",
+        "nvidia-router",
+        "nvidia-routed",
+        "http://host.openshell.internal:4000/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        false,
+      ],
+      [
+        "fresh Amazon Bedrock adapter route",
+        "bedrock",
+        "compatible-anthropic-endpoint",
+        "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "https://bedrock-runtime.us-east-1.amazonaws.com/model/test/invoke",
+        "COMPATIBLE_API_KEY",
+        false,
+      ],
+      [
+        "interrupted custom-endpoint resume",
+        "resume",
+        "compatible-endpoint",
+        "test-model",
+        "http://host.openshell.internal:19001/v1",
+        "COMPATIBLE_API_KEY",
+        true,
+      ],
+      [
+        "missing-sandbox repair",
+        "repair",
+        "compatible-endpoint",
+        "test-model",
+        "http://host.openshell.internal:19002/v1",
+        "COMPATIBLE_API_KEY",
+        true,
+      ],
+    ] as const)(
+      "stages %s from the durable route",
+      async (_label, sandboxName, provider, model, endpointUrl, credentialEnv, existing) => {
         const gatewayName = "nemoclaw";
         const sessionId = `session-${sandboxName}`;
         const reservedSelection = {
@@ -301,18 +313,9 @@ describe("sandbox inference route reservation", () => {
           reservationSessionId: sessionId,
         });
         expect(registry.getDefault()).toBeNull();
-      } finally {
-        await fs.rm(home, { recursive: true, force: true });
-      }
-    },
-  );
-  it("rejects creation registration from a foreign reservation session and preserves the pending row (#10214)", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
-    vi.stubEnv("HOME", home);
-    vi.resetModules();
-    try {
-      const registry = await import("./registry");
-      const { registerCreatedSandbox } = await import("../onboard/sandbox-registration");
+      },
+    );
+    it("rejects creation registration from a foreign reservation session and preserves the pending row (#10214)", async () => {
       registry.reserveSandboxInferenceRoute("alpha", {
         ...EXACT_ROUTE_SELECTION,
         gatewayName: "nemoclaw",
@@ -332,11 +335,71 @@ describe("sandbox inference route reservation", () => {
       ).toThrow("Cannot stage a sandbox after its inference route reservation changed");
       expect(registry.getSandbox("alpha")).toEqual(reserved);
       expect(registry.getDefault()).toBeNull();
-    } finally {
-      await fs.rm(home, { recursive: true, force: true });
-    }
-  });
+    });
 
+    it("preserves an omitted host-local receipt through creation registration", async () => {
+      const receipt = serializedHostLocalInferenceReceipt("docker");
+      const route = {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw-9090",
+        reservationSessionId: "session-owner",
+      } as const;
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        ...route,
+        hostLocalInferenceReceipt: receipt,
+      });
+      registry.reserveSandboxInferenceRoute("alpha", route);
+
+      expect(registry.getSandbox("alpha")?.hostLocalInferenceReceipt).toBe(receipt);
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
+      const entry = registerCreatedSandbox({
+        sandboxName: "alpha",
+        inferenceSelection: {
+          provider: route.provider,
+          model: route.model,
+          endpointUrl: route.endpointUrl,
+          endpointSource: null,
+          credentialEnv: route.credentialEnv,
+          preferredInferenceApi: route.preferredInferenceApi,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+        runtimeFields: {
+          gpuEnabled: false,
+          hostGpuDetected: false,
+          sandboxGpuEnabled: false,
+          sandboxGpuMode: "auto",
+          sandboxGpuDevice: null,
+          openshellDriver: "docker",
+          openshellVersion: "0.1.2",
+        },
+        agent: null,
+        agentVersionKnown: true,
+        imageTag: null,
+        workload: {
+          schemaVersion: 1,
+          kind: "legacy-dockerfile",
+          reference: null,
+          shared: false,
+        },
+        plannedMessagingState: undefined,
+        hermesToolGateways: [],
+        hermesDashboardState: { enabled: false, config: null },
+        dashboardPort: 18789,
+        gatewayName: route.gatewayName,
+        gatewayPort: 9090,
+      });
+
+      expect(entry.hostLocalInferenceReceipt).toBe(receipt);
+      expect(registry.getSandbox("alpha")?.hostLocalInferenceReceipt).toBe(receipt);
+    });
+  });
   it("retargets an existing row to the gateway protected by the reservation", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
@@ -407,78 +470,6 @@ describe("sandbox inference route reservation", () => {
         pendingRouteReservation: true,
         reservationSessionId: "session-owner",
       });
-    } finally {
-      await fs.rm(home, { recursive: true, force: true });
-    }
-  });
-
-  it("preserves an omitted host-local receipt through creation registration", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
-    vi.stubEnv("HOME", home);
-    vi.resetModules();
-    try {
-      const registry = await import("./registry");
-      const { registerCreatedSandbox } = await import("../onboard/sandbox-registration");
-      const receipt = serializedHostLocalInferenceReceipt("docker");
-      const route = {
-        provider: "compatible-endpoint",
-        model: "model-a",
-        endpointUrl: "https://api.example.test/v1",
-        credentialEnv: "CUSTOM_API_KEY",
-        preferredInferenceApi: "openai-responses",
-        gatewayName: "nemoclaw-9090",
-        reservationSessionId: "session-owner",
-      } as const;
-
-      registry.reserveSandboxInferenceRoute("alpha", {
-        ...route,
-        hostLocalInferenceReceipt: receipt,
-      });
-      registry.reserveSandboxInferenceRoute("alpha", route);
-
-      expect(registry.getSandbox("alpha")?.hostLocalInferenceReceipt).toBe(receipt);
-      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
-      const entry = registerCreatedSandbox({
-        sandboxName: "alpha",
-        inferenceSelection: {
-          provider: route.provider,
-          model: route.model,
-          endpointUrl: route.endpointUrl,
-          endpointSource: null,
-          credentialEnv: route.credentialEnv,
-          preferredInferenceApi: route.preferredInferenceApi,
-          compatibleEndpointReasoning: null,
-          compatibleEndpointReasoningEffort: null,
-          nimContainer: null,
-        },
-        runtimeFields: {
-          gpuEnabled: false,
-          hostGpuDetected: false,
-          sandboxGpuEnabled: false,
-          sandboxGpuMode: "auto",
-          sandboxGpuDevice: null,
-          openshellDriver: "docker",
-          openshellVersion: "0.1.2",
-        },
-        agent: null,
-        agentVersionKnown: true,
-        imageTag: null,
-        workload: {
-          schemaVersion: 1,
-          kind: "legacy-dockerfile",
-          reference: null,
-          shared: false,
-        },
-        plannedMessagingState: undefined,
-        hermesToolGateways: [],
-        hermesDashboardState: { enabled: false, config: null },
-        dashboardPort: 18789,
-        gatewayName: route.gatewayName,
-        gatewayPort: 9090,
-      });
-
-      expect(entry.hostLocalInferenceReceipt).toBe(receipt);
-      expect(registry.getSandbox("alpha")?.hostLocalInferenceReceipt).toBe(receipt);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
