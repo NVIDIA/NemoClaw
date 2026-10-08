@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+vi.mock("../adapters/openshell/provider-policy", () => ({
+  requireNativeProviderPolicy: vi.fn(async () => {}),
+}));
+
 import { runInferenceSet } from "./inference-set";
 import {
   createCompatibleProviderCapture,
   createDeps,
   nativeLocalTestReceipt,
+  createFailingNativeLocalRestoreAdapter,
 } from "./inference-set.test-support";
 
 describe("runInferenceSet live rollback authority", () => {
@@ -148,5 +153,33 @@ describe("native to shared inference rollback", () => {
       });
       expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     },
+  );
+});
+
+it("preserves the original failure and detaches NVIDIA after local restoration fails (#12558)", async () => {
+  const previous = nativeLocalTestReceipt();
+  const deps = createDeps({
+    config: {},
+    entry: {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "ollama-local",
+      model: "old-model",
+      nativeLocalProviderAttachment: previous,
+    },
+    updateSandbox: () => false,
+  });
+  const { adapter, detachProvider } = createFailingNativeLocalRestoreAdapter(
+    deps.providerAdapter,
+    previous,
+  );
+  await expect(
+    runInferenceSet(
+      { provider: "nvidia-prod", model: "model-a" },
+      { ...deps, providerAdapter: adapter },
+    ),
+  ).rejects.toThrow(/Failed to update NemoClaw registry[\s\S]*local restoration unavailable/);
+  expect(detachProvider).toHaveBeenCalledWith(
+    expect.objectContaining({ providerName: "nemoclaw-nvidia-prod-v1" }),
   );
 });

@@ -505,6 +505,7 @@ export function createDirectSetupInferenceHarnessFactory(
       providerAdapter: native.adapter,
       getNativeLocalProviderAuthority: native.getNativeLocalProviderAuthority,
       setNativeLocalProviderAuthority: native.setNativeLocalProviderAuthority,
+      clearNativeLocalProviderAuthority: native.clearNativeLocalProviderAuthority,
       ...options.overrides,
     });
     const revalidateSandboxIdentity = vi.fn();

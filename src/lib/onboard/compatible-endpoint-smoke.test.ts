@@ -6,6 +6,7 @@ import {
   NATIVE_LOCAL_CREDENTIAL_ENV,
   type NativeLocalBinding,
 } from "../inference/native-local/contract";
+import * as nativeProfile from "../inference/native-local/profile";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1334,4 +1335,52 @@ JSON
     expect(command).toContain("\n");
     expect(command).not.toContain("base64.b64decode");
   });
+});
+
+it("reports the native provider identity when a verified lookup subsequently fails (#12558)", async () => {
+  const binding = {
+    provider: "vllm-local",
+    sandboxName: "native",
+    gatewayName: "nemoclaw",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+    authMode: "authenticated",
+  } as const;
+  const receipt = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned-provider-id",
+  };
+  const verification = vi
+    .spyOn(nativeProfile, "verifyNativeLocalProviderAttachment")
+    .mockResolvedValue(receipt);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const runOpenshell = vi.fn().mockReturnValue({ status: 1, stderr: "provider query failed" });
+  try {
+    await expect(
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "native",
+        provider: "vllm-local",
+        model: "model-a",
+        nativeLocalProviderAttachment: receipt,
+        runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+        redact: (value) => value,
+        onFailure: () => {
+          throw new Error("verification failed");
+        },
+      }),
+    ).rejects.toThrow("verification failed");
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain(receipt.providerName);
+    expect(diagnostics).toContain("Native sandbox inference");
+    expect(diagnostics).not.toContain("inference.local");
+    expect(diagnostics).not.toContain("Compatible endpoint provider");
+  } finally {
+    verification.mockRestore();
+    error.mockRestore();
+    log.mockRestore();
+  }
 });

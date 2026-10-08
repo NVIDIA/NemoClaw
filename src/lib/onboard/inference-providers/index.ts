@@ -31,5 +31,8 @@ export {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
 } from "../../inference/native-local/contract";
-export { prepareNativeLocalSelection } from "../../inference/native-local/selection";
+export {
+  prepareNativeLocalSelection,
+  retireUnreservedNativeLocalProvider,
+} from "../../inference/native-local/selection";
 export { gatewayReachableCompatibleEndpointUrl } from "./compatible-endpoint-gateway-route";

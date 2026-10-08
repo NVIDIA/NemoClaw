@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
@@ -10,6 +9,7 @@ import path from "node:path";
 import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -721,7 +721,7 @@ test
 test(
   "TC-INF-09 native local inference stays isolated between sibling sandboxes (#12558)",
   {
-    timeout: 2 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    timeout: INFERENCE_ROUTING_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm compatible-endpoint prerequisites",
@@ -779,6 +779,7 @@ test(
       artifacts,
       sandboxName,
       {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
         COMPATIBLE_API_KEY: apiKey,
         NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
         NEMOCLAW_MODEL: model,
@@ -795,18 +796,7 @@ test(
     const sandboxRequestOffset = fake.requests().length;
     const turn = await sandbox.exec(
       sandboxName,
-      [
-        "openclaw",
-        "agent",
-        "--local",
-        "--agent",
-        "main",
-        "--session-id",
-        randomUUID(),
-        "--message",
-        "Reply with PONG. Do not use tools.",
-        "--json",
-      ],
+      ["dcode", "-n", "Reply with PONG. Do not use tools.", "--json"],
       {
         artifactName: "tc-inf-09-native-agent",
         env: buildAvailabilityProbeEnv(),
@@ -849,6 +839,7 @@ test(
       siblingName,
       {
         COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_AGENT: "openclaw",
         NEMOCLAW_ENDPOINT_URL: sibling.baseUrl,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PREFERRED_API: "openai-completions",

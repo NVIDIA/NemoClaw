@@ -93,6 +93,44 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("does not inherit a native attachment from a different published route (#12558)", () => {
+    const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated",
+      gatewayName: "nemoclaw",
+      sandboxName: "demo",
+    } as const;
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "previous-id",
+    };
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "demo",
+      gatewayName: "nemoclaw",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://localhost:8000/v1",
+      nativeLocalProviderAttachment: receipt,
+    });
+    const base = createdRegistryEntryInput();
+    const entry = prepareCreatedSandboxRegistration({
+      ...base,
+      inferenceSelection: {
+        ...base.inferenceSelection,
+        provider: "compatible-endpoint",
+        endpointUrl: "https://models.example.com/v1",
+      },
+    });
+    expect(entry.nativeLocalProviderAttachment).toBeUndefined();
+  });
+
   it("records only an exact native NVIDIA provider identity", () => {
     const attachment = {
       schemaVersion: 1 as const,

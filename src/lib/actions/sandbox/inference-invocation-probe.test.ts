@@ -96,6 +96,41 @@ const NVCF_BODY_VARIANTS = [
 ] as const;
 
 describe("sandbox inference invocation probe", () => {
+  it("validates native compatible replies using the API sent to the endpoint (#12558)", async () => {
+    const binding = {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandboxName,
+    } as const;
+    const execute = vi.fn(async () => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":"PONG"}}]}',
+      stderr: "",
+    }));
+    const result = await probeSandboxInferenceInvocation(
+      {
+        ...input,
+        provider: binding.provider,
+        gatewayName: binding.gatewayName,
+        preferredInferenceApi: "openai-responses",
+        nativeLocalProviderAttachment: {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+          schemaVersion: 1,
+          providerId: "owned-local-provider",
+        },
+      },
+      { execute },
+    );
+    expect(result).toEqual({ ok: true });
+    expect((execute.mock.calls[0] as unknown as [string, string])[1]).toContain(
+      "/v1/chat/completions",
+    );
+  });
+
   it("probes the recorded native endpoint with its opaque credential (#12558)", async () => {
     const binding = {
       provider: "ollama-local",

@@ -2079,7 +2079,7 @@ async function runInferenceSetWithoutHostLock(
     };
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
-    await rollbackNativeLocalSelection({
+    let failure = await rollbackNativeLocalSelection({
       adapter: deps.providerAdapter,
       sandboxName,
       provider,
@@ -2090,30 +2090,47 @@ async function runInferenceSetWithoutHostLock(
       previousDetached: previousNativeLocalDetached,
       previousDetachCommitted: previousNativeLocalDetachCommitted,
       getSandbox: deps.getSandbox,
-    });
-    await restorePreviousNativeNvidiaAfterFailedPublish({
+    }).then(
+      () => error,
+      (rollbackError: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        const rollbackDetail =
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        return new InferenceSetError(
+          `${detail}\n  Native local access compensation failed: ${rollbackDetail}`,
+          error instanceof InferenceSetError ? error.exitCode : 1,
+        );
+      },
+    );
+    failure = await restorePreviousNativeNvidiaAfterFailedPublish({
       detached: previousNativeNvidiaDetached,
       committed: previousNativeNvidiaDetachCommitted,
       previousAttachment: previousNativeNvidiaAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
-      error,
+      error: failure,
       deps,
-    });
-    await rollbackNativeNvidiaSelection({
+    }).then(
+      () => failure,
+      (rollbackError: unknown) => rollbackError,
+    );
+    failure = await rollbackNativeNvidiaSelection({
       attachmentChanged: nativeNvidiaAttachmentChanged,
       registryCommitted: nativeNvidiaRegistryCommitted,
       attachment: nativeNvidiaProviderAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
-      error,
+      error: failure,
       deps,
-    });
-    if (!providerMutation) throw error;
-    if (ambiguousInferenceSelection) throw error;
-    if (restoredSelectionAfterProviderFailure) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
+    }).then(
+      () => failure,
+      (rollbackError: unknown) => rollbackError,
+    );
+    if (!providerMutation) throw failure;
+    if (ambiguousInferenceSelection) throw failure;
+    if (restoredSelectionAfterProviderFailure) throw failure;
+    const detail = failure instanceof Error ? failure.message : String(failure);
+    const exitCode = failure instanceof InferenceSetError ? failure.exitCode : 1;
     if (!appliedInferenceSelection) {
       if (providerMutation.action === "create") {
         try {

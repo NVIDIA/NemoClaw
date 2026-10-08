@@ -110,6 +110,11 @@ export function createNativeLocalSetupHarness() {
     authorities,
     profiles,
     getNativeLocalProviderAuthority: (name: string) => authorities.get(name),
+    clearNativeLocalProviderAuthority: (receipt: NativeLocalProviderAttachment) => {
+      const current = authorities.get(receipt.providerName);
+      if (current?.providerId !== receipt.providerId) throw new Error("Fixture authority changed");
+      authorities.delete(receipt.providerName);
+    },
     setNativeLocalProviderAuthority: (receipt: NativeLocalProviderAttachment) => {
       authorities.set(receipt.providerName, receipt);
     },

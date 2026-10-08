@@ -139,10 +139,14 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     return;
   }
 
+  const forceCanonicalRoute = options.forceCanonicalRoute === true || Boolean(local);
+  const providerName = local?.providerName ?? options.provider;
   console.log(
-    options.forceCanonicalRoute
-      ? "  Verifying provider-neutral inference through the sandbox runtime..."
-      : "  Verifying compatible endpoint through the sandbox runtime...",
+    local
+      ? "  Verifying native local inference through the sandbox runtime..."
+      : forceCanonicalRoute
+        ? "  Verifying provider-neutral inference through the sandbox runtime..."
+        : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
   const target = local
@@ -177,8 +181,8 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
 
   if (!providerResult.ok) {
     console.error(
-      options.forceCanonicalRoute
-        ? `  Provider-neutral inference provider '${options.provider}' is missing or unreachable in the OpenShell gateway.`
+      forceCanonicalRoute
+        ? `  Provider-neutral inference provider '${providerName}' is missing or unreachable in the OpenShell gateway.`
         : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error(
@@ -199,7 +203,6 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     );
   }
 
-  const forceCanonicalRoute = options.forceCanonicalRoute === true || Boolean(local);
   const script = forceCanonicalRoute
     ? buildProviderNeutralInferenceSandboxSmokeScript(
         options.model,
@@ -220,15 +223,13 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
 
   if (smokeStatus !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
     console.error(
-      options.forceCanonicalRoute
+      forceCanonicalRoute
         ? "  Provider-neutral sandbox inference smoke check failed."
         : "  Compatible endpoint sandbox smoke check failed.",
     );
-    if (!options.forceCanonicalRoute) {
+    if (!forceCanonicalRoute) {
       console.error(
-        local
-          ? "  Messaging setup is not the root cause; native sandbox inference failed."
-          : "  Messaging setup is not the root cause; the sandbox inference.local route failed.",
+        "  Messaging setup is not the root cause; the sandbox inference.local route failed.",
       );
     }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);

@@ -17,6 +17,7 @@ import {
 } from "../../state/registry/native-local-provider-authority";
 import {
   nativeLocalIdentity,
+  normalizeNativeLocalProviderAttachment,
   NATIVE_LOCAL_CREDENTIAL_ENV,
   type NativeLocalBinding,
   type NativeLocalProviderAttachment,
@@ -95,4 +96,33 @@ export async function retireUnselectedNativeLocalProviders(input: {
         "Native inference provider remains attached; recovery authority retained. Inspect its attachments before retrying cleanup.",
       );
   }
+}
+
+/** Retire prepared authority only before the caller starts publishing a reservation. */
+export async function retireUnreservedNativeLocalProvider(input: {
+  adapter: OpenShellProviderAdapter;
+  expected: NativeLocalProviderAttachment;
+  sandboxName: string;
+  gatewayName: string;
+  getSandbox?: typeof import("../../state/registry").getSandbox;
+  clearAuthority?: typeof clearNativeLocalProviderAuthority;
+}): Promise<void> {
+  if (!input.getSandbox) throw new Error("Sandbox ownership observation is unavailable.");
+  const entry = input.getSandbox(input.sandboxName);
+  const recorded = normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
+  if (entry?.nativeLocalProviderAttachment !== undefined && !recorded)
+    throw new Error(
+      "Sandbox provider ownership could not be verified; cleanup authority retained.",
+    );
+  if (
+    recorded?.providerName === input.expected.providerName &&
+    recorded.providerId === input.expected.providerId
+  )
+    return;
+  const retired = await retireNativeLocalProvider({
+    ...input,
+    clearAuthority: input.clearAuthority ?? clearNativeLocalProviderAuthority,
+  });
+  if (retired.status === "attached")
+    throw new Error("Provider remains attached; cleanup authority retained.");
 }

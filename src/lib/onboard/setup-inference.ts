@@ -10,6 +10,7 @@ import {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
   prepareNativeLocalSelection,
+  retireUnreservedNativeLocalProvider,
   gatewayReachableCompatibleEndpointUrl,
 } from "./inference-providers";
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
@@ -251,6 +252,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   listSandboxes?: typeof import("../state/registry").listSandboxes;
   getNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").getNativeLocalProviderAuthority;
   setNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").setNativeLocalProviderAuthority;
+  clearNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").clearNativeLocalProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
@@ -649,6 +651,41 @@ function releaseSupersededOllamaModel(
   if (authorityRefusal) throw authorityRefusal;
 }
 
+async function rejectNativeLocalSetupFailure(input: {
+  error: unknown;
+  attachment?: NativeLocalProviderAttachment;
+  reservationEntered: boolean;
+  sandboxName: string | null;
+  gatewayName: string;
+  deps: SetupInferenceDeps;
+}): Promise<never> {
+  if (
+    input.attachment &&
+    !input.reservationEntered &&
+    input.deps.providerAdapter &&
+    input.sandboxName
+  ) {
+    try {
+      await retireUnreservedNativeLocalProvider({
+        adapter: input.deps.providerAdapter,
+        expected: input.attachment,
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        getSandbox: input.deps.getSandbox,
+        clearAuthority: input.deps.clearNativeLocalProviderAuthority,
+      });
+    } catch (cleanupError) {
+      throw new Error(
+        `${hostLocalInferenceFailureDetail(input.error, input.deps)}\n  Native local provider cleanup was not confirmed: ${hostLocalInferenceFailureDetail(cleanupError, input.deps)}`,
+        { cause: input.error },
+      );
+    }
+  }
+  if (input.error instanceof HostLocalInferenceBranchExit)
+    return input.deps.exitProcess(input.error.code);
+  throw input.error;
+}
+
 export function createSetupInference(
   defaults: SetupInferenceDeps,
   overrides: Partial<SetupInferenceDeps> = {},
@@ -787,6 +824,7 @@ export function createSetupInference(
         const hostLocalProviderErrors: string[] = [];
         const hostLocalSelection = options.hostLocalInference;
         let routeReserved = false;
+        let nativeLocalReservationEntered = false;
         let hostLocalInferenceReceipt: string | null = null;
         let hostLocalInferenceProvenance:
           | import("../state/registry/types").SandboxEntry["hostLocalInferenceProvenance"]
@@ -825,6 +863,8 @@ export function createSetupInference(
           if (releaseAbandonedRouteReservation(name, route)) {
             deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
           }
+          // A failed response can follow a durable registry write. Retain authority once publication starts.
+          nativeLocalReservationEntered = true;
           const reserved = deps.updateSandbox(name, route);
           routeReserved = reserved;
           return reserved;
@@ -835,11 +875,12 @@ export function createSetupInference(
           gatewayName,
           revalidateSandboxIdentity,
         );
-        const providerExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
-          ? (code: number): never => {
-              throw new HostLocalInferenceBranchExit(code);
-            }
-          : deps.exitProcess;
+        const providerExitProcess: CommonDeps["exitProcess"] =
+          hostLocalSelection || selectingNativeLocal
+            ? (code: number): never => {
+                throw new HostLocalInferenceBranchExit(code);
+              }
+            : deps.exitProcess;
         const ambiguousRouteExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
           ? (code: number): never => {
               throw new HostLocalInferenceBranchExit(code, true);
@@ -1358,7 +1399,16 @@ export function createSetupInference(
           shouldLogSuccessfulRoute = true;
           return { ok: true as const };
         } catch (error) {
-          if (!hostLocalRoute || !hostLocalSelection) throw error;
+          if (!hostLocalRoute || !hostLocalSelection) {
+            return rejectNativeLocalSetupFailure({
+              error,
+              attachment: nativeLocalProviderAttachment,
+              reservationEntered: nativeLocalReservationEntered,
+              sandboxName,
+              gatewayName,
+              deps,
+            });
+          }
           emitHostLocalInferenceFailure(
             hostLocalSelection.runtimeProviderId,
             error instanceof HostLocalInferenceBranchExit

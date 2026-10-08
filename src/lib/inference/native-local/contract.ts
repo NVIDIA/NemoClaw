@@ -138,10 +138,18 @@ export function normalizeNativeLocalProviderAttachment(
 export function normalizeNativeLocalProviderAuthorities(
   value: unknown,
 ): Record<string, NativeLocalProviderAttachment> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const entries = Object.entries(value).flatMap(([name, value]) => {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(
+      "Invalid persisted native local provider authority. Retain the registry for explicit repair.",
+    );
+  const entries = Object.entries(value).map(([name, value]) => {
     const receipt = normalizeNativeLocalProviderAttachment(value);
-    return receipt?.providerName === name ? [[name, receipt] as const] : [];
+    if (!receipt || receipt.providerName !== name)
+      throw new Error(
+        "Invalid persisted native local provider authority. Retain the registry for explicit repair.",
+      );
+    return [name, receipt] as const;
   });
   return entries.length ? Object.fromEntries(entries) : undefined;
 }

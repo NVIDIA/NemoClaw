@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -241,3 +242,57 @@ it("enumerates cleanup authority only for the exact sandbox and gateway (#12558)
     await fs.rm(home, { recursive: true, force: true });
   }
 });
+
+const wrongAuthorityKeyBinding = {
+  provider: "vllm-local",
+  endpointUrl: "http://host.openshell.internal:8000/v1",
+  sandboxName: "alpha",
+  gatewayName: "nemoclaw",
+  authMode: "sentinel",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+} as const;
+
+it.each([
+  ["invalid map", []],
+  [
+    "wrong map key",
+    {
+      "different-key": {
+        ...wrongAuthorityKeyBinding,
+        ...nativeLocalIdentity(wrongAuthorityKeyBinding),
+        schemaVersion: 1,
+        providerId: "retained-id",
+      },
+    },
+  ],
+  ["invalid receipt", { "owned-provider": { providerId: "retained-id" } }],
+])(
+  "preserves %s authority evidence when an unrelated registry write is attempted (#12558)",
+  async (_label, invalid) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-native-invalid-authority-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { REGISTRY_FILE, save } = await import("./registry/persistence");
+      await fs.mkdir(path.dirname(REGISTRY_FILE), { recursive: true });
+      const original = JSON.stringify({
+        sandboxes: {},
+        defaultSandbox: null,
+        nativeLocalProviderAuthorities: invalid,
+      });
+      await fs.writeFile(REGISTRY_FILE, original);
+      expect(() =>
+        registry.registerSandbox({ name: "unrelated", gatewayName: "nemoclaw" }),
+      ).toThrow(/native local provider authority/i);
+      expect(await fs.readFile(REGISTRY_FILE, "utf8")).toBe(original);
+      expect(() => save({ sandboxes: {}, defaultSandbox: null })).toThrow(
+        /native local provider authority/i,
+      );
+      expect(await fs.readFile(REGISTRY_FILE, "utf8")).toBe(original);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

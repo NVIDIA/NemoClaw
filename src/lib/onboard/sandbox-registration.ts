@@ -26,7 +26,10 @@ import {
   requireSandboxHostLocalInferenceProvenance,
 } from "../state/registry/host-local-inference";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
-import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
+import {
+  retainedNativeLocalProviderAttachment,
+  type QualifiedSandboxInferenceRouteReservation,
+} from "../state/registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
@@ -350,17 +353,23 @@ export function prepareCreatedSandboxRegistration(
     input.hostLocalInferenceProvenance !== undefined
       ? input.hostLocalInferenceProvenance
       : pending?.hostLocalInferenceProvenance;
+  const effectiveSelection = pendingRoute
+    ? { ...input.inferenceSelection, ...pendingRoute }
+    : input.inferenceSelection;
   const pendingNativeLocalProviderAttachment =
-    input.nativeLocalProviderAttachment ?? pending?.nativeLocalProviderAttachment;
+    input.nativeLocalProviderAttachment ??
+    retainedNativeLocalProviderAttachment(pending ?? undefined, {
+      provider: effectiveSelection.provider,
+      endpointUrl: effectiveSelection.endpointUrl,
+      gatewayName: input.gatewayName,
+    });
   const pendingNativeNvidiaProviderAttachment =
     input.nativeNvidiaProviderAttachment !== undefined
       ? input.nativeNvidiaProviderAttachment
       : pending?.nativeNvidiaProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
-    inferenceSelection: pendingRoute
-      ? { ...input.inferenceSelection, ...pendingRoute }
-      : input.inferenceSelection,
+    inferenceSelection: effectiveSelection,
     ...(pendingHostLocalInferenceReceipt === undefined
       ? {}
       : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),

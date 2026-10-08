@@ -521,3 +521,55 @@ export function createDeps(options: {
     getSession: () => session,
   };
 }
+
+/** Stateful local-to-NVIDIA fixture with a failed restoration after detach. */
+export function createFailingNativeLocalRestoreAdapter(
+  base: OpenShellProviderAdapter,
+  previous: ReturnType<typeof nativeLocalTestReceipt>,
+) {
+  let localAttached = true;
+  const detachProvider = vi.fn(async (request: Parameters<typeof base.detachProvider>[0]) => {
+    if (request.providerName !== previous.providerName) return base.detachProvider(request);
+    localAttached = false;
+    return { ok: true as const, value: { changed: true } };
+  });
+  const adapter = {
+    ...base,
+    detachProvider,
+    inspectProviderProfile: async () => ({
+      ok: true as const,
+      value: { credentialKeys: [previous.credentialEnv] },
+    }),
+    getProvider: async (request: Parameters<typeof base.getProvider>[0]) =>
+      request.providerName !== previous.providerName
+        ? base.getProvider(request)
+        : {
+            ok: true as const,
+            value: {
+              name: previous.providerName,
+              type: previous.profileId,
+              credentialKeys: [previous.credentialEnv],
+              configKeys: [],
+              revision: { id: previous.providerId, resourceVersion: 1 },
+            },
+          },
+    listProviderAttachments: async (
+      request: Parameters<typeof base.listProviderAttachments>[0],
+    ) => {
+      const result = await base.listProviderAttachments(request);
+      return result.ok
+        ? {
+            ok: true as const,
+            value: {
+              names: [...result.value.names, ...(localAttached ? [previous.providerName] : [])],
+            },
+          }
+        : result;
+    },
+    attachProvider: async (request: Parameters<typeof base.attachProvider>[0]) => {
+      if (request.providerName !== previous.providerName) return base.attachProvider(request);
+      throw new Error("local restoration unavailable");
+    },
+  };
+  return { adapter, detachProvider };
+}

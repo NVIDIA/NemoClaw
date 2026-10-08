@@ -2051,6 +2051,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,

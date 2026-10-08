@@ -19,6 +19,8 @@ import {
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
   catalogueTarget,
@@ -91,6 +93,12 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
+  it("reserves two final handoffs and cleanup headroom for sibling inference isolation (#12558)", () => {
+    expect(catalogueTarget("inference-routing").timeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      2 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS + jobHeadroomMs,
+    );
+  });
+
   it("pins the reviewed command, test, and target timeout values", () => {
     expect({
       finalHandoffCommandMinutes: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS / MINUTE_MS,
@@ -128,8 +136,8 @@ describe("onboard final-handoff timeout contract", () => {
   it.each([
     [
       "inference-routing",
-      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-      ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+      INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+      INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
   ] as const)(

@@ -110,6 +110,8 @@ export function load(): SandboxRegistry {
 export function save(data: SandboxRegistry): void {
   const serialized = serializeRegistryForDisk(data);
   const previous = readConfigFile<unknown>(REGISTRY_FILE, {});
+  if (isObjectRecord(previous))
+    normalizeNativeLocalProviderAuthorities(previous.nativeLocalProviderAuthorities);
   // Legacy MCP ownership is disk-only compatibility evidence, not runtime
   // authority. Ordinary writes must retain it until an explicit migration or
   // verified removal retires it. Never accept a caller-supplied replacement.

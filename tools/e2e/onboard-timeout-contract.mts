@@ -31,6 +31,11 @@ export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
 
+// Native routing qualification onboards two sandbox owners before checking isolation.
+export const INFERENCE_ROUTING_TEST_TIMEOUT_MS = 2 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS;
+export const INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES =
+  (INFERENCE_ROUTING_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
+
 // The typed DCode target runs onboarding, its invalid-credential lifecycle,
 // state validation, and the ordered cloud checks. Those checks can consume 96
 // minutes of command deadlines before automatic config export; retain the same
