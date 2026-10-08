@@ -512,13 +512,69 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       );
     },
   );
-  it.each([
-    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
-    [
-      "Advisor runtime",
-      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
-    ],
-  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+  it("bounds and retries only Ubuntu package metadata for CLI shards", () => {
+    const installStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Install pinned Pi search tools",
+    );
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
+    const fakeBin = join(temp, "bin");
+    const aptArgs = join(temp, "apt-args");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "sudo"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" "__END_CALL__" >> "$APT_ARGS"\nexit 86\n',
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWorkflowShellStep(installStep, {
+        APT_ARGS: aptArgs,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
+      const expectedCall = [
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=10s",
+        "120s",
+        "apt-get",
+        "-o",
+        "Acquire::Retries=2",
+        "-o",
+        "Acquire::http::Timeout=20",
+        "-o",
+        "Acquire::https::Timeout=20",
+        "update",
+        "-o",
+        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+        "-o",
+        "Dir::Etc::sourceparts=-",
+        "__END_CALL__",
+      ];
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stdout).toContain(
+        "Retrying pinned Pi search-tool package index update (attempt 2/3)",
+      );
+      expect(result.stdout).toContain(
+        "Retrying pinned Pi search-tool package index update (attempt 3/3)",
+      );
+      expect(result.stdout).toContain(
+        "::error::Could not update pinned Pi search-tool package indexes after three bounded attempts",
+      );
+      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual(
+        Array.from({ length: 3 }, () => expectedCall).flat(),
+      );
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  it("refreshes only Ubuntu package metadata for Advisor runtime", () => {
+    const installStep = requiredWorkflowStep(
+      advisorWorkflow.jobs["build-advisor-runtime"],
+      "Install locked runtime",
+    );
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
     const fakeBin = join(temp, "bin");
     const aptArgs = join(temp, "apt-args");

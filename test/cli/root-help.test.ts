@@ -93,4 +93,15 @@ describe("root help", () => {
     expect(output).not.toMatch(/--keep-user-data/);
     expect(output).not.toMatch(/--keep-backups/);
   });
+
+  it("marks dashboard-url as unsupported for the experimental Hermes portable profile (#11966)", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toMatch(
+      /nemoclaw <name> dashboard-url[^\n]*not supported for the experimental Hermes portable profile/,
+    );
+  });
 });

@@ -32,6 +32,8 @@ import {
   MODEL_DIGEST,
   MODEL_FILENAME,
   modelFilesystemIdentity,
+  keyRootIdentitySha256,
+  replaceModelWithSameSizeContent,
   NETWORK_ID,
   PROBE_IMAGE,
   RECEIPT_TARGET_SHA256,
@@ -100,25 +102,6 @@ beforeEach(() => {
 });
 
 afterEach(() => fs.rmSync(temporaryRoot, { force: true, recursive: true }));
-
-function keyRootIdentitySha256(): string {
-  const status = fs.lstatSync(apiKeyRoot, { bigint: true });
-  return rawDigest({
-    schemaVersion: 1,
-    identities: [
-      {
-        dev: status.dev.toString(),
-        ino: status.ino.toString(),
-        uid: status.uid.toString(),
-        gid: status.gid.toString(),
-        nlink: status.nlink.toString(),
-        mode: (status.mode & 0o777n).toString(8),
-        mtimeNs: status.mtimeNs.toString(),
-        ctimeNs: status.ctimeNs.toString(),
-      },
-    ],
-  });
-}
 
 function bindings(): DockerLlamaCppManagedLifecycleOptions["bindings"] {
   return {
@@ -324,7 +307,7 @@ function preparedJournal(): HostLocalCreateJournalRecord {
     createIntentUnixMs: null,
     specSha256: rawDigest({
       contract: contract(),
-      apiKeyRootIdentitySha256: keyRootIdentitySha256(),
+      apiKeyRootIdentitySha256: keyRootIdentitySha256(apiKeyRoot),
       containerName: "nemoclaw-llama-cpp",
       imageReference: IMAGE,
       model: {
@@ -361,7 +344,7 @@ function preparedJournal(): HostLocalCreateJournalRecord {
       bindingSha256: "1".repeat(64),
     },
     apiKeyIdentitySha256: "3".repeat(64),
-    apiKeyRootIdentitySha256: keyRootIdentitySha256(),
+    apiKeyRootIdentitySha256: keyRootIdentitySha256(apiKeyRoot),
     receiptTargetSha256: RECEIPT_TARGET_SHA256,
     serializedReceipt: null,
     receiptSha256: null,
@@ -1145,7 +1128,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     });
     const lifecycle = controller(fixture, store);
     expect(() => lifecycle.start(unavailableWriter)).toThrow("writer unavailable");
-    fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    replaceModelWithSameSizeContent(modelPath);
     const replayWriter = receiptWriter();
 
     const recovery = lifecycle.recoverUnfinished(replayWriter);
@@ -1402,7 +1385,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const modelFixture = dockerFixture();
     const modelLifecycle = controller(modelFixture);
     const modelReceipt = modelLifecycle.start(receiptWriter());
-    fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    replaceModelWithSameSizeContent(modelPath);
     expect(() => modelLifecycle.runtime.inspectManaged(modelReceipt)).toThrow(
       "filesystem identity",
     );
@@ -1423,11 +1406,19 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const persistedAuthority = authorityStore();
-    const initial = createLifecycle(options(fixture, store, bindings(), persistedAuthority));
+    const privateBridge = privateBridgeFixture();
+    const initial = createLifecycle(
+      options(fixture, store, bindings(), persistedAuthority),
+      {},
+      privateBridge,
+    );
     const receipt = initial.start(receiptWriter());
-    fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    expect(initial.runtime.inspectManaged(receipt).running).toBe(true);
+    replaceModelWithSameSizeContent(modelPath);
     const currentIdentityInspector = createLifecycle(
       options(fixture, store, bindings(), persistedAuthority),
+      {},
+      privateBridge,
     );
     expect(() => currentIdentityInspector.runtime.inspectManaged(receipt)).toThrow(
       "durable create journal",
