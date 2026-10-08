@@ -3,6 +3,7 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
+import { captureDeferredPodmanCleanupOwnership } from "../fixtures/sandbox-failure-diagnostics.ts";
 
 const state = vi.hoisted(() => ({
   run: undefined as unknown as (fixtures: E2ETargetFixtures) => Promise<void>,
@@ -118,5 +119,46 @@ describe.each(["hermes", "langchain-deepagents-code"])(
         sandboxName: "owned-deferred",
       });
     });
+  },
+);
+
+it("captures bounded root ownership only after failed Deep Agents Podman destroy", async () => {
+  const execSandboxAsRoot = vi.fn().mockRejectedValue(new Error("diagnostic unavailable"));
+  await expect(
+    captureDeferredPodmanCleanupOwnership({ id: "podman", execSandboxAsRoot } as never, {
+      agent: "langchain-deepagents-code",
+      destroyed: false,
+      redactionValues: ["fixture-key"],
+      sandboxName: "owned-deferred",
+    }),
+  ).resolves.toBeUndefined();
+  expect(execSandboxAsRoot).toHaveBeenCalledExactlyOnceWith(
+    "owned-deferred",
+    ["sh", "-c", expect.stringContaining("stat -c")],
+    {
+      artifactName: "deferred-dcode-podman-cleanup-root-metadata",
+      redactionValues: ["fixture-key"],
+      sanitizeEnvironment: true,
+      captureLimitBytes: 4096,
+      timeoutMs: 10_000,
+    },
+  );
+});
+
+it.each([
+  { agent: "langchain-deepagents-code", destroyed: true, id: "podman" },
+  { agent: "hermes", destroyed: false, id: "podman" },
+  { agent: "langchain-deepagents-code", destroyed: false, id: "docker" },
+])(
+  "skips root ownership capture outside failed Deep Agents Podman destroy: $agent/$id",
+  async (caseInput) => {
+    const execSandboxAsRoot = vi.fn();
+    await captureDeferredPodmanCleanupOwnership({ id: caseInput.id, execSandboxAsRoot } as never, {
+      agent: caseInput.agent,
+      destroyed: caseInput.destroyed,
+      redactionValues: [],
+      sandboxName: "owned-deferred",
+    });
+    expect(execSandboxAsRoot).not.toHaveBeenCalled();
   },
 );
