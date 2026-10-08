@@ -115,12 +115,21 @@ if [[ "$1" == chmod && "$3" == "$RUNNER_TEMP" ]]; then
   command chmod "$2" "$3" || exit $?
 fi
 if [[ "$1" == test && "$FAKE_APT_MODE" == missing-source ]]; then exit 1; fi
-if [[ "$1" == apt-get && "$FAKE_APT_MODE" == update-error ]]; then
+if [[ "$1" == timeout ]]; then shift; timeout "$@"; exit $?; fi
+if [[ "$1" == apt-get ]]; then echo 'apt-get must run under sudo timeout' >&2; exit 99; fi
+exit 0
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(fakeBin, "apt-get"),
+    `#!/usr/bin/env bash
+printf 'apt-get %s\\n' "$*" >> "$APT_CALLS"
+if [[ "$FAKE_APT_MODE" == update-error ]]; then
   for ((line=1; line<=100; line++)); do printf 'apt diagnostic %s\\n' "$line" >&2; done
   exit 86
 fi
-if [[ "$1" == apt-get && "$FAKE_APT_MODE" == force-killed ]]; then exit 137; fi
-if [[ "$1" == apt-get && "$FAKE_APT_MODE" == install-error && "$*" == *' install '* ]]; then exit 100; fi
+if [[ "$FAKE_APT_MODE" == install-error && "$*" == *' install '* ]]; then exit 100; fi
 exit 0
 `,
     { mode: 0o755 },
@@ -131,6 +140,7 @@ exit 0
 printf '%s\\n' "$*" >> "$TIMEOUT_CALLS"
 shift 3
 if [[ "$FAKE_APT_MODE" == timeout || ( "$FAKE_APT_MODE" == install-timeout && "$*" == *' install '* ) ]]; then exit 124; fi
+if [[ "$FAKE_APT_MODE" == force-killed ]]; then exit 137; fi
 if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TIMEOUT_CALLS") -lt 3 ]]; then exit 124; fi
 "$@"
 `,
@@ -168,7 +178,10 @@ if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TI
       ? runWorkflowShellStep(step, env)
       : spawnSync(
           "bash",
-          [join(env.GITHUB_ACTION_PATH, "install-pinned-ubuntu-packages.sh"), ...packages],
+          [
+            join(process.cwd(), ".github/actions/ci-install-pinned-ubuntu-packages.sh"),
+            ...packages,
+          ],
           { encoding: "utf8", env, timeout: 5_000 },
         );
     return {
@@ -672,7 +685,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     const result = runPinnedAptFixture("timeout");
     expect(result.status).toBe(124);
     expect(result.stderr).toContain("APT update timed out");
-    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 300s sudo apt-get /u);
+    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 300s apt-get /u);
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
   });
 
@@ -685,9 +698,9 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.status, result.stderr).toBe(0);
     expect(result.timeoutCalls).toHaveLength(4);
     expect(result.timeoutCalls.slice(0, 3)).toEqual(
-      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s sudo apt-get /u)),
+      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s apt-get /u)),
     );
-    expect(result.timeoutCalls[3]).toMatch(/^-k 10s 180s sudo apt-get /u);
+    expect(result.timeoutCalls[3]).toMatch(/^-k 10s 180s apt-get /u);
     const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
     expect(aptCalls).toHaveLength(2);
     expect(aptCalls[0]).toContain("Acquire::Retries=2");
@@ -708,7 +721,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.status).toBe(124);
     expect(result.timeoutCalls).toHaveLength(3);
     expect(result.timeoutCalls).toEqual(
-      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s sudo apt-get /u)),
+      Array.from({ length: 3 }, () => expect.stringMatching(/^-k 10s 120s apt-get /u)),
     );
     expect(result.stderr).toContain("APT update timed out");
     expect(result.stderr).toContain("attempt 3/3");
@@ -720,7 +733,7 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.status).toBe(124);
     expect(result.stderr).toContain("APT install timed out");
     expect(result.timeoutCalls).toHaveLength(2);
-    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 300s sudo apt-get /u);
+    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 300s apt-get /u);
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
   });
 
@@ -733,8 +746,8 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.status).toBe(124);
     expect(result.stderr).toContain("APT install timed out");
     expect(result.timeoutCalls).toHaveLength(2);
-    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 120s sudo apt-get /u);
-    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 180s sudo apt-get /u);
+    expect(result.timeoutCalls[0]).toMatch(/^-k 10s 120s apt-get /u);
+    expect(result.timeoutCalls[1]).toMatch(/^-k 10s 180s apt-get /u);
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
   });
 
@@ -750,7 +763,11 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     expect(result.status).toBe(137);
     expect(result.stderr).toContain("APT update was force-killed");
     expect(result.stderr).toContain("may have exceeded 300s");
-    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(1);
+    expect(result.calls.filter((call) => call.startsWith("timeout "))).toHaveLength(1);
+    expect(result.calls.find((call) => call.startsWith("timeout "))).toMatch(
+      /^timeout -k 10s 300s apt-get /u,
+    );
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
   });
 
   it("rejects a missing Ubuntu source before APT runs (#11320)", () => {

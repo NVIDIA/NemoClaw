@@ -590,6 +590,7 @@ jobs:
             .github/actions/ci-build-typecheck
             .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-install-pinned-ubuntu-packages.sh
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
             .github/actions/ci-installer-integration

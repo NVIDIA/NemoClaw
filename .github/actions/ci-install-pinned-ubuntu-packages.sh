@@ -73,7 +73,7 @@ run_apt() {
   local log status
   log="$(mktemp "$RUNNER_TEMP/nemoclaw-apt-${operation}.XXXXXXXX")"
   echo "Installing pinned Pi tools: APT $operation started (attempt $attempt/$total)."
-  if timeout -k 10s "$duration" sudo apt-get "${apt_options[@]}" "$@" >"$log" 2>&1; then
+  if { sudo timeout -k 10s "$duration" apt-get "${apt_options[@]}" "$@"; } >"$log" 2>&1; then
     rm -f -- "$log"
     echo "Installing pinned Pi tools: APT $operation completed."
     return 0

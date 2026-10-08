@@ -217,7 +217,7 @@ jobs:
       - name: Install locked runtime
         run: |
           set -euo pipefail
-          bash "$ADVISOR_DIR/.github/actions/ci-cli-coverage-shard/install-pinned-ubuntu-packages.sh" \
+          bash "$ADVISOR_DIR/.github/actions/ci-install-pinned-ubuntu-packages.sh" \
             "fd-find=${FD_FIND_VERSION}" "ripgrep=${RIPGREP_VERSION}"
           test "$(dpkg-query -W -f='${Version}' fd-find)" = "$FD_FIND_VERSION"
           test "$(dpkg-query -W -f='${Version}' ripgrep)" = "$RIPGREP_VERSION"
