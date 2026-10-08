@@ -30,17 +30,20 @@ const authority: DockerLlamaCppPrivateBridgeAuthority = {
   bindAddresses: ["127.0.0.1", "172.29.0.1"],
 };
 
-function fixture() {
+function fixture(startupStatus: "READY" | "FAILED" | "" = "READY") {
   let nextPid = 40_001;
   const processes = new Map<number, readonly string[]>();
   const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
   const openApiKeyDescriptor = vi.fn(() => 17);
   const closeApiKeyDescriptor = vi.fn();
-  const spawnProcess = vi.fn((file: string, args: readonly string[]) => {
-    const pid = nextPid++;
-    processes.set(pid, [file, ...args]);
-    return { pid, unref: vi.fn() } as unknown as ChildProcess;
-  }) as unknown as typeof spawn;
+  const spawnProcess = vi.fn(
+    (file: string, args: readonly string[], options: { readonly stdio: readonly unknown[] }) => {
+      const pid = nextPid++;
+      processes.set(pid, [file, ...args]);
+      fs.writeSync(options.stdio[4] as number, startupStatus);
+      return { pid, unref: vi.fn() } as unknown as ChildProcess;
+    },
+  ) as unknown as typeof spawn;
   const controller = createDockerLlamaCppPrivateBridgeController({
     spawnProcess,
     processIsAlive: (pid) => processes.has(pid),
@@ -71,6 +74,7 @@ function defaultCredentialOpenerFixture() {
       const descriptor = options.stdio[3] as number;
       expect(descriptor).toEqual(expect.any(Number));
       openedCredentialSize = Number(fs.fstatSync(descriptor).size);
+      fs.writeSync(options.stdio[4] as number, "READY");
       return { pid: 40_001, unref: vi.fn() } as unknown as ChildProcess;
     },
   ) as unknown as typeof spawn;
@@ -133,7 +137,7 @@ describe("Docker llama.cpp private bridge controller", () => {
         detached: true,
         env: {},
         shell: false,
-        stdio: ["ignore", "ignore", "ignore", 17],
+        stdio: ["ignore", "ignore", "ignore", 17, expect.any(Number)],
       }),
     );
     expect(openApiKeyDescriptor).toHaveBeenCalledExactlyOnceWith(authority.apiKeyPath);
@@ -167,6 +171,30 @@ describe("Docker llama.cpp private bridge controller", () => {
     expect(signals).toEqual([{ pid: 40_001, signal: "SIGTERM" }]);
     expect(processes.has(50_000)).toBe(true);
     controller.assertRunning({ ...authority, targetHost: "172.30.0.3" });
+  });
+
+  it("fails promptly on a bind failure and stops only its transaction process", () => {
+    const { controller, processes, signals, spawnProcess } = fixture("FAILED");
+
+    expect(() => controller.start(authority)).toThrow("failed to bind its listeners");
+
+    expect(spawnProcess).toHaveBeenCalledOnce();
+    expect(signals).toEqual([{ pid: 40_001, signal: "SIGTERM" }]);
+    expect(processes.size).toBe(0);
+  });
+
+  it("bounds a bridge startup that never reports ready and cleans up its transaction", () => {
+    const { controller, processes, signals } = fixture("");
+    let elapsed = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => (elapsed += 50));
+    try {
+      expect(() => controller.start(authority)).toThrow("failed to bind its listeners");
+      expect(elapsed).toBeLessThanOrEqual(10_200);
+      expect(signals).toEqual([{ pid: 40_001, signal: "SIGTERM" }]);
+      expect(processes.size).toBe(0);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("replaces a pre-authentication bridge process for the same transaction (#9591)", () => {
@@ -352,6 +380,36 @@ async function close(server: http.Server): Promise<void> {
   });
 }
 
+it("reports startup ready only after its listener binds", async () => {
+  const server = http.createServer();
+  const port = await listen(server);
+  await close(server);
+  const createServer = vi.spyOn(http, "createServer").mockReturnValueOnce(server);
+  const onReady = vi.fn(() => {
+    expect(server.listening).toBe(true);
+    throw new Error("startup observed");
+  });
+  try {
+    await expect(
+      runLlamaCppPrivateBridge(
+        {
+          ...authority,
+          targetHost: "127.0.0.1",
+          targetPort: port === 65_535 ? 65_534 : port + 1,
+          listenPort: port,
+          bindAddresses: ["127.0.0.1"],
+        },
+        API_KEY,
+        onReady,
+      ),
+    ).rejects.toThrow("startup observed");
+    expect(onReady).toHaveBeenCalledOnce();
+    expect(server.listening).toBe(false);
+  } finally {
+    createServer.mockRestore();
+  }
+});
+
 it("closes both bridge listeners when one address cannot bind (#12285)", async () => {
   const servers = [http.createServer(), http.createServer()];
   const port = await listen(servers[0]!);
@@ -359,6 +417,7 @@ it("closes both bridge listeners when one address cannot bind (#12285)", async (
   const signals = ["SIGINT", "SIGTERM"] as const;
   const originalListeners = signals.map((signal) => process.listeners(signal));
   const registerSignal = vi.spyOn(process, "once");
+  const onReady = vi.fn();
   vi.spyOn(http, "createServer").mockReturnValueOnce(servers[0]!).mockReturnValueOnce(servers[1]!);
 
   try {
@@ -366,8 +425,10 @@ it("closes both bridge listeners when one address cannot bind (#12285)", async (
       runLlamaCppPrivateBridge(
         { ...authority, listenPort: port, bindAddresses: ["127.0.0.1", "127.0.0.1"] },
         API_KEY,
+        onReady,
       ),
     ).rejects.toMatchObject({ code: "EADDRINUSE" });
+    expect(onReady).not.toHaveBeenCalled();
     expect(servers.map((server) => server.listening)).toEqual([false, false]);
     expect(signals.map((signal) => process.listeners(signal))).toEqual(originalListeners);
   } finally {

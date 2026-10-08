@@ -4,11 +4,15 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const PROCESS_EXIT_WAIT_MS = 5_000;
 const PROCESS_EXIT_POLL_MS = 50;
+const STARTUP_WAIT_MS = 10_000;
+const STARTUP_READY = "READY";
+const STARTUP_FAILED = "FAILED";
 const SLEEP_ARRAY = new Int32Array(new SharedArrayBuffer(4));
 
 export interface DockerLlamaCppPrivateBridgeAuthority {
@@ -146,6 +150,39 @@ function defaultSleep(milliseconds: number): void {
   Atomics.wait(SLEEP_ARRAY, 0, 0, milliseconds);
 }
 
+function openStartupDescriptor(): number {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-bridge-start-"));
+  const statusPath = path.join(directory, "status");
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      statusPath,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.unlinkSync(statusPath);
+    fs.rmdirSync(directory);
+    return descriptor;
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function waitForStartup(descriptor: number, sleep: (milliseconds: number) => void): void {
+  const status = Buffer.alloc(STARTUP_FAILED.length);
+  const deadline = Date.now() + STARTUP_WAIT_MS;
+  while (Date.now() < deadline) {
+    const length = fs.readSync(descriptor, status, 0, status.length, 0);
+    const result = status.toString("utf8", 0, length);
+    if (result === STARTUP_READY) return;
+    if (result === STARTUP_FAILED) break;
+    sleep(PROCESS_EXIT_POLL_MS);
+  }
+  throw new Error("Docker llama.cpp private bridge failed to bind its listeners.");
+}
+
 function defaultOpenApiKeyDescriptor(apiKeyPath: string): number {
   if (typeof fs.constants.O_NOFOLLOW !== "number" || typeof fs.constants.O_NONBLOCK !== "number") {
     throw new Error("Docker llama.cpp private bridge requires secure file-open flags.");
@@ -278,21 +315,34 @@ export function createDockerLlamaCppPrivateBridgeController(
       const stale = transactionProcessIds(authority.transactionId);
       if (stale.length > 0) stopProcessIds(stale);
       const apiKeyDescriptor = openApiKeyDescriptor(authority.apiKeyPath);
-      let child: ChildProcess;
+      let apiKeyOpen = true;
+      let startupDescriptor: number | undefined;
       try {
-        child = spawnProcess(process.execPath, [scriptPath, ...bridgeArguments(authority)], {
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore", apiKeyDescriptor],
-          shell: false,
-          env: {},
-        });
-      } finally {
+        startupDescriptor = openStartupDescriptor();
+        const child: ChildProcess = spawnProcess(
+          process.execPath,
+          [scriptPath, ...bridgeArguments(authority)],
+          {
+            detached: true,
+            stdio: ["ignore", "ignore", "ignore", apiKeyDescriptor, startupDescriptor],
+            shell: false,
+            env: {},
+          },
+        );
+        apiKeyOpen = false;
         closeApiKeyDescriptor(apiKeyDescriptor);
+        if (!Number.isInteger(child.pid) || !child.pid || child.pid < 1) {
+          throw new Error("Docker llama.cpp private bridge did not return a process identity.");
+        }
+        waitForStartup(startupDescriptor, sleep);
+        child.unref();
+      } catch (error) {
+        stopProcessIds(transactionProcessIds(authority.transactionId));
+        throw error;
+      } finally {
+        if (apiKeyOpen) closeApiKeyDescriptor(apiKeyDescriptor);
+        if (startupDescriptor !== undefined) fs.closeSync(startupDescriptor);
       }
-      if (!Number.isInteger(child.pid) || !child.pid || child.pid < 1) {
-        throw new Error("Docker llama.cpp private bridge did not return a process identity.");
-      }
-      child.unref();
     },
     assertRunning(authorityValue: DockerLlamaCppPrivateBridgeAuthority) {
       requireOne(normalizeAuthority(authorityValue));

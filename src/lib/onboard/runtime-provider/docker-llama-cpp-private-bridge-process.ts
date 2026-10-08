@@ -8,6 +8,7 @@ import net from "node:net";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const API_KEY_FILE_DESCRIPTOR = 3;
+const STARTUP_STATUS_DESCRIPTOR = 4;
 const AUTH_MODE = "api-key-fd3";
 const UPSTREAM_CONTINUE_TIMEOUT_MS = 30_000;
 const UNAUTHORIZED_BODY = `${JSON.stringify({
@@ -305,6 +306,7 @@ export function createLlamaCppPrivateBridgeServer(
 export async function runLlamaCppPrivateBridge(
   authority: LlamaCppPrivateBridgeArguments,
   apiKey: string,
+  onReady?: () => void,
 ): Promise<void> {
   const servers = authority.bindAddresses.map(() =>
     createLlamaCppPrivateBridgeServer(authority, apiKey),
@@ -336,6 +338,7 @@ export async function runLlamaCppPrivateBridge(
           }),
       ),
     );
+    onReady?.();
     await new Promise<void>((_resolve, reject) => {
       for (const server of servers) server.once("error", reject);
     });
@@ -347,14 +350,32 @@ export async function runLlamaCppPrivateBridge(
 }
 
 if (require.main === module) {
+  let startupReported = false;
+  const reportStartup = (status: "READY" | "FAILED") => {
+    if (startupReported) return;
+    startupReported = true;
+    try {
+      fs.writeSync(STARTUP_STATUS_DESCRIPTOR, status);
+    } catch {
+      // The parent may have timed out and closed its startup descriptor.
+    } finally {
+      try {
+        fs.closeSync(STARTUP_STATUS_DESCRIPTOR);
+      } catch {
+        // The descriptor may already be closed after a failed write.
+      }
+    }
+  };
   Promise.resolve()
     .then(() =>
       runLlamaCppPrivateBridge(
         parseLlamaCppPrivateBridgeArguments(process.argv.slice(2)),
         readPrivateBridgeApiKey(),
+        () => reportStartup("READY"),
       ),
     )
     .catch((error: unknown) => {
+      reportStartup("FAILED");
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     });
