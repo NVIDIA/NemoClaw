@@ -838,10 +838,17 @@ it("delegates a Ready route reservation to selection checks before journaling (#
         liveIdentityFingerprint: fingerprintSandboxRecreateValue("existing-id"),
       }),
       createSandbox,
+      finalizeSandboxRouteReservation: (name, sessionId) => {
+        expect(name).toBe("fresh");
+        expect(sessionId).toBe(session.sessionId);
+        reservation.pendingRouteReservation = undefined;
+        return true;
+      },
     },
     session,
   );
   await handleSandboxState({ ...baseOptions(deps, session), sandboxName: "fresh" });
+  expect(reservation.pendingRouteReservation).not.toBe(true);
   expect(createSandbox).toHaveBeenCalledOnce();
   expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
 });

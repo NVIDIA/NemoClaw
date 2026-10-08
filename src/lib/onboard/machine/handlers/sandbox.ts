@@ -2410,6 +2410,7 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
+      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>
