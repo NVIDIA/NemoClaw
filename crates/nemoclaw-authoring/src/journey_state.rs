@@ -10,8 +10,8 @@ use nemoclaw_sdk::config::{Document, InferenceApi, InferenceProviderKind};
 use nemoclaw_sdk::discovery::{
     CredentialRequest, DiscoveryObservations, DiscoveryRequest, ObservationStatus,
 };
-use nemoclaw_sdk::fabric_capabilities::schema_accepts;
 use nemoclaw_sdk::inference_discovery::AuthenticationStatus;
+use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Map, Value};
 
 use crate::{

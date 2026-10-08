@@ -95,7 +95,7 @@ fn public_fabric_configuration_passes_through_without_overriding_deployment_bind
 }
 
 #[test]
-fn different_fabric_revision_is_unverified_even_when_schema_accepts() {
+fn different_fabric_revision_is_unverified_even_when_the_configuration_is_valid() {
     use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, Support, assess_fabric};
     let mut catalog = catalog();
     catalog.fabric_revision = "0".repeat(40);
