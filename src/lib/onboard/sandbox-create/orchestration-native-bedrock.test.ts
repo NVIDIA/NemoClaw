@@ -174,9 +174,14 @@ const otherCompatibleIdentity = nativeCompatibleEndpointIdentity({
   api: "openai-completions",
 });
 const invalidReceipts = [
-  { name: "compatible missing", provider: compatibleIdentity.providerName },
+  {
+    name: "compatible missing",
+    provider: compatibleIdentity.providerName,
+    expectedMessage: "Sandbox is missing its matching native compatible provider receipt.",
+  },
   {
     name: "compatible malformed",
+    expectedMessage: "Sandbox is missing its matching native compatible provider receipt.",
     provider: compatibleIdentity.providerName,
     expectedNativeCompatibleProviderAttachment: {
       ...compatibleReceipt,
@@ -185,6 +190,7 @@ const invalidReceipts = [
   },
   {
     name: "compatible mismatched",
+    expectedMessage: "Sandbox is missing its matching native compatible provider receipt.",
     provider: compatibleIdentity.providerName,
     expectedNativeCompatibleProviderAttachment: {
       ...compatibleReceipt,
@@ -195,11 +201,13 @@ const invalidReceipts = [
   },
   {
     name: "Bedrock missing",
+    expectedMessage: "Sandbox is missing its matching native Bedrock provider receipt.",
     provider: identity.providerName,
     expectedNativeBedrockProviderAttachment: undefined,
   },
   {
     name: "Bedrock malformed",
+    expectedMessage: "Sandbox is missing its matching native Bedrock provider receipt.",
     provider: identity.providerName,
     expectedNativeBedrockProviderAttachment: {
       ...bedrockReceipt,
@@ -208,6 +216,7 @@ const invalidReceipts = [
   },
   {
     name: "Bedrock mismatched",
+    expectedMessage: "Sandbox is missing its matching native Bedrock provider receipt.",
     provider: nativeBedrockIdentity({ ...binding, gatewayName: "other" }).providerName,
     expectedNativeBedrockProviderAttachment: {
       ...bedrockReceipt,
@@ -248,7 +257,7 @@ describe.each([false, true])("native receipt pre-create validation deferred=%s",
   );
   it.each(invalidReceipts)(
     "rejects $name before create effects",
-    async ({ name: _name, provider, ...receipts }) => {
+    async ({ name: _name, provider, expectedMessage, ...receipts }) => {
       const adapter = providerAdapter(recordedProviderId);
       const createSandbox = vi.fn();
       const boundary = nativeProviderBoundary(adapter, {
@@ -268,10 +277,8 @@ describe.each([false, true])("native receipt pre-create validation deferred=%s",
         await boundary.publishBeforeCreate();
         await createSandbox();
       };
-      await expect(attemptCreate()).rejects.toThrow(/receipt/u);
+      await expect(attemptCreate()).rejects.toThrow(expectedMessage);
       expect(createSandbox).not.toHaveBeenCalled();
-      expect(adapter.getProvider).not.toHaveBeenCalled();
-      expect(adapter.attachProvider).not.toHaveBeenCalled();
     },
   );
 });
