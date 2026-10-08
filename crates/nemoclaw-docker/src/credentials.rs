@@ -212,7 +212,6 @@ mod reader {
     }
 
     #[cfg(all(test, unix))]
-    #[cfg(all(test, unix))]
     mod credential_boundary_tests {
         use super::*;
         use crate::fixture::Fixture;

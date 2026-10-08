@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 #[tokio::test]
-#[cfg(unix)]
 async fn docker_transport_distinguishes_confirmed_absence_from_failed_observation() {
     for (status, body, absent) in [
         (404, r#"{"message":"missing"}"#, true),
