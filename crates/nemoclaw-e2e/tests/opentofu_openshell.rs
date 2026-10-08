@@ -154,7 +154,8 @@ async fn bundled_openshell_provider_refreshes_saved_cluster_credentials_without_
             .unwrap();
         assert!(
             output.status.success(),
-            "{}\n{}",
+            "OpenTofu {arguments:?} exited with {}\n{}\n{}",
+            output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
@@ -162,7 +163,6 @@ async fn bundled_openshell_provider_refreshes_saved_cluster_credentials_without_
     };
     run(&[
         "plan",
-        "-refresh-only",
         "-detailed-exitcode",
         "-input=false",
         "-no-color",
