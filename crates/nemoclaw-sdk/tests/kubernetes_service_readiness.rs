@@ -218,7 +218,11 @@ async fn readiness_still_fails_fast_when_the_pod_binding_changes() {
     pod["metadata"]["uid"] = json!("replacement");
     objects.insert(pod);
     let executor = Exec::new(Vec::new());
-    super::assert_binding_mismatch(operations.wait_ready_with_exec(&spec, &executor).await);
+    let error = operations
+        .wait_ready_with_exec(&spec, &executor)
+        .await
+        .unwrap_err();
+    super::diagnostics::assert_named_mismatch(&error, "Pod", "agents", &spec.name, "metadata.uid");
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -240,6 +244,10 @@ async fn terminal_readiness_still_verifies_the_retained_namespace_identity() {
     namespace["metadata"]["uid"] = json!("substituted-namespace");
     objects.insert(namespace);
     let executor = Exec::new(Vec::new());
-    super::assert_binding_mismatch(operations.wait_ready_with_exec(&spec, &executor).await);
+    let error = operations
+        .wait_ready_with_exec(&spec, &executor)
+        .await
+        .unwrap_err();
+    super::diagnostics::assert_named_mismatch(&error, "Namespace", "", "agents", "metadata.uid");
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }

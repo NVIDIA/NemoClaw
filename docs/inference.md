@@ -352,7 +352,11 @@ At the pinned adapter revision, omitted route context defaults to `32768`; `over
 The reply allowance defaults to `4096`; `overrides.maxTokens` replaces that default, and `overrides.settings.model_metadata.maxTokens` takes precedence over both.
 A smaller available context produces a budget warning; explicit token metadata that cannot be assessed instead produces a warning without substituting defaults.
 The `20000`-token prompt allowance is an estimate from the report; longer prompts and conversations need more.
-The advisory appears in text output and the JSON result's `warnings` field; it neither rejects the configuration nor measures the current prompt or available memory.
+Plan and apply also warn whenever the effective route context window exceeds the managed service's `serving.contextTokens`, even when the initial prompt and reply allowance fit.
+For example, a service context of `24576` with the default route window of `32768` can permit longer conversations to exceed the server limit.
+Set `overrides.settings.model_metadata.contextWindow` no higher than the service context, or increase the service context and size memory for it.
+This mismatch warning can appear alongside the budget warning, or alongside the cannot-assess warning when the route window is valid but the reply allowance is not.
+The advisories appear in text output and the JSON result's `warnings` field; they neither reject the configuration nor measure the current prompt or available memory.
 These budgets do not qualify a model, GPU, or deployment path.
 
 Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).

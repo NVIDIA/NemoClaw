@@ -218,7 +218,7 @@ Use separate deployments when you need independent teardown.
 
 | Proposed change | Current behavior and next step |
 |---|---|
-| Models, settings, or public Fabric configuration within the selected adapter | Reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
+| Models, settings, or public Fabric configuration within the selected adapter | After successful runtime observation, reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
 | Harness adapter, sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
@@ -227,6 +227,9 @@ Use separate deployments when you need independent teardown.
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
 | Remove a sandbox, retained storage, or a protected gateway binding | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
+
+Configuration edits do not recover a runtime whose bridge snapshot reports `runtime_state: unknown`.
+The provider rejects that observation before reconciling agent configuration; see [replacement after an unusable OpenClaw runtime](#replace-workloads-after-an-unusable-openclaw-runtime).
 
 For OpenClaw model and native-setting updates, use an [agent image built from this revision](build.md#build-agent-images).
 Rebuilding the CLI bundle alone does not update the adapter in an existing sandbox image; changing that image requires a separate deployment with a fresh UID and state.
@@ -285,6 +288,8 @@ With the current bundle and bridge image, configuration failures report a fixed 
 A failed restart retains the sandbox and its files.
 When Fabric cannot confirm that startup left no processes, the bridge reports `unknown` and refuses another lifecycle change; this protocol does not provide recovery for that state.
 An `unknown` runtime state does not establish that the old process stopped.
+An invocation failure can also leave the runtime `unknown`; ordinary apply cannot reach configuration reconciliation while that observation remains incomplete.
+For the operator-reported OpenClaw failure, see [workload replacement](#replace-workloads-after-an-unusable-openclaw-runtime).
 A sandbox in `Error` can still block ordinary apply, but its saved identity permits [explicit teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).
 
@@ -323,6 +328,45 @@ An explicit apply reconciles the resource graph and performs bounded readiness c
 The installer contract has no separate recovery operation and does not create an automatic restart loop.
 Export preserves retained intent and validates required resource bindings without another readiness or model-inventory check.
 Destroy uses native provider compute/cache state and separately verified credential and gateway storage; it does not inspect model inventories.
+
+### Replace Workloads After an Unusable OpenClaw Runtime
+
+Use this path when an OpenClaw runtime remains `unknown` after an invocation failure and you choose to replace its sandbox.
+The [reported malformed-request failure](agents.md#run-one-headless-openclaw-request) required sandbox replacement; the exact inputs that trigger it and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+The CLI has no targeted sandbox replacement or runtime-reset command.
+Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
+
+**Destroy deletes every bound sandbox's files and conversation history, including those of other agents in this deployment.**
+Preserve any native data you need before choosing removal; configuration export does not back it up and can fail while runtime observation is incomplete.
+Managed model and credential storage remain tracked, including the cluster model and credential PVCs; those PVCs do not preserve sandbox files.
+Keep the original YAML, matching bundle, credential references, and entire state directory.
+Do not replace the state directory or change the deployment UID to bypass the failure.
+
+From the directory containing the original `deployment.yaml`, with the matching bundle on `PATH`, preview the removal using the deployment's existing state path:
+
+```sh
+nemoclaw plan --destroy --state-dir .local/deployment
+```
+
+Teardown verifies the parent sandbox's identity without requiring a successful agent-runtime snapshot or health check.
+It still requires gateway access, matching ownership, and saved bindings for pending creations; if the preview fails, retain state and resolve that error before proceeding.
+After reviewing the whole-deployment removal and accepting its data loss, run:
+
+```sh
+nemoclaw destroy --state-dir .local/deployment
+```
+
+Destroy does not prompt for confirmation.
+If it fails or is interrupted, resolve the cause and resume destroy with the same state; do not reapply until destroy completes.
+After a successful destroy, request workload recreation with the original configuration and retained storage:
+
+```sh
+nemoclaw apply --state-dir .local/deployment deployment.yaml
+```
+
+This procedure follows the implemented CLI lifecycle; recovery from arbitrary malformed inputs remains unqualified.
+The [Fabric health limitation](#fabric-health-during-apply) still applies after recreation.
+Check the recreated runtime before using the [exact OpenClaw request](agents.md#run-one-headless-openclaw-request); do not replay an invocation whose effects are unknown merely to test recovery.
 
 ### Recover an Interrupted Helm Removal
 

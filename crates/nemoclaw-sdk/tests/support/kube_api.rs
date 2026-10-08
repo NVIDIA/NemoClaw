@@ -26,12 +26,21 @@ pub struct Objects(
 
 #[derive(Default)]
 struct Controls {
+    request_failure: Option<RequestFailure>,
+    rejected_requests: Vec<Value>,
     create_failure: Option<(String, bool, u16)>,
     denied_resource: Option<String>,
     delete_delay: Option<(String, u32)>,
     deleting: BTreeMap<String, u32>,
     pod_identity: Option<u32>,
     dry_runs: Vec<Value>,
+}
+
+struct RequestFailure {
+    method: String,
+    path: String,
+    dry_run: bool,
+    code: u16,
 }
 
 fn plural(kind: &str) -> String {
@@ -88,6 +97,17 @@ fn status(code: u16, reason: &str) -> Option<(u16, Vec<u8>)> {
 }
 
 impl Objects {
+    pub fn reject_request(&self, method: &str, path: &str, dry_run: bool, code: u16) {
+        self.2.lock().unwrap().request_failure = Some(RequestFailure {
+            method: method.into(),
+            path: path.into(),
+            dry_run,
+            code,
+        });
+    }
+    pub fn rejected_requests(&self) -> Vec<Value> {
+        self.2.lock().unwrap().rejected_requests.clone()
+    }
     /// Fail the next create of this kind, optionally after committing it.
     pub fn fail_create(&self, kind: &str, committed: bool) {
         self.2.lock().unwrap().create_failure = Some((kind.into(), committed, 500));
@@ -135,6 +155,18 @@ impl Objects {
 
     pub fn answer(&self, method: &str, path: &str, body: &[u8]) -> Option<(u16, Vec<u8>)> {
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
+        let dry_run = url::form_urlencoded::parse(query.as_bytes())
+            .any(|(key, value)| key == "dryRun" && value == "All");
+        {
+            let mut controls = self.2.lock().unwrap();
+            if controls.request_failure.as_ref().is_some_and(|failure| {
+                failure.method == method && failure.path == path && failure.dry_run == dry_run
+            }) {
+                let failure = controls.request_failure.take().unwrap();
+                controls.rejected_requests.push(json!({"method":method,"path":path,"dryRun":dry_run,"body":serde_json::from_slice::<Value>(body).unwrap_or(Value::Null)}));
+                return Some((failure.code, json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Conflict","code":failure.code,"message":"private-api-message token=private-credential uid=private-observed-uid"}).to_string().into_bytes()));
+            }
+        }
         let selector = url::form_urlencoded::parse(query.as_bytes())
             .find_map(|(key, value)| (key == "labelSelector").then(|| value.into_owned()));
         let mut objects = self.0.lock().unwrap();
@@ -195,8 +227,6 @@ impl Objects {
                 {
                     return status(403, "NamespaceIdentityMismatch");
                 }
-                let dry_run = url::form_urlencoded::parse(query.as_bytes())
-                    .any(|(key, value)| key == "dryRun" && value == "All");
                 let failure = {
                     let mut controls = self.2.lock().unwrap();
                     let next = &mut controls.create_failure;

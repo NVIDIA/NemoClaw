@@ -287,7 +287,8 @@ async fn failed_compute_creation_retains_a_binding_and_destroy_preserves_foreign
         .await
         .unwrap();
     objects.insert(json!({"apiVersion": "v1", "kind": "Pod", "metadata": {"name": spec.name, "namespace": "agents", "uid": "foreign"}}));
-    assert_binding_mismatch(operations.ensure(&spec, None).await);
+    let error = operations.ensure(&spec, None).await.unwrap_err();
+    diagnostics::assert_named_mismatch(&error, "Pod", "agents", &spec.name, "receipt binding");
     let partial = operations.read_for_removal(&spec, None).await.unwrap();
     assert!(partial.id.is_some());
     operations
@@ -406,12 +407,12 @@ async fn endpoint_grants_follow_only_the_owned_service_cluster_addresses() {
             "fd00::42".parse().unwrap()
         ]
     );
-    assert!(
-        operations
-            .endpoint_addresses(&spec.storage(), "http://elsewhere.agents.svc:11434/v1")
-            .await
-            .is_err()
-    );
+    let error = operations
+        .endpoint_addresses(&spec.storage(), "http://elsewhere.agents.svc:11434/v1")
+        .await
+        .unwrap_err();
+    diagnostics::assert_named_mismatch(&error, "Service", "agents", &spec.name, "endpoint");
+    assert!(!error.to_string().contains("elsewhere"));
     service["metadata"]["uid"] = json!("replacement");
     objects.insert(service);
     assert_binding_mismatch(
@@ -494,7 +495,19 @@ async fn openshift_workloads_use_only_the_recorded_namespace_identity() {
         json!("1000730000/10000");
     objects.insert(namespace);
     let before = objects.0.lock().unwrap().clone();
-    assert_binding_mismatch(operations.ensure(&spec, compute.id.as_deref()).await);
+    let error = operations
+        .ensure(&spec, compute.id.as_deref())
+        .await
+        .unwrap_err();
+    diagnostics::assert_named_mismatch(
+        &error,
+        "Namespace",
+        "",
+        "agents",
+        "metadata.annotations[openshift.io identity]",
+    );
+    assert!(!error.to_string().contains("1000720000"));
+    assert!(!error.to_string().contains("1000730000"));
     assert_eq!(*objects.0.lock().unwrap(), before);
 }
 
@@ -892,11 +905,19 @@ async fn foreign_service_backends_cannot_receive_the_managed_credential() {
     service["spec"]["clusterIP"] = json!("10.96.0.42");
     objects.insert(service);
     objects.insert(json!({"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice", "metadata":{"name":"injected-backend", "namespace":"agents", "labels":{"kubernetes.io/service-name":spec.name}}, "addressType":"IPv4", "endpoints":[{"addresses":["10.244.0.15"],"conditions":{"ready":true},"targetRef":{"kind":"Pod","namespace":"agents","name":"foreign","uid":"foreign"}}]}));
-    assert_binding_mismatch(
-        operations
-            .endpoint_addresses(&spec.storage(), &spec.endpoint())
-            .await,
+    let error = operations
+        .endpoint_addresses(&spec.storage(), &spec.endpoint())
+        .await
+        .unwrap_err();
+    diagnostics::assert_named_mismatch(
+        &error,
+        "EndpointSlice",
+        "agents",
+        "injected-backend",
+        "endpoints.targetRef",
     );
+    assert!(!error.to_string().contains("foreign"));
+    assert!(!error.to_string().contains("10.244.0.15"));
 }
 
 #[tokio::test]
@@ -1144,16 +1165,26 @@ async fn endpoint_grants_reject_service_drift_and_unroutable_addresses() {
         json!(["::"]),
         json!(["10.96.0.42", "fd00::42", "10.96.0.43"]),
     ] {
+        let malformed = addresses[0] == "None" || addresses.as_array().unwrap().len() > 2;
         let mut invalid = service.clone();
         invalid["spec"]["clusterIP"] = addresses[0].clone();
         invalid["spec"]["clusterIPs"] = addresses;
         objects.insert(invalid);
-        assert!(
-            operations
-                .endpoint_addresses(&spec.storage(), &spec.endpoint())
-                .await
-                .is_err()
-        );
+        let error = operations
+            .endpoint_addresses(&spec.storage(), &spec.endpoint())
+            .await
+            .unwrap_err();
+        if malformed {
+            assert_eq!(error, nemoclaw_sdk::ObservationError::Incomplete);
+        } else {
+            diagnostics::assert_named_mismatch(
+                &error,
+                "Service",
+                "agents",
+                &spec.name,
+                "spec.clusterIPs",
+            );
+        }
     }
     for (field, value) in [
         ("selector", json!({"foreign":"pod"})),
@@ -1312,7 +1343,8 @@ async fn a_replacement_during_delete_preserves_the_network_boundary() {
     let mut pod = objects.get("v1", "Pod", "agents", &spec.name).unwrap();
     pod["metadata"]["uid"] = json!("replacement");
     objects.insert(pod.clone());
-    assert_binding_mismatch(removal.await);
+    let error = removal.await.unwrap_err();
+    diagnostics::assert_named_mismatch(&error, "Pod", "agents", &spec.name, "metadata.uid");
     assert_eq!(objects.get("v1", "Pod", "agents", &spec.name), Some(pod));
     assert!(
         objects

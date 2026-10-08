@@ -25,6 +25,10 @@ pub(super) fn validate_bound_sandboxes(
         unreachable!()
     };
     let prior = record.document.sandbox(sandbox)?;
+    // These bindings come from the main OpenShell state. Runtime resources
+    // live in a separate store, so compare retained and proposed intent here;
+    // runtime reconciliation still owns live binding and identity checks.
+    let previous = compile::runtime_targets(&record.document, &record.generations)?;
     let targets = compile::runtime_targets(document, &record.generations)?;
     for route in &record.document.sandbox_inference(prior)?.routes {
         let provider = record.document.sandbox_route_provider(prior, route)?;
@@ -32,15 +36,13 @@ pub(super) fn validate_bound_sandboxes(
             continue;
         };
         let address = format!("nemoclaw_kubernetes_service.{name}");
-        let (Some(binding), Some(target)) = (
-            bindings.get(&address),
+        let (Some(previous), Some(target)) = (
+            previous.iter().find(|target| target.address == address),
             targets.iter().find(|target| target.address == address),
         ) else {
             continue;
         };
-        let Ok(bound) = crate::kubernetes::services::Spec::decode(&binding.spec) else {
-            continue;
-        };
+        let bound = crate::kubernetes::services::Spec::decode(&previous.values["spec"])?;
         let want = crate::kubernetes::services::Spec::decode(&target.values["spec"])?;
         if bound.storage() == want.storage() && bound.port() != want.port() {
             return Err(crate::ObservationError::Backend(

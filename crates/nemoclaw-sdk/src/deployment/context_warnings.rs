@@ -41,14 +41,131 @@ async fn context_warnings(document: &Document, apply: bool) -> Vec<String> {
         .collect()
 }
 
+fn budget_warnings(warnings: &[String]) -> Vec<&str> {
+    warnings
+        .iter()
+        .filter(|message| message.contains("initial prompt"))
+        .map(String::as_str)
+        .collect()
+}
+
+#[tokio::test]
+async fn native_route_window_above_the_service_limit_warns_even_with_initial_prompt_room() {
+    for source in [CLUSTER_VLLM, CLUSTER_OLLAMA, DOCKER_VLLM, DOCKER_OLLAMA] {
+        for explicit_window in [false, true] {
+            let mut input = with_context(source, 24576);
+            let metadata = &mut input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]
+                ["settings"]["model_metadata"];
+            *metadata = json!({});
+            if explicit_window {
+                metadata["contextWindow"] = json!(32768);
+            }
+            let document = Document::parse(input.to_string().as_bytes()).unwrap();
+            for apply in [false, true] {
+                let warnings = context_warnings(&document, apply).await;
+                assert_eq!(
+                    warnings.len(),
+                    1,
+                    "a larger native window permits conversations beyond the server limit"
+                );
+                for detail in ["assistant", "primary", "qwen", "24576", "32768"] {
+                    assert!(
+                        warnings[0].contains(detail),
+                        "missing {detail}: {}",
+                        warnings[0]
+                    );
+                }
+                assert!(warnings[0].contains("conversations"), "{}", warnings[0]);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_route_window_at_or_below_the_service_limit_needs_no_mismatch_warning() {
+    for source in [CLUSTER_VLLM, CLUSTER_OLLAMA, DOCKER_VLLM, DOCKER_OLLAMA] {
+        for context in [32768, 65536] {
+            for route_context in [None, Some(24576), Some(32768)] {
+                let mut input = with_context(source, context);
+                let metadata = &mut input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"]
+                    [0]["overrides"]["settings"]["model_metadata"];
+                *metadata = json!({});
+                if let Some(route_context) = route_context {
+                    metadata["contextWindow"] = json!(route_context);
+                }
+                let document = Document::parse(input.to_string().as_bytes()).unwrap();
+                for apply in [false, true] {
+                    assert!(
+                        context_warnings(&document, apply).await.is_empty(),
+                        "{input}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_route_mismatch_is_assessed_independently_of_unusable_reply_metadata() {
+    for source in [CLUSTER_VLLM, CLUSTER_OLLAMA, DOCKER_VLLM, DOCKER_OLLAMA] {
+        for route_context in [None, Some(32768), Some(24576)] {
+            let mut input = with_context(source, 24576);
+            let metadata = &mut input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]
+                ["settings"]["model_metadata"];
+            *metadata = json!({"maxTokens": "unusable-reply-secret"});
+            if let Some(route_context) = route_context {
+                metadata["contextWindow"] = json!(route_context);
+            }
+            let document = Document::parse(input.to_string().as_bytes()).unwrap();
+            for apply in [false, true] {
+                let warnings = context_warnings(&document, apply).await;
+                let mismatch = route_context != Some(24576);
+                assert_eq!(warnings.len(), 1 + usize::from(mismatch), "{warnings:?}");
+                assert_eq!(
+                    warnings
+                        .iter()
+                        .filter(|message| message.contains("conversations"))
+                        .count(),
+                    usize::from(mismatch)
+                );
+                assert_eq!(
+                    warnings
+                        .iter()
+                        .filter(|message| message.contains("cannot assess"))
+                        .count(),
+                    1
+                );
+                assert!(
+                    warnings
+                        .iter()
+                        .all(|message| !message.contains("unusable-reply-secret"))
+                );
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn small_managed_openclaw_context_warns_before_plan_or_apply_mutation() {
     for source in [CLUSTER_VLLM, CLUSTER_OLLAMA, DOCKER_VLLM, DOCKER_OLLAMA] {
         let document = Document::parse(with_context(source, 8192).to_string().as_bytes()).unwrap();
         for apply in [false, true] {
             let warnings = context_warnings(&document, apply).await;
-            assert_eq!(warnings.len(), 1);
-            let warning = &warnings[0];
+            assert_eq!(
+                warnings.len(),
+                2,
+                "budget and route mismatch both need warnings"
+            );
+            assert_eq!(
+                warnings
+                    .iter()
+                    .filter(|message| message.contains("conversations"))
+                    .count(),
+                1
+            );
+            let budgets = budget_warnings(&warnings);
+            assert_eq!(budgets.len(), 1);
+            let warning = budgets[0];
             for detail in ["assistant", "primary", "qwen", "8192", "32768"] {
                 assert!(warning.contains(detail), "missing {detail}: {warning}");
             }
@@ -82,6 +199,8 @@ async fn context_advisory_reserves_the_effective_reply_allowance() {
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         for apply in [false, true] {
             let warnings = context_warnings(&document, apply).await;
+            assert_eq!(warnings.len(), 2);
+            let warnings = budget_warnings(&warnings);
             assert_eq!(
                 warnings.len(),
                 1,
@@ -139,7 +258,7 @@ async fn context_advisory_follows_native_defaults_and_metadata_precedence() {
         }
         let document = Document::parse(input.to_string().as_bytes()).unwrap();
         assert_eq!(
-            context_warnings(&document, false).await.len(),
+            budget_warnings(&context_warnings(&document, false).await).len(),
             usize::from(warns),
             "{input}"
         );
@@ -186,7 +305,10 @@ async fn context_advisory_uses_the_selected_harness_and_service_budget() {
     ] {
         let document =
             Document::parse(with_context(CLUSTER_VLLM, context).to_string().as_bytes()).unwrap();
-        assert_eq!(context_warnings(&document, false).await.len(), count);
+        assert_eq!(
+            budget_warnings(&context_warnings(&document, false).await).len(),
+            count
+        );
     }
     let mut other_harness = with_context(CLUSTER_VLLM, 8192);
     other_harness["spec"]["sandboxes"][0]["harness"]["kind"] = json!("nvidia.fabric.codex");
@@ -226,5 +348,7 @@ async fn context_advisory_resolves_referenced_harnesses_and_local_providers() {
     input["spec"]["sandboxes"][0]["inferences"] = json!({"selected": inference});
     input["spec"]["sandboxes"][0]["agent"]["inferenceRef"] = json!("selected");
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
-    assert_eq!(context_warnings(&document, false).await.len(), 1);
+    let warnings = context_warnings(&document, false).await;
+    assert_eq!(warnings.len(), 2);
+    assert_eq!(budget_warnings(&warnings).len(), 1);
 }

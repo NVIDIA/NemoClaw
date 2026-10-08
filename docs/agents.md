@@ -56,8 +56,10 @@ The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/24f068c
 A request can incur inference charges and affect retained conversation history.
 
 **A malformed request can leave the runtime unusable.**
-An operator reported this persistent failure with the current pinned OpenClaw adapter and recovered only by replacing the sandbox; the affected input cases and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
-Sandbox replacement deletes its files and conversation history; review the [sandbox change path](usage.md#choose-the-change-path) and [destroy consequences](usage.md#destroy) before choosing replacement.
+With the current pinned OpenClaw adapter, an operator reported later invocations failing with `runtime_unavailable`, a bridge `runtime_state` of `unknown`, and subsequent deployment operations failing with `observation is incomplete`.
+Ordinary apply cannot recover while the runtime observation is `unknown`, even after a configuration edit; the operator recovered by replacing the sandbox.
+The [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime) destroys all of the deployment's sandboxes, including their files and conversation history, while retaining managed model and credential storage.
+The affected input cases and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 With a configured runtime, run this from any directory inside the target sandbox when its YAML `agent.name` is `assistant` and its native OpenClaw agent is the default `main`:
 
@@ -183,7 +185,7 @@ Fabric's Pi adapter owns that metadata's schema and mapping.
 The SDK forwards the selected provider API as a public model extension and preserves each named route plus the `default` role.
 
 Model and settings updates reconcile a reconstructible agent-configuration resource for every adapter.
-When sandbox identity, provider attachments, image, and policy remain unchanged, the runtime restarts inside the existing sandbox.
+When sandbox identity, provider attachments, image, and policy remain unchanged and runtime observation succeeds, the runtime restarts inside the existing sandbox.
 In-memory conversations can be lost; retained native files remain subject to the adapter's lifecycle.
 Changing sandbox resources can still require a separate deployment under the normal replacement protections.
 

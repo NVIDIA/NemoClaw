@@ -14,9 +14,16 @@ fn bound_cluster_port_change_explains_required_teardown_before_runtime_reconcili
     ] {
         let document = Document::parse(source.as_bytes()).unwrap();
         let record = Record::new(document.clone()).unwrap();
-        let mut targets = compile::runtime_targets(&document, &record.generations).unwrap();
-        targets.extend(compile::targets(&document, &record.generations).unwrap());
+        // The early guard receives only the main state's OpenShell resources;
+        // managed model services belong to the separate runtime state.
+        let targets = compile::targets(&document, &record.generations).unwrap();
         let bindings = kubernetes_bindings(&targets);
+        assert!(
+            bindings
+                .keys()
+                .any(|address| address.starts_with("nemoclaw_sandbox."))
+        );
+        assert!(!bindings.contains_key("nemoclaw_kubernetes_service.qwen"));
         let mut changed = serde_json::to_value(&document).unwrap();
         changed["spec"]["services"]["qwen"]["serving"]["port"] = json!(19001);
         let changed = Document::parse(changed.to_string().as_bytes()).unwrap();
@@ -33,13 +40,134 @@ fn bound_cluster_port_change_explains_required_teardown_before_runtime_reconcili
                 "missing {required:?}: {message}"
             );
         }
-        let mut unbound_model = bindings.clone();
-        unbound_model.remove("nemoclaw_kubernetes_service.qwen");
-        assert!(matches!(
-            validate_bound_sandboxes(&record, &changed, &unbound_model),
-            Err(Error::SandboxChangeRefused { .. })
-        ));
         validate_bound_sandboxes(&record, &changed, &BTreeMap::new()).unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; separate local OpenTofu states"]
+async fn plan_and_apply_refuse_cluster_port_changes_with_separate_state_files() {
+    let bundle_path = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    for source in [
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        {
+            let store = Store::open(directory.path()).unwrap();
+            store.save(&record).unwrap();
+        }
+        let main = compile::targets(&document, &record.generations).unwrap();
+        let runtime = compile::runtime_targets(&document, &record.generations).unwrap();
+        let sandbox = main.iter().find(|target| target.kind == "sandbox").unwrap();
+        let model = runtime
+            .iter()
+            .find(|target| target.kind == crate::kubernetes::services::SERVICE_KIND)
+            .unwrap();
+        // Materialize native state files rather than combining the two stages'
+        // bindings. Real OpenTofu decodes these through the packaged schemas.
+        let native_state = |target: &Target| {
+            let (kind, name) = target.address.split_once('.').unwrap();
+            let mut attributes = serde_json::to_value(&target.values).unwrap();
+            attributes["id"] = json!(format!("physical-{}", target.kind));
+            json!({
+                "version": 4, "terraform_version": compile::OPENTOFU_VERSION,
+                "serial": 1, "lineage": "cd73e09f-c75c-48ce-86af-352a4764560e", "outputs": {},
+                "resources": [{
+                    "mode": "managed", "type": kind, "name": name,
+                    "provider": format!("provider[\"{}\"]", compile::PROVIDER_ADDRESS),
+                    "instances": [{"schema_version": 0, "attributes": attributes}]
+                }]
+            })
+        };
+        fs::create_dir(directory.path().join("runtime")).unwrap();
+        save_json(
+            &directory.path().join("terraform.tfstate"),
+            &native_state(sandbox),
+        )
+        .unwrap();
+        save_json(
+            &directory.path().join("runtime/terraform.tfstate"),
+            &native_state(model),
+        )
+        .unwrap();
+        let saved: Vec<_> = [
+            "intent.json",
+            "terraform.tfstate",
+            "runtime/terraform.tfstate",
+        ]
+        .into_iter()
+        .map(|name| (name, fs::read(directory.path().join(name)).unwrap()))
+        .collect();
+        let mut changed = serde_json::to_value(&document).unwrap();
+        changed["spec"]["services"]["qwen"]["serving"]["port"] = json!(19001);
+        let changed = Document::parse(changed.to_string().as_bytes()).unwrap();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let deployment = Deployment::new(directory.path(), &bundle_path)
+            .with_progress(Arc::new(move |event| captured.lock().unwrap().push(event)));
+        for apply in [false, true] {
+            let cancel = CancellationToken::new();
+            let error = if apply {
+                deployment.apply(&changed, &cancel).await
+            } else {
+                deployment.plan(&changed, &cancel).await
+            }
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("changing the model serving port"),
+                "{error}"
+            );
+            assert!(!events.lock().unwrap().contains(&Progress::MutationStarted));
+            for (name, bytes) in &saved {
+                assert_eq!(
+                    &fs::read(directory.path().join(name)).unwrap(),
+                    bytes,
+                    "{name}"
+                );
+            }
+            assert!(
+                !directory.path().join("runtime/main.tf.json").exists(),
+                "runtime reconciliation must not start"
+            );
+        }
+    }
+}
+
+#[test]
+fn unrelated_sandbox_or_storage_changes_keep_their_original_refusal() {
+    for source in [
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        let targets = compile::targets(&document, &record.generations).unwrap();
+        let bindings = kubernetes_bindings(&targets);
+        for change in ["sandbox image", "storage and port"] {
+            let mut revised = serde_json::to_value(&document).unwrap();
+            if change == "sandbox image" {
+                revised["spec"]["sandboxes"][0]["image"]["ref"] = json!(format!(
+                    "registry.example.com/changed@sha256:{}",
+                    "b".repeat(64)
+                ));
+            } else {
+                revised["spec"]["services"]["qwen"]["serving"]["port"] = json!(19001);
+                revised["spec"]["services"]["qwen"]["kubernetes"]["storageGiB"] = json!(200);
+            }
+            let revised = Document::parse(revised.to_string().as_bytes()).unwrap();
+            assert!(
+                matches!(
+                    validate_bound_sandboxes(&record, &revised, &bindings),
+                    Err(Error::SandboxChangeRefused { .. })
+                ),
+                "{change}"
+            );
+        }
     }
 }
 

@@ -60,6 +60,32 @@ enum Change {
     CredentialPvcUid,
 }
 impl Change {
+    fn assert_mismatch(self, error: &ObservationError, pod: &str) {
+        let (kind, name, field) = match self {
+            Self::PodUid => ("Pod", pod.to_owned(), "metadata.uid"),
+            Self::StartedAt => (
+                "Pod",
+                pod.to_owned(),
+                "status.containerStatuses[runtime].state.running.startedAt",
+            ),
+            Self::CredentialMount => (
+                "Pod",
+                pod.to_owned(),
+                "spec.volumes.persistentVolumeClaim.claimName",
+            ),
+            Self::CredentialPvcUid => (
+                "PersistentVolumeClaim",
+                format!("{pod}-auth"),
+                "metadata.uid",
+            ),
+        };
+        super::diagnostics::assert_named_mismatch(error, kind, "agents", &name, field);
+        let message = error.to_string();
+        for value in ["foreign", STARTED, "2099-01-01T00:00:01Z", &"a".repeat(64)] {
+            assert!(!message.contains(value), "value leaked: {message}");
+        }
+    }
+
     fn apply(self, objects: &Objects, pod: &str) {
         if matches!(self, Self::CredentialPvcUid) {
             let mut claim = objects
@@ -237,14 +263,13 @@ async fn runtime_reads_reject_identity_changes_during_status_exec() {
         let mut step = Step::status("ready");
         step.change = Some(change);
         let executor = harness.executor(vec![step]);
-        assert!(
-            harness
-                .operations
-                .read_with_exec(&harness.spec, None, &executor)
-                .await
-                .is_err(),
-            "{change:?}"
-        );
+        let error = harness
+            .operations
+            .read_with_exec(&harness.spec, None, &executor)
+            .await
+            .unwrap_err();
+        change.assert_mismatch(&error, &harness.spec.name);
+        assert_eq!(*executor.calls.lock().unwrap(), [RuntimeFile::Status]);
     }
 }
 
@@ -258,14 +283,12 @@ async fn credential_reads_reject_identity_changes_before_and_during_exec() {
         let harness = Harness::new("vllm", true).await;
         change.apply(&harness.objects, &harness.spec.name);
         let executor = harness.executor(Vec::new());
-        assert!(
-            harness
-                .operations
-                .credential_with_exec(&harness.spec.storage(), &executor)
-                .await
-                .is_err(),
-            "before {change:?}"
-        );
+        let error = harness
+            .operations
+            .credential_with_exec(&harness.spec.storage(), &executor)
+            .await
+            .unwrap_err();
+        change.assert_mismatch(&error, &harness.spec.name);
         assert!(executor.calls.lock().unwrap().is_empty());
     }
     for change in [
@@ -278,14 +301,12 @@ async fn credential_reads_reject_identity_changes_before_and_during_exec() {
         let mut step = Step::key(vec![b'a'; 64]);
         step.change = Some(change);
         let executor = harness.executor(vec![Step::status("ready"), step]);
-        assert!(
-            harness
-                .operations
-                .credential_with_exec(&harness.spec.storage(), &executor)
-                .await
-                .is_err(),
-            "during {change:?}"
-        );
+        let error = harness
+            .operations
+            .credential_with_exec(&harness.spec.storage(), &executor)
+            .await
+            .unwrap_err();
+        change.assert_mismatch(&error, &harness.spec.name);
         assert_eq!(
             *executor.calls.lock().unwrap(),
             [RuntimeFile::Status, RuntimeFile::Credential]

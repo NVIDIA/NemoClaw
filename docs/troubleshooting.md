@@ -47,7 +47,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
-| OpenClaw remains unusable after a malformed request | Read the [reported invocation failure and sandbox replacement consequences](agents.md#run-one-headless-openclaw-request) before choosing recovery |
+| After a malformed OpenClaw request: `runtime_unavailable`, bridge `runtime_state: unknown`, then `observation is incomplete` | Ordinary apply cannot recover the unknown runtime, including through configuration edits; review the [reported failure and whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of all sandbox files and history |
 
 For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
 NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.

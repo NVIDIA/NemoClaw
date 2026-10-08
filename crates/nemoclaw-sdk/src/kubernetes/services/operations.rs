@@ -51,6 +51,32 @@ impl Operations {
         }
     }
 
+    fn api_error(owned: &Owned, field: &'static str, error: ObservationError) -> ObservationError {
+        match error {
+            ObservationError::BindingMismatch => Self::mismatch(owned, field),
+            error => error,
+        }
+    }
+
+    async fn get_object(
+        &self,
+        spec: &StorageSpec,
+        owned: &Owned,
+    ) -> Result<Option<kube::api::DynamicObject>, ObservationError> {
+        self.cluster(spec)
+            .get(owned)
+            .await
+            .map_err(|error| Self::api_error(owned, "API read conflict", error))
+    }
+
+    async fn dry_run(&self, spec: &StorageSpec, object: Value) -> Result<(), ObservationError> {
+        let address = Owned::new(&object, "");
+        self.cluster(spec)
+            .dry_run(object)
+            .await
+            .map_err(|error| Self::api_error(&address, "API dry-run conflict", error))
+    }
+
     fn compute_mismatch(receipt: &Receipt, kind: &str, field: &'static str) -> ObservationError {
         Self::mismatch(
             &Owned {
@@ -204,7 +230,7 @@ impl Operations {
 
     async fn settle_pending(&self, receipt: &mut Receipt) -> Result<(), ObservationError> {
         if let Some(pending) = &receipt.pending {
-            if self.cluster(&receipt.storage).get(pending).await?.is_some() {
+            if self.get_object(&receipt.storage, pending).await?.is_some() {
                 return Err(ObservationError::UnrecordedResource {
                     kind: pending.kind.clone(),
                     namespace: pending.namespace.clone(),
@@ -225,17 +251,17 @@ impl Operations {
     ) -> Result<(), ObservationError> {
         let cluster = self.cluster(&receipt.storage);
         let address = Owned::new(&object, "");
-        if cluster.get(&address).await?.is_some() {
+        if self.get_object(&receipt.storage, &address).await?.is_some() {
             return Err(Self::mismatch(&address, "receipt binding"));
         }
-        receipt.pending = Some(address);
+        receipt.pending = Some(address.clone());
         self.save(receipt)?;
         let owned = match cluster.create_model(object).await {
             Ok(owned) => owned,
             Err(error) => {
                 // Keep the pending address unless an authoritative read proves no object exists.
                 let _ = self.settle_pending(receipt).await;
-                return Err(error);
+                return Err(Self::api_error(&address, "API create conflict", error));
             }
         };
         if volume {
@@ -347,12 +373,7 @@ impl Operations {
                 .filter(|object| matches!(object["kind"].as_str(), Some("Pod" | "ConfigMap")))
             {
                 let address = Owned::new(&object, "");
-                if self
-                    .cluster(&receipt.storage)
-                    .get(&address)
-                    .await?
-                    .is_none()
-                {
+                if self.get_object(&receipt.storage, &address).await?.is_none() {
                     continue;
                 }
                 let owned = receipt
@@ -370,7 +391,7 @@ impl Operations {
                 getrandom::fill(&mut suffix).map_err(|_| ObservationError::Incomplete)?;
                 let suffix: String = suffix.iter().map(|byte| format!("{byte:02x}")).collect();
                 object["metadata"]["name"] = format!("{}-check-{suffix}", address.name).into();
-                self.cluster(&receipt.storage).dry_run(object).await?;
+                self.dry_run(&receipt.storage, object).await?;
             }
         }
         Ok(())
@@ -381,7 +402,6 @@ impl Operations {
         spec: &StorageSpec,
         objects: Vec<Value>,
     ) -> Result<(), ObservationError> {
-        let cluster = self.cluster(spec);
         // The gateway creates this namespace later on a deployment's first plan.
         let namespace = Owned {
             api_version: "v1".into(),
@@ -390,12 +410,16 @@ impl Operations {
             name: spec.namespace().into(),
             uid: String::new(),
         };
-        if cluster.get(&namespace).await?.is_none() {
+        if self.get_object(spec, &namespace).await?.is_none() {
             return Ok(());
         }
         for object in objects {
-            if cluster.get(&Owned::new(&object, "")).await?.is_none() {
-                cluster.dry_run(object).await?;
+            if self
+                .get_object(spec, &Owned::new(&object, ""))
+                .await?
+                .is_none()
+            {
+                self.dry_run(spec, object).await?;
             }
         }
         Ok(())
@@ -438,7 +462,6 @@ impl Operations {
         runtime_class: Option<&str>,
     ) -> Result<(), ObservationError> {
         spec.validate().map_err(|_| ObservationError::Query)?;
-        let cluster = self.cluster(spec);
         let existing = self.load(spec)?;
         if let Some(receipt) = &existing {
             self.verify_storage(receipt, false).await?;
@@ -467,8 +490,8 @@ impl Operations {
                     name: name.into(),
                     uid: String::new(),
                 };
-                if cluster
-                    .get(&address)
+                if self
+                    .get_object(spec, &address)
                     .await?
                     .and_then(|object| object.metadata.uid)
                     .is_none()
@@ -495,15 +518,17 @@ impl Operations {
         if !gateway.storage_ready {
             return Err(ObservationError::Incomplete);
         }
-        let cluster = self.cluster(spec);
-        let system = cluster
-            .get(&Owned {
-                api_version: "v1".into(),
-                kind: "Namespace".into(),
-                namespace: String::new(),
-                name: "kube-system".into(),
-                uid: String::new(),
-            })
+        let system = self
+            .get_object(
+                spec,
+                &Owned {
+                    api_version: "v1".into(),
+                    kind: "Namespace".into(),
+                    namespace: String::new(),
+                    name: "kube-system".into(),
+                    uid: String::new(),
+                },
+            )
             .await?
             .and_then(|object| object.metadata.uid)
             .ok_or(ObservationError::Incomplete)?;
@@ -585,8 +610,7 @@ impl Operations {
         owned: &Owned,
     ) -> Result<kube::api::DynamicObject, ObservationError> {
         let object = self
-            .cluster(spec)
-            .get(owned)
+            .get_object(spec, owned)
             .await?
             .ok_or_else(|| Self::mismatch(owned, "object presence"))?;
         if object.metadata.uid.as_deref() != Some(&owned.uid) {
@@ -715,10 +739,9 @@ impl Operations {
         if !compute_bound {
             return Ok(Response::default());
         }
-        let cluster = self.cluster(&receipt.storage);
         let mut running = false;
         for owned in &receipt.compute {
-            let Some(_) = cluster.get(owned).await? else {
+            let Some(_) = self.get_object(&receipt.storage, owned).await? else {
                 if removing || owned.kind == "Pod" {
                     continue;
                 }
@@ -937,7 +960,7 @@ impl Operations {
                 .position(|owned| owned.kind == address.kind && owned.name == address.name);
             if let Some(index) = recorded {
                 let owned = receipt.compute[index].clone();
-                let current = self.cluster(&receipt.storage).get(&owned).await?;
+                let current = self.get_object(&receipt.storage, &owned).await?;
                 let recreate = (matches!(owned.kind.as_str(), "Pod" | "ConfigMap")
                     && current.is_none())
                     || (owned.kind == "Pod"
@@ -965,8 +988,7 @@ impl Operations {
     async fn delete(&self, spec: &StorageSpec, owned: &Owned) -> Result<(), ObservationError> {
         let cluster = self.cluster(spec);
         let grace = if owned.kind == "Pod" {
-            cluster
-                .get(owned)
+            self.get_object(spec, owned)
                 .await?
                 .and_then(|object| {
                     object
@@ -984,7 +1006,7 @@ impl Operations {
         })?;
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(grace.saturating_add(30));
-        while let Some(object) = cluster.get(owned).await? {
+        while let Some(object) = self.get_object(spec, owned).await? {
             if object.metadata.uid.as_deref() != Some(&owned.uid) {
                 return Err(Self::mismatch(owned, "metadata.uid"));
             }

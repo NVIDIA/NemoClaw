@@ -312,8 +312,19 @@ impl Deployment {
                     },
                     Some(_) => None,
                 };
+                let route_context = positive_integer("contextWindow", 32768);
+                if let Some(route_context) = route_context
+                    && i128::from(route_context) > i128::from(context)
+                {
+                    (self.progress)(Progress::Warning {
+                        message: format!(
+                            "OpenClaw sandbox {} route {} advertises contextWindow={route_context}, exceeding managed service {name} serving.contextTokens={context}; longer conversations can exceed the server limit. Set overrides.settings.model_metadata.contextWindow to {context} or less, or increase the service context and size model/GPU memory accordingly.",
+                            sandbox.name, route.name
+                        ),
+                    });
+                }
                 let (Some(route_context), Some(reply_tokens)) = (
-                    positive_integer("contextWindow", 32768),
+                    route_context,
                     positive_integer(
                         "maxTokens",
                         u64::from(route.overrides.tuning.max_tokens.unwrap_or(4096)),
