@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 
+import { readGatewayProcessEnvironment } from "./gateway/process-environment";
 import { resolveGatewayName } from "./gateway-binding";
 import {
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
@@ -34,19 +35,8 @@ export function readDockerDriverGatewayProcessIdentity(
 export function readDockerDriverGatewayProcessEnvironment(
   pid: number,
 ): Record<string, string> | null {
-  const procEnvPath = `/proc/${pid}/environ`;
-  const env: Record<string, string> = {};
-  try {
-    if (!fs.existsSync(procEnvPath)) return null;
-    for (const entry of fs.readFileSync(procEnvPath, "utf-8").split("\0")) {
-      if (!entry) continue;
-      const separator = entry.indexOf("=");
-      if (separator <= 0) continue;
-      env[entry.slice(0, separator)] = entry.slice(separator + 1);
-    }
-  } catch {
-    return null;
-  }
+  const env = readGatewayProcessEnvironment(pid);
+  if (!env) return null;
   if (env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] === undefined) {
     env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY;
   }

@@ -80,6 +80,8 @@ nemoclaw <name> gateway restart
 nemoclaw <name> exec -- openclaw plugins inspect <plugin-id> --runtime --json
 ```
 
+For an updated native plugin, the restart loads a fresh module graph.
+Replacement code at the same plugin path takes effect.
 NemoClaw preserves OpenClaw's native state during restart and state-preserving
 rebuild or restore. User-installed extensions and packages therefore survive
 without NemoClaw plugin ownership metadata. A fresh onboarding with `--fresh`

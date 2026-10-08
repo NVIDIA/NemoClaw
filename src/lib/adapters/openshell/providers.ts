@@ -18,14 +18,30 @@ import {
 
 import {
   ManagedBraveProfileResponseSchema,
+  ManagedTavilyProfileResponseSchema,
+  ManagedHermesTavilyProfileResponseSchema,
   ManagedOpenAiProfileResponseSchema,
   BuiltinNvidiaProfileResponseSchema,
   ProviderResponseSchema,
 } from "./sdk-read-schema";
+import { isManagedNativeNvidiaProfileResponse } from "./native-nvidia-profile-response";
 
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
+import {
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+} from "../../inference/native-nvidia/contract";
 
 import type { OpenShellProviderMetadata } from "./provider-adapter";
+
+const managedProfileSchemas = {
+  brave: ManagedBraveProfileResponseSchema,
+  openai: ManagedOpenAiProfileResponseSchema,
+  tavily: ManagedTavilyProfileResponseSchema,
+  "tavily-hermes-v1": ManagedHermesTavilyProfileResponseSchema,
+};
+type ManagedProfileContract = keyof typeof managedProfileSchemas;
+type ProfileContract = ManagedProfileContract | "native-nvidia";
 
 export type Provider = Readonly<
   Pick<OpenShellProviderMetadata, "name" | "type" | "credentialKeys" | "configKeys"> & {
@@ -34,10 +50,11 @@ export type Provider = Readonly<
     resourceVersion: string;
     config: Readonly<Record<string, string>>;
     builtinInferenceEndpoint?: string;
+    managedInferenceEndpoint?: string;
     profileWorkspace?: string;
     // null records a successful not-found read at the OpenAI provider's profile binding.
     managedProfile?: Readonly<{
-      id: "brave" | "openai";
+      id: ManagedProfileContract | typeof NVIDIA_HOSTED_NATIVE_PROFILE_ID;
       source: "builtin" | "user";
       scope: "" | "platform" | "workspace";
       resourceVersion: string;
@@ -50,7 +67,7 @@ export interface Providers {
       Readonly<{
         name: string;
         configKeys: readonly string[];
-        profileContract?: "brave" | "openai";
+        profileContract?: ProfileContract;
       }>,
   ): Promise<Provider | null>;
 }
@@ -58,12 +75,13 @@ export interface Providers {
 async function readBuiltinNvidiaEndpoint(
   client: OpenShellReadClient,
   request: ReadRequest,
+  profileWorkspace: string,
 ): Promise<string> {
   request.signal.throwIfAborted();
   readValue(
     BuiltinNvidiaProfileResponseSchema,
     await client.raw.getProviderProfile(
-      { id: "nvidia", workspace: request.workspace },
+      { id: "nvidia", workspace: profileWorkspace },
       { signal: request.signal },
     ),
   );
@@ -73,10 +91,12 @@ async function readBuiltinNvidiaEndpoint(
 async function readManagedProfile(
   client: OpenShellReadClient,
   request: ReadRequest,
-  profileId: "brave" | "openai",
+  profileContract: ProfileContract,
   providerType: string,
   profileWorkspace: string | undefined,
 ): Promise<NonNullable<Provider["managedProfile"]> | null> {
+  const profileId =
+    profileContract === "native-nvidia" ? NVIDIA_HOSTED_NATIVE_PROFILE_ID : profileContract;
   if (
     providerType !== profileId ||
     (profileWorkspace !== "" && profileWorkspace !== request.workspace)
@@ -92,21 +112,39 @@ async function readManagedProfile(
     );
   } catch (error) {
     // OpenShell 0.0.116 has an OpenAI provider type without a builtin profile.
-    if (profileId === "openai" && isNotFound(error)) return null;
+    if (profileContract === "openai" && isNotFound(error)) return null;
     throw error;
   }
-  return validateManagedProfileResponse(response, profileId, profileWorkspace);
+  return validateManagedProfileResponse(response, profileContract, profileWorkspace);
+}
+
+function validateNativeManagedProfileResponse(
+  response: unknown,
+  profileWorkspace: string,
+): NonNullable<Provider["managedProfile"]> {
+  if (!isManagedNativeNvidiaProfileResponse(response)) {
+    throw new OpenShellReadError("schema");
+  }
+  const profile = response.profile;
+  const expectedScope = profileWorkspace === "" ? "platform" : "workspace";
+  if (profile.scope !== expectedScope) throw new OpenShellReadError("schema");
+  return {
+    id: profile.id,
+    source: "user",
+    scope: profile.scope,
+    resourceVersion: String(profile.resourceVersion),
+  };
 }
 
 function validateManagedProfileResponse(
   response: unknown,
-  profileId: "brave" | "openai",
+  profileContract: ProfileContract,
   profileWorkspace: string,
 ): NonNullable<Provider["managedProfile"]> {
-  const { profile } = readValue(
-    profileId === "brave" ? ManagedBraveProfileResponseSchema : ManagedOpenAiProfileResponseSchema,
-    response,
-  );
+  if (profileContract === "native-nvidia") {
+    return validateNativeManagedProfileResponse(response, profileWorkspace);
+  }
+  const { profile } = readValue(managedProfileSchemas[profileContract], response);
   const builtin = profile.source === "builtin";
   const customScope = profileWorkspace === "" ? "platform" : "workspace";
   const expectedScope = builtin ? "" : customScope;
@@ -125,18 +163,35 @@ function validateManagedProfileResponse(
   };
 }
 
+function managedInferenceEndpointFor(
+  managedProfile: Provider["managedProfile"],
+): string | undefined {
+  return managedProfile?.id === NVIDIA_HOSTED_NATIVE_PROFILE_ID
+    ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+    : undefined;
+}
+
 async function readProfileEvidence(
   client: OpenShellReadClient,
   request: Parameters<Providers["get"]>[0],
   provider: Readonly<{ type: string; profileWorkspace?: string; config: Record<string, unknown> }>,
-): Promise<Pick<Provider, "builtinInferenceEndpoint" | "profileWorkspace" | "managedProfile">> {
+): Promise<
+  Pick<
+    Provider,
+    "builtinInferenceEndpoint" | "managedInferenceEndpoint" | "profileWorkspace" | "managedProfile"
+  >
+> {
   let builtinInferenceEndpoint: string | undefined;
   if (
     provider.type === "nvidia" &&
-    provider.profileWorkspace === "" &&
+    (provider.profileWorkspace === "" || provider.profileWorkspace === request.workspace) &&
     Object.keys(provider.config).length === 0
   ) {
-    builtinInferenceEndpoint = await readBuiltinNvidiaEndpoint(client, request);
+    builtinInferenceEndpoint = await readBuiltinNvidiaEndpoint(
+      client,
+      request,
+      provider.profileWorkspace,
+    );
   }
   const managedProfile =
     request.profileContract === undefined
@@ -148,12 +203,14 @@ async function readProfileEvidence(
           provider.type,
           provider.profileWorkspace,
         );
+  const managedInferenceEndpoint = managedInferenceEndpointFor(managedProfile);
   return {
     ...(builtinInferenceEndpoint === undefined ? {} : { builtinInferenceEndpoint }),
     ...(provider.profileWorkspace === undefined
       ? {}
       : { profileWorkspace: provider.profileWorkspace }),
     ...(managedProfile === undefined ? {} : { managedProfile }),
+    ...(managedInferenceEndpoint === undefined ? {} : { managedInferenceEndpoint }),
   };
 }
 

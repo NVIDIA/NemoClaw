@@ -10,6 +10,7 @@ import {
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cron-preflight";
 const MODEL = process.env.NEMOCLAW_CRON_PREFLIGHT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
@@ -83,6 +84,13 @@ test(
       env,
       redactionValues: redactions,
       timeoutMs: execTimeout(20 * 60_000),
+    });
+    await captureOpenClawOnboardFailure(install, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "cron-preflight-install",
+      env,
+      redactionValues: redactions,
+      runtime: runtimeProvider,
     });
     assertExitZero(install, "native cron install");
 

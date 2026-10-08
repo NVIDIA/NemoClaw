@@ -240,6 +240,7 @@ export async function preflightRebuildTargetRuntime(
           ...sb,
           provider: target.resumeConfig.provider,
           model: target.resumeConfig.model,
+          endpointUrl: target.resumeConfig.endpointUrl,
           credentialEnv: target.credentialEnv,
           hermesAuthMethod: target.durableConfig.hermesAuthMethod,
         },

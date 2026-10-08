@@ -6,6 +6,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock/inspection";
+import { resolveNemoclawHomeDir } from "../../state/paths";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   assertHermesPortableSandboxLifecycleAuthority,
@@ -60,6 +61,29 @@ export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
 export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
   "The --fix option is not supported for an experimental Hermes portable sandbox.";
 
+const HERMES_PORTABLE_DASHBOARD_URL_COMMAND_ID = "sandbox:dashboard-url";
+
+/** Point to the saved dashboard metadata used by the dashboard URL command. */
+export function hermesPortableDashboardUrlGuidance(registryFile: string): string {
+  return `After onboarding, find this sandbox's saved dashboard metadata in ${JSON.stringify(registryFile)}. Use 'dashboardExternalUrl' when set; otherwise open http://127.0.0.1:<dashboardPort>/.`;
+}
+
+/**
+ * Build the portable-profile refusal for one command id.
+ *
+ * Only `sandbox:dashboard-url` appends the actionable hint; every other
+ * excluded command keeps the bare unsupported-command sentence.
+ */
+export function hermesPortableUnsupportedCommandMessage(
+  commandId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const message = `${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`;
+  if (commandId !== HERMES_PORTABLE_DASHBOARD_URL_COMMAND_ID) return message;
+  const registryFile = path.join(resolveNemoclawHomeDir(env.HOME || "/tmp"), "sandboxes.json");
+  return `${message} ${hermesPortableDashboardUrlGuidance(registryFile)}`;
+}
+
 const HERMES_PORTABLE_COMMANDS = new Set([
   "launch",
   "sandbox:connect",
@@ -83,8 +107,6 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
   "sandbox:skill",
 ]);
 
-const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
-
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "inference:get",
   "list",
@@ -100,7 +122,6 @@ const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status", "debug"]);
 export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;
   readonly hostFence: "read" | "deny" | null;
-  readonly multiSandboxLifecycle: boolean;
   readonly rawSandboxName: boolean;
 };
 
@@ -118,7 +139,6 @@ export function classifyHermesPortableCommand(
       : HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS.has(commandId)
         ? "deny"
         : null,
-    multiSandboxLifecycle: MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId),
     rawSandboxName: RAW_SANDBOX_NAME_COMMANDS.has(commandId),
   };
 }
@@ -142,7 +162,7 @@ export function assertHermesPortableCommandSupported(
   if (doctorFix) {
     throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE} Command: ${commandId}`);
   }
-  throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
+  throw new Error(hermesPortableUnsupportedCommandMessage(commandId, process.env));
 }
 
 export type PortableAgentReceiptDisposition =
@@ -612,7 +632,7 @@ export function assertHermesPortableCommandUnavailable(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (inspectPortableAgentReceiptDisposition(sandboxName, env).kind !== "hermes") return;
-  throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
+  throw new Error(hermesPortableUnsupportedCommandMessage(commandId, env));
 }
 
 function requireMatchingAgent(

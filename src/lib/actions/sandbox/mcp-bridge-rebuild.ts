@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import type { PreparedStoppedNativeState } from "../../state/state-directory-restore";
 import * as policies from "../../policy";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import {
@@ -117,7 +118,7 @@ async function getCompleteMcpRebuildEntries(
  * to scrub, so this path validates targets and provider recoverability without
  * attempting sandbox exec or changing provider attachment state.
  */
-export async function prepareMcpBridgesForAbsentSandboxRebuild(
+async function prepareMcpBridgesWithoutSourceMutation(
   sandboxName: string,
   sourceEntries: readonly McpSourceEntry[],
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -155,6 +156,62 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   };
 }
 
+export async function prepareMcpBridgesForAbsentSandboxRebuild(
+  sandboxName: string,
+  sourceEntries: readonly McpSourceEntry[],
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+): Promise<McpRebuildPreparation> {
+  return prepareMcpBridgesWithoutSourceMutation(sandboxName, sourceEntries, runtimeSelection);
+}
+
+/** A captured, unmounted Docker source cannot execute or retain adapter state after deletion. */
+export async function prepareMcpBridgesForStoppedSandboxRebuild(
+  sandboxName: string,
+  sourceEntries: readonly McpSourceEntry[],
+  source: PreparedStoppedNativeState,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+): Promise<McpRebuildPreparation> {
+  const registeredAgent = getSandboxOrThrow(sandboxName).agent ?? "openclaw";
+  if (
+    source.sandboxName !== sandboxName ||
+    source.agentName !== registeredAgent ||
+    !["openclaw", "langchain-deepagents-code"].includes(registeredAgent)
+  ) {
+    throw new McpBridgeError("Stopped MCP preservation does not match the captured agent sandbox.");
+  }
+  source.assertCurrent();
+  const prepared = await prepareMcpBridgesWithoutSourceMutation(
+    sandboxName,
+    sourceEntries,
+    runtimeSelection,
+  );
+  source.assertCurrent();
+  if (prepared.entries.length === 0)
+    return { ...prepared, assertDeleteEdgeUnchanged: source.assertCurrent };
+  const selectedRuntime = prepared.runtimeSelection;
+  if (!selectedRuntime)
+    throw new McpBridgeError("Stopped MCP preservation has no gateway authority.");
+  const policyHandoff = await policies.captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "capture the stopped source policy before replacement",
+    selectedRuntime,
+  );
+  if (!policyHandoff || !isSandboxPolicyCredentialFree(policyHandoff)) {
+    throw new McpBridgeError("Stopped MCP preservation requires a credential-free live policy.");
+  }
+  return {
+    ...prepared,
+    policyHandoff,
+    assertDeleteEdgeUnchanged: source.assertCurrent,
+    revalidateBeforeDelete: async () => {
+      source.assertCurrent();
+      await assertMcpTeardownPolicyUnchanged(sandboxName, policyHandoff, selectedRuntime);
+      await prepareMcpBridgesWithoutSourceMutation(sandboxName, prepared.entries, selectedRuntime);
+      source.assertCurrent();
+    },
+  };
+}
+
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
   sourceEntries: readonly McpSourceEntry[],
@@ -162,7 +219,9 @@ export async function prepareMcpBridgesForRebuild(
 ): Promise<McpRebuildPreparation> {
   const sandbox = getSandboxOrThrow(sandboxName);
   const { entries, runtimeSelection: providerRuntimeSelection } =
-    await getCompleteMcpRebuildEntries(sandboxName, sourceEntries, { runtimeSelection });
+    await getCompleteMcpRebuildEntries(sandboxName, sourceEntries, {
+      runtimeSelection,
+    });
   if (entries.length === 0) {
     return {
       entries: [],

@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/actions/sandbox/sandbox-exec-output";
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/adapters/sandbox/sandbox-exec-output";
 import type { OwnedTestResources } from "../helpers/owned-test-resources";
 import { execTimeout, testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
@@ -582,33 +582,13 @@ export function createDoctorTestSetup(
   };
 }
 
-export function createCloudflaredServiceDir(prefix: string): {
-  sandboxName: string;
-  serviceDir: string;
-} {
-  const compactPrefix = prefix
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 4);
-  const suffix = [
-    process.pid.toString(36).slice(-3),
-    Date.now().toString(36).slice(-6),
-    Math.random().toString(36).slice(2, 5),
-  ].join("-");
-  const sandboxName = `${compactPrefix || "test"}-${suffix}`;
-  const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
-  fs.rmSync(serviceDir, { recursive: true, force: true });
-  fs.mkdirSync(serviceDir, { recursive: true });
-  return { sandboxName, serviceDir };
-}
-
 export function createDebugCommandTestEnv(
   resources: OwnedTestResources,
   prefix: string,
   options: { extraSandboxNames?: string[]; gatewayPort?: number; openshellArgsLog?: string } = {},
 ): Record<string, string> {
   const { home, bin: localBin } = resources.home(prefix);
-  const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
+  const sandboxName = `${prefix.slice(0, 5)}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
   // --sandbox flag so the validation gate accepts them.

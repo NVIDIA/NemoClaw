@@ -30,6 +30,8 @@ vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit }));
 vi.mock("./gateway-target", () => ({ getSandboxTargetGatewayName }));
 
 import { installSandboxSkill, listSandboxSkills, removeSandboxSkill } from "./skill-install";
+import * as registry from "../../state/registry";
+import * as onboardSession from "../../state/onboard-session";
 import type { AgentSkillIntegration } from "../../agent/skill-integration";
 
 const roots: string[] = [];
@@ -63,18 +65,21 @@ const OPENCLAW: AgentSkillIntegration = {
   listCommand: ["skills", "list", "--agent", "main"],
   addCommand: ["skills", "install", "{source}", "--agent", "main", "--force"],
   removeCommand: null,
+  verifiedContentDigest: null,
 };
 const HERMES: AgentSkillIntegration = {
   writableRoot: "/sandbox/.hermes/skills",
   listCommand: ["skills", "list"],
   addCommand: null,
   removeCommand: null,
+  verifiedContentDigest: null,
 };
 const DCODE: AgentSkillIntegration = {
   writableRoot: "/sandbox/.deepagents/agent/skills",
   listCommand: ["skills", "list", "--agent", "agent"],
   addCommand: null,
   removeCommand: ["skills", "delete", "{name}", "--agent", "agent", "--force", "--json"],
+  verifiedContentDigest: "sha256",
 };
 
 describe("stateless sandbox skill orchestration", () => {
@@ -133,6 +138,41 @@ describe("stateless sandbox skill orchestration", () => {
     expect(request.command.slice(-command.length)).toEqual(command);
     expect(captureOpenshell).not.toHaveBeenCalled();
   });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "keeps OpenClaw skill operations on their registered sandbox after %s onboarding (#12586)",
+    async (sessionAgent) => {
+      const runtime =
+        await vi.importActual<typeof import("../../agent/runtime")>("../../agent/runtime");
+      getSessionAgent.mockImplementation(runtime.getSessionAgent);
+      resolveSessionAgentDefinition.mockImplementation(runtime.resolveSessionAgentDefinition);
+      vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: null } as never);
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({ agent: sessionAgent } as never);
+
+      await listSandboxSkills("alpha");
+      expect(sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].command.slice(-5)).toEqual([
+        "/usr/local/bin/openclaw",
+        "skills",
+        "list",
+        "--agent",
+        "main",
+      ]);
+      expect(process.exitCode).toBe(0);
+      sdkCommandExecutor.runStreaming.mockClear();
+
+      await installSandboxSkill("alpha", { command: "install", path: localSkill() });
+      const install = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
+      expect(install.slice(-7, -4)).toEqual(["/usr/local/bin/openclaw", "skills", "install"]);
+      expect(install.slice(-3)).toEqual(["--agent", "main", "--force"]);
+      expect(process.exitCode).toBe(0);
+      sdkCommandExecutor.runStreaming.mockClear();
+
+      await removeSandboxSkill("alpha", { name: "demo-skill" });
+      const remove = sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].command as string[];
+      expect(remove.at(-1)).toContain("/sandbox/.openclaw/workspace/skills");
+      expect(process.exitCode).toBe(0);
+    },
+  );
 
   it("forwards the native list exit status", async () => {
     selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
@@ -232,21 +272,85 @@ describe("stateless sandbox skill orchestration", () => {
   });
 
   it.each([
-    ["hermes", "/usr/local/bin/hermes", HERMES],
-    ["langchain-deepagents-code", "/usr/local/bin/dcode", DCODE],
-  ] as const)("adds through the stateless %s fallback", async (name, binary, integration) => {
-    selectAgent(name, binary, integration);
+    ["hermes", "/usr/local/bin/hermes", HERMES, false],
+    ["langchain-deepagents-code", "/usr/local/bin/dcode", DCODE, true],
+  ] as const)(
+    "adds through the stateless %s fallback",
+    async (name, binary, integration, reportsDigest) => {
+      selectAgent(name, binary, integration);
+      const source = localSkill();
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await installSandboxSkill("alpha", { command: "install", path: source });
+
+      const command = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
+      expect(command.slice(-3, -1)).toEqual(["/bin/sh", "-c"]);
+      expect(command.at(-1)).toContain(integration.writableRoot);
+      expect(command.at(-1)?.includes("expected='")).toBe(reportsDigest);
+      expect(
+        log.mock.calls
+          .flat()
+          .some((line) => /Content digest \(SHA-256\): [a-f0-9]{64}/u.test(String(line))),
+      ).toBe(reportsDigest);
+      expect(JSON.stringify(captureOpenshell.mock.calls)).not.toMatch(
+        /docker|podman|receipt|provenance/u,
+      );
+      expect(process.exitCode).toBe(0);
+    },
+  );
+
+  it("omits the Deep Agents digest and cleans staging when verified placement fails (#8470)", async () => {
+    selectAgent("langchain-deepagents-code", "/usr/local/bin/dcode", DCODE);
     const source = localSkill();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    sdkCommandExecutor.runStreaming
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 1 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      });
 
     await installSandboxSkill("alpha", { command: "install", path: source });
 
-    const command = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
-    expect(command.slice(-3, -1)).toEqual(["/bin/sh", "-c"]);
-    expect(command.at(-1)).toContain(integration.writableRoot);
-    expect(JSON.stringify(captureOpenshell.mock.calls)).not.toMatch(
-      /docker|podman|receipt|provenance/u,
+    expect(process.exitCode).toBe(1);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Content digest (SHA-256)"));
+    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(3);
+    const failedScript = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command.at(-1) ?? "";
+    expect(failedScript.indexOf('[ "$actual" = "$expected" ]')).toBeLessThan(
+      failedScript.indexOf('mv -T -- "$temporary" "$destination"'),
     );
-    expect(process.exitCode).toBe(0);
+    expect(sdkCommandExecutor.runStreaming.mock.calls[2]?.[0].command.at(-1)).toContain("rm -rf");
+  });
+
+  it("omits the Deep Agents digest when remote staging cleanup fails (#8470)", async () => {
+    selectAgent("langchain-deepagents-code", "/usr/local/bin/dcode", DCODE);
+    const source = localSkill();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    sdkCommandExecutor.runStreaming
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 1 },
+        release: vi.fn(),
+      });
+
+    await installSandboxSkill("alpha", { command: "install", path: source });
+
+    expect(process.exitCode).toBe(1);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Content digest (SHA-256)"));
   });
 
   it("fails clearly when the selected agent declares no safe skill integration", async () => {

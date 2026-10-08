@@ -4,6 +4,7 @@
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
+import { reserveRecoveredSandboxInferenceRoute } from "../../sandbox-lifecycle";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
 export interface SandboxResumeSignals {
@@ -339,4 +340,45 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
     note: "  [resume] Recorded sandbox state is unavailable; recreating it.",
     removeRegistryEntry: true,
   };
+}
+
+/** Preserve explicit runtime authority while reclaiming a published resume reservation. */
+export function reserveSandboxResumeRoute(
+  sandboxName: string,
+  entry: SandboxEntry | null,
+  route: Parameters<typeof import("../../../state/registry").reserveSandboxInferenceRoute>[1],
+  reserve: typeof import("../../../state/registry").reserveSandboxInferenceRoute,
+  cliName: string,
+): void {
+  if (!route.reservationSessionId || !entry) return;
+  const explicitHostLocal = entry.hostLocalInferenceProvenance !== undefined;
+  // Route-only create reservations stay with the verified create boundary.
+  if (
+    !explicitHostLocal &&
+    entry.pendingRouteReservation === true &&
+    (entry.reservationSessionId === route.reservationSessionId || entry.createdAt === undefined)
+  )
+    return;
+  const desired = explicitHostLocal
+    ? {
+        ...route,
+        gatewayPort: entry.gatewayPort ?? undefined,
+        openshellDriver: entry.openshellDriver ?? undefined,
+        hostLocalInferenceReceipt: entry.hostLocalInferenceReceipt,
+        hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance,
+      }
+    : route;
+  try {
+    if (!reserveRecoveredSandboxInferenceRoute(reserve, sandboxName, desired)) {
+      throw new Error(`Failed to reserve the inference route for sandbox '${sandboxName}'.`);
+    }
+  } catch (error) {
+    if (!explicitHostLocal) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot reserve host-local inference for sandbox '${sandboxName}': ${detail}\n` +
+        `Run '${cliName} ${sandboxName} doctor' to inspect runtime and gateway authority before retrying.`,
+      { cause: error },
+    );
+  }
 }

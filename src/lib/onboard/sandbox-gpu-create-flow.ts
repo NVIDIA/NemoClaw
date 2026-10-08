@@ -3,6 +3,13 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
+import {
+  type CreateOpenShellSandboxRequest,
+  type OpenShellSandboxLifecycle,
+  withoutOpenShellSandboxCreateGpu,
+} from "../adapters/openshell/sandbox-lifecycle";
+import { createCliOpenShellSandboxLifecycleFromRunner } from "../adapters/openshell/sandbox-lifecycle-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
@@ -18,7 +25,6 @@ import type {
   SandboxCreateRuntimePatch,
 } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
-import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import {
@@ -26,6 +32,7 @@ import {
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   createHermesPortableReadyRunner,
@@ -64,6 +71,7 @@ export {
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
+  createHermesPortableGpuDiagnostics,
   createHermesPortableOpenShellCapture,
   createHermesPortableReadyCapture,
   createHermesPortableReadyRunner,
@@ -204,9 +212,8 @@ export interface SandboxGpuCreateFlowInput {
   gatewayName: string;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
-  createArgv: string[];
-  /** Exact schema-5 build context consumed by the OpenShell create child. */
-  createWorkingDirectory?: string;
+  /** Semantic request consumed by the selected OpenShell lifecycle adapter. */
+  createRequest: CreateOpenShellSandboxRequest;
   /** Host-side runtime environment used only by the selected lifecycle provider. */
   hostEnv?: NodeJS.ProcessEnv;
   portableLifecycle?: boolean;
@@ -215,11 +222,13 @@ export interface SandboxGpuCreateFlowInput {
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
   portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
-  prebuild: SandboxPrebuildResult;
+  prebuild: Omit<SandboxPrebuildResult, "createArgs">;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
   managedImage?: boolean;
+  /** Publisher-owned exact-digest image; readiness failures include compatibility guidance. */
+  externalImage?: boolean;
   requiredUlimits?: readonly DockerUlimit[] | null;
   /**
    * Verify the exact sandbox created by each attempt before runtime activation,
@@ -258,11 +267,13 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 
 export interface SandboxGpuCreateFlowDeps {
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
+  openShellGpuDiagnostics?: OpenShellGpuDiagnostics;
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
   sandboxObserver: OpenShellSandboxObserver;
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
+  createSandbox?: OpenShellSandboxLifecycle["createSandbox"];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
   /** Test seam for the exact Docker runtime proof used only during handoff resume. */
   verifyExactFinalHandoffRuntime?: (
@@ -364,14 +375,29 @@ export async function runSandboxGpuCreateFlow(
     );
   }
   let registryImageRef: string | null = input.prebuild.imageRef;
+  const createSandbox =
+    deps.createSandbox ??
+    (() => {
+      let selectedExecutable: string | undefined;
+      return createCliOpenShellSandboxLifecycleFromRunner(deps.runOpenshell, {
+        resolveBinary: () => {
+          selectedExecutable ??= deps.openshellArgv([])[0];
+          if (!selectedExecutable) {
+            throw new Error("OpenShell executable selection returned an empty command.");
+          }
+          return selectedExecutable;
+        },
+      }).createSandbox;
+    })();
   const attemptRunner = createSandboxGpuCreateAttemptRunner(
     hermesPortableLifecycle ? { ...input, portableLifecycle: true } : input,
     hermesPortableLifecycle
       ? {
           ...deps,
+          createSandbox,
           installPortableDemoLifecycle: () => input.lifecycleGeneration!,
         }
-      : deps,
+      : { ...deps, createSandbox },
   );
   const gpuCreateOutcome = await (input.resumeVerifiedCreate
     ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
@@ -385,7 +411,10 @@ export async function runSandboxGpuCreateFlow(
               error: failure.error,
               additionalSummaryLines: routeAdapter.additionalSummaryLines,
             },
-            { runCaptureOpenshell: deps.runCaptureOpenshell },
+            {
+              runCaptureOpenshell: deps.runCaptureOpenshell,
+              openShellGpuDiagnostics: deps.openShellGpuDiagnostics,
+            },
           );
           if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
         },
@@ -421,24 +450,21 @@ export async function runSandboxGpuCreateFlow(
           ) {
             registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
           }
-          const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
-            input.prebuild.createArgs,
+          if (!input.createRequest) {
+            throw new Error("Ordinary compatibility creation has no semantic create request.");
+          }
+          if (!imageId && !attemptRunner.state.allowUnbuiltCompatibilitySource) {
+            throw new Error(
+              "Native GPU fallback cannot reuse the completed sandbox image; refusing to rebuild it.",
+            );
+          }
+          attemptRunner.state.compatibilityRequest = withoutOpenShellSandboxCreateGpu(
+            input.createRequest,
             {
-              imageRef: imageId,
-              allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-              compatibilityPolicyPath: input.compatibilityPolicyPath,
+              ...(imageId ? { sourceReference: imageId } : {}),
+              policyPath: input.compatibilityPolicyPath,
             },
           );
-          attemptRunner.state.compatibilityArgv = deps.openshellArgv([
-            "sandbox",
-            "create",
-            ...compatibilityArgs,
-            "--",
-            ...input.sandboxStartupCommand,
-          ]);
-          if (attemptRunner.state.compatibilityArgv.length === 0) {
-            throw new Error("Compatibility sandbox create executable is missing.");
-          }
         },
         activateCompatibilityAttempt: async () => {
           await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(

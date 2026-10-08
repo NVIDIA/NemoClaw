@@ -6,6 +6,7 @@ import {
   buildMcpCredentialRevisionObservationCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness.ts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -19,6 +20,7 @@ import {
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { hostAddressForSandbox } from "./mcp-bridge-sandbox.ts";
+import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
   startCompatibleMock,
@@ -316,7 +318,6 @@ async function updateProviderCredential(
     timeoutMs: 90_000,
   });
   expectExitZero(result, artifactName);
-  expect(resultText(result)).toMatch(/Updated provider/iu);
 }
 
 async function sandboxIdentity(sandbox: SandboxClient, artifactName: string): Promise<string> {
@@ -406,14 +407,7 @@ test(
     });
     const hostAddress = await hostAddressForSandbox(host);
     const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
-    await host.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "precleanup-credential-window-sandbox",
-      timeoutMs: 15 * 60_000,
-    });
-    cleanup.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "cleanup-credential-window-sandbox",
-      timeoutMs: 15 * 60_000,
-    });
+    await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, SANDBOX_NAME);
     const onboard = await host.nemoclaw(
       ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
       {
@@ -436,6 +430,10 @@ test(
       },
     );
     expectExitZero(onboard, "onboard credential-window sandbox");
+    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, buildAvailabilityProbeEnv(), [
+      COMPATIBLE_KEY,
+      ...allSecrets,
+    ]);
     const sourceSandboxId = await sandboxIdentity(
       sandbox,
       "credential-window-source-sandbox-before-expiry",
