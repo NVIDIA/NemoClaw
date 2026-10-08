@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import type { OpenShellProviderMetadata } from "../../adapters/openshell/provider-adapter";
 import {
   NativeProviderError as NativeNvidiaProviderError,
   ensureNativeProvider,
+  nativeProviderAttachmentFromMetadata,
   persistNativeProviderAuthority,
   verifyNativeProviderAttachment,
   ensureNativeProviderAttached,
@@ -101,13 +103,35 @@ function nvidiaReceipt(receipt: NativeProviderAttachment): NativeNvidiaProviderA
     throw new NativeNvidiaProviderError("OpenShell returned an invalid NVIDIA provider identity.");
   return normalized;
 }
+export function nativeNvidiaProviderAttachmentFromMetadata(
+  metadata: OpenShellProviderMetadata,
+): NativeNvidiaProviderAttachment {
+  return nvidiaReceipt(nativeProviderAttachmentFromMetadata(metadata, nativeProfile()));
+}
+
 export async function ensureNativeNvidiaProvider(
-  input: Omit<Parameters<typeof ensureNativeProvider>[0], "profile" | "expected"> & {
+  input: Omit<
+    Parameters<typeof ensureNativeProvider>[0],
+    "profile" | "expected" | "prepareProviderPolicy"
+  > & {
     expected?: NativeNvidiaProviderAttachment;
   },
 ): Promise<NativeNvidiaProviderAttachment> {
   return nvidiaReceipt(
-    await ensureNativeProvider({ ...input, profile: nativeProfile(input.profilePath) }),
+    await ensureNativeProvider({
+      ...input,
+      profile: nativeProfile(input.profilePath),
+      prepareProviderPolicy: async () => {
+        const result = await input.adapter.ensureProviderPolicyComposition({
+          target: input.target,
+        });
+        if (!result.ok) {
+          throw new NativeNvidiaProviderError(
+            `Could not activate native NVIDIA provider policy: ${result.error.message.trim() || "OpenShell did not provide a diagnostic."}`,
+          );
+        }
+      },
+    }),
   );
 }
 export async function verifyNativeNvidiaProviderAttachment(

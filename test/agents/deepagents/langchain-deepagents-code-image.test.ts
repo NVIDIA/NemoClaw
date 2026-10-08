@@ -989,7 +989,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "references_native_nvidia_route",
     "https://integrate\\.api\\.nvidia\\.com/v1",
     "references_attached_provider_placeholder_key",
-    'api_key_env[[:space:]]*=[[:space:]]*"NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+    'api_key_env[[:space:]]*=[[:space:]]*"NVIDIA_INFERENCE_API_KEY"',
     "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
@@ -1124,7 +1124,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "native-nvidia",
       [
         'base_url = "https://integrate.api.nvidia.com/v1"',
-        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+        'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
   ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
@@ -1146,7 +1146,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       [
         'base_url = "https://inference.local/v1"',
         'base_url = "https://integrate.api.nvidia.com/v1"',
-        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+        'api_key_env = "NVIDIA_INFERENCE_API_KEY"',
       ].join("\n"),
     ],
   ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {

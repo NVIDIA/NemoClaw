@@ -31,6 +31,7 @@ export type DcodeRebuildResumeConfig = {
 
 export type ResolvedDcodeRebuildTarget = {
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  nativeProvider?: boolean;
   agent: typeof DCODE_AGENT_NAME;
   gatewayName: string;
   gatewayPort: number;

@@ -38,6 +38,7 @@ export function createNativeLocalSetupHarness() {
     throw new Error("Unexpected native setup adapter operation");
   };
   const adapter = {
+    ensureProviderPolicyComposition: vi.fn(unsupported),
     importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(
       async ({ profilePath }) => {
         profiles.push(JSON.parse(fs.readFileSync(profilePath, "utf8")));

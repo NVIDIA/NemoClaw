@@ -15,6 +15,10 @@ import {
 } from "../../inference/native-local/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
+import {
+  normalizeNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia/contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import type { ReasoningEffort } from "../../onboard/reasoning-mode";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
@@ -46,6 +50,7 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  * from ambient selection env.
  */
 export interface RebuildResumeConfig {
+  readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   readonly agent: string | null;
   readonly provider: string;
   readonly model: string;
@@ -242,7 +247,15 @@ export function prepareRebuildResumeConfig(
     endpointUrl,
   );
 
+  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+    sb.nativeNvidiaProviderAttachment,
+  );
+  if (sb.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+    bail("Malformed native NVIDIA provider attachment; sandbox is untouched");
+    return null;
+  }
   return {
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     agent: rebuildAgent,
     provider: trustedSelection.provider,
     model: trustedSelection.model,

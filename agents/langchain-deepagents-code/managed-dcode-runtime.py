@@ -1074,6 +1074,17 @@ def managed_inference_base_url() -> str:
     return value
 
 
+def managed_inference_api_key(base_url: str) -> str:
+    """Select the non-secret credential for the validated image-owned route."""
+    if base_url != "https://integrate.api.nvidia.com/v1":
+        return "nemoclaw-managed-inference"
+    name = "NVIDIA_INFERENCE_API_KEY"
+    value = os.environ.get(name, "")
+    if not _is_openshell_placeholder_for_name(name, value):
+        raise RuntimeError("native NVIDIA inference requires an OpenShell credential placeholder")
+    return value
+
+
 def managed_fetch_proxy_url() -> str | None:
     """Return the explicit OpenShell proxy delegated to managed ``fetch_url``.
 

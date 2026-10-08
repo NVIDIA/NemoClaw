@@ -47,6 +47,9 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
   let attached = false;
   let authority: NativeLocalProviderAttachment | undefined;
   const adapter = {
+    ensureProviderPolicyComposition: vi.fn(() => {
+      throw new Error("Native local setup must not activate provider composition");
+    }),
     importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(async () => ({
       ok: true,
     })),

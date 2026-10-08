@@ -60,7 +60,7 @@ function exactNativeProvider(
   );
 }
 
-function attachmentFromMetadata(
+export function nativeProviderAttachmentFromMetadata(
   metadata: OpenShellProviderMetadata,
   profile: NativeProviderProfile,
 ): NativeProviderAttachment {
@@ -110,7 +110,7 @@ async function removeNewNativeProvider(input: {
 }): Promise<void> {
   const provider = await inspectNativeProvider(input.adapter, input.target, input.profile);
   if (!provider) return;
-  const current = attachmentFromMetadata(provider, input.profile);
+  const current = nativeProviderAttachmentFromMetadata(provider, input.profile);
   if (current.providerId !== input.expected.providerId) {
     throw new NativeProviderError(
       `Refusing to remove OpenShell provider '${input.profile.providerName}' because its identity changed.`,
@@ -127,7 +127,7 @@ async function removeNewNativeProvider(input: {
   }
   const after = await inspectNativeProvider(input.adapter, input.target, input.profile);
   if (after) {
-    const observed = attachmentFromMetadata(after, input.profile);
+    const observed = nativeProviderAttachmentFromMetadata(after, input.profile);
     const identity =
       observed.providerId === input.expected.providerId ? "still exists" : "changed identity";
     throw new NativeProviderError(
@@ -197,6 +197,8 @@ export async function ensureNativeProvider(input: {
   target: OpenShellGatewayTarget;
   credentialValue: string | null;
   reuseExistingCredential?: boolean;
+  /** Provider-owned policy preparation after identity and credential checks. */
+  prepareProviderPolicy?: () => Promise<void>;
   expected?: NativeProviderAttachment;
   profilePath?: string;
 }): Promise<NativeProviderAttachment> {
@@ -218,7 +220,7 @@ export async function ensureNativeProvider(input: {
 
   const before = await inspectNativeProvider(adapter, target, profile);
   if (before) {
-    const receipt = attachmentFromMetadata(before, profile);
+    const receipt = nativeProviderAttachmentFromMetadata(before, profile);
     if (!input.expected) {
       throw new NativeProviderError(
         `OpenShell provider '${profile.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
@@ -229,6 +231,7 @@ export async function ensureNativeProvider(input: {
         `OpenShell provider '${profile.providerName}' changed identity. Recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
       );
     }
+    await input.prepareProviderPolicy?.();
     if (!input.credentialValue) return receipt;
     const updated = await adapter.updateProvider({
       target,
@@ -252,7 +255,7 @@ export async function ensureNativeProvider(input: {
         `OpenShell did not confirm provider '${profile.providerName}' after its credential update.`,
       );
     }
-    const confirmed = attachmentFromMetadata(observed, profile);
+    const confirmed = nativeProviderAttachmentFromMetadata(observed, profile);
     if (confirmed.providerId !== receipt.providerId) {
       throw new NativeProviderError(
         `OpenShell provider '${profile.providerName}' changed identity during its credential update. No provider receipt was recorded.`,
@@ -272,6 +275,7 @@ export async function ensureNativeProvider(input: {
       `A host credential is required to create OpenShell provider '${profile.providerName}'.`,
     );
   }
+  await input.prepareProviderPolicy?.();
   const created = await adapter.createProvider({
     target,
     name: profile.providerName,
@@ -293,7 +297,7 @@ export async function ensureNativeProvider(input: {
       `OpenShell did not confirm provider '${profile.providerName}' after creation.`,
     );
   }
-  return attachmentFromMetadata(observed, profile);
+  return nativeProviderAttachmentFromMetadata(observed, profile);
 }
 
 /** Prove that the exact NemoClaw-owned hosted provider is attached to one sandbox. */
@@ -314,7 +318,7 @@ export async function verifyNativeProviderAttachment(input: {
       `OpenShell provider '${profile.providerName}' is missing. Recreate the sandbox to restore native ${profile.label} inference.`,
     );
   }
-  const receipt = attachmentFromMetadata(provider, profile);
+  const receipt = nativeProviderAttachmentFromMetadata(provider, profile);
   if (input.expected && input.expected.providerId !== receipt.providerId) {
     throw new NativeProviderError(
       `OpenShell provider '${profile.providerName}' changed identity. Recreate the sandbox before using native ${profile.label} inference.`,
@@ -352,7 +356,7 @@ export async function ensureNativeProviderAttached(input: {
   const provider = await inspectNativeProvider(input.adapter, input.target, profile);
   if (
     !provider ||
-    attachmentFromMetadata(provider, profile).providerId !== input.expected.providerId
+    nativeProviderAttachmentFromMetadata(provider, profile).providerId !== input.expected.providerId
   ) {
     throw new NativeProviderError(
       `OpenShell provider '${profile.providerName}' changed identity before attachment. Recreate the sandbox; no provider was attached.`,
@@ -414,7 +418,7 @@ export async function detachNativeProvider(input: {
   assertExpectedProfile(profile, input.expected);
   const provider = await inspectNativeProvider(input.adapter, input.target, profile);
   if (!provider) return;
-  const current = attachmentFromMetadata(provider, profile);
+  const current = nativeProviderAttachmentFromMetadata(provider, profile);
   if (current.providerId !== input.expected.providerId) {
     throw new NativeProviderError(
       `Refusing to detach OpenShell provider '${profile.providerName}' because its identity changed.`,
