@@ -1745,6 +1745,11 @@ a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
 
+The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens
+and a local inference fixture. It leaves the default pre-recreation backup enabled and checks
+that `/sandbox/work/credential-preserve.txt` retains its contents after changing the Telegram
+token. This proves the workspace-preservation boundary, not external messaging authentication.
+
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
 Each push to `main` compares `github.event.before` with `github.sha`.

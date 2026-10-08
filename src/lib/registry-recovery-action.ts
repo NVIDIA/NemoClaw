@@ -19,6 +19,7 @@ import { withGatewayRouteMutationLock } from "./inference/gateway-route-mutation
 import { resolveGatewayName, resolveSandboxGatewayName } from "./onboard/gateway-binding";
 import { validateName } from "./runner";
 import * as onboardSession from "./state/onboard-session";
+import { withCurrentPortableHostFenceTry } from "./state/portable-uninstall-retirement";
 import type { SandboxEntry } from "./state/registry";
 import * as registry from "./state/registry";
 import { getSandboxEntryInference } from "./state/registry-entry-view";
@@ -463,21 +464,23 @@ export async function recoverRegistryEntries({
   if (!hasRecoverySeed) {
     return recoverRegistryEntriesFromSnapshot(current, session, requestedSandboxName, gatewayName);
   }
-  return withGatewayRouteMutationLock(gatewayName, async () => {
-    const lockedCurrent = registry.listSandboxes();
-    const lockedSession = onboardSession.loadSession();
-    const lockedCheck = shouldRecoverRegistryEntries(
-      lockedCurrent,
-      lockedSession,
-      requestedSandboxName,
-    );
-    return lockedCheck.shouldRecover
-      ? recoverRegistryEntriesFromSnapshot(
-          lockedCurrent,
-          lockedSession,
-          requestedSandboxName,
-          gatewayName,
-        )
-      : { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
-  });
+  return withCurrentPortableHostFenceTry(() =>
+    withGatewayRouteMutationLock(gatewayName, async () => {
+      const lockedCurrent = registry.listSandboxes();
+      const lockedSession = onboardSession.loadSession();
+      const lockedCheck = shouldRecoverRegistryEntries(
+        lockedCurrent,
+        lockedSession,
+        requestedSandboxName,
+      );
+      return lockedCheck.shouldRecover
+        ? recoverRegistryEntriesFromSnapshot(
+            lockedCurrent,
+            lockedSession,
+            requestedSandboxName,
+            gatewayName,
+          )
+        : { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
+    }),
+  );
 }
