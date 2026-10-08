@@ -1539,13 +1539,12 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Set up blueprint for local resolution.
-# Blueprints are immutable at runtime; DAC protection (root ownership) is applied
-# later since /sandbox/.nemoclaw is Landlock read_write for plugin state (#804).
+# Copy immutable blueprints locally. Apply root ownership later;
+# Landlock permits plugin writes to /sandbox/.nemoclaw (#804).
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Configuration inputs for the cached plugin install.
+# Cached plugin config.
 COPY scripts/generate-openclaw-config.mts scripts/validate-openclaw-tool-search.mts /scripts/
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
@@ -1553,7 +1552,7 @@ COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plu
 
 RUN chmod 755 /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \
-    && chmod 444 /src/lib/*.ts \
+    && chmod 444 /src/lib/*.ts /src/lib/inference/native-local/agent-config.ts \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
@@ -1950,7 +1949,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \
-    && chmod 444 /src/lib/*.ts \
+    && chmod 444 /src/lib/*.ts /src/lib/inference/native-local/agent-config.ts \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \

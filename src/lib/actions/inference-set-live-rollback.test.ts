@@ -183,3 +183,85 @@ it("preserves the original failure and detaches NVIDIA after local restoration f
     expect.objectContaining({ providerName: "nemoclaw-nvidia-prod-v1" }),
   );
 });
+
+describe("native local to shared inference without a prior gateway route", () => {
+  function fixture(probeOk: boolean) {
+    const previous = nativeLocalTestReceipt();
+    const setInferenceRoute = vi.fn(async () => ({ ok: true as const }));
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "ollama-local",
+        model: "old-model",
+        nativeLocalProviderAttachment: previous,
+      },
+      captureOpenshell: createCompatibleProviderCapture({
+        name: "compatible-endpoint",
+        type: "openai",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        configKey: "OPENAI_BASE_URL",
+        initiallyPresent: false,
+      }),
+      inferenceRouteObserver: {
+        observeInferenceRoute: vi.fn(async () => ({
+          ok: true as const,
+          value: { state: "unconfigured" as const },
+        })),
+      },
+      inferenceRouteMutator: { setInferenceRoute },
+      probeSandboxRoute: vi.fn(async () => ({
+        ok: probeOk,
+        detail: "sandbox rejected route",
+        httpStatus: 400,
+      })),
+    });
+    const { adapter, detachProvider } = createFailingNativeLocalRestoreAdapter(
+      {
+        ...deps.providerAdapter,
+        listProviderAttachments: async () => ({ ok: true as const, value: { names: [] } }),
+      },
+      previous,
+    );
+    return {
+      deps: { ...deps, providerAdapter: adapter },
+      previous,
+      detachProvider,
+      setInferenceRoute,
+      request: {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "http://host.openshell.internal:18767/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions" as const,
+        noVerify: true,
+      },
+    };
+  }
+
+  it("publishes the verified shared route and detaches prior native access (#12558)", async () => {
+    const f = fixture(true);
+    await runInferenceSet(f.request, f.deps);
+    expect(f.setInferenceRoute).toHaveBeenCalledTimes(1);
+    expect(f.detachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: f.previous.providerName }),
+    );
+    expect(f.deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        nativeLocalProviderAttachment: undefined,
+      }),
+    );
+  });
+
+  it("preserves native access and registry authority when the shared probe fails (#12558)", async () => {
+    const f = fixture(false);
+    await expect(runInferenceSet(f.request, f.deps)).rejects.toThrow("sandbox rejected route");
+    expect(f.setInferenceRoute).toHaveBeenCalledTimes(1);
+    expect(f.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(f.deps.getSandbox("alpha")?.nativeLocalProviderAttachment).toEqual(f.previous);
+  });
+});

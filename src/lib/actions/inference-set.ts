@@ -1169,7 +1169,7 @@ function providerBackedRouteLacksRollbackTarget(input: {
   httpsPinProviderBinding: boolean;
   probeDirectSandboxBridge: boolean;
   rollbackRoute: boolean;
-  previousNativeNvidiaAttachment: boolean;
+  previousNativeAttachment: boolean;
 }): boolean {
   return (
     !input.nativeNvidia &&
@@ -1177,7 +1177,7 @@ function providerBackedRouteLacksRollbackTarget(input: {
       input.httpsPinProviderBinding ||
       input.probeDirectSandboxBridge) &&
     !input.rollbackRoute &&
-    !input.previousNativeNvidiaAttachment
+    !input.previousNativeAttachment
   );
 }
 
@@ -1617,7 +1617,9 @@ async function runInferenceSetWithoutHostLock(
       httpsPinProviderBinding: Boolean(httpsPinProviderBinding),
       probeDirectSandboxBridge: probeSandboxRoute,
       rollbackRoute: Boolean(rollbackRoute),
-      previousNativeNvidiaAttachment: Boolean(previousNativeNvidiaAttachment),
+      previousNativeAttachment: Boolean(
+        previousNativeNvidiaAttachment || previousNativeLocalAttachment,
+      ),
     })
   ) {
     throw new InferenceSetError(
