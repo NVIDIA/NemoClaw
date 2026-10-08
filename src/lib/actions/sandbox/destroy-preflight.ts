@@ -62,7 +62,10 @@ export function reconcileIdentityFreeRecovery(
   sandboxName: string,
   records: Parameters<typeof reconcileRetainedMetadata>[1],
   owningGatewayPort: number,
-  state: Omit<Parameters<typeof reconcileRetainedMetadata>[3], "observeSandbox" | "timeoutMs"> & {
+  state: Omit<
+    Parameters<typeof reconcileRetainedMetadata>[3],
+    "observeSandbox" | "timeoutMs" | "registryEntryGatewayPort"
+  > & {
     captureOpenshell?: typeof import("../../adapters/openshell/runtime").captureOpenshell;
   },
 ): boolean {
@@ -73,6 +76,7 @@ export function reconcileIdentityFreeRecovery(
     ).captureOpenshell;
   return reconcileRetainedMetadata(sandboxName, records, owningGatewayPort, {
     ...state,
+    registryEntryGatewayPort,
     timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     observeSandbox: (gatewayName) =>
       classifyDestroySandboxPresence(

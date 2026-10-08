@@ -8,7 +8,7 @@ import { dockerContextIsDefaultFromBuild } from "../../../adapters/docker/client
 import { normalizeInferenceSelection } from "../../../inference/selection";
 import { MANAGED_IMAGE_AGENTS } from "../../../onboard/managed-image/agents";
 import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
-import { registryEntryGatewayPort } from "../../../state/gateway-registry";
+import type { registryEntryGatewayPort } from "../../../state/gateway-registry";
 import type * as OnboardSession from "../../../state/onboard-session";
 import { resolveNemoclawStateGatewayPort } from "../../../state/paths";
 import type * as Registry from "../../../state/registry";
@@ -27,6 +27,7 @@ import {
 type Recovery = OnboardSession.RetainedSandboxRecoveryRecord;
 type RecoveryState = {
   observeSandbox(gatewayName: string): DestroySandboxPresence;
+  registryEntryGatewayPort: typeof registryEntryGatewayPort;
   timeoutMs: number;
   session: Pick<
     typeof OnboardSession,
@@ -104,15 +105,15 @@ function requireReservationOwner(
   record: Recovery,
   entry: Registry.SandboxEntry,
   session: OnboardSession.Session | null,
-  sessionState: RecoveryState["session"],
+  state: RecoveryState,
 ): void {
   if (
     session?.status !== "recovery_required" ||
     session.sandboxName !== record.sandboxName ||
     session.cancellationRecovery?.reason !== record.reason ||
-    !sessionState.retainedSandboxRecoveryMatchesSession(record, session) ||
+    !state.session.retainedSandboxRecoveryMatchesSession(record, session) ||
     !isPendingReservationForSession(entry, session.sessionId) ||
-    registryEntryGatewayPort({
+    state.registryEntryGatewayPort({
       name: entry.name,
       gatewayName: entry.gatewayName,
       gatewayPort: entry.gatewayPort,
@@ -159,7 +160,7 @@ export function reconcileIdentityFreeRecovery(
     if (
       record.gatewayPort !== owningGatewayPort ||
       record.gatewayPort !== resolveNemoclawStateGatewayPort() ||
-      registryEntryGatewayPort({ name: sandboxName, gatewayName: record.gatewayName }) !==
+      state.registryEntryGatewayPort({ name: sandboxName, gatewayName: record.gatewayName }) !==
         record.gatewayPort ||
       record.resources.sandboxScopedProviders.length > 0
     ) {
@@ -172,7 +173,7 @@ export function reconcileIdentityFreeRecovery(
     if (!isDeepStrictEqual(entry, observedEntry) || !unpublished(entry)) {
       refuse(sandboxName, "the registry changed before reconciliation");
     }
-    if (entry) requireReservationOwner(record, entry, sessionState.loadSession(), sessionState);
+    if (entry) requireReservationOwner(record, entry, sessionState.loadSession(), state);
     if (
       resolveGatewayCleanupRuntimeProviderId(record.gatewayName, entry?.openshellDriver, {
         requireOwnedRuntime: true,
@@ -196,7 +197,7 @@ export function reconcileIdentityFreeRecovery(
       refuse(sandboxName, "the recovery record changed during absence verification");
     }
     if (entry) {
-      requireReservationOwner(record, entry, sessionState.loadSession(), sessionState);
+      requireReservationOwner(record, entry, sessionState.loadSession(), state);
       if (!registry.removeSandboxRouteReservationIfCurrent(entry)) {
         refuse(sandboxName, "the registry changed during absence verification");
       }

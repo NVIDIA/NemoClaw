@@ -345,6 +345,18 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     ).toEqual(["alpha-provider"]);
   });
 
+  it("preserves metadata when the reservation gateway name and port conflict (#12260)", async () => {
+    const h = await setup();
+    expect(h.registry.updateSandbox("alpha", { gatewayPort: 8080 })).toBe(true);
+    const before = h.snapshot();
+
+    expect(h.run).toThrow(/conflicting gateway identity/u);
+
+    expect(h.snapshot()).toEqual(before);
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(h.volumes).not.toHaveBeenCalled();
+  });
+
   it("preserves a replacement session after registry retirement (#12260)", async () => {
     const h = await setup();
     h.registry.removeSandboxRouteReservationIfCurrent(h.registry.getSandbox("alpha")!);
