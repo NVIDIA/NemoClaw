@@ -263,3 +263,120 @@ pub fn verify_identity(expected: &Row, observed: &Row) -> Result<(), Observation
     }
     Ok(())
 }
+
+/// OpenShell objects and their planning rules.
+pub(crate) fn definitions() -> [crate::Definition; 5] {
+    use crate::{Definition, rerun_when_stopped};
+    [
+        Definition::new("workspace", &["name", "owner", "generation"], &[]),
+        Definition::new(
+            "provider",
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "endpoint",
+                "credential_env",
+                "provider_type",
+                "credential_source",
+                "profile_name",
+            ],
+            // Endpoint and authentication-mode changes also replace the
+            // imported profile. Delete the registration first so the API
+            // permits profile deletion; ordinary key rotation stays mutable.
+            &["credential_env"],
+        )
+        .optional(&[
+            "credential_env",
+            "provider_type",
+            "credential_source",
+            "profile_name",
+        ])
+        // Omission selects the default, not the previous selection.
+        .reset_when_omitted(&["credential_env", "credential_source", "provider_type"])
+        .replaces(authentication_mode_changes),
+        Definition::new(
+            "provider_profile",
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "endpoint",
+                "provider_type",
+                "authenticated",
+                "binaries_json",
+            ],
+            &[],
+        )
+        .optional(&["endpoint", "provider_type", "authenticated"])
+        .reset_when_omitted(&["provider_type"]),
+        Definition::new(
+            "sandbox",
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "image",
+                "agent_name",
+                "agent_runtime",
+                "policy_json",
+                "runtime_json",
+                "provider_names_json",
+            ],
+            &[],
+        )
+        .optional(&["agent_runtime", "policy_json", "provider_names_json"]),
+        Definition::new(
+            "agent_configuration",
+            &[
+                "workspace",
+                "name",
+                "owner",
+                "generation",
+                "sandbox_id",
+                "config_json",
+                "running",
+            ],
+            &["config_json", "running"],
+        )
+        .computed("running", rerun_when_stopped),
+    ]
+    .map(lifecycle_rules)
+}
+
+/// Retained and stateful objects keep their bindings and refuse replacement.
+fn lifecycle_rules(definition: crate::Definition) -> crate::Definition {
+    use crate::Protection;
+    use nemoclaw_sdk::backend::{OpenShellLifecycle, openshell_lifecycle};
+    match openshell_lifecycle(definition.kind) {
+        Some(OpenShellLifecycle::Retained) => {
+            definition.protect(Protection::Always).refuse_replacement()
+        }
+        Some(OpenShellLifecycle::Stateful) => definition
+            .protect(Protection::UnlessDestroying)
+            .refuse_replacement(),
+        Some(OpenShellLifecycle::Reconstructible) | None => definition,
+    }
+}
+
+/// Credential references rotate in place; adding or removing authentication
+/// requires replacement.
+fn authentication_mode_changes(field: &str, prior: &crate::State, proposed: &crate::State) -> bool {
+    field == "credential_env" && authentication_mode(prior) != authentication_mode(proposed)
+}
+
+fn authentication_mode(state: &crate::State) -> Option<bool> {
+    use tf_provider::value::Value;
+    let mut authenticated = false;
+    for field in ["credential_env", "credential_source"] {
+        match state.get(field) {
+            Some(Value::Unknown) => return None,
+            Some(Value::Value(value)) => authenticated |= !value.is_empty(),
+            Some(Value::Null) | None => {}
+        }
+    }
+    Some(authenticated)
+}

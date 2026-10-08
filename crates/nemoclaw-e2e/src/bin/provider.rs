@@ -126,7 +126,8 @@ impl Provider for FixtureProvider {
             (
                 "inference_service".into(),
                 Box::new(ResourceAdapter::new(
-                    Definition::new("inference_service", &["spec"], &[]),
+                    Definition::new("inference_service", &["spec"], &[])
+                        .validate_spec(nemoclaw_sdk::services::validate_resource_spec),
                     self.backend.clone(),
                 )) as Box<dyn DynamicResource>,
             ),

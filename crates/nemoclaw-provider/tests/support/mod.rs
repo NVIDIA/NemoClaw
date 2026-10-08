@@ -18,3 +18,20 @@ pub fn specification(kind: &str) -> Value {
         .unwrap();
     serde_json::from_str(&target.values["spec"]).unwrap()
 }
+
+/// A served resource definition with its planning rules, narrowed to the
+/// fields a test exercises.
+pub fn definition(
+    kind: &str,
+    fields: &[&'static str],
+    mutable: &[&'static str],
+) -> nemoclaw_provider::Definition {
+    let mut definition = nemoclaw_provider::resource_definition(kind).unwrap();
+    definition.fields = fields.to_vec();
+    definition.mutable = mutable.to_vec();
+    definition.optional.retain(|field| fields.contains(field));
+    definition
+        .reset_when_omitted
+        .retain(|field| fields.contains(field));
+    definition
+}
