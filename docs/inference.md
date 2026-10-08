@@ -246,7 +246,7 @@ Do not supply `inferenceProviders[].credential` for a managed service.
 The supervisor creates a mode-0600 key in `/credentials/inference-key` on a separate credential volume under its own writer lock and reuses it after restart.
 It passes the key only to the vLLM child process through `VLLM_API_KEY`, then verifies `/v1/models` using bearer authentication before reporting readiness.
 Recipe environment maps cannot set `VLLM_API_KEY`.
-The NemoClaw provider reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
+The OpenShell provider reads the key through the verified runtime container identity and installs it in OpenShell's provider credential store.
 Agent requests use their OpenShell placeholder credential.
 YAML, plans, container launch settings, and OpenTofu state contain no generated key.
 The runtime's root user and Docker administrators can read the key and child environment.

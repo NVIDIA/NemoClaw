@@ -41,7 +41,11 @@ impl OperationResult {
             if provider.key != provider.definition.name {
                 for kind in ["provider", "provider_profile"] {
                     self.resource_sources.insert(
-                        format!("nemoclaw_{kind}.inference_{}", provider.key),
+                        format!(
+                            "{}.inference_{}",
+                            crate::compile::resource_type(kind),
+                            provider.key
+                        ),
                         ResourceSource {
                             name: provider.definition.name.clone(),
                             path: provider.path.clone(),
@@ -202,7 +206,7 @@ impl DiscoveryReport {
 fn observation_name(address: &str) -> Option<String> {
     if address == "data.nemoclaw_engine_capabilities.current" {
         Some("engine".into())
-    } else if address == "data.nemoclaw_gateway_capabilities.current" {
+    } else if address == "data.openshell_gateway.current" {
         Some("gateway".into())
     } else {
         [

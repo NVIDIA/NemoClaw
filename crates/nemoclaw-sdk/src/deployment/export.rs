@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn export_rejects_cluster_endpoint_provenance_drift() {
         let target = Target {
-            address: "nemoclaw_provider_profile.inference_qwen".into(),
+            address: "openshell_provider_profile.inference_qwen".into(),
             kind: "provider_profile".into(),
             values: Row::from([(
                 "cluster_source".into(),

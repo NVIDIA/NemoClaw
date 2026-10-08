@@ -227,9 +227,9 @@ fn gateway_observations_are_read_only_in_plans_and_discardable_during_teardown()
 }
 #[test]
 fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
-    let allowed = [("nemoclaw_workspace.deployment".into(), Row::new())].into();
+    let allowed = [("openshell_workspace.deployment".into(), Row::new())].into();
     let bound = [(
-        "nemoclaw_workspace.deployment".into(),
+        "openshell_workspace.deployment".into(),
         StateBinding {
             id: "physical".into(),
             ..Default::default()
@@ -242,7 +242,7 @@ fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
         vec!["create"],
         vec!["forget"],
     ] {
-        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"address":"nemoclaw_workspace.deployment","change":{"actions":actions,"before":{"id":"physical"}}}]})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"address":"openshell_workspace.deployment","change":{"actions":actions,"before":{"id":"physical"}}}]})).unwrap();
         assert!(check_plan(&plan, &allowed, &bound).is_err());
     }
 }
@@ -250,7 +250,7 @@ fn ordinary_plan_cannot_delete_replace_or_recreate_a_bound_resource() {
 fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
     // After OpenTofu commits refresh, its next plan need not report absence again.
     // Supplied bindings must not override OpenTofu's reconstructible transitions.
-    let address = "nemoclaw_provider.example";
+    let address = "openshell_provider_registration.example";
     let allowed = [(address.into(), Row::new())].into();
     let bindings = [(
         address.into(),
@@ -273,7 +273,7 @@ fn reconstructible_recreation_uses_opentofu_state_after_refresh_only() {
 #[test]
 fn reconstructible_resources_support_removal_replacement_and_confirmed_absence() {
     for kind in ["provider", "provider_profile", "agent_configuration"] {
-        let address = format!("nemoclaw_{kind}.example");
+        let address = format!("{}.example", crate::compile::resource_type(kind));
         let expected = [(address.clone(), Row::new())].into();
         let bindings = [(
             address.clone(),
@@ -317,7 +317,7 @@ fn reconstructible_resources_support_removal_replacement_and_confirmed_absence()
 
 #[test]
 fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identity() {
-    let address = "nemoclaw_provider.example";
+    let address = "openshell_provider_registration.example";
     let expected = [(address.into(), Row::new())].into();
     let bindings = [(
         address.into(),
@@ -344,8 +344,8 @@ fn reconstructible_resource_plans_keep_scope_without_rechecking_provider_identit
 #[test]
 fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
     for address in [
-        "nemoclaw_provider.example",
-        "nemoclaw_provider_profile.example",
+        "openshell_provider_registration.example",
+        "openshell_provider_profile.example",
         "nemoclaw_agent_configuration.example",
         "docker_container.runtime",
     ] {
@@ -415,19 +415,19 @@ fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
 
 #[test]
 fn teardown_must_account_for_every_binding_and_retain_the_workspace() {
-    let allowed = [("nemoclaw_workspace.deployment".into(), Row::new())].into();
+    let allowed = [("openshell_workspace.deployment".into(), Row::new())].into();
     let bound = [(
-        "nemoclaw_workspace.deployment".into(),
+        "openshell_workspace.deployment".into(),
         StateBinding {
             id: "physical".into(),
             ..Default::default()
         },
     )]
     .into();
-    let retained = ["nemoclaw_workspace.deployment".into()].into();
+    let retained = ["openshell_workspace.deployment".into()].into();
     let plan: Plan = serde_json::from_value(json!({"resource_changes":[]})).unwrap();
     assert!(check_destroy_plan(&plan, &allowed, &bound, &retained).is_err());
-    let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"address":"nemoclaw_workspace.deployment","change":{"actions":["delete"],"before":{"id":"physical"}}}]})).unwrap();
+    let plan:Plan=serde_json::from_value(json!({"resource_changes":[{"address":"openshell_workspace.deployment","change":{"actions":["delete"],"before":{"id":"physical"}}}]})).unwrap();
     assert!(check_destroy_plan(&plan, &allowed, &bound, &retained).is_err());
 }
 
@@ -700,9 +700,7 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
         .as_array()
         .unwrap()
         .iter()
-        .find(|resource| {
-            resource["mode"] == "data" && resource["type"] == "nemoclaw_gateway_capabilities"
-        })
+        .find(|resource| resource["mode"] == "data" && resource["type"] == "openshell_gateway")
         .expect("runtime apply must record provider-owned readiness");
     assert_eq!(readiness["instances"][0]["attributes"]["compatible"], true);
     drop(stage);
@@ -922,7 +920,7 @@ fn public_operation_futures_fit_the_async_callers_stack_budget() {
 
 #[test]
 fn destroy_drift_errors_distinguish_undeclared_resources_from_missing_saved_ids() {
-    let address = "nemoclaw_sandbox.assistant";
+    let address = "openshell_sandbox.assistant";
     let plan: Plan = serde_json::from_value(json!({
         "resource_drift":[{
             "address": address, "change": {"actions":["update"], "before":{"id":"saved-id"}}

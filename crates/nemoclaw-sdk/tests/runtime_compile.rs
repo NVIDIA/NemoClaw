@@ -25,7 +25,7 @@ fn runtime_compilation_does_not_require_openshell_resource_generations() {
         .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["resource"]["docker_container"].is_object());
-    assert!(graph["resource"].get("nemoclaw_sandbox").is_none());
+    assert!(graph["resource"].get("openshell_sandbox").is_none());
     assert!(graph["data"].get("nemoclaw_sandbox_readiness").is_none());
 }
 
@@ -49,7 +49,7 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
         graph["data"].get("nemoclaw_sandbox_readiness").is_none(),
         "the runtime graph cannot observe sandboxes owned by the deployment graph"
     );
-    let readiness = &graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    let readiness = &graph["data"]["openshell_gateway"]["current"];
     assert_eq!(readiness["wait_timeout_seconds"], 90);
     assert_eq!(readiness["required_compute_drivers"], json!(["docker"]));
     assert_eq!(
@@ -340,7 +340,7 @@ fn gateway_readiness_observes_the_exact_docker_provider_container() {
         readiness["container_id"],
         "${docker_container.managed_gateway_runtime.id}"
     );
-    let capabilities = &graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    let capabilities = &graph["data"]["openshell_gateway"]["current"];
     assert!(
         capabilities.get("managed_spec").is_none() && capabilities.get("container_id").is_none()
     );

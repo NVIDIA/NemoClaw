@@ -9,6 +9,7 @@ pub mod credential_metadata;
 mod driver;
 mod lifecycle;
 mod names;
+mod observation;
 pub mod policy;
 pub mod profile;
 pub mod runtime;
@@ -19,5 +20,8 @@ pub use connection::{
     Connection, TlsFiles, capabilities, client, health, remote_error, remote_rejection, request,
 };
 pub use driver::ComputeDriver;
-pub use lifecycle::{OpenShellLifecycle, openshell_lifecycle};
+pub use lifecycle::{
+    OpenShellLifecycle, RESOURCE_TYPES, object_kind, openshell_lifecycle, resource_type,
+};
 pub use names::{NAME_PATTERN, valid_name};
+pub use observation::GatewayObservation;

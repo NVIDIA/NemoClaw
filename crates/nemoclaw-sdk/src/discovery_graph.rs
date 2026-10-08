@@ -98,7 +98,7 @@ pub(crate) fn populate(graph: &mut Value, document: &Document) -> Result<(), Con
                 // Reuse the existing strict gateway read rather than probing it twice.
                 observations.insert(
                     "gateway".into(),
-                    json!("${data.nemoclaw_gateway_capabilities.current.observation_json}"),
+                    json!("${data.openshell_gateway.current.observation_json}"),
                 );
             }
             DiscoveryQuery::Inference(_) => {

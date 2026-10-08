@@ -14,6 +14,176 @@ use nemoclaw_sdk::{
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf, process::Output};
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; local gateway fixture only"]
+async fn bundled_openshell_provider_refreshes_saved_cluster_credentials_without_resolving_them() {
+    use nemoclaw_sdk::{bundle::Bundle, compile, config::Document};
+    use openshell_core::proto;
+
+    let bundle = Bundle::open(&PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit verified native bundle"),
+    ))
+    .unwrap();
+    let fixture = Fixture::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let mut input: Value =
+        serde_saphyr::from_str(include_str!("../../../examples/kubernetes/local-vllm.yaml"))
+            .unwrap();
+    input["spec"]["gateway"]["kubernetes"]["kubeconfig"] =
+        json!({"env": "FIXTURE_CLUSTER_KUBECONFIG"});
+    input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_storage",
+        "kubernetes_gateway",
+        "inference_service",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    let target = compile::targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .find(|target| target.kind == "provider")
+        .unwrap();
+    let mut fields = target.values;
+    fields.insert("profile_name".into(), String::new());
+    let source = &fields["credential_source"];
+    assert!(matches!(
+        nemoclaw_sdk::services::authentication::Source::parse(
+            source,
+            &fields["owner"],
+            &fields["endpoint"],
+        )
+        .unwrap(),
+        nemoclaw_sdk::services::authentication::Source::ClusterService { .. }
+    ));
+    let registration = proto::Provider {
+        metadata: Some(proto::ObjectMeta {
+            id: "saved-cluster-registration".into(),
+            name: fields["name"].clone(),
+            workspace: fields["workspace"].clone(),
+            labels: [
+                (
+                    nemoclaw_provider::openshell::OWNER.into(),
+                    fields["owner"].clone(),
+                ),
+                (
+                    nemoclaw_provider::openshell::GENERATION.into(),
+                    fields["generation"].clone(),
+                ),
+            ]
+            .into(),
+            annotations: nemoclaw_sdk::config::credential_metadata::pack(source).unwrap(),
+            resource_version: 1,
+            ..Default::default()
+        }),
+        r#type: format!("nemoclaw-inference-{}", fields["name"]),
+        profile_workspace: fields["workspace"].clone(),
+        config: [("OPENAI_BASE_URL".into(), fields["endpoint"].clone())].into(),
+        ..Default::default()
+    };
+    let key = format!("{}/{}", fields["workspace"], fields["name"]);
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .providers
+        .insert(key.clone(), registration.clone());
+
+    // Select the verified packaged executable, not a target/debug sibling that
+    // could be the SDK-free provider without NemoClaw's cluster callbacks.
+    let provider_directory = bundle.directory.join(format!(
+        "providers/{}/{}/{}",
+        compile::OPENSHELL_PROVIDER_ADDRESS,
+        bundle.manifest.version,
+        nemoclaw_sdk::bundle::platform().unwrap(),
+    ));
+    let cli_config = directory.path().join("tofu.rc");
+    fs::write(
+        &cli_config,
+        format!(
+            "provider_installation {{ dev_overrides {{ \"{}\" = {} }} }}",
+            compile::OPENSHELL_PROVIDER_ADDRESS,
+            serde_json::to_string(&provider_directory).unwrap(),
+        ),
+    )
+    .unwrap();
+    let (kind, name) = target.address.split_once('.').unwrap();
+    fs::write(
+        directory.path().join("main.tf.json"),
+        json!({
+            "terraform": {"required_providers": {"openshell": {
+                "source": compile::OPENSHELL_PROVIDER_ADDRESS,
+                "version": format!("= {}", bundle.manifest.version),
+            }}},
+            "provider": {"openshell": {"endpoint": fixture.endpoint}},
+            "resource": {kind: {name: fields}},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let mut attributes = serde_json::to_value(&fields).unwrap();
+    attributes["id"] = json!("saved-cluster-registration");
+    let state_path = directory.path().join("terraform.tfstate");
+    let original = serde_json::to_vec(&json!({
+        "version": 4, "terraform_version": compile::OPENTOFU_VERSION,
+        "serial": 1, "lineage": "cd73e09f-c75c-48ce-86af-352a4764560e", "outputs": {},
+        "resources": [{
+            "mode": "managed", "type": kind, "name": name,
+            "provider": format!("provider[\"{}\"]", compile::OPENSHELL_PROVIDER_ADDRESS),
+            "instances": [{"schema_version": 0, "attributes": attributes}],
+        }],
+    }))
+    .unwrap();
+    fs::write(&state_path, &original).unwrap();
+    let run = |arguments: &[&str]| {
+        let output = std::process::Command::new(bundle.tofu())
+            .current_dir(directory.path())
+            .args(arguments)
+            .env("TF_CLI_CONFIG_FILE", &cli_config)
+            .env("TF_IN_AUTOMATION", "1")
+            .env("CHECKPOINT_DISABLE", "1")
+            .env(
+                "FIXTURE_CLUSTER_KUBECONFIG",
+                directory.path().join("absent.kubeconfig"),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        output
+    };
+    run(&[
+        "plan",
+        "-refresh-only",
+        "-detailed-exitcode",
+        "-input=false",
+        "-no-color",
+        "-out=refresh.plan",
+    ]);
+    let plan: Value =
+        serde_json::from_slice(&run(&["show", "-json", "refresh.plan"]).stdout).unwrap();
+    let resources = plan["planned_values"]["root_module"]["resources"]
+        .as_array()
+        .unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0]["address"], target.address);
+    assert_eq!(resources[0]["values"]["id"], "saved-cluster-registration");
+    assert_eq!(resources[0]["values"]["credential_source"], source.as_str());
+    assert_eq!(fs::read(state_path).unwrap(), original);
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.effects, 0);
+    assert!(state.exec_calls.is_empty());
+    assert_eq!(state.providers[&key], registration);
+}
+
 // Compiled deployment planning requires a currently Unix-only image engine.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -208,19 +378,20 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     }
 
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
+    graph["provider"]["openshell"]["destroy"] = json!(true);
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
-    graph["resource"]["nemoclaw_workspace"]["deployment"]
+    graph["resource"]["openshell_workspace"]["deployment"]
         .as_object_mut()
         .unwrap()
         .remove("depends_on");
-    graph["resource"]["nemoclaw_workspace"]["deployment"]["lifecycle"] =
+    graph["resource"]["openshell_workspace"]["deployment"]["lifecycle"] =
         json!({"prevent_destroy":true});
     for kind in [
         "nemoclaw_agent_configuration",
-        "nemoclaw_sandbox",
-        "nemoclaw_provider_profile",
-        "nemoclaw_provider",
+        "openshell_sandbox",
+        "openshell_provider_profile",
+        "openshell_provider_registration",
     ] {
         graph["resource"].as_object_mut().unwrap().remove(kind);
     }
@@ -289,14 +460,14 @@ async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     assert!(tofu.is_absolute() && provider.is_absolute());
     let directory = TofuWorkspace::new(tofu, provider);
     fs::write(directory.path().join("main.tf.json"), json!({
-        "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
-        "provider":{"nemoclaw":{"endpoint":fixture.endpoint}},
+        "terraform":{"required_version":"= 1.12.6", "required_providers":{"openshell":{"source":"registry.opentofu.org/nvidia/openshell"}}},
+        "provider":{"openshell":{"endpoint":fixture.endpoint}},
         "resource":{"terraform_data":{"bootstrap":{"input":"docker"}}},
-        "data":{"nemoclaw_gateway_capabilities":{"current":{
+        "data":{"openshell_gateway":{"current":{
             "required_compute_drivers":["${terraform_data.bootstrap.output}"],
             "lifecycle":{"postcondition":[{"condition":"${self.compatible}", "error_message":"Gateway is incompatible."}]}
         }}},
-        "output":{"compatible":{"value":"${data.nemoclaw_gateway_capabilities.current.compatible}"}}
+        "output":{"compatible":{"value":"${data.openshell_gateway.current.compatible}"}}
     }).to_string()).unwrap();
     let run = |args: &[&str]| {
         let output = directory.command().args(args).output().unwrap();

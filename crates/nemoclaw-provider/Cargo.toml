@@ -62,3 +62,7 @@ workspace = true
 [[bin]]
 name = "terraform-provider-nemoclaw"
 path = "src/main.rs"
+
+[[bin]]
+name = "terraform-provider-nemoclaw-openshell"
+path = "src/openshell_main.rs"

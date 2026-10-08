@@ -21,7 +21,7 @@ fn bound_cluster_port_change_explains_required_teardown_before_runtime_reconcili
         assert!(
             bindings
                 .keys()
-                .any(|address| address.starts_with("nemoclaw_sandbox."))
+                .any(|address| address.starts_with("openshell_sandbox."))
         );
         assert!(!bindings.contains_key("nemoclaw_kubernetes_service.qwen"));
         let mut changed = serde_json::to_value(&document).unwrap();
@@ -70,6 +70,11 @@ async fn plan_and_apply_refuse_cluster_port_changes_with_separate_state_files() 
         // bindings. Real OpenTofu decodes these through the packaged schemas.
         let native_state = |target: &Target| {
             let (kind, name) = target.address.split_once('.').unwrap();
+            let provider = if kind.starts_with("openshell_") {
+                compile::OPENSHELL_PROVIDER_ADDRESS
+            } else {
+                compile::PROVIDER_ADDRESS
+            };
             let mut attributes = serde_json::to_value(&target.values).unwrap();
             attributes["id"] = json!(format!("physical-{}", target.kind));
             json!({
@@ -77,7 +82,7 @@ async fn plan_and_apply_refuse_cluster_port_changes_with_separate_state_files() 
                 "serial": 1, "lineage": "cd73e09f-c75c-48ce-86af-352a4764560e", "outputs": {},
                 "resources": [{
                     "mode": "managed", "type": kind, "name": name,
-                    "provider": format!("provider[\"{}\"]", compile::PROVIDER_ADDRESS),
+                    "provider": format!("provider[\"{provider}\"]"),
                     "instances": [{"schema_version": 0, "attributes": attributes}]
                 }]
             })

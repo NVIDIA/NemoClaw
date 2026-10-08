@@ -16,7 +16,7 @@ pub enum OpenShellLifecycle {
 
 /// Classify either a backend kind or its full OpenTofu resource type.
 pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
-    match kind.strip_prefix("nemoclaw_").unwrap_or(kind) {
+    match object_kind(kind) {
         "workspace" => Some(OpenShellLifecycle::Retained),
         "sandbox" => Some(OpenShellLifecycle::Stateful),
         "provider" | "provider_profile" | "agent_configuration" => {
@@ -24,4 +24,31 @@ pub fn openshell_lifecycle(kind: &str) -> Option<OpenShellLifecycle> {
         }
         _ => None,
     }
+}
+
+/// The `openshell` provider's resource type name, after its prefix, for each object kind.
+pub const RESOURCE_TYPES: [(&str, &str); 4] = [
+    ("workspace", "workspace"),
+    ("provider", "provider_registration"),
+    ("provider_profile", "provider_profile"),
+    ("sandbox", "sandbox"),
+];
+
+/// The object kind that a kind or an OpenTofu resource type names.
+pub fn object_kind(name: &str) -> &str {
+    if let Some(name) = name.strip_prefix("openshell_") {
+        return RESOURCE_TYPES
+            .iter()
+            .find(|(_, resource)| *resource == name)
+            .map_or(name, |(kind, _)| kind);
+    }
+    name.strip_prefix("nemoclaw_").unwrap_or(name)
+}
+
+/// The OpenTofu resource type for an OpenShell object kind.
+pub fn resource_type(kind: &str) -> Option<String> {
+    RESOURCE_TYPES
+        .iter()
+        .find(|(object, _)| *object == kind)
+        .map(|(_, name)| format!("openshell_{name}"))
 }

@@ -183,11 +183,11 @@ pub(crate) fn resource_label(address: &str) -> String {
             "gateway".to_owned()
         }
         "nemoclaw_gateway_storage.runtime" => "gateway storage".to_owned(),
-        "nemoclaw_workspace.deployment" => "OpenShell workspace".to_owned(),
+        "openshell_workspace.deployment" => "OpenShell workspace".to_owned(),
         _ => {
             // Search registration hashes distinguish credentials in state. The
             // default label names the integration; verbose retains its address.
-            if address.starts_with("nemoclaw_provider.web_search_tavily_") {
+            if address.starts_with("openshell_provider_registration.web_search_tavily_") {
                 return "web search provider/tavily".into();
             }
             if let Some(name) = address
@@ -199,7 +199,7 @@ pub(crate) fn resource_label(address: &str) -> String {
             let mappings = [
                 ("nemoclaw_agent_configuration.", "agent runtime/"),
                 (
-                    "nemoclaw_provider_profile.web_search_",
+                    "openshell_provider_profile.web_search_",
                     "web search profile/",
                 ),
                 ("nemoclaw_ollama_external_model.", "external Ollama model/"),
@@ -217,10 +217,10 @@ pub(crate) fn resource_label(address: &str) -> String {
                     "inference/",
                 ),
                 ("docker_volume.inference_storage_inference_", "model cache/"),
-                ("nemoclaw_sandbox.", "sandbox/"),
+                ("openshell_sandbox.", "sandbox/"),
                 ("data.nemoclaw_sandbox_readiness.", "sandbox readiness/"),
-                ("nemoclaw_provider.inference_", "provider/"),
-                ("nemoclaw_provider_profile.inference_", "provider profile/"),
+                ("openshell_provider_registration.inference_", "provider/"),
+                ("openshell_provider_profile.inference_", "provider profile/"),
                 ("docker_image.", "image binding/"),
             ];
             mappings
@@ -261,7 +261,7 @@ fn styled_action(actions: &[String], palette: Palette) -> String {
 
 fn result_resource_label(result: &OperationResult, address: &str) -> String {
     if let Some(source) = result.resource_sources.get(address) {
-        let kind = if address.starts_with("nemoclaw_provider_profile.") {
+        let kind = if address.starts_with("openshell_provider_profile.") {
             "provider profile"
         } else {
             "provider"
@@ -352,7 +352,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
             {
                 output.push_str("    Agent runtime is not running; apply restarts it.\n");
             }
-            if change.resource.starts_with("nemoclaw_sandbox.")
+            if change.resource.starts_with("openshell_sandbox.")
                 && change.actions.iter().any(|action| action == "delete")
             {
                 let warning = if planned {
@@ -491,7 +491,7 @@ fn operation(result: &OperationResult, context: &RenderContext) -> String {
         for resource in &result.retained {
             let label = resource_label(resource);
             output.push_str(&format!("  {label}\n"));
-            if resource == "nemoclaw_workspace.deployment" {
+            if resource == "openshell_workspace.deployment" {
                 output.push_str(&format!(
                     "    {}\n",
                     context.output_palette.paint(
@@ -777,8 +777,8 @@ mod tests {
         context.output_palette = Palette { enabled: true };
         let value = json!({
             "outcome": "destroyed",
-            "changes": [{"resource": "nemoclaw_sandbox.assistant", "actions": ["delete"]}],
-            "retained": ["nemoclaw_workspace.deployment"]
+            "changes": [{"resource": "openshell_sandbox.assistant", "actions": ["delete"]}],
+            "retained": ["openshell_workspace.deployment"]
         });
         let colored = super::render(
             CommandResult::Operation(serde_json::from_value(value.clone()).unwrap()),
@@ -807,17 +807,17 @@ mod tests {
     fn resource_results_name_authored_sources_and_separate_deferred_work() {
         let result = json!({"outcome":"planned", "changes":[
             {"resource":"nemoclaw_agent_configuration.host", "actions":["update"]},
-            {"resource":"nemoclaw_provider.inference_local-1234", "actions":["update"]},
-            {"resource":"nemoclaw_provider.web_search_tavily_1234", "actions":["create"]},
-            {"resource":"nemoclaw_provider_profile.web_search_tavily", "actions":["create"]},
+            {"resource":"openshell_provider_registration.inference_local-1234", "actions":["update"]},
+            {"resource":"openshell_provider_registration.web_search_tavily_1234", "actions":["create"]},
+            {"resource":"openshell_provider_profile.web_search_tavily", "actions":["create"]},
             {"resource":"nemoclaw_inference_storage.inference_tiny_auth", "actions":["create"]}
         ], "resourceSources": {
-            "nemoclaw_provider.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
+            "openshell_provider_registration.inference_local-1234":{"name":"responses", "path":"spec.sandboxes[host].inferenceProviders[responses]"}
         }, "deferred":["Gateway is required"], "deferredResources":[
             "docker_container.ollama_proxy_local", "nemoclaw_ollama_external_model.local", "nemoclaw_ollama_proxy_storage.local", "docker_image.image_1234"
         ], "discovery":{"resources":[
             {"address":"nemoclaw_agent_configuration.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
-            {"address":"nemoclaw_provider.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
+            {"address":"openshell_provider_registration.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
             {"address":"docker_container.managed_gateway_runtime", "scope":"runtime", "existed":true, "plannedActions":["no-op"], "drifted":true, "retained":false, "reusePlanned":false}
         ]}});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
@@ -843,7 +843,7 @@ mod tests {
             &["nemoclaw", "plan", "spark.yaml", "--verbose"],
             result.clone(),
         );
-        assert!(verbose.contains("nemoclaw_provider.inference_local-1234"));
+        assert!(verbose.contains("openshell_provider_registration.inference_local-1234"));
         let json: Value = serde_json::from_str(&render(
             &["nemoclaw", "plan", "spark.yaml", "-o", "json"],
             result.clone(),
@@ -857,7 +857,7 @@ mod tests {
     #[test]
     fn creation_labels_do_not_imply_sandbox_deletion_or_retention() {
         let result = json!({"outcome":"planned","changes":[
-            {"resource":"nemoclaw_workspace.deployment","actions":["create"]},
+            {"resource":"openshell_workspace.deployment","actions":["create"]},
             {"resource":"nemoclaw_gateway_storage.runtime","actions":["create"]}
         ]});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result);
@@ -944,7 +944,7 @@ mod tests {
     #[test]
     fn actions_and_unknown_addresses_are_never_lost() {
         let result = json!({"outcome":"planned","changes":[
-            {"resource":"nemoclaw_sandbox.assistant","actions":["delete","create"]},
+            {"resource":"openshell_sandbox.assistant","actions":["delete","create"]},
             {"resource":"future_provider.unknown","actions":["new-action"]}]});
         let text = render(&["nemoclaw", "plan", "spark.yaml"], result.clone());
         for expected in [
@@ -958,7 +958,7 @@ mod tests {
             assert!(text.contains(expected), "missing {expected}: {text}");
         }
         let verbose = render(&["nemoclaw", "plan", "spark.yaml", "--verbose"], result);
-        assert!(verbose.contains("nemoclaw_sandbox.assistant"));
+        assert!(verbose.contains("openshell_sandbox.assistant"));
     }
 
     #[test]
@@ -986,7 +986,7 @@ mod tests {
     fn destroy_separates_sandbox_loss_from_retained_workspace() {
         let text = render(
             &["nemoclaw", "plan", "--destroy"],
-            json!({"outcome":"planned","changes":[{"resource":"nemoclaw_sandbox.assistant","actions":["delete"]}],"retained":["nemoclaw_workspace.deployment","docker_volume.inference_storage_inference_qwen"]}),
+            json!({"outcome":"planned","changes":[{"resource":"openshell_sandbox.assistant","actions":["delete"]}],"retained":["openshell_workspace.deployment","docker_volume.inference_storage_inference_qwen"]}),
         );
         let (remove, keep) = text.split_once("Retained resources:").unwrap();
         assert!(remove.contains("Deletes sandbox files"));
@@ -1017,7 +1017,7 @@ mod tests {
     fn repeated_destroy_has_a_readable_completion() {
         let text = render(
             &["nemoclaw", "destroy"],
-            json!({"outcome":"destroyed","changes":[],"retained":["nemoclaw_workspace.deployment"]}),
+            json!({"outcome":"destroyed","changes":[],"retained":["openshell_workspace.deployment"]}),
         );
         assert!(text.contains("Destroy complete"));
         assert!(text.contains("Nothing to remove. Retained data unchanged."));

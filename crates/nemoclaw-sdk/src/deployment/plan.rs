@@ -653,7 +653,7 @@ mod reporting_tests {
         use super::discovery_tests::{deferred, encoded};
         let catalog = encoded(crate::inference_discovery::EndpointObservation::unknown(""));
         let hardware = encoded(crate::hardware_discovery::HardwareObservation::unknown());
-        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":catalog}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":hardware}},{"address":"data.nemoclaw_gateway_capabilities.current","values":{"observation_json":null}}]}}})).unwrap();
+        let plan:Plan=serde_json::from_value(json!({"planned_values":{"outputs":{"discovery":{"sensitive":false}},"root_module":{"resources":[{"address":"data.nemoclaw_inference_capabilities.endpoint_0","values":{"observation_json":catalog}},{"address":"data.nemoclaw_target_hardware.target_0","values":{"observation_json":hardware}},{"address":"data.openshell_gateway.current","values":{"observation_json":null}}]}}})).unwrap();
         let messages = deferred(&plan);
         assert!(!messages.iter().any(|message| message.contains("Inference")));
         assert!(messages.iter().any(|message| message.contains("hardware")));

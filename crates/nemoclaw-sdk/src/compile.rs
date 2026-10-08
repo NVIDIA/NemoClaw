@@ -11,6 +11,13 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
+/// Registry address of the provider that reconciles OpenShell objects.
+pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/openshell";
+
+/// The OpenTofu resource type that reconciles a resource kind.
+pub fn resource_type(kind: &str) -> String {
+    nemoclaw_openshell::resource_type(kind).unwrap_or_else(|| format!("nemoclaw_{kind}"))
+}
 pub use crate::artifact_pins::OPENTOFU_VERSION;
 pub type Generations = BTreeMap<String, String>;
 
@@ -58,7 +65,7 @@ fn targets_with_plans(
     let providers = document.selected_providers()?;
     let mut result = vec![Target {
         kind: "workspace".into(),
-        address: "nemoclaw_workspace.deployment".into(),
+        address: "openshell_workspace.deployment".into(),
         values: [
             ("name".into(), workspace.clone()),
             ("owner".into(), document.metadata.uid.clone()),
@@ -133,7 +140,7 @@ fn targets_with_plans(
                     ),
                     (
                         "sandbox_id".into(),
-                        format!("${{nemoclaw_sandbox.{}.id}}", sandbox.name),
+                        format!("${{openshell_sandbox.{}.id}}", sandbox.name),
                     ),
                     (
                         "config_json".into(),
@@ -145,7 +152,7 @@ fn targets_with_plans(
         }
         result.push(Target {
             kind: "sandbox".into(),
-            address: format!("nemoclaw_sandbox.{}", sandbox.name),
+            address: format!("openshell_sandbox.{}", sandbox.name),
             values,
         });
         if let Some(search) = web_search {
@@ -181,11 +188,11 @@ fn targets_with_plans(
                     kind: kind.into(),
                     address: if kind == "provider" {
                         let logical = crate::config::profile_address(search.provider)
-                            .strip_prefix("nemoclaw_provider_profile.")
+                            .strip_prefix("openshell_provider_profile.")
                             .unwrap();
                         let prefix = format!("{}-search-", search.provider.name());
                         format!(
-                            "nemoclaw_provider.{logical}_{}",
+                            "openshell_provider_registration.{logical}_{}",
                             provider_name.strip_prefix(&prefix).unwrap()
                         )
                     } else {
@@ -268,12 +275,12 @@ fn inference_targets(
     Ok([
         Target {
             kind: "provider_profile".into(),
-            address: format!("nemoclaw_provider_profile.{logical}"),
+            address: format!("openshell_provider_profile.{logical}"),
             values: profile,
         },
         Target {
             kind: "provider".into(),
-            address: format!("nemoclaw_provider.{logical}"),
+            address: format!("openshell_provider_registration.{logical}"),
             values,
         },
     ])
@@ -310,9 +317,8 @@ pub(crate) fn deployment_graph(
     Ok((graph, targets))
 }
 
-pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.nemoclaw_gateway_capabilities.current";
-pub(crate) const GATEWAY_APPLY_CAPABILITIES_ADDRESS: &str =
-    "data.nemoclaw_gateway_capabilities.apply";
+pub(crate) const GATEWAY_CAPABILITIES_ADDRESS: &str = "data.openshell_gateway.current";
+pub(crate) const GATEWAY_APPLY_CAPABILITIES_ADDRESS: &str = "data.openshell_gateway.apply";
 
 /// The data-source addresses a compiled graph reads, which are the only
 /// observations its plans may contain.
@@ -363,9 +369,13 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
     let provider = gateway_provider(&document.spec.gateway);
     let drivers = [document.spec.gateway.runtime().provider.openshell_driver()];
     let mut graph = json!({
-        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},
-        "provider":{"nemoclaw":provider}, "resource":{},
-        "data":{"nemoclaw_gateway_capabilities":{"current":{"required_compute_drivers":drivers}}}
+        "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
+            "nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")},
+            "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")}
+        }},
+        // Fabric resources still reach the gateway through the nemoclaw provider.
+        "provider":{"nemoclaw":provider.clone(),"openshell":provider}, "resource":{},
+        "data":{"openshell_gateway":{"current":{"required_compute_drivers":drivers}}}
     });
     crate::discovery_graph::populate(&mut graph, document)?;
     Ok(graph)
@@ -410,7 +420,7 @@ fn compile_with_plans(
     for target in targets {
         let mut attributes = serde_json::to_value(&target.values).expect("string map");
         if target.values.contains_key("workspace") {
-            attributes["workspace"] = json!("${nemoclaw_workspace.deployment.name}");
+            attributes["workspace"] = json!("${openshell_workspace.deployment.name}");
         }
         for field in ["credential_source", "cluster_source"] {
             if let Some(value) = attributes[field].as_str() {
@@ -469,7 +479,7 @@ fn compile_with_plans(
                 .is_none_or(|kind| SearchProvider::from_name(kind).is_none())
         {
             let logical = target.address.split_once('.').unwrap().1;
-            let mut dependencies = vec![format!("nemoclaw_provider_profile.{logical}")];
+            let mut dependencies = vec![format!("openshell_provider_profile.{logical}")];
             if let Some(selected) = providers
                 .iter()
                 .find(|provider| provider.key == target.values["name"])
@@ -525,7 +535,7 @@ fn compile_with_plans(
     // timestamp() is unknown while planning. Its nonempty test becomes a
     // stable true at apply, forcing a fresh read without perpetual state drift.
     let apply_readiness = json!({
-        "required_compute_drivers":graph["data"]["nemoclaw_gateway_capabilities"]["current"]["required_compute_drivers"],
+        "required_compute_drivers":graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"],
         "read_trigger":"${timestamp() != \"\"}",
         "lifecycle":{"postcondition":[{
             "condition":"${self.compatible}",
@@ -533,7 +543,7 @@ fn compile_with_plans(
         }]}
     });
     let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
-        let reference = format!("nemoclaw_sandbox.{}", sandbox.name);
+        let reference = format!("openshell_sandbox.{}", sandbox.name);
         let binding = format!("${{merge({reference}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}", sandbox.name);
         Ok((sandbox.name.clone(), json!({
             "sandbox":binding,
@@ -548,7 +558,7 @@ fn compile_with_plans(
     }).collect::<Result<_, ConfigError>>()?;
     graph["resource"] = resources;
     graph["data"]["nemoclaw_sandbox_readiness"] = json!(sandbox_readiness);
-    graph["data"]["nemoclaw_gateway_capabilities"]["apply"] = apply_readiness;
+    graph["data"]["openshell_gateway"]["apply"] = apply_readiness;
     Ok(graph)
 }
 

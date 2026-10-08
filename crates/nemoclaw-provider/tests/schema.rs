@@ -32,44 +32,12 @@ fn service_capacity_is_exposed_as_read_only_data() {
 }
 
 #[test]
-fn gateway_capabilities_are_exposed_as_read_only_data() {
-    use tf_provider::schema::AttributeConstraint;
-    let mut diagnostics = Diagnostics::default();
-    let sources = NemoClawProvider::default()
-        .get_data_sources(&mut diagnostics)
-        .unwrap();
-    let source = sources
-        .get("gateway_capabilities")
-        .expect("gateway observation data source");
-    let schema = source.schema(&mut diagnostics).unwrap();
-    assert!(matches!(
-        schema.block.attributes["required_compute_drivers"].constraint,
-        AttributeConstraint::Required
-    ));
-    for field in [
-        "gateway_version",
-        "compute_drivers",
-        "compatible",
-        "incompatibility",
-    ] {
-        assert!(matches!(
-            schema.block.attributes[field].constraint,
-            AttributeConstraint::Computed
-        ));
-    }
-    assert!(diagnostics.errors.is_empty());
-}
-
-#[test]
-fn production_provider_exposes_the_existing_openshell_resource_addresses() {
+fn production_provider_serves_platform_resources_but_not_openshell_objects() {
     let provider = NemoClawProvider::default();
     let mut diagnostics = Diagnostics::default();
     let resources = provider.get_resources(&mut diagnostics).unwrap();
     for name in [
-        "workspace",
-        "provider",
-        "provider_profile",
-        "sandbox",
+        "agent_configuration",
         "managed_gateway",
         "gateway_storage",
         "inference_storage",
@@ -79,25 +47,13 @@ fn production_provider_exposes_the_existing_openshell_resource_addresses() {
         "kubernetes_service_storage",
         "kubernetes_service",
     ] {
-        assert!(resources.contains_key(name));
+        assert!(resources.contains_key(name), "{name}");
     }
-    let profile = resources["provider_profile"]
-        .schema(&mut diagnostics)
-        .unwrap();
-    for name in ["endpoint", "authenticated", "cluster_source"] {
-        assert!(
-            matches!(
-                profile.block.attributes[name].constraint,
-                tf_provider::schema::AttributeConstraint::OptionalComputed
-            ),
-            "native inference fields must be optional for the Brave profile"
-        );
+    for name in ["workspace", "provider", "provider_profile", "sandbox"] {
+        assert!(!resources.contains_key(name), "{name}");
     }
-    let inference = resources["provider"].schema(&mut diagnostics).unwrap();
-    assert!(matches!(
-        inference.block.attributes["endpoint"].constraint,
-        tf_provider::schema::AttributeConstraint::Required
-    ));
+    let sources = provider.get_data_sources(&mut diagnostics).unwrap();
+    assert!(!sources.contains_key("gateway_capabilities"));
     let schema = provider.schema(&mut diagnostics).unwrap();
     for name in [
         "endpoint",
@@ -234,17 +190,4 @@ fn inference_discovery_keeps_credentials_as_optional_references() {
         AttributeConstraint::Computed
     ));
     assert!(!schema.block.attributes.contains_key("credential"));
-}
-
-#[test]
-fn gateway_capabilities_include_typed_discovery_output() {
-    let mut diagnostics = Diagnostics::default();
-    let sources = NemoClawProvider::default()
-        .get_data_sources(&mut diagnostics)
-        .unwrap();
-    let schema = sources["gateway_capabilities"]
-        .schema(&mut diagnostics)
-        .unwrap();
-    assert!(schema.block.attributes.contains_key("observation_json"));
-    assert!(schema.block.attributes.contains_key("status"));
 }

@@ -20,20 +20,20 @@ fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
     .into();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
-        graph["data"]["nemoclaw_gateway_capabilities"]["current"]["required_compute_drivers"],
+        graph["data"]["openshell_gateway"]["current"]["required_compute_drivers"],
         serde_json::json!(["docker"])
     );
     for resources in graph["resource"].as_object().unwrap().values() {
         for resource in resources.as_object().unwrap().values() {
             assert_eq!(
                 resource["lifecycle"]["precondition"][0]["condition"],
-                "${data.nemoclaw_gateway_capabilities.current.compatible}"
+                "${data.openshell_gateway.current.compatible}"
             );
         }
     }
     let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
-        bootstrap["data"]["nemoclaw_gateway_capabilities"]["current"]["depends_on"],
+        bootstrap["data"]["openshell_gateway"]["current"]["depends_on"],
         serde_json::json!([
             "docker_container.managed_gateway_runtime",
             "data.nemoclaw_gateway_readiness.current"
@@ -178,10 +178,11 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
         assert_eq!(connection[field], expected, "{field}");
     }
     let resources = &graph["resource"];
-    let workspace = &resources["nemoclaw_workspace"]["deployment"];
-    let provider = &provider_scope::resource(&resources["nemoclaw_provider"], "remote");
-    let profile = &provider_scope::resource(&resources["nemoclaw_provider_profile"], "remote");
-    let sandbox = &resources["nemoclaw_sandbox"]["worker"];
+    let workspace = &resources["openshell_workspace"]["deployment"];
+    let provider =
+        &provider_scope::resource(&resources["openshell_provider_registration"], "remote");
+    let profile = &provider_scope::resource(&resources["openshell_provider_profile"], "remote");
+    let sandbox = &resources["openshell_sandbox"]["worker"];
     assert_eq!(workspace["name"], document.workspace());
     for (resource, generation) in [
         (workspace, "workspace"),
@@ -205,7 +206,7 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             .as_array()
             .unwrap()
             .contains(&json!(provider_scope::address(
-                &resources["nemoclaw_provider_profile"],
+                &resources["openshell_provider_profile"],
                 "provider_profile",
                 "remote"
             )))
@@ -215,7 +216,7 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
             .as_array()
             .unwrap()
             .contains(&json!(provider_scope::address(
-                &resources["nemoclaw_provider"],
+                &resources["openshell_provider_registration"],
                 "provider",
                 "remote"
             )))
@@ -223,7 +224,7 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     for resource in [provider, profile, sandbox] {
         assert_eq!(
             resource["workspace"],
-            "${nemoclaw_workspace.deployment.name}"
+            "${openshell_workspace.deployment.name}"
         );
     }
 }
@@ -323,7 +324,7 @@ fn arbitrary_fabric_harness_identifier_survives_runtime_compilation() {
     );
     let graph = compile(&document, &ownership_generations(), "0.1.0").unwrap();
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["assistant"]["agent_runtime"],
+        graph["resource"]["openshell_sandbox"]["assistant"]["agent_runtime"],
         "fabric"
     );
 }
@@ -364,13 +365,13 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
     let graph = compile(&changed, &generations, "0.1.0").unwrap();
     for name in ["assistant", "second"] {
         assert!(
-            graph["resource"]["nemoclaw_sandbox"][name]["runtime_json"]
+            graph["resource"]["openshell_sandbox"][name]["runtime_json"]
                 .as_str()
                 .unwrap()
                 .contains("nemoclaw_fabric_capabilities")
         );
     }
-    for profile in graph["resource"]["nemoclaw_provider_profile"]
+    for profile in graph["resource"]["openshell_provider_profile"]
         .as_object()
         .unwrap()
         .values()

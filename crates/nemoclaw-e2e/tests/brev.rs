@@ -80,7 +80,7 @@ fn bindings(directory: &Path) -> (Value, Row) {
             ),
             attributes["id"].clone(),
         );
-        if resource["type"] == "nemoclaw_sandbox" {
+        if resource["type"] == "openshell_sandbox" {
             assert!(
                 sandbox
                     .replace(serde_json::from_value(attributes.clone()).unwrap())
@@ -410,10 +410,10 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
             "docker_container.managed_gateway_runtime",
             image_resource.as_str(),
             "nemoclaw_gateway_storage.runtime",
-            "nemoclaw_provider.inference_hosted-nvidia-prod",
-            "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-            "nemoclaw_sandbox.assistant",
-            "nemoclaw_workspace.deployment",
+            "openshell_provider_registration.inference_hosted-nvidia-prod",
+            "openshell_provider_profile.inference_hosted-nvidia-prod",
+            "openshell_sandbox.assistant",
+            "openshell_workspace.deployment",
         ],
         "create",
     );
@@ -483,12 +483,12 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     let removed = [
         "docker_container.managed_gateway_runtime",
         image_resource.as_str(),
-        "nemoclaw_provider.inference_hosted-nvidia-prod",
-        "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-        "nemoclaw_sandbox.assistant",
+        "openshell_provider_registration.inference_hosted-nvidia-prod",
+        "openshell_provider_profile.inference_hosted-nvidia-prod",
+        "openshell_sandbox.assistant",
     ];
     let retained = vec![
-        String::from("nemoclaw_workspace.deployment"),
+        String::from("openshell_workspace.deployment"),
         String::from("nemoclaw_gateway_storage.runtime"),
     ];
     let destroy_plan = deployment.plan_destroy(&cancel).await.unwrap();
@@ -504,7 +504,7 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     assert_eq!(
         destroyed.retained,
         vec![
-            String::from("nemoclaw_workspace.deployment"),
+            String::from("openshell_workspace.deployment"),
             String::from("nemoclaw_gateway_storage.runtime"),
         ]
     );

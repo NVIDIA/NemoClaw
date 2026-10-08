@@ -115,7 +115,7 @@ fn cluster_endpoint_provenance_preserves_literal_kubeconfig_contexts() {
     input["spec"]["gateway"]["kubernetes"]["context"] = json!("cluster-${literal}-%{literal}");
     let document = Document::parse(input.to_string().as_bytes()).unwrap();
     let graph = compile::compile(&document, &generations(), "0.1.0").unwrap();
-    let profiles = graph["resource"]["nemoclaw_provider_profile"]
+    let profiles = graph["resource"]["openshell_provider_profile"]
         .as_object()
         .unwrap();
     let source = profiles.values().next().unwrap()["cluster_source"]

@@ -283,3 +283,13 @@ pub fn refresh<T>(
         }
     }
 }
+
+/// Whether a discovery read found what it looked for. `Unknown` is a failed
+/// read, never absence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationStatus {
+    Available,
+    Unavailable,
+    Unknown,
+}
