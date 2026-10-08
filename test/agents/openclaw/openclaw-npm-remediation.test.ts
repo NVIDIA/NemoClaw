@@ -17,7 +17,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildRemediatedOpenClawArchive,
+  buildRemediatedOpenClawPluginArchive,
+  fatalOpenClawNpmRemediationDiagnostic,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
   patchLegacyOpenClawCorePackageGraph,
@@ -26,6 +27,8 @@ import {
   patchOpenClawPluginPackageGraph,
   patchOpenClawSlackProxyAddrPackageGraph,
   patchOpenClawSlackProxyPackageGraph,
+  OpenClawNpmRemediationCommandError,
+  runOpenClawNpmRemediationCommand,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
@@ -528,19 +531,19 @@ describe("OpenClaw npm remediation", () => {
       failure: "malformed",
       prepare: (archivePath: string) => writeFileSync(archivePath, "not a tar archive"),
       env: {},
-      message: "OpenClaw npm remediation command failed",
+      message: "Remediation command failed.",
     },
     {
       failure: "missing",
       prepare: (_archivePath: string) => undefined,
       env: {},
-      message: "OpenClaw npm remediation command failed",
+      message: "Remediation command failed.",
     },
     {
       failure: "unavailable tar",
       prepare: (archivePath: string) => writeFileSync(archivePath, "not a tar archive"),
       env: { PATH: "" },
-      message: "OpenClaw npm remediation command could not start",
+      message: "Remediation command could not start.",
     },
   ])("withholds archive paths and child diagnostics when $failure", ({ prepare, env, message }) => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-private-archive-marker-"));
@@ -554,8 +557,8 @@ describe("OpenClaw npm remediation", () => {
       env,
     };
 
-    expect(() => buildRemediatedOpenClawArchive(request)).toThrow(message);
-    expect(() => buildRemediatedOpenClawArchive(request)).not.toThrow("private-archive-marker");
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).toThrow(message);
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-archive-marker");
   });
 
   it("rejects unsafe archive members without echoing their names or archive path", () => {
@@ -574,11 +577,11 @@ describe("OpenClaw npm remediation", () => {
       workingDirectory: path.join(directory, "work"),
     };
 
-    expect(() => buildRemediatedOpenClawArchive(request)).toThrow(
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).toThrow(
       "npm archive has an unsafe member",
     );
-    expect(() => buildRemediatedOpenClawArchive(request)).not.toThrow("private-member-marker");
-    expect(() => buildRemediatedOpenClawArchive(request)).not.toThrow("private-archive-marker");
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-member-marker");
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-archive-marker");
   });
 
   it.each(["@slack/bolt", "@slack/bolt/node_modules/express"])(
@@ -599,6 +602,39 @@ describe("OpenClaw npm remediation", () => {
       ).toContain("vulnerable");
     },
   );
+  it("bounds a non-returning remediation command and keeps its diagnostic generic", () => {
+    const startedAt = Date.now();
+    let failure: unknown;
+    try {
+      runOpenClawNpmRemediationCommand(
+        process.execPath,
+        ["-e", 'process.stdout.write("private command output"); setInterval(() => {}, 1000);'],
+        undefined,
+        process.env,
+        "fetch replacement",
+        64 * 1024 * 1024,
+        750,
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(OpenClawNpmRemediationCommandError);
+    expect(failure).toMatchObject({
+      couldNotStart: false,
+      operation: "fetch replacement",
+      timedOut: true,
+      timeoutMs: 750,
+      message: "Remediation command timed out after 750 ms.",
+    });
+    expect(fatalOpenClawNpmRemediationDiagnostic(failure)).toBe(
+      "OpenClaw npm remediation operation 'fetch replacement' timed out after 750 ms.",
+    );
+    expect(String(failure)).not.toContain("private command output");
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+
   it("replaces bundled Slack proxy-addr bytes and rejects an unexpected source version", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-slack-proxy-"));
     temporaryDirectories.push(directory);
@@ -1030,9 +1066,9 @@ describe("OpenClaw npm remediation", () => {
       packageSpec: "openclaw@2026.3.11",
       workingDirectory: fixture.workingDirectory,
     };
-    const remediated = buildRemediatedOpenClawArchive(request);
+    const remediated = buildRemediatedOpenClawPluginArchive(request);
     expect(() =>
-      buildRemediatedOpenClawArchive({
+      buildRemediatedOpenClawPluginArchive({
         ...request,
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
       }),
