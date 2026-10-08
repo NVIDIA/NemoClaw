@@ -7,6 +7,43 @@ use crate::{deployment::tests::kubernetes_context, managed::GATEWAY_STORAGE_KIND
 const GATEWAY: &str = "nemoclaw_managed_gateway.runtime";
 
 #[test]
+fn bound_cluster_port_change_explains_required_teardown_before_runtime_reconciliation() {
+    for source in [
+        include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
+        include_str!("../../../../../examples/kubernetes/local-ollama.yaml"),
+    ] {
+        let document = Document::parse(source.as_bytes()).unwrap();
+        let record = Record::new(document.clone()).unwrap();
+        let mut targets = compile::runtime_targets(&document, &record.generations).unwrap();
+        targets.extend(compile::targets(&document, &record.generations).unwrap());
+        let bindings = kubernetes_bindings(&targets);
+        let mut changed = serde_json::to_value(&document).unwrap();
+        changed["spec"]["services"]["qwen"]["serving"]["port"] = json!(19001);
+        let changed = Document::parse(changed.to_string().as_bytes()).unwrap();
+        let error = validate_bound_sandboxes(&record, &changed, &bindings).unwrap_err();
+        let message = error.to_string();
+        for required in [
+            "model serving port",
+            "whole-deployment destroy and apply",
+            "sandbox files and conversation history",
+            "retains model and credential PVCs",
+        ] {
+            assert!(
+                message.contains(required),
+                "missing {required:?}: {message}"
+            );
+        }
+        let mut unbound_model = bindings.clone();
+        unbound_model.remove("nemoclaw_kubernetes_service.qwen");
+        assert!(matches!(
+            validate_bound_sandboxes(&record, &changed, &unbound_model),
+            Err(Error::SandboxChangeRefused { .. })
+        ));
+        validate_bound_sandboxes(&record, &changed, &BTreeMap::new()).unwrap();
+    }
+}
+
+#[test]
 fn cluster_service_changes_keep_bound_storage_and_require_all_recorded_prerequisites() {
     for source in [
         include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),

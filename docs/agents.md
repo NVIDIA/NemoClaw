@@ -54,6 +54,11 @@ No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDI
 Headless operation follows the same public Fabric invocation boundary.
 The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py) accepts an object with exactly `agent` and `message` for an explicit native-agent request.
 A request can incur inference charges and affect retained conversation history.
+
+**A malformed request can leave the runtime unusable.**
+An operator reported this persistent failure with the current pinned OpenClaw adapter and recovered only by replacing the sandbox; the affected input cases and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+Sandbox replacement deletes its files and conversation history; review the [sandbox change path](usage.md#choose-the-change-path) and [destroy consequences](usage.md#destroy) before choosing replacement.
+
 With a configured runtime, run this from any directory inside the target sandbox when its YAML `agent.name` is `assistant` and its native OpenClaw agent is the default `main`:
 
 ```sh
@@ -65,7 +70,7 @@ JSON
 The command's `--agent` selects the deployment's YAML `agent.name`; the JSON `agent` selects OpenClaw's native agent, set by `harness.settings.agent_name` and defaulting to `main`.
 The bridge passes this JSON unchanged to OpenClaw; `{"text":"..."}` is not this adapter's request format.
 On success, inspect `result.fabric_result.status` and `result.fabric_result.output.response`; a successful command does not establish general model compatibility.
-Host-side invocation tooling and malformed-input recovery remain follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+Host-side invocation tooling also remains follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 For browser access, see [agent interfaces](interfaces.md#openclaw-dashboard).
 
 ## Native Controls at Initialization

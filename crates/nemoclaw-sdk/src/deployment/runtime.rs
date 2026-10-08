@@ -12,6 +12,45 @@ const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
 const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
 const KUBERNETES_AUTH: &str = "nemoclaw_kubernetes_auth.runtime";
 
+pub(super) fn validate_bound_sandboxes(
+    record: &Record,
+    document: &Document,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<(), Error> {
+    let error = match record.validate_bound_sandboxes(document, bindings) {
+        Err(error @ Error::SandboxChangeRefused { .. }) => error,
+        result => return result,
+    };
+    let Error::SandboxChangeRefused { sandbox, .. } = &error else {
+        unreachable!()
+    };
+    let prior = record.document.sandbox(sandbox)?;
+    let targets = compile::runtime_targets(document, &record.generations)?;
+    for route in &record.document.sandbox_inference(prior)?.routes {
+        let provider = record.document.sandbox_route_provider(prior, route)?;
+        let Some(name) = provider.service_ref.as_deref() else {
+            continue;
+        };
+        let address = format!("nemoclaw_kubernetes_service.{name}");
+        let (Some(binding), Some(target)) = (
+            bindings.get(&address),
+            targets.iter().find(|target| target.address == address),
+        ) else {
+            continue;
+        };
+        let Ok(bound) = crate::kubernetes::services::Spec::decode(&binding.spec) else {
+            continue;
+        };
+        let want = crate::kubernetes::services::Spec::decode(&target.values["spec"])?;
+        if bound.storage() == want.storage() && bound.port() != want.port() {
+            return Err(crate::ObservationError::Backend(
+                "changing the model serving port requires whole-deployment destroy and apply; destroy deletes sandbox files and conversation history but retains model and credential PVCs",
+            ).into());
+        }
+    }
+    Err(error)
+}
+
 fn kubernetes_binding(
     target: &Target,
     bindings: &BTreeMap<String, StateBinding>,

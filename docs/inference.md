@@ -344,9 +344,14 @@ These settings do not resize a managed inference server; configure that service'
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
 The managed Ollama examples and [cluster examples](kubernetes.md#run-a-managed-model-service) set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
-This leaves room for an initial prompt and a reply; the [operator-reported prompt](design/cluster-inference-compatibility.md#openclaw-context-budget) used 19,947 tokens in one setup.
+The [operator-reported prompt](design/cluster-inference-compatibility.md#openclaw-context-budget) used 19,947 tokens in one setup, before allowing space for a reply.
 Keep the two limits aligned and size the model, KV cache, and GPU memory for the selected context.
-Plan and apply warn when an OpenClaw route selects a managed vLLM or Ollama service with `contextTokens` below `20000`, on Docker as well as Kubernetes.
+
+For an OpenClaw route to managed vLLM or Ollama, plan and apply compare the smaller of the service context and the effective route context window with `20000` plus the effective reply allowance, on Docker as well as Kubernetes.
+At the pinned adapter revision, omitted route context defaults to `32768`; `overrides.settings.model_metadata.contextWindow` replaces that default.
+The reply allowance defaults to `4096`; `overrides.maxTokens` replaces that default, and `overrides.settings.model_metadata.maxTokens` takes precedence over both.
+A smaller available context produces a budget warning; explicit token metadata that cannot be assessed instead produces a warning without substituting defaults.
+The `20000`-token prompt allowance is an estimate from the report; longer prompts and conversations need more.
 The advisory appears in text output and the JSON result's `warnings` field; it neither rejects the configuration nor measures the current prompt or available memory.
 These budgets do not qualify a model, GPU, or deployment path.
 

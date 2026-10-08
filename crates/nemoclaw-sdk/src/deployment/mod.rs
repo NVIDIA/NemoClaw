@@ -296,12 +296,45 @@ impl Deployment {
                     }
                     _ => continue,
                 };
-                // A measured initial OpenClaw prompt used 19,947 tokens; this is
-                // an advisory budget, not a universal adapter requirement.
-                if context < 20_000 {
+                let metadata = route
+                    .overrides
+                    .settings
+                    .as_ref()
+                    .and_then(|settings| settings.get("model_metadata"));
+                // The pinned OpenClaw adapter overlays model_metadata on its
+                // defaults, including maxTokens. Invalid explicit values are
+                // passed through, so they cannot be treated as omitted here.
+                let positive_integer = |field, default| match metadata {
+                    None => Some(default),
+                    Some(Value::Object(metadata)) => match metadata.get(field) {
+                        None => Some(default),
+                        Some(value) => value.as_u64().filter(|value| *value > 0),
+                    },
+                    Some(_) => None,
+                };
+                let (Some(route_context), Some(reply_tokens)) = (
+                    positive_integer("contextWindow", 32768),
+                    positive_integer(
+                        "maxTokens",
+                        u64::from(route.overrides.tuning.max_tokens.unwrap_or(4096)),
+                    ),
+                ) else {
                     (self.progress)(Progress::Warning {
                         message: format!(
-                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context}; its initial prompt can need about 20,000 tokens before reply tokens. Consider 32768 or more, align settings.model_metadata.contextWindow, and size model/GPU memory for that context.",
+                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context}, but cannot assess its context budget: settings.model_metadata must be an object with positive integer contextWindow and maxTokens when present.",
+                            sandbox.name, route.name
+                        ),
+                    });
+                    continue;
+                };
+                let effective_context = i128::from(context).min(i128::from(route_context));
+                // A measured initial OpenClaw prompt used 19,947 tokens; this is
+                // an advisory budget, not a universal adapter requirement.
+                let required_context = 20_000 + i128::from(reply_tokens);
+                if effective_context < required_context {
+                    (self.progress)(Progress::Warning {
+                        message: format!(
+                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context} and settings.model_metadata.contextWindow={route_context}; allow at least {required_context} tokens for an initial prompt of about 20,000 tokens plus {reply_tokens} reply tokens. Consider 32768 or more as needed, align both limits, and size model/GPU memory for that context.",
                             sandbox.name, route.name
                         ),
                     });
@@ -347,7 +380,7 @@ impl Deployment {
         };
         record.reconcile_pending_creations(&bindings);
         record.validate_pending_intent(&document)?;
-        record.validate_bound_sandboxes(&document, &bindings)?;
+        runtime::validate_bound_sandboxes(&record, &document, &bindings)?;
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint().into(),
             workspace: document.workspace(),

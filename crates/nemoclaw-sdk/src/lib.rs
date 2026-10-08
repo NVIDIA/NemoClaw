@@ -92,6 +92,13 @@ pub enum ObservationError {
     Extension,
     Incomplete,
     BindingMismatch,
+    /// An identity or authored-field mismatch, without expected or observed values.
+    KubernetesObjectMismatch {
+        kind: String,
+        namespace: String,
+        name: String,
+        field: &'static str,
+    },
     /// A fixed, non-secret diagnostic from an owning backend.
     Backend(&'static str),
     Rejected {
@@ -133,6 +140,18 @@ pub enum ObservationError {
 impl fmt::Display for ObservationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::KubernetesObjectMismatch {
+                kind,
+                namespace,
+                name,
+                field,
+            } => write!(
+                f,
+                "Kubernetes {} {}/{} does not match its saved binding at {field}; resources retained",
+                kind.escape_default(),
+                namespace.escape_default(),
+                name.escape_default()
+            ),
             Self::Rejected {
                 operation,
                 code,
@@ -208,7 +227,14 @@ impl fmt::Display for ObservationError {
     }
 }
 
-impl std::error::Error for ObservationError {}
+impl std::error::Error for ObservationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::KubernetesObjectMismatch { .. } => Some(&Self::BindingMismatch),
+            _ => None,
+        }
+    }
+}
 
 impl ObservationError {
     /// Bound backend diagnostics and remove credentials before they enter public errors.

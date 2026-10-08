@@ -64,6 +64,12 @@ mod tests {
             ObservationError::Authentication,
             ObservationError::Permission,
             ObservationError::BindingMismatch,
+            ObservationError::KubernetesObjectMismatch {
+                kind: "Pod".into(),
+                namespace: "agents".into(),
+                name: "model".into(),
+                field: "metadata.uid",
+            },
         ] {
             let start = tokio::time::Instant::now();
             let result = wait(|| std::future::ready(Err(error.clone()))).await;

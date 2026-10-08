@@ -5,7 +5,7 @@ use super::{Spec, StorageSpec, compute_objects, storage_objects};
 use crate::{
     ObservationError,
     kubernetes::{
-        cluster::{Cluster, GENERATION_LABEL, Owned},
+        cluster::{Cluster, GENERATION_LABEL, OWNER_LABEL, Owned},
         gateway::Identity,
         receipt::{ClusterIdentity, Receipt as GatewayReceipt, private_directory},
     },
@@ -42,6 +42,28 @@ struct Receipt {
 }
 
 impl Operations {
+    fn mismatch(owned: &Owned, field: &'static str) -> ObservationError {
+        ObservationError::KubernetesObjectMismatch {
+            kind: owned.kind.clone(),
+            namespace: owned.namespace.clone(),
+            name: owned.name.clone(),
+            field,
+        }
+    }
+
+    fn compute_mismatch(receipt: &Receipt, kind: &str, field: &'static str) -> ObservationError {
+        Self::mismatch(
+            &Owned {
+                api_version: String::new(),
+                kind: kind.into(),
+                namespace: receipt.storage.namespace().into(),
+                name: receipt.storage.name.clone(),
+                uid: String::new(),
+            },
+            field,
+        )
+    }
+
     pub async fn endpoint_addresses(
         &self,
         spec: &StorageSpec,
@@ -54,7 +76,7 @@ impl Operations {
             .as_ref()
             .ok_or(ObservationError::Incomplete)?;
         if compute.endpoint() != endpoint {
-            return Err(ObservationError::BindingMismatch);
+            return Err(Self::compute_mismatch(&receipt, "Service", "endpoint"));
         }
         let service = receipt
             .compute
@@ -64,15 +86,6 @@ impl Operations {
         let observed = self.verify(spec, service).await?;
         Self::verify_compute_spec(&receipt, &observed)?;
         self.verify_endpoints(&receipt, service).await?;
-        let expected = compute_objects(compute, None)
-            .into_iter()
-            .find(|object| object["kind"] == "Service")
-            .ok_or(ObservationError::Incomplete)?;
-        for field in ["type", "selector", "ports"] {
-            if observed.data["spec"][field] != expected["spec"][field] {
-                return Err(ObservationError::BindingMismatch);
-            }
-        }
         let primary = observed
             .data
             .pointer("/spec/clusterIP")
@@ -98,7 +111,7 @@ impl Operations {
                 let address: std::net::IpAddr =
                     text.parse().map_err(|_| ObservationError::Incomplete)?;
                 if !super::service_address_allowed(&address) {
-                    return Err(ObservationError::BindingMismatch);
+                    return Err(Self::mismatch(service, "spec.clusterIPs"));
                 }
                 Ok(address)
             })
@@ -147,7 +160,16 @@ impl Operations {
                         && target.name.as_deref() == Some(&pod.name)
                         && target.uid.as_deref() == Some(&pod.uid)
                 }) {
-                    return Err(ObservationError::BindingMismatch);
+                    return Err(Self::mismatch(
+                        &Owned {
+                            api_version: "discovery.k8s.io/v1".into(),
+                            kind: "EndpointSlice".into(),
+                            namespace: service.namespace.clone(),
+                            name: slice.metadata.name.clone().unwrap_or_default(),
+                            uid: String::new(),
+                        },
+                        "endpoints.targetRef",
+                    ));
                 }
             }
         }
@@ -204,7 +226,7 @@ impl Operations {
         let cluster = self.cluster(&receipt.storage);
         let address = Owned::new(&object, "");
         if cluster.get(&address).await?.is_some() {
-            return Err(ObservationError::BindingMismatch);
+            return Err(Self::mismatch(&address, "receipt binding"));
         }
         receipt.pending = Some(address);
         self.save(receipt)?;
@@ -235,9 +257,17 @@ impl Operations {
             .as_ref()
             .map(|types| types.kind.as_str())
             .ok_or(ObservationError::Incomplete)?;
-        let fields: &[&str] = match kind {
-            "Service" => &["type", "selector", "ports"],
-            "NetworkPolicy" => &["podSelector", "policyTypes", "ingress"],
+        let fields: &[(&str, &str)] = match kind {
+            "Service" => &[
+                ("type", "spec.type"),
+                ("selector", "spec.selector"),
+                ("ports", "spec.ports"),
+            ],
+            "NetworkPolicy" => &[
+                ("podSelector", "spec.podSelector"),
+                ("policyTypes", "spec.policyTypes"),
+                ("ingress", "spec.ingress"),
+            ],
             "ConfigMap" => &[],
             _ => return Ok(()),
         };
@@ -249,9 +279,9 @@ impl Operations {
             .into_iter()
             .find(|value| value["kind"] == kind)
             .ok_or(ObservationError::Incomplete)?;
-        for field in fields {
+        for (field, diagnostic) in fields {
             if object.data["spec"][field] != expected["spec"][field] {
-                return Err(ObservationError::BindingMismatch);
+                return Err(Self::compute_mismatch(receipt, kind, diagnostic));
             }
         }
         let extra = match kind {
@@ -264,12 +294,23 @@ impl Operations {
                 !value.is_null() && value.as_array().is_none_or(|values| !values.is_empty())
             })
         {
-            return Err(ObservationError::BindingMismatch);
+            return Err(Self::compute_mismatch(
+                receipt,
+                kind,
+                if kind == "Service" {
+                    "spec.externalIPs"
+                } else {
+                    "spec.egress"
+                },
+            ));
         }
-        if kind == "ConfigMap"
-            && (object.data["data"] != expected["data"] || object.data["immutable"] != true)
-        {
-            return Err(ObservationError::BindingMismatch);
+        if kind == "ConfigMap" {
+            if object.data["data"] != expected["data"] {
+                return Err(Self::compute_mismatch(receipt, kind, "data"));
+            }
+            if object.data["immutable"] != true {
+                return Err(Self::compute_mismatch(receipt, kind, "immutable"));
+            }
         }
         Ok(())
     }
@@ -318,7 +359,7 @@ impl Operations {
                     .compute
                     .iter()
                     .find(|owned| owned.kind == address.kind && owned.name == address.name)
-                    .ok_or(ObservationError::BindingMismatch)?;
+                    .ok_or_else(|| Self::mismatch(&address, "receipt binding"))?;
                 let observed = self.verify(&receipt.storage, owned).await?;
                 if owned.kind == "Pod" {
                     Self::verify_pod(receipt, &observed)?;
@@ -471,7 +512,16 @@ impl Operations {
             system_uid: system,
         };
         if gateway.cluster.as_ref() != Some(&identity) {
-            return Err(ObservationError::BindingMismatch);
+            return Err(Self::mismatch(
+                &Owned {
+                    api_version: "v1".into(),
+                    kind: "Namespace".into(),
+                    namespace: String::new(),
+                    name: "kube-system".into(),
+                    uid: String::new(),
+                },
+                "cluster identity",
+            ));
         }
         let namespace = gateway
             .objects
@@ -483,7 +533,7 @@ impl Operations {
             })
             .ok_or(ObservationError::Incomplete)?
             .clone();
-        let observed = cluster.verify(&namespace).await?;
+        let observed = self.verify_identity(spec, &namespace).await?;
         let openshift =
             spec.gateway.settings.runtime.provider == crate::config::ComputeDriver::OpenShift;
         if openshift {
@@ -492,7 +542,10 @@ impl Operations {
             if (require_identity && gateway.namespace_identity.is_none())
                 || (gateway.namespace_identity.is_some() && current != gateway.namespace_identity)
             {
-                return Err(ObservationError::BindingMismatch);
+                return Err(Self::mismatch(
+                    &namespace,
+                    "metadata.annotations[openshift.io identity]",
+                ));
             }
         }
         Ok((
@@ -511,7 +564,7 @@ impl Operations {
         spec: &StorageSpec,
         owned: &Owned,
     ) -> Result<kube::api::DynamicObject, ObservationError> {
-        let object = self.cluster(spec).verify(owned).await?;
+        let object = self.verify_identity(spec, owned).await?;
         if object
             .metadata
             .labels
@@ -519,7 +572,37 @@ impl Operations {
             .and_then(|labels| labels.get(GENERATION_LABEL))
             != Some(&spec.generation)
         {
-            return Err(ObservationError::BindingMismatch);
+            return Err(Self::mismatch(
+                owned,
+                "metadata.labels[nemoclaw.nvidia.com/generation]",
+            ));
+        }
+        Ok(object)
+    }
+    async fn verify_identity(
+        &self,
+        spec: &StorageSpec,
+        owned: &Owned,
+    ) -> Result<kube::api::DynamicObject, ObservationError> {
+        let object = self
+            .cluster(spec)
+            .get(owned)
+            .await?
+            .ok_or_else(|| Self::mismatch(owned, "object presence"))?;
+        if object.metadata.uid.as_deref() != Some(&owned.uid) {
+            return Err(Self::mismatch(owned, "metadata.uid"));
+        }
+        if object
+            .metadata
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get(OWNER_LABEL))
+            != Some(&spec.owner)
+        {
+            return Err(Self::mismatch(
+                owned,
+                "metadata.labels[nemoclaw.nvidia.com/uid]",
+            ));
         }
         Ok(object)
     }
@@ -529,8 +612,11 @@ impl Operations {
         complete: bool,
     ) -> Result<Option<Identity>, ObservationError> {
         let (cluster, namespace, identity) = self.gateway(&receipt.storage, true).await?;
-        if cluster != receipt.cluster || namespace.uid != receipt.namespace_uid {
-            return Err(ObservationError::BindingMismatch);
+        if cluster != receipt.cluster {
+            return Err(Self::mismatch(&namespace, "cluster identity"));
+        }
+        if namespace.uid != receipt.namespace_uid {
+            return Err(Self::mismatch(&namespace, "metadata.uid"));
         }
         for volume in &receipt.volumes {
             self.verify(&receipt.storage, volume).await?;
@@ -636,7 +722,7 @@ impl Operations {
                 if removing || owned.kind == "Pod" {
                     continue;
                 }
-                return Err(ObservationError::BindingMismatch);
+                return Err(Self::mismatch(owned, "object presence"));
             };
             let object = self.verify(&receipt.storage, owned).await?;
             if !removing {
@@ -658,7 +744,10 @@ impl Operations {
                 let after = self.verify(&receipt.storage, owned).await?;
                 Self::verify_pod(&receipt, &after)?;
                 if super::status::started(&after)? != started {
-                    return Err(ObservationError::BindingMismatch);
+                    return Err(Self::mismatch(
+                        owned,
+                        "status.containerStatuses[runtime].state.running.startedAt",
+                    ));
                 }
                 running = super::status::phase(bytes.as_deref(), started)? == "ready";
             }
@@ -690,11 +779,26 @@ impl Operations {
             .iter()
             .find(|container| container["name"] == "runtime")
             .ok_or(ObservationError::Incomplete)?;
-        if runtime["image"].as_str() != Some(&spec.image)
-            || runtime["command"] != serde_json::json!(["/usr/local/bin/nemoclaw-runtime"])
-            || runtime["envFrom"][0]["configMapRef"]["name"].as_str() != Some(&spec.name)
-        {
-            return Err(ObservationError::BindingMismatch);
+        if runtime["image"].as_str() != Some(&spec.image) {
+            return Err(Self::compute_mismatch(
+                receipt,
+                "Pod",
+                "spec.containers[runtime].image",
+            ));
+        }
+        if runtime["command"] != serde_json::json!(["/usr/local/bin/nemoclaw-runtime"]) {
+            return Err(Self::compute_mismatch(
+                receipt,
+                "Pod",
+                "spec.containers[runtime].command",
+            ));
+        }
+        if runtime["envFrom"][0]["configMapRef"]["name"].as_str() != Some(&spec.name) {
+            return Err(Self::compute_mismatch(
+                receipt,
+                "Pod",
+                "spec.containers[runtime].envFrom[0].configMapRef.name",
+            ));
         }
         let volumes = object
             .data
@@ -714,19 +818,42 @@ impl Operations {
             let volume = volumes
                 .iter()
                 .find(|volume| volume["name"] == name)
-                .ok_or(ObservationError::BindingMismatch)?;
+                .ok_or_else(|| Self::compute_mismatch(receipt, "Pod", "spec.volumes"))?;
             let mount = mounts
                 .iter()
                 .find(|mount| mount["mountPath"] == path)
-                .ok_or(ObservationError::BindingMismatch)?;
-            if volume["persistentVolumeClaim"]["claimName"] != format!("{}-{suffix}", spec.name)
-                || mount["name"] != name
-                || mount.get("subPath").is_some()
-                || mount.get("subPathExpr").is_some()
-                || mount["readOnly"] == true
-                || volume["persistentVolumeClaim"]["readOnly"] == true
-            {
-                return Err(ObservationError::BindingMismatch);
+                .ok_or_else(|| {
+                    Self::compute_mismatch(receipt, "Pod", "spec.containers[runtime].volumeMounts")
+                })?;
+            let mismatches = [
+                (
+                    volume["persistentVolumeClaim"]["claimName"]
+                        != format!("{}-{suffix}", spec.name),
+                    "spec.volumes.persistentVolumeClaim.claimName",
+                ),
+                (
+                    mount["name"] != name,
+                    "spec.containers[runtime].volumeMounts.name",
+                ),
+                (
+                    mount.get("subPath").is_some(),
+                    "spec.containers[runtime].volumeMounts.subPath",
+                ),
+                (
+                    mount.get("subPathExpr").is_some(),
+                    "spec.containers[runtime].volumeMounts.subPathExpr",
+                ),
+                (
+                    mount["readOnly"] == true,
+                    "spec.containers[runtime].volumeMounts.readOnly",
+                ),
+                (
+                    volume["persistentVolumeClaim"]["readOnly"] == true,
+                    "spec.volumes.persistentVolumeClaim.readOnly",
+                ),
+            ];
+            if let Some((_, field)) = mismatches.into_iter().find(|(changed, _)| *changed) {
+                return Err(Self::compute_mismatch(receipt, "Pod", field));
             }
         }
         Ok(())
@@ -851,12 +978,15 @@ impl Operations {
         } else {
             0
         };
-        cluster.delete(owned).await?;
+        cluster.delete(owned).await.map_err(|error| match error {
+            ObservationError::BindingMismatch => Self::mismatch(owned, "metadata.uid"),
+            error => error,
+        })?;
         let deadline =
             tokio::time::Instant::now() + std::time::Duration::from_secs(grace.saturating_add(30));
         while let Some(object) = cluster.get(owned).await? {
             if object.metadata.uid.as_deref() != Some(&owned.uid) {
-                return Err(ObservationError::BindingMismatch);
+                return Err(Self::mismatch(owned, "metadata.uid"));
             }
             if tokio::time::Instant::now() >= deadline {
                 return Err(ObservationError::Incomplete);
@@ -981,7 +1111,10 @@ impl Operations {
         let after = self.verify(spec, pod).await?;
         Self::verify_pod(&receipt, &after)?;
         if super::status::started(&after)? != started {
-            return Err(ObservationError::BindingMismatch);
+            return Err(Self::mismatch(
+                pod,
+                "status.containerStatuses[runtime].state.running.startedAt",
+            ));
         }
         let key = String::from_utf8(bytes).map_err(|_| ObservationError::Incomplete)?;
         if key.len() != 64

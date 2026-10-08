@@ -57,8 +57,133 @@ async fn small_managed_openclaw_context_warns_before_plan_or_apply_mutation() {
 }
 
 #[tokio::test]
+async fn route_context_warns_even_when_the_managed_service_has_room() {
+    for source in [CLUSTER_VLLM, CLUSTER_OLLAMA, DOCKER_VLLM, DOCKER_OLLAMA] {
+        let mut input = with_context(source, 32768);
+        input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
+            ["model_metadata"]["contextWindow"] = json!(8192);
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        for apply in [false, true] {
+            let warnings = context_warnings(&document, apply).await;
+            assert_eq!(warnings.len(), 1, "a low route context must warn");
+            assert!(warnings[0].contains("contextWindow=8192"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn context_advisory_reserves_the_effective_reply_allowance() {
+    for source in [CLUSTER_VLLM, CLUSTER_OLLAMA, DOCKER_VLLM, DOCKER_OLLAMA] {
+        let mut input = with_context(source, 20000);
+        let overrides =
+            &mut input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
+        overrides["maxTokens"] = json!(2048);
+        overrides["settings"]["model_metadata"]["contextWindow"] = json!(32768);
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        for apply in [false, true] {
+            let warnings = context_warnings(&document, apply).await;
+            assert_eq!(
+                warnings.len(),
+                1,
+                "the prompt budget alone leaves no reply room"
+            );
+            for budget in ["2048", "22048"] {
+                assert!(warnings[0].contains(budget), "{}", warnings[0]);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn context_advisory_follows_native_defaults_and_metadata_precedence() {
+    for (context, metadata, max_tokens, warns) in [
+        (65536, None, Some(16000), true),
+        (24095, None, None, true),
+        (24096, None, None, false),
+        (
+            32768,
+            Some(json!({"contextWindow": 22047})),
+            Some(2048),
+            true,
+        ),
+        (
+            32768,
+            Some(json!({"contextWindow": 22048})),
+            Some(2048),
+            false,
+        ),
+        (21024, Some(json!({"maxTokens": 1024})), Some(8192), false),
+        (21023, Some(json!({"maxTokens": 1024})), Some(8192), true),
+        (25000, Some(json!({"maxTokens": 8192})), Some(1024), true),
+        (28192, Some(json!({"maxTokens": 8192})), Some(1024), false),
+        (
+            65536,
+            Some(json!({"contextWindow": u64::MAX, "maxTokens": u64::MAX})),
+            None,
+            true,
+        ),
+    ] {
+        let mut input = with_context(CLUSTER_VLLM, context);
+        let overrides =
+            &mut input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"];
+        let settings = overrides["settings"].as_object_mut().unwrap();
+        if let Some(metadata) = metadata {
+            settings.insert("model_metadata".into(), metadata);
+        } else {
+            settings.remove("model_metadata");
+        }
+        if let Some(max_tokens) = max_tokens {
+            overrides["maxTokens"] = json!(max_tokens);
+        } else {
+            overrides.as_object_mut().unwrap().remove("maxTokens");
+        }
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            context_warnings(&document, false).await.len(),
+            usize::from(warns),
+            "{input}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn context_advisory_reports_unusable_metadata_without_guessing_or_echoing_values() {
+    for metadata in [
+        Value::Null,
+        json!("not-a-number-secret"),
+        json!({"contextWindow": null}),
+        json!({"contextWindow": "not-a-number-secret"}),
+        json!({"contextWindow": 0}),
+        json!({"maxTokens": null}),
+        json!({"maxTokens": "not-a-number-secret"}),
+        json!({"maxTokens": 0}),
+    ] {
+        let mut input = with_context(CLUSTER_VLLM, 32768);
+        input["spec"]["sandboxes"][0]["agent"]["inference"]["routes"][0]["overrides"]["settings"]
+            ["model_metadata"] = metadata;
+        let document = Document::parse(input.to_string().as_bytes()).unwrap();
+        for apply in [false, true] {
+            let warnings = context_warnings(&document, apply).await;
+            assert_eq!(
+                warnings.len(),
+                1,
+                "unusable metadata must not silently use defaults: {input}"
+            );
+            assert!(warnings[0].contains("cannot assess"), "{}", warnings[0]);
+            assert!(!warnings[0].contains("not-a-number-secret"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn context_advisory_uses_the_selected_harness_and_service_budget() {
-    for (context, count) in [(19_999, 1), (20_000, 0), (32_768, 0)] {
+    for (context, count) in [
+        (19_999, 1),
+        (20_000, 1),
+        (22_047, 1),
+        (22_048, 0),
+        (32_768, 0),
+    ] {
         let document =
             Document::parse(with_context(CLUSTER_VLLM, context).to_string().as_bytes()).unwrap();
         assert_eq!(context_warnings(&document, false).await.len(), count);

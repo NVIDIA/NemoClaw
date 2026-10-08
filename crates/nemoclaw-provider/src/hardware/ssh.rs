@@ -338,43 +338,51 @@ mod tests {
         }
     }
 
-    /// Run the shipped script with fake `docker` and `nvidia-smi` on PATH, and
+    /// Run the shipped script with fake `docker` and `nvidia-smi` shell commands, and
     /// the real `uname`, `stat`, and `/proc/meminfo` of this Linux host.
     #[cfg(target_os = "linux")]
     #[test]
     fn collector_script_queries_compute_and_memory_and_parses_on_linux() {
-        use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+        use std::{fs, process::Command};
         let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
         let docker_root = root.path().join("docker-root");
         let calls = root.path().join("calls");
-        fs::create_dir(&bin).unwrap();
         fs::create_dir(&docker_root).unwrap();
         let info = json!({"ID": "fixture", "OSType": "linux",
             "Architecture": std::env::consts::ARCH, "DockerRootDir": docker_root});
-        let fakes = [
-            ("docker", format!(
-                "case \"$1 $2\" in\n'context inspect') echo unix:///var/run/docker.sock ;;\n'info --format') if [ \"$3\" = '{{{{json .}}}}' ]; then echo '{info}'; else echo '{root}'; fi ;;\n*) exit 2 ;;\nesac\n",
-                root = docker_root.display()
-            )),
-            ("nvidia-smi", "[ \"$2\" = --format=csv,noheader,nounits ] || exit 2\ncase \"$1\" in\n--query-gpu=name,driver_version) echo 'NVIDIA GB10, 580.0' ;;\n--query-gpu=compute_cap) echo 12.1 ;;\n--query-gpu=memory.total,memory.free) echo '[N/A], [N/A]' ;;\n--query-compute-apps=pid) ;;\n*) exit 2 ;;\nesac\n".into()),
-        ];
-        for (name, body) in fakes {
-            let path = bin.join(name);
-            fs::write(
-                &path,
-                format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"{name} $*\" >> '{}'\n{body}",
-                    calls.display()
-                ),
-            )
-            .unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-        let result = Command::new("sh")
-            .args(["-c", COLLECT])
-            .env("PATH", path)
+        // Shell functions preserve the collector's command arguments without
+        // executing newly written files that another spawn could hold writable.
+        let fakes = r#"docker() {
+    printf '%s\n' "docker $*" >> "$TEST_COLLECT_CALLS"
+    case "$1 $2" in
+        'context inspect') printf '%s\n' unix:///var/run/docker.sock ;;
+        'info --format')
+            case "$3" in
+                '{{json .}}') printf '%s\n' "$TEST_COLLECT_INFO" ;;
+                '{{.DockerRootDir}}') printf '%s\n' "$TEST_COLLECT_ROOT" ;;
+                *) return 2 ;;
+            esac ;;
+        *) return 2 ;;
+    esac
+}
+nemoclaw_nvidia_smi() {
+    printf '%s\n' "nvidia-smi $*" >> "$TEST_COLLECT_CALLS"
+    [ "$2" = --format=csv,noheader,nounits ] || return 2
+    case "$1" in
+        --query-gpu=name,driver_version) printf '%s\n' 'NVIDIA GB10, 580.0' ;;
+        --query-gpu=compute_cap) printf '%s\n' 12.1 ;;
+        --query-gpu=memory.total,memory.free) printf '%s\n' '[N/A], [N/A]' ;;
+        --query-compute-apps=pid) ;;
+        *) return 2 ;;
+    esac
+}
+alias nvidia-smi=nemoclaw_nvidia_smi
+"#;
+        let result = Command::new("/bin/sh")
+            .args(["-c", &format!("{fakes}\n{COLLECT}")])
+            .env("TEST_COLLECT_CALLS", &calls)
+            .env("TEST_COLLECT_INFO", info.to_string())
+            .env("TEST_COLLECT_ROOT", &docker_root)
             .env_remove("DOCKER_HOST")
             .output()
             .unwrap();

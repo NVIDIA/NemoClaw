@@ -2,12 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 use nemoclaw_sdk::kubernetes::services::{Spec, compute_objects, storage_objects};
 use serde_json::{Value, json};
+#[path = "kubernetes_service_diagnostics.rs"]
+mod diagnostics;
 #[path = "kubernetes_service_exec.rs"]
 mod exec_boundary;
 #[path = "kubernetes_service_idempotence.rs"]
 mod idempotence;
 #[path = "kubernetes_service_readiness.rs"]
 mod readiness;
+
+fn assert_binding_mismatch<T>(result: Result<T, nemoclaw_sdk::ObservationError>) {
+    use nemoclaw_sdk::ObservationError;
+    use std::error::Error;
+    let error = result.err().expect("identity change must be refused");
+    assert!(
+        error == ObservationError::BindingMismatch
+            || error
+                .source()
+                .and_then(|source| source.downcast_ref::<ObservationError>())
+                == Some(&ObservationError::BindingMismatch),
+        "{error:?}"
+    );
+}
 
 fn spec(backend: &str, authenticated: bool) -> Spec {
     let runtime: Value = if backend == "vllm" {
@@ -224,7 +240,6 @@ async fn running_pod_without_runtime_evidence_is_not_ready() {
 
 #[tokio::test]
 async fn retained_claim_loss_and_substitution_block_compute_mutation() {
-    use nemoclaw_sdk::ObservationError;
     for corrupt in ["missing", "uid", "generation"] {
         let spec = spec("vllm", true);
         let objects = crate::kube_api::Objects::default();
@@ -254,14 +269,8 @@ async fn retained_claim_loss_and_substitution_block_compute_mutation() {
             _ => unreachable!(),
         }
         let before = objects.0.lock().unwrap().clone();
-        assert_eq!(
-            operations.ensure(&spec, compute.id.as_deref()).await,
-            Err(ObservationError::BindingMismatch)
-        );
-        assert_eq!(
-            operations.remove(&spec, compute.id.as_deref()).await,
-            Err(ObservationError::BindingMismatch)
-        );
+        assert_binding_mismatch(operations.ensure(&spec, compute.id.as_deref()).await);
+        assert_binding_mismatch(operations.remove(&spec, compute.id.as_deref()).await);
         assert_eq!(*objects.0.lock().unwrap(), before);
     }
 }
@@ -278,10 +287,7 @@ async fn failed_compute_creation_retains_a_binding_and_destroy_preserves_foreign
         .await
         .unwrap();
     objects.insert(json!({"apiVersion": "v1", "kind": "Pod", "metadata": {"name": spec.name, "namespace": "agents", "uid": "foreign"}}));
-    assert_eq!(
-        operations.ensure(&spec, None).await,
-        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-    );
+    assert_binding_mismatch(operations.ensure(&spec, None).await);
     let partial = operations.read_for_removal(&spec, None).await.unwrap();
     assert!(partial.id.is_some());
     operations
@@ -371,10 +377,7 @@ async fn cluster_identity_changes_block_model_mutations() {
         .unwrap();
     objects.insert(json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "kube-system", "uid": "rebuilt-cluster"}}));
     let before = objects.0.lock().unwrap().clone();
-    assert_eq!(
-        operations.ensure(&spec, None).await,
-        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-    );
+    assert_binding_mismatch(operations.ensure(&spec, None).await);
     assert_eq!(*objects.0.lock().unwrap(), before);
 }
 
@@ -411,11 +414,10 @@ async fn endpoint_grants_follow_only_the_owned_service_cluster_addresses() {
     );
     service["metadata"]["uid"] = json!("replacement");
     objects.insert(service);
-    assert_eq!(
+    assert_binding_mismatch(
         operations
             .endpoint_addresses(&spec.storage(), &spec.endpoint())
             .await,
-        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
     );
 }
 
@@ -492,10 +494,7 @@ async fn openshift_workloads_use_only_the_recorded_namespace_identity() {
         json!("1000730000/10000");
     objects.insert(namespace);
     let before = objects.0.lock().unwrap().clone();
-    assert_eq!(
-        operations.ensure(&spec, compute.id.as_deref()).await,
-        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-    );
+    assert_binding_mismatch(operations.ensure(&spec, compute.id.as_deref()).await);
     assert_eq!(*objects.0.lock().unwrap(), before);
 }
 
@@ -517,10 +516,7 @@ async fn a_bound_pod_cannot_redirect_the_runtime_to_another_credentials_claim() 
         .find(|volume| volume["name"] == "credentials")
         .unwrap()["persistentVolumeClaim"]["claimName"] = json!("foreign-credentials");
     objects.insert(pod);
-    assert_eq!(
-        operations.read(&spec, compute.id.as_deref()).await,
-        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-    );
+    assert_binding_mismatch(operations.read(&spec, compute.id.as_deref()).await);
 }
 
 #[tokio::test]
@@ -680,10 +676,7 @@ async fn missing_network_objects_refuse_updates_before_stopping_the_pod() {
         objects.0.lock().unwrap().remove(&path);
         let before = objects.0.lock().unwrap().clone();
         spec.image = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
-        assert_eq!(
-            operations.ensure(&spec, first.id.as_deref()).await,
-            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-        );
+        assert_binding_mismatch(operations.ensure(&spec, first.id.as_deref()).await);
         assert_eq!(*objects.0.lock().unwrap(), before);
     }
 }
@@ -713,15 +706,9 @@ async fn changed_network_specs_refuse_refresh_and_update_but_allow_explicit_remo
         object["spec"][field] = replacement;
         objects.insert(object);
         let before = objects.0.lock().unwrap().clone();
-        assert_eq!(
-            operations.read(&spec, first.id.as_deref()).await,
-            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-        );
+        assert_binding_mismatch(operations.read(&spec, first.id.as_deref()).await);
         spec.image = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
-        assert_eq!(
-            operations.ensure(&spec, first.id.as_deref()).await,
-            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-        );
+        assert_binding_mismatch(operations.ensure(&spec, first.id.as_deref()).await);
         assert_eq!(*objects.0.lock().unwrap(), before);
         operations.remove(&spec, first.id.as_deref()).await.unwrap();
     }
@@ -905,11 +892,10 @@ async fn foreign_service_backends_cannot_receive_the_managed_credential() {
     service["spec"]["clusterIP"] = json!("10.96.0.42");
     objects.insert(service);
     objects.insert(json!({"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice", "metadata":{"name":"injected-backend", "namespace":"agents", "labels":{"kubernetes.io/service-name":spec.name}}, "addressType":"IPv4", "endpoints":[{"addresses":["10.244.0.15"],"conditions":{"ready":true},"targetRef":{"kind":"Pod","namespace":"agents","name":"foreign","uid":"foreign"}}]}));
-    assert_eq!(
+    assert_binding_mismatch(
         operations
             .endpoint_addresses(&spec.storage(), &spec.endpoint())
             .await,
-        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
     );
 }
 
@@ -936,7 +922,7 @@ async fn terminal_pods_are_replaced_only_by_explicit_apply_and_only_when_owned()
         let read = operations.read(&spec, first.id.as_deref()).await;
         assert_eq!(*objects.0.lock().unwrap(), before);
         if foreign {
-            assert_eq!(read, Err(nemoclaw_sdk::ObservationError::BindingMismatch));
+            assert_binding_mismatch(read);
             assert!(operations.ensure(&spec, first.id.as_deref()).await.is_err());
             assert_eq!(*objects.0.lock().unwrap(), before);
         } else {
@@ -1177,11 +1163,10 @@ async fn endpoint_grants_reject_service_drift_and_unroutable_addresses() {
         let mut invalid = service.clone();
         invalid["spec"][field] = value;
         objects.insert(invalid);
-        assert_eq!(
+        assert_binding_mismatch(
             operations
                 .endpoint_addresses(&spec.storage(), &spec.endpoint())
                 .await,
-            Err(nemoclaw_sdk::ObservationError::BindingMismatch)
         );
     }
 }
@@ -1327,10 +1312,7 @@ async fn a_replacement_during_delete_preserves_the_network_boundary() {
     let mut pod = objects.get("v1", "Pod", "agents", &spec.name).unwrap();
     pod["metadata"]["uid"] = json!("replacement");
     objects.insert(pod.clone());
-    assert_eq!(
-        removal.await,
-        Err(nemoclaw_sdk::ObservationError::BindingMismatch)
-    );
+    assert_binding_mismatch(removal.await);
     assert_eq!(objects.get("v1", "Pod", "agents", &spec.name), Some(pod));
     assert!(
         objects
