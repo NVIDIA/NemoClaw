@@ -721,24 +721,49 @@ describe("live export snapshot reader", () => {
     expect(raw.getProviderProfile).toHaveBeenCalled();
   });
 
-  it.each(NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "nvidia-prod"))(
-    "exports native $label without shared-route or credential reads",
-    async (profile) => {
-      const fixture = mockNativeHostedSource(profile);
-      const { result, writeStdout, publish } = await exportLiveSource();
-      expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-      const yaml = writeStdout.mock.calls[0]![0];
-      const document = asExportedConfig(YAML.parse(yaml));
-      expect(document.spec.inferenceProviders[0]).toMatchObject({
-        endpoint: profile.endpoint,
-        credential: { env: profile.hostCredentialEnv ?? profile.credentialEnv },
-      });
-      expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
-      expect(fixture.readCredential).not.toHaveBeenCalled();
-      expect(yaml).not.toContain(readFailureCanary);
-      expect(publish).not.toHaveBeenCalled();
-    },
-  );
+  it.each(
+    NATIVE_HOSTED_PROFILES.filter(
+      (profile) => !["nvidia-prod", "gemini-api"].includes(profile.logicalProvider),
+    ),
+  )("exports native $label without shared-route or credential reads", async (profile) => {
+    const fixture = mockNativeHostedSource(profile);
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]![0];
+    const document = asExportedConfig(YAML.parse(yaml));
+    expect(document.spec.inferenceProviders[0]).toMatchObject({
+      endpoint: profile.endpoint,
+      credential: { env: profile.hostCredentialEnv ?? profile.credentialEnv },
+    });
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(fixture.readCredential).not.toHaveBeenCalled();
+    expect(yaml).not.toContain(readFailureCanary);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("refuses native Gemini export without shared-route or credential reads", async () => {
+    const profile = NATIVE_HOSTED_PROFILES.find((row) => row.logicalProvider === "gemini-api")!;
+    const fixture = mockNativeHostedSource(profile);
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "observation",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            field: "spec.inferenceProviders[].provider",
+            category: "unsupported",
+            diagnostic: expect.stringContaining("V1 cannot consume this provider"),
+          }),
+        ]),
+      },
+    });
+    expect(writeStdout).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(fixture.readCredential).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
 
   it.each<{
     label: string;
