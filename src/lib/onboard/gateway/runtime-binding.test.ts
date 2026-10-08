@@ -65,6 +65,11 @@ describe("Docker-driver gateway binding persistence", () => {
     expect(binding.stateDir).toBe(path.join(home, "custom-gateway-18080"));
     expect(binding.dockerNetworkName).toBe("operator-selected-network");
     expect(env).toEqual({ OPENSHELL_DOCKER_NETWORK_NAME: "operator-selected-network" });
+    env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = " ";
+    expect(resolveDockerDriverGatewayBinding(env, home, 18080).stateDir).toBe(
+      path.join(home, "custom-gateway-18080"),
+    );
+    expect(env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe(" ");
   });
 
   it("ignores malformed or symlinked receipts instead of changing startup configuration", () => {

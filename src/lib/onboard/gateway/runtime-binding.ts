@@ -95,7 +95,7 @@ export function resolveDockerDriverGatewayBinding(
 ): Partial<DockerDriverGatewayBinding> {
   const saved = readDockerDriverGatewayBinding(home, gatewayPort);
   return {
-    stateDir: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR || saved?.stateDir,
+    stateDir: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() || saved?.stateDir,
     dockerNetworkName: env.OPENSHELL_DOCKER_NETWORK_NAME || saved?.dockerNetworkName,
   };
 }
