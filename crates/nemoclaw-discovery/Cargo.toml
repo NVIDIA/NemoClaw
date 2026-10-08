@@ -20,6 +20,7 @@ path = "tests/main.rs"
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-docker = { path = "../nemoclaw-docker" }
+nemoclaw-fabric = { path = "../nemoclaw-fabric" }
 bollard.workspace = true
 futures-util.workspace = true
 openshell-sdk.workspace = true

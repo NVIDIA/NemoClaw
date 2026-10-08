@@ -1289,7 +1289,7 @@ const UNEXPECTED_OBSERVATION: &str = "plan contains an unexpected observation";
 
 // Observations a plan could name without the compiled graph reading them.
 const UNDECLARED_OBSERVATIONS: [&str; 6] = [
-    "data.nemoclaw_fabric_capabilities.sandbox_99",
+    "data.fabric_capabilities.sandbox_99",
     "data.nemoclaw_target_hardware.target_99",
     "data.nemoclaw_inference_capabilities.endpoint_99",
     "data.nemoclaw_engine_capabilities.current",

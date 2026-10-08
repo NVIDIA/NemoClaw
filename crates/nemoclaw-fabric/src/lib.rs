@@ -6,5 +6,9 @@
 pub mod capabilities;
 pub mod catalog;
 pub mod image_metadata;
+#[cfg(feature = "client")]
+mod observe;
 
 pub use capabilities::{FabricObservation, FabricRequirements};
+#[cfg(feature = "client")]
+pub use observe::{judge_image, observe_fabric};

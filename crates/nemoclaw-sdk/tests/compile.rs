@@ -268,7 +268,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
             engine.get("depends_on").is_none(),
             "read existing capabilities during plan"
         );
-        let image = &graph["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"];
+        let image = &graph["data"]["fabric_capabilities"]["sandbox_0"];
         assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
         assert!(
             image.get("depends_on").is_none(),
@@ -372,7 +372,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
             graph["resource"]["openshell_sandbox"][name]["runtime_json"]
                 .as_str()
                 .unwrap()
-                .contains("nemoclaw_fabric_capabilities")
+                .contains("fabric_capabilities")
         );
     }
     for profile in graph["resource"]["openshell_provider_profile"]
@@ -381,7 +381,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         .values()
     {
         let binaries = profile["binaries"].as_str().unwrap();
-        assert!(binaries.starts_with("${jsondecode(data.nemoclaw_fabric_capabilities."));
+        assert!(binaries.starts_with("${jsondecode(data.fabric_capabilities."));
         assert!(binaries.ends_with(".binaries_json)}"));
     }
 }

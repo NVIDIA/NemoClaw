@@ -6,7 +6,7 @@ use fabric_provider::FabricProvider;
 use tf_provider::{Diagnostics, Provider, schema::AttributeConstraint};
 
 #[test]
-fn provider_serves_agent_configuration_and_sandbox_readiness_through_a_gateway() {
+fn provider_serves_agent_configuration_readiness_and_image_capabilities() {
     let provider = FabricProvider::default();
     let mut diagnostics = Diagnostics::default();
     let resources = provider.get_resources(&mut diagnostics).unwrap();
@@ -15,7 +15,15 @@ fn provider_serves_agent_configuration_and_sandbox_readiness_through_a_gateway()
         ["agent_configuration"]
     );
     let sources = provider.get_data_sources(&mut diagnostics).unwrap();
-    assert_eq!(sources.keys().collect::<Vec<_>>(), ["sandbox_readiness"]);
+    let mut names: Vec<_> = sources.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["capabilities", "sandbox_readiness"]);
+    // Image reads name their engine; they need no gateway.
+    let capabilities = sources["capabilities"].schema(&mut diagnostics).unwrap();
+    assert!(matches!(
+        capabilities.block.attributes["engine"].constraint,
+        AttributeConstraint::Required
+    ));
     let readiness = sources["sandbox_readiness"]
         .schema(&mut diagnostics)
         .unwrap();

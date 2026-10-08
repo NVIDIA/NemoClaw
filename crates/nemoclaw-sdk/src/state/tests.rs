@@ -774,6 +774,7 @@ async fn state_with_openshell_types_from_the_nemoclaw_provider_is_rejected_befor
         "nemoclaw_gateway_capabilities",
         "nemoclaw_agent_configuration",
         "nemoclaw_sandbox_readiness",
+        "nemoclaw_fabric_capabilities",
     ] {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(

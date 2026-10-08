@@ -31,7 +31,8 @@ tokio = { workspace = true, features = ["test-util"] }
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
-nemoclaw-fabric = { path = "../nemoclaw-fabric" }
+# Only the image contract, without the engine client.
+nemoclaw-fabric = { path = "../nemoclaw-fabric", default-features = false }
 # Only the endpoint policy and retained identity types, without the engine client.
 nemoclaw-docker = { path = "../nemoclaw-docker", default-features = false }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }

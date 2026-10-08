@@ -9,14 +9,21 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+default = ["client"]
+# Reading an image's label through its container engine.
+client = ["dep:nemoclaw-docker", "dep:tokio"]
+
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
+nemoclaw-docker = { path = "../nemoclaw-docker", optional = true }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["time"], optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
