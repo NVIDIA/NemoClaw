@@ -3,6 +3,7 @@
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
+import { getChatCompletionsProbePayload } from "../../inference/openai-probe-models";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import {
   existsSync,
@@ -669,4 +670,17 @@ it("uses the current supervisor credential generation for native probes", () => 
   );
   expect(result.status).toBe(0);
   expect(result.stdout).toBe(`Authorization: Bearer ${value}`);
+});
+
+it("gives native Ultra readiness the same reasoning budget as host onboarding", () => {
+  const model = "nvidia/nemotron-3-ultra-550b-a55b";
+  const command = buildSandboxInferenceInvocationCommand({
+    ...input,
+    provider: "nvidia-prod",
+    model,
+    nativeProvider: true,
+  });
+  const payload = getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload: true });
+  expect(payload.max_tokens).toBe(256);
+  expect(command).toContain('"max_tokens":256');
 });

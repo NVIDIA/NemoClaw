@@ -103,7 +103,7 @@ function exactNativeProvider(metadata: OpenShellProviderMetadata): boolean {
   );
 }
 
-function attachmentFromMetadata(
+export function nativeNvidiaProviderAttachmentFromMetadata(
   metadata: OpenShellProviderMetadata,
 ): NativeNvidiaProviderAttachment {
   if (!exactNativeProvider(metadata) || !metadata.revision) {
@@ -154,7 +154,7 @@ async function removeNewNativeNvidiaProvider(input: {
 }): Promise<void> {
   const provider = await inspectNativeProvider(input.adapter, input.target);
   if (!provider) return;
-  const current = attachmentFromMetadata(provider);
+  const current = nativeNvidiaProviderAttachmentFromMetadata(provider);
   if (current.providerId !== input.expected.providerId) {
     throw new NativeNvidiaProviderError(
       `Refusing to remove OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' because its identity changed.`,
@@ -171,7 +171,7 @@ async function removeNewNativeNvidiaProvider(input: {
   }
   const after = await inspectNativeProvider(input.adapter, input.target);
   if (after) {
-    const observed = attachmentFromMetadata(after);
+    const observed = nativeNvidiaProviderAttachmentFromMetadata(after);
     const identity =
       observed.providerId === input.expected.providerId ? "still exists" : "changed identity";
     throw new NativeNvidiaProviderError(
@@ -256,7 +256,7 @@ export async function ensureNativeNvidiaProvider(input: {
 
   const before = await inspectNativeProvider(adapter, target);
   if (before) {
-    const receipt = attachmentFromMetadata(before);
+    const receipt = nativeNvidiaProviderAttachmentFromMetadata(before);
     if (!input.expected) {
       throw new NativeNvidiaProviderError(
         `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
@@ -291,7 +291,7 @@ export async function ensureNativeNvidiaProvider(input: {
         `OpenShell did not confirm provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' after its credential update.`,
       );
     }
-    const observedReceipt = attachmentFromMetadata(observed);
+    const observedReceipt = nativeNvidiaProviderAttachmentFromMetadata(observed);
     if (observedReceipt.providerId !== input.expected.providerId) {
       throw new NativeNvidiaProviderError(
         `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' changed identity during its credential update. No provider receipt was recorded.`,
@@ -333,7 +333,7 @@ export async function ensureNativeNvidiaProvider(input: {
       `OpenShell did not confirm provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' after creation.`,
     );
   }
-  return attachmentFromMetadata(observed);
+  return nativeNvidiaProviderAttachmentFromMetadata(observed);
 }
 
 /** Prove that the exact NemoClaw-owned NVIDIA provider is attached to one sandbox. */
@@ -350,7 +350,7 @@ export async function verifyNativeNvidiaProviderAttachment(input: {
       `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' is missing. Recreate the sandbox to restore native NVIDIA inference.`,
     );
   }
-  const receipt = attachmentFromMetadata(provider);
+  const receipt = nativeNvidiaProviderAttachmentFromMetadata(provider);
   if (input.expected && input.expected.providerId !== receipt.providerId) {
     throw new NativeNvidiaProviderError(
       `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' changed identity. Recreate the sandbox before using native NVIDIA inference.`,
@@ -387,7 +387,7 @@ export async function ensureNativeNvidiaProviderAttached(input: {
       `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' is missing. Recreate the sandbox to restore native NVIDIA inference.`,
     );
   }
-  const receipt = attachmentFromMetadata(provider);
+  const receipt = nativeNvidiaProviderAttachmentFromMetadata(provider);
   if (receipt.providerId !== input.expected.providerId) {
     throw new NativeNvidiaProviderError(
       `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' changed identity. Recreate the sandbox before using native NVIDIA inference.`,
@@ -444,7 +444,7 @@ export async function detachNativeNvidiaProvider(input: {
 }): Promise<void> {
   const provider = await inspectNativeProvider(input.adapter, input.target);
   if (!provider) return;
-  const current = attachmentFromMetadata(provider);
+  const current = nativeNvidiaProviderAttachmentFromMetadata(provider);
   if (current.providerId !== input.expected.providerId) {
     throw new NativeNvidiaProviderError(
       `Refusing to detach OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' because its identity changed.`,

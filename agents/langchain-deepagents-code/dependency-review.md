@@ -288,7 +288,14 @@ tests verify that both managed Ultra IDs receive the argument and unrelated
 models do not. The focused managed-model-params patch test verifies that the
 managed provider resolver supplies it only for those IDs, and the Deep Agents
 E2E test verifies the installed request settings.
-Remove this argument only after a reviewed serving-template or client update
+The native NVIDIA attachment uses `https://integrate.api.nvidia.com/v1`
+directly and omits this argument at both supply points. Live native endpoint
+requests showed that enabling it moves reasoning into answer content, while
+omitting it preserves separate reasoning and valid tool calls with null content.
+The native endpoint exception is exact; the managed `inference.local` aliases
+retain the workaround. Focused tests cover the native exception in both the
+config generator and patched constructor.
+Remove this argument from the managed route only after a reviewed serving-template or client update
 produces nonempty assistant content for reasoning-plus-tool-call turns without
 it, and the live DCode Ultra E2E passes for both managed model IDs with both
 supply points deleted.

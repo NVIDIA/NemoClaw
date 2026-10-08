@@ -123,7 +123,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     headers: [],
     payload: {
       model: input.model,
-      [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),
+      [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
       messages: [{ role: "user", content: "Reply with OK" }],
       stream: false,
     },

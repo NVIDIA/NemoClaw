@@ -111,7 +111,8 @@ for value in (
     os.environ[name] = value
     os.environ["DEEPAGENTS_CODE_OPENAI_API_KEY"] = "nemoclaw-managed-inference"
     for provider in ("openai", "openrouter"):
-        resolved = config._get_provider_kwargs(provider)
+        resolved = config._get_provider_kwargs(provider, model_name="nvidia/nemotron-3-ultra-550b-a55b")
+        assert "chat_template_kwargs" not in resolved.get("extra_body", {})
         assert resolved["api_key"] == value
         assert resolved["base_url"] == "https://integrate.api.nvidia.com/v1"
 

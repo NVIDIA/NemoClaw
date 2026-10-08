@@ -490,7 +490,8 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
         reasoning_effort = managed_reasoning_effort()
         if reasoning_effort is not None:
             extra_body["reasoning_effort"] = reasoning_effort
-        if model_name in _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS:
+        if (model_name in _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS
+                and base_url != "https://integrate.api.nvidia.com/v1"):
             # A model name can enable exactly this reviewed template argument
             # and nothing else; the credential, endpoint, and remaining request
             # shape stay fixed above.

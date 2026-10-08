@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../inference/native-nvidia/contract";
 import { resolveProviderCredential } from "../credentials/store";
 import { validateNvidiaApiKeyValue } from "../validation";
 import type { EndpointValidationResult } from "./inference-selection-validation";
@@ -39,7 +43,9 @@ export async function resolveNonInteractiveBuildCredential(opts: {
     }
     return false;
   }
-  if (!recoveredFromSandbox || !(await providerExistsInGateway(provider))) {
+  const providerName =
+    provider === NVIDIA_HOSTED_LOGICAL_PROVIDER ? NVIDIA_HOSTED_NATIVE_PROVIDER : provider;
+  if (!recoveredFromSandbox || !(await providerExistsInGateway(providerName))) {
     logMissingNvidiaApiKeyHelp(helpUrl);
     process.exit(1);
   }
