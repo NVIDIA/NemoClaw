@@ -29,7 +29,7 @@ The provider implements resource operations against SDK desired-state and observ
 Pure policy compilation stays in SDK configuration; OpenShell transport and mutation code belong to the provider.
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
-Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
+Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-backend/src/contract.rs).
 
 ## Managed Kubernetes Ownership
 

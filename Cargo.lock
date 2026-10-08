@@ -2260,6 +2260,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-backend"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-runtime",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "nemoclaw-build"
 version = "0.1.0"
 dependencies = [
@@ -2461,6 +2470,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "nemo-fabric-core",
+ "nemoclaw-backend",
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "openshell-core",
