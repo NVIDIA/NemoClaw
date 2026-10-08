@@ -981,15 +981,34 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it.for([
-    { mode: "interactive", answer: "y", recreate: true },
-    { mode: "interactive", answer: "n", recreate: false },
-    { mode: "non-interactive", answer: "", recreate: true },
+    { mode: "interactive", answer: "y", recreate: true, reconciliation: null },
+    { mode: "interactive", answer: "n", recreate: false, reconciliation: null },
+    { mode: "non-interactive", answer: "", recreate: true, reconciliation: null },
+    {
+      mode: "planned recreation",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      forced: false,
+      reconciliation: true,
+    },
+    {
+      mode: "forced recreation",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      forced: true,
+      reconciliation: false,
+    },
   ])(
-    "$mode drift recreation with answer '$answer' preserves the confirmation decision (#12667)",
+    "$mode drift recreation with answer '$answer' preserves confirmation and reconciliation authority (#12667)",
     {
       timeout: 60_000,
     },
-    async ({ mode, answer, recreate }, context) => {
+    async (
+      { mode, answer, recreate, reconciliation, journalOnly = false, forced = false },
+      context,
+    ) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-drift-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -1023,11 +1042,16 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 const sourceSandboxId = createdSandbox.state.sandboxId;
 const prompts = [];
-process.on("exit", () => console.log(JSON.stringify({ commands, prompts, sourceSandboxId, sandboxId: createdSandbox.state.sandboxId })));
+let reconciliationRecorded = null;
+process.on("exit", () => console.log(JSON.stringify({ commands, prompts, reconciliationRecorded, sourceSandboxId, sandboxId: createdSandbox.state.sandboxId })));
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
+  if (cmd.includes("sandbox delete") && ${journalOnly}) {
+    reconciliationRecorded = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))}).loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference === true;
+    throw new Error("fixture: stop after journal persistence before deletion");
+  }
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("sandbox download")) {
@@ -1108,10 +1132,20 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-	  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
 	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
 	    createFixture,
-	  ));
+	  );
+  if (${journalOnly}) {
+    // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.
+    createArgs[15] = { ...createArgs[15], recreate: true, recreateTransaction: undefined };
+    const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+    sessions.updateSession((session) => {
+      delete session.checkpoint.sandboxRecreate;
+      return session;
+    });
+  }
+  const sandboxName = await createSandbox(...createArgs);
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1128,8 +1162,8 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
-      env["NEMOCLAW_NON_INTERACTIVE"] = mode === "non-interactive" ? "1" : undefined;
-      delete env["NEMOCLAW_RECREATE_SANDBOX"];
+      env["NEMOCLAW_NON_INTERACTIVE"] = mode !== "interactive" ? "1" : undefined;
+      env["NEMOCLAW_RECREATE_SANDBOX"] = forced ? "1" : undefined;
       const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
         env,
@@ -1137,7 +1171,7 @@ const { createSandbox } = require(${onboardPath});
         context,
       });
 
-      assert.equal(result.status, recreate ? 0 : 1, result.stderr);
+      assert.equal(result.status, journalOnly ? 1 : recreate ? 0 : 1, result.stderr);
       const payloadLine = result.stdout
         .trim()
         .split("\n")
@@ -1146,22 +1180,24 @@ const { createSandbox } = require(${onboardPath});
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
+      assert.equal(payload.reconciliationRecorded, reconciliation);
+      const completedRecreation = recreate && !journalOnly;
 
       assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*delete/.test(String(entry.command)),
         ),
-        recreate,
+        completedRecreation,
         "sandbox delete must match the confirmation decision",
       );
       assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*create/.test(String(entry.command)),
         ),
-        recreate,
+        completedRecreation,
         "sandbox create must match the confirmation decision",
       );
-      assert.equal(payload.sandboxId !== payload.sourceSandboxId, recreate);
+      assert.equal(payload.sandboxId !== payload.sourceSandboxId, completedRecreation);
       assert.equal(
         result.stdout.includes("requested inference selection changed"),
         mode === "interactive",

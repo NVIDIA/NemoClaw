@@ -2537,7 +2537,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       reconcileOpenClawInference = shouldReconcileRestoredOpenClawSelection(
         getRequestedSandboxAgentName(agent),
         customOpenClawImage,
-        createIntent?.recreate === true,
+        isRecreateSandbox(false),
         selectionDrift,
       );
       if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
