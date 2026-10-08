@@ -43,27 +43,27 @@ fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mut
     );
     for phase in ["current", "apply"] {
         assert_eq!(
-            graph["data"]["nemoclaw_gateway_capabilities"][phase]["required_compute_drivers"],
+            graph["data"]["openshell_gateway"][phase]["required_compute_drivers"],
             json!(["kubernetes"])
         );
     }
     for (kind, resources) in graph["resource"].as_object().unwrap() {
-        assert!(kind.starts_with("nemoclaw_"));
+        assert!(kind.starts_with("nemoclaw_") || kind.starts_with("openshell_"));
         for resource in resources.as_object().unwrap().values() {
             assert!(
                 resource["depends_on"]
                     .as_array()
                     .unwrap()
-                    .contains(&json!("data.nemoclaw_gateway_capabilities.apply"))
+                    .contains(&json!("data.openshell_gateway.apply"))
             );
             assert_eq!(
                 resource["lifecycle"]["precondition"][0]["condition"],
-                "${data.nemoclaw_gateway_capabilities.current.compatible}"
+                "${data.openshell_gateway.current.compatible}"
             );
         }
     }
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["assistant"]["lifecycle"]["prevent_destroy"],
+        graph["resource"]["openshell_sandbox"]["assistant"]["lifecycle"]["prevent_destroy"],
         true
     );
 }

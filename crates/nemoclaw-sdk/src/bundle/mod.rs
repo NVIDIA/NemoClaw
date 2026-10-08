@@ -107,6 +107,13 @@ pub fn required_files(version: &str) -> Result<Vec<String>, Error> {
             platform()?,
             executable(&format!("terraform-provider-nemoclaw_v{version}"))
         ),
+        format!(
+            "providers/{}/{}/{}/{}",
+            crate::compile::OPENSHELL_PROVIDER_ADDRESS,
+            version,
+            platform()?,
+            executable(&format!("terraform-provider-openshell_v{version}"))
+        ),
         helm_provider_path(&platform()?)?,
         "licenses/helm-provider-LICENSE".into(),
         crate::config::schema::SCHEMA_PATH.into(),

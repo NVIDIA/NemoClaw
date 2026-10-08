@@ -33,8 +33,8 @@ flowchart TB
     RUNTIME --> COMPILE["NemoClaw SDK<br/>Compile deployment graph"]
 
     subgraph DEPLOY["OpenTofu — deployment stage: plan → SDK checks → apply"]
-        PROVIDERS["4. NemoClaw provider → OpenShell<br/>Reconcile workspace and provider registrations"]
-        SANDBOX["5. NemoClaw provider → OpenShell<br/>Create or observe sandbox<br/>Image, policies, credentials and startup settings"]
+        PROVIDERS["4. OpenShell provider → OpenShell<br/>Reconcile workspace and provider registrations"]
+        SANDBOX["5. OpenShell provider → OpenShell<br/>Create or observe sandbox<br/>Image, policies, credentials and startup settings"]
         CONFIG["NemoClaw provider → generic host<br/>Apply SDK-prepared public Fabric configuration"]
         CHECK["Provider readiness checks"]
 
@@ -76,8 +76,8 @@ OpenShell owns sandbox creation and policy enforcement.
 | **1–2. Validate and compile** | The CLI acquires required credential values. The SDK validates configuration, locks deployment state, checks identity and recovery constraints, and compiles the runtime graph when required. |
 | **3. Runtime prerequisites** | Providers reconcile the declared gateway, inference services, storage, and networks. Provider data sources check gateway compatibility and service readiness before the SDK proceeds. |
 | **Deployment compilation** | After the runtime stage completes, the SDK compiles the OpenShell resource dependencies, sandbox policy, and startup settings into the deployment graph. |
-| **4. OpenShell registrations** | The NemoClaw provider reconciles the workspace, provider profiles, and credential-bearing provider registrations. Gateway version and compute-driver checks gate deployment mutations. |
-| **5. Sandbox reconciliation** | The NemoClaw provider sends OpenShell the image, network and filesystem policy, provider attachments, launch command, and environment. Existing bindings are observed; ordinary apply protects sandboxes against replacement or recreation of a missing bound sandbox. |
+| **4. OpenShell registrations** | The OpenShell provider reconciles the workspace, provider profiles, and credential-bearing provider registrations. Gateway version and compute-driver checks gate deployment mutations. |
+| **5. Sandbox reconciliation** | The OpenShell provider sends OpenShell the image, network and filesystem policy, provider attachments, launch command, and environment. Existing bindings are observed; ordinary apply protects sandboxes against replacement or recreation of a missing bound sandbox. |
 | **6. Fabric configuration** | OpenShell starts the generic Fabric host. The NemoClaw provider's `agent_configuration` resource supplies SDK-compiled canonical Fabric configuration after routes are established; the host validates and starts it through Fabric's public API. |
 | **7. Native configuration** | The selected Fabric adapter maps the public configuration into native settings and owns native validation. The NemoClaw host performs no adapter-specific translation. |
 | **8. Harness runtime** | The adapter starts its runtime and launches the harness or connects to an independently deployed remote service. The harness uses its installed components and configured settings. |
@@ -86,7 +86,7 @@ OpenShell owns sandbox creation and policy enforcement.
 | **T. Port forwarding** | An operator runs `openshell forward service` using a separately configured OpenShell CLI connection. Forwarding to an enabled listener lasts while that foreground command runs. |
 
 The Docker provider owns disposable Docker compute, images, model-cache volumes, and service networks.
-The NemoClaw provider owns OpenShell operations, Podman gateway processes, gateway initialization and retained bridges, and application-specific persistence.
+The OpenShell provider owns OpenShell operations; the NemoClaw provider owns Fabric runtime configuration, Podman gateway processes, gateway initialization and retained bridges, and application-specific persistence.
 The selected engine, any SSH execution setup, and the harness image are [operator prerequisites](../prerequisites.md).
 
 ## Conditions Summarized by the Diagram

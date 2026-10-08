@@ -238,7 +238,7 @@ fn teardown_expected(
     };
     if runtime {
         bind_teardown_processes(record, &mut targets, bindings)?;
-    } else if !bindings.contains_key("nemoclaw_workspace.deployment") {
+    } else if !bindings.contains_key("openshell_workspace.deployment") {
         return Err(Error::Conflict(
             "destroy requires the retained workspace binding",
         ));
@@ -506,14 +506,14 @@ mod tests {
         record.begin_apply(&record.document.clone(), BTreeMap::new());
         let bindings = [
             (
-                "nemoclaw_workspace.deployment".into(),
+                "openshell_workspace.deployment".into(),
                 StateBinding {
                     id: "workspace".into(),
                     ..Default::default()
                 },
             ),
             (
-                "nemoclaw_provider.removed".into(),
+                "openshell_provider_registration.removed".into(),
                 StateBinding {
                     id: "provider".into(),
                     ..Default::default()
@@ -525,7 +525,7 @@ mod tests {
         assert!(
             teardown_expected(&record, &bindings, false)
                 .unwrap()
-                .contains_key("nemoclaw_provider.removed")
+                .contains_key("openshell_provider_registration.removed")
         );
     }
 
@@ -629,7 +629,7 @@ mod tests {
 
         let mut root_bindings = bindings;
         root_bindings.insert(
-            "nemoclaw_workspace.deployment".into(),
+            "openshell_workspace.deployment".into(),
             StateBinding {
                 id: "possibly-partial-root-resource".into(),
                 ..Default::default()

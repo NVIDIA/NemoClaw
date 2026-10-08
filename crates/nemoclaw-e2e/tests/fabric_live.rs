@@ -76,7 +76,7 @@ fn bindings(directory: &Path) -> (Value, Row) {
             ),
             attributes["id"].clone(),
         );
-        if resource["type"] == "nemoclaw_sandbox" {
+        if resource["type"] == "openshell_sandbox" {
             assert!(
                 sandbox
                     .replace(serde_json::from_value(attributes.clone()).unwrap())

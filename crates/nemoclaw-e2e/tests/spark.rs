@@ -104,10 +104,10 @@ async fn spark_yaml_plans_and_applies_expected_resources() {
 
     let mut expected_apply = expected_runtime;
     expected_apply.extend(creates(&[
-        "nemoclaw_provider.inference_qwen",
-        "nemoclaw_provider_profile.inference_qwen",
-        "nemoclaw_sandbox.assistant",
-        "nemoclaw_workspace.deployment",
+        "openshell_provider_registration.inference_qwen",
+        "openshell_provider_profile.inference_qwen",
+        "openshell_sandbox.assistant",
+        "openshell_workspace.deployment",
     ]));
     let applied = deployment.apply(&document, &cancel).await.unwrap();
     assert_applied(&applied, &expected_apply);

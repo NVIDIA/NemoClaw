@@ -195,10 +195,9 @@ async fn exercise(fresh: bool) {
     );
     deployment.apply(&document, &cancel).await.unwrap();
     let recovered = bindings(&directory);
-    for (address, id) in before
-        .iter()
-        .filter(|(address, _)| address.starts_with("nemoclaw_"))
-    {
+    for (address, id) in before.iter().filter(|(address, _)| {
+        address.starts_with("nemoclaw_") || address.starts_with("openshell_")
+    }) {
         assert_eq!(
             recovered.get(address),
             Some(id),
@@ -227,7 +226,7 @@ async fn exercise(fresh: bool) {
     let retained = bindings(&directory);
     assert_eq!(retained.len(), 3);
     for address in [
-        "nemoclaw_workspace.deployment",
+        "openshell_workspace.deployment",
         "nemoclaw_gateway_storage.runtime",
         before
             .keys()

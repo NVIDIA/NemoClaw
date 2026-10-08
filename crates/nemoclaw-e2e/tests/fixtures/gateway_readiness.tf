@@ -61,7 +61,7 @@ resource "docker_container" "gateway" {
     target = "/var/run/docker.sock"
   }
 }
-data "nemoclaw_gateway_capabilities" "ready" {
+data "openshell_gateway" "ready" {
   required_compute_drivers = ["docker"]
   wait_timeout_seconds = 90
   depends_on = [docker_container.gateway]
@@ -72,12 +72,12 @@ data "nemoclaw_gateway_capabilities" "ready" {
     }
   }
 }
-resource "nemoclaw_workspace" "probe" {
+resource "openshell_workspace" "probe" {
   name = substr(var.name, 0, 19)
   owner = var.owner
   generation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  depends_on = [data.nemoclaw_gateway_capabilities.ready]
+  depends_on = [data.openshell_gateway.ready]
   lifecycle { prevent_destroy = true }
 }
-output "gateway_version" { value = data.nemoclaw_gateway_capabilities.ready.gateway_version }
-output "workspace_id" { value = nemoclaw_workspace.probe.id }
+output "gateway_version" { value = data.openshell_gateway.ready.gateway_version }
+output "workspace_id" { value = openshell_workspace.probe.id }

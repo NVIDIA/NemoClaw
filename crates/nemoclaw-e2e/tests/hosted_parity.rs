@@ -224,7 +224,7 @@ mod live {
                     ids.insert(address, attributes["id"].as_str().unwrap().into())
                         .is_none()
                 );
-                if resource["type"] == "nemoclaw_sandbox" {
+                if resource["type"] == "openshell_sandbox" {
                     assert!(sandbox.is_none(), "scenario must have exactly one sandbox");
                     sandbox = Some(serde_json::from_value(attributes.clone()).unwrap());
                 }
@@ -262,10 +262,10 @@ mod live {
             deferred: vec!["OpenShell registration and sandbox require the managed gateway".into()],
             deferred_resources: vec![
                 "nemoclaw_agent_configuration.assistant".into(),
-                "nemoclaw_provider.inference_hosted-nvidia-prod".into(),
-                "nemoclaw_provider_profile.inference_hosted-nvidia-prod".into(),
-                "nemoclaw_sandbox.assistant".into(),
-                "nemoclaw_workspace.deployment".into(),
+                "openshell_provider_registration.inference_hosted-nvidia-prod".into(),
+                "openshell_provider_profile.inference_hosted-nvidia-prod".into(),
+                "openshell_sandbox.assistant".into(),
+                "openshell_workspace.deployment".into(),
             ],
             resource_sources: Default::default(),
             unverified: vec![],
@@ -279,9 +279,9 @@ mod live {
         let mut removed = changes(
             &[
                 "nemoclaw_agent_configuration.assistant",
-                "nemoclaw_provider.inference_hosted-nvidia-prod",
-                "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-                "nemoclaw_sandbox.assistant",
+                "openshell_provider_registration.inference_hosted-nvidia-prod",
+                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "openshell_sandbox.assistant",
             ],
             "delete",
         );
@@ -299,7 +299,7 @@ mod live {
 
     fn retained_resources() -> Vec<String> {
         vec![
-            "nemoclaw_workspace.deployment".into(),
+            "openshell_workspace.deployment".into(),
             "nemoclaw_gateway_storage.runtime".into(),
         ]
     }
@@ -332,10 +332,10 @@ mod live {
         expected.extend(changes(
             &[
                 "nemoclaw_agent_configuration.assistant",
-                "nemoclaw_provider.inference_hosted-nvidia-prod",
-                "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-                "nemoclaw_sandbox.assistant",
-                "nemoclaw_workspace.deployment",
+                "openshell_provider_registration.inference_hosted-nvidia-prod",
+                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
             ],
             "create",
         ));
@@ -439,10 +439,10 @@ mod live {
         expected.extend(
             [
                 "nemoclaw_agent_configuration.assistant",
-                "nemoclaw_provider.inference_hosted-nvidia-prod",
-                "nemoclaw_provider_profile.inference_hosted-nvidia-prod",
-                "nemoclaw_sandbox.assistant",
-                "nemoclaw_workspace.deployment",
+                "openshell_provider_registration.inference_hosted-nvidia-prod",
+                "openshell_provider_profile.inference_hosted-nvidia-prod",
+                "openshell_sandbox.assistant",
+                "openshell_workspace.deployment",
             ]
             .map(String::from),
         );

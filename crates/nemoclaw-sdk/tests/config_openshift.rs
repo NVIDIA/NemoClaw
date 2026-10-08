@@ -111,7 +111,7 @@ fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
         assert!(graph["provider"].get("docker").is_none());
         for phase in ["current", "apply"] {
             assert_eq!(
-                graph["data"]["nemoclaw_gateway_capabilities"][phase]["required_compute_drivers"],
+                graph["data"]["openshell_gateway"][phase]["required_compute_drivers"],
                 json!(["kubernetes"])
             );
         }

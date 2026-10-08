@@ -117,13 +117,7 @@ pub fn plan_queries(document: &Document) -> Result<Vec<DiscoveryQuery>, ConfigEr
     Ok(queries)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservationStatus {
-    Available,
-    Unavailable,
-    Unknown,
-}
+pub use nemoclaw_backend::ObservationStatus;
 
 /// What a target read reports, given only its query's inputs. Plan and
 /// onboarding share these facts; a read that needs a plan's own resources is a

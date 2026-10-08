@@ -236,11 +236,7 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
             "Kubernetes discovery must not contact the client engine: {data_source}"
         );
     }
-    assert!(
-        agents["data"]
-            .get("nemoclaw_gateway_capabilities")
-            .is_some()
-    );
+    assert!(agents["data"].get("openshell_gateway").is_some());
     assert!(
         agents["data"]
             .get("nemoclaw_inference_capabilities")

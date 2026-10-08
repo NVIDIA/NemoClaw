@@ -47,7 +47,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
                 "name":name,"owner":owner,"endpoint":gateway.endpoint,
                 "wait_timeout_seconds":90,"read_trigger":"${timestamp() != \"\"}"
             }},
-            "nemoclaw_gateway_capabilities":{"current":{
+            "openshell_gateway":{"current":{
                 "required_compute_drivers":["docker"],"wait_timeout_seconds":90,
                 "read_trigger":"${data.nemoclaw_gateway_readiness.current.ready}",
                 "lifecycle":{"postcondition":[{"condition":"${self.compatible}","error_message":"Gateway incompatible"}]}

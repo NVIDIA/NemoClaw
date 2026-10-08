@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fabric::AgentConfigurationBackend;
-use crate::openshell::{EnvironmentSecrets, OpenShell};
+use crate::openshell::OpenShell;
 use crate::{Backend, Definition, Mutation, ResourceAdapter, Row};
 use crate::{docker::Connections, services::BackendRegistry};
 use async_trait::async_trait;
 use nemoclaw_sdk::ObservationError;
+use openshell_provider::{GatewayClient, GatewaySettings};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, RwLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -31,30 +32,14 @@ pub struct ProviderConfig {
     destroy: Value<bool>,
     platform_only: Value<bool>,
 }
-fn text(value: Value<String>) -> String {
-    match value {
-        Value::Value(v) => v,
-        _ => String::new(),
-    }
-}
 #[derive(Default)]
-enum Connection {
-    #[default]
-    Unconfigured,
-    Deferred,
-    Ready(OpenShell),
-}
-#[derive(Default)]
-pub(crate) struct ConfiguredBackend(RwLock<Connection>, Connections);
+pub(crate) struct ConfiguredBackend(GatewayClient, Connections);
 impl ConfiguredBackend {
     pub(crate) fn connections(&self) -> &Connections {
         &self.1
     }
     pub(crate) fn client(&self) -> Result<OpenShell, ObservationError> {
-        match &*self.0.read().map_err(|_| ObservationError::Query)? {
-            Connection::Ready(client) => Ok(client.clone()),
-            Connection::Unconfigured | Connection::Deferred => Err(ObservationError::Query),
-        }
+        self.0.client()
     }
 }
 #[async_trait]
@@ -71,12 +56,7 @@ impl Backend for ConfiguredBackend {
         // Unknown provider inputs may be produced by an upstream resource.
         // Only fresh-resource planning can defer its read; bound resources
         // must still be observed, and mutations always require a ready client.
-        if prior.is_none()
-            && matches!(
-                *self.0.read().map_err(|_| ObservationError::Query)?,
-                Connection::Deferred
-            )
-        {
+        if prior.is_none() && self.0.deferred()? {
             return Ok(());
         }
         let client = self.client()?;
@@ -222,11 +202,6 @@ impl Provider for NemoClawProvider {
                     as Box<dyn DynamicDataSource>,
             ),
             (
-                "gateway_capabilities".into(),
-                Box::new(crate::gateway::GatewayDataSource(self.backend.clone()))
-                    as Box<dyn DynamicDataSource>,
-            ),
-            (
                 "gateway_readiness".into(),
                 Box::new(crate::gateway::GatewayReadinessDataSource(
                     self.backend.clone(),
@@ -275,44 +250,25 @@ impl Provider for NemoClawProvider {
         // Reconfiguration must not retain a client or teardown permission from
         // an earlier configuration when inputs become unknown or invalid.
         self.destroying.store(false, Ordering::Release);
-        let deferred = [
-            &config.endpoint,
-            &config.credential_env,
-            &config.tls_ca_env,
-            &config.tls_certificate_env,
-            &config.tls_key_env,
-        ]
-        .into_iter()
-        .any(|value| matches!(value, Value::Unknown))
+        let settings = GatewaySettings {
+            endpoint: &config.endpoint,
+            credential_env: &config.credential_env,
+            tls_ca_env: &config.tls_ca_env,
+            tls_certificate_env: &config.tls_certificate_env,
+            tls_key_env: &config.tls_key_env,
+        };
+        let deferred = settings.unknown()
             || matches!(config.destroy, Value::Unknown)
             || matches!(config.platform_only, Value::Unknown);
-        match self.backend.0.write() {
-            Ok(mut slot) => {
-                *slot = if deferred {
-                    Connection::Deferred
-                } else {
-                    Connection::Unconfigured
-                }
-            }
-            Err(_) => {
-                diags.root_error_short("Provider configuration lock failed");
-                return None;
-            }
+        if let Err(error) = self.backend.0.reset(deferred) {
+            diags.root_error_short(error);
+            return None;
         }
         if deferred {
             return Some(());
         }
         if matches!(config.platform_only, Value::Value(true)) {
-            if [
-                &config.endpoint,
-                &config.credential_env,
-                &config.tls_ca_env,
-                &config.tls_certificate_env,
-                &config.tls_key_env,
-            ]
-            .into_iter()
-            .any(|value| matches!(value, Value::Value(_)))
-            {
+            if settings.any() {
                 diags.root_error_short("Platform-only provider configuration cannot include gateway connection settings");
                 return None;
             }
@@ -322,64 +278,29 @@ impl Provider for NemoClawProvider {
             );
             return Some(());
         }
-        if matches!(config.endpoint, Value::Null) {
-            if [
-                &config.credential_env,
-                &config.tls_ca_env,
-                &config.tls_certificate_env,
-                &config.tls_key_env,
-            ]
-            .into_iter()
-            .any(|value| matches!(value, Value::Value(value) if !value.is_empty()))
-                || matches!(config.destroy, Value::Value(true))
-            {
-                diags.root_error_short("Gateway credentials and teardown require an endpoint");
-                return None;
-            }
-            return Some(());
-        }
-        let mut gateway = nemoclaw_openshell::Connection {
-            endpoint: text(config.endpoint),
-            ..Default::default()
-        };
-        let credential = text(config.credential_env);
-        if !credential.is_empty() {
-            gateway.credential_env = Some(credential);
-        }
-        let ca = text(config.tls_ca_env);
-        let certificate = text(config.tls_certificate_env);
-        let key = text(config.tls_key_env);
-        if !ca.is_empty() || !certificate.is_empty() || !key.is_empty() {
-            if ca.is_empty() || certificate.is_empty() || key.is_empty() {
-                diags.root_error_short("Incomplete TLS credential references");
-                return None;
-            }
-            gateway.tls = Some(nemoclaw_openshell::TlsFiles {
-                ca_env: ca,
-                certificate_env: certificate,
-                key_env: key,
-            });
-        }
-        match OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)) {
-            Ok(client) => {
-                match self.backend.0.write() {
-                    Ok(mut slot) => *slot = Connection::Ready(client),
-                    Err(_) => {
-                        diags.root_error_short("Provider configuration lock failed");
-                        return None;
-                    }
+        let connection = match settings.connection() {
+            Ok(Some(connection)) => connection,
+            Ok(None) => {
+                if settings.credentials() || matches!(config.destroy, Value::Value(true)) {
+                    diags.root_error_short("Gateway credentials and teardown require an endpoint");
+                    return None;
                 }
-                self.destroying.store(
-                    matches!(config.destroy, Value::Value(true)),
-                    Ordering::Release,
-                );
-                Some(())
+                return Some(());
             }
             Err(error) => {
-                diags.root_error("Gateway connection", error.to_string());
-                None
+                diags.root_error_short(error);
+                return None;
             }
+        };
+        if let Err(error) = self.backend.0.connect(&connection) {
+            diags.root_error("Gateway connection", error);
+            return None;
         }
+        self.destroying.store(
+            matches!(config.destroy, Value::Value(true)),
+            Ordering::Release,
+        );
+        Some(())
     }
     fn get_resources(
         &self,
@@ -406,7 +327,6 @@ pub(crate) fn definitions() -> Vec<Definition> {
     definitions.extend(crate::kubernetes::definitions());
     definitions.extend(crate::services::definitions());
     definitions.extend(crate::managed::definitions());
-    definitions.extend(crate::openshell::definitions());
     definitions.extend(crate::fabric::definitions());
     definitions
 }

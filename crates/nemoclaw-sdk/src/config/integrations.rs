@@ -160,8 +160,8 @@ pub use nemoclaw_openshell::search::{SearchProvider, search_provider_name};
 /// Deployment graph address of a search provider's profile.
 pub(crate) fn profile_address(provider: SearchProvider) -> &'static str {
     match provider {
-        SearchProvider::Brave => "nemoclaw_provider_profile.web_search",
-        SearchProvider::Tavily => "nemoclaw_provider_profile.web_search_tavily",
+        SearchProvider::Brave => "openshell_provider_profile.web_search",
+        SearchProvider::Tavily => "openshell_provider_profile.web_search_tavily",
     }
 }
 

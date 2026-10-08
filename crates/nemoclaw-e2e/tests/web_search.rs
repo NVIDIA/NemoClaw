@@ -17,13 +17,13 @@ async fn search_preserves_credentials_on_unchanged_ensure_and_removes_owned_regi
     for (provider_type, profile_address, profile_name, credential_env) in [
         (
             "brave",
-            "nemoclaw_provider_profile.web_search",
+            "openshell_provider_profile.web_search",
             "nemoclaw-brave",
             "BRAVE_API_KEY",
         ),
         (
             "tavily",
-            "nemoclaw_provider_profile.web_search_tavily",
+            "openshell_provider_profile.web_search_tavily",
             "nemoclaw-tavily",
             "TAVILY_API_KEY",
         ),
