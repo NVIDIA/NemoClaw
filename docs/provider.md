@@ -157,6 +157,8 @@ Both take optional `owner` and `generation`, generated the same way; generated g
 | `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
 | `nemoclaw_sandbox_readiness` | [Sandbox completion](#sandbox-completion) |
 | `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
+| `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
+| `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
 
 ### Docker and Helm Types
 
@@ -403,6 +405,15 @@ Generated graphs declare:
 - All capabilities dropped, `no-new-privileges`, restart policy `no`, and JSON-file logs rotated at 32 MB across three files.
 
 OpenTofu shows a changed setting as a replacement of the whole `NEMOCLAW_RUNTIME_SPEC` environment entry.
+
+## Ollama Runtime Contracts
+
+`nemoclaw_ollama_runtime` computes the managed Ollama runtime's `NEMOCLAW_RUNTIME_SPEC` the same way.
+Its blocks follow the Ollama runtime contract with snake_case names: `hardware`, `model` with `name` and `digest`, `serving`, and `memory`.
+
+`nemoclaw_ollama_proxy_runtime` computes the external Ollama proxy's `NEMOCLAW_OLLAMA_PROXY` value from `bind_address`, `upstream`, `model`, and `digest`.
+`bind_address` is a loopback or private address with a port, and `upstream` a loopback HTTP endpoint ending in `/v1`; the output `spec` names the endpoint the proxy serves on `bind_address`.
+Generated graphs pass each `spec` to its container's environment variable.
 
 ## Runtime Image Compatibility
 

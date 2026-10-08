@@ -302,26 +302,57 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .ok_or(Error::State("missing service resource"))?;
         let mut attrs = container(target)?;
         literal(&mut attrs);
-        if target.kind == crate::services::installers::vllm::SERVICE_KIND {
-            // The runtime contract comes from typed settings that OpenTofu
-            // checks, not from an opaque compiled string.
+        // Runtime contracts come from typed settings that OpenTofu checks,
+        // not from opaque compiled strings.
+        use crate::services::installers::{ollama, vllm};
+        let contract = match target.kind.as_str() {
+            vllm::SERVICE_KIND => Some((
+                vllm::RUNTIME_DATA_SOURCE,
+                "NEMOCLAW_RUNTIME_SPEC",
+                crate::hcl_schema::to_hcl(
+                    &vllm::runtime_fields().map_err(|_| {
+                        Error::State("the vLLM runtime contract has no OpenTofu schema")
+                    })?,
+                    &serde_json::to_value(vllm::configured_service(&spec(target)?)?)
+                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                ),
+            )),
+            ollama::SERVICE_KIND => Some((
+                ollama::RUNTIME_DATA_SOURCE,
+                "NEMOCLAW_RUNTIME_SPEC",
+                crate::hcl_schema::to_hcl(
+                    &ollama::runtime_fields().map_err(|_| {
+                        Error::State("the Ollama runtime contract has no OpenTofu schema")
+                    })?,
+                    &serde_json::to_value(ollama::configured_service(&spec(target)?)?)
+                        .map_err(|_| Error::State("cannot encode runtime settings"))?,
+                ),
+            )),
+            ollama::proxy::PROXY => {
+                let proxy = ollama::proxy::row_spec(&target.values)?;
+                Some((
+                    ollama::proxy::RUNTIME_DATA_SOURCE,
+                    "NEMOCLAW_OLLAMA_PROXY",
+                    json!({
+                        "bind_address": proxy.bind_address,
+                        "upstream": proxy.settings.upstream,
+                        "model": proxy.settings.model,
+                        "digest": proxy.settings.digest,
+                    }),
+                ))
+            }
+            _ => None,
+        };
+        if let Some((source, variable, mut settings)) = contract {
             let logical = address(&target.address)
                 .split_once('.')
                 .ok_or(Error::State("invalid service address"))?
                 .1
                 .to_owned();
-            let fields = crate::services::installers::vllm::runtime_fields()
-                .map_err(|_| Error::State("the vLLM runtime contract has no OpenTofu schema"))?;
-            let service = serde_json::to_value(
-                crate::services::installers::vllm::configured_service(&spec(target)?)?,
-            )
-            .map_err(|_| Error::State("cannot encode vLLM runtime settings"))?;
-            let mut settings = crate::hcl_schema::to_hcl(&fields, &service);
             literal(&mut settings);
-            let source = crate::services::installers::vllm::RUNTIME_DATA_SOURCE;
             graph["data"][format!("nemoclaw_{source}")][&logical] = settings;
             attrs["env"] = json!([format!(
-                "NEMOCLAW_RUNTIME_SPEC=${{data.nemoclaw_{source}.{logical}.spec}}"
+                "{variable}=${{data.nemoclaw_{source}.{logical}.spec}}"
             )]);
         }
         if target.kind == crate::managed::GATEWAY_KIND {
