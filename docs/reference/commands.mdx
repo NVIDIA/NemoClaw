@@ -3781,7 +3781,9 @@ $$nemoclaw credentials reset nvidia-prod
 
 ### `$$nemoclaw gc`
 
-Remove orphaned sandbox Docker images from the host. Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository. The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain. This command lists images from both repositories, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
+Remove orphaned sandbox Docker images from the host. Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository. The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain. Docker images are shared across gateways on the host. This command lists images from both repositories, checks every validated host gateway registry, and removes only images that no registered sandbox uses. It checks the registries again after confirmation, so images registered while the prompt was open remain protected.
+
+If the command cannot safely read a gateway registry, it stops before deletion. Correct the reported gateway-state problem, then rerun `$$nemoclaw gc --dry-run` before removing images.
 
 ```bash
 $$nemoclaw gc [--dry-run] [--yes|-y|--force]
