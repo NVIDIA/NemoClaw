@@ -70,6 +70,12 @@ export function resolveDcodeRebuildTarget(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${gatewayPort}.`,
     );
   }
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    entry.nativeLocalProviderAttachment,
+  );
+  if (entry.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment) {
+    throw new Error("Malformed native local provider attachment; sandbox is untouched");
+  }
   return {
     agent: DCODE_AGENT_NAME,
     gatewayName,
@@ -77,13 +83,7 @@ export function resolveDcodeRebuildTarget(
     provider: requiredString(resumeConfig.provider, "inference provider"),
     model: requiredString(resumeConfig.model, "inference model"),
     preferredInferenceApi: resumeConfig.preferredInferenceApi,
-    ...(normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment)
-      ? {
-          nativeLocalProviderAttachment: normalizeNativeLocalProviderAttachment(
-            entry.nativeLocalProviderAttachment,
-          ),
-        }
-      : {}),
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
       ? { nativeProvider: true }
       : {}),

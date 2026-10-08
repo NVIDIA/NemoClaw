@@ -254,6 +254,13 @@ export function prepareRebuildResumeConfig(
     bail("Malformed native NVIDIA provider attachment; sandbox is untouched");
     return null;
   }
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    sb.nativeLocalProviderAttachment,
+  );
+  if (sb.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment) {
+    bail("Malformed native local provider attachment; sandbox is untouched");
+    return null;
+  }
   return {
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     agent: rebuildAgent,
@@ -270,9 +277,7 @@ export function prepareRebuildResumeConfig(
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
     registryInferenceRoute,
-    nativeLocalProviderAttachment: normalizeNativeLocalProviderAttachment(
-      sb.nativeLocalProviderAttachment,
-    ),
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ambient,
   };
 }

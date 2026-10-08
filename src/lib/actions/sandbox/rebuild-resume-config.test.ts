@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -921,6 +922,61 @@ describe("persisted native NVIDIA rebuild authority", () => {
       );
       expect(result).not.toBeNull();
       expect(result.nativeNvidiaProviderAttachment).toEqual(receipt);
+    },
+  );
+});
+
+describe("persisted native local rebuild authority", () => {
+  const binding = {
+    provider: "vllm-local",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "sentinel",
+    gatewayName: "nemoclaw",
+    sandboxName: "alpha",
+  } as const;
+  const attachment = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1,
+    providerId: "owned",
+  };
+  it.each([null, {}, { ...attachment, providerId: "" }, { ...attachment, schemaVersion: 2 }])(
+    "rejects malformed local authority before returning a rebuild plan (%j)",
+    (receipt) => {
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+      expect(() =>
+        prepareRebuildResumeConfig(
+          "alpha",
+          entry({
+            provider: binding.provider,
+            model: "model",
+            nativeLocalProviderAttachment: receipt,
+          }),
+          "langchain-deepagents-code",
+          noopLog,
+          throwingBail,
+        ),
+      ).toThrow("Malformed native local provider attachment");
+    },
+  );
+  it.each([attachment, undefined])(
+    "preserves valid native local or absent legacy authority (%j)",
+    (receipt) => {
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+      const result = prepareRebuildResumeConfig(
+        "alpha",
+        entry({
+          provider: binding.provider,
+          model: "model",
+          nativeLocalProviderAttachment: receipt,
+        }),
+        "langchain-deepagents-code",
+        noopLog,
+        throwingBail,
+      );
+      expect(result).not.toBeNull();
+      expect(result.nativeLocalProviderAttachment).toEqual(receipt);
     },
   );
 });
