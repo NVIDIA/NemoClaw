@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { observeWindowsMxcNativeHostFacts } from "./native-host-facts";
 
@@ -37,5 +37,30 @@ describe("inactive native Windows MXC host observation", () => {
       nativeArchitecture: "x64",
       release: "6.6.87.2-microsoft-standard-WSL2",
     });
+  });
+
+  it("uses Windows' native architecture marker under x64 emulation (#10585)", () => {
+    expect(
+      observeWindowsMxcNativeHostFacts({
+        platform: "win32",
+        machine: () => "x86_64",
+        nativeArchitectureOverride: () => "ARM64",
+        release: () => "10.0.28000.30169",
+      }),
+    ).toEqual({
+      platform: "win32",
+      nativeArchitecture: "arm64",
+      release: "10.0.28000.30169",
+    });
+  });
+
+  it("uses the ARM processor identity when ARM64 Windows omits the WOW64 marker (#10585)", () => {
+    try {
+      vi.stubEnv("PROCESSOR_ARCHITEW6432", undefined);
+      vi.stubEnv("PROCESSOR_IDENTIFIER", "ARMv8 (64-bit) Family 8 Model D87 Revision 1, NVIDIA");
+      expect(observeWindowsMxcNativeHostFacts()).toMatchObject({ nativeArchitecture: "arm64" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

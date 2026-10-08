@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MxcWindowsInactiveOnboardingInput } from "../../../src/lib/onboard/windows-mxc/inactive-onboarding.ts";
-import { runMxcWindowsInactiveOnboarding } from "../../../src/lib/onboard/windows-mxc/inactive-onboarding.ts";
+import {
+  recoverMxcWindowsInactiveOnboarding,
+  runMxcWindowsInactiveOnboarding,
+} from "../../../src/lib/onboard/windows-mxc/inactive-onboarding.ts";
 import {
   qualifyMxcOpenShellAttachment,
   resolveMxcOpenShellDistributionAuthority,
@@ -31,6 +34,8 @@ export interface WindowsMxcInactiveOnboardingCompositionInput {
   readonly workspace: string;
   readonly policy: MxcOpenShellLivePolicyBinding;
   readonly bootstrap: MxcWindowsInactiveOnboardingInput["bootstrap"];
+  readonly executorEnvironment?: NodeJS.ProcessEnv;
+  readonly executorEnvironmentReferences?: readonly string[];
   readonly executorRuntime?: MxcWindowsOpenShellExecutorRuntime;
   readonly recordFailure?: (record: MxcOpenShellLiveFailureRecord) => void;
 }
@@ -53,7 +58,10 @@ export async function createWindowsMxcInactiveOnboardingComposition(
   const boundary = createMxcWindowsOpenShellExecutor({
     distributionAuthority: input.distributionAuthority,
     observationRequest: input.attachmentObservation,
-    runtime: input.executorRuntime,
+    ...(input.executorRuntime
+      ? { runtime: input.executorRuntime }
+      : { environment: input.executorEnvironment }),
+    environmentReferences: input.executorEnvironmentReferences,
     recordFailure: input.recordFailure,
   });
   const operations = createMxcOpenShellLiveOperations({
@@ -80,4 +88,24 @@ export async function runWindowsMxcInactiveOnboardingComposition(
   return await runMxcWindowsInactiveOnboarding(
     await createWindowsMxcInactiveOnboardingComposition(input),
   );
+}
+
+/** Reconcile the same request authority without registering or selecting MXC. */
+export async function recoverWindowsMxcInactiveOnboardingComposition(
+  input: WindowsMxcInactiveOnboardingCompositionInput,
+) {
+  return await recoverMxcWindowsInactiveOnboarding(
+    await createWindowsMxcInactiveOnboardingComposition(input),
+  );
+}
+
+/** Bind one physical qualification cycle to the composed create and recovery paths. */
+export function createWindowsMxcInactiveOnboardingLifecycle(
+  input: WindowsMxcInactiveOnboardingCompositionInput,
+) {
+  return Object.freeze({
+    qualify: async () => await createWindowsMxcInactiveOnboardingComposition(input),
+    run: async () => await runWindowsMxcInactiveOnboardingComposition(input),
+    recover: async () => await recoverWindowsMxcInactiveOnboardingComposition(input),
+  });
 }
