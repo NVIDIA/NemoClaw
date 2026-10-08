@@ -57,6 +57,10 @@ mod service_storage;
 mod spark;
 #[path = "tls.rs"]
 mod tls;
+// The fixture engine listens on a Unix socket.
+#[cfg(unix)]
+#[path = "vllm_runtime.rs"]
+mod vllm_runtime;
 #[path = "web_search.rs"]
 mod web_search;
 

@@ -301,6 +301,28 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .ok_or(Error::State("missing service resource"))?;
         let mut attrs = container(target)?;
         literal(&mut attrs);
+        if target.kind == crate::services::installers::vllm::SERVICE_KIND {
+            // The runtime contract comes from typed settings that OpenTofu
+            // checks, not from an opaque compiled string.
+            let logical = address(&target.address)
+                .split_once('.')
+                .ok_or(Error::State("invalid service address"))?
+                .1
+                .to_owned();
+            let fields = crate::services::installers::vllm::runtime_fields()
+                .map_err(|_| Error::State("the vLLM runtime contract has no OpenTofu schema"))?;
+            let service = serde_json::to_value(
+                crate::services::installers::vllm::configured_service(&spec(target)?)?,
+            )
+            .map_err(|_| Error::State("cannot encode vLLM runtime settings"))?;
+            let mut settings = crate::hcl_schema::to_hcl(&fields, &service);
+            literal(&mut settings);
+            let source = crate::services::installers::vllm::RUNTIME_DATA_SOURCE;
+            graph["data"][format!("nemoclaw_{source}")][&logical] = settings;
+            attrs["env"] = json!([format!(
+                "NEMOCLAW_RUNTIME_SPEC=${{data.nemoclaw_{source}.{logical}.spec}}"
+            )]);
+        }
         if target.kind == crate::managed::GATEWAY_KIND {
             fn storage_path(value: &mut Value) {
                 match value {

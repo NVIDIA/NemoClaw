@@ -126,9 +126,23 @@ impl Provider for NemoClawProvider {
     type MetaState<'a> = ValueEmpty;
     fn get_data_sources(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
+        let vllm_runtime = match crate::vllm_runtime::VllmRuntimeDataSource::new() {
+            Ok(source) => source,
+            Err(error) => {
+                diags.root_error(
+                    "The vLLM runtime contract has no OpenTofu schema",
+                    error.to_string(),
+                );
+                return None;
+            }
+        };
         Some(HashMap::from([
+            (
+                nemoclaw_sdk::services::installers::vllm::RUNTIME_DATA_SOURCE.into(),
+                Box::new(vllm_runtime) as Box<dyn DynamicDataSource>,
+            ),
             (
                 "inference_capabilities".into(),
                 Box::new(crate::inference_discovery::InferenceDataSource)
