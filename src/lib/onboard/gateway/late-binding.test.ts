@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import { gatewayAdaptersForTest } from "../../../../test/helpers/openshell-gateway-adapters";
 import path from "node:path";
 
@@ -561,7 +562,10 @@ describe("gateway lifecycle late binding", () => {
       expect(
         gatewayStateLifecycleLock.tryAcquireManagedGatewayStateLifecycleLock(stateDir),
       ).toBeNull();
-      return { OPENSHELL_SERVER_PORT: String(port) };
+      return {
+        OPENSHELL_SERVER_PORT: String(port),
+        OPENSHELL_DOCKER_NETWORK_NAME: "custom-network",
+      };
     });
     const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
     const runtimeIdentitySpy = vi
@@ -621,6 +625,7 @@ describe("gateway lifecycle late binding", () => {
       verifySandboxBridgeGatewayReachableOrExit: verifyReachability,
     });
 
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(root);
     name = "resumed";
     port = 9777;
     const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
@@ -662,6 +667,12 @@ describe("gateway lifecycle late binding", () => {
       expect(managedStart).toHaveBeenCalledWith(
         expect.objectContaining({ gatewayName: "resumed" }),
       );
+      const receiptPath = path.join(
+        root,
+        ".local/state/nemoclaw/gateway-runtime-bindings/9777.json",
+      );
+      const savedBinding = fs.readFileSync(receiptPath, "utf8");
+      expect(JSON.parse(savedBinding)).toEqual({ stateDir, dockerNetworkName: "custom-network" });
       const runtimeIdentityOptions = runtimeIdentitySpy.mock.calls[0]?.[0];
       const managedOptions = managedStart.mock.calls[0]?.[0];
       expect(runtimeIdentityOptions?.env).toEqual(managedOptions?.env);
@@ -722,6 +733,7 @@ describe("gateway lifecycle late binding", () => {
 
       await expect(start.startDockerDriverGateway()).rejects.toThrow(/refusing to adopt/);
       expect(fs.readFileSync(path.join(unsafeStateDir, "keep.txt"), "utf8")).toBe("keep\n");
+      expect(fs.readFileSync(receiptPath, "utf8")).toBe(savedBinding);
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
 
@@ -743,6 +755,7 @@ describe("gateway lifecycle late binding", () => {
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
     } finally {
+      homeSpy.mockRestore();
       runtimeIdentitySpy.mockRestore();
       vi.unstubAllEnvs();
       fs.rmSync(root, { force: true, recursive: true });

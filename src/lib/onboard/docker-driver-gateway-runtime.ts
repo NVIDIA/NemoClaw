@@ -36,6 +36,7 @@ import {
 } from "./gateway-process-identity";
 import { resolveOpenshell } from "./openshell-cli";
 import type { PortProbeResult } from "./preflight";
+import { resolveDockerDriverGatewayBinding } from "./gateway/runtime-binding";
 
 // Keep the listener option type on the established runtime facade while the
 // implementation remains isolated in docker-driver-gateway-port-listener.ts.
@@ -171,8 +172,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     typeof deps.gatewayPort === "function" ? deps.gatewayPort() : deps.gatewayPort;
 
   function getDockerDriverGatewayStateDir(): string {
+    const binding = resolveDockerDriverGatewayBinding(
+      process.env,
+      os.homedir(),
+      currentGatewayPort(),
+    );
     return gatewayBinding.resolveGatewayStateDirForPort({
-      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      configured: binding.stateDir,
       home: os.homedir(),
       port: currentGatewayPort(),
     });
@@ -270,11 +276,20 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       }
       podmanSocketPath = candidate.slice("unix://".length);
     }
+    const binding = resolveDockerDriverGatewayBinding(
+      process.env,
+      os.homedir(),
+      currentGatewayPort(),
+    );
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
-      stateDir: getDockerDriverGatewayStateDir(),
-      dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
+      stateDir: gatewayBinding.resolveGatewayStateDirForPort({
+        configured: binding.stateDir,
+        home: os.homedir(),
+        port: currentGatewayPort(),
+      }),
+      dockerNetworkName: binding.dockerNetworkName || "openshell-docker",
       podmanSocketPath,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
