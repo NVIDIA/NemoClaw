@@ -7,8 +7,6 @@ import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-
 import { retryUntilAsync } from "../../core/retry";
 import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
-import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted/contract";
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import {
   classifyRegisteredPortableAgentLifecycle,
   qualifyLegacyHermesPortableLifecycleProfile,
@@ -19,6 +17,7 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -158,21 +157,6 @@ async function checkStartedSandboxInference(
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  const recordedAttachment =
-    sandbox.nativeHostedProviderAttachment !== undefined
-      ? sandbox.nativeHostedProviderAttachment
-      : sandbox.nativeNvidiaProviderAttachment;
-  const nativeAttachment = normalizeNativeHostedProviderAttachment(
-    sandbox.nativeHostedProviderAttachment !== undefined
-      ? recordedAttachment
-      : normalizeNativeNvidiaProviderAttachment(recordedAttachment),
-    provider,
-  );
-  if (recordedAttachment !== undefined && !nativeAttachment) {
-    throw new Error(
-      "Native hosted provider attachment is invalid for the recorded inference provider. Recreate the sandbox to restore inference.",
-    );
-  }
   log("  Checking that the sandbox serves an agent request…");
   const input = {
     sandboxName,
@@ -181,7 +165,11 @@ async function checkStartedSandboxInference(
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
-    ...(nativeAttachment ? { nativeProvider: true } : {}),
+    ...(normalizeNativeHostedProviderAttachment(
+      sandbox.nativeHostedProviderAttachment ?? sandbox.nativeNvidiaProviderAttachment,
+    )
+      ? { nativeProvider: true }
+      : {}),
   };
   const probe = () =>
     (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
