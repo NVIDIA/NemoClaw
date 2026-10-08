@@ -339,18 +339,34 @@ describe("credentials oclif adapter source coverage", () => {
   it("deletes provider credentials with --yes", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 1,
+      stderr: "Error: provider 'nvidia-prod' not found",
+    });
     await CredentialsResetCommand.run(["nvidia-prod", "--yes"], rootDir);
 
     expect(mocks.prompt).not.toHaveBeenCalled();
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
-      {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        suppressOutput: true,
-        timeout: 30_000,
-      },
-    );
+    expect(mocks.runOpenshellProviderCommand.mock.calls).toEqual([
+      [
+        ["provider", "get", "-g", "nemoclaw", "nvidia-prod"],
+        {
+          ignoreError: true,
+          maxBuffer: 64 * 1024,
+          suppressOutput: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30_000,
+        },
+      ],
+      [
+        ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
+          timeout: 30_000,
+        },
+      ],
+    ]);
     const output = log.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     log.mockRestore();
     expect(output).toContain("Removed provider 'nvidia-prod'");
