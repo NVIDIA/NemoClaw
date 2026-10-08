@@ -7,6 +7,7 @@ import { dockerCapture } from "../adapters/docker";
 import type { ResolveBaseImageOptions } from "../sandbox-base-image";
 import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
 import type { AgentDefinition } from "./defs";
+import { DEEP_AGENTS_CODE_SANDBOX_USER } from "./deep-agents-code-runtime-identity";
 
 const DEEPAGENTS_CODE_DISTRIBUTION = "deepagents-code";
 const DEEPAGENTS_CODE_DOS2UNIX_PROBE_OK = "nemoclaw-dcode-dos2unix-ok";
@@ -72,7 +73,7 @@ export function deepAgentsCodeBaseImageHasDos2Unix(imageRef: string): boolean {
       "--rm",
       ...DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS,
       "--user",
-      "999:999",
+      DEEP_AGENTS_CODE_SANDBOX_USER,
       "--entrypoint",
       "/bin/sh",
       imageRef,

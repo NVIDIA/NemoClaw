@@ -145,10 +145,16 @@ export function createPodmanPrivilegedSandboxControl(
       > & { readonly timeoutMs?: number },
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
-    // The caller restricts this to the native-home image whose sandbox user
-    // is UID/GID 999; target resolution still pins the exact managed container.
-    executeAsSandboxUser: (input: RuntimeProviderPrivilegedSandboxCommandInput) =>
-      execute(engine, input, "999:999"),
+    // The caller supplies its managed-image identity; target resolution still
+    // pins the exact container, and root or option-like identities are refused.
+    executeAsSandboxUser: (
+      input: RuntimeProviderPrivilegedSandboxCommandInput & { readonly sandboxUser: string },
+    ) => {
+      if (!/^[1-9][0-9]{0,9}:[1-9][0-9]{0,9}$/u.test(input.sandboxUser)) {
+        throw new Error("Podman sandbox-user cleanup requires a non-root numeric UID and GID.");
+      }
+      return execute(engine, input, input.sandboxUser);
+    },
     ...(cleanupEngine
       ? {
           clearStoppedStateRoots: (

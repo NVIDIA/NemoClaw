@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
+import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
@@ -806,6 +807,7 @@ export async function executeSandboxDestroy({
                 sandbox,
                 sandboxName,
                 registeredSandboxNames: [...registeredSandboxNames],
+                sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
                 command,
                 sanitizeEnvironment: true,
                 timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,

@@ -461,7 +461,7 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   /** Provider-owned execution as the pinned native-home sandbox user. */
   executeAsSandboxUser?(
-    input: RuntimeProviderPrivilegedSandboxCommandInput,
+    input: RuntimeProviderPrivilegedSandboxCommandInput & { readonly sandboxUser: string },
   ): RuntimeProviderPrivilegedSandboxCommandResult;
   clearStoppedStateRoots?(
     input: RuntimeProviderStoppedSandboxStateCleanupInput,
