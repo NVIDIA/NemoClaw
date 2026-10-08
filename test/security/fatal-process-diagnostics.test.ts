@@ -297,7 +297,6 @@ describe("fatal process diagnostics", () => {
     }
   });
 
-
   it("omits messaging plan credentials from a build failure (#11673)", () => {
     const result = spawnSync(
       process.execPath,

@@ -558,7 +558,9 @@ describe("OpenClaw npm remediation", () => {
     };
 
     expect(() => buildRemediatedOpenClawPluginArchive(request)).toThrow(message);
-    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-archive-marker");
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow(
+      "private-archive-marker",
+    );
   });
 
   it("rejects unsafe archive members without echoing their names or archive path", () => {
@@ -580,8 +582,12 @@ describe("OpenClaw npm remediation", () => {
     expect(() => buildRemediatedOpenClawPluginArchive(request)).toThrow(
       "npm archive has an unsafe member",
     );
-    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-member-marker");
-    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-archive-marker");
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow(
+      "private-member-marker",
+    );
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow(
+      "private-archive-marker",
+    );
   });
 
   it.each(["@slack/bolt", "@slack/bolt/node_modules/express"])(
@@ -633,7 +639,6 @@ describe("OpenClaw npm remediation", () => {
     expect(String(failure)).not.toContain("private command output");
     expect(Date.now() - startedAt).toBeLessThan(5_000);
   });
-
 
   it("replaces bundled Slack proxy-addr bytes and rejects an unexpected source version", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-slack-proxy-"));
