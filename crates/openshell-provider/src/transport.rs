@@ -3,10 +3,14 @@
 
 use super::*;
 use async_trait::async_trait;
-use nemoclaw_sdk::{Error, discovery::GatewayCapabilities};
+use nemoclaw_backend::Error;
+use nemoclaw_openshell::GatewayCapabilities;
 use openshell_sdk::OpenShellClient;
 use std::{sync::Arc, time::Duration};
 use tonic::Request;
+
+/// Largest sandbox command output the client accepts.
+pub const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct OpenShell {
@@ -19,8 +23,9 @@ pub(super) struct ConnectedOpenShellGateway {
     pub(super) secrets: Arc<dyn Secrets>,
 }
 
+/// Whether a sandbox has finished starting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum SandboxPhase {
+pub enum SandboxPhase {
     Pending,
     Ready,
 }
@@ -105,7 +110,9 @@ impl OpenShell {
         self.exec_input(binding, command, environment, seconds, Vec::new())
             .await
     }
-    pub(super) async fn exec_input(
+    /// Run one command in the bound sandbox with `stdin`, returning its exit
+    /// code and bounded output.
+    pub async fn exec_input(
         &self,
         binding: &Row,
         command: Vec<String>,
@@ -121,10 +128,14 @@ impl OpenShell {
         .await
         .map_err(|_| Error::Conflict("sandbox exec timed out; invocation may have had effects"))?
     }
+    /// The bound sandbox's phase; `ready` requires its runtime to report readiness.
+    pub async fn sandbox_phase(&self, binding: &Row, ready: bool) -> Result<SandboxPhase, Error> {
+        self.gateway.sandbox_phase(binding, ready).await
+    }
 }
 
 impl ConnectedOpenShellGateway {
-    pub(in crate::openshell) fn connect(
+    pub(crate) fn connect(
         connection: &nemoclaw_openshell::Connection,
         secrets: Arc<dyn Secrets>,
     ) -> Result<Self, ObservationError> {
@@ -438,7 +449,7 @@ impl ConnectedOpenShellGateway {
             }
             match event.payload.ok_or(ObservationError::Incomplete)? {
                 proto::exec_sandbox_event::Payload::Stdout(chunk) => {
-                    if output.len() + chunk.data.len() > protocol::RESPONSE_LIMIT {
+                    if output.len() + chunk.data.len() > RESPONSE_LIMIT {
                         return Err(Error::Conflict("sandbox exec output exceeds limit"));
                     }
                     output.extend(chunk.data);
@@ -455,7 +466,8 @@ impl ConnectedOpenShellGateway {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use nemoclaw_sdk::{Error, backend::Backend, discovery::GatewayCapabilities};
+    use nemoclaw_backend::{Backend, Error};
+    use nemoclaw_openshell::GatewayCapabilities;
     use std::sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -603,7 +615,7 @@ mod tests {
             let direct = failure.to_string();
             let observation = failure.into_observation();
             assert_eq!(direct, observation.to_string());
-            let message = crate::observation_message(observation, Some("coder"));
+            let message = nemoclaw_tofu::observation_message(observation, Some("coder"));
             for expected in ["sandbox/coder", reason, guidance, "resources retained"] {
                 assert!(message.contains(expected), "{message}");
             }

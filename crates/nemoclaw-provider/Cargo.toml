@@ -17,6 +17,7 @@ nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 nemoclaw-docker = { path = "../nemoclaw-docker" }
+openshell-provider = { path = "../openshell-provider" }
 nemoclaw-discovery = { path = "../nemoclaw-discovery" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }

@@ -62,7 +62,7 @@ The [migration policy](../migration.md#move-from-the-combined-kubernetes-gateway
 
 ## OpenShell SDK Boundary
 
-NemoClaw's [OpenShell adapter](../../crates/nemoclaw-provider/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
+NemoClaw's [OpenShell adapter](../../crates/openshell-provider/src/lib.rs) reconciles deployment ownership and desired state against the gateway.
 Reconciliation calls a private, domain-shaped gateway boundary for observations, mutations, sandbox state, and exec.
 The connected implementation owns the pinned `OpenShellClient`, protobuf conversion, transport errors, and the choice between a high-level SDK operation and its supported raw client.
 The boundary does not mirror gRPC methods or create a second public client API.

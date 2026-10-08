@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nemoclaw_sdk::config::ExplicitPolicy;
+use nemoclaw_openshell::policy::ExplicitPolicy;
 
 // Baseline grants follow NVIDIA/OpenShell crates/openshell-supervisor/src/lib.rs
 // at 7e7a8d5610f336f5f7f9f60da0951adbf295475d (Apache-2.0).
@@ -69,7 +69,7 @@ pub(super) fn loaded_policy_matches(
 }
 
 pub(super) fn row_policy(row: &Row) -> Result<proto::SandboxPolicy, ObservationError> {
-    let input: nemoclaw_sdk::image_runtime::PolicyInput =
+    let input: nemoclaw_openshell::runtime::PolicyInput =
         serde_json::from_str(row.get("policy_json").ok_or(ObservationError::Incomplete)?)
             .map_err(|_| ObservationError::Query)?;
     agent::binding(row)?.policy(&input)
