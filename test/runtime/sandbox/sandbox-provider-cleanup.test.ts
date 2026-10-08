@@ -291,6 +291,27 @@ describe("detachSandboxProviders", () => {
 });
 
 describe("runSandboxProviderPreDeleteCleanup", () => {
+  it.each([true, false])(
+    "reports structured sandbox absence only when it is unexpected (tolerateMissingSandbox=%s)",
+    async (tolerateMissingSandbox) => {
+      const { runOpenshell } = buildRunOpenshell(new Map(), {
+        status: 1,
+        stderr: `Error:   × code: 'Some requested entity was not found', message: "sandbox not found"`,
+      });
+      const warn = vi.fn();
+
+      const result = await runSandboxProviderPreDeleteCleanup("my-assistant", {
+        runOpenshell,
+        warn,
+        tolerateMissingSandbox,
+      });
+
+      const failureCount = tolerateMissingSandbox ? 0 : SANDBOX_PROVIDER_SUFFIXES.length;
+      expect(result.failures).toHaveLength(failureCount);
+      expect(warn).toHaveBeenCalledTimes(failureCount);
+    },
+  );
+
   it("emits no warning when every detach succeeds", async () => {
     const { runOpenshell } = buildRunOpenshell(new Map());
     const warn = vi.fn();

@@ -242,7 +242,7 @@ export function reportsExactProviderNotFound(
   return diagnosticLines.every((line) => providerNameFromNotFoundLine(line) === providerName);
 }
 
-/** A missing sandbox permits cleanup only when every diagnostic names the requested sandbox. */
+/** Recognize named sandbox absence and OpenShell's structured response for the requested operation. */
 export function reportsExactSandboxNotFound(
   output: string,
   sandboxName: string,
@@ -250,6 +250,10 @@ export function reportsExactSandboxNotFound(
 ): boolean {
   if (output.length > diagnosticLimit) return false;
   const lines = output.split(/\r?\n/).map(stripIssueDecoration).filter(Boolean);
+  // OpenShell's structured response omits the name; require the complete absence diagnostic.
+  const structuredNotFound =
+    /^(?:error:\s*)?(?:×\s*)?(?:code:\s*(["'])Some requested entity was not found\1|status:\s*(["']?)Not\s*Found\2)\s*,\s*message:\s*(["'])sandbox not found\3$/iu;
+  if (structuredNotFound.test(joinDiagnosticLines(lines))) return true;
   return (
     lines.length > 0 &&
     lines.every((line) => {
