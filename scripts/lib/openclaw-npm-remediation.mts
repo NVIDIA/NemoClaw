@@ -1999,7 +1999,13 @@ export function remediateInstalledOfficialOpenClawPlugin(
 ): void {
   try {
     remediateVerifiedInstalledOfficialOpenClawPlugin(request);
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof OpenClawNpmRemediationCommandError ||
+      error instanceof OpenClawNpmPackageRecoveryError
+    ) {
+      throw error;
+    }
     throw new Error(
       "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
     );

@@ -29,18 +29,8 @@
     },
     {
       "pullRequest": 12593,
-      "baseBudgetSha256": "fdc4a78b5588629e26b00778d1bc82d69101077b9e372f2b58670510184579c2",
-      "headBudgetSha256": "4c23631362f14df242b533a09b8b26f9f65b448611848c084d3263feb40c423c"
-    },
-    {
-      "pullRequest": 12593,
-      "baseBudgetSha256": "d0a41e5514e5cc2f7bb34d7604c82106d9e36239f1abf5859e343c7733501289",
-      "headBudgetSha256": "4c23631362f14df242b533a09b8b26f9f65b448611848c084d3263feb40c423c"
-    },
-    {
-      "pullRequest": 12593,
-      "baseBudgetSha256": "bda0267c094710272fd2a02ed05c26a2e93e5a78c81fcdb9d4d9a338e342914a",
-      "headBudgetSha256": "4c23631362f14df242b533a09b8b26f9f65b448611848c084d3263feb40c423c"
+      "baseBudgetSha256": "53c51c4229d387633165771730f8f1a8373f84e9f3303b2144280027a56e3441",
+      "headBudgetSha256": "e8fb0b98decdc20f8253ed0f378f39e6a5b6b0ce44c9f1f2ad6e612a8c086c15"
     }
   ]
 }

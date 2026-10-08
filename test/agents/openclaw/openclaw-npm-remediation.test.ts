@@ -574,7 +574,8 @@ describe("OpenClaw npm remediation", () => {
       failure: "unavailable tar",
       prepare: (archivePath: string) => writeFileSync(archivePath, "not a tar archive"),
       env: { PATH: "" },
-      message: "OpenClaw npm remediation operation 'list archive' could not start a required command.",
+      message:
+        "OpenClaw npm remediation operation 'list archive' could not start a required command.",
     },
   ])("withholds archive paths and child diagnostics when $failure", ({ prepare, env, message }) => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-private-archive-marker-"));
@@ -588,8 +589,15 @@ describe("OpenClaw npm remediation", () => {
       env,
     };
 
-    expect(() => buildRemediatedOpenClawPluginArchive(request)).toThrow(message);
-    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-archive-marker");
+    let failure: unknown;
+    try {
+      buildRemediatedOpenClawPluginArchive(request);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(OpenClawNpmRemediationCommandError);
+    expect(fatalOpenClawNpmRemediationDiagnostic(failure)).toBe(message);
+    expect(String(failure)).not.toContain("private-archive-marker");
   });
 
   it("rejects unsafe archive members without echoing their names or archive path", () => {
@@ -611,8 +619,12 @@ describe("OpenClaw npm remediation", () => {
     expect(() => buildRemediatedOpenClawPluginArchive(request)).toThrow(
       "npm archive has an unsafe member",
     );
-    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-member-marker");
-    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow("private-archive-marker");
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow(
+      "private-member-marker",
+    );
+    expect(() => buildRemediatedOpenClawPluginArchive(request)).not.toThrow(
+      "private-archive-marker",
+    );
   });
 
   it.each(["@slack/bolt", "@slack/bolt/node_modules/express"])(
