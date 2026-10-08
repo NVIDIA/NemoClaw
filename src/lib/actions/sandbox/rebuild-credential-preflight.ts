@@ -8,6 +8,7 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
+  validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
@@ -200,7 +201,23 @@ export async function preflightRebuildCredentials(
     );
     return true;
   }
-  if (credentialValue) return true;
+  if (credentialValue) {
+    if (
+      await validateRebuildHostInferenceCredential(
+        { ...sb, credentialEnv: rebuildCredentialEnv },
+        credentialValue,
+      )
+    )
+      return true;
+    console.error("");
+    console.error(
+      `  ${RD}Rebuild preflight failed:${R} the host inference credential could not be validated.`,
+    );
+    console.error(`  Check ${rebuildCredentialEnv} and the recorded endpoint, then retry rebuild.`);
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail("Host inference credential validation failed");
+    return false;
+  }
 
   console.error("");
   console.error(`  ${RD}Rebuild preflight failed:${R} provider credential not found.`);

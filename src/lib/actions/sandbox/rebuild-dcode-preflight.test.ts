@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { rebuildProviderPreflight } from "../../../../test/helpers/rebuild-flow-harness";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   configureDcodeSession,
   expectNoDcodeMutation,
@@ -16,6 +18,53 @@ import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("rebuildSandbox DCode flow: preflight", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it.each([false, true])(
+    "rejects an invalid host inference key before DCode mutation with force %s (#12742)",
+    async (force) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: {
+          ...makeDcodeSandboxEntry(),
+          provider: "nvidia-prod",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        },
+        hydrateCredentialEnv: () => "invalid-rebuild-test-credential",
+      });
+      configureDcodeSession(harness);
+      vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockRestore();
+
+      await expect(
+        harness.rebuildSandbox("alpha", force ? ["--yes", "--force"] : ["--yes"], {
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("Host inference credential validation failed");
+
+      expectNoDcodeMutation(harness);
+    },
+  );
+
+  it("preserves DCode when the host key is rejected after backup (#12742)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      hydrateCredentialEnv: () => "host-test-key",
+      beforeBackup: () => {
+        vi.mocked(
+          rebuildProviderPreflight.validateRebuildHostInferenceCredential,
+        ).mockResolvedValue(false);
+      },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("Host inference credential could not be validated before sandbox deletion");
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["defaults legacy state to disabled", undefined, undefined, "disabled", null],
