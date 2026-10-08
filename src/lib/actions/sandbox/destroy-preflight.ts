@@ -55,6 +55,36 @@ import {
 } from "./gateway-target";
 
 export { teardownSandboxDashboardForward } from "./forward-recovery";
+import { reconcileIdentityFreeRecovery as reconcileRetainedMetadata } from "./lifecycle/retained-recovery";
+
+/** Probe only the recorded gateway before reconciling identity-free local metadata. */
+export function reconcileIdentityFreeRecovery(
+  sandboxName: string,
+  records: Parameters<typeof reconcileRetainedMetadata>[1],
+  owningGatewayPort: number,
+  state: Omit<Parameters<typeof reconcileRetainedMetadata>[3], "observeSandbox" | "timeoutMs"> & {
+    captureOpenshell?: typeof import("../../adapters/openshell/runtime").captureOpenshell;
+  },
+): boolean {
+  const captureOpenshell =
+    state.captureOpenshell ??
+    (
+      require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime")
+    ).captureOpenshell;
+  return reconcileRetainedMetadata(sandboxName, records, owningGatewayPort, {
+    ...state,
+    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    observeSandbox: (gatewayName) =>
+      classifyDestroySandboxPresence(
+        sandboxName,
+        captureOpenshell(["sandbox", "list", "-g", gatewayName, "--output", "json"], {
+          ignoreError: true,
+          includeStreams: true,
+          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        }),
+      ),
+  });
+}
 
 export type SandboxDestroyPreflight = {
   cleanupGatewayName: string;
@@ -126,23 +156,6 @@ export function resolveSandboxDestroyRuntimeSelection(
   // MCP source inspection freezes its gateway target during preparation. The
   // non-MCP registry is only a routing hint and cannot assert MCP ownership.
   return undefined;
-}
-
-export function stopSandboxInferenceResources(
-  sandboxName: string,
-  sandbox: SandboxEntry | null,
-): void {
-  const nim = require("../../inference/nim") as {
-    stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
-    stopNimContainerByName: (name: string) => void;
-  };
-  if (sandbox?.nimContainer) {
-    console.log(`  Stopping NIM for '${sandboxName}'...`);
-    nim.stopNimContainerByName(sandbox.nimContainer);
-  } else {
-    // Older registry entries may not record the convention-named container.
-    nim.stopNimContainer(sandboxName, { silent: true });
-  }
 }
 
 function sandboxGatewayPort(entry: SandboxEntry): number {

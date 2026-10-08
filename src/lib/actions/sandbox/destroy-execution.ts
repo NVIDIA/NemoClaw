@@ -67,6 +67,23 @@ export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
 }
 
+export function stopSandboxInferenceResources(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+): void {
+  const nim = require("../../inference/nim") as {
+    stopNimContainer: (name: string, opts?: { silent?: boolean }) => void;
+    stopNimContainerByName: (name: string) => void;
+  };
+  if (sandbox?.nimContainer) {
+    console.log(`  Stopping NIM for '${sandboxName}'...`);
+    nim.stopNimContainerByName(sandbox.nimContainer);
+  } else {
+    // Older registry entries may not record the convention-named container.
+    nim.stopNimContainer(sandboxName, { silent: true });
+  }
+}
+
 const SANDBOX_NATIVE_ROOT = "/sandbox";
 const COMPLETE_NATIVE_HOME_AGENTS = new Set(["hermes", "langchain-deepagents-code", "openclaw"]);
 

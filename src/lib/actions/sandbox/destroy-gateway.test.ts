@@ -109,6 +109,23 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     });
   });
 
+  it("requires an owned runtime marker for identity-free recovery (#12260)", () => {
+    mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValue(null);
+    expect(
+      resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", "docker", {
+        configuredRuntimeProviderId: "docker",
+        requireOwnedRuntime: true,
+      }),
+    ).toBeNull();
+
+    mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
+    expect(
+      resolveGatewayCleanupRuntimeProviderId("nemoclaw-8081", undefined, {
+        requireOwnedRuntime: true,
+      }),
+    ).toBe("docker");
+  });
+
   it("rejects disagreement between sandbox and gateway provider authority", () => {
     mocks.resolveOwnedHostGatewayRuntimeProviderId.mockReturnValueOnce("docker");
 
