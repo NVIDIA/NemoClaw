@@ -16,6 +16,7 @@
     },
     {
       "live": "test/e2e/live/deferred-onboarding.test.ts",
+      "liveSources": ["test/e2e/fixtures/deferred-cleanup-diagnostics.ts"],
       "fast": [
         "test/e2e/support/deferred-onboarding-diagnostics.test.ts",
         "src/lib/actions/installer/deferred-onboarding.test.ts",

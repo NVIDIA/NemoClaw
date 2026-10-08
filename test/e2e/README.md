@@ -1950,6 +1950,7 @@ To select the protected managed-image runtime qualification, set `jobs=managed-i
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+Multiarch activation version 2 adds `dcodeBaseSource: "candidate"`. It builds the DCode base from the exact candidate on each native architecture, publishes only to the job's isolated registry, and retains the AMD64 OCI layout for the GPU job. The trusted GPU controller verifies every referenced blob and binds the receipt to the candidate, workflow, platform, and run attempt before consuming it offline. Version 1 continues to require the selected published base. A dependency-upgrade PR must incorporate this controller support after it lands on `main`; candidate workflow edits do not replace the trusted dispatcher.
 To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.

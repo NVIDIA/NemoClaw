@@ -100,6 +100,17 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
+  it.each([
+    "node scripts/checks/protected-dcode-base-receipt.mts verify",
+    '"$verified_dcode" == "$cached_dcode"',
+    '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/dcode-base-receipt.json"',
+  ])("rejects a candidate OCI base handoff without %s", (fragment) => {
+    const value = workflow();
+    const step = namedStep(value, "Resolve digest-pinned amd64 runtime base images");
+    step.run = String(step.run).replace(fragment, "REMOVED");
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
   it("requires cancellation cleanup for the derived Docker Engine 27 receipt daemon", () => {
     const value = workflow();
     const cleanup = namedMultiarchStep(value, "Remove owned Docker Engine 27 receipt daemon");

@@ -226,12 +226,35 @@ export function wipeAgentNativeHome(
       `${agent.displayName} native-home cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds; its result is unknown.`,
     );
   }
+  const ownerPassFailed = result.status === 1 && !result.error;
   if (result.status !== 0 && result.status !== 20 && result.status !== 21 && runPrivileged) {
     try {
       result = runPrivileged(command);
     } catch (error) {
       if (clearStoppedNativeHome?.(nativeRoot, protectedEntries).cleared) return;
       throw error;
+    }
+    // Deep Agents' native tree contains both sandbox-owned state and root-owned
+    // managed files. Rootless Podman cannot always remove the former as root.
+    // Complete the same validated wipe as the image's sandbox user after the
+    // privileged pass has removed files the sandbox user could not remove.
+    if (
+      agentName === "langchain-deepagents-code" &&
+      ownerPassFailed &&
+      result.status === 1 &&
+      !result.error
+    ) {
+      result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", ...command], {
+        ignoreError: true,
+        killSignal: "SIGKILL",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+      });
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+        throw new Error(
+          `${agent.displayName} native-home cleanup timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds; its result is unknown.`,
+        );
+      }
     }
   }
   if (

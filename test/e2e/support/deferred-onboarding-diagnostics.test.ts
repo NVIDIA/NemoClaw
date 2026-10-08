@@ -3,7 +3,7 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { captureDeferredPodmanCleanupOwnership } from "../fixtures/sandbox-failure-diagnostics.ts";
+import { captureDeferredPodmanCleanupOwnership } from "../fixtures/deferred-cleanup-diagnostics.ts";
 
 const state = vi.hoisted(() => ({
   run: undefined as unknown as (fixtures: E2ETargetFixtures) => Promise<void>,

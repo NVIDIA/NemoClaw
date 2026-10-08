@@ -11,13 +11,11 @@ import {
 } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { captureDeferredPodmanCleanupOwnership } from "../fixtures/deferred-cleanup-diagnostics.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import {
-  captureDeferredPodmanCleanupOwnership,
-  captureSandboxFailureDiagnostics,
-} from "../fixtures/sandbox-failure-diagnostics.ts";
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-deferred";
 validateSandboxName(SANDBOX_NAME);
