@@ -30,6 +30,7 @@ import {
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
 import { isTransientInferenceInvocationFailure } from "./inference-route-health";
+import { nativeInferenceInvocationFields } from "./launch-readiness/health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
@@ -164,6 +165,7 @@ async function checkStartedSandboxInference(
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    ...nativeInferenceInvocationFields(sandbox, gatewayName),
   };
   const probe = () =>
     (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(

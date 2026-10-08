@@ -16,6 +16,9 @@ import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provide
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
+import { nativeBedrockIdentity } from "../../inference/native-bedrock/contract";
+import { buildSandboxInferenceInvocationCommand } from "./inference-invocation-probe";
 import { type SandboxStartDeps, startSandbox } from "./start";
 
 afterEach(() => {
@@ -347,6 +350,176 @@ describe("startSandbox native lifecycle", () => {
     );
     expect(h.probeGatewayProcess).not.toHaveBeenCalled();
   });
+
+  it.each(["openai-completions", "anthropic-messages"] as const)(
+    "uses the recorded native compatible %s endpoint on start",
+    async (api) => {
+      const identity = nativeCompatibleEndpointIdentity({
+        endpointUrl: "https://models.example/v1",
+        api,
+        addresses: ["93.184.216.34"],
+      });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: identity.profileId,
+        providerName: identity.providerName,
+        providerId: "owned",
+        endpointUrl: identity.endpoint,
+        api,
+        addresses: identity.addresses!,
+      };
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async () => ({ ok: true }));
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          agent: "openclaw",
+          provider:
+            api === "anthropic-messages" ? "compatible-anthropic-endpoint" : "compatible-endpoint",
+          endpointUrl: receipt.endpointUrl,
+          preferredInferenceApi: api,
+          model: "model",
+          nativeCompatibleProviderAttachment: receipt,
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      const input = vi.mocked(probeInferenceInvocation).mock.calls[0]?.[0];
+      expect(input).toMatchObject({ nativeCompatibleProviderAttachment: receipt });
+      const command = buildSandboxInferenceInvocationCommand(input!);
+      expect(command).toContain(
+        api === "anthropic-messages"
+          ? "https://models.example/v1/messages"
+          : "https://models.example/v1/chat/completions",
+      );
+      expect(command).not.toContain("inference.local");
+    },
+  );
+
+  it("uses the recorded native Bedrock adapter on start", async () => {
+    const binding = {
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+      adapterGeneration: "a".repeat(32),
+      adapterBaseUrl: "http://host.openshell.internal:11436/v1",
+      gatewayName: "nemoclaw",
+    };
+    const receipt = {
+      schemaVersion: 1 as const,
+      ...binding,
+      ...nativeBedrockIdentity(binding),
+      providerId: "owned",
+    };
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async () => ({ ok: true }));
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "openclaw",
+        provider: "compatible-anthropic-endpoint",
+        endpointUrl: binding.endpointUrl,
+        gatewayName: binding.gatewayName,
+        model: "model",
+        nativeBedrockProviderAttachment: receipt,
+      }),
+    );
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    const input = vi.mocked(probeInferenceInvocation).mock.calls[0]?.[0];
+    expect(input).toMatchObject({
+      nativeBedrockProviderAttachment: receipt,
+      preferredInferenceApi: "openai-completions",
+    });
+    const command = buildSandboxInferenceInvocationCommand(input!);
+    expect(command).toContain("http://host.openshell.internal:11436/v1/chat/completions");
+    expect(command).not.toContain("inference.local");
+  });
+
+  it.each([{ gatewayName: "nemoclaw-19080" }, { pendingRouteReservation: true as const }])(
+    "refuses a Bedrock receipt outside the committed sandbox route",
+    async (invalidRoute) => {
+      const binding = {
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        adapterGeneration: "a".repeat(32),
+        adapterBaseUrl: "http://host.openshell.internal:11436/v1",
+        gatewayName: "nemoclaw",
+      };
+      const receipt = {
+        schemaVersion: 1 as const,
+        ...binding,
+        ...nativeBedrockIdentity(binding),
+        providerId: "owned",
+      };
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async () => ({ ok: true }));
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          agent: "openclaw",
+          provider: "compatible-anthropic-endpoint",
+          endpointUrl: binding.endpointUrl,
+          gatewayName: binding.gatewayName,
+          model: "model",
+          nativeBedrockProviderAttachment: receipt,
+          ...invalidRoute,
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(/Native Bedrock/);
+      expect(probeInferenceInvocation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves the recorded native NVIDIA route on start", async () => {
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async () => ({ ok: true }));
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "model",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned",
+        },
+      }),
+    );
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    const command = buildSandboxInferenceInvocationCommand(
+      probeInferenceInvocation.mock.calls[0]![0],
+    );
+    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(command).not.toContain("inference.local");
+  });
+
+  it.each([undefined, { schemaVersion: 1, providerId: "invalid" }])(
+    "refuses missing or malformed hosted receipt before invoking inference",
+    async (receipt) => {
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async () => ({ ok: true }));
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          agent: "openclaw",
+          provider: "compatible-endpoint",
+          endpointUrl: "https://models.example/v1",
+          model: "model",
+          nativeCompatibleProviderAttachment:
+            receipt as SandboxEntry["nativeCompatibleProviderAttachment"],
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
+        /Native compatible provider receipt/,
+      );
+      expect(probeInferenceInvocation).not.toHaveBeenCalled();
+    },
+  );
 
   it("waits for the Hermes gateway process to settle before checking gateway health", async () => {
     const probeGatewayProcess = vi

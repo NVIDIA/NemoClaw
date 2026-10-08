@@ -30,6 +30,7 @@ import {
 import type { SandboxEntry } from "../../../state/registry";
 import {
   normalizeNativeNvidiaProviderAttachment,
+  isNativeNvidiaProvider,
   verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
 } from "../../../inference/native-nvidia";
@@ -221,6 +222,44 @@ export function getNativeNvidiaProviderAttachment(
   entry: SandboxEntry,
 ): NativeNvidiaProviderAttachment | null {
   return normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment) ?? null;
+}
+
+/** Bind an invocation to the recorded native route before any request is sent. */
+export function nativeInferenceInvocationFields(sandbox: SandboxEntry, gatewayName: string) {
+  if (isNativeBedrockSelection(sandbox)) {
+    const receipt = requireMatchingNativeBedrockAttachment(
+      sandbox.nativeBedrockProviderAttachment,
+      sandbox,
+    );
+    if (!receipt || sandbox.pendingRouteReservation || receipt.gatewayName !== gatewayName)
+      throw new Error(
+        "Native Bedrock provider receipt is not ready for this sandbox. Recreate the sandbox.",
+      );
+    return {
+      nativeBedrockProviderAttachment: receipt,
+      preferredInferenceApi: "openai-completions",
+    };
+  }
+  if (isNativeCompatibleHostedSelection(sandbox)) {
+    const receipt = requireMatchingNativeCompatibleAttachment(
+      sandbox.nativeCompatibleProviderAttachment,
+      sandbox,
+    );
+    if (!receipt || sandbox.pendingRouteReservation)
+      throw new Error(
+        "Native compatible provider receipt is not ready for this sandbox. Recreate the sandbox.",
+      );
+    return { nativeCompatibleProviderAttachment: receipt, preferredInferenceApi: receipt.api };
+  }
+  if (sandbox.nativeNvidiaProviderAttachment !== undefined) {
+    const receipt = normalizeNativeNvidiaProviderAttachment(sandbox.nativeNvidiaProviderAttachment);
+    if (!receipt || !isNativeNvidiaProvider(sandbox.provider) || sandbox.pendingRouteReservation)
+      throw new Error(
+        "Native NVIDIA provider receipt is not ready for this sandbox. Recreate the sandbox.",
+      );
+    return { nativeProvider: true };
+  }
+  return {};
 }
 
 export async function requireNativeNvidiaInferenceHealth(input: {
