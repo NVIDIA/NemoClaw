@@ -39,14 +39,36 @@ fi
 
 runner_temp_mode="$(stat -c '%a' "$RUNNER_TEMP")"
 apt_lists="$(mktemp -d "$RUNNER_TEMP/nemoclaw-apt-lists.XXXXXXXX")"
+isolated_sources_dir="$(mktemp -d "$RUNNER_TEMP/nemoclaw-ubuntu-sources.XXXXXXXX")"
+isolated_sources="$isolated_sources_dir/ubuntu.sources"
 cleanup() {
   local status=$?
   trap - EXIT
   sudo rm -rf -- "$apt_lists" || status=1
+  rm -rf -- "$isolated_sources_dir" || status=1
   sudo chmod "$runner_temp_mode" "$RUNNER_TEMP" || status=1
   exit "$status"
 }
 trap cleanup EXIT
+
+# APT cannot reliably fetch a mirror+file auxiliary list from a custom lists
+# directory during install. Resolve only the runner's Ubuntu mirrorlist URI;
+# keep each stanza's suites, components, and Signed-By key.
+if ! sudo awk '
+  $0 == "URIs: mirror+file:/etc/apt/apt-mirrors.txt" {
+    print "URIs: https://archive.ubuntu.com/ubuntu"
+    replaced++
+    next
+  }
+  /mirror\+file:/ { unexpected = 1 }
+  { print }
+  END { if (replaced < 1 || unexpected) exit 1 }
+' "$ubuntu_sources" | tee "$isolated_sources" >/dev/null; then
+  echo "::error title=Unsupported Ubuntu APT source::Expected the Ubuntu archive mirrorlist URI in $ubuntu_sources." >&2
+  exit 1
+fi
+chmod 0755 "$isolated_sources_dir"
+chmod 0644 "$isolated_sources"
 
 # APT's _apt user needs traversal into the isolated package-list directory.
 sudo chmod o+x "$RUNNER_TEMP"
@@ -54,7 +76,7 @@ sudo chmod 0755 "$apt_lists"
 sudo install -d -o _apt -g root -m 0700 "$apt_lists/partial"
 
 apt_options=(
-  -o "Dir::Etc::sourcelist=$ubuntu_sources"
+  -o "Dir::Etc::sourcelist=$isolated_sources"
   -o "Dir::Etc::sourceparts=-"
   -o "Dir::State::lists=$apt_lists"
   -o "Acquire::http::Timeout=$acquire_timeout"
