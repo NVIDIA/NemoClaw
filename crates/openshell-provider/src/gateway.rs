@@ -1,0 +1,19 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use super::OpenShell;
+use nemoclaw_backend::{Error, ObservationError};
+use nemoclaw_openshell::GatewayCapabilities;
+
+impl OpenShell {
+    pub async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError> {
+        self.gateway.gateway_capabilities().await
+    }
+
+    pub async fn verify_gateway(
+        &self,
+        driver: nemoclaw_openshell::ComputeDriver,
+    ) -> Result<(), Error> {
+        self.gateway_capabilities().await?.require(driver)
+    }
+}

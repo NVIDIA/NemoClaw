@@ -140,6 +140,14 @@ pub(crate) fn runtime_graph(
         // Platform resources must be plannable before their gateway credentials
         // exist. The following deployment stage verifies the authenticated API.
         graph["provider"]["nemoclaw"] = json!({"platform_only": true});
+        graph["provider"]
+            .as_object_mut()
+            .unwrap()
+            .remove("openshell");
+        graph["terraform"]["required_providers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("openshell");
         graph.as_object_mut().unwrap().remove("data");
         graph.as_object_mut().unwrap().remove("output");
         graph["resource"] = json!({});
@@ -174,7 +182,7 @@ pub(crate) fn runtime_graph(
     }
     // Readiness follows gateway reconciliation, including restart or replacement.
     // Keeping it in this stage allows recovery before OpenShell resource refresh.
-    let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    let readiness = &mut graph["data"]["openshell_gateway"]["current"];
     readiness["wait_timeout_seconds"] = json!(90);
     readiness["lifecycle"] = json!({"postcondition":[{
         "condition":"${self.compatible}",
@@ -185,11 +193,16 @@ pub(crate) fn runtime_graph(
     }
     let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
     for target in &targets {
-        let mut attrs =
-            json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
-        if let Some(policy) = target.values.get("image_pull_policy") {
-            attrs["image_pull_policy"] = json!(policy);
-        }
+        let mut attrs = json!(
+            target
+                .values
+                .iter()
+                .map(|(name, value)| (
+                    name.clone(),
+                    json!(value.replace("${", "$${").replace("%{", "%%{"))
+                ))
+                .collect::<serde_json::Map<_, _>>()
+        );
         if target.kind == GATEWAY_STORAGE_KIND
             || crate::services::resource_behavior(&target.kind).retained_storage
         {
@@ -225,13 +238,26 @@ pub(crate) fn compiled_runtime(
     if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
         && document.spec.gateway.runtime().provider == ComputeDriver::Docker
     {
-        let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
-        readiness["managed_spec"] = json!(
-            gateway.values["spec"]
-                .replace("${", "$${")
-                .replace("%{", "%%{")
-        );
-        readiness["container_id"] = json!("${docker_container.managed_gateway_runtime.id}");
+        // The process must serve its API before the authenticated capability
+        // read; its readiness fails quickly when the container stops.
+        let spec: crate::managed::Spec = serde_json::from_str(&gateway.values["spec"])
+            .map_err(|_| Error::State("invalid managed gateway specification"))?;
+        let literal = |value: &str| json!(value.replace("${", "$${").replace("%{", "%%{"));
+        graph["data"]["nemoclaw_gateway_readiness"]["current"] = json!({
+            "engine": literal(spec.engine()),
+            "container_id": "${docker_container.managed_gateway_runtime.id}",
+            "name": literal(&spec.name),
+            "owner": literal(&spec.owner),
+            "endpoint": literal(&spec.gateway.endpoint),
+            "wait_timeout_seconds": 90,
+        });
+        let capabilities = &mut graph["data"]["openshell_gateway"]["current"];
+        let mut dependencies = capabilities["depends_on"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        dependencies.push(json!("data.nemoclaw_gateway_readiness.current"));
+        capabilities["depends_on"] = json!(dependencies);
     }
     crate::services::configure_readiness(&mut graph, &targets)?;
     Ok((graph, crate::docker_compute::targets(&targets)?))

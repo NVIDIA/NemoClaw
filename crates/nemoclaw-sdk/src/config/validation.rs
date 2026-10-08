@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use std::net::{IpAddr, SocketAddr};
-use url::Url;
+use std::net::SocketAddr;
 
 pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigError> {
     if valid {
@@ -12,15 +11,6 @@ pub(crate) fn require(valid: bool, reason: &'static str) -> Result<(), ConfigErr
         Err(ConfigError::new(reason))
     }
 }
-fn private(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => ip.is_private(),
-        IpAddr::V6(ip) => ip.is_unique_local(),
-    }
-}
-fn host_ip(url: &Url) -> Option<IpAddr> {
-    url.host_str()?.trim_matches(['[', ']']).parse().ok()
-}
 pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> {
     if let Some(credential) = value {
         schema::validate_definition("Credential", credential)?;
@@ -28,68 +18,7 @@ pub(super) fn credential(value: &Option<Credential>) -> Result<(), ConfigError> 
     Ok(())
 }
 
-pub fn validate_endpoint(raw: &str, gateway: bool) -> Result<(), ConfigError> {
-    require(
-        !raw.contains(['\r', '\n', '\t', '$', '%', '{', '}', '\\']),
-        "endpoint contains unsupported characters",
-    )?;
-    let url =
-        Url::parse(raw).map_err(|_| ConfigError::new("expected an HTTP or HTTPS endpoint"))?;
-    require(
-        url.has_host()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "endpoint must not include credentials, query, or fragment",
-    )?;
-    require(
-        matches!(url.scheme(), "https" | "http"),
-        "expected HTTPS or local HTTP",
-    )?;
-    require(
-        !gateway || url.path() == "/" || url.path().is_empty(),
-        "gateway endpoint must not include a path",
-    )?;
-    let ip = host_ip(&url);
-    if let Some(ip) = ip {
-        let link_local = match ip {
-            IpAddr::V4(ip) => ip.is_link_local(),
-            IpAddr::V6(ip) => ip.is_unicast_link_local(),
-        };
-        require(
-            !ip.is_unspecified() && !ip.is_multicast() && !link_local,
-            "unspecified, multicast, and link-local endpoints are forbidden",
-        )?;
-    }
-    // url normalizes shorthand IPv4 (127.1, integers, octal). Require the literal
-    // address spelling from the input so normalization cannot weaken policy.
-    let authority = raw
-        .split_once("://")
-        .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
-        .unwrap_or("");
-    let literal_host = if authority.starts_with('[') {
-        authority
-            .split(']')
-            .next()
-            .unwrap_or("")
-            .trim_start_matches('[')
-    } else {
-        authority.split(':').next().unwrap_or("")
-    };
-    if url.scheme() == "http" {
-        let literal: Option<IpAddr> = literal_host.parse().ok();
-        require(
-            literal.is_some_and(|ip| ip.is_loopback() || (!gateway && private(ip))),
-            "HTTP requires a literal loopback address or private inference address",
-        )?;
-    }
-    require(
-        url.host_str()
-            .is_none_or(|host| !host.eq_ignore_ascii_case("metadata.google.internal")),
-        "metadata endpoints are forbidden",
-    )
-}
+pub use nemoclaw_backend::validate_endpoint;
 
 pub fn is_fabric_harness(harness: &str) -> bool {
     harness.parse::<super::HarnessKind>().is_ok()
@@ -128,7 +57,7 @@ impl Document {
             )?;
             sandbox.network.validate()?;
             let web_search = self.web_search(sandbox)?;
-            crate::image_runtime::PolicyInput::for_sandbox(self, sandbox)?;
+            crate::image_runtime::policy_input(self, sandbox)?;
             if let Some(search) = web_search {
                 require(
                     selected_providers.iter().all(|provider| {
@@ -211,6 +140,4 @@ impl Document {
     }
 }
 
-pub fn valid_name(name: &str) -> bool {
-    schema::validate_property("Metadata", "name", &name).is_ok()
-}
+pub use nemoclaw_openshell::valid_name;

@@ -103,7 +103,7 @@ impl Engine {
                 "invalid gateway storage specification or engine",
             ));
         }
-        let info = self.gateway_engine_info(spec.compute_driver).await?;
+        let info = nemoclaw_discovery::gateway_engine_info(self, spec.compute_driver).await?;
         let mut volume = self.volume(&spec.volume()).await?;
         let network = self.network(&spec.network()).await?;
         let helper = self

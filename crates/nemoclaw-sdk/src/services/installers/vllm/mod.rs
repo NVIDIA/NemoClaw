@@ -28,6 +28,15 @@ use std::collections::BTreeMap;
 
 pub const SERVICE_KIND: &str = "inference_service";
 pub const STORAGE_KIND: &str = "inference_storage";
+/// Data source that computes the vLLM runtime contract.
+pub const RUNTIME_DATA_SOURCE: &str = "vllm_runtime";
+
+/// OpenTofu attributes for the vLLM runtime contract.
+pub fn runtime_fields() -> Result<crate::hcl_schema::Fields, crate::hcl_schema::Unmappable> {
+    let schema = serde_json::to_value(schemars::schema_for!(nemoclaw_runtime::vllm::Service))
+        .expect("the vLLM runtime schema serializes");
+    crate::hcl_schema::fields(&schema, &[])
+}
 
 pub fn configured_service(spec: &Spec) -> Result<nemoclaw_runtime::vllm::Service, Error> {
     let configuration = spec.runtime_configuration()?;
@@ -80,24 +89,17 @@ fn targets(
             "bearer-v1".into(),
         );
     }
-    let placement = service.published_placement()?;
-    let (engine, network_cidr, bind_address) = match placement {
-        Some(explicit) => (
-            &explicit.placement.engine,
-            &explicit.placement.network_cidr,
-            explicit.publication.bind_address.clone(),
-        ),
-        None => {
-            let gateway = document.spec.gateway.managed()?;
-            (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
-        }
-    };
+    let placed = crate::services::placement::ResolvedPlacement::resolve(
+        service.published_placement()?,
+        &document.spec.gateway,
+        service.serving.port,
+    )?;
     let architecture = service.architecture()?.to_owned();
     let process = Process {
-        engine: engine.clone(),
+        engine: placed.engine.clone(),
         image: service.image.clone(),
-        network_cidr: network_cidr.clone(),
-        create_network: service.placement.is_some(),
+        network_cidr: placed.network_cidr.clone(),
+        create_network: placed.explicit,
         architecture,
         image_labels,
         pull_image: false,
@@ -112,7 +114,7 @@ fn targets(
         environment: BTreeMap::new(),
         input_revision: String::new(),
         mount_target: "/data".into(),
-        bind_address,
+        bind_address: placed.bind_address,
         port: service.serving.port as u16,
         shared_memory_bytes: service
             .container
@@ -133,7 +135,7 @@ fn targets(
         name: format!("{}-inference-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generation.clone(),
-        gateway: if service.placement.is_some() {
+        gateway: if placed.explicit {
             Default::default()
         } else {
             document.spec.gateway.managed()?.runtime_settings()
@@ -146,30 +148,29 @@ fn targets(
         generation: spec.generation.clone(),
         engine: spec.engine().to_owned(),
     };
-    let mut result = Vec::new();
-    for (kind, encoded) in [
-        (STORAGE_KIND, storage.json()?),
-        (SERVICE_KIND, spec.json()?),
-    ] {
-        let mut values = crate::backend::Row::from([("spec".into(), encoded)]);
-        if kind == SERVICE_KIND
-            && let Some(policy) = service.image_pull_policy
-        {
-            values.insert("image_pull_policy".into(), policy.as_str().into());
-        }
-        result.push(Target {
-            kind: kind.into(),
-            address: address(kind, name),
-            values,
-        });
+    let mut values = crate::backend::Row::from([("spec".into(), spec.json()?)]);
+    if let Some(policy) = service.image_pull_policy {
+        values.insert("image_pull_policy".into(), policy.as_str().into());
     }
+    let mut result = vec![
+        Target {
+            kind: STORAGE_KIND.into(),
+            address: address(STORAGE_KIND, name),
+            values: storage.row()?,
+        },
+        Target {
+            kind: SERVICE_KIND.into(),
+            address: address(SERVICE_KIND, name),
+            values,
+        },
+    ];
     if service.authentication.is_some() {
         let mut credentials = storage.clone();
         credentials.name = format!("{}-auth", spec.name);
         result.push(Target {
             kind: STORAGE_KIND.into(),
             address: address(STORAGE_KIND, &format!("{name}_auth")),
-            values: crate::backend::Row::from([("spec".into(), credentials.json()?)]),
+            values: credentials.row()?,
         });
     }
     Ok((result, spec))
@@ -229,8 +230,8 @@ impl Service {
             return Ok(None);
         }
         let (_, spec) = targets(document, name, self, generations)?;
-        Ok(Some(
-            crate::services::authentication::Source::ManagedService {
+        Ok(Some(crate::services::authentication::source_json(
+            &crate::services::authentication::Source::ManagedService {
                 storage: crate::managed::Storage {
                     name: format!("{}-auth", spec.name),
                     owner: spec.owner.clone(),
@@ -245,9 +246,8 @@ impl Service {
                         .ok_or(Error::State("missing service process"))?;
                     format!("http://{}:{}/v1", process.bind_address, process.port)
                 },
-            }
-            .json()?,
-        ))
+            },
+        )?))
     }
 }
 

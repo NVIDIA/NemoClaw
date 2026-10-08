@@ -29,6 +29,22 @@ use std::{
 use tokio::io::AsyncWriteExt;
 const INPUT_LABEL: &str = "nemoclaw.nvidia.com/input-spec";
 
+pub(crate) fn definition() -> crate::Definition {
+    super::schema_definition(nemoclaw_sdk::services::installers::container::inputs::INPUTS_KIND)
+        .validate_spec(nemoclaw_sdk::services::validate_resource_spec)
+        .computed("complete", crate::rerun_when_stopped)
+        .computed("id", input_identity)
+}
+
+fn input_identity(name: &str, prior: &crate::State) -> Option<tf_provider::value::Value<String>> {
+    use tf_provider::value::Value;
+    if prior.get("complete") == Some(&Value::Value("false".into())) {
+        Some(Value::Unknown)
+    } else {
+        crate::carry_prior(name, prior)
+    }
+}
+
 fn setup_environment_is_safe(environment: Option<&[String]>) -> bool {
     // Docker supplies PATH even for scratch images; the helper uses an absolute entrypoint.
     environment.is_none_or(|values| {
@@ -229,7 +245,9 @@ impl InputsBackend {
                             bytes.extend_from_slice(&chunk);
                         }
                     }
-                    Err(e) if crate::docker::is_missing(&e) && bytes.is_empty() => return Ok(None),
+                    Err(e) if nemoclaw_docker::is_missing(&e) && bytes.is_empty() => {
+                        return Ok(None);
+                    }
                     Err(e) => return Err(crate::docker::remote(&e)),
                 }
             }

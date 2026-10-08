@@ -77,7 +77,8 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
         ("generation".into(), "generation".into()),
     ]
     .into();
-    let valid = OpenShell::connect(&gateway, Arc::new(Values(values.clone()))).unwrap();
+    let valid =
+        OpenShell::connect(&gateway.connection(), Arc::new(Values(values.clone()))).unwrap();
     let established = valid.ensure("workspace", &desired).await;
     assert!(established.error().is_none(), "{:?}", established.error());
     let binding = established.into_parts().0.unwrap();
@@ -108,7 +109,7 @@ async fn mutual_tls_and_bearer_references_fail_closed_without_disclosing_credent
                 );
             }
         }
-        let result = match OpenShell::connect(&gateway, Arc::new(Values(altered))) {
+        let result = match OpenShell::connect(&gateway.connection(), Arc::new(Values(altered))) {
             Ok(client) => client.read("workspace", &binding, false).await.map(|_| ()),
             Err(error) => Err(error),
         };

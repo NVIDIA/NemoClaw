@@ -7,7 +7,8 @@ use nemoclaw_authoring::{
     Capabilities, JourneyQuestionKind, JourneyState, discovery_queries,
     inference_request_for_document,
 };
-use nemoclaw_discovery::{Direct, DiscoveryObservations};
+use nemoclaw_discovery::Direct;
+use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     CancellationToken, EnvironmentSecrets, Error, config::Document, discovery::DiscoveryQuery,
 };
@@ -170,17 +171,7 @@ pub(crate) async fn run(
                     match observed {
                         Ok(Some(observations)) => {
                             wizard.remember(observations);
-                            match wizard
-                                .state
-                                .delegate_remaining(&wizard.capabilities, &wizard.observations)
-                            {
-                                Ok(delegated) => {
-                                    wizard.history.push(wizard.state.clone());
-                                    wizard.state = delegated;
-                                    wizard.error = None;
-                                }
-                                Err(error) => wizard.error = Some(error.to_string()),
-                            }
+                            wizard.delegate();
                         }
                         Ok(None) => return Ok(None),
                         Err(Error::Cancelled) => return Err(Error::Cancelled.into()),

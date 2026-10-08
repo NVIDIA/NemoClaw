@@ -38,27 +38,67 @@ pub(crate) struct Record {
 fn is_false(value: &bool) -> bool {
     !*value
 }
-impl Record {
-    pub fn new(document: Document) -> Result<Self, Error> {
-        document.validate()?;
-        let mut generations = Generations::new();
-        let mut kinds = vec!["workspace", "provider", "sandbox", "managed_gateway"];
-        if document.spec.gateway.as_kubernetes().is_some() {
-            kinds.push(crate::kubernetes::GATEWAY_KIND);
-            kinds.push(crate::kubernetes::STORAGE_KIND);
-        }
-        kinds.extend(crate::services::generation_kinds(&document)?);
-        kinds.sort_unstable();
-        kinds.dedup();
-        for kind in kinds {
+fn required_generation_kinds(document: &Document) -> Result<Vec<&'static str>, Error> {
+    let mut kinds = vec!["workspace", "provider", "sandbox", "managed_gateway"];
+    if document.spec.gateway.as_kubernetes().is_some() {
+        kinds.push(crate::kubernetes::GATEWAY_KIND);
+        kinds.push(crate::kubernetes::STORAGE_KIND);
+    }
+    kinds.extend(crate::services::generation_kinds(document)?);
+    kinds.sort_unstable();
+    kinds.dedup();
+    Ok(kinds)
+}
+fn valid_generation(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+fn supported_generation_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "workspace" | "provider" | "sandbox" | "managed_gateway"
+    ) || kind == crate::kubernetes::GATEWAY_KIND
+        || kind == crate::kubernetes::STORAGE_KIND
+        || crate::services::supported_generation_kind(kind)
+}
+fn allocate_missing_generation_values(
+    generations: &mut Generations,
+    document: &Document,
+) -> Result<(), Error> {
+    document.validate()?;
+    if generations
+        .iter()
+        .any(|(kind, value)| !supported_generation_kind(kind) || !valid_generation(value))
+    {
+        return Err(Error::State(
+            "deployment intent record is invalid; retain it for recovery",
+        ));
+    }
+    let additions = required_generation_kinds(document)?
+        .into_iter()
+        .filter(|kind| !generations.contains_key(*kind))
+        .map(|kind| {
             let mut random = [0_u8; 16];
             getrandom::fill(&mut random)
                 .map_err(|_| Error::State("cannot generate resource identities"))?;
-            generations.insert(
+            Ok((
                 kind.into(),
-                random.iter().map(|b| format!("{b:02x}")).collect(),
-            );
-        }
+                random.iter().map(|byte| format!("{byte:02x}")).collect(),
+            ))
+        })
+        .collect::<Result<Vec<(String, String)>, Error>>()?;
+    generations.extend(additions);
+    Ok(())
+}
+impl Record {
+    pub fn allocate_missing_generations(&mut self, document: &Document) -> Result<(), Error> {
+        allocate_missing_generation_values(&mut self.generations, document)
+    }
+    pub fn new(document: Document) -> Result<Self, Error> {
+        let mut generations = Generations::new();
+        allocate_missing_generation_values(&mut generations, &document)?;
         Ok(Self {
             version: 7,
             digest: document.digest(),
@@ -76,7 +116,7 @@ impl Record {
             // any partial effects, and its configuration binding uses that ID.
             let address = address
                 .strip_prefix("nemoclaw_agent_configuration.")
-                .map(|name| format!("nemoclaw_sandbox.{name}"))
+                .map(|name| format!("openshell_sandbox.{name}"))
                 .unwrap_or_else(|| address.clone());
             !bindings.get(&address).is_some_and(|binding| {
                 !binding.id.is_empty()
@@ -128,7 +168,7 @@ impl Record {
     ) -> Result<(), Error> {
         if !bindings
             .keys()
-            .any(|address| address.starts_with("nemoclaw_sandbox."))
+            .any(|address| address.starts_with("openshell_sandbox."))
         {
             return Ok(());
         }
@@ -248,14 +288,15 @@ impl Record {
                 "deployment predates Docker-provider model cache ownership; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
-        let service_generations_valid = crate::services::generation_kinds(&self.document)
-            .is_ok_and(|kinds| {
-                kinds.iter().all(|kind| {
-                    self.generations
-                        .get(*kind)
-                        .is_some_and(|value| !value.is_empty())
-                })
-            });
+        let generations_valid = required_generation_kinds(&self.document).is_ok_and(|kinds| {
+            kinds
+                .iter()
+                .all(|kind| self.generations.contains_key(*kind))
+                && self
+                    .generations
+                    .iter()
+                    .all(|(kind, value)| supported_generation_kind(kind) && valid_generation(value))
+        });
         let has_pending_creations = !self.pending_creations.is_empty();
         if has_pending_creations != (self.pending && !self.runtime_pending)
             || (self.runtime_pending && !self.document.has_runtime())
@@ -265,10 +306,7 @@ impl Record {
         }
         if self.document.validate().is_err()
             || self.digest != self.document.digest()
-            || ["workspace", "provider", "sandbox"]
-                .iter()
-                .any(|kind| self.generations.get(*kind).is_none_or(String::is_empty))
-            || !service_generations_valid
+            || !generations_valid
         {
             return Err(Error::State(
                 "deployment intent record is invalid; retain it for recovery",
@@ -294,8 +332,28 @@ pub(crate) struct StateBinding {
     pub generation: String,
     #[serde(default)]
     pub spec: String,
+    #[serde(default)]
+    pub engine: String,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
+}
+
+impl StateBinding {
+    /// Whether bound configuration differs from compiled values. An encoded
+    /// specification compares whole; typed storage compares its identity.
+    pub(crate) fn differs(&self, values: &crate::backend::Row) -> bool {
+        match values.get("spec") {
+            Some(spec) => *spec != self.spec,
+            None => [
+                ("name", &self.name),
+                ("owner", &self.owner),
+                ("generation", &self.generation),
+                ("engine", &self.engine),
+            ]
+            .into_iter()
+            .any(|(attribute, bound)| values.get(attribute).is_some_and(|want| want != bound)),
+        }
+    }
 }
 
 pub(crate) struct Store {
@@ -370,6 +428,45 @@ pub(crate) fn schema_environment(directory: &Path) -> BTreeMap<String, String> {
         ),
     ])
 }
+/// Resource types that served OpenShell objects before the `openshell` provider.
+const EARLIER_TYPES: [&str; 5] = [
+    "nemoclaw_workspace",
+    "nemoclaw_provider",
+    "nemoclaw_provider_profile",
+    "nemoclaw_sandbox",
+    "nemoclaw_gateway_capabilities",
+];
+
+/// Refuse state that an earlier release wrote with OpenShell types of the
+/// nemoclaw provider. Reading it would need that provider's schemas, and no
+/// release upgrades it, so it is left unchanged for the release that wrote it.
+fn reject_earlier_types(path: &Path) -> Result<(), Error> {
+    #[derive(serde::Deserialize)]
+    struct Resource {
+        #[serde(rename = "type")]
+        kind: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct State {
+        #[serde(default)]
+        resources: Vec<Resource>,
+    }
+    let state: State = serde_json::from_slice(
+        &std::fs::read(path).map_err(|_| Error::State("cannot inspect OpenTofu state"))?,
+    )
+    .map_err(|_| Error::State("cannot inspect OpenTofu state"))?;
+    if state
+        .resources
+        .iter()
+        .any(|resource| EARLIER_TYPES.contains(&resource.kind.as_str()))
+    {
+        return Err(Error::State(
+            "OpenTofu state holds OpenShell resources from an earlier release; keep the state directory and use the release that wrote it",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) async fn bindings(
     directory: &Path,
     tofu: &Path,
@@ -382,6 +479,7 @@ pub(crate) async fn bindings(
     {
         return Ok(BTreeMap::new());
     }
+    reject_earlier_types(&directory.join("terraform.tfstate"))?;
     let bytes = crate::process::run(
         directory,
         tofu,
@@ -473,6 +571,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.workspace = attributes.workspace;
                 binding.owner = attributes.owner;
                 binding.generation = attributes.generation;
+                binding.engine = attributes.engine;
             }
         }
     }

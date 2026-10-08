@@ -113,6 +113,35 @@ mod tests {
     use clap::{CommandFactory, error::ErrorKind};
 
     #[test]
+    fn first_deployment_example_supplies_the_image_inspection_engine() {
+        use nemoclaw_sdk::{
+            config::Document,
+            discovery::{DiscoveryQuery, plan_queries},
+        };
+
+        let document =
+            Document::parse(include_bytes!("../../../examples/openclaw-dashboard.yaml").as_slice())
+                .unwrap();
+        let nemoclaw_sdk::config::Gateway::External(gateway) = &document.spec.gateway else {
+            panic!("the walkthrough uses an operator-owned gateway");
+        };
+        assert!(
+            !gateway.engine.is_empty(),
+            "supply the engine holding the sandbox image"
+        );
+        let queries = plan_queries(&document).unwrap();
+        let images: Vec<_> = queries
+            .iter()
+            .filter_map(|query| match query {
+                DiscoveryQuery::Fabric(request) => Some(&request.engine),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(images.len(), document.spec.sandboxes.len());
+        assert!(images.iter().all(|engine| *engine == &gateway.engine));
+    }
+
+    #[test]
     fn onboard_accepts_template_and_output_without_deployment_inputs() {
         let cli = Cli::try_parse_from([
             "nemoclaw",

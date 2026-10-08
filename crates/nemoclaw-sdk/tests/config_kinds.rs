@@ -93,6 +93,8 @@ fn the_runtime_is_chosen_once_on_the_gateway() {
         if management == "external" {
             input["spec"]["gateway"] =
                 json!({"management": "external", "endpoint": "https://gateway.example:8080"});
+        } else {
+            input["spec"]["gateway"]["engine"] = json!("unix:///run/user/1000/podman/podman.sock");
         }
         input["spec"]["gateway"]["runtime"] = json!({"provider": "podman"});
         assert!(validator.is_valid(&input), "{management}");

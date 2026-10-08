@@ -4,7 +4,7 @@
 use crate::Diagnostics;
 use nemoclaw_sdk::{
     config::Document,
-    discovery::{DiscoveryQuery, plan_queries},
+    discovery::{CredentialRequest, DiscoveryQuery, plan_queries},
     inference_discovery::EndpointRequest,
 };
 
@@ -58,18 +58,18 @@ pub fn discovery_queries(
         .into_iter()
         .filter(|query| match query {
             DiscoveryQuery::Inference(request) => selected.as_ref() == Some(request),
-            DiscoveryQuery::Hardware { engine } => {
-                key.managed_gateway && !engine.is_empty() && *engine == key.engine
+            DiscoveryQuery::Hardware(request) => {
+                key.managed_gateway && !request.engine.is_empty() && request.engine == key.engine
             }
             DiscoveryQuery::Engine(request) => !request.engine.is_empty(),
-            DiscoveryQuery::Fabric { engine, .. } => !engine.is_empty(),
-            DiscoveryQuery::Gateway { .. } | DiscoveryQuery::Credential { .. } => true,
+            DiscoveryQuery::Fabric(request) => !request.engine.is_empty(),
+            DiscoveryQuery::Gateway(_) | DiscoveryQuery::Credential(_) => true,
         })
         .collect();
     queries.extend(document.credential_names().into_iter().map(|reference| {
-        DiscoveryQuery::Credential {
+        DiscoveryQuery::Credential(CredentialRequest {
             reference: reference.into(),
-        }
+        })
     }));
     Ok(queries)
 }

@@ -507,6 +507,38 @@ fn a_sandbox_cannot_choose_a_runtime_apart_from_its_gateway() {
 }
 
 #[test]
+fn managed_podman_requires_an_explicit_engine() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("managed-podman.yaml");
+    value["spec"]["gateway"]
+        .as_object_mut()
+        .unwrap()
+        .remove("engine");
+    agrees(&validator, &value, false);
+    let error = Document::parse(value.to_string().as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Podman requires spec.gateway.engine"),
+        "{error}"
+    );
+    let mut document: Document = serde_json::from_value(value.clone()).unwrap();
+    document.defaults();
+    assert!(
+        document
+            .spec
+            .gateway
+            .as_managed()
+            .unwrap()
+            .engine
+            .is_empty()
+    );
+
+    value["spec"]["gateway"]["engine"] = json!("");
+    agrees(&validator, &value, false);
+}
+
+#[test]
 fn schema_errors_identify_the_contract_without_echoing_input_values_or_map_keys() {
     let mut value = input("fabric-openclaw.yaml");
     value["spec"]["harnesses"] = json!({"SECRET-MAP-KEY": {

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Shared structural contract for authored input and normalized SDK values.
-use crate::config::network as n;
 use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
 use serde_json::{Value, json};
 
@@ -191,41 +190,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     );
     defs["Network"]["if"] = json!({"required": ["policy"]});
     defs["Network"]["then"] = json!({"properties": {"tier": {"const": ""}}});
-    property(&mut defs["ExplicitPolicy"], "version", json!({"const": 1}));
-    property(
-        &mut defs["PolicyLandlock"],
-        "compatibility",
-        json!({"enum": ["best_effort", "hard_requirement"]}),
-    );
-    for (field, choices) in [
-        ("protocol", json!(n::POLICY_PROTOCOLS)),
-        ("tls", json!(n::POLICY_TLS)),
-        ("enforcement", json!(n::POLICY_ENFORCEMENT)),
-        ("access", json!(n::POLICY_ACCESS)),
-    ] {
-        property(&mut defs["PolicyEndpoint"], field, json!({"enum": choices}));
-    }
-    property(&mut defs["PolicyEndpoint"], "port", json!({"minimum": 1}));
-    property(
-        &mut defs["PolicyEndpoint"],
-        "ports",
-        json!({"minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 65535}}),
-    );
-    defs["PolicyEndpoint"]["allOf"] = json!([
-        {"oneOf": [{"required": ["port"], "not": {"required": ["ports"]}}, {"required": ["ports"], "not": {"required": ["port"]}}]},
-        {"anyOf": [{"required": ["host"], "properties":{"host":{"minLength":1}}}, {"required": ["allowed_ips"], "properties":{"allowed_ips":{"minItems":1}}}]},
-        {"not": {"required": ["access", "rules"]}}
-    ]);
-    for field in ["rules", "deny_rules"] {
-        property(&mut defs["PolicyEndpoint"], field, json!({"minItems": 1}));
-    }
-    for name in ["PolicyJsonRpc", "PolicyMcp"] {
-        property(
-            &mut defs[name],
-            "max_body_bytes",
-            json!({"minimum": 1, "maximum": n::POLICY_BODY_MAX}),
-        );
-    }
+    nemoclaw_openshell::policy::constrain(defs);
     property(
         &mut defs["Sandbox"],
         "harnessRef",
@@ -294,6 +259,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 ),
                 (
                     "engine",
+                    // Docker's socket is the default for a Docker runtime only;
+                    // the Podman rule below requires an explicit socket.
                     json!({"anyOf": [{"const":""},{"pattern":"^unix:///"}], "default": c::GATEWAY_ENGINE}),
                 ),
                 (
@@ -329,6 +296,8 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                         "Without kubernetes, omitted or empty selects the local HTTP endpoint. Kubernetes requires an explicit HTTPS loopback endpoint and port."
                     } else if field == "networkCIDR" {
                         "Without kubernetes, omitted or empty selects 172.30.N.0/24, where N is the first byte of SHA-256(metadata.uid). Excluded by kubernetes."
+                    } else if field == "engine" {
+                        "With runtime.provider docker, omitted or empty selects Docker's default socket. Podman requires its API service socket. Excluded by kubernetes."
                     } else {
                         "Without kubernetes, omitted or empty selects the SDK default. Excluded by kubernetes."
                     }}),
@@ -342,6 +311,15 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 "x-nemoclaw-error": "managed Kubernetes requires an explicit HTTPS 127.0.0.1 endpoint with a nonzero port and excludes local engine settings"
             });
             gateway["else"] = local;
+            // Podman's socket depends on the host user, so it has no default.
+            gateway["allOf"] = json!([{
+                "if": at("runtime/provider", json!({"const":"podman"}), true),
+                "then": {
+                    "required": ["engine"],
+                    "properties": {"engine": {"minLength": 1}},
+                    "x-nemoclaw-error": "Podman requires spec.gateway.engine to name its local API service socket."
+                }
+            }]);
         } else {
             property(gateway, "endpoint", json!({"pattern": "^https?://"}));
             gateway["if"] = at("endpoint", json!({"pattern": "^http:"}), true);

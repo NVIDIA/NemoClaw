@@ -114,16 +114,20 @@ fn a_sandbox_attaches_the_union_of_selected_providers_with_bound_credentials() {
         .filter(|row| row.kind == "provider")
         .map(|row| json!(row.address))
         .collect();
-    dependencies.push(json!("data.nemoclaw_gateway_capabilities.apply"));
+    dependencies.push(json!("data.openshell_gateway.apply"));
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"],
+        graph["resource"]["openshell_sandbox"]["assistant"]["depends_on"],
         json!(dependencies)
     );
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["other"]["depends_on"],
+        graph["resource"]["openshell_sandbox"]["other"]["depends_on"],
         json!([
-            provider_scope::address(&graph["resource"]["nemoclaw_provider"], "provider", "local"),
-            "data.nemoclaw_gateway_capabilities.apply"
+            provider_scope::address(
+                &graph["resource"]["openshell_provider_registration"],
+                "provider",
+                "local"
+            ),
+            "data.openshell_gateway.apply"
         ])
     );
     assert_eq!(
@@ -181,7 +185,7 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
     );
     let graph = compile(&doc, &generations(), "0.1.0").unwrap();
     let dependencies = provider_scope::resource(
-        &graph["resource"]["nemoclaw_provider"],
+        &graph["resource"]["openshell_provider_registration"],
         &local_name,
     )["depends_on"]
         .as_array()
@@ -190,11 +194,11 @@ fn managed_ollama_installs_while_an_external_provider_is_the_default() {
         dependencies,
         &[
             json!(provider_scope::address(
-                &graph["resource"]["nemoclaw_provider_profile"],
+                &graph["resource"]["openshell_provider_profile"],
                 "provider_profile",
                 &local_name
             )),
-            json!("data.nemoclaw_gateway_capabilities.apply")
+            json!("data.openshell_gateway.apply")
         ]
     );
 }

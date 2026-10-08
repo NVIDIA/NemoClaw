@@ -12,8 +12,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 pub const GATEWAY_KIND: &str = "managed_gateway";
-pub const OWNER_LABEL: &str = "nemoclaw.nvidia.com/uid";
-pub const GENERATION_LABEL: &str = "nemoclaw.nvidia.com/generation";
+pub use nemoclaw_docker::{GENERATION_LABEL, OWNER_LABEL};
 pub use nemoclaw_runtime::{
     SPEC_VERSION as RUNTIME_SPEC_VERSION, SPEC_VERSION_LABEL as RUNTIME_SPEC_VERSION_LABEL,
 };

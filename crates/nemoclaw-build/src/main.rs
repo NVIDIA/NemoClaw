@@ -121,6 +121,12 @@ enum ImageAction {
     Qualify {
         #[arg(required = true)]
         images: Vec<String>,
+        /// Also run the shared configure, invoke and prepare assertions with this adapter's offline configuration.
+        #[arg(long, value_enum)]
+        lifecycle: Option<nemoclaw_build::images::Lifecycle>,
+        /// Fail when native readiness is unsupported instead of reporting it as skipped.
+        #[arg(long, requires = "lifecycle")]
+        require_ready: bool,
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
@@ -275,7 +281,10 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
-    build(&["nemoclaw-cli", "nemoclaw-provider"], target)?;
+    build(
+        &["nemoclaw-cli", "nemoclaw-provider", "openshell-provider"],
+        target,
+    )?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::create_dir_all("dist")?;
     let temporary = tempfile::tempdir_in("dist")?;
@@ -284,6 +293,9 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     fs::create_dir_all(root.join("libexec"))?;
     let provider = format!("providers/registry.opentofu.org/nvidia/nemoclaw/{version}/{platform}");
     fs::create_dir_all(root.join(&provider))?;
+    let openshell =
+        format!("providers/registry.opentofu.org/nvidia/openshell/{version}/{platform}");
+    fs::create_dir_all(root.join(&openshell))?;
     let extension = if platform.starts_with("windows") {
         ".exe"
     } else {
@@ -305,6 +317,10 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
         (
             format!("terraform-provider-nemoclaw{extension}"),
             format!("{provider}/terraform-provider-nemoclaw_v{version}{extension}"),
+        ),
+        (
+            format!("terraform-provider-openshell{extension}"),
+            format!("{openshell}/terraform-provider-openshell_v{version}{extension}"),
         ),
     ] {
         fs::copy(
@@ -411,9 +427,13 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
-            ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
+            ImageAction::Qualify {
+                images,
+                lifecycle,
+                require_ready,
+            } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
-                nemoclaw_build::images::qualify(root, image)
+                nemoclaw_build::images::qualify(root, image, lifecycle, require_ready)
             }),
             ImageAction::ExportMetadata {
                 image,

@@ -2251,13 +2251,25 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
  "jsonschema 0.56.0",
- "nemoclaw-discovery",
  "nemoclaw-sdk",
  "serde",
  "serde-saphyr 1.2.0",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+]
+
+[[package]]
+name = "nemoclaw-backend"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "getrandom 0.4.3",
+ "nemoclaw-runtime",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "url",
 ]
 
 [[package]]
@@ -2321,6 +2333,8 @@ dependencies = [
  "futures-util",
  "hyper",
  "hyper-util",
+ "nemoclaw-docker",
+ "nemoclaw-openshell",
  "nemoclaw-sdk",
  "openshell-sdk",
  "reqwest 0.13.5",
@@ -2334,15 +2348,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-docker"
+version = "0.1.0"
+dependencies = [
+ "bollard",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hyper",
+ "hyper-util",
+ "nemoclaw-backend",
+ "regex",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tar",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "nemoclaw-e2e"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
  "http",
+ "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
+ "nemoclaw-tofu",
  "openshell-core",
  "prost",
  "rcgen",
@@ -2397,6 +2434,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-openshell"
+version = "0.1.0"
+dependencies = [
+ "jsonschema 0.56.0",
+ "nemoclaw-backend",
+ "nemoclaw-tofu",
+ "openshell-policy",
+ "openshell-sdk",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tonic",
+ "url",
+]
+
+[[package]]
 name = "nemoclaw-provider"
 version = "0.1.0"
 dependencies = [
@@ -2407,12 +2462,17 @@ dependencies = [
  "interprocess",
  "ipnet",
  "nemo-fabric-core",
+ "nemoclaw-backend",
  "nemoclaw-container-inputs",
  "nemoclaw-discovery",
+ "nemoclaw-docker",
+ "nemoclaw-openshell",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
+ "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",
+ "openshell-provider",
  "openshell-sdk",
  "prost",
  "regex",
@@ -2474,9 +2534,13 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "nemo-fabric-core",
+ "nemoclaw-backend",
+ "nemoclaw-docker",
+ "nemoclaw-openshell",
  "nemoclaw-container-inputs",
  "nemoclaw-provider",
  "nemoclaw-runtime",
+ "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",
  "process-wrap",
@@ -2498,6 +2562,18 @@ dependencies = [
  "toml",
  "url",
  "widestring",
+]
+
+[[package]]
+name = "nemoclaw-tofu"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-backend",
+ "serde",
+ "serde_json",
+ "tf-provider",
+ "tokio",
 ]
 
 [[package]]
@@ -2782,6 +2858,28 @@ dependencies = [
  "noyalib",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "openshell-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-backend",
+ "nemoclaw-docker",
+ "nemoclaw-openshell",
+ "nemoclaw-tofu",
+ "openshell-core",
+ "openshell-policy",
+ "openshell-sdk",
+ "prost",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tf-provider",
+ "tokio",
+ "tokio-util",
+ "tonic",
 ]
 
 [[package]]

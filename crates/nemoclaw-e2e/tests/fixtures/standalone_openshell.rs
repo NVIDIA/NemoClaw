@@ -13,20 +13,32 @@ impl Standalone {
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider"));
         assert!(tofu.is_absolute() && provider.is_absolute());
         let root = TofuWorkspace::new(tofu, provider);
-        fs::write(
-            root.path().join("main.tf"),
-            include_str!("openshell_resources.tf"),
-        )
-        .unwrap();
         let runtime = nemoclaw_e2e::image_runtime::binding("nvidia.fabric.pi");
         let mut document = nemoclaw_sdk::config::Document::parse(
             include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
         )
         .unwrap();
         document.spec.inference_providers[0].endpoint = "http://127.0.0.1:11434/v1".into();
-        let policy = nemoclaw_sdk::image_runtime::PolicyInput::for_sandbox(
-            &document,
-            &document.spec.sandboxes[0],
+        let policy =
+            nemoclaw_sdk::image_runtime::policy_input(&document, &document.spec.sandboxes[0])
+                .unwrap();
+        // Write the policy as an author would: a typed block, not JSON.
+        let input = nemoclaw_openshell::structured_inputs("sandbox")
+            .into_iter()
+            .find(|input| input.attribute == "policy")
+            .unwrap();
+        let nemoclaw_tofu::shape::Shape::Object(fields) = &input.shape else {
+            unreachable!("the policy is a block")
+        };
+        let policy = input
+            .configuration(&serde_json::to_string(&policy).unwrap())
+            .unwrap();
+        fs::write(
+            root.path().join("main.tf"),
+            include_str!("openshell_resources.tf").replace(
+                "@POLICY@\n",
+                &nemoclaw_e2e::hcl::block("policy", fields, &policy, 2),
+            ),
         )
         .unwrap();
         fs::write(
@@ -34,8 +46,7 @@ impl Standalone {
             json!({
                 "endpoint": endpoint,
                 "runtime_json": serde_json::to_string(&runtime).unwrap(),
-                "policy_json": serde_json::to_string(&policy).unwrap(),
-                "binaries_json": serde_json::to_string(runtime.binaries()).unwrap(),
+                "binaries": runtime.binaries(),
             })
             .to_string(),
         )
@@ -82,7 +93,7 @@ impl Standalone {
         let path = self.root.path().join("main.tf");
         let source = fs::read_to_string(&path).unwrap();
         let (registrations, _) = source
-            .split_once("resource \"nemoclaw_sandbox\" \"agent\"")
+            .split_once("resource \"openshell_sandbox\" \"agent\"")
             .unwrap();
         fs::write(
             path,
@@ -126,7 +137,7 @@ async fn standalone_registrations_recreate_confirmed_absence_without_replacing_s
         for change in plan["resource_changes"].as_array().unwrap() {
             assert_eq!(
                 change["change"]["actions"],
-                if change["type"] == format!("nemoclaw_{kind}") {
+                if change["type"] == nemoclaw_sdk::compile::resource_type(kind) {
                     json!(["create"])
                 } else {
                     json!(["no-op"])
@@ -169,9 +180,9 @@ async fn standalone_registrations_replace_and_remove_without_destroy_mode() {
         assert_eq!(
             change["change"]["actions"],
             match change["type"].as_str().unwrap() {
-                "nemoclaw_provider_profile" => json!(["delete", "create"]),
-                "nemoclaw_provider" => json!(["delete", "create"]),
-                "nemoclaw_workspace" => json!(["no-op"]),
+                "openshell_provider_profile" => json!(["delete", "create"]),
+                "openshell_provider_registration" => json!(["delete", "create"]),
+                "openshell_workspace" => json!(["no-op"]),
                 other => panic!("unexpected resource {other}"),
             }
         );
@@ -283,8 +294,8 @@ async fn standalone_registration_authentication_mode_replaces_but_secret_referen
                 "authenticated = tostring(var.credential_env != \"\")",
             )
             .replace(
-                "endpoint   = nemoclaw_provider_profile.inference[0].endpoint",
-                "endpoint   = nemoclaw_provider_profile.inference[0].endpoint\n  credential_env = var.credential_env",
+                "endpoint   = openshell_provider_profile.inference[0].endpoint",
+                "endpoint   = openshell_provider_profile.inference[0].endpoint\n  credential_env = var.credential_env",
             )
             + "\nvariable \"credential_env\" { default = \"\" }\n",
     )
@@ -373,7 +384,7 @@ async fn standalone_hcl_recovers_partial_creation_after_untaint_and_retains_work
             .unwrap()
             .iter()
             .any(|resource| {
-                resource["type"] == "nemoclaw_sandbox"
+                resource["type"] == "openshell_sandbox"
                     && resource["instances"][0]["attributes"]["id"]
                         .as_str()
                         .is_some_and(|id| !id.is_empty())
@@ -386,7 +397,7 @@ async fn standalone_hcl_recovers_partial_creation_after_untaint_and_retains_work
         &["apply", "-refresh-only", "-auto-approve", "-input=false"],
         true,
     );
-    tofu.run(&["untaint", "nemoclaw_sandbox.agent[0]"], true);
+    tofu.run(&["untaint", "openshell_sandbox.agent[0]"], true);
     tofu.apply();
     tofu.noop();
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
@@ -453,7 +464,7 @@ async fn standalone_hcl_rejects_replacement_and_unauthorized_removal_during_plan
             "plan",
             "-input=false",
             "-var=destroying=true",
-            "-replace=nemoclaw_sandbox.agent[0]",
+            "-replace=openshell_sandbox.agent[0]",
         ],
         false,
     );
@@ -533,7 +544,7 @@ async fn standalone_hcl_recovers_lost_delete_response_without_repeating_the_muta
             .as_array()
             .unwrap()
             .iter()
-            .any(|resource| resource["type"] == "nemoclaw_provider")
+            .any(|resource| resource["type"] == "openshell_provider_registration")
     );
     tofu.run(&args, true);
     let state = fixture.state.lock().unwrap();
@@ -654,14 +665,14 @@ async fn gateway_readiness_dependency_waits_for_startup_before_workspace_creatio
     tofu.deferred_endpoint();
     let path = tofu.root.path().join("main.tf");
     let source = fs::read_to_string(&path).unwrap().replace(
-        "resource \"nemoclaw_workspace\" \"example\" {",
-        "resource \"nemoclaw_workspace\" \"example\" {\n depends_on = [data.nemoclaw_gateway_capabilities.ready]",
+        "resource \"openshell_workspace\" \"example\" {",
+        "resource \"openshell_workspace\" \"example\" {\n depends_on = [data.openshell_gateway.ready]",
     );
     fs::write(
         path,
         source
             + r#"
- data "nemoclaw_gateway_capabilities" "ready" {
+ data "openshell_gateway" "ready" {
    required_compute_drivers = ["docker"]
    wait_timeout_seconds = 5
    depends_on = [terraform_data.bootstrap]
@@ -712,11 +723,11 @@ async fn standalone_pi_configuration_updates_without_replacing_the_sandbox() {
 variable "model" { default = "first-model" }
 resource "nemoclaw_agent_configuration" "agent" {
   count = var.enabled ? 1 : 0
-  workspace = nemoclaw_sandbox.agent[0].workspace
-  name = nemoclaw_sandbox.agent[0].name
-  owner = nemoclaw_sandbox.agent[0].owner
-  generation = nemoclaw_sandbox.agent[0].generation
-  sandbox_id = nemoclaw_sandbox.agent[0].id
+  workspace = openshell_sandbox.agent[0].workspace
+  name = openshell_sandbox.agent[0].name
+  owner = openshell_sandbox.agent[0].owner
+  generation = openshell_sandbox.agent[0].generation
+  sandbox_id = openshell_sandbox.agent[0].id
   config_json = jsonencode({ schema_version = "fabric.agent/v1alpha1", runtime = {}, metadata = { name = "assistant" }, harness = { adapter_id = "nvidia.fabric.pi" }, models = { default = { provider = "openai", model = var.model } } })
 }
 "#,
@@ -865,7 +876,7 @@ async fn standalone_create_readback_rejects_substitution_and_retains_established
             .as_array()
             .unwrap()
             .iter()
-            .find(|resource| resource["type"] == "nemoclaw_sandbox")
+            .find(|resource| resource["type"] == "openshell_sandbox")
             .expect("failed readback must preserve the create response binding");
         assert_eq!(
             sandbox["instances"][0]["attributes"]["id"],
@@ -916,7 +927,7 @@ async fn standalone_registrations_recover_after_absence_was_committed_by_refresh
         .as_array()
         .unwrap()
         .iter()
-        .find(|change| change["type"] == "nemoclaw_provider")
+        .find(|change| change["type"] == "openshell_provider_registration")
         .unwrap();
     assert_eq!(registration["change"]["actions"], json!(["create"]));
     assert_eq!(fixture.state.lock().unwrap().effects, effects);

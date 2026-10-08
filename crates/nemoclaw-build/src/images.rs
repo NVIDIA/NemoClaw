@@ -19,7 +19,8 @@ pub const PLATFORMS: [&str; 2] = ["linux/arm64", "linux/amd64"];
 const BRIDGE_LABEL: &str = "io.nemoclaw.fabric.bridge";
 const CATALOG_LABEL: &str = "io.nemoclaw.fabric.catalog";
 const REFERENCE_LABEL: &str = "io.nemoclaw.fabric.reference";
-const QUALIFY_TIMEOUT: Duration = Duration::from_secs(180);
+// Lifecycle profiles start a native adapter and make two inference requests.
+const QUALIFY_TIMEOUT: Duration = Duration::from_secs(480);
 
 fn docker() -> Command {
     let mut command = Command::new("docker");
@@ -312,7 +313,94 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
 }
 
 /// Run the black-box command contract inside one image, offline and read-only.
-pub fn qualify(root: &Path, image: &str) -> Result<()> {
+/// A shared lifecycle profile: the adapter whose offline configuration the
+/// contract suite configures, invokes and prepares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Lifecycle {
+    Dummy,
+    Openclaw,
+    Hermes,
+    Pi,
+}
+
+impl Lifecycle {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Dummy => "dummy",
+            Self::Openclaw => "openclaw",
+            Self::Hermes => "hermes",
+            Self::Pi => "pi",
+        }
+    }
+}
+
+/// The `docker run` arguments for one qualification container: offline,
+/// read-only, with the contract suite and native helper mounted read-only.
+pub fn qualify_arguments(
+    root: &Path,
+    name: &str,
+    id: &str,
+    bridge: &str,
+    reference: &str,
+    lifecycle: Option<Lifecycle>,
+    require_ready: bool,
+) -> Vec<String> {
+    let mount = |file: &str, destination: &str| {
+        format!(
+            "type=bind,src={},dst={destination},readonly",
+            root.join("image").join(file).display()
+        )
+    };
+    let mut arguments: Vec<String> = [
+        "run",
+        "--name",
+        name,
+        "--rm",
+        "--runtime=runc",
+        "--network=none",
+        "--read-only",
+        "--tmpfs",
+        "/sandbox:rw,uid=10001,gid=10001,mode=0700",
+        "--tmpfs",
+        "/tmp:rw,mode=1777",
+    ]
+    .map(String::from)
+    .to_vec();
+    for variable in [
+        format!("NEMOCLAW_TEST_BRIDGE={bridge}"),
+        format!("NEMOCLAW_TEST_REFERENCE={reference}"),
+        format!(
+            "NEMOCLAW_TEST_LIFECYCLE={}",
+            lifecycle.map(Lifecycle::name).unwrap_or("")
+        ),
+        format!("NEMOCLAW_TEST_REQUIRE_READY={}", u8::from(require_ready)),
+        "FABRIC_NATIVE_TEST_KEY=fabric-native-key".into(),
+        "HOME=/sandbox".into(),
+    ] {
+        arguments.extend(["-e".into(), variable]);
+    }
+    arguments.extend([
+        "--workdir".into(),
+        "/sandbox".into(),
+        "--mount".into(),
+        mount("test_agent_contract.py", "/test.py"),
+        "--mount".into(),
+        mount("qualify_native.py", "/qualify_native.py"),
+        "--entrypoint".into(),
+        "/opt/fabric/bin/python".into(),
+        id.into(),
+        "-B".into(),
+        "/test.py".into(),
+    ]);
+    arguments
+}
+
+pub fn qualify(
+    root: &Path,
+    image: &str,
+    lifecycle: Option<Lifecycle>,
+    require_ready: bool,
+) -> Result<()> {
     let inspected = output(
         docker().args(["image", "inspect", image]),
         "inspect the image",
@@ -325,41 +413,20 @@ pub fn qualify(root: &Path, image: &str) -> Result<()> {
     })?;
     let reference = labels[REFERENCE_LABEL].as_str().unwrap_or("");
     let id = inspected[0]["Id"].as_str().ok_or("image has no ID")?;
-    let test = std::path::absolute(root.join("image/test_agent_contract.py"))
-        .map_err(|_| "cannot locate the contract test")?;
+    let root = std::path::absolute(root).map_err(|_| "cannot locate the repository")?;
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the qualification container")?;
     let name = format!("nemoclaw-contract-{}", crate::hex(&nonce));
     let mut child = docker()
-        .args([
-            "run",
-            "--name",
+        .args(qualify_arguments(
+            &root,
             &name,
-            "--rm",
-            "--runtime=runc",
-            "--network=none",
-            "--read-only",
-            "--tmpfs",
-            "/sandbox:rw,uid=10001,gid=10001,mode=0700",
-            "--tmpfs",
-            "/tmp:rw,mode=1777",
-            "-e",
-        ])
-        .arg(format!("NEMOCLAW_TEST_BRIDGE={bridge}"))
-        .arg("-e")
-        .arg(format!("NEMOCLAW_TEST_REFERENCE={reference}"))
-        .arg("--mount")
-        .arg(format!(
-            "type=bind,src={},dst=/test.py,readonly",
-            test.display()
-        ))
-        .args([
-            "--entrypoint",
-            "/opt/fabric/bin/python",
             id,
-            "-B",
-            "/test.py",
-        ])
+            bridge,
+            reference,
+            lifecycle,
+            require_ready,
+        ))
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()

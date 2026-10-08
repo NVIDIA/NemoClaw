@@ -99,12 +99,12 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
         },
         ResourceSchema {
             kind: installers::ollama::STORAGE_KIND,
-            fields: &["spec"],
+            fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],
         },
         ResourceSchema {
             kind: installers::vllm::STORAGE_KIND,
-            fields: &["spec"],
+            fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],
         },
     ]
@@ -239,21 +239,11 @@ impl ServiceDefinition {
             Self::OllamaProxy(_) => return Ok(None),
             Self::Container(_) => unreachable!(),
         };
-        let (engine, network_cidr, bind_address) = match placement {
-            Some(explicit) => (
-                &explicit.placement.engine,
-                &explicit.placement.network_cidr,
-                explicit.publication.bind_address.clone(),
-            ),
-            None => {
-                let gateway = gateway.managed()?;
-                (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
-            }
-        };
+        let placed = super::placement::ResolvedPlacement::resolve(placement, gateway, port)?;
         Ok(Some(NetworkAllocation {
-            engine: engine.clone(),
-            network_cidr: network_cidr.clone(),
-            bind_address,
+            engine: placed.engine,
+            network_cidr: placed.network_cidr,
+            bind_address: placed.bind_address,
             port,
         }))
     }
@@ -298,14 +288,12 @@ impl ServiceDefinition {
                 ));
             }
             ServiceDefinition::Ollama(service) => ResolvedInference {
-                endpoint: match &service.publication {
-                    Some(publication) => publication.endpoint.clone(),
-                    None => format!(
-                        "http://{}:{}/v1",
-                        document.spec.gateway.managed()?.bridge()?,
-                        service.serving.port
-                    ),
-                },
+                endpoint: super::placement::ResolvedPlacement::resolve(
+                    service.published_placement()?,
+                    &document.spec.gateway,
+                    service.serving.port,
+                )?
+                .endpoint,
                 served_model: service.model.name.clone(),
                 requires_authentication: false,
                 resource_dependencies: Vec::new(),
@@ -317,14 +305,12 @@ impl ServiceDefinition {
                 resource_dependencies: vec![format!("nemoclaw_ollama_proxy.{name}")],
             },
             ServiceDefinition::Vllm(service) => ResolvedInference {
-                endpoint: match &service.publication {
-                    Some(publication) => publication.endpoint.clone(),
-                    None => format!(
-                        "http://{}:{}/v1",
-                        document.spec.gateway.managed()?.bridge()?,
-                        service.serving.port
-                    ),
-                },
+                endpoint: super::placement::ResolvedPlacement::resolve(
+                    service.published_placement()?,
+                    &document.spec.gateway,
+                    service.serving.port,
+                )?
+                .endpoint,
                 served_model: service.served_model().into(),
                 requires_authentication: service.authentication.is_some(),
                 resource_dependencies: Vec::new(),
@@ -646,6 +632,16 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
         }
     }
     Ok(kinds.into_iter().collect())
+}
+
+pub(crate) fn supported_generation_kind(kind: &str) -> bool {
+    // Removed services may still own resources under their retained generation.
+    matches!(
+        kind,
+        installers::ollama::SERVICE_KIND
+            | installers::ollama::proxy::PROXY
+            | installers::vllm::SERVICE_KIND
+    )
 }
 
 pub(crate) fn remove_plans(

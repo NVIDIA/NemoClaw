@@ -17,13 +17,13 @@ async fn search_preserves_credentials_on_unchanged_ensure_and_removes_owned_regi
     for (provider_type, profile_address, profile_name, credential_env) in [
         (
             "brave",
-            "nemoclaw_provider_profile.web_search",
+            "openshell_provider_profile.web_search",
             "nemoclaw-brave",
             "BRAVE_API_KEY",
         ),
         (
             "tavily",
-            "nemoclaw_provider_profile.web_search_tavily",
+            "openshell_provider_profile.web_search_tavily",
             "nemoclaw-tavily",
             "TAVILY_API_KEY",
         ),
@@ -48,7 +48,11 @@ async fn search_credential_lifecycle(
     }))
     .unwrap();
     doc.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
-    let client = OpenShell::connect(&doc.spec.gateway, Arc::new(Key("owned-search-key"))).unwrap();
+    let client = OpenShell::connect(
+        &doc.spec.gateway.connection(),
+        Arc::new(Key("owned-search-key")),
+    )
+    .unwrap();
     let generations: Generations = ["workspace", "provider", "sandbox"]
         .map(|k| (k.into(), "a".repeat(32)))
         .into();
@@ -103,8 +107,11 @@ async fn search_credential_lifecycle(
         assert_eq!(stored.profile_workspace, doc.workspace());
     }
     let effects = fixture.state.lock().unwrap().effects;
-    let changed_key_client =
-        OpenShell::connect(&doc.spec.gateway, Arc::new(Key("changed-search-key"))).unwrap();
+    let changed_key_client = OpenShell::connect(
+        &doc.spec.gateway.connection(),
+        Arc::new(Key("changed-search-key")),
+    )
+    .unwrap();
     let unchanged = changed_key_client.ensure("provider", target).await;
     assert!(unchanged.error().is_none(), "{:?}", unchanged.error());
     assert_eq!(unchanged.into_parts().0.unwrap()["id"], provider["id"]);
@@ -182,7 +189,7 @@ async fn separate_search_credentials_reach_only_their_selected_sandbox_attachmen
         .map(|k| (k.into(), "a".repeat(32)))
         .into();
     let targets = targets(&doc, &generations).unwrap();
-    let client = OpenShell::connect(&doc.spec.gateway, Arc::new(Keys)).unwrap();
+    let client = OpenShell::connect(&doc.spec.gateway.connection(), Arc::new(Keys)).unwrap();
     for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
         for target in targets.iter().filter(|t| t.kind == kind) {
             let result = client.ensure(kind, &target.values).await;

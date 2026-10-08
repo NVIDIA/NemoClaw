@@ -151,23 +151,16 @@ fn managed_targets(
         .filter(|value| !value.is_empty())
         .ok_or(Error::State("missing Ollama service generation"))?;
     let runtime = nemoclaw_runtime::RuntimeSpec::Ollama(Box::new(service.runtime_settings()));
-    let placement = service.published_placement()?;
-    let (engine, network_cidr, bind_address) = match placement {
-        Some(explicit) => (
-            &explicit.placement.engine,
-            &explicit.placement.network_cidr,
-            explicit.publication.bind_address.clone(),
-        ),
-        None => {
-            let gateway = document.spec.gateway.managed()?;
-            (&gateway.engine, &gateway.network_cidr, gateway.bridge()?)
-        }
-    };
+    let placed = crate::services::placement::ResolvedPlacement::resolve(
+        service.published_placement()?,
+        &document.spec.gateway,
+        service.serving.port,
+    )?;
     let process = Process {
-        engine: engine.clone(),
+        engine: placed.engine.clone(),
         image: service.image.clone(),
-        network_cidr: network_cidr.clone(),
-        create_network: service.placement.is_some(),
+        network_cidr: placed.network_cidr.clone(),
+        create_network: placed.explicit,
         architecture: service.architecture()?.into(),
         image_labels: BTreeMap::from([
             ("org.nemoclaw.backend".into(), "ollama".into()),
@@ -186,7 +179,7 @@ fn managed_targets(
         environment: BTreeMap::new(),
         input_revision: String::new(),
         mount_target: "/data".into(),
-        bind_address,
+        bind_address: placed.bind_address,
         port: service.serving.port as u16,
         shared_memory_bytes: service
             .container
@@ -207,7 +200,7 @@ fn managed_targets(
         name: format!("{}-ollama-{name}", document.workspace()),
         owner: document.metadata.uid.clone(),
         generation: generation.clone(),
-        gateway: if service.placement.is_some() {
+        gateway: if placed.explicit {
             Default::default()
         } else {
             document.spec.gateway.managed()?.runtime_settings()
@@ -220,24 +213,22 @@ fn managed_targets(
         generation: spec.generation.clone(),
         engine: spec.engine().into(),
     };
-    let mut targets = Vec::new();
-    for (kind, encoded) in [
-        (STORAGE_KIND, storage.json()?),
-        (SERVICE_KIND, spec.json()?),
-    ] {
-        let mut values = crate::backend::Row::from([("spec".into(), encoded)]);
-        if kind == SERVICE_KIND
-            && let Some(policy) = service.image_pull_policy
-        {
-            values.insert("image_pull_policy".into(), policy.as_str().into());
-        }
-        targets.push(Target {
-            kind: kind.into(),
-            address: address(kind, name),
-            values,
-        });
+    let mut values = crate::backend::Row::from([("spec".into(), spec.json()?)]);
+    if let Some(policy) = service.image_pull_policy {
+        values.insert("image_pull_policy".into(), policy.as_str().into());
     }
-    Ok(targets)
+    Ok(vec![
+        Target {
+            kind: STORAGE_KIND.into(),
+            address: address(STORAGE_KIND, name),
+            values: storage.row()?,
+        },
+        Target {
+            kind: SERVICE_KIND.into(),
+            address: address(SERVICE_KIND, name),
+            values,
+        },
+    ])
 }
 
 impl Installer for ManagedOllama {
@@ -309,17 +300,18 @@ impl OllamaProxy {
         generations: &Generations,
     ) -> Result<String, Error> {
         let spec = proxy::specification(document, name, self, generations)?;
-        Ok(crate::services::authentication::Source::OllamaProxy {
-            storage: crate::managed::Storage {
-                name: spec.volume(),
-                owner: spec.owner.clone(),
-                generation: spec.generation.clone(),
-                engine: self.engine(document)?.into(),
+        Ok(crate::services::authentication::source_json(
+            &crate::services::authentication::Source::OllamaProxy {
+                storage: crate::managed::Storage {
+                    name: spec.volume(),
+                    owner: spec.owner.clone(),
+                    generation: spec.generation.clone(),
+                    engine: self.engine(document)?.into(),
+                },
+                container: spec.name.clone(),
+                endpoint: spec.settings.endpoint.clone(),
             },
-            container: spec.name.clone(),
-            endpoint: spec.settings.endpoint.clone(),
-        }
-        .json()?)
+        )?)
     }
 }
 

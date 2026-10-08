@@ -10,7 +10,7 @@ use ratatui::backend::TestBackend;
 pub(super) fn resource(name: &str, status: &'static str) -> Progress {
     Progress::Resource {
         resource: "sandbox",
-        address: Some(format!("nemoclaw_sandbox.{name}")),
+        address: Some(format!("openshell_sandbox.{name}")),
         action: "create",
         status,
         elapsed: Duration::ZERO,

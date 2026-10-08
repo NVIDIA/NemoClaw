@@ -131,7 +131,9 @@ async fn missing_selected_provider_reconciles_without_sandbox_changes() {
         initial
             .changes
             .iter()
-            .find(|change| change.resource.starts_with("nemoclaw_provider."))
+            .find(|change| change
+                .resource
+                .starts_with("openshell_provider_registration."))
             .unwrap()
             .resource
     );
@@ -1207,6 +1209,9 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
     .unwrap();
     *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    // Keep passive discovery identical across applies. An unroutable endpoint can
+    // fail as either a transport error or a timeout.
+    document.spec.inference_providers[0].endpoint = "http://127.0.0.1:9/v1".into();
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
     fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
@@ -1382,7 +1387,7 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
         added
             .changes
             .iter()
-            .any(|change| change.resource == "nemoclaw_sandbox.third")
+            .any(|change| change.resource == "openshell_sandbox.third")
     );
     assert!(
         added
@@ -1566,7 +1571,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
             preview
                 .changes
                 .iter()
-                .any(|change| change.resource == "nemoclaw_sandbox.assistant")
+                .any(|change| change.resource == "openshell_sandbox.assistant")
         );
         assert_eq!(fs::read(&intent_path).unwrap(), intent);
         assert_eq!(fs::read(&state_path).unwrap(), saved);

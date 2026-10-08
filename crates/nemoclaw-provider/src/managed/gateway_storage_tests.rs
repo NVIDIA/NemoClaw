@@ -231,8 +231,7 @@ async fn gateway_prerequisites_can_be_checked_without_storage_or_resource_reads(
     .await;
     let engine = fixture.engine_for("unix:///var/run/docker.sock");
     assert_eq!(
-        engine
-            .gateway_engine_info(ComputeDriver::Docker)
+        nemoclaw_discovery::gateway_engine_info(&engine, ComputeDriver::Docker)
             .await
             .unwrap()
             .id

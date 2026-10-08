@@ -1,90 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use crate::ObservationError;
-use serde::{Deserialize, Serialize};
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
-pub enum Source {
-    OllamaProxy {
-        storage: crate::managed::Storage,
-        container: String,
-        endpoint: String,
-    },
-    ManagedService {
-        storage: crate::managed::Storage,
-        container: String,
-        endpoint: String,
-    },
-}
-impl Source {
-    pub fn fields(&self) -> (&crate::managed::Storage, &str, &str) {
-        match self {
-            Self::OllamaProxy {
-                storage,
-                container,
-                endpoint,
-            }
-            | Self::ManagedService {
-                storage,
-                container,
-                endpoint,
-            } => (storage, container, endpoint),
-        }
-    }
-    pub(crate) fn json(&self) -> Result<String, crate::config::ConfigError> {
-        let source = serde_json::to_string(self).expect("typed credential source");
-        crate::config::credential_metadata::pack(&source).map_err(|_| {
-            crate::config::ConfigError::new(
-                "managed credential reference exceeds gateway annotation capacity",
-            )
-        })?;
-        Ok(source)
-    }
+pub use nemoclaw_docker::credentials::Source;
 
-    pub fn parse(value: &str, owner: &str, endpoint: &str) -> Result<Self, ObservationError> {
-        let source: Self = serde_json::from_str(value).map_err(|_| ObservationError::Incomplete)?;
-        use sha2::{Digest, Sha256};
-        let (storage, container, published) = source.fields();
-        let prefix = format!(
-            "nc-{}-",
-            Sha256::digest(owner.as_bytes())[..8]
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-        );
-        let (kind, suffix, local) = match source {
-            Self::OllamaProxy { .. } => ("ollama-proxy-", "auth", true),
-            Self::ManagedService { .. } => ("inference-", "auth", false),
-        };
-        let namespace = format!("{prefix}{kind}");
-        let name = container.strip_prefix(&namespace);
-        let address = published
-            .strip_prefix("http://")
-            .and_then(|s| s.strip_suffix("/v1"))
-            .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
-        let private = address.is_some_and(|address| {
-            address.port() != 0
-                && match address.ip() {
-                    std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
-                    std::net::IpAddr::V6(ip) => local && (ip.is_unique_local() || ip.is_loopback()),
-                }
-        });
-        if storage.validate().is_err()
-            || storage.owner != owner
-            || published != endpoint
-            || !private
-            || (local && !storage.engine.starts_with("unix:///"))
-            || !name.is_some_and(|name| {
-                regex::Regex::new(r"^[a-z][a-z0-9-]*$")
-                    .unwrap()
-                    .is_match(name)
-            })
-            || storage.name != format!("{container}-{suffix}")
-        {
-            return Err(ObservationError::BindingMismatch);
-        }
-        Ok(source)
-    }
+/// The credential source as a registration annotation value.
+pub(crate) fn source_json(source: &Source) -> Result<String, crate::config::ConfigError> {
+    let source = serde_json::to_string(source).expect("typed credential source");
+    crate::config::credential_metadata::pack(&source).map_err(|_| {
+        crate::config::ConfigError::new(
+            "managed credential reference exceeds gateway annotation capacity",
+        )
+    })?;
+    Ok(source)
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ fn runtime_compilation_does_not_require_openshell_resource_generations() {
         .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["resource"]["docker_container"].is_object());
-    assert!(graph["resource"].get("nemoclaw_sandbox").is_none());
+    assert!(graph["resource"].get("openshell_sandbox").is_none());
     assert!(graph["data"].get("nemoclaw_sandbox_readiness").is_none());
 }
 
@@ -49,12 +49,15 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
         graph["data"].get("nemoclaw_sandbox_readiness").is_none(),
         "the runtime graph cannot observe sandboxes owned by the deployment graph"
     );
-    let readiness = &graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    let readiness = &graph["data"]["openshell_gateway"]["current"];
     assert_eq!(readiness["wait_timeout_seconds"], 90);
     assert_eq!(readiness["required_compute_drivers"], json!(["docker"]));
     assert_eq!(
         readiness["depends_on"],
-        json!(["docker_container.managed_gateway_runtime"])
+        json!([
+            "docker_container.managed_gateway_runtime",
+            "data.nemoclaw_gateway_readiness.current"
+        ])
     );
     assert_eq!(
         readiness["lifecycle"]["postcondition"][0]["condition"],
@@ -332,22 +335,28 @@ fn gateway_readiness_observes_the_exact_docker_provider_container() {
         .map(|kind| (kind.into(), "b".repeat(32)))
         .into();
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
-    let readiness = &graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    let readiness = &graph["data"]["nemoclaw_gateway_readiness"]["current"];
     assert_eq!(
         readiness["container_id"],
         "${docker_container.managed_gateway_runtime.id}"
     );
-    let spec: nemoclaw_sdk::managed::Spec =
-        serde_json::from_str(readiness["managed_spec"].as_str().unwrap()).unwrap();
-    assert_eq!(
-        spec.name,
-        graph["resource"]["docker_container"]["managed_gateway_runtime"]["name"]
+    let capabilities = &graph["data"]["openshell_gateway"]["current"];
+    assert!(
+        capabilities.get("managed_spec").is_none() && capabilities.get("container_id").is_none()
     );
-    assert_eq!(spec.owner, document.metadata.uid);
+    let container = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
+    assert_eq!(readiness["name"], container["name"]);
+    assert_eq!(readiness["wait_timeout_seconds"], 90);
+    assert!(
+        readiness["endpoint"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:")
+    );
+    assert_eq!(readiness["owner"], document.metadata.uid);
     let podman =
         Document::parse(include_bytes!("../../../examples/managed-podman.yaml").as_slice())
             .unwrap();
     let graph = compile_runtime(&podman, &generations, "0.1.0").unwrap();
-    assert!(graph["data"]["nemoclaw_gateway_capabilities"]["current"]["container_id"].is_null());
-    assert!(graph["data"]["nemoclaw_gateway_capabilities"]["current"]["managed_spec"].is_null());
+    assert!(graph["data"].get("nemoclaw_gateway_readiness").is_none());
 }

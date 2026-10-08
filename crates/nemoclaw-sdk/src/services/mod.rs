@@ -8,7 +8,6 @@
 
 #[doc(hidden)]
 pub mod authentication;
-pub(crate) mod capacity;
 mod contract;
 pub mod installers;
 pub mod placement;
@@ -30,5 +29,6 @@ pub use registry::{
 pub(crate) use registry::{
     constrain_schema, credential_source_json, defaults, discovery_engines, generation_kinds,
     has_runtime, install_plans, provider_authenticated, remove_plans, required_storage_address,
-    resolve, resource_label, validate, validate_provider, validate_route,
+    resolve, resource_label, supported_generation_kind, validate, validate_provider,
+    validate_route,
 };

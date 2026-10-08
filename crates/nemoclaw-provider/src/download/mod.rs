@@ -97,3 +97,43 @@ pub(crate) fn layer_id(value: Option<&str>) -> Option<String> {
         })
         .map(str::to_owned)
 }
+
+/// The resource a download belongs to, for progress labels.
+pub(crate) fn resource_label(kind: &str, row: &crate::Row) -> String {
+    #[derive(serde::Deserialize)]
+    struct NamedSpec {
+        name: String,
+    }
+    let name = row
+        .get("name")
+        .or_else(|| row.get("model"))
+        .cloned()
+        .or_else(|| {
+            serde_json::from_str::<NamedSpec>(row.get("spec")?)
+                .ok()
+                .map(|spec| spec.name)
+        })
+        .unwrap_or_else(|| "resource".into());
+    format!("{kind}.{name}")
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    #[test]
+    fn download_labels_distinguish_named_specs_and_models() {
+        for name in ["first", "second"] {
+            let row =
+                crate::Row::from([("spec".into(), serde_json::json!({"name":name}).to_string())]);
+            assert_eq!(
+                resource_label("inference_service", &row),
+                format!("inference_service.{name}")
+            );
+        }
+        let row = crate::Row::from([("model".into(), "llama3:latest".into())]);
+        assert_eq!(
+            resource_label("model_snapshot", &row),
+            "model_snapshot.llama3:latest"
+        );
+    }
+}

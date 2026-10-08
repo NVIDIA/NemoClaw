@@ -1,134 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! OpenTofu protocol adapter for shared desired-state operations.
+//! The `nemoclaw` OpenTofu provider: platform resources and observations.
 
-use std::collections::BTreeMap;
-use tf_provider::value::Value;
+pub use nemoclaw_tofu::*;
 
-/// OpenTofu string attributes, including distinct null and unknown values.
-pub type State = BTreeMap<String, Value<String>>;
-
-/// Stable resource schema and the fields permitted to change in place.
-#[derive(Clone, Debug)]
-pub struct Definition {
-    pub kind: &'static str,
-    pub fields: Vec<&'static str>,
-    pub mutable: Vec<&'static str>,
-    pub observed_running: bool,
-}
-
-impl Definition {
-    pub fn new(kind: &'static str, fields: &[&'static str], mutable: &[&'static str]) -> Self {
-        Self {
-            kind,
-            fields: fields.to_vec(),
-            mutable: mutable.to_vec(),
-            observed_running: matches!(
-                kind,
-                "managed_gateway"
-                    | "agent_configuration"
-                    | nemoclaw_sdk::kubernetes::GATEWAY_KIND
-                    | nemoclaw_sdk::kubernetes::STORAGE_KIND
-                    | nemoclaw_sdk::kubernetes::AUTH_KIND
-            ),
-        }
-    }
-}
-
-/// Preserve established computed identity; mark immutable configuration changes
-/// for replacement. The resource adapter protects retained and stateful resources.
-pub fn plan_update(
-    definition: &Definition,
-    prior: &State,
-    mut proposed: State,
-) -> (State, Vec<&'static str>) {
-    if definition.kind == "container_inputs" {
-        match prior.get("complete") {
-            Some(Value::Value(value)) if value == "false" => {
-                proposed.insert("complete".into(), Value::Unknown);
-                proposed.insert("id".into(), Value::Unknown);
-            }
-            Some(value) => {
-                proposed.insert("complete".into(), value.clone());
-            }
-            None => {}
-        }
-    }
-    if matches!(
-        proposed.get("id"),
-        Some(Value::Unknown | Value::Null) | None
-    ) && !(definition.kind == "container_inputs"
-        && prior.get("complete") == Some(&Value::Value("false".into())))
-        && let Some(id) = prior.get("id")
-    {
-        proposed.insert("id".into(), id.clone());
-    }
-    if definition.kind == "gateway_storage" {
-        proposed.insert(
-            "data_path".into(),
-            prior.get("data_path").cloned().unwrap_or(Value::Unknown),
-        );
-    }
-    if definition.observed_running {
-        match prior.get("running") {
-            Some(Value::Value(value)) if value == "false" => {
-                proposed.insert("running".into(), Value::Unknown);
-            }
-            Some(value) => {
-                proposed.insert("running".into(), value.clone());
-            }
-            None => {}
-        }
-    }
-    if definition.kind == nemoclaw_sdk::kubernetes::AUTH_KIND {
-        proposed.insert(
-            "release_present".into(),
-            prior
-                .get("release_present")
-                .cloned()
-                .unwrap_or(Value::Unknown),
-        );
-        let prepared = matches!(prior.get("running"), Some(Value::Value(value)) if value == "true");
-        proposed.insert(
-            "gateway_values".into(),
-            prior
-                .get("gateway_values")
-                .filter(|_| prepared)
-                .cloned()
-                .unwrap_or(Value::Unknown),
-        );
-    }
-    let authentication_changed = definition.kind == "provider"
-        && authentication_mode(prior) != authentication_mode(&proposed);
-    let replacements = definition
-        .fields
-        .iter()
-        .copied()
-        .filter(|field| {
-            (!definition.mutable.contains(field)
-                || (*field == "credential_env" && authentication_changed))
-                && proposed.get(*field) != prior.get(*field)
-        })
-        .collect();
-    (proposed, replacements)
-}
-
-fn authentication_mode(state: &State) -> Option<bool> {
-    let mut authenticated = false;
-    for field in ["credential_env", "credential_source"] {
-        match state.get(field) {
-            Some(Value::Unknown) => return None,
-            Some(Value::Value(value)) => authenticated |= !value.is_empty(),
-            Some(Value::Null) | None => {}
-        }
-    }
-    Some(authenticated)
-}
-
-mod resource;
-pub use nemoclaw_sdk::backend::{Backend, Mutation, Row};
-pub use resource::ResourceAdapter;
 mod capacity;
 mod discovery;
 mod gateway;
@@ -140,10 +16,19 @@ mod provider;
 mod readiness;
 mod runtime_image;
 mod sandbox_readiness;
+mod vllm_runtime;
 pub use provider::NemoClawProvider;
 
+/// The definition this provider serves for a resource kind.
+pub fn resource_definition(kind: &str) -> Option<Definition> {
+    provider::definitions()
+        .into_iter()
+        .find(|definition| definition.kind == kind)
+}
+
 /// OpenShell resource operations owned by this provider.
-pub mod openshell;
+pub mod fabric;
+pub use openshell_provider as openshell;
 
 pub mod docker;
 pub mod hardware_observation;
@@ -162,9 +47,14 @@ use nemoclaw_sdk::compile;
 #[cfg(test)]
 mod application_input_contract_tests {
     use super::*;
+    use tf_provider::value::Value;
     #[test]
     fn incomplete_input_delivery_requires_an_explicit_apply_update() {
-        let definition = Definition::new("container_inputs", &["spec", "sandbox_id"], &[]);
+        let definition = services::inputs::definition();
+        assert_eq!(
+            definition.attributes().filter(|name| *name == "id").count(),
+            1
+        );
         let prior: State = [
             ("id".into(), Value::Value("bound".into())),
             ("complete".into(), Value::Value("false".into())),
@@ -173,6 +63,11 @@ mod application_input_contract_tests {
         let (planned, replacements) = plan_update(&definition, &prior, prior.clone());
         assert_eq!(planned["complete"], Value::Unknown);
         assert_eq!(planned["id"], Value::Unknown);
+        assert!(replacements.is_empty());
+        let mut complete = prior;
+        complete.insert("complete".into(), Value::Value("true".into()));
+        let (planned, replacements) = plan_update(&definition, &complete, complete.clone());
+        assert_eq!(planned, complete);
         assert!(replacements.is_empty());
     }
     #[tokio::test]

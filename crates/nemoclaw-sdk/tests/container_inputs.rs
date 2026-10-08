@@ -343,7 +343,7 @@ fn complete_container_connection_document_keeps_operator_identity_out_of_applica
         spec.to_string()
             .contains("VOICECLAW_OPENSHELL_SERVICE_TOKEN")
     );
-    assert_eq!(inputs["sandbox_id"], "${nemoclaw_sandbox.assistant.id}");
+    assert_eq!(inputs["sandbox_id"], "${openshell_sandbox.assistant.id}");
     let app = &graph["resource"]["docker_container"]["container_service_voice"];
     assert_eq!(app["user"], "65532:65532");
     for dependency in [
@@ -415,7 +415,7 @@ fn container_inputs_compile_references_and_order_complete_delivery_before_start(
     assert!(document.credential_names().contains(&"SERVICE_TOKEN"));
     let graph = compile(&document, &generations(), "0.1.0").unwrap();
     let inputs = &graph["resource"]["nemoclaw_container_inputs"]["voice"];
-    assert_eq!(inputs["sandbox_id"], "${nemoclaw_sandbox.assistant.id}");
+    assert_eq!(inputs["sandbox_id"], "${openshell_sandbox.assistant.id}");
     assert!(inputs["spec"].as_str().unwrap().contains("SERVICE_TOKEN"));
     assert!(
         inputs["depends_on"]

@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 pub struct CompiledTeardown {
     pub graph: Value,
     pub retained: BTreeSet<String>,
+    /// Observations the applied graph read; a destroy plan may only discard these.
+    pub observations: BTreeSet<String>,
 }
 
 /// Compile removal of workloads while keeping established storage tracked.
@@ -39,7 +41,7 @@ pub fn compile_teardown(
             "nemoclaw_gateway_storage.runtime".into()
         }
     } else {
-        "nemoclaw_workspace.deployment".into()
+        "openshell_workspace.deployment".into()
     });
     retained.retain(|address| {
         established.contains(address)
@@ -53,6 +55,7 @@ pub fn compile_teardown(
 
     // Reuse the compiler's literal escaping and provider aliases. Teardown has
     // no workload readiness prerequisites and must not create absent storage.
+    let observations = observations(&graph);
     graph
         .as_object_mut()
         .expect("compiled graph")
@@ -62,6 +65,9 @@ pub fn compile_teardown(
         .expect("compiled graph")
         .remove("output");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
+    if graph["provider"].get("openshell").is_some() {
+        graph["provider"]["openshell"]["destroy"] = json!(true);
+    }
     let resources = graph["resource"]
         .as_object_mut()
         .expect("compiled resources");
@@ -93,7 +99,11 @@ pub fn compile_teardown(
             .expect("compiled graph")
             .remove("resource");
     }
-    Ok(CompiledTeardown { graph, retained })
+    Ok(CompiledTeardown {
+        graph,
+        retained,
+        observations,
+    })
 }
 
 #[cfg(test)]
@@ -179,6 +189,7 @@ mod tests {
                 "teardown must not retain discovery references"
             );
             assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
+            assert_eq!(graph["provider"]["openshell"]["destroy"], true);
             assert_eq!(graph["provider"]["docker"], full["provider"]["docker"]);
             for address in &established {
                 let (kind, name) = address.split_once('.').unwrap();
@@ -281,8 +292,8 @@ mod tests {
         for established in [
             BTreeSet::new(),
             BTreeSet::from([
-                "nemoclaw_workspace.deployment".into(),
-                "nemoclaw_sandbox.assistant".into(),
+                "openshell_workspace.deployment".into(),
+                "openshell_sandbox.assistant".into(),
             ]),
         ] {
             let compiled =
@@ -290,7 +301,7 @@ mod tests {
             let graph = compiled.graph;
             let expected = established
                 .into_iter()
-                .filter(|address| address == "nemoclaw_workspace.deployment")
+                .filter(|address| address == "openshell_workspace.deployment")
                 .collect();
             assert_eq!(addresses(&graph), expected);
             assert_eq!(compiled.retained, expected);

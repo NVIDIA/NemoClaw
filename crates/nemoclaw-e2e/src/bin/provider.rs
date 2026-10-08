@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use nemoclaw_provider::{Backend, Definition, Mutation, ResourceAdapter, Row};
 use nemoclaw_sdk::ObservationError;
+use nemoclaw_tofu::{Backend, Definition, Mutation, ResourceAdapter, Row};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tf_provider::{Diagnostics, DynamicResource, Provider, schema::Schema, value::ValueEmpty};
 
@@ -126,7 +126,8 @@ impl Provider for FixtureProvider {
             (
                 "inference_service".into(),
                 Box::new(ResourceAdapter::new(
-                    Definition::new("inference_service", &["spec"], &[]),
+                    Definition::new("inference_service", &["spec"], &[])
+                        .validate_spec(nemoclaw_sdk::services::validate_resource_spec),
                     self.backend.clone(),
                 )) as Box<dyn DynamicResource>,
             ),

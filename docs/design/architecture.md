@@ -16,7 +16,8 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | OpenTofu | Dependency ordering, concurrent resource reconciliation, and resource state |
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
 | Helm provider | The pinned OpenShell chart release on the authored Kubernetes cluster |
-| NemoClaw provider | OpenShell operations, Podman gateway processes, durable storage contracts, and readiness observations |
+| OpenShell provider | OpenShell workspaces, provider registrations and profiles, sandboxes, and gateway capability reads |
+| NemoClaw provider | Fabric runtime configuration, Podman gateway processes, durable storage contracts, and readiness observations |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
 | Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
 
@@ -29,7 +30,7 @@ The provider implements resource operations against SDK desired-state and observ
 Pure policy compilation stays in SDK configuration; OpenShell transport and mutation code belong to the provider.
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
-Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
+Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-backend/src/contract.rs).
 
 ## Managed Kubernetes Ownership
 
@@ -62,7 +63,7 @@ The [migration policy](../migration.md#move-from-the-combined-kubernetes-gateway
 
 ## OpenShell SDK Boundary
 
-NemoClaw's [OpenShell adapter](../../crates/nemoclaw-provider/src/openshell/mod.rs) reconciles deployment ownership and desired state against the gateway.
+NemoClaw's [OpenShell adapter](../../crates/openshell-provider/src/lib.rs) reconciles deployment ownership and desired state against the gateway.
 Reconciliation calls a private, domain-shaped gateway boundary for observations, mutations, sandbox state, and exec.
 The connected implementation owns the pinned `OpenShellClient`, protobuf conversion, transport errors, and the choice between a high-level SDK operation and its supported raw client.
 The boundary does not mirror gRPC methods or create a second public client API.
@@ -238,7 +239,7 @@ OpenTofu selects Podman gateway replacement through the provider contract, witho
 The SDK requires the gateway's independent storage binding, the compiler orders the dependency and protects retained storage, and the provider rechecks identity before replacing the process.
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
-The shared [OpenShell lifecycle contract](../../crates/nemoclaw-sdk/src/backend.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
+The shared [OpenShell lifecycle contract](../../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
 Sandbox files and conversation history have no separately retained storage, so ordinary apply refuses sandbox deletion or replacement.
 It also refuses to recreate a missing sandbox binding.
 Explicit destroy deletes those files even though the OpenShell workspace remains.

@@ -286,14 +286,7 @@ impl Deployment {
                 "state is bound to a different deployment UID or gateway",
             ));
         }
-        for kind in crate::services::generation_kinds(&document)? {
-            if record.generations.get(kind).is_none_or(String::is_empty) {
-                record.generations.insert(
-                    kind.into(),
-                    Record::new(document.clone())?.generations[kind].clone(),
-                );
-            }
-        }
+        record.allocate_missing_generations(&document)?;
         let bindings = if (record.pending() && !record.runtime_pending())
             || record.digest != document.digest()
         {
@@ -359,7 +352,11 @@ impl Deployment {
         let plan = operation
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
-        let root_changes = check_plan(&plan, &allowed, &bindings)?;
+        let root_changes = check_plan(
+            &plan,
+            &with_observations(&allowed, &compile::observations(&graph)),
+            &bindings,
+        )?;
         let creations = root_changes
             .iter()
             .filter(|change| {
@@ -639,6 +636,18 @@ fn allowed(targets: &[Target]) -> BTreeMap<String, Row> {
         .iter()
         .map(|target| (target.address.clone(), target.values.clone()))
         .collect()
+}
+
+/// The addresses a plan may contain: the compiled targets and the observations the graph reads.
+fn with_observations(
+    expected: &BTreeMap<String, Row>,
+    observations: &BTreeSet<String>,
+) -> BTreeMap<String, Row> {
+    let mut expected = expected.clone();
+    for address in observations {
+        expected.entry(address.clone()).or_default();
+    }
+    expected
 }
 
 fn command_environment(

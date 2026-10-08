@@ -1,0 +1,35 @@
+[package]
+name = "openshell-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "terraform-provider-openshell"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+nemoclaw-backend = { path = "../nemoclaw-backend" }
+nemoclaw-docker = { path = "../nemoclaw-docker" }
+nemoclaw-openshell = { path = "../nemoclaw-openshell" }
+nemoclaw-tofu = { path = "../nemoclaw-tofu" }
+async-trait.workspace = true
+openshell-core.workspace = true
+openshell-policy.workspace = true
+openshell-sdk.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tf-provider.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tonic.workspace = true
+
+[dev-dependencies]
+prost.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

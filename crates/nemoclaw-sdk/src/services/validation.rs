@@ -4,7 +4,7 @@
 use super::installers::{ollama, vllm};
 use crate::{
     Error,
-    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec, Storage},
+    managed::{GATEWAY_KIND, GATEWAY_STORAGE_KIND, Spec},
 };
 
 /// Validate a compiled resource without opening connections or reading secrets.
@@ -28,14 +28,6 @@ pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
             ));
         }
         return spec.validate();
-    }
-    if matches!(
-        kind,
-        vllm::STORAGE_KIND | ollama::STORAGE_KIND | super::installers::container::STORAGE_KIND
-    ) {
-        let storage: Storage = serde_json::from_str(encoded)
-            .map_err(|_| Error::State("invalid managed storage specification"))?;
-        return storage.validate();
     }
     if !matches!(
         kind,

@@ -46,6 +46,7 @@ Inside the sandbox, `fabric-agent invoke --agent NAME --input FILE` reads one JS
 Use `--input -` to read the object from stdin instead; see the [bridge commands](design/fabric-management.md#bridge-commands).
 A request can incur inference charges and affect retained agent history.
 Do not assume a universal prompt/result shape.
+An adapter that takes only a text prompt, today Hermes in `service` mode, receives `{"text": "..."}` from the bridge as the string itself; any other object is refused for it.
 No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 
 ### Run One Headless OpenClaw Request

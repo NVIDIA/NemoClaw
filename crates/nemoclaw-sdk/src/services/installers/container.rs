@@ -327,7 +327,7 @@ impl Installer for Service {
             Target {
                 kind: STORAGE_KIND.into(),
                 address: address(STORAGE_KIND, name),
-                values: crate::backend::Row::from([("spec".into(), storage.json()?)]),
+                values: storage.row()?,
             },
             Target {
                 kind: SERVICE_KIND.into(),
@@ -371,7 +371,7 @@ impl Installer for Service {
                         self.agent_connections.values().next().map_or_else(
                             || "none".into(),
                             |connection| {
-                                format!("${{nemoclaw_sandbox.{}.id}}", connection.sandbox_ref)
+                                format!("${{openshell_sandbox.{}.id}}", connection.sandbox_ref)
                             },
                         ),
                     ),

@@ -140,8 +140,7 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     for target in &mut result {
         if address(&target.address).starts_with("docker_volume.") {
             let retained = target.kind != crate::services::installers::container::STORAGE_KIND;
-            let storage: crate::managed::Storage = serde_json::from_str(&target.values["spec"])
-                .map_err(|_| Error::State("invalid cache specification"))?;
+            let storage = crate::managed::Storage::from_row(&target.values)?;
             target.address = address(&target.address);
             target.kind = "docker_volume".into();
             target.values = Row::from([
@@ -190,7 +189,8 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     result.extend(ancillary.into_values());
     Ok(result)
 }
-fn literal(value: &mut Value) {
+/// Escape OpenTofu template sequences in every string of `value`.
+pub(crate) fn literal(value: &mut Value) {
     match value {
         Value::String(text) => *text = text.replace("${", "$${").replace("%{", "%%{"),
         Value::Array(values) => values.iter_mut().for_each(literal),
@@ -342,6 +342,28 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .ok_or(Error::State("missing service resource"))?;
         let mut attrs = container(target)?;
         literal(&mut attrs);
+        if target.kind == crate::services::installers::vllm::SERVICE_KIND {
+            // The runtime contract comes from typed settings that OpenTofu
+            // checks, not from an opaque compiled string.
+            let logical = address(&target.address)
+                .split_once('.')
+                .ok_or(Error::State("invalid service address"))?
+                .1
+                .to_owned();
+            let fields = crate::services::installers::vllm::runtime_fields()
+                .map_err(|_| Error::State("the vLLM runtime contract has no OpenTofu schema"))?;
+            let service = serde_json::to_value(
+                crate::services::installers::vllm::configured_service(&spec(target)?)?,
+            )
+            .map_err(|_| Error::State("cannot encode vLLM runtime settings"))?;
+            let mut settings = crate::hcl_schema::to_hcl(&fields, &service);
+            literal(&mut settings);
+            let source = crate::services::installers::vllm::RUNTIME_DATA_SOURCE;
+            graph["data"][format!("nemoclaw_{source}")][&logical] = settings;
+            attrs["env"] = json!([format!(
+                "NEMOCLAW_RUNTIME_SPEC=${{data.nemoclaw_{source}.{logical}.spec}}"
+            )]);
+        }
         if target.kind == crate::managed::GATEWAY_KIND {
             fn storage_path(value: &mut Value) {
                 match value {
@@ -563,9 +585,7 @@ mod tests {
         assert_eq!(mounts[1]["target"], "/credentials");
         assert_ne!(mounts[0]["source"], mounts[1]["source"]);
         let auth = &graph["resource"]["nemoclaw_inference_storage"]["inference_qwen_auth"];
-        let spec: crate::managed::Storage =
-            serde_json::from_str(auth["spec"].as_str().unwrap()).unwrap();
-        assert!(spec.name.ends_with("-auth"));
+        assert!(auth["name"].as_str().unwrap().ends_with("-auth"));
         assert_eq!(auth["lifecycle"]["prevent_destroy"], true);
     }
     #[test]
@@ -663,7 +683,7 @@ mod tests {
         let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
         assert!(graph["resource"]["docker_container"].is_null());
         assert_eq!(
-            graph["data"]["nemoclaw_gateway_capabilities"]["current"]["depends_on"],
+            graph["data"]["openshell_gateway"]["current"]["depends_on"],
             json!(["nemoclaw_managed_gateway.runtime"])
         );
         assert_eq!(

@@ -43,7 +43,7 @@ fn declared_services_install_once_and_service_ref_selects_the_inference_connecti
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
-        provider_scope::resource(&graph["resource"]["nemoclaw_provider_profile"], "local")["authenticated"],
+        provider_scope::resource(&graph["resource"]["openshell_provider_profile"], "local")["authenticated"],
         "false"
     );
     assert_eq!(

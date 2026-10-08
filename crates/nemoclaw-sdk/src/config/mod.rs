@@ -4,15 +4,14 @@
 mod agent_inference;
 pub(crate) mod constraints;
 #[doc(hidden)]
-pub mod credential_metadata;
+pub use nemoclaw_openshell::credential_metadata;
 mod engine_endpoint;
 mod execution;
 pub use constraints::GATEWAY_ENGINE;
 pub use engine_endpoint::validate_engine_endpoint;
-pub(crate) mod integration_policy;
 mod integrations;
-pub use integration_policy::search_policy;
 pub use integrations::*;
+pub use nemoclaw_openshell::search::search_policy;
 mod inference;
 mod providers;
 pub(crate) mod references;
@@ -23,10 +22,8 @@ pub use agent_inference::*;
 pub use execution::*;
 mod image_pull_policy;
 pub use image_pull_policy::ImagePullPolicy;
-mod inference_profile;
-pub use inference_profile::definition as inference_profile;
-mod sandbox_policy;
-pub use sandbox_policy::policy_json;
+pub use nemoclaw_openshell::policy::policy_json;
+pub use nemoclaw_openshell::profile::definition as inference_profile;
 mod network;
 pub use network::*;
 mod kinds;
@@ -209,7 +206,9 @@ impl Document {
             && gateway.kubernetes.is_none()
         {
             default_string(&mut gateway.endpoint, constraints::GATEWAY_ENDPOINT);
-            default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
+            if gateway.runtime.provider == ComputeDriver::Docker {
+                default_string(&mut gateway.engine, constraints::GATEWAY_ENGINE);
+            }
             default_string(&mut gateway.image, DEFAULT_GATEWAY_IMAGE);
             default_string(
                 &mut gateway.network_cidr,
@@ -357,6 +356,18 @@ impl Gateway {
         match self {
             Self::Managed(_) => None,
             Self::External(gateway) => gateway.tls.as_ref(),
+        }
+    }
+    /// Settings to reach this gateway's API.
+    pub fn connection(&self) -> nemoclaw_openshell::Connection {
+        nemoclaw_openshell::Connection {
+            endpoint: self.endpoint().into(),
+            credential_env: self.credential().map(|credential| credential.env.clone()),
+            tls: self.tls().map(|tls| nemoclaw_openshell::TlsFiles {
+                ca_env: tls.ca.env.clone(),
+                certificate_env: tls.certificate.env.clone(),
+                key_env: tls.key.env.clone(),
+            }),
         }
     }
 }

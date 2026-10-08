@@ -1,16 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::openshell::{EnvironmentSecrets, OpenShell};
+use crate::fabric::AgentConfigurationBackend;
+use crate::openshell::OpenShell;
 use crate::{Backend, Definition, Mutation, ResourceAdapter, Row};
 use crate::{docker::Connections, services::BackendRegistry};
 use async_trait::async_trait;
-use nemoclaw_sdk::{ObservationError, config::Credential, config::Gateway, config::TLS};
+use nemoclaw_sdk::ObservationError;
+use openshell_provider::{GatewayClient, GatewaySettings};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, RwLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -30,30 +32,14 @@ pub struct ProviderConfig {
     destroy: Value<bool>,
     platform_only: Value<bool>,
 }
-fn text(value: Value<String>) -> String {
-    match value {
-        Value::Value(v) => v,
-        _ => String::new(),
-    }
-}
 #[derive(Default)]
-enum Connection {
-    #[default]
-    Unconfigured,
-    Deferred,
-    Ready(OpenShell),
-}
-#[derive(Default)]
-pub(crate) struct ConfiguredBackend(RwLock<Connection>, Connections);
+pub(crate) struct ConfiguredBackend(GatewayClient, Connections);
 impl ConfiguredBackend {
     pub(crate) fn connections(&self) -> &Connections {
         &self.1
     }
     pub(crate) fn client(&self) -> Result<OpenShell, ObservationError> {
-        match &*self.0.read().map_err(|_| ObservationError::Query)? {
-            Connection::Ready(client) => Ok(client.clone()),
-            Connection::Unconfigured | Connection::Deferred => Err(ObservationError::Query),
-        }
+        self.0.client()
     }
 }
 #[async_trait]
@@ -70,15 +56,16 @@ impl Backend for ConfiguredBackend {
         // Unknown provider inputs may be produced by an upstream resource.
         // Only fresh-resource planning can defer its read; bound resources
         // must still be observed, and mutations always require a ready client.
-        if prior.is_none()
-            && matches!(
-                *self.0.read().map_err(|_| ObservationError::Query)?,
-                Connection::Deferred
-            )
-        {
+        if prior.is_none() && self.0.deferred()? {
             return Ok(());
         }
-        self.client()?.plan(kind, desired, prior).await
+        let client = self.client()?;
+        if kind == "agent_configuration" {
+            return AgentConfigurationBackend(client)
+                .plan(kind, desired, prior)
+                .await;
+        }
+        client.plan(kind, desired, prior).await
     }
 
     async fn read(
@@ -90,18 +77,36 @@ impl Backend for ConfiguredBackend {
         if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, prior)? {
             return backend.read(kind, prior, removing).await;
         }
-        self.client()?.read(kind, prior, removing).await
+        let client = self.client()?;
+        if kind == "agent_configuration" {
+            return AgentConfigurationBackend(client)
+                .read(kind, prior, removing)
+                .await;
+        }
+        client.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        match BackendRegistry::new(&self.1).resolve(kind, desired) {
-            Ok(Some(backend)) => return backend.ensure(kind, desired).await,
-            Err(error) => return Mutation::failed(error),
-            Ok(None) => {}
-        }
-        match self.client() {
-            Ok(client) => client.ensure(kind, desired).await,
-            Err(error) => Mutation::failed(error),
-        }
+        // Image and model downloads during a mutation report progress to the SDK.
+        crate::download::with_provider_download_progress(
+            crate::download::resource_label(kind, desired),
+            async {
+                match BackendRegistry::new(&self.1).resolve(kind, desired) {
+                    Ok(Some(backend)) => return backend.ensure(kind, desired).await,
+                    Err(error) => return Mutation::failed(error),
+                    Ok(None) => {}
+                }
+                match self.client() {
+                    Ok(client) if kind == "agent_configuration" => {
+                        AgentConfigurationBackend(client)
+                            .ensure(kind, desired)
+                            .await
+                    }
+                    Ok(client) => client.ensure(kind, desired).await,
+                    Err(error) => Mutation::failed(error),
+                }
+            },
+        )
+        .await
     }
     async fn remove(
         &self,
@@ -112,7 +117,13 @@ impl Backend for ConfiguredBackend {
         if let Some(backend) = BackendRegistry::new(&self.1).resolve(kind, prior)? {
             return backend.remove(kind, prior, destroying).await;
         }
-        self.client()?.remove(kind, prior, destroying).await
+        let client = self.client()?;
+        if kind == "agent_configuration" {
+            return AgentConfigurationBackend(client)
+                .remove(kind, prior, destroying)
+                .await;
+        }
+        client.remove(kind, prior, destroying).await
     }
 }
 #[derive(Default)]
@@ -126,9 +137,23 @@ impl Provider for NemoClawProvider {
     type MetaState<'a> = ValueEmpty;
     fn get_data_sources(
         &self,
-        _: &mut Diagnostics,
+        diags: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
+        let vllm_runtime = match crate::vllm_runtime::VllmRuntimeDataSource::new() {
+            Ok(source) => source,
+            Err(error) => {
+                diags.root_error(
+                    "The vLLM runtime contract has no OpenTofu schema",
+                    error.to_string(),
+                );
+                return None;
+            }
+        };
         Some(HashMap::from([
+            (
+                nemoclaw_sdk::services::installers::vllm::RUNTIME_DATA_SOURCE.into(),
+                Box::new(vllm_runtime) as Box<dyn DynamicDataSource>,
+            ),
             (
                 "inference_capabilities".into(),
                 Box::new(crate::inference_discovery::InferenceDataSource)
@@ -177,9 +202,10 @@ impl Provider for NemoClawProvider {
                     as Box<dyn DynamicDataSource>,
             ),
             (
-                "gateway_capabilities".into(),
-                Box::new(crate::gateway::GatewayDataSource(self.backend.clone()))
-                    as Box<dyn DynamicDataSource>,
+                "gateway_readiness".into(),
+                Box::new(crate::gateway::GatewayReadinessDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
             ),
         ]))
     }
@@ -224,44 +250,25 @@ impl Provider for NemoClawProvider {
         // Reconfiguration must not retain a client or teardown permission from
         // an earlier configuration when inputs become unknown or invalid.
         self.destroying.store(false, Ordering::Release);
-        let deferred = [
-            &config.endpoint,
-            &config.credential_env,
-            &config.tls_ca_env,
-            &config.tls_certificate_env,
-            &config.tls_key_env,
-        ]
-        .into_iter()
-        .any(|value| matches!(value, Value::Unknown))
+        let settings = GatewaySettings {
+            endpoint: &config.endpoint,
+            credential_env: &config.credential_env,
+            tls_ca_env: &config.tls_ca_env,
+            tls_certificate_env: &config.tls_certificate_env,
+            tls_key_env: &config.tls_key_env,
+        };
+        let deferred = settings.unknown()
             || matches!(config.destroy, Value::Unknown)
             || matches!(config.platform_only, Value::Unknown);
-        match self.backend.0.write() {
-            Ok(mut slot) => {
-                *slot = if deferred {
-                    Connection::Deferred
-                } else {
-                    Connection::Unconfigured
-                }
-            }
-            Err(_) => {
-                diags.root_error_short("Provider configuration lock failed");
-                return None;
-            }
+        if let Err(error) = self.backend.0.reset(deferred) {
+            diags.root_error_short(error);
+            return None;
         }
         if deferred {
             return Some(());
         }
         if matches!(config.platform_only, Value::Value(true)) {
-            if [
-                &config.endpoint,
-                &config.credential_env,
-                &config.tls_ca_env,
-                &config.tls_certificate_env,
-                &config.tls_key_env,
-            ]
-            .into_iter()
-            .any(|value| matches!(value, Value::Value(_)))
-            {
+            if settings.any() {
                 diags.root_error_short("Platform-only provider configuration cannot include gateway connection settings");
                 return None;
             }
@@ -271,147 +278,35 @@ impl Provider for NemoClawProvider {
             );
             return Some(());
         }
-        if matches!(config.endpoint, Value::Null) {
-            if [
-                &config.credential_env,
-                &config.tls_ca_env,
-                &config.tls_certificate_env,
-                &config.tls_key_env,
-            ]
-            .into_iter()
-            .any(|value| matches!(value, Value::Value(value) if !value.is_empty()))
-                || matches!(config.destroy, Value::Value(true))
-            {
-                diags.root_error_short("Gateway credentials and teardown require an endpoint");
-                return None;
-            }
-            return Some(());
-        }
-        let mut gateway = nemoclaw_sdk::config::ExternalGateway {
-            endpoint: text(config.endpoint),
-            ..Default::default()
-        };
-        let credential = text(config.credential_env);
-        if !credential.is_empty() {
-            gateway.credential = Some(Credential { env: credential });
-        }
-        let ca = text(config.tls_ca_env);
-        let certificate = text(config.tls_certificate_env);
-        let key = text(config.tls_key_env);
-        if !ca.is_empty() || !certificate.is_empty() || !key.is_empty() {
-            if ca.is_empty() || certificate.is_empty() || key.is_empty() {
-                diags.root_error_short("Incomplete TLS credential references");
-                return None;
-            }
-            gateway.tls = Some(TLS {
-                ca: Credential { env: ca },
-                certificate: Credential { env: certificate },
-                key: Credential { env: key },
-            });
-        }
-        match OpenShell::connect(&Gateway::External(gateway), Arc::new(EnvironmentSecrets)) {
-            Ok(client) => {
-                match self.backend.0.write() {
-                    Ok(mut slot) => *slot = Connection::Ready(client),
-                    Err(_) => {
-                        diags.root_error_short("Provider configuration lock failed");
-                        return None;
-                    }
+        let connection = match settings.connection() {
+            Ok(Some(connection)) => connection,
+            Ok(None) => {
+                if settings.credentials() || matches!(config.destroy, Value::Value(true)) {
+                    diags.root_error_short("Gateway credentials and teardown require an endpoint");
+                    return None;
                 }
-                self.destroying.store(
-                    matches!(config.destroy, Value::Value(true)),
-                    Ordering::Release,
-                );
-                Some(())
+                return Some(());
             }
             Err(error) => {
-                diags.root_error("Gateway connection", error.to_string());
-                None
+                diags.root_error_short(error);
+                return None;
             }
+        };
+        if let Err(error) = self.backend.0.connect(&connection) {
+            diags.root_error("Gateway connection", error);
+            return None;
         }
+        self.destroying.store(
+            matches!(config.destroy, Value::Value(true)),
+            Ordering::Release,
+        );
+        Some(())
     }
     fn get_resources(
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
-        let mut definitions: Vec<_> = nemoclaw_sdk::services::resource_schemas()
-            .into_iter()
-            .map(|schema| Definition::new(schema.kind, schema.fields, schema.mutable))
-            .collect();
-        definitions.extend([
-            Definition::new(
-                "managed_gateway",
-                &["spec", "running", "image_pull_policy"],
-                &["running", "image_pull_policy"],
-            ),
-            Definition::new(
-                "gateway_storage",
-                &["spec", "image_pull_policy"],
-                &["image_pull_policy"],
-            ),
-            Definition::new(
-                "provider_profile",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "endpoint",
-                    "provider_type",
-                    "authenticated",
-                    "binaries_json",
-                ],
-                &[],
-            ),
-            Definition::new(
-                "agent_configuration",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "sandbox_id",
-                    "config_json",
-                    "running",
-                ],
-                &["config_json", "running"],
-            ),
-            Definition::new("workspace", &["name", "owner", "generation"], &[]),
-            Definition::new(
-                "provider",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "endpoint",
-                    "credential_env",
-                    "provider_type",
-                    "credential_source",
-                    "profile_name",
-                ],
-                // Endpoint and authentication-mode changes also replace the
-                // imported profile. Delete the registration first so the API
-                // permits profile deletion; ordinary key rotation stays mutable.
-                &["credential_env"],
-            ),
-            Definition::new(
-                "sandbox",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "image",
-                    "agent_name",
-                    "agent_runtime",
-                    "policy_json",
-                    "runtime_json",
-                    "provider_names_json",
-                ],
-                &[],
-            ),
-        ]);
+        let definitions = definitions();
         Some(
             definitions
                 .into_iter()
@@ -426,6 +321,16 @@ impl Provider for NemoClawProvider {
     }
 }
 
+/// Resource definitions served by this provider.
+pub(crate) fn definitions() -> Vec<Definition> {
+    let mut definitions = Vec::new();
+    definitions.extend(crate::kubernetes::definitions());
+    definitions.extend(crate::services::definitions());
+    definitions.extend(crate::managed::definitions());
+    definitions.extend(crate::fabric::definitions());
+    definitions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,6 +340,20 @@ mod tests {
             endpoint: Value::Value("http://127.0.0.1:1".into()),
             destroy: Value::Value(true),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn every_sdk_resource_schema_is_served_once_with_its_fields() {
+        let served = definitions();
+        for schema in nemoclaw_sdk::services::resource_schemas() {
+            let matching: Vec<_> = served
+                .iter()
+                .filter(|definition| definition.kind == schema.kind)
+                .collect();
+            assert_eq!(matching.len(), 1, "{}", schema.kind);
+            assert_eq!(matching[0].fields, schema.fields, "{}", schema.kind);
+            assert_eq!(matching[0].mutable, schema.mutable, "{}", schema.kind);
         }
     }
 
