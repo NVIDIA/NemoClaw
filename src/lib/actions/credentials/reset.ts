@@ -282,30 +282,22 @@ export async function runCredentialsResetAction(
     };
 
     if (key === NVIDIA_HOSTED_LOGICAL_PROVIDER) {
-      const lines: string[] = [];
-      for (const name of [NVIDIA_HOSTED_LOGICAL_PROVIDER, NVIDIA_HOSTED_NATIVE_PROVIDER]) {
-        const result = await deleteProviderWithRecovery(name, target, providerAdapter, {
-          detachAttached: false,
-        });
-        if (!result.ok && result.error?.kind === "command" && result.error.reason === "not_found") {
-          lines.push(`  Provider '${name}' is already absent from the OpenShell gateway.`);
-        } else {
-          const outcome = formatResetOutcome(
-            !result.ok && result.error?.kind === "command" && result.error.reason === "attached"
-              ? publicKey
-              : name,
-            result,
-            target.gatewayName,
-          );
-          lines.push(...outcome.lines);
-          if (!outcome.ok) return fail(lines);
-        }
+      const legacy = await providerAdapter.getProvider({
+        target,
+        providerName: NVIDIA_HOSTED_LOGICAL_PROVIDER,
+        timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
+      // Native authority binds only the native identity. No durable legacy receipt exists.
+      if (legacy.ok || legacy.error.kind !== "command" || legacy.error.reason !== "not_found") {
+        return fail([
+          `  Provider ownership conflict for '${NVIDIA_HOSTED_LOGICAL_PROVIDER}'.`,
+          legacy.ok
+            ? "  NemoClaw has no durable ownership proof for this legacy provider."
+            : "  NemoClaw could not confirm that the legacy provider is absent.",
+          "  No provider or ownership authority was changed.",
+          "  Inspect the legacy provider with its owner before retrying the logical reset.",
+        ]);
       }
-      forgetExtraProvider(publicKey);
-      (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
-        target.gatewayName,
-      );
-      return ok(lines);
     }
 
     const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
