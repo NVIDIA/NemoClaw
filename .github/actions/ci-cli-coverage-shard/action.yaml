@@ -60,10 +60,26 @@ runs:
         RIPGREP_VERSION: "14.1.0-1"
       run: |
         set -euo pipefail
-        sudo apt-get update -qq \
-          -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
-          -o Dir::Etc::sourceparts="-"
-        sudo apt-get install -y --no-install-recommends \
+        apt_network_options=(
+          -o Acquire::Retries=2
+          -o Acquire::http::Timeout=20
+          -o Acquire::https::Timeout=20
+        )
+        for attempt in 1 2 3; do
+          if sudo timeout --signal=TERM --kill-after=10s 120s apt-get \
+            "${apt_network_options[@]}" update \
+            -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+            -o Dir::Etc::sourceparts="-"; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "::error::Could not update pinned Pi search-tool package indexes after three bounded attempts"
+            exit 1
+          fi
+          echo "::warning::Retrying pinned Pi search-tool package index update (attempt $((attempt + 1))/3)"
+        done
+        sudo timeout --signal=TERM --kill-after=10s 180s apt-get \
+          "${apt_network_options[@]}" install -y --no-install-recommends \
           "fd-find=${FD_FIND_VERSION}" \
           "ripgrep=${RIPGREP_VERSION}"
 

@@ -102,9 +102,58 @@ describe("native NVIDIA credential reset ownership", () => {
     expect(listNativeNvidiaProviderAttachmentSandboxNames).toHaveBeenCalledExactlyOnceWith(
       "nemoclaw",
     );
-    expect(deleteProvider).toHaveBeenCalledOnce();
+    expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
+      "nemoclaw-nvidia-prod-v1",
+      "nvidia-prod",
+    ]);
     expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledExactlyOnceWith("nemoclaw");
   });
+
+  it("keeps explicit native identity reset separate from legacy removal", async () => {
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
+      ok: true,
+    }));
+    await runCredentialsResetAction(
+      { provider: "nemoclaw-nvidia-prod-v1", confirmed: true },
+      {
+        providerAdapter: adapter(deleteProvider),
+        clearNativeNvidiaProviderAuthority: vi.fn(),
+        listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+        withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
+      },
+    );
+    expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
+      "nemoclaw-nvidia-prod-v1",
+    ]);
+  });
+
+  it.each(["nemoclaw-nvidia-prod-v1", "nvidia-prod"])(
+    "preserves authority when deleting %s fails",
+    async (failedName) => {
+      const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async (input) =>
+        input.providerName === failedName
+          ? { ok: false, error: { kind: "command", reason: "failed", message: "delete failed" } }
+          : { ok: true },
+      );
+      const clearNativeNvidiaProviderAuthority = vi.fn();
+      const result = await runCredentialsResetAction(
+        { provider: "nvidia-prod", confirmed: true },
+        {
+          providerAdapter: adapter(deleteProvider),
+          clearNativeNvidiaProviderAuthority,
+          listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+          withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
+        "nemoclaw-nvidia-prod-v1",
+        "nvidia-prod",
+      ]);
+      expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+      expect(result.failureLines.join("\n")).toContain(failedName);
+    },
+  );
 
   it("fails closed before reset when registry ownership cannot be read", async () => {
     const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
