@@ -20,6 +20,15 @@ pub(crate) fn schema_definition(kind: &str) -> crate::Definition {
     crate::Definition::new(schema.kind, schema.fields, schema.mutable)
 }
 
+/// Service storage whose omitted identity the provider generates on create.
+fn storage_definition(kind: &str) -> crate::Definition {
+    use crate::managed::Storage;
+    schema_definition(kind)
+        .validate_attribute(Storage::check)
+        .generated("owner", Storage::generate_owner)
+        .generated("generation", Storage::generate_generation)
+}
+
 /// Installer-owned service storage and external model resources.
 pub(crate) fn definitions() -> [crate::Definition; 4] {
     use nemoclaw_sdk::services::installers::{ollama, vllm};
@@ -27,7 +36,7 @@ pub(crate) fn definitions() -> [crate::Definition; 4] {
         schema_definition(ollama::proxy::STORAGE),
         schema_definition(ollama::proxy::MODEL)
             .describe(installers::ollama::proxy::describe_model_error),
-        schema_definition(ollama::STORAGE_KIND).validate_attribute(crate::managed::Storage::check),
-        schema_definition(vllm::STORAGE_KIND).validate_attribute(crate::managed::Storage::check),
+        storage_definition(ollama::STORAGE_KIND),
+        storage_definition(vllm::STORAGE_KIND),
     ]
 }
