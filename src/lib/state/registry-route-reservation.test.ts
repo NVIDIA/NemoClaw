@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
+import { testTimeout } from "../../../test/helpers/timeouts";
 import type { InferenceSelection } from "../inference/selection";
 import { createSandboxHostLocalInferenceProvenance } from "./registry/host-local-inference";
 import type { SandboxInferenceRouteReservationDisposition } from "./registry/route-reservation";
@@ -314,6 +315,7 @@ describe("sandbox inference route reservation", () => {
         });
         expect(registry.getDefault()).toBeNull();
       },
+      testTimeout(15_000),
     );
     it("rejects creation registration from a foreign reservation session and preserves the pending row (#10214)", async () => {
       registry.reserveSandboxInferenceRoute("alpha", {

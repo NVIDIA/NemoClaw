@@ -16,11 +16,12 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -67,6 +68,30 @@ export type RemediatedArchive = Readonly<
       treeIntegrity: string;
     }
 >;
+
+export class OpenClawNpmPackageRecoveryError extends Error {
+  readonly packageName: string;
+  readonly recoveryPath: string;
+  readonly replacementActive: boolean;
+
+  constructor(
+    packageName: string,
+    cause: unknown,
+    recoveryPath: string,
+    replacementActive = false,
+  ) {
+    super(
+      replacementActive
+        ? `Replacement of ${packageName} is active, but recovery-directory cleanup failed at ${recoveryPath}.`
+        : `Replacement of ${packageName} failed; the original package is preserved at ${recoveryPath}.`,
+      { cause },
+    );
+    this.name = "OpenClawNpmPackageRecoveryError";
+    this.packageName = packageName;
+    this.recoveryPath = recoveryPath;
+    this.replacementActive = replacementActive;
+  }
+}
 
 const AXIOS_VERSION = "1.18.0";
 const AXIOS_INTEGRITY =
@@ -135,6 +160,7 @@ const OTEL_CORE_INTEGRITY =
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
 const PROXY_ADDR_VERSION = "2.0.8";
+const REMEDIATION_COMMAND_TIMEOUT_MS = 15 * 60_000;
 const PROXY_ADDR_INTEGRITY =
   "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
 const PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
@@ -214,26 +240,90 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
 });
 
-function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv) {
+export class OpenClawNpmRemediationCommandError extends Error {
+  readonly couldNotStart: boolean;
+  readonly operation: OpenClawNpmRemediationOperation;
+  readonly timedOut: boolean;
+  readonly timeoutMs: number;
+
+  constructor(
+    error: NodeJS.ErrnoException | undefined,
+    timeoutMs: number,
+    operation: OpenClawNpmRemediationOperation,
+  ) {
+    const couldNotStart = ["ENOENT", "EACCES", "EPERM"].includes(error?.code ?? "");
+    const timedOut = error?.code === "ETIMEDOUT";
+    let message = "Remediation command failed.";
+    if (couldNotStart) message = "Remediation command could not start.";
+    else if (timedOut) {
+      message = `Remediation command timed out after ${describeOpenClawNpmRemediationTimeout(timeoutMs)}.`;
+    }
+    super(message);
+    this.couldNotStart = couldNotStart;
+    this.operation = operation;
+    this.timedOut = timedOut;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export type OpenClawNpmRemediationOperation =
+  | "extract archive"
+  | "fetch replacement"
+  | "list archive"
+  | "pack archive";
+
+export function describeOpenClawNpmRemediationTimeout(timeoutMs: number): string {
+  if (timeoutMs % 60_000 === 0) {
+    const minutes = timeoutMs / 60_000;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  if (timeoutMs % 1_000 === 0) {
+    const seconds = timeoutMs / 1_000;
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+  return `${timeoutMs} ms`;
+}
+
+export function runOpenClawNpmRemediationCommand(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  env: NodeJS.ProcessEnv,
+  operation: OpenClawNpmRemediationOperation,
+  maxBuffer = 64 * 1024 * 1024,
+  timeoutMs = REMEDIATION_COMMAND_TIMEOUT_MS,
+) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf-8",
     env,
-    maxBuffer: 64 * 1024 * 1024,
+    killSignal: "SIGKILL",
+    maxBuffer,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: timeoutMs,
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
+  if (result.error || result.status !== 0) {
+    throw new OpenClawNpmRemediationCommandError(result.error, timeoutMs, operation);
   }
   return result.stdout;
 }
 
+function run(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  env: NodeJS.ProcessEnv,
+  operation: OpenClawNpmRemediationOperation,
+  maxBuffer = 64 * 1024 * 1024,
+) {
+  return runOpenClawNpmRemediationCommand(command, args, cwd, env, operation, maxBuffer);
+}
+
 function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.ProcessEnv): void {
-  const names = run("tar", ["-tzf", archivePath], cwd, env)
+  const names = run("tar", ["-tzf", archivePath], cwd, env, "list archive")
     .split("\n")
     .filter((entry) => entry.length > 0);
-  const verbose = run("tar", ["-tvzf", archivePath], cwd, env)
+  const verbose = run("tar", ["-tvzf", archivePath], cwd, env, "list archive")
     .split("\n")
     .filter((entry) => entry.length > 0);
   if (names.length === 0 || verbose.length !== names.length) {
@@ -268,7 +358,7 @@ function extractArchive(
 ): string {
   validateArchiveMembers(archivePath, cwd, env);
   mkdirSync(destination, { recursive: true, mode: 0o700 });
-  run("tar", ["-xzf", archivePath, "-C", destination], cwd, env);
+  run("tar", ["-xzf", archivePath, "-C", destination], cwd, env, "extract archive");
   const packageDirectory = join(destination, "package");
   if (!existsSync(join(packageDirectory, "package.json"))) {
     throw new Error(`npm archive ${archivePath} did not extract a package directory`);
@@ -1096,9 +1186,169 @@ function patchFsSafePackageGraph(packageDirectory: string): void {
 }
 
 function copyReplacementPackage(source: string, destination: string): void {
-  rmSync(destination, { recursive: true, force: true });
-  mkdirSync(resolve(destination, ".."), { recursive: true, mode: 0o755 });
-  cpSync(source, destination, { recursive: true, force: true });
+  const targetDirectory = dirname(resolve(destination));
+  mkdirSync(targetDirectory, { recursive: true, mode: 0o755 });
+  const sourceMetadata = readJson(join(source, "package.json"));
+  if (typeof sourceMetadata.name !== "string" || sourceMetadata.name.length === 0) {
+    throw new Error("Replacement package identity has no valid name");
+  }
+  const packageName = sourceMetadata.name;
+  const replacementRoot = mkdtempSync(
+    join(targetDirectory, `.${basename(destination)}-replacement-`),
+  );
+  const stagedReplacement = join(replacementRoot, "replacement");
+  const previousPackage = join(replacementRoot, "previous");
+  let previousPackageMoved = false;
+  let preserveRecoveryDirectory = false;
+
+  try {
+    cpSync(source, stagedReplacement, { recursive: true, force: true });
+    const stagedMetadata = readJson(join(stagedReplacement, "package.json"));
+    if (
+      sourceMetadata.name !== stagedMetadata.name ||
+      sourceMetadata.version !== stagedMetadata.version
+    ) {
+      throw new Error("Staged replacement package identity does not match its source");
+    }
+
+    const recoveryDirectories = findReplacementRecoveryDirectories(
+      targetDirectory,
+      destination,
+      packageName,
+    );
+    const recoveryCleanupDirectories = [
+      ...recoveryDirectories,
+      ...findReplacementRecoveryDirectories(
+        targetDirectory,
+        destination,
+        packageName,
+        "replacement",
+      ),
+    ];
+    if (pathIsMissing(destination) && recoveryDirectories.length > 0) {
+      const recoveryDirectory = recoveryDirectories[0]!;
+      const previousPackage = join(recoveryDirectory, "previous");
+      try {
+        renameSync(previousPackage, destination);
+      } catch (error) {
+        throw new OpenClawNpmPackageRecoveryError(
+          packageName,
+          error,
+          relative(targetDirectory, previousPackage),
+        );
+      }
+    }
+
+    try {
+      renameSync(destination, previousPackage);
+      previousPackageMoved = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    try {
+      renameSync(stagedReplacement, destination);
+    } catch (replacementError) {
+      if (previousPackageMoved) {
+        try {
+          renameSync(previousPackage, destination);
+        } catch (restoreError) {
+          preserveRecoveryDirectory = true;
+          throw new OpenClawNpmPackageRecoveryError(
+            packageName,
+            new AggregateError([replacementError, restoreError]),
+            relative(targetDirectory, previousPackage),
+          );
+        }
+      }
+      throw replacementError;
+    }
+
+    if (previousPackageMoved) {
+      try {
+        rmSync(previousPackage, { recursive: true, force: true });
+      } catch (error) {
+        preserveRecoveryDirectory = true;
+        throw new OpenClawNpmPackageRecoveryError(
+          packageName,
+          error,
+          relative(targetDirectory, previousPackage),
+          true,
+        );
+      }
+    }
+
+    let recoveryCleanupFailure: unknown;
+    let failedRecoveryPath: string | undefined;
+    for (const recoveryDirectory of new Set(recoveryCleanupDirectories)) {
+      try {
+        rmSync(recoveryDirectory, { recursive: true, force: true });
+      } catch (error) {
+        recoveryCleanupFailure ??= error;
+        failedRecoveryPath ??= relative(targetDirectory, recoveryDirectory);
+      }
+    }
+    if (recoveryCleanupFailure !== undefined && failedRecoveryPath) {
+      throw new OpenClawNpmPackageRecoveryError(
+        packageName,
+        recoveryCleanupFailure,
+        failedRecoveryPath,
+        true,
+      );
+    }
+  } finally {
+    if (!preserveRecoveryDirectory) {
+      rmSync(replacementRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function pathIsMissing(path: string): boolean {
+  try {
+    lstatSync(path);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+function findReplacementRecoveryDirectories(
+  targetDirectory: string,
+  destination: string,
+  packageName: string,
+  packageDirectoryName = "previous",
+): string[] {
+  const prefix = `.${basename(destination)}-replacement-`;
+  return readdirSync(targetDirectory, { withFileTypes: true })
+    .filter((entry) => entry.name.startsWith(prefix) && entry.isDirectory())
+    .map((entry) => join(targetDirectory, entry.name))
+    .filter((recoveryDirectory) => {
+      try {
+        const recoveryStats = lstatSync(recoveryDirectory);
+        const recoveryPackage = join(recoveryDirectory, packageDirectoryName);
+        const packageStats = lstatSync(recoveryPackage);
+        const packageMetadata = join(recoveryPackage, "package.json");
+        const metadataStats = lstatSync(packageMetadata);
+        if (
+          !recoveryStats.isDirectory() ||
+          recoveryStats.isSymbolicLink() ||
+          !packageStats.isDirectory() ||
+          packageStats.isSymbolicLink() ||
+          !metadataStats.isFile() ||
+          metadataStats.isSymbolicLink()
+        ) {
+          return false;
+        }
+        return readJson(packageMetadata).name === packageName;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+    })
+    .sort((left, right) => lstatSync(right).mtimeMs - lstatSync(left).mtimeMs);
 }
 
 function packReplacement(
@@ -1133,15 +1383,26 @@ function packReplacement(
     }
     return { archivePath, rootDirectory: archiveRoot };
   }
-  return packReviewedNpmArchive({
-    env,
-    expectedIntegrity,
-    label: `OpenClaw npm remediation dependency ${packageSpec}`,
-    npmExecutable: env.NEMOCLAW_REVIEWED_NPM_EXECUTABLE,
-    packageSpec,
-    tarballUrl,
-    tempDirectory: workingDirectory,
-  });
+  return packReviewedNpmArchive(
+    {
+      env,
+      expectedIntegrity,
+      label: `OpenClaw npm remediation dependency ${packageSpec}`,
+      npmExecutable: env.NEMOCLAW_REVIEWED_NPM_EXECUTABLE,
+      packageSpec,
+      tarballUrl,
+      tempDirectory: workingDirectory,
+    },
+    (args, request) =>
+      run(
+        request.npmExecutable ?? "npm",
+        args,
+        undefined,
+        env,
+        "fetch replacement",
+        16 * 1024 * 1024,
+      ),
+  );
 }
 
 export function patchOpenClawSlackProxyPackageGraph(
@@ -1628,6 +1889,7 @@ export function buildRemediatedOpenClawPluginArchive(
     ["pack", ".", "--pack-destination", outputDirectory, "--ignore-scripts", "--json"],
     sourcePackage,
     env,
+    "pack archive",
   );
   const packed = JSON.parse(packedJson);
   const packedResult = singleNpmPackResult(packed);
@@ -1660,14 +1922,6 @@ export function buildRemediatedOpenClawPluginArchive(
     );
   }
   return { archivePath, integrity, metadataIntegrity, remediated: true, treeIntegrity };
-}
-
-// Compatibility export for the 2026.6.10 remediation tests and callers merged
-// from main. Both names use the same version-dispatched implementation.
-export function buildRemediatedOpenClawArchive(
-  request: BuildRequest,
-): Extract<RemediatedArchive, { remediated: true }> {
-  return buildRemediatedOpenClawPluginArchive(request);
 }
 
 export function remediateReviewedOpenClawPluginArchive(
@@ -1762,7 +2016,16 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
-function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+  if (error instanceof OpenClawNpmRemediationCommandError) {
+    if (error.couldNotStart) {
+      return `OpenClaw npm remediation operation '${error.operation}' could not start a required command.`;
+    }
+    if (error.timedOut) {
+      return `OpenClaw npm remediation operation '${error.operation}' timed out after ${describeOpenClawNpmRemediationTimeout(error.timeoutMs)}.`;
+    }
+    return `OpenClaw npm remediation operation '${error.operation}' failed.`;
+  }
   const message = error instanceof Error ? error.message : "";
   if (message.startsWith("Missing --")) {
     return "OpenClaw npm remediation is missing required arguments.";
