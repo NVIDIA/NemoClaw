@@ -62,6 +62,9 @@ function providerAdapter(
   const getProviderRefreshStatus: OpenShellProviderAdapter["getProviderRefreshStatus"] =
     async () => ({ ok: true, value: { status: "refreshed" } });
   return {
+    ensureProviderPolicyComposition: vi
+      .fn<OpenShellProviderAdapter["ensureProviderPolicyComposition"]>()
+      .mockResolvedValue({ ok: true, value: undefined }),
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
     getProvider: vi.fn(getProvider),
