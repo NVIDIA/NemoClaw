@@ -2255,7 +2255,7 @@ function isMainModule(): boolean {
 export function fatalMessagingBuildDiagnostic(error: unknown): string {
   if (error instanceof OpenClawNpmPackageRecoveryError) {
     return error.replacementActive
-      ? `OpenClaw dependency '${error.packageName}' was replaced, but recovery-directory cleanup failed at '${error.recoveryPath}'.`
+      ? `OpenClaw dependency '${error.packageName}' was replaced, but recovery-directory cleanup failed at '${error.recoveryPath}'. Rerun the plugin installation to reconcile recovery state before retrying.`
       : `OpenClaw dependency '${error.packageName}' could not be replaced. The previous package is preserved at '${error.recoveryPath}'. Rerun the plugin installation before retrying.`;
   }
   if (error instanceof OfficialPluginRemediationError) {
