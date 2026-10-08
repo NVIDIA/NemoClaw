@@ -360,18 +360,17 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
           config.gatewayName,
           native.profileId,
         );
-        const result = await (deps.providerAdapter ?? rebuildProviderAdapter()).getProvider({
+        const providerAdapter = deps.providerAdapter ?? rebuildProviderAdapter();
+        const result = await providerAdapter.getProvider({
           providerName: native.providerName,
           target: { kind: "named", gatewayName: config.gatewayName },
         });
-        if (
+        const absent =
           !result.ok &&
           result.error.kind === "command" &&
           result.error.reason === "not_found" &&
-          !authority
-        )
-          return true;
-        if (
+          !authority;
+        const owned =
           result.ok &&
           authority &&
           authority.profileId === native.profileId &&
@@ -381,9 +380,17 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
           result.value.type === native.profileId &&
           result.value.configKeys.length === 0 &&
           result.value.credentialKeys.length === 1 &&
-          result.value.credentialKeys[0] === native.credentialEnv
-        )
-          return true;
+          result.value.credentialKeys[0] === native.credentialEnv;
+        if (absent || owned) {
+          const policy = await providerAdapter.ensureProviderPolicyComposition({
+            target: { kind: "named", gatewayName: config.gatewayName },
+          });
+          if (policy.ok) return true;
+          bail(
+            "Native rebuild migration provider policy could not be activated; sandbox is untouched.",
+          );
+          return false;
+        }
         bail(
           "Native rebuild migration target ownership could not be verified; sandbox is untouched.",
         );

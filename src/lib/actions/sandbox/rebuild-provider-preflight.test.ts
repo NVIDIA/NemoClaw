@@ -262,83 +262,110 @@ describe("inspectRebuildGatewayProviderRegistration", () => {
 });
 
 describe("checkRebuildGatewayCredentialReuseOrBail", () => {
-  it.each(["missing", "owned", "unowned", "replaced", "indeterminate", "keyless"] as const)(
-    "checks receiptless migration target %s on recorded gateway",
-    async (state) => {
-      const native = {
-        schemaVersion: 1,
-        profileId: "nemoclaw-openai-inference-v1",
-        providerName: "nemoclaw-openai-api-v1",
-        providerId: "recorded-id",
-      } as const;
-      const providerAdapter = createCliOpenShellProviderAdapter();
-      const get = vi.spyOn(providerAdapter, "getProvider").mockResolvedValue(
-        state === "missing" || state === "indeterminate"
+  it.each([
+    "missing",
+    "owned",
+    "unowned",
+    "replaced",
+    "indeterminate",
+    "keyless",
+    "policy-disabled",
+    "policy-unavailable",
+  ] as const)("checks receiptless migration target %s on recorded gateway", async (state) => {
+    const native = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "recorded-id",
+    } as const;
+    const providerAdapter = createCliOpenShellProviderAdapter();
+    const get = vi.spyOn(providerAdapter, "getProvider").mockResolvedValue(
+      state === "missing" || state === "indeterminate" || state.startsWith("policy-")
+        ? {
+            ok: false,
+            error: {
+              kind: "command",
+              reason: state === "indeterminate" ? "failed" : "not_found",
+              message: "unavailable",
+            },
+          }
+        : {
+            ok: true,
+            value: {
+              name: native.providerName,
+              type: native.profileId,
+              credentialKeys: ["OPENAI_API_KEY"],
+              configKeys: [],
+              revision: {
+                id: state === "replaced" ? "foreign" : native.providerId,
+                resourceVersion: 1,
+              },
+            },
+          },
+    );
+    const activatePolicy = vi
+      .spyOn(providerAdapter, "ensureProviderPolicyComposition")
+      .mockResolvedValue(
+        state.startsWith("policy-")
           ? {
               ok: false,
               error: {
                 kind: "command",
-                reason: state === "missing" ? "not_found" : "failed",
-                message: "unavailable",
+                reason: state === "policy-disabled" ? "conflict" : "failed",
+                message: "policy unavailable",
               },
             }
-          : {
-              ok: true,
-              value: {
-                name: native.providerName,
-                type: native.profileId,
-                credentialKeys: ["OPENAI_API_KEY"],
-                configKeys: [],
-                revision: {
-                  id: state === "replaced" ? "foreign" : native.providerId,
-                  resourceVersion: 1,
-                },
-              },
-            },
+          : { ok: true, value: undefined },
       );
-      const readNativeAuthority = vi
-        .fn()
-        .mockReturnValue(state === "owned" || state === "replaced" ? native : undefined);
-      const outcome = checkRebuildGatewayCredentialReuseOrBail(
-        "alpha",
-        config({
-          gatewayName: "nemoclaw",
-          provider: "openai-api",
-          credentialEnv: "OPENAI_API_KEY",
-        }),
-        state !== "keyless",
-        vi.fn(),
-        throwingBail,
-        {
-          providerAdapter,
-          readNativeAuthority,
-          readGatewayProviderMetadata: vi.fn(),
-          readRecordedProviderEndpoints: vi.fn(),
-        },
-      );
-      await expect(
-        outcome.then(
-          (result) => ({ result }),
-          (error) => ({ error: error.message }),
-        ),
-      ).resolves.toEqual(
-        state === "missing" || state === "owned"
-          ? { result: true }
-          : { error: expect.stringContaining("sandbox is untouched") },
-      );
-      expect(
-        get.mock.calls.every(
-          ([request]) =>
-            request.target.kind === "named" && request.target.gatewayName === "nemoclaw",
-        ),
-      ).toBe(true);
-      expect(
-        readNativeAuthority.mock.calls.every(
-          ([gateway, profile]) => gateway === "nemoclaw" && profile === native.profileId,
-        ),
-      ).toBe(true);
-    },
-  );
+    const readNativeAuthority = vi
+      .fn()
+      .mockReturnValue(state === "owned" || state === "replaced" ? native : undefined);
+    const outcome = checkRebuildGatewayCredentialReuseOrBail(
+      "alpha",
+      config({
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+      }),
+      state !== "keyless",
+      vi.fn(),
+      throwingBail,
+      {
+        providerAdapter,
+        readNativeAuthority,
+        readGatewayProviderMetadata: vi.fn(),
+        readRecordedProviderEndpoints: vi.fn(),
+      },
+    );
+    await expect(
+      outcome.then(
+        (result) => ({ result }),
+        (error) => ({ error: error.message }),
+      ),
+    ).resolves.toEqual(
+      state === "missing" || state === "owned"
+        ? { result: true }
+        : { error: expect.stringContaining("sandbox is untouched") },
+    );
+    expect(activatePolicy).toHaveBeenCalledTimes(
+      ["missing", "owned", "policy-disabled", "policy-unavailable"].includes(state) ? 1 : 0,
+    );
+    expect(
+      activatePolicy.mock.calls.every(
+        ([request]) => request.target.kind === "named" && request.target.gatewayName === "nemoclaw",
+      ),
+    ).toBe(true);
+    expect(
+      get.mock.calls.every(
+        ([request]) => request.target.kind === "named" && request.target.gatewayName === "nemoclaw",
+      ),
+    ).toBe(true);
+    expect(
+      readNativeAuthority.mock.calls.every(
+        ([gateway, profile]) => gateway === "nemoclaw" && profile === native.profileId,
+      ),
+    ).toBe(true);
+  });
   it("accepts an exact complete registry route and gateway provider identity", async () => {
     await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {

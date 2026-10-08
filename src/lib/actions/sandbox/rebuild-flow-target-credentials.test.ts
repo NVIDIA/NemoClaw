@@ -144,9 +144,11 @@ describe("rebuildSandbox flow: target credentials", () => {
     expect(harness.session.credentialEnv).toBe("OPENAI_API_KEY");
   });
 
-  it.each([false, true])(
-    "rechecks legacy Hermes migration target before deletion (changed: %s)",
-    async (changed) => {
+  it.each(["unchanged", "collision", "disabled"] as const)(
+    "rechecks legacy Hermes migration target before deletion (%s)",
+    async (state) => {
+      const changed = state === "collision";
+      const disabled = state === "disabled";
       const restoreEnv = snapshotEnv(["NOUS_API_KEY"]);
       process.env.NOUS_API_KEY = "fixture-legacy-nous-key";
       let backupStarted = false;
@@ -164,18 +166,27 @@ describe("rebuildSandbox flow: target credentials", () => {
         hydrateCredentialEnv: (key) => (key === "NOUS_API_KEY" ? "fixture-legacy-nous-key" : null),
         runOpenshell: (args) => {
           const result =
-            args[0] === "provider" &&
-            args[1] === "get" &&
-            args.includes("nemoclaw-hermes-provider-v1")
-              ? changed && backupStarted
-                ? {
-                    status: 0,
-                    stdout:
-                      "Name: nemoclaw-hermes-provider-v1\nType: nemoclaw-hermes-inference-v1\nId: unowned-id\nResource version: 1\nCredential keys: OPENAI_API_KEY\nConfig keys: <none>",
-                    stderr: "",
-                  }
-                : { status: 1, stdout: "", stderr: "provider not found" }
-              : undefined;
+            args[0] === "settings" && args[1] === "get"
+              ? {
+                  status: 0,
+                  stdout: JSON.stringify({
+                    scope: "global",
+                    settings: { providers_v2_enabled: disabled ? "false" : "true" },
+                  }),
+                  stderr: "",
+                }
+              : args[0] === "provider" &&
+                  args[1] === "get" &&
+                  args.includes("nemoclaw-hermes-provider-v1")
+                ? changed && backupStarted
+                  ? {
+                      status: 0,
+                      stdout:
+                        "Name: nemoclaw-hermes-provider-v1\nType: nemoclaw-hermes-inference-v1\nId: unowned-id\nResource version: 1\nCredential keys: OPENAI_API_KEY\nConfig keys: <none>",
+                      stderr: "",
+                    }
+                  : { status: 1, stdout: "", stderr: "provider not found" }
+                : undefined;
           return result && { ...result, output: result.stdout || result.stderr };
         },
       });
@@ -187,15 +198,19 @@ describe("rebuildSandbox flow: target credentials", () => {
             (error: Error) => error.message,
           );
         expect(outcome).toEqual(
-          changed ? expect.stringContaining("Replacement validation failed") : "rebuilt",
+          disabled
+            ? expect.stringContaining("provider policy could not be activated")
+            : changed
+              ? expect.stringContaining("Replacement validation failed")
+              : "rebuilt",
         );
-        expect(harness.onboardSpy).toHaveBeenCalledTimes(changed ? 0 : 1);
-        expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+        expect(harness.onboardSpy).toHaveBeenCalledTimes(changed || disabled ? 0 : 1);
+        expect(harness.backupSandboxStateSpy).toHaveBeenCalledTimes(disabled ? 0 : 1);
         expect(
           harness.runOpenshellSpy.mock.calls.some(
             ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
           ),
-        ).toBe(!changed);
+        ).toBe(!changed && !disabled);
       } finally {
         restoreEnv();
       }

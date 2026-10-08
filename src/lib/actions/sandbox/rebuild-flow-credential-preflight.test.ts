@@ -287,18 +287,21 @@ describe("rebuildSandbox flow: credential preflight", () => {
         credentialEnv === "NVIDIA_INFERENCE_API_KEY" ? "saved-provider-key" : null,
       runOpenshell: (args) => {
         const stdout =
-          args[1] === "get"
-            ? "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: NVIDIA_BASE_URL"
-            : JSON.stringify([
-                {
-                  name: "nvidia-prod",
-                  credential_keys: ["NVIDIA_INFERENCE_API_KEY"],
-                  credential_expires_at_ms: {},
-                },
-              ]);
+          args[0] === "settings"
+            ? JSON.stringify({ scope: "global", settings: { providers_v2_enabled: "true" } })
+            : args[1] === "get"
+              ? "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: NVIDIA_BASE_URL"
+              : JSON.stringify([
+                  {
+                    name: "nvidia-prod",
+                    credential_keys: ["NVIDIA_INFERENCE_API_KEY"],
+                    credential_expires_at_ms: {},
+                  },
+                ]);
         return args.includes("nemoclaw-nvidia-prod-v1")
           ? { status: 1, output: "provider not found", stdout: "", stderr: "provider not found" }
-          : args[0] === "provider" && ["get", "list"].includes(args[1])
+          : (args[0] === "settings" && args[1] === "get") ||
+              (args[0] === "provider" && ["get", "list"].includes(args[1]))
             ? { status: 0, output: stdout, stdout, stderr: "" }
             : undefined;
       },
