@@ -176,7 +176,8 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     result.extend(ancillary.into_values());
     Ok(result)
 }
-fn literal(value: &mut Value) {
+/// Escape OpenTofu template sequences in every string of `value`.
+pub(crate) fn literal(value: &mut Value) {
     match value {
         Value::String(text) => *text = text.replace("${", "$${").replace("%{", "%%{"),
         Value::Array(values) => values.iter_mut().for_each(literal),
@@ -614,7 +615,7 @@ mod tests {
         let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
         assert!(graph["resource"]["docker_container"].is_null());
         assert_eq!(
-            graph["data"]["nemoclaw_gateway_capabilities"]["current"]["depends_on"],
+            graph["data"]["openshell_gateway"]["current"]["depends_on"],
             json!(["nemoclaw_managed_gateway.runtime"])
         );
         assert_eq!(

@@ -4,6 +4,7 @@ terraform {
   required_version = "= 1.12.6"
   required_providers {
     nemoclaw = { source = "registry.opentofu.org/nvidia/nemoclaw", version = "@PROVIDER_VERSION@" }
+    openshell = { source = "registry.opentofu.org/nvidia/openshell", version = "@PROVIDER_VERSION@" }
     docker = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
   }
 }
@@ -17,6 +18,9 @@ provider "nemoclaw" {
   endpoint = "http://127.0.0.1:1"
 }
 provider "nemoclaw" {
+  endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
+}
+provider "openshell" {
   endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
 }
 data "docker_image" "gateway" { name = "@GATEWAY_IMAGE@" }
@@ -61,7 +65,7 @@ resource "docker_container" "gateway" {
     target = "/var/run/docker.sock"
   }
 }
-data "nemoclaw_gateway_capabilities" "ready" {
+data "openshell_gateway" "ready" {
   required_compute_drivers = ["docker"]
   wait_timeout_seconds = 90
   depends_on = [docker_container.gateway]
@@ -72,12 +76,12 @@ data "nemoclaw_gateway_capabilities" "ready" {
     }
   }
 }
-resource "nemoclaw_workspace" "probe" {
+resource "openshell_workspace" "probe" {
   name = substr(var.name, 0, 19)
   owner = var.owner
   generation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  depends_on = [data.nemoclaw_gateway_capabilities.ready]
+  depends_on = [data.openshell_gateway.ready]
   lifecycle { prevent_destroy = true }
 }
-output "gateway_version" { value = data.nemoclaw_gateway_capabilities.ready.gateway_version }
-output "workspace_id" { value = nemoclaw_workspace.probe.id }
+output "gateway_version" { value = data.openshell_gateway.ready.gateway_version }
+output "workspace_id" { value = openshell_workspace.probe.id }

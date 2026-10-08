@@ -5,9 +5,12 @@
 mod tests;
 
 pub mod agent;
+mod client;
 mod connected;
+mod gateway_source;
 mod network;
 mod profile;
+mod provider;
 pub use nemoclaw_openshell::{policy::policy_json, profile::definition as inference_profile};
 mod inference;
 use inference::{PROVIDERS_ENV, inference_environment};
@@ -16,9 +19,12 @@ mod gateway;
 mod transport;
 use nemoclaw_backend::{ObservationError, Row};
 
+pub use client::{GatewayClient, GatewaySettings, OpenShellBackend};
+pub use gateway_source::{GatewayDataSource, GatewayState, observe_with_wait};
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
 use nemoclaw_openshell::credential_metadata;
 use openshell_sdk::raw::proto;
+pub use provider::{OpenShellProvider, OpenShellProviderConfig};
 use transport::ConnectedOpenShellGateway;
 pub use transport::{OpenShell, RESPONSE_LIMIT, SandboxPhase};
 
@@ -328,6 +334,12 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         .optional(&["agent_runtime", "policy_json", "provider_names_json"]),
     ]
     .map(lifecycle_rules)
+    .map(|mut definition| {
+        definition.structured = nemoclaw_openshell::structured_inputs(definition.kind);
+        definition
+            .generated("owner", nemoclaw_backend::generate_owner)
+            .generated("generation", nemoclaw_backend::generate_generation)
+    })
 }
 
 /// Retained and stateful objects keep their bindings and refuse replacement.

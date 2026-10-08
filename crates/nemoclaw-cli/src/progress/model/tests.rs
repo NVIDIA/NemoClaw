@@ -105,9 +105,9 @@ fn completion_preserves_actual_failure_and_cancellation_without_verbose_mode() {
 fn default_progress_hides_known_supporting_reads_but_preserves_failures_and_unknown_resources() {
     for address in [
         "data.docker_image.image_abcd",
-        "data.nemoclaw_gateway_capabilities.current",
+        "data.openshell_gateway.current",
         "data.nemoclaw_gateway_readiness.current",
-        "nemoclaw_provider_profile.inference_hosted",
+        "openshell_provider_profile.inference_hosted",
     ] {
         let event = Progress::Resource {
             resource: "resource",

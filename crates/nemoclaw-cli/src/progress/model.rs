@@ -255,16 +255,16 @@ fn infrastructure_step(operation: &str) -> bool {
 fn supporting_resource(address: &str) -> bool {
     matches!(
         address,
-        "nemoclaw_workspace.deployment"
+        "openshell_workspace.deployment"
             | "nemoclaw_gateway_storage.runtime"
-            | "data.nemoclaw_gateway_capabilities.current"
-            | "data.nemoclaw_gateway_capabilities.apply"
+            | "data.openshell_gateway.current"
+            | "data.openshell_gateway.apply"
             | "data.nemoclaw_gateway_readiness.current"
     ) || [
         "data.docker_image.image_",
         "docker_image.image_",
-        "nemoclaw_provider_profile.inference_",
-        "nemoclaw_provider.inference_",
+        "openshell_provider_profile.inference_",
+        "openshell_provider_registration.inference_",
     ]
     .iter()
     .any(|prefix| address.starts_with(prefix))

@@ -15,7 +15,7 @@ fn native_inference_attaches_provider_without_a_managed_route() {
     assert!(resources.iter().all(|r| r.kind != "route"));
     assert!(resources.iter().any(|r| {
         r.address
-            .starts_with("nemoclaw_provider_profile.inference_local-")
+            .starts_with("openshell_provider_profile.inference_local-")
     }));
     let sandbox = &resources
         .iter()

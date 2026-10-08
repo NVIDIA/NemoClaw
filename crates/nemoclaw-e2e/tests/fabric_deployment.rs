@@ -446,8 +446,8 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
     let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     for resource in state["resources"].as_array_mut().unwrap() {
         let field = match resource["type"].as_str().unwrap() {
-            "nemoclaw_provider" => "provider_type",
-            "nemoclaw_sandbox" => "agent_runtime",
+            "openshell_provider_registration" => "provider_type",
+            "openshell_sandbox" => "agent_runtime",
             _ => continue,
         };
         resource["instances"][0]["attributes"]

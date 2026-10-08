@@ -63,11 +63,11 @@ impl Ui {
         // messages, physical IDs, outputs, or arbitrary configuration values.
         let kind = value["hook"]["resource"]["resource_type"].as_str();
         let resource = match kind {
-            Some("nemoclaw_workspace") => "workspace",
-            Some("nemoclaw_sandbox") => "sandbox",
+            Some("openshell_workspace") => "workspace",
+            Some("openshell_sandbox") => "sandbox",
             Some("nemoclaw_sandbox_readiness") => "sandbox readiness",
-            Some("nemoclaw_provider") => "provider",
-            Some("nemoclaw_provider_profile") => "provider profile",
+            Some("openshell_provider_registration") => "provider",
+            Some("openshell_provider_profile") => "provider profile",
             Some("nemoclaw_managed_gateway") => "gateway",
             Some("nemoclaw_gateway_storage") => "gateway storage",
             Some("docker_container") => "container",
@@ -206,33 +206,33 @@ mod tests {
         for (kind, address, timestamp) in [
             (
                 "apply_start",
-                "nemoclaw_provider.fast",
+                "openshell_provider_registration.fast",
                 "2026-09-17T00:00:00.000Z",
             ),
             (
                 "apply_start",
-                "nemoclaw_provider.smart",
+                "openshell_provider_registration.smart",
                 "2026-09-17T00:00:00.100Z",
             ),
             (
                 "apply_complete",
-                "nemoclaw_provider.fast",
+                "openshell_provider_registration.fast",
                 "2026-09-17T00:00:00.125Z",
             ),
             (
                 "apply_complete",
-                "nemoclaw_provider.smart",
+                "openshell_provider_registration.smart",
                 "2026-09-17T00:00:00.350Z",
             ),
         ] {
-            let mut line = serde_json::json!({"type":kind, "@timestamp":timestamp, "hook":{"resource":{"resource_type":"nemoclaw_provider", "addr":address}, "action":"create", "elapsed_seconds":0}}).to_string();
+            let mut line = serde_json::json!({"type":kind, "@timestamp":timestamp, "hook":{"resource":{"resource_type":"openshell_provider_registration", "addr":address}, "action":"create", "elapsed_seconds":0}}).to_string();
             line.push('\n');
             ui.feed(line.as_bytes());
         }
         ui.finish().unwrap();
         let events = received.lock().unwrap();
-        assert!(format!("{:?}", events[0]).contains("nemoclaw_provider.fast"));
-        assert!(format!("{:?}", events[1]).contains("nemoclaw_provider.smart"));
+        assert!(format!("{:?}", events[0]).contains("openshell_provider_registration.fast"));
+        assert!(format!("{:?}", events[1]).contains("openshell_provider_registration.smart"));
         assert!(
             matches!(events[2], Progress::Resource { elapsed, .. } if elapsed == std::time::Duration::from_millis(125))
         );
@@ -271,7 +271,7 @@ mod tests {
             "{\"type\":\"version\",\"ui\":\"1.99\"}\n",
             "{\"type\":\"future_event\",\"@message\":\"secret-sentinel\"}\n",
             "{\"type\":\"outputs\",\"outputs\":{\"secret\":\"secret-sentinel\"}}\n",
-            "{\"type\":\"apply_progress\",\"@message\":\"secret-sentinel\",\"hook\":{\"resource\":{\"resource_type\":\"nemoclaw_sandbox\",\"addr\":\"secret-sentinel\"},\"action\":\"create\",\"elapsed_seconds\":30}}"
+            "{\"type\":\"apply_progress\",\"@message\":\"secret-sentinel\",\"hook\":{\"resource\":{\"resource_type\":\"openshell_sandbox\",\"addr\":\"secret-sentinel\"},\"action\":\"create\",\"elapsed_seconds\":30}}"
         );
         for chunk in stream.as_bytes().chunks(7) {
             ui.feed(chunk);
@@ -292,11 +292,11 @@ mod tests {
     #[test]
     fn unsafe_addresses_keep_operation_visible_without_exposing_values() {
         for address in [
-            "nemoclaw_sandbox.\u{1b}[31msecret-sentinel",
-            "nemoclaw_sandbox.assistant[\"secret-sentinel\"]",
+            "openshell_sandbox.\u{1b}[31msecret-sentinel",
+            "openshell_sandbox.assistant[\"secret-sentinel\"]",
             "secret-sentinel",
             "different_kind.secret-sentinel",
-            &format!("nemoclaw_sandbox.{}", "s".repeat(1024)),
+            &format!("openshell_sandbox.{}", "s".repeat(1024)),
         ] {
             let received = Arc::new(Mutex::new(Vec::new()));
             let events = received.clone();
@@ -305,7 +305,7 @@ mod tests {
             ui.feed(
                 serde_json::json!({
                     "type":"apply_errored", "hook": {
-                        "resource":{"resource_type":"nemoclaw_sandbox", "addr":address},
+                        "resource":{"resource_type":"openshell_sandbox", "addr":address},
                         "action":"create"
                     }
                 })

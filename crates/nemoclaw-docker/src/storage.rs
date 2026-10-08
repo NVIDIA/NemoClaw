@@ -62,22 +62,11 @@ impl Storage {
     }
     /// A random version 4 UUID for an omitted owner.
     pub fn generate_owner() -> Result<String, Error> {
-        let mut bytes = random()?;
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let hex = hex(&bytes);
-        Ok(format!(
-            "{}-{}-{}-{}-{}",
-            &hex[..8],
-            &hex[8..12],
-            &hex[12..16],
-            &hex[16..20],
-            &hex[20..]
-        ))
+        nemoclaw_backend::generate_owner()
     }
     /// A random generation for omitted storage identity.
     pub fn generate_generation() -> Result<String, Error> {
-        Ok(hex(&random()?))
+        nemoclaw_backend::generate_generation()
     }
     /// Resource attributes for this storage.
     pub fn row(&self) -> Result<Row, Error> {
@@ -109,16 +98,6 @@ impl Storage {
         serde_json::to_string(self)
             .map_err(|_| Error::State("cannot serialize storage specification"))
     }
-}
-
-fn random() -> Result<[u8; 16], Error> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes).map_err(|_| Error::State("cannot generate storage identity"))?;
-    Ok(bytes)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(feature = "client")]

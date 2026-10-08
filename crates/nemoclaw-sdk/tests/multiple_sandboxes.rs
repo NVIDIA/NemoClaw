@@ -46,14 +46,14 @@ fn different_adapters_separate_provider_grants_and_ignore_declaration_order() {
     );
     let before = graph(&value);
     assert_eq!(
-        before["resource"]["nemoclaw_sandbox"]
+        before["resource"]["openshell_sandbox"]
             .as_object()
             .unwrap()
             .len(),
         2
     );
     assert_eq!(
-        before["resource"]["nemoclaw_provider"]
+        before["resource"]["openshell_provider_registration"]
             .as_object()
             .unwrap()
             .len(),
@@ -104,7 +104,9 @@ fn sandbox_local_provider_and_inference_names_do_not_escape_their_scope() {
         .unwrap()
         .push(other);
     let before = graph(&value);
-    let providers = before["resource"]["nemoclaw_provider"].as_object().unwrap();
+    let providers = before["resource"]["openshell_provider_registration"]
+        .as_object()
+        .unwrap();
     assert_eq!(providers.len(), 2);
     assert_ne!(
         providers.values().next().unwrap()["name"],

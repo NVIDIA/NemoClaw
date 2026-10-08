@@ -52,6 +52,9 @@ pub struct ResourceAdapter {
     pub destroying: Arc<AtomicBool>,
 }
 impl ResourceAdapter {
+    pub fn definition(&self) -> &Definition {
+        &self.definition
+    }
     pub fn new(definition: Definition, backend: Arc<dyn Backend>) -> Self {
         Self {
             definition,

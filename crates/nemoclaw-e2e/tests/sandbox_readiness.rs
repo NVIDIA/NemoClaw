@@ -172,13 +172,14 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    let mut workspace = graph["resource"]["nemoclaw_workspace"].clone();
+    graph["provider"]["openshell"]["destroy"] = json!(true);
+    let mut workspace = graph["resource"]["openshell_workspace"].clone();
     workspace["deployment"]
         .as_object_mut()
         .unwrap()
         .remove("depends_on");
     workspace["deployment"]["lifecycle"] = json!({"prevent_destroy":true});
-    graph["resource"] = json!({"nemoclaw_workspace":workspace});
+    graph["resource"] = json!({"openshell_workspace":workspace});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     run(
         &["apply", "-auto-approve", "-input=false", "-no-color"],

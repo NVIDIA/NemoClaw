@@ -7,6 +7,7 @@ mod contract;
 mod endpoint;
 mod error;
 mod health;
+mod identity;
 mod observation;
 mod secrets;
 
@@ -14,6 +15,7 @@ pub use contract::{Backend, Mutation, Row};
 pub use endpoint::validate_endpoint;
 pub use error::Error;
 pub use health::{RuntimeHealth, SandboxHealth};
+pub use identity::{generate_generation, generate_owner};
 pub use nemoclaw_runtime::config::ConfigError;
-pub use observation::{Binding, Bound, Observation, ObservationError, refresh};
+pub use observation::{Binding, Bound, Observation, ObservationError, ObservationStatus, refresh};
 pub use secrets::{EnvironmentSecrets, Secrets};
