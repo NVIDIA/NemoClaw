@@ -109,10 +109,15 @@ placement and specialized evidence. Common starting points are:
 npm run test:changed
 ```
 
-Normal Git hooks validate committed changes. If hooks were skipped or unavailable, commit the
-changes, run `git fetch origin main`, then run `npm run validate:pr`. This command compares committed
-changes with `origin/main` and requires a clean worktree. It checks formatting without applying fixes.
-Complete formatting and generated-file updates before the final commit.
+Normal Git hooks validate committed changes. If hooks are missing, stale, or were skipped, repair
+[contributor setup](.agents/skills/nemoclaw-contributor-onboard/SKILL.md), then follow the
+[publication procedure](.agents/skills/nemoclaw-contributor-create-pr/references/validation.md)
+before pushing. The installed pre-push hook runs publication validation; a separate
+`npm run validate:pr` is not a substitute. Changed validators must run inside the actual hook's
+verified isolation boundary, with Git transport authentication outside it.
+Publication validation compares committed changes with the refreshed `origin/main` and requires a
+clean worktree. It checks formatting without applying fixes. Complete formatting and generated-file
+updates before the final commit.
 When adding or renaming a hook, classify its read-only behavior in
 `scripts/checks/read-only-config.mts`; publication validation rejects unclassified hooks.
 

@@ -2,8 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Execute only trusted base code; read PR commits as inert Git objects.
-# The commit status shares the required checks context with the native CI check.
-# Both must pass. Serialize PR and comment events to prevent stale overwrites.
+# Native CI produces a check run; this workflow produces a separate commit status.
+# GitHub requires BOTH records to pass when their shared name, checks, is required:
+# https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks
+# Using another status name would require a separate repository rule to enforce it.
+# Serialize PR and comment events to prevent stale commit-status overwrites.
 name: Governance / Enforce Codebase Growth Limits
 on:
   issue_comment:

@@ -97,8 +97,9 @@ or admin role. Bot comments and candidate-defined approvals cannot authorize tha
 The last matching maintainer record wins. Deleting a record removes it from subsequent evaluations.
 Creating, editing, or deleting an approval record automatically refreshes the growth check for the current PR commit.
 Both PR events and approval changes mark the current commit's required `checks` status pending before running trusted-base checks.
-The independent status uses the repository's existing required context. GitHub requires both the native CI check and
-this commit status to pass. After invalidation, a failed or incomplete check cannot restore the earlier green result.
+The independent status uses the repository's existing required context. The native CI job produces a check run;
+this workflow writes a separate commit status. GitHub requires [both records to pass when their shared name is required](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+After invalidation, a failed or incomplete check cannot restore the earlier green commit status.
 PR and comment evaluations run serially per PR and read current comments instead of replaying old decisions.
 No policy PR or manual rerun is required for an approval change.
 Normal code review and the assertion census still apply. This record authorizes only the stated budget delta.
