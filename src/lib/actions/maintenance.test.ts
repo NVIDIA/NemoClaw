@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
+  listHostGatewayRegistryEntries: vi.fn(),
   getSandbox: vi.fn(),
   recordSandboxStopIntent: vi.fn(),
   updateSandbox: vi.fn(),
@@ -55,6 +56,11 @@ vi.mock("../state/registry", () => ({
   getSandbox: mocks.getSandbox,
   recordSandboxStopIntent: mocks.recordSandboxStopIntent,
   updateSandbox: mocks.updateSandbox,
+}));
+vi.mock("../state/registry/lock", () => ({ withRegistryLockAt: vi.fn() }));
+vi.mock("../state/gateway-registry", async () => ({
+  resolveHome: (await import("../state/state-root")).resolveHome,
+  listHostGatewayRegistryEntries: mocks.listHostGatewayRegistryEntries,
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
@@ -1476,24 +1482,19 @@ describe("garbageCollectImages", () => {
         ? `${imageRepo}:gc-test-orphan-111\t3GB\n${imageRepo}:live-222\t2GB`
         : "openshell/sandbox-from:in-use\t1GB",
     );
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [
-        { imageTag: `${imageRepo}:live-222` },
-        { imageTag: "openshell/sandbox-from:in-use" },
-      ],
-      defaultSandbox: null,
-    });
+    mocks.listHostGatewayRegistryEntries.mockReturnValue([
+      { entry: { imageTag: `${imageRepo}:live-222` } },
+      { entry: { imageTag: "openshell/sandbox-from:in-use" } },
+    ]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-
     await garbageCollectImages({ dryRun: true });
-
     const out = logSpy.mock.calls.flat().join("\n");
     logSpy.mockRestore();
 
     expect(out).toContain(`${imageRepo}:gc-test-orphan-111`);
     expect(out).not.toContain(`${imageRepo}:live-222`);
-    const scannedRepos = mocks.dockerListImagesFormat.mock.calls.map((call) => call[0]);
-    expect(scannedRepos).toContain("openshell/sandbox-from");
-    expect(scannedRepos).toContain(imageRepo);
+    expect(mocks.dockerListImagesFormat.mock.calls.map((call) => call[0])).toEqual(
+      expect.arrayContaining(["openshell/sandbox-from", imageRepo]),
+    );
   });
 });
