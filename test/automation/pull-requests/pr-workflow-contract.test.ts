@@ -623,7 +623,6 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       );
     },
   );
-
   it.each([
     ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
     [
