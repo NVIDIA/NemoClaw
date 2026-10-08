@@ -63,6 +63,75 @@ pub struct Process {
     pub memory_bytes: u64,
     pub gpu: bool,
 }
+/// Data source computing a Docker gateway container's launch.
+pub const GATEWAY_RUNTIME_DATA_SOURCE: &str = "gateway_runtime";
+/// Process launch of a gateway container.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatewayLaunch {
+    pub entrypoint: Vec<String>,
+    pub command: Vec<String>,
+    pub env: Vec<String>,
+}
+fn gateway_launch(driver: ComputeDriver, name: &str, port: u16, data_path: &str) -> GatewayLaunch {
+    // Docker publishes the port from the gateway network; Podman uses host networking.
+    let bind_address = if driver == ComputeDriver::Docker {
+        "0.0.0.0"
+    } else {
+        "127.0.0.1"
+    };
+    GatewayLaunch {
+        entrypoint: vec!["/usr/local/bin/openshell-gateway".into()],
+        command: vec![
+            "--config".into(),
+            format!("{data_path}/gateway.toml"),
+            "--name".into(),
+            name.into(),
+            "--bind-address".into(),
+            bind_address.into(),
+            "--port".into(),
+            port.to_string(),
+        ],
+        env: vec![
+            format!("XDG_STATE_HOME={data_path}/state"),
+            format!("OPENSHELL_DB_URL=sqlite:{data_path}/gateway.db"),
+        ],
+    }
+}
+/// Launch a Docker gateway container from its name, endpoint, and the data
+/// path its storage returns.
+///
+/// # Errors
+/// Returns a conflict naming the invalid setting.
+pub fn docker_gateway_launch(
+    name: &str,
+    endpoint: &str,
+    data_path: &str,
+) -> Result<GatewayLaunch, Error> {
+    check_gateway_attribute("name", name).map_err(|_| {
+        Error::Conflict(
+            "name must be nc-, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name",
+        )
+    })?;
+    let port = endpoint
+        .strip_prefix("http://")
+        .and_then(|authority| authority.strip_suffix('/').or(Some(authority)))
+        .and_then(|authority| authority.parse::<std::net::SocketAddr>().ok())
+        .filter(|address| address.ip().is_loopback() && address.port() >= 1024)
+        .ok_or(Error::Conflict(
+            "endpoint must be an HTTP origin with a loopback address and an unprivileged port",
+        ))?
+        .port();
+    if !data_path.starts_with('/')
+        || data_path.len() < 2
+        || data_path.split('/').any(|segment| segment == "..")
+        || data_path.contains(|c: char| c.is_control() || c.is_whitespace())
+    {
+        return Err(Error::Conflict(
+            "data_path must be an absolute path without parent segments or whitespace",
+        ));
+    }
+    Ok(gateway_launch(ComputeDriver::Docker, name, port, data_path))
+}
 /// Resource attributes of a managed gateway and its storage.
 pub const GATEWAY_ATTRIBUTES: [&str; 8] = [
     "name",
@@ -428,25 +497,10 @@ impl Spec {
                 .map_err(|_| Error::Conflict("invalid gateway endpoint"))?;
             let port = url.port().ok_or(Error::Conflict("missing gateway port"))?;
             config["User"] = json!("0:0");
-            config["Env"] = json!([
-                format!("XDG_STATE_HOME={data_path}/state"),
-                format!("OPENSHELL_DB_URL=sqlite:{data_path}/gateway.db")
-            ]);
-            config["Entrypoint"] = json!(["/usr/local/bin/openshell-gateway"]);
-            config["Cmd"] = json!([
-                "--config",
-                &format!("{data_path}/gateway.toml"),
-                "--name",
-                &self.name,
-                "--bind-address",
-                if self.compute_driver == ComputeDriver::Docker {
-                    "0.0.0.0"
-                } else {
-                    "127.0.0.1"
-                },
-                "--port",
-                &port.to_string()
-            ]);
+            let launch = gateway_launch(self.compute_driver, &self.name, port, data_path);
+            config["Env"] = json!(launch.env);
+            config["Entrypoint"] = json!(launch.entrypoint);
+            config["Cmd"] = json!(launch.command);
             if self.compute_driver == ComputeDriver::Podman {
                 host["NetworkMode"] = json!("host");
                 config["Hostname"] = json!(self.name);

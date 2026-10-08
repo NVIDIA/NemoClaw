@@ -3,6 +3,8 @@
 
 mod process;
 mod readiness;
+mod runtime;
+pub(crate) use runtime::GatewayRuntimeDataSource;
 
 pub(crate) use readiness::GatewayReadinessDataSource;
 

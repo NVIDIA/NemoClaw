@@ -7,6 +7,7 @@ use crate::{
     config::Document,
     docker::{Engine, fixture::Fixture},
     hardware::{GIB, GpuMemory, HostObservation, HostObserver},
+    managed::Spec,
 };
 use serde_json::json;
 use std::sync::{
@@ -30,7 +31,13 @@ fn specs_for(document: &Document) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter(|target| nemoclaw_sdk::services::resource_behavior(&target.kind).runtime_process)
-        .map(|target| target.values["spec"].clone())
+        .map(|target| {
+            serde_json::from_str::<Spec>(&target.values["spec"])
+                .unwrap()
+                .runtime_configuration()
+                .unwrap()
+                .to_owned()
+        })
         .collect()
 }
 fn capacity() -> Capacity {
@@ -164,12 +171,7 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
         Some((200, json!({"ID":"engine"}).to_string().into_bytes()))
     })
     .await;
-    let mut specs = specs();
-    for encoded in &mut specs {
-        let mut spec: Spec = serde_json::from_str(encoded).unwrap();
-        spec.process.as_mut().unwrap().engine = "ssh://operator@gpu-box".into();
-        *encoded = spec.json().unwrap();
-    }
+    let specs = specs();
     for mode in ["normal", "unavailable", "foreign", "incomplete"] {
         let reads = Arc::new(AtomicUsize::new(0));
         let connections = Connections::fixed([fixture
@@ -231,12 +233,7 @@ async fn capacity_observation_counts_combined_budgets_and_largest_reserve_once()
     };
     service.memory.host_reserve_gib = 48;
     service.memory.gpu_memory_gib = 52;
-    let mut specs = specs_for(&document);
-    for encoded in &mut specs {
-        let mut spec: Spec = serde_json::from_str(encoded).unwrap();
-        spec.process.as_mut().unwrap().engine = "ssh://operator@gpu-box".into();
-        *encoded = spec.json().unwrap();
-    }
+    let specs = specs_for(&document);
     let required = (20 + 52 + 48) * GIB;
     for total in [required, required - 1] {
         let reads = Arc::new(AtomicUsize::new(0));

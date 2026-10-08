@@ -127,10 +127,17 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
             .collect(),
     )
     .unwrap();
-    let command = gateway["command"].as_array().unwrap();
-    let gateway_port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
+    let launch = &graph["data"]["nemoclaw_gateway_runtime"]["managed_gateway_runtime"];
+    assert_eq!(
+        launch["data_path"],
+        "${nemoclaw_gateway_storage.runtime.data_path}"
+    );
+    let gateway_port = launch["endpoint"]
         .as_str()
         .unwrap()
+        .rsplit_once(':')
+        .unwrap()
+        .1
         .parse::<u16>()
         .unwrap();
     assert!(gateway.get("network_mode").is_none());
@@ -330,7 +337,13 @@ fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply()
         "${docker_container.inference_service_inference_qwen.id}"
     );
     assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
-    assert!(readiness["spec"].is_string());
+    assert_eq!(
+        readiness["contract"],
+        "${data.nemoclaw_vllm_runtime.inference_service_inference_qwen.spec}"
+    );
+    let container = &graph["resource"]["docker_container"]["inference_service_inference_qwen"];
+    assert_eq!(readiness["name"], container["name"]);
+    assert!(readiness["engine"].as_str().unwrap().starts_with("unix://"));
 }
 
 #[test]

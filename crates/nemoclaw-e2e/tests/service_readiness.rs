@@ -76,24 +76,24 @@ async fn standalone_readiness(proxy: bool) {
     })
     .await;
     let upstream = format!("{}/v1", server.endpoint);
-    let encoded = if proxy {
-        json!({"kind":"ollama_proxy", "engine":"ssh://operator@gpu-box", "proxy":{
-            "Name":"nc-0123456789abcdef-ollama-proxy-local", "Owner":document.metadata.uid,
-            "Generation":"a".repeat(32), "Image":format!("proxy@sha256:{}", "a".repeat(64)),
-            "BindAddress":"127.0.0.1:11435", "Settings":{"upstream":upstream,
-            "endpoint":"http://127.0.0.1:11435/v1", "model":"qwen3:0.6b", "digest":"a".repeat(64)}
-        }})
-        .to_string()
+    // Readiness takes the contract the container runs with, as a runtime
+    // contract data source computes it.
+    let (name, contract) = if proxy {
+        (
+            "nc-0123456789abcdef-ollama-proxy-local".to_owned(),
+            json!({"upstream":upstream, "endpoint":"http://127.0.0.1:11435/v1",
+                "model":"qwen3:0.6b", "digest":"a".repeat(64)})
+            .to_string(),
+        )
     } else {
-        target.values["spec"].clone()
+        let spec: nemoclaw_sdk::managed::Spec =
+            serde_json::from_str(&target.values["spec"]).unwrap();
+        (
+            spec.name.clone(),
+            spec.runtime_configuration().unwrap().to_owned(),
+        )
     };
-    let spec: Value = serde_json::from_str(&encoded).unwrap();
-    let name = if proxy {
-        &spec["proxy"]["Name"]
-    } else {
-        &spec["name"]
-    };
-    let engine = json!({"effects":0,"container":{"Id":"owned","Name":format!("/{}",name.as_str().unwrap()),"State":{"Running":true,"StartedAt":"2026-09-15T00:00:00Z"}}});
+    let engine = json!({"effects":0,"container":{"Id":"owned","Name":format!("/{name}"),"State":{"Running":true,"StartedAt":"2026-09-15T00:00:00Z"}}});
     fs::write(root.join("engine.json"), engine.to_string()).unwrap();
     let status = |phase: &str| {
         if proxy {
@@ -127,7 +127,7 @@ async fn standalone_readiness(proxy: bool) {
     // fails only when the wait expires, so its wait stays short; every expected
     // proxy failure is immediate, so the proxy wait can be generous.
     let wait = if proxy { 30 } else { 3 };
-    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
+    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"engine":"ssh://operator@gpu-box","name":name,"contract":contract,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
         let output = directory

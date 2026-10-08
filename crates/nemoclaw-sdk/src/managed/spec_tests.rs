@@ -453,3 +453,45 @@ fn gateway_attributes_reproduce_the_gateway_and_its_storage() {
         );
     }
 }
+
+#[test]
+fn docker_gateway_launch_matches_the_compiled_container() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
+    let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    assert_eq!(spec.compute_driver, ComputeDriver::Docker);
+    let data = "/var/lib/docker/volumes/gateway-data/_data";
+    let container = spec.container(data).unwrap();
+    let launch = docker_gateway_launch(&spec.name, &spec.gateway.endpoint, data).unwrap();
+    assert_eq!(container.entrypoint, Some(launch.entrypoint));
+    assert_eq!(container.cmd, Some(launch.command));
+    assert_eq!(container.env, Some(launch.env));
+    for (name, endpoint, data_path) in [
+        ("unrelated", spec.gateway.endpoint.as_str(), data),
+        (spec.name.as_str(), "http://127.0.0.1:80", data),
+        (spec.name.as_str(), "http://10.0.0.8:17670", data),
+        (spec.name.as_str(), "https://127.0.0.1:17670", data),
+        (
+            spec.name.as_str(),
+            spec.gateway.endpoint.as_str(),
+            "relative",
+        ),
+        (
+            spec.name.as_str(),
+            spec.gateway.endpoint.as_str(),
+            "/data/../etc",
+        ),
+        (
+            spec.name.as_str(),
+            spec.gateway.endpoint.as_str(),
+            "/data path",
+        ),
+    ] {
+        assert!(
+            docker_gateway_launch(name, endpoint, data_path).is_err(),
+            "{name} {endpoint} {data_path}"
+        );
+    }
+}

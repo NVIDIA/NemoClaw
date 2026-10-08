@@ -256,8 +256,18 @@ pub(crate) fn compiled_runtime(
     {
         let container = crate::docker_compute::address(&target.address);
         let logical = container.split_once('.').unwrap().1;
+        let spec = Spec::from_values(&target.kind, &target.values)?;
+        let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
+        let source = if target.kind == "inference_service" {
+            crate::services::installers::vllm::RUNTIME_DATA_SOURCE
+        } else {
+            crate::services::installers::ollama::RUNTIME_DATA_SOURCE
+        };
+        // Readiness checks the contract the container runs with.
         graph["data"]["nemoclaw_service_readiness"][logical] = json!({
-            "spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{"),
+            "engine":literal(spec.engine()),
+            "name":literal(&spec.name),
+            "contract":format!("${{data.nemoclaw_{source}.{logical}.spec}}"),
             "container_id":format!("${{{container}.id}}"),
             "read_trigger":"${timestamp() != \"\"}",
             "wait_timeout_seconds":9 * 3600
