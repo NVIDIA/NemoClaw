@@ -945,7 +945,14 @@ describe("credential actions use typed OpenShell provider results", () => {
         },
       }));
       const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>();
-      const adapter = providerAdapter({ deleteProvider, detachProvider });
+      const adapter = providerAdapter({
+        deleteProvider,
+        detachProvider,
+        getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "absent" },
+        })),
+      });
 
       const result = await runCredentialsResetAction(
         { provider, confirmed: true },
@@ -960,7 +967,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       expect(deleteProvider).toHaveBeenCalledOnce();
       expect(deleteProvider).toHaveBeenCalledWith({
         target: { kind: "named", gatewayName: "nemoclaw" },
-        providerName: provider,
+        providerName: "nemoclaw-nvidia-prod-v1",
         timeoutMs: 30_000,
       });
       expect(detachProvider).not.toHaveBeenCalled();
@@ -984,9 +991,14 @@ describe("credential actions use typed OpenShell provider results", () => {
           ok: false,
           error: { kind: "command", reason: "failed", message: "failed" },
         })
-        .mockResolvedValueOnce({ ok: true })
         .mockResolvedValueOnce({ ok: true });
-      const adapter = providerAdapter({ deleteProvider: deletion });
+      const adapter = providerAdapter({
+        deleteProvider: deletion,
+        getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+          ok: false as const,
+          error: { kind: "command" as const, reason: "not_found" as const, message: "absent" },
+        })),
+      });
       const failed = await runCredentialsResetAction(
         { provider: profile.logicalProvider, confirmed: true },
         { providerAdapter: adapter, clearNativeHostedProviderAuthority: clear },
@@ -999,8 +1011,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       );
       expect(succeeded.exitCode).toBe(0);
       expect(deletion.mock.calls.map(([request]) => request.providerName)).toEqual([
-        profile.logicalProvider,
-        profile.logicalProvider,
+        profile.providerName,
         profile.providerName,
       ]);
       expect(clear).toHaveBeenCalledExactlyOnceWith("nemoclaw", profile.profileId);
@@ -1012,6 +1023,10 @@ describe("credential actions use typed OpenShell provider results", () => {
     async (profile) => {
       const clear = vi.fn();
       const adapter = providerAdapter({
+        getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+          ok: false as const,
+          error: { kind: "command" as const, reason: "not_found" as const, message: "absent" },
+        })),
         deleteProvider: vi.fn(async () => ({
           ok: false as const,
           error: { kind: "command" as const, reason: "not_found" as const, message: "absent" },
@@ -1029,6 +1044,10 @@ describe("credential actions use typed OpenShell provider results", () => {
   it("clears native NVIDIA gateway authority only after provider deletion is confirmed", async () => {
     const clearNativeNvidiaProviderAuthority = vi.fn();
     const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "absent" },
+      })),
       deleteProvider: vi.fn(async () => ({ ok: true as const })),
     });
 
@@ -1049,6 +1068,10 @@ describe("credential actions use typed OpenShell provider results", () => {
   it("clears native NVIDIA authority when the provider is already absent", async () => {
     const clearNativeNvidiaProviderAuthority = vi.fn();
     const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "absent" },
+      })),
       deleteProvider: vi.fn(async () => ({
         ok: false as const,
         error: {

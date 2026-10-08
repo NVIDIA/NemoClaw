@@ -15,7 +15,13 @@ vi.mock("../onboard/gateway-teardown-authority", () => ({
 function adapter(
   deleteProvider: OpenShellProviderAdapter["deleteProvider"],
 ): OpenShellProviderAdapter {
-  return { deleteProvider: vi.fn(deleteProvider) } as unknown as OpenShellProviderAdapter;
+  return {
+    getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "absent" },
+    })),
+    deleteProvider: vi.fn(deleteProvider),
+  } as unknown as OpenShellProviderAdapter;
 }
 
 describe("native NVIDIA credential reset ownership", () => {
@@ -80,6 +86,60 @@ describe("native NVIDIA credential reset ownership", () => {
     },
   );
 
+  it.each(
+    NATIVE_HOSTED_PROFILES.flatMap((profile) =>
+      (["present", "timeout", "authentication", "schema"] as const).map((state) => ({
+        profile,
+        state,
+      })),
+    ),
+  )(
+    "preserves providers and native authority when legacy observation is $state for $profile.logicalProvider",
+    async ({ profile, state }) => {
+      const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
+        ok: true,
+      }));
+      const clearNativeNvidiaProviderAuthority = vi.fn();
+      const providerAdapter = adapter(deleteProvider);
+      providerAdapter.getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
+        state === "present"
+          ? {
+              ok: true,
+              value: {
+                name: profile.logicalProvider,
+                type: "nvidia",
+                credentialKeys: ["NVIDIA_API_KEY"],
+                configKeys: [],
+              },
+            }
+          : {
+              ok: false,
+              error: { kind: state, message: "observation failed" },
+            },
+      );
+      const result = await runCredentialsResetAction(
+        { provider: profile.logicalProvider, confirmed: true },
+        {
+          providerAdapter,
+          clearNativeNvidiaProviderAuthority,
+          clearNativeHostedProviderAuthority: clearNativeNvidiaProviderAuthority,
+          listNativeHostedProviderAttachmentSandboxNames: () => [],
+          listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+          withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(providerAdapter.getProvider).toHaveBeenCalledExactlyOnceWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        providerName: profile.logicalProvider,
+        timeoutMs: 30_000,
+      });
+      expect(deleteProvider).not.toHaveBeenCalled();
+      expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+      expect(result.failureLines.join("\n")).toContain("ownership conflict");
+    },
+  );
+
   it("refuses hosted reset for an owned receipt under the gateway lock", async () => {
     const operations: string[] = [];
     const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
@@ -109,7 +169,7 @@ describe("native NVIDIA credential reset ownership", () => {
   });
 
   it.each(NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "nvidia-prod"))(
-    "removes both native and legacy identities for $label",
+    "removes native identity only after legacy absence for $label",
     async (profile) => {
       const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
         ok: true,
@@ -126,7 +186,6 @@ describe("native NVIDIA credential reset ownership", () => {
       );
       expect(result.exitCode).toBe(0);
       expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
-        profile.logicalProvider,
         profile.providerName,
       ]);
       expect(clearNativeHostedProviderAuthority).toHaveBeenCalledExactlyOnceWith(
@@ -160,7 +219,6 @@ describe("native NVIDIA credential reset ownership", () => {
       "nemoclaw",
     );
     expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
-      "nvidia-prod",
       "nemoclaw-nvidia-prod-v1",
     ]);
     expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledExactlyOnceWith("nemoclaw");
@@ -172,10 +230,11 @@ describe("native NVIDIA credential reset ownership", () => {
       const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
         ok: true,
       }));
+      const providerAdapter = adapter(deleteProvider);
       await runCredentialsResetAction(
         { provider: profile.providerName, confirmed: true },
         {
-          providerAdapter: adapter(deleteProvider),
+          providerAdapter,
           clearNativeNvidiaProviderAuthority: vi.fn(),
           clearNativeHostedProviderAuthority: vi.fn(),
           listNativeHostedProviderAttachmentSandboxNames: () => [],
@@ -183,18 +242,26 @@ describe("native NVIDIA credential reset ownership", () => {
           withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
         },
       );
+      expect(providerAdapter.getProvider).not.toHaveBeenCalled();
       expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
         profile.providerName,
       ]);
     },
   );
 
-  it.each(["nemoclaw-nvidia-prod-v1", "nvidia-prod"])(
+  it.each(["nemoclaw-nvidia-prod-v1"])(
     "preserves authority when deleting %s fails",
     async (failedName) => {
       const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async (input) =>
         input.providerName === failedName
-          ? { ok: false, error: { kind: "command", reason: "failed", message: "delete failed" } }
+          ? {
+              ok: false,
+              error: {
+                kind: "command",
+                reason: "failed",
+                message: "delete failed",
+              },
+            }
           : { ok: true },
       );
       const clearNativeNvidiaProviderAuthority = vi.fn();
@@ -208,11 +275,11 @@ describe("native NVIDIA credential reset ownership", () => {
         },
       );
       expect(result.exitCode).toBe(1);
-      expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual(
-        failedName === "nvidia-prod" ? ["nvidia-prod"] : ["nvidia-prod", "nemoclaw-nvidia-prod-v1"],
-      );
+      expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
+        "nemoclaw-nvidia-prod-v1",
+      ]);
       expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
-      expect(result.failureLines.join("\n")).toContain(failedName);
+      expect(result.failureLines.join("\n")).toContain("delete failed");
     },
   );
 
