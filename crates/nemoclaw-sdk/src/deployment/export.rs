@@ -75,6 +75,8 @@ impl Deployment {
             ))?;
             if !plan::disposable(&target.address)
                 && (target.values.contains_key("spec")
+                    // Gateways, their storage, and Kubernetes resources are typed.
+                    || target.values.contains_key("compute_driver")
                     || crate::services::resource_behavior(&target.kind).retained_storage)
                 && binding.differs(&target.values)
             {

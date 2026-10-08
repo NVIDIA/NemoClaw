@@ -39,7 +39,7 @@ fn kubernetes_gateway_requires_storage_and_fresh_readiness_without_replacement()
     missing.remove(KUBERNETES_STORAGE);
     assert!(runtime_bindings(&targets, &missing).is_err());
     let mut drift = bindings.clone();
-    drift.get_mut(KUBERNETES_STORAGE).unwrap().spec = "changed".into();
+    drift.get_mut(KUBERNETES_STORAGE).unwrap().namespace = "elsewhere".into();
     assert!(runtime_bindings(&targets, &drift).is_err());
     for change in &mut plan.resource_changes {
         if change.address == "nemoclaw_kubernetes_gateway.runtime" {
@@ -119,7 +119,7 @@ fn bound(id: impl Into<String>, target: &Target) -> StateBinding {
 
 /// Planned prior attributes of a bound resource.
 fn before(binding: &StateBinding) -> Value {
-    let mut before = json!(binding.gateway_values());
+    let mut before = json!(binding.typed_values());
     before["id"] = json!(binding.id);
     if !binding.spec.is_empty() {
         before["spec"] = json!(binding.spec);

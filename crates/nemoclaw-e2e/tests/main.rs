@@ -29,6 +29,8 @@ mod health;
 mod hosted_parity;
 #[path = "inference_discovery.rs"]
 mod inference_discovery;
+#[path = "kubernetes_hcl.rs"]
+mod kubernetes_hcl;
 #[path = "managed.rs"]
 mod managed;
 #[path = "model_live.rs"]

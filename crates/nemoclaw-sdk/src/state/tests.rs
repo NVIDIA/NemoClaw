@@ -792,7 +792,7 @@ fn gateway_storage_bindings_record_their_typed_settings() {
         .filter(|(name, _)| crate::managed::GATEWAY_ATTRIBUTES.contains(&name.as_str()))
         .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
         .collect();
-    assert_eq!(bindings[address].gateway_values(), compiled);
+    assert_eq!(bindings[address].typed_values(), compiled);
     assert!(!bindings[address].differs(&compiled));
     let mut changed = compiled.clone();
     changed.insert("image".into(), "changed".into());

@@ -210,9 +210,16 @@ impl Provider for NemoClawProvider {
                 .into_iter()
                 .map(|definition| {
                     let name = definition.kind.into();
+                    let structured = !definition.structured.is_empty();
                     let mut resource = ResourceAdapter::new(definition, self.backend.clone());
                     resource.destroying = self.destroying.clone();
-                    (name, Box::new(resource) as Box<dyn DynamicResource>)
+                    // Typed list and block inputs need the structured adapter.
+                    let resource: Box<dyn DynamicResource> = if structured {
+                        Box::new(nemoclaw_tofu::StructuredAdapter(resource))
+                    } else {
+                        Box::new(resource)
+                    };
+                    (name, resource)
                 })
                 .collect(),
         )

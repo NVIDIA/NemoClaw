@@ -71,6 +71,9 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
         "endpoint",
         "image",
         "network_cidr",
+        "kubeconfig_env",
+        "context",
+        "authentication_profile",
     ] {
         if let Some(value) = expected.get(key)
             && change.change.before[key] != *value
