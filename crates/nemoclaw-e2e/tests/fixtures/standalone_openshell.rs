@@ -721,6 +721,10 @@ async fn standalone_pi_configuration_updates_without_replacing_the_sandbox() {
         source
             + r#"
 variable "model" { default = "first-model" }
+variable "adapter" {
+  type    = any
+  default = "nvidia.fabric.pi"
+}
 resource "fabric_agent_configuration" "agent" {
   count = var.enabled ? 1 : 0
   workspace = openshell_sandbox.agent[0].workspace
@@ -728,11 +732,27 @@ resource "fabric_agent_configuration" "agent" {
   owner = openshell_sandbox.agent[0].owner
   generation = openshell_sandbox.agent[0].generation
   sandbox_id = openshell_sandbox.agent[0].id
-  config_json = jsonencode({ schema_version = "fabric.agent/v1alpha1", runtime = {}, metadata = { name = "assistant" }, harness = { adapter_id = "nvidia.fabric.pi" }, models = { default = { provider = "openai", model = var.model } } })
+  config_json = jsonencode({ schema_version = "fabric.agent/v1alpha1", runtime = {}, metadata = { name = "assistant" }, harness = { adapter_id = var.adapter }, models = { default = { provider = "openai", model = var.model } } })
 }
 "#,
     )
     .unwrap();
+    // A configuration Fabric rejects fails validation at its field, before
+    // any sandbox call, and the message never repeats the rejected value.
+    let rejected = tofu.run(
+        &[
+            "plan",
+            "-input=false",
+            "-var=model=PRIVATE_SENTINEL",
+            r#"-var=adapter=["PRIVATE_SENTINEL"]"#,
+        ],
+        false,
+    );
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("Invalid config_json"), "{stderr}");
+    assert!(stderr.contains("at harness.adapter_id"), "{stderr}");
+    assert!(!stderr.contains("PRIVATE_SENTINEL"), "{stderr}");
+    assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     tofu.run(&["plan", "-input=false"], true);
     assert!(fixture.state.lock().unwrap().exec_calls.is_empty());
     tofu.apply();

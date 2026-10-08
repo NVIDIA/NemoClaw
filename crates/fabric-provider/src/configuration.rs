@@ -46,6 +46,19 @@ fn configuration_failure(stage: &str, code: &str, runtime_state: Option<&str>) -
     }
 }
 
+/// Check a Fabric configuration document. The error names the rejected field
+/// with a safe path, never the value or Fabric's message about it.
+pub(crate) fn check(encoded: &str) -> Result<(), String> {
+    let value: Value = serde_json::from_str(encoded).map_err(|_| "is not valid JSON".to_owned())?;
+    serde_path_to_error::deserialize::<_, nemo_fabric_core::FabricConfig>(value)
+        .map(drop)
+        .map_err(|error| {
+            let path = error.path().to_string();
+            let field = nemoclaw_fabric::capabilities::diagnostic_field(&path);
+            format!("is not a valid Fabric configuration at {field}")
+        })
+}
+
 fn configuration(encoded: &str) -> Result<Value, ObservationError> {
     let value: Value = serde_json::from_str(encoded).map_err(|_| ObservationError::Query)?;
     serde_json::from_value::<nemo_fabric_core::FabricConfig>(value.clone())
@@ -220,6 +233,31 @@ pub(crate) async fn configure_agent(client: &OpenShell, binding: &Row) -> Result
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
+    fn valid() -> serde_json::Value {
+        json!({
+            "schema_version": "fabric.agent/v1alpha1",
+            "runtime": {},
+            "metadata": {"name": "assistant"},
+            "harness": {"adapter_id": "nvidia.fabric.pi"},
+        })
+    }
+
+    #[test]
+    fn rejected_configuration_names_the_field_without_its_value() {
+        assert!(super::check(&valid().to_string()).is_ok());
+        let mut invalid = valid();
+        invalid["harness"]["adapter_id"] = json!(["PRIVATE_SENTINEL"]);
+        let message = super::check(&invalid.to_string()).unwrap_err();
+        assert!(message.contains("harness.adapter_id"), "{message}");
+        assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
+        // Malformed JSON is reported as such, without echoing the input.
+        let message = super::check("{\"PRIVATE_SENTINEL\"").unwrap_err();
+        assert!(message.contains("JSON"), "{message}");
+        assert!(!message.contains("PRIVATE_SENTINEL"), "{message}");
+    }
+
     #[test]
     fn configuration_diagnostics_preserve_only_known_fields() {
         let failure = super::configuration_failure(
