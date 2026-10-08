@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as restoreWindow from "../actions/sandbox/runtime/openclaw-lifecycle";
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 import type { SandboxEntry } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
@@ -1136,9 +1137,26 @@ describe("created sandbox completion actions", () => {
         sandboxGpuDevice: null,
         errors: [],
       };
+      const binding = {
+        provider: "ollama-local" as const,
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated" as const,
+        gatewayName: "nemoclaw",
+        sandboxName: "hermes",
+      };
+      const nativeLocalProviderAttachment = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "selected-provider-id",
+      };
+      const retireNativeLocalProviders = vi.fn(async () => {
+        order.push("retire-providers");
+      });
       const registerCreatedSandbox = vi.fn((input: CreatedSandboxRegistrationInput) => {
         order.push("registry");
-        return input as unknown as SandboxEntry;
+        return { ...input, nativeLocalProviderAttachment } as unknown as SandboxEntry;
       });
       const initialOpenShellGpuDiagnostics = { collect: vi.fn(() => []) };
       const receiptOpenShellGpuDiagnostics = { collect: vi.fn(() => []) };
@@ -1233,6 +1251,7 @@ describe("created sandbox completion actions", () => {
             getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
           },
           gpu: {
+            commandExecutor: { runBuffered: vi.fn() },
             config: gpuConfig,
             provider: "ollama",
             dockerDriverGateway: true,
@@ -1287,6 +1306,7 @@ describe("created sandbox completion actions", () => {
             throw new Error(`unexpected exit ${code}`);
           },
           registerCreatedSandbox,
+          retireNativeLocalProviders,
         },
       );
       const created = {
@@ -1343,7 +1363,15 @@ describe("created sandbox completion actions", () => {
         ...(schema5 ? [] : ["workload"]),
         "lifecycle-revalidate",
         "registry",
+        "retire-providers",
       ]);
+      expect(retireNativeLocalProviders).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          sandboxName: "hermes",
+          gatewayName: "nemoclaw",
+          selected: nativeLocalProviderAttachment,
+        }),
+      );
       expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
       expect(verifyHermesGpu).toHaveBeenCalledWith(
         gpuConfig,
@@ -1372,6 +1400,7 @@ describe("created sandbox completion actions", () => {
       const proofFailure = new Error("Hermes GPU proof failed");
       verifyHermesGpu.mockRejectedValueOnce(proofFailure);
       registerCreatedSandbox.mockClear();
+      retireNativeLocalProviders.mockClear();
       await expect(
         completion.complete(
           schema5 ? null : created,
@@ -1384,6 +1413,41 @@ describe("created sandbox completion actions", () => {
         ),
       ).rejects.toBe(proofFailure);
       expect(registerCreatedSandbox).not.toHaveBeenCalled();
+      expect(retireNativeLocalProviders).not.toHaveBeenCalled();
+
+      const cleanupFailure = new Error("Provider absence was not confirmed; authority retained");
+      retireNativeLocalProviders.mockRejectedValueOnce(cleanupFailure);
+      await expect(
+        completion.complete(
+          schema5 ? null : created,
+          configuredReceipt,
+          "hermes",
+          manageDashboard,
+          () => ({ lifecycleGeneration: "generation-1" }),
+          lifecycle,
+          schema5 ? inferenceRouteReservation : undefined,
+        ),
+      ).rejects.toBe(cleanupFailure);
+      expect(registerCreatedSandbox).toHaveBeenCalledOnce();
+      expect(retireNativeLocalProviders).toHaveBeenCalledOnce();
+
+      const registrationFailure = new Error("Registry publication outcome is uncertain");
+      registerCreatedSandbox.mockImplementationOnce(() => {
+        throw registrationFailure;
+      });
+      retireNativeLocalProviders.mockClear();
+      await expect(
+        completion.complete(
+          schema5 ? null : created,
+          configuredReceipt,
+          "hermes",
+          manageDashboard,
+          () => ({ lifecycleGeneration: "generation-1" }),
+          lifecycle,
+          schema5 ? inferenceRouteReservation : undefined,
+        ),
+      ).rejects.toBe(registrationFailure);
+      expect(retireNativeLocalProviders).not.toHaveBeenCalled();
     },
   );
 });

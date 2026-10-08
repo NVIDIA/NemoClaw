@@ -4,6 +4,9 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
+import { retireUnselectedNativeLocalProviders } from "../inference/native-local/selection";
+
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import {
   hermesDashboardStateMigrationRecoveryGuidance,
@@ -124,6 +127,7 @@ export interface CreatedSandboxCompletionOptions {
     >;
   };
   readonly gpu: {
+    readonly commandExecutor: OpenShellSandboxBufferedCommandExecutor;
     readonly config: Parameters<
       typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
     >[0];
@@ -164,6 +168,7 @@ export interface CreatedSandboxCompletionDeps extends Omit<
   CreatedSandboxFinalizationDeps,
   "prepareRegistration" | "register" | "revalidatePreparedRegistration"
 > {
+  readonly retireNativeLocalProviders?: typeof retireUnselectedNativeLocalProviders;
   readonly prepareCreatedSandboxRegistration?: typeof prepareCreatedSandboxRegistration;
   readonly registerCreatedSandbox?: typeof registerCreatedSandbox;
   readonly registerPreparedCreatedSandbox?: typeof registerPreparedCreatedSandbox;
@@ -379,6 +384,7 @@ export function createCreatedSandboxCompletionActions(
         verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
         openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
         runCaptureOpenshell: options.gpu.runCaptureOpenshell,
+        deps: { commandExecutor: options.gpu.commandExecutor },
         log: console.log,
       },
       created.runtimePatch,
@@ -542,12 +548,21 @@ export function createCreatedSandboxCompletionActions(
             )(await registrationInput(true), prepared),
           register: async (prepared) => {
             const input = await registrationInput(prepared !== undefined);
-            return prepared
+            const registered = prepared
               ? (deps.registerPreparedCreatedSandbox ?? registerPreparedCreatedSandbox)(
                   input,
                   prepared,
                 )
               : (deps.registerCreatedSandbox ?? registerCreatedSandbox)(input);
+            // Reservation is too early: the former sandbox may still need its provider.
+            // Retirement failure retains the committed selection and cleanup authority.
+            await (deps.retireNativeLocalProviders ?? retireUnselectedNativeLocalProviders)({
+              adapter: createManagedProviderAdapter(),
+              sandboxName: input.sandboxName,
+              gatewayName: input.gatewayName,
+              selected: registered.nativeLocalProviderAttachment,
+            });
+            return registered;
           },
         },
       );
@@ -786,6 +801,7 @@ export function createOnboardCreatedSandboxCompletion(
           preparedPolicy.getVerifiedCreateRegistrationAuthority,
       },
       gpu: {
+        commandExecutor,
         config: gpuConfig,
         provider,
         dockerDriverGateway,

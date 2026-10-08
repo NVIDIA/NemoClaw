@@ -3,12 +3,7 @@
 
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import { isProtectedNemoClawHostPort } from "../../core/protected-host-ports";
-import {
-  listRecordedGatewayPorts,
-  listRecordedModelRouterPorts,
-  resolveHome,
-} from "../../state/gateway-registry";
+import { isProtectedLocalInferencePort } from "../gateway/local-endpoint-ports";
 import {
   getNativeLocalProviderAuthority,
   listNativeLocalProviderAuthorities,
@@ -36,15 +31,11 @@ export async function prepareNativeLocalSelection(input: {
   const binding = { ...input.binding, credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV };
   const identity = nativeLocalIdentity(binding);
   const port = Number(new URL(binding.endpointUrl).port);
-  const home = resolveHome();
   const ownedProxy =
     input.ownedProxy === true &&
     port === OLLAMA_PROXY_PORT &&
     new URL(binding.endpointUrl).hostname === "host.openshell.internal";
-  if (
-    (!ownedProxy && isProtectedNemoClawHostPort(port, listRecordedModelRouterPorts(home))) ||
-    listRecordedGatewayPorts(home).includes(port)
-  ) {
+  if (isProtectedLocalInferencePort(port, { ownedProxy })) {
     throw new Error("The selected local inference endpoint uses a protected host port.");
   }
   const readAuthority = input.readAuthority ?? getNativeLocalProviderAuthority;
