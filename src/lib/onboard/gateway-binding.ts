@@ -28,28 +28,9 @@ import {
   resolveGatewayCompatContainerName,
   resolveGatewayName,
 } from "./gateway-binding/identity";
-import {
-  DEFAULT_GATEWAY_PORT,
-  resolveGatewayStateDirForPort as resolveConfiguredGatewayStateDirForPort,
-} from "./gateway/state-dir";
-import {
-  readDockerDriverGatewayBinding,
-  resolveDockerDriverGatewayBinding,
-} from "./gateway/runtime-binding";
+import { DEFAULT_GATEWAY_PORT, resolveDockerDriverGatewayBinding } from "./gateway/state-dir";
 
 export { resolveDockerDriverGatewayBinding };
-
-/** Resolve explicit or saved inputs through the existing directory validator. */
-export function resolveGatewayStateDirForPort(
-  options: Parameters<typeof resolveConfiguredGatewayStateDirForPort>[0],
-): string {
-  return resolveConfiguredGatewayStateDirForPort({
-    ...options,
-    configured: options.configured?.trim()
-      ? options.configured
-      : readDockerDriverGatewayBinding(options.home, options.port)?.stateDir,
-  });
-}
 
 export {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
@@ -66,6 +47,8 @@ export {
   isManagedGatewayStateRootReservation,
   managedGatewayStateRootOwnershipFailure,
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
+  removeDockerDriverGatewayBinding,
+  resolveGatewayStateDirForPort,
   resolveGatewayStateDirName,
   UnsafeGatewayStateDirectoryError,
 } from "./gateway/state-dir";

@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
 import { createGatewayEnvLoader } from "./gateway-binding";
-import { writeDockerDriverGatewayBinding } from "./gateway/runtime-binding";
+import { writeDockerDriverGatewayBinding } from "./gateway/state-dir";
 import {
   gatewayIdForStateDir,
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,

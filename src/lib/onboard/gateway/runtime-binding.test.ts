@@ -10,7 +10,7 @@ import {
   readDockerDriverGatewayBinding,
   resolveDockerDriverGatewayBinding,
   writeDockerDriverGatewayBinding,
-} from "./runtime-binding";
+} from "./state-dir";
 
 const homes: string[] = [];
 function tempHome(): string {

@@ -16,7 +16,7 @@ import {
   readDockerDriverGatewayBinding,
   resolveDockerDriverGatewayBinding,
   writeDockerDriverGatewayBinding,
-} from "./runtime-binding";
+} from "./state-dir";
 import { reportDockerDriverGatewayStartFailure } from "../docker-driver-gateway-failure";
 import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
 import {
@@ -273,7 +273,7 @@ export function createDockerDriverGatewayStart(
           });
         } catch {
           (output?.warn ?? console.warn)(
-            "  Gateway is healthy, but its custom binding could not be saved. Preserve the original gateway environment for recovery.",
+            "  Gateway is healthy, but its custom binding could not be saved. Preserve NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR and OPENSHELL_DOCKER_NETWORK_NAME for recovery.",
           );
         }
       };
