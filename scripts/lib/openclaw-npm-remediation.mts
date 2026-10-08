@@ -2073,7 +2073,13 @@ export function remediateInstalledOfficialOpenClawPlugin(
 ): void {
   try {
     remediateVerifiedInstalledOfficialOpenClawPlugin(request);
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof OpenClawNpmRemediationCommandError ||
+      error instanceof OpenClawNpmPackageRecoveryError
+    ) {
+      throw error;
+    }
     throw new Error(
       "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
     );
@@ -2170,11 +2176,7 @@ export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
   if (message.startsWith("Missing --")) {
     return "OpenClaw npm remediation is missing required arguments.";
   }
-  if (
-    message === "OpenClaw npm remediation command failed" ||
-    message === "OpenClaw npm remediation command could not start" ||
-    message.includes(" failed:")
-  ) {
+  if (message.includes(" failed:")) {
     return "OpenClaw npm remediation command failed.";
   }
   if (
