@@ -24,11 +24,9 @@ impl Standalone {
         )
         .unwrap();
         document.spec.inference_providers[0].endpoint = "http://127.0.0.1:11434/v1".into();
-        let policy = nemoclaw_sdk::image_runtime::PolicyInput::for_sandbox(
-            &document,
-            &document.spec.sandboxes[0],
-        )
-        .unwrap();
+        let policy =
+            nemoclaw_sdk::image_runtime::policy_input(&document, &document.spec.sandboxes[0])
+                .unwrap();
         fs::write(
             root.path().join("terraform.tfvars.json"),
             json!({

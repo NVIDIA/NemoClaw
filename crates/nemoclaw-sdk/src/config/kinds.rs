@@ -51,39 +51,4 @@ impl schemars::JsonSchema for HarnessKind {
 
 pub use nemoclaw_openshell::ComputeDriver;
 
-/// Inference provider implementation, independent of the request API and provider name.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[schemars(inline)]
-pub enum InferenceProviderKind {
-    #[serde(rename = "openai")]
-    Openai,
-    #[serde(rename = "anthropic")]
-    Anthropic,
-}
-impl InferenceProviderKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Openai => "openai",
-            Self::Anthropic => "anthropic",
-        }
-    }
-}
-impl fmt::Display for InferenceProviderKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl FromStr for InferenceProviderKind {
-    type Err = super::ConfigError;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "openai" => Ok(Self::Openai),
-            "anthropic" => Ok(Self::Anthropic),
-            _ => Err(super::ConfigError::new(
-                "unsupported inference provider kind",
-            )),
-        }
-    }
-}
+pub use nemoclaw_openshell::profile::InferenceProviderKind;

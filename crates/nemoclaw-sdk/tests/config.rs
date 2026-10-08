@@ -537,3 +537,28 @@ fn native_identifiers_and_model_metadata_do_not_require_sdk_registration() {
         assert!(Document::parse(serde_json::to_vec(&tree).unwrap().as_slice()).is_err());
     }
 }
+
+#[test]
+fn sandbox_policy_validation_uses_the_configuration_schema_definitions() {
+    fn without_defaults(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(object) => object
+                .iter()
+                .filter(|(key, _)| *key != "default")
+                .map(|(key, value)| (key.clone(), without_defaults(value)))
+                .collect(),
+            serde_json::Value::Array(values) => values.iter().map(without_defaults).collect(),
+            value => value.clone(),
+        }
+    }
+    let schema = nemoclaw_sdk::config::schema::input_schema();
+    let definitions = nemoclaw_openshell::policy::definitions();
+    assert!(definitions.contains_key("ExplicitPolicy"));
+    for (name, definition) in definitions {
+        assert_eq!(
+            without_defaults(&definition),
+            without_defaults(&schema["$defs"][&name]),
+            "{name}"
+        );
+    }
+}

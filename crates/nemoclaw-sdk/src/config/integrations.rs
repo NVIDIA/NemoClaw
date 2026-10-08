@@ -155,68 +155,21 @@ pub(crate) struct RuntimeWebSearch {
     pub agent_refs: Vec<String>,
     pub credential: Credential,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "lowercase")]
-/// Search provider supported by the managed profile.
-pub enum SearchProvider {
-    Brave,
-    Tavily,
-}
-impl SearchProvider {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Brave => "brave",
-            Self::Tavily => "tavily",
-        }
-    }
-    pub fn profile(self) -> &'static str {
-        match self {
-            Self::Brave => "nemoclaw-brave",
-            Self::Tavily => "nemoclaw-tavily",
-        }
-    }
-    pub(crate) fn profile_address(self) -> &'static str {
-        match self {
-            Self::Brave => "nemoclaw_provider_profile.web_search",
-            Self::Tavily => "nemoclaw_provider_profile.web_search_tavily",
-        }
-    }
-    pub fn image_profile(self, scope: &str) -> String {
-        format!("{}-{scope}", self.profile())
-    }
-    pub(crate) fn image_profile_address(self, scope: &str) -> String {
-        format!("{}_{scope}", self.profile_address())
-    }
-    pub fn credential_env(self) -> &'static str {
-        match self {
-            Self::Brave => "BRAVE_API_KEY",
-            Self::Tavily => "TAVILY_API_KEY",
-        }
-    }
-    pub fn endpoint(self) -> &'static str {
-        match self {
-            Self::Brave => "https://api.search.brave.com",
-            Self::Tavily => "https://api.tavily.com",
-        }
-    }
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "brave" => Some(Self::Brave),
-            "tavily" => Some(Self::Tavily),
-            _ => None,
-        }
-    }
-    pub fn from_profile(profile: &str) -> Option<Self> {
-        [Self::Brave, Self::Tavily].into_iter().find(|provider| {
-            profile == provider.profile()
-                || profile
-                    .strip_prefix(&format!("{}-", provider.profile()))
-                    .is_some_and(|scope| {
-                        scope.len() == 24 && scope.bytes().all(|c| c.is_ascii_hexdigit())
-                    })
-        })
+pub use nemoclaw_openshell::search::{SearchProvider, search_provider_name};
+
+/// Deployment graph address of a search provider's profile.
+pub(crate) fn profile_address(provider: SearchProvider) -> &'static str {
+    match provider {
+        SearchProvider::Brave => "nemoclaw_provider_profile.web_search",
+        SearchProvider::Tavily => "nemoclaw_provider_profile.web_search_tavily",
     }
 }
+
+/// Deployment graph address of a search provider's image-scoped profile.
+pub(crate) fn image_profile_address(provider: SearchProvider, scope: &str) -> String {
+    format!("{}_{scope}", profile_address(provider))
+}
+
 impl RuntimeWebSearch {
     pub(crate) fn validate<'a>(
         &self,
@@ -236,14 +189,4 @@ impl RuntimeWebSearch {
         }
         super::validation::credential(&Some(self.credential.clone()))
     }
-}
-
-/// Stable registration identity for a search credential reference, never its value.
-pub fn search_provider_name(provider: SearchProvider, reference: &str, profile: &str) -> String {
-    use sha2::{Digest, Sha256};
-    format!(
-        "{}-search-{}",
-        provider.name(),
-        &super::hex(&Sha256::digest(format!("{reference}\0{profile}")))[..24]
-    )
 }

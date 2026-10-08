@@ -108,7 +108,7 @@ impl FabricCatalog {
             || catalog
                 .runtime
                 .as_ref()
-                .is_some_and(|runtime| !runtime.valid(&catalog.adapters))
+                .is_some_and(|runtime| !crate::image_runtime::valid_for(runtime, &catalog.adapters))
             || catalog.runtime_files.iter().any(|(adapter_id, files)| {
                 !catalog
                     .adapters
