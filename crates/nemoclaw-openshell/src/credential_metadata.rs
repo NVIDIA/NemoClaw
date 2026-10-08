@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+//! Credential source references carried in provider registration annotations.
 pub const CREDENTIAL_SOURCE: &str = "nemoclaw.nvidia.com/credential-source";
-use crate::ObservationError;
+use nemoclaw_backend::ObservationError;
 use std::collections::HashMap;
 
 // The pinned gateway permits 128 annotations, each with at most 8192 bytes.

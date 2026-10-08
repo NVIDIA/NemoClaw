@@ -112,4 +112,4 @@ Do not include vulnerability details or credentials in a public issue.
 
 ## Implementation and Tests
 
-The [policy validator](../crates/nemoclaw-sdk/src/config/network.rs), [credential handling](../crates/nemoclaw-provider/src/services/authentication.rs), [runtime authentication](../crates/nemoclaw-runtime/src/vllm/runtime/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.
+The [policy validator](../crates/nemoclaw-openshell/src/policy.rs), [credential handling](../crates/nemoclaw-provider/src/services/authentication.rs), [runtime authentication](../crates/nemoclaw-runtime/src/vllm/runtime/authentication.rs), and [managed-auth tests](../crates/nemoclaw-sdk/tests/managed_auth.rs) implement parts of these controls.

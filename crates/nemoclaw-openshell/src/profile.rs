@@ -1,8 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+//! OpenShell provider profiles for native inference endpoints.
 
-use crate::{ObservationError, config::InferenceProviderKind};
-use openshell_core::proto;
+use nemoclaw_backend::{ConfigError, ObservationError};
+use openshell_sdk::raw::proto;
+use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
+
+/// Inference provider implementation, independent of the request API and provider name.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[schemars(inline)]
+pub enum InferenceProviderKind {
+    #[serde(rename = "openai")]
+    Openai,
+    #[serde(rename = "anthropic")]
+    Anthropic,
+}
+impl InferenceProviderKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Openai => "openai",
+            Self::Anthropic => "anthropic",
+        }
+    }
+}
+impl fmt::Display for InferenceProviderKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl FromStr for InferenceProviderKind {
+    type Err = ConfigError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "openai" => Ok(Self::Openai),
+            "anthropic" => Ok(Self::Anthropic),
+            _ => Err(ConfigError::new("unsupported inference provider kind")),
+        }
+    }
+}
 
 /// Build the endpoint and credential projection for a native inference provider.
 /// The caller must supply image-resolved binaries before importing the profile.
@@ -21,7 +59,7 @@ pub fn definition(
     {
         return Err(ObservationError::Query);
     }
-    crate::config::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
+    nemoclaw_backend::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
     if url.query().is_some()
         || url.fragment().is_some()

@@ -79,7 +79,7 @@ Use explicit `enforcement: enforce` when the policy must reject disallowed inspe
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
 The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
-The [SDK policy validator](../crates/nemoclaw-sdk/src/config/network.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
+The [SDK policy validator](../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
 

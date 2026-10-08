@@ -11,11 +11,16 @@ workspace = true
 
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
+jsonschema.workspace = true
+openshell-policy.workspace = true
 openshell-sdk.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tonic.workspace = true
+url.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true

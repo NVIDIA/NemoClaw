@@ -57,7 +57,7 @@ impl Document {
             )?;
             sandbox.network.validate()?;
             let web_search = self.web_search(sandbox)?;
-            crate::image_runtime::PolicyInput::for_sandbox(self, sandbox)?;
+            crate::image_runtime::policy_input(self, sandbox)?;
             if let Some(search) = web_search {
                 require(
                     selected_providers.iter().all(|provider| {
@@ -140,6 +140,4 @@ impl Document {
     }
 }
 
-pub fn valid_name(name: &str) -> bool {
-    schema::validate_property("Metadata", "name", &name).is_ok()
-}
+pub use nemoclaw_openshell::valid_name;
