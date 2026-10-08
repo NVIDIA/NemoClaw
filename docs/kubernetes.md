@@ -27,7 +27,7 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
 - **Inference:** an endpoint reachable from inside the sandboxes, or a [managed model service](#run-a-managed-model-service) in the managed gateway's namespace.
-  Managed services require a GPU node, a compatible runtime image, and persistent storage; real-cluster inference remains unqualified ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
+  Managed services require a GPU node, a compatible runtime image, and persistent storage; the [reported GB300 run](design/cluster-inference-compatibility.md#openclaw-context-budget) does not qualify other GPU/model combinations ([#12732](https://github.com/NVIDIA/NemoClaw/issues/12732)).
 
 NemoClaw installs nothing cluster-wide and never selects a context for you.
 
@@ -118,6 +118,12 @@ The same [vLLM model](models.md) and [managed Ollama](inference.md#run-managed-o
 vLLM takes a public Hugging Face repository and exact commit; Ollama takes a public library model name and manifest digest.
 Models, image digests, hardware profiles, serving budgets, and storage sizes remain deployment settings.
 There is no cluster-specific model allowlist.
+
+Both examples set `serving.contextTokens` and the route's `settings.model_metadata.contextWindow` to `32768` to leave room for OpenClaw's initial prompt and a reply.
+Keep those settings aligned and size the model, KV cache, and GPU memory for the selected context; `32768` does not establish that every model or GPU can serve it.
+Plan and apply warn when an OpenClaw route selects a managed vLLM or Ollama service with `contextTokens` below `20000`, on Docker as well as Kubernetes.
+This is an advisory based on the [measured prompt budget](design/cluster-inference-compatibility.md#openclaw-context-budget), not a validation error or a measurement of the current prompt.
+The warning appears in text output and the JSON result's `warnings` field.
 
 The cluster settings below reserve CPU and memory and limit their use for one service:
 

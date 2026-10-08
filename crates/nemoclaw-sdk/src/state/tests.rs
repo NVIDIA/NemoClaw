@@ -3,6 +3,29 @@
 
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn dropping_store_releases_lock_while_a_duplicate_descriptor_remains_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    // Model the shared open file description inherited by a concurrent spawn
+    // before exec closes the child's copy, without depending on spawn timing.
+    let inherited = store._lock.try_clone().unwrap();
+    assert!(Store::open(directory.path()).is_err());
+    drop(store);
+
+    let reopened = Store::open(directory.path())
+        .expect("dropping the store must release ownership even while a duplicate remains open");
+    assert!(Store::open(directory.path()).is_err());
+    drop(inherited);
+    assert!(
+        Store::open(directory.path()).is_err(),
+        "closing the old descriptor must not unlock the new owner"
+    );
+    drop(reopened);
+    Store::open(directory.path()).unwrap();
+}
+
 #[test]
 fn lock_excludes_other_operations_and_atomic_intent_survives_reopen() {
     let dir = tempfile::tempdir().unwrap();

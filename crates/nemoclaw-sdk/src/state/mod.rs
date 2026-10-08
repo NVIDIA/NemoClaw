@@ -318,6 +318,14 @@ pub(crate) struct Store {
     pub directory: PathBuf,
     _lock: File,
 }
+impl Drop for Store {
+    fn drop(&mut self) {
+        // A concurrently spawned child can retain the shared open file
+        // description until exec. Closing our descriptor alone would then
+        // leave the deployment locked after this operation has finished.
+        let _ = self._lock.unlock();
+    }
+}
 impl Store {
     pub fn open(directory: &Path) -> Result<Self, Error> {
         let mut builder = fs::DirBuilder::new();

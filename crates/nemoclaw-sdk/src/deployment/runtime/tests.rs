@@ -170,7 +170,9 @@ async fn plan_and_apply_warn_about_unauthenticated_cluster_network_boundaries_be
             let warnings: Vec<_> = events
                 .iter()
                 .filter_map(|event| match event {
-                    Progress::Warning { message } => Some(message),
+                    Progress::Warning { message } if message.contains("NetworkPolicy") => {
+                        Some(message)
+                    }
                     _ => None,
                 })
                 .collect();

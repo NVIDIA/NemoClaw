@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
-# Configuration template; real-cluster GPU inference is not qualified.
+# Configuration template; these AMD64 RTX 4090 settings are not qualified.
 # Replace the UID, context, namespace, and both zero image digests.
 # Choose hardware and budgets for your GPU node; these values illustrate one
 # AMD64 RTX 4090 service, not a requirement of the cluster implementation.
@@ -38,7 +38,7 @@ spec:
         name: qwen3:0.6b
         digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
       serving:
-        contextTokens: 8192
+        contextTokens: 32768
         maxSequences: 1
         startupTimeoutSeconds: 1800
       memory:
@@ -81,4 +81,4 @@ spec:
                 maxTokens: 2048
                 settings:
                   model_metadata:
-                    contextWindow: 8192
+                    contextWindow: 32768

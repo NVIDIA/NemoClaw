@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(test)]
+mod context_warnings;
+#[cfg(test)]
 mod tests;
 
 mod apply;
@@ -271,6 +273,39 @@ impl Deployment {
                         "Cluster service {name} has no bearer authentication; access depends on NetworkPolicy enforcement, which the Kubernetes API cannot verify. Verify that the network plugin enforces the supervisor-only policy."
                     ),
                 });
+            }
+        }
+        for sandbox in &document.spec.sandboxes {
+            if document.sandbox_harness(sandbox)?.kind.as_str() != "nvidia.fabric.openclaw" {
+                continue;
+            }
+            let inference = document.scoped_inference(sandbox)?;
+            for route in &inference.inference.routes {
+                let provider = document.route_provider(route, &inference)?;
+                let crate::config::InferenceTarget::Service { name } =
+                    provider.definition.target()?
+                else {
+                    continue;
+                };
+                let context = match document.spec.services.get(name) {
+                    Some(crate::services::ServiceDefinition::Vllm(service)) => {
+                        service.serving.context_tokens
+                    }
+                    Some(crate::services::ServiceDefinition::Ollama(service)) => {
+                        service.serving.context_tokens
+                    }
+                    _ => continue,
+                };
+                // A measured initial OpenClaw prompt used 19,947 tokens; this is
+                // an advisory budget, not a universal adapter requirement.
+                if context < 20_000 {
+                    (self.progress)(Progress::Warning {
+                        message: format!(
+                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context}; its initial prompt can need about 20,000 tokens before reply tokens. Consider 32768 or more, align settings.model_metadata.contextWindow, and size model/GPU memory for that context.",
+                            sandbox.name, route.name
+                        ),
+                    });
+                }
             }
         }
         let (bundle, store) = self.open()?;
