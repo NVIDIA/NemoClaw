@@ -67,9 +67,6 @@ function providerAdapter(
   overrides: Partial<OpenShellProviderAdapter> = {},
 ): OpenShellProviderAdapter {
   return {
-    ensureProviderPolicyComposition: vi
-      .fn<OpenShellProviderAdapter["ensureProviderPolicyComposition"]>()
-      .mockResolvedValue({ ok: true, value: undefined }),
     listProviders: vi
       .fn<OpenShellProviderAdapter["listProviders"]>()
       .mockResolvedValue({ ok: true, value: { names: [] } }),

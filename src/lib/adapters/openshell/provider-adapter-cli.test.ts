@@ -82,7 +82,6 @@ describe("CLI OpenShell provider adapter", () => {
     const target = namedOpenShellGateway("nemoclaw-18080");
     const credentialValue = "host-only-value";
     const operations = [
-      adapter.ensureProviderPolicyComposition({ target }),
       adapter.listProviders({ target }),
       adapter.listProviderAttachments({ target, sandboxName: "alpha" }),
       adapter.createProvider({
@@ -131,7 +130,6 @@ describe("CLI OpenShell provider adapter", () => {
       },
     };
     expect(results).toEqual([
-      expectedFailure,
       expectedFailure,
       expectedFailure,
       expectedFailure,

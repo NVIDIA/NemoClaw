@@ -72,7 +72,6 @@ describe("runInferenceSet OpenClaw routing", () => {
     };
     let attached = false;
     const providerAdapter = {
-      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () => ({
         ok: true as const,
@@ -158,7 +157,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       });
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
     const providerAdapter = {
-      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider,
       updateProvider: vi.fn(async () => ({ ok: true as const })),
@@ -198,7 +196,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       return { ok: true };
     });
     const providerAdapter = {
-      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () =>
         providerPresent
@@ -282,7 +279,6 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
     const providerAdapter = {
-      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () =>
         providerPresent
@@ -345,7 +341,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       return { ok: true, value: { changed: true } };
     });
     const providerAdapter = {
-      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
       getProvider: vi.fn(async () => ({
         ok: true,
         value: {
@@ -468,7 +463,6 @@ describe("runInferenceSet OpenClaw routing", () => {
   it("rejects a replaced NVIDIA provider before restoring detached access", async () => {
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
     const providerAdapter = {
-      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
       importProviderProfile: vi.fn(async () => ({ ok: true })),
       getProvider: vi.fn(async () => ({
         ok: true,
@@ -516,7 +510,6 @@ describe("runInferenceSet OpenClaw routing", () => {
 
   it("does not publish a non-native route when native NVIDIA detach fails", async () => {
     const providerAdapter = {
-      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
       getProvider: vi.fn(async () => ({
         ok: true,
         value: {

@@ -34,7 +34,6 @@ function metadata(overrides: Record<string, unknown> = {}) {
 
 function adapter(overrides: Partial<OpenShellProviderAdapter> = {}): OpenShellProviderAdapter {
   return {
-    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
     importProviderProfile: vi.fn(() => ({ ok: true })),
     getProvider: vi.fn(async () => ({ ok: true, value: metadata() })),
     createProvider: vi.fn(async () => ({ ok: true })),
@@ -261,8 +260,6 @@ describe("native NVIDIA OpenShell provider", () => {
 
   it("refuses a replaced provider before rotating its credential (#12558)", async () => {
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
-    const ensureProviderPolicyComposition =
-      vi.fn<OpenShellProviderAdapter["ensureProviderPolicyComposition"]>();
 
     await expect(
       ensureNativeNvidiaProvider({
@@ -272,7 +269,6 @@ describe("native NVIDIA OpenShell provider", () => {
             value: metadata({ revision: { id: "replacement-id", resourceVersion: 1 } }),
           })),
           updateProvider,
-          ensureProviderPolicyComposition,
         }),
         target,
         credentialValue: "opaque-test-secret",
@@ -285,25 +281,21 @@ describe("native NVIDIA OpenShell provider", () => {
       }),
     ).rejects.toThrow(/changed identity.*No provider was changed/u);
     expect(updateProvider).not.toHaveBeenCalled();
-    expect(ensureProviderPolicyComposition).not.toHaveBeenCalled();
   });
 
   it("refuses an existing provider without an ownership receipt before mutation (#12558)", async () => {
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
-    const ensureProviderPolicyComposition =
-      vi.fn<OpenShellProviderAdapter["ensureProviderPolicyComposition"]>();
 
     await expect(
       ensureNativeNvidiaProvider({
-        adapter: adapter({ updateProvider, attachProvider, ensureProviderPolicyComposition }),
+        adapter: adapter({ updateProvider, attachProvider }),
         target,
         credentialValue: "opaque-test-secret",
       }),
     ).rejects.toThrow(/already exists without a matching NemoClaw ownership receipt/u);
     expect(updateProvider).not.toHaveBeenCalled();
     expect(attachProvider).not.toHaveBeenCalled();
-    expect(ensureProviderPolicyComposition).not.toHaveBeenCalled();
   });
 
   it("does not record a receipt after an ambiguous credential update (#12558)", async () => {
@@ -534,30 +526,4 @@ describe("native NVIDIA OpenShell provider", () => {
       /does not have its native NVIDIA inference provider attached[\s\S]*did not confirm removal/u,
     );
   });
-});
-
-it("does not publish credentials when native provider policy is unavailable", async () => {
-  const providerAdapter = adapter({
-    ensureProviderPolicyComposition: vi.fn<
-      OpenShellProviderAdapter["ensureProviderPolicyComposition"]
-    >(async () => ({
-      ok: false,
-      error: { kind: "command", reason: "conflict", message: "disabled by administrator" },
-    })),
-  });
-  await expect(
-    ensureNativeNvidiaProvider({
-      adapter: providerAdapter,
-      target,
-      credentialValue: "opaque-test-secret",
-      expected: {
-        schemaVersion: 1,
-        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
-        providerId: "provider-id",
-      },
-    }),
-  ).rejects.toThrow("disabled by administrator");
-  expect(providerAdapter.createProvider).not.toHaveBeenCalled();
-  expect(providerAdapter.updateProvider).not.toHaveBeenCalled();
 });

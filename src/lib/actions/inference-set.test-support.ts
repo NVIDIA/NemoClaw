@@ -93,7 +93,6 @@ function nativeAwareProviderAdapter(
     providerName === NVIDIA_HOSTED_NATIVE_PROVIDER;
   return {
     ...base,
-    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
     importProviderProfile: async (request) =>
       request.profilePath.endsWith(`${NVIDIA_HOSTED_NATIVE_PROFILE_ID}.yaml`)
         ? ({ ok: true } as const)
