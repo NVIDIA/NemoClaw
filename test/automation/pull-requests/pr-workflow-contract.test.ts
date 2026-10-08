@@ -219,6 +219,7 @@ if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TI
     return {
       status: result.status,
       stderr: String(result.stderr),
+      runnerTemp,
       runnerTempMode: statSync(runnerTemp).mode & 0o777,
       calls: readFileSync(aptCalls, "utf8").trim().split("\n"),
       sourceText: readFileSync(sourceCapture, "utf8"),
@@ -690,8 +691,17 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
     expect(aptCalls).toHaveLength(2);
     const lists = aptCalls.map((call) => call.match(/Dir::State::lists=(\S+)/u)?.[1]);
-    expect(lists[0]).toMatch(/\/nemoclaw-apt-lists\.\S+$/u);
+    expect(lists[0]).toMatch(/^\/tmp\/nemoclaw-apt-lists\.\S+$/u);
     expect(lists[1]).toBe(lists[0]);
+    expect(
+      result.calls.filter(
+        (call) => call.startsWith("chmod ") && call.endsWith(` ${result.runnerTemp}`),
+      ),
+    ).toEqual([]);
+    expect(result.calls.filter((call) => call.startsWith("rm -rf -- "))).toEqual([
+      `rm -rf -- ${lists[0]}`,
+    ]);
+    expect(existsSync(lists[0] ?? "")).toBe(false);
     const sources = aptCalls.map((call) => call.match(/Dir::Etc::sourcelist=(\S+)/u)?.[1]);
     expect(sources[0]).toMatch(/\/nemoclaw-ubuntu-sources\.\S+\/ubuntu\.sources$/u);
     expect(sources[1]).toBe(sources[0]);
