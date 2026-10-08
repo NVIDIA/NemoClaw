@@ -108,7 +108,8 @@ success, since interruption can arrive during post-transfer verification or lock
 retry an interrupted or indeterminate transfer. Session exports, onboarding downloads, and plugin
 copy remain assigned to later #9810 deliveries.
 
-When NVIDIA is selected, policy preparation adds the mandatory
+Native NVIDIA policy preparation and invocation probes are shared across agent
+integrations. When NVIDIA is selected, policy preparation adds the mandatory
 `native_nvidia_inference` entry from the checked-in provider profile's endpoint,
 method, path, and binary scope. Setup does not
 change the gateway's `providers_v2_enabled` setting. OpenShell resolves the attached

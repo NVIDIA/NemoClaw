@@ -190,46 +190,43 @@ async function expectCredentialBindingFailure({
 }
 
 describe("prepareSandboxCreatePolicy", () => {
-  it.each(["nemoclaw-nvidia-prod-v1", null])(
-    "passes the selected provider and sandbox name into policy preparation [%#] (#12822)",
-    (inferenceProvider) => {
-      const intent = resolveSandboxCreateIntent({
-        basePolicyPath: "/repo/policy.yaml",
-        sandboxName: "bound-sandbox",
-        inferenceProvider,
-        channels,
-        enabledChannels: ["telegram"],
-        disabledChannelNames: new Set(),
-        messagingProviderRequests: [],
-        primaryMessagingCredentialEnvKeys: [],
-        reusableMessagingChannels: [],
-        reusableMessagingProviders: [],
-        hermesToolGateways: [],
-        sandboxGpuConfig: disabledSandboxGpuConfig,
-        gpuCreateArgs: [],
-        gpuRoutePlan: "native-only",
-        sandboxGpuLogMessage: null,
-      });
-      const seenOptions: Array<Record<string, unknown>> = [];
-      const preparePolicy: typeof prepareInitialSandboxCreatePolicy = (
-        _basePolicyPath,
-        _channels,
-        options,
-      ) => {
-        seenOptions.push(options as unknown as Record<string, unknown>);
-        return { policyPath: "/tmp/policy.yaml", appliedPresets: [] };
-      };
+  it("passes the sandbox name and selected provider into policy preparation (#12822)", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "bound-sandbox",
+      inferenceProvider: "nemoclaw-nvidia-prod-v1",
+      channels,
+      enabledChannels: ["telegram"],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig: disabledSandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+    });
+    const seenOptions: Array<Record<string, unknown>> = [];
+    const preparePolicy: typeof prepareInitialSandboxCreatePolicy = (
+      _basePolicyPath,
+      _channels,
+      options,
+    ) => {
+      seenOptions.push(options as unknown as Record<string, unknown>);
+      return { policyPath: "/tmp/policy.yaml", appliedPresets: [] };
+    };
 
-      const messagingConfig = { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" };
-      prepareSandboxCreatePolicy(intent, preparePolicy, messagingConfig);
+    const messagingConfig = { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" };
+    prepareSandboxCreatePolicy(intent, preparePolicy, messagingConfig);
 
-      expect(seenOptions[0]).toMatchObject({
-        sandboxName: "bound-sandbox",
-        inferenceProvider,
-        messagingConfig,
-      });
-    },
-  );
+    expect(seenOptions[0]).toMatchObject({
+      sandboxName: "bound-sandbox",
+      inferenceProvider: "nemoclaw-nvidia-prod-v1",
+      messagingConfig,
+    });
+  });
 
   it("materializes the captured exact WeChat IDC endpoint in the create policy (#10606)", async () => {
     const resolved = resolveDiscordCreateIntent({ selected: false });

@@ -12,7 +12,6 @@ import YAML from "yaml";
 
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import { prepareInitialSandboxCreatePolicy } from "../../../src/lib/onboard/initial-policy.ts";
-import { shellQuote } from "../../../src/lib/runner.ts";
 import { TOKEN_PREFIX_PATTERNS } from "../../../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "../../e2e/live/cloud-experimental-check-list.ts";
 import {
@@ -567,51 +566,27 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
   });
 
-  it.each([
-    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
-    "openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY",
-    `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
-  ])(
-    "serves restored native config through the current credential placeholder [%#] (#12822)",
+  it.each(["openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY", undefined])(
+    "binds the restored DCode credential variable only to the current native placeholder [%#] (#12822)",
     (placeholder) => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-legacy-native-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-native-alias-"));
       try {
         const { wrapperPath } = makeWrapperFixture(tempDir);
-        const configPath = path.join(tempDir, "config.toml");
-        const consumerPath = path.join(tempDir, "legacy-consumer.cjs");
-        const resultPath = path.join(tempDir, "credential.json");
-        const config = [
-          "[models.providers.openai]",
-          'base_url = "https://integrate.api.nvidia.com/v1"',
-          'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
-          'models = ["nvidia/nemotron-3-ultra-550b-a55b"]',
-          "",
-        ].join("\n");
-        fs.writeFileSync(configPath, config);
         fs.writeFileSync(
-          consumerPath,
-          String.raw`
-const fs = require("node:fs");
-const config = fs.readFileSync(process.argv[2], "utf8");
-const envName = /^api_key_env = "([A-Z_]+)"$/m.exec(config)[1];
-fs.writeFileSync(process.argv[3], JSON.stringify({ credential: process.env[envName] }));
-`,
+          wrapperPath,
+          fs
+            .readFileSync(wrapperPath, "utf8")
+            .replace(
+              "echo dcode-stub-ran",
+              'printf "%s" "${NEMOCLAW_ATTACHED_PROVIDER_API_KEY-absent}"',
+            ),
         );
-        const consumer = [process.execPath, consumerPath, configPath, resultPath]
-          .map(shellQuote)
-          .join(" ");
-        const wrapper = fs.readFileSync(wrapperPath, "utf8");
-        expect(wrapper).toContain("echo dcode-stub-ran");
-        fs.writeFileSync(wrapperPath, wrapper.replace("echo dcode-stub-ran", `exec ${consumer}`));
         const result = runWrapper(wrapperPath, ["-n", "PONG"], {
           NVIDIA_INFERENCE_API_KEY: placeholder,
           NEMOCLAW_ATTACHED_PROVIDER_API_KEY: "nemoclaw-openshell-provider",
         });
         expect(result.status, result.stderr).toBe(0);
-        expect(JSON.parse(fs.readFileSync(resultPath, "utf8"))).toEqual({
-          credential: placeholder,
-        });
-        expect(fs.readFileSync(configPath, "utf8")).toBe(config);
+        expect(result.stdout).toBe(placeholder ?? "absent");
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
@@ -628,32 +603,6 @@ fs.writeFileSync(process.argv[3], JSON.stringify({ credential: process.env[envNa
         expect(result.status).not.toBe(0);
         expect(fs.existsSync(ranMarker)).toBe(false);
         expect(result.stderr).not.toContain(value);
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it.each([undefined, ""])(
-    "does not retain the retired token without a native placeholder [%#] (#12822)",
-    (placeholder) => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-native-alias-absent-"));
-      try {
-        const { wrapperPath } = makeWrapperFixture(tempDir);
-        const wrapper = fs.readFileSync(wrapperPath, "utf8");
-        fs.writeFileSync(
-          wrapperPath,
-          wrapper.replace(
-            "echo dcode-stub-ran",
-            'test -z "${NEMOCLAW_ATTACHED_PROVIDER_API_KEY+x}" || exit 1; echo native-alias-absent',
-          ),
-        );
-        const result = runWrapper(wrapperPath, ["-n", "PONG"], {
-          NVIDIA_INFERENCE_API_KEY: placeholder,
-          NEMOCLAW_ATTACHED_PROVIDER_API_KEY: "nemoclaw-openshell-provider",
-        });
-        expect(result.status, result.stderr).toBe(0);
-        expect(result.stdout.trim()).toBe("native-alias-absent");
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }

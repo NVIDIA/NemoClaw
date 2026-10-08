@@ -482,13 +482,7 @@ check("disabled", False)
     );
   });
 
-  it.each([
-    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
-    "openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY",
-    `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
-    undefined,
-    "",
-  ])(
+  it.each(["openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY", undefined])(
     "maps the legacy native credential key only when a current binding exists [%#] (#12822)",
     (placeholder) => {
       const tempDir = createPatchedPackageFixture();

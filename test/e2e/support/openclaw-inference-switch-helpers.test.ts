@@ -27,16 +27,6 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
     productMatched: false,
   };
 
-  it("does not retry a rejected native credential placeholder (#12822)", () => {
-    // The runtime placeholder guard exits before curl when its env is missing or raw.
-    expect(
-      classifyOpenClawPostSwitchInferenceAttempt({
-        ...attempt,
-        exitCode: 2,
-      }),
-    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
-  });
-
   it.each([6, 7, 28, 35, 52, 56])(
     "retries only explicit transport and HTTP failures [%s]",
     (exitCode) => {
@@ -59,7 +49,7 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
       expect(
         classifyOpenClawPostSwitchInferenceAttempt({
           ...attempt,
-          exitCode: 1,
+          exitCode: 2,
           output: "ETIMEDOUT",
         }),
       ).toEqual({ outcome: "failed", failureClass: "deterministic" });

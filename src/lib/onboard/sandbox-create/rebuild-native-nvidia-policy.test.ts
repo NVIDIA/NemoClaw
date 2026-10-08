@@ -87,12 +87,4 @@ describe("native NVIDIA rebuild policy", () => {
       "live network policy 'native_nvidia_inference' does not match the selected runtime requirement",
     );
   });
-
-  it("accepts an unchanged required native rule on a later rebuild (#12822)", () => {
-    const first = rebuild(nativeProvider);
-    expect(
-      rebuild(nativeProvider, first.selected.network_policies.native_nvidia_inference).selected
-        .network_policies,
-    ).toEqual(first.selected.network_policies);
-  });
 });

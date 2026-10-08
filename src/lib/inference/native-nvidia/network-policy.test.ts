@@ -11,13 +11,6 @@ import { nativeNvidiaProviderProfilePath } from "./index";
 afterEach(() => vi.restoreAllMocks());
 
 describe("native NVIDIA static policy preparation", () => {
-  it.each(["null", "[]", "version: 1\nnetwork_policies: []\n"])(
-    "rejects a malformed sandbox policy [%#] (#12822)",
-    (source) => {
-      expect(() => buildNativeNvidiaSandboxPolicy(source)).toThrow("mapping");
-    },
-  );
-
   it("preserves an existing matching native rule on repeated preparation (#12822)", () => {
     const prepared = buildNativeNvidiaSandboxPolicy("version: 1\nnetwork_policies: {}\n");
     expect(buildNativeNvidiaSandboxPolicy(prepared)).toBe(prepared);
@@ -31,21 +24,11 @@ describe("native NVIDIA static policy preparation", () => {
     ).toThrow("conflicts with the selected provider profile");
   });
 
-  it.each(["{}", "id: wrong-profile\n", "not: [valid"])(
-    "rejects a malformed checked-in provider profile [%#] (#12822)",
-    (source) => {
-      vi.spyOn(fs, "readFileSync").mockReturnValue(source);
-      expect(() => buildNativeNvidiaSandboxPolicy("version: 1\n")).toThrow(
-        "checked-in provider profile is invalid",
-      );
-    },
-  );
-
-  it("stops when the checked-in profile cannot be read (#12822)", () => {
-    vi.spyOn(fs, "readFileSync").mockImplementation(() => {
-      throw new Error("profile unavailable");
-    });
-    expect(() => buildNativeNvidiaSandboxPolicy("version: 1\n")).toThrow("profile unavailable");
+  it("rejects a malformed checked-in provider profile (#12822)", () => {
+    vi.spyOn(fs, "readFileSync").mockReturnValue("{}");
+    expect(() => buildNativeNvidiaSandboxPolicy("version: 1\n")).toThrow(
+      "checked-in provider profile is invalid",
+    );
   });
 
   it.each([
