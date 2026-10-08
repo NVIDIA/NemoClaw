@@ -139,20 +139,32 @@ impl Provider for NemoClawProvider {
         &self,
         diags: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        let vllm_runtime = match crate::vllm_runtime::VllmRuntimeDataSource::new() {
-            Ok(source) => source,
-            Err(error) => {
-                diags.root_error(
-                    "The vLLM runtime contract has no OpenTofu schema",
-                    error.to_string(),
-                );
-                return None;
-            }
-        };
+        use crate::runtime_contract::RuntimeDataSource;
+        use nemoclaw_sdk::services::installers::{ollama, vllm};
+        let (vllm_runtime, ollama_runtime) =
+            match (RuntimeDataSource::vllm(), RuntimeDataSource::ollama()) {
+                (Ok(vllm), Ok(ollama)) => (vllm, ollama),
+                (Err(error), _) | (_, Err(error)) => {
+                    diags.root_error(
+                        "A runtime contract has no OpenTofu schema",
+                        error.to_string(),
+                    );
+                    return None;
+                }
+            };
         Some(HashMap::from([
             (
-                nemoclaw_sdk::services::installers::vllm::RUNTIME_DATA_SOURCE.into(),
+                vllm::RUNTIME_DATA_SOURCE.into(),
                 Box::new(vllm_runtime) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                ollama::RUNTIME_DATA_SOURCE.into(),
+                Box::new(ollama_runtime) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                ollama::proxy::RUNTIME_DATA_SOURCE.into(),
+                Box::new(crate::services::installers::ollama::ProxyRuntimeDataSource)
+                    as Box<dyn DynamicDataSource>,
             ),
             (
                 "inference_capabilities".into(),

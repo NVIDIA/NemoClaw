@@ -131,6 +131,17 @@ fn address(kind: &str, name: &str) -> String {
 }
 
 pub const SERVICE_KIND: &str = "ollama_service";
+/// Data source that computes the Ollama runtime contract.
+pub const RUNTIME_DATA_SOURCE: &str = "ollama_runtime";
+
+/// OpenTofu attributes for the Ollama runtime contract.
+pub fn runtime_fields() -> Result<crate::hcl_schema::Fields, crate::hcl_schema::Unmappable> {
+    let schema = serde_json::to_value(schemars::schema_for!(
+        nemoclaw_runtime::ollama::ManagedOllama
+    ))
+    .expect("the Ollama runtime schema serializes");
+    crate::hcl_schema::fields(&schema, &[])
+}
 pub const STORAGE_KIND: &str = "ollama_service_storage";
 
 pub fn configured_service(spec: &Spec) -> Result<nemoclaw_runtime::ollama::ManagedOllama, Error> {

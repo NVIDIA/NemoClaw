@@ -14,9 +14,9 @@ mod inference_discovery;
 pub mod kubernetes;
 mod provider;
 mod readiness;
+mod runtime_contract;
 mod runtime_image;
 mod sandbox_readiness;
-mod vllm_runtime;
 pub use provider::NemoClawProvider;
 
 /// The definition this provider serves for a resource kind.
