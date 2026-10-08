@@ -127,10 +127,17 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
             .collect(),
     )
     .unwrap();
-    let command = gateway["command"].as_array().unwrap();
-    let gateway_port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
+    let launch = &graph["data"]["nemoclaw_gateway_runtime"]["managed_gateway_runtime"];
+    assert_eq!(
+        launch["data_path"],
+        "${nemoclaw_gateway_storage.runtime.data_path}"
+    );
+    let gateway_port = launch["endpoint"]
         .as_str()
         .unwrap()
+        .rsplit_once(':')
+        .unwrap()
+        .1
         .parse::<u16>()
         .unwrap();
     assert!(gateway.get("network_mode").is_none());

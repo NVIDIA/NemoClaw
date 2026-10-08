@@ -350,6 +350,21 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             )]);
         }
         if target.kind == crate::managed::GATEWAY_KIND {
+            // The launch comes from typed settings and the storage's data path.
+            let gateway = spec(target)?;
+            let source = format!("nemoclaw_{}", crate::managed::GATEWAY_RUNTIME_DATA_SOURCE);
+            let logical = address(&target.address)
+                .split_once('.')
+                .ok_or(Error::State("invalid gateway address"))?
+                .1
+                .to_owned();
+            let mut settings = json!({"name": gateway.name, "endpoint": gateway.gateway.endpoint});
+            literal(&mut settings);
+            settings["data_path"] = json!("${nemoclaw_gateway_storage.runtime.data_path}");
+            graph["data"][&source][&logical] = settings;
+            for attribute in ["entrypoint", "command", "env"] {
+                attrs[attribute] = json!(format!("${{data.{source}.{logical}.{attribute}}}"));
+            }
             fn storage_path(value: &mut Value) {
                 match value {
                     Value::String(text) => {
@@ -565,12 +580,20 @@ mod tests {
                 .collect(),
         )
         .unwrap();
-        let command = gateway["command"].as_array().unwrap();
-        let gateway_port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
-            .as_str()
-            .unwrap()
-            .parse::<u16>()
-            .unwrap();
+        let endpoint = document.spec.gateway.endpoint();
+        let gateway_port = url::Url::parse(endpoint).unwrap().port().unwrap();
+        let launch = "data.nemoclaw_gateway_runtime.managed_gateway_runtime";
+        for attribute in ["entrypoint", "command", "env"] {
+            assert_eq!(gateway[attribute], format!("${{{launch}.{attribute}}}"));
+        }
+        assert_eq!(
+            graph["data"]["nemoclaw_gateway_runtime"]["managed_gateway_runtime"],
+            json!({
+                "name": gateway["name"],
+                "endpoint": endpoint,
+                "data_path": "${nemoclaw_gateway_storage.runtime.data_path}",
+            })
+        );
         assert!(gateway.get("network_mode").is_none());
         assert_eq!(
             gateway["networks_advanced"],

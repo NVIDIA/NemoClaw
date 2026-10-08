@@ -169,6 +169,7 @@ The storage volume, bridge network, and initialization labels derive from `name`
 | `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
 | `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
 | `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
+| `nemoclaw_gateway_runtime` | Nothing; [computes a Docker gateway's launch](#docker-gateway-launch) |
 
 ### Docker and Helm Types
 
@@ -424,6 +425,34 @@ Its blocks follow the Ollama runtime contract with snake_case names: `hardware`,
 `nemoclaw_ollama_proxy_runtime` computes the external Ollama proxy's `NEMOCLAW_OLLAMA_PROXY` value from `bind_address`, `upstream`, `model`, and `digest`.
 `bind_address` is a loopback or private address with a port, and `upstream` a loopback HTTP endpoint ending in `/v1`; the output `spec` names the endpoint the proxy serves on `bind_address`.
 Generated graphs pass each `spec` to its container's environment variable.
+
+## Docker Gateway Launch
+
+`nemoclaw_gateway_runtime` computes a Docker gateway container's `entrypoint`, `command`, and `env` without contacting any host.
+It takes the gateway's `name` and `endpoint`, validated as for `nemoclaw_managed_gateway`, and the `data_path` returned by its `nemoclaw_gateway_storage`, an absolute path:
+
+```hcl
+data "nemoclaw_gateway_runtime" "gateway" {
+  name      = nemoclaw_gateway_storage.gateway.name
+  endpoint  = "http://127.0.0.1:17670"
+  data_path = nemoclaw_gateway_storage.gateway.data_path
+}
+
+resource "docker_container" "gateway" {
+  # name, image, network, ports, and mounts as described below
+  entrypoint = data.nemoclaw_gateway_runtime.gateway.entrypoint
+  command    = data.nemoclaw_gateway_runtime.gateway.command
+  env        = data.nemoclaw_gateway_runtime.gateway.env
+}
+```
+
+The gateway reads its configuration and database under `data_path` and listens on all container addresses at the endpoint's port.
+Generated graphs also run the container as `0:0` and give it:
+
+- the storage's volume mounted at `data_path`;
+- the engine socket mounted at `/var/run/docker.sock`;
+- the endpoint's port published on the endpoint's address;
+- the storage's bridge network, at the second host address of `network_cidr`.
 
 ## Runtime Image Compatibility
 
