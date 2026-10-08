@@ -19,6 +19,7 @@ import type {
 import { readTelemetryTestLabel, TELEMETRY_OPERATIONS } from "../../domain/telemetry/event";
 import {
   allowedTelemetryCollection,
+  resolveTelemetryDeliveryConfig,
   shouldSuppressTelemetry,
   telemetryRuntime,
 } from "../../adapters/telemetry/http";
@@ -424,7 +425,7 @@ export async function withTelemetryOperation<T>(
   if (
     !operation ||
     shouldSuppressTelemetry(process.env) ||
-    !allowedTelemetryCollection(telemetryRuntime.config, readTelemetryTestLabel(process.env))
+    !resolveTelemetryDeliveryConfig(process.env)
   )
     return run();
   const nested = context();
@@ -501,10 +502,7 @@ function createContextDirectory(
 export function beginInstallerTelemetry(operation: "install" | "update"): string | null {
   const parent = context();
   if (parent) return parent.directory;
-  if (
-    shouldSuppressTelemetry(process.env) ||
-    !allowedTelemetryCollection(telemetryRuntime.config, readTelemetryTestLabel(process.env))
-  )
+  if (shouldSuppressTelemetry(process.env) || !resolveTelemetryDeliveryConfig(process.env))
     return null;
   const started = process.env.NEMOCLAW_TELEMETRY_INSTALLER_STARTED_AT;
   const startedAt =

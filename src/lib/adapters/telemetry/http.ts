@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readTelemetryTestLabel } from "../../domain/telemetry/event";
+
 export const TEST_TELEMETRY_ENDPOINT =
   "https://events.telemetry.data-uat.nvidia.com/v1.1/events/json";
 export interface TelemetryDeliveryConfig {
@@ -40,6 +42,21 @@ export function allowedTelemetryCollection(
     testLabel !== null &&
     (config.localReceiver === true || testLabel.length > 0)
   );
+}
+
+/** Select the fixed TEST receiver before a CLI or installer operation starts. */
+export function resolveTelemetryDeliveryConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): TelemetryDeliveryConfig | null {
+  if (shouldSuppressTelemetry(env)) return null;
+  const label = readTelemetryTestLabel(env);
+  if (label === null) return null;
+  if (!telemetryRuntime.config && label.length > 0) {
+    telemetryRuntime.config = { endpoint: new URL(TEST_TELEMETRY_ENDPOINT) };
+  }
+  return allowedTelemetryCollection(telemetryRuntime.config, label)
+    ? telemetryRuntime.config
+    : null;
 }
 
 export async function postOperationRecord(

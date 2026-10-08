@@ -47,6 +47,8 @@ import type { SandboxEntry } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-provider-inspection";
 
+const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
+
 function booleanSetting(value: unknown): {
   value: "true" | "false" | "unknown";
   status: ValueStatus;
@@ -337,6 +339,14 @@ async function collectRuntime(
   }
 }
 
+function markRuntimeNotObserved(row: TelemetryConfiguration): void {
+  row.state = "unavailable";
+  row.status = row.agentsStatus = row.defaultAgentModel.status = "not_observed";
+  if (row.sandboxOSStatus !== "reported") row.sandboxOSStatus = "not_observed";
+  row.currentInferenceRoute = unknownModel("primary", "not_observed");
+  row.currentInferenceRouteStatus = "not_observed";
+}
+
 function metadataErrorsAt(
   position: number,
   positions: ReadonlyMap<string, number>,
@@ -423,15 +433,28 @@ export async function collectOperationSnapshot(options: {
   );
   const reader = createSupervisedSandboxCommandReader(options.signal, true);
   const routes = new Map<string, Promise<OpenShellInferenceRouteResult>>();
+  let nextIndex = 0;
+  let observationIncomplete = false;
   try {
     await Promise.all(
-      entries.map((entry, index) =>
-        collectRuntime(
-          entry,
-          snapshot.configurations[index],
-          { ...options, metadataErrors: metadataErrors[index], routes },
-          reader,
-        ),
+      Array.from(
+        { length: Math.min(MAX_CONCURRENT_RUNTIME_OBSERVATIONS, entries.length) },
+        async () => {
+          while (nextIndex < entries.length) {
+            const index = nextIndex++;
+            if (options.signal.aborted || Date.now() >= options.deadlineAt) {
+              markRuntimeNotObserved(snapshot.configurations[index]);
+              observationIncomplete = true;
+              continue;
+            }
+            await collectRuntime(
+              entries[index],
+              snapshot.configurations[index],
+              { ...options, metadataErrors: metadataErrors[index], routes },
+              reader,
+            );
+          }
+        },
       ),
     );
   } finally {
@@ -447,6 +470,7 @@ export async function collectOperationSnapshot(options: {
   );
   const collectionError =
     inventoryError ||
+    observationIncomplete ||
     snapshot.configurations.some((row) => JSON.stringify(row).includes('"collection_error"'));
   if (collectionError) {
     snapshot.collectionStatus = snapshot.configurations.length > 0 ? "partial" : "collection_error";
