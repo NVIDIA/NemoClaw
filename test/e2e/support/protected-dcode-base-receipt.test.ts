@@ -119,12 +119,19 @@ describe("protected DCode base artifact handoff", () => {
     const first = spawnSync(process.execPath, args, options);
     expect(first.status, first.stderr).toBe(0);
     expect(first.stdout.trim()).toBe(f.receipt.reference);
-    expect(fs.statSync(receiptPath).mode & 0o777).toBe(0o600);
-    const bytes = fs.readFileSync(receiptPath);
-    const second = spawnSync(process.execPath, args, options);
-    expect(second.status, second.stderr).toBe(1);
-    expect(second.stderr).toContain("EEXIST");
-    expect(fs.readFileSync(receiptPath)).toEqual(bytes);
+    const receiptFd = fs.openSync(receiptPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      expect(fs.fstatSync(receiptFd).mode & 0o777).toBe(0o600);
+      const bytes = fs.readFileSync(receiptFd);
+      const second = spawnSync(process.execPath, args, options);
+      expect(second.status, second.stderr).toBe(1);
+      expect(second.stderr).toContain("EEXIST");
+      const after = Buffer.alloc(bytes.length);
+      expect(fs.readSync(receiptFd, after, 0, after.length, 0)).toBe(bytes.length);
+      expect(after).toEqual(bytes);
+    } finally {
+      fs.closeSync(receiptFd);
+    }
   });
 
   it.each(["linux/amd64", "linux/arm64"] as const)(
