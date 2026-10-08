@@ -1902,6 +1902,27 @@ export function stopPortableDemoSandboxLifecycle(
   };
 
   if (inspection.isolatedPair) {
+    const companions = matchingPortableSandboxContainerIds(sandboxName, authority.podman).filter(
+      (id) => id !== receipt.containerId,
+    );
+    if (companions.length !== 1) {
+      throw new Error(`Portable sandbox '${sandboxName}' requires one receipt-bound supervisor`);
+    }
+    const supervisorId = companions[0]!;
+    const inspectSupervisor = (): PodmanContainerInspection => {
+      const supervisor = inspectPodmanContainer(
+        supervisorId,
+        sandboxName,
+        authority.podman,
+        authority.podman(["inspect", supervisorId]),
+        "supervisor",
+      );
+      if (supervisor.sandboxId !== receipt.sandboxId) {
+        throw new Error(`Portable sandbox '${sandboxName}' supervisor identity changed`);
+      }
+      return supervisor;
+    };
+    inspectSupervisor();
     const openshellBinary =
       deps.openshellBinary ?? commandEnv.NEMOCLAW_OPENSHELL_BIN ?? "openshell";
     const capture =
@@ -1914,9 +1935,17 @@ export function stopPortableDemoSandboxLifecycle(
       stateDir,
       authority,
       capture,
-      beforeStop,
+      () => {
+        beforeStop();
+        inspectSupervisor();
+      },
     );
-    if (!waitFor(STOP_SETTLEMENT_TIMEOUT_MS, timing, inspectExitedState)) {
+    const inspectPairExitedState = (): boolean => {
+      const workloadExited = inspectExitedState();
+      const supervisor = inspectSupervisor();
+      return workloadExited && !supervisor.running && supervisor.status === "exited";
+    };
+    if (!waitFor(STOP_SETTLEMENT_TIMEOUT_MS, timing, inspectPairExitedState)) {
       throw new Error(`Portable sandbox '${sandboxName}' did not settle into the exited state`);
     }
     return { kind: changed ? "stopped" : "already-stopped" };

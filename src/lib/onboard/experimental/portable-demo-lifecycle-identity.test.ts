@@ -508,6 +508,10 @@ describe("portable receipt paired removal", () => {
 
 function pairLifecycleFixture() {
   const f = pairRemovalFixture();
+  let now = 0;
+  const sleep = vi.fn((milliseconds: number) => {
+    now += milliseconds;
+  });
   const detail = { id: SANDBOX_ID, name: "alpha", workspace: "default", phase: "Stopped" };
   const setState = (running: boolean) => {
     for (const record of [f.workload, f.supervisor]) {
@@ -548,6 +552,8 @@ function pairLifecycleFixture() {
   };
   const deps: PortableDemoLifecycleDeps = {
     platform: "linux",
+    now: () => now,
+    sleep,
     stateDir: f.stateDir,
     env: { HOME: f.stateDir },
     podman: (args) => f.podman(args[0] === "--url" ? args.slice(2) : args),
@@ -571,6 +577,7 @@ function pairLifecycleFixture() {
     transition,
     capture,
     beforeStop,
+    sleep,
     recover: () => recoverPortableDemoSandboxLifecycleUnchecked("alpha", context, deps),
     stop: () => stopPortableDemoSandboxLifecycle("alpha", context, beforeStop, deps),
     rawMutations: () =>
@@ -609,6 +616,59 @@ describe("portable split-container gateway lifecycle", () => {
     expect(f.beforeStop).not.toHaveBeenCalled();
     expect(f.capture.mock.calls.filter(([args]) => args[1] === "get")).toHaveLength(1);
   });
+
+  it("rejects stop transition success when the supervisor remains running", () => {
+    const f = pairLifecycleFixture();
+    f.setState(true);
+    f.transition.mockImplementation(() => {
+      f.setState(false);
+      f.supervisor.State.Running = true;
+      f.supervisor.State.Status = "running";
+      return { status: 0 };
+    });
+    expect(() => f.stop()).toThrow("did not settle into the exited state");
+    expect(f.sleep).toHaveBeenCalled();
+    expect(f.rawMutations()).toEqual([]);
+    expect(f.records.has(f.supervisorId)).toBe(true);
+  });
+
+  it("rejects already-stopped success when the supervisor remains running", () => {
+    const f = pairLifecycleFixture();
+    f.supervisor.State.Running = true;
+    f.supervisor.State.Status = "running";
+    expect(() => f.stop()).toThrow("did not settle into the exited state");
+    expect(f.sleep).toHaveBeenCalled();
+    expect(f.rawMutations()).toEqual([]);
+    expect(f.records.has(f.supervisorId)).toBe(true);
+  });
+
+  it("waits for the supervisor to exit after the workload stops", () => {
+    const f = pairLifecycleFixture();
+    f.supervisor.State.Running = true;
+    f.supervisor.State.Status = "stopping";
+    const advance = f.sleep.getMockImplementation()!;
+    f.sleep.mockImplementation((milliseconds) => {
+      advance(milliseconds);
+      f.supervisor.State.Running = false;
+      f.supervisor.State.Status = "exited";
+    });
+    expect(f.stop()).toEqual({ kind: "already-stopped" });
+    expect(f.sleep).toHaveBeenCalled();
+    expect(f.rawMutations()).toEqual([]);
+  });
+
+  it.each(["openshell.ai/sandbox-id", "openshell.ai/isolation-role"])(
+    "rejects supervisor %s mismatch before stopping",
+    (label) => {
+      const f = pairLifecycleFixture();
+      f.setState(true);
+      f.supervisor.Config.Labels[label] = "another-identity";
+      expect(() => f.stop()).toThrow();
+      expect(f.transition).not.toHaveBeenCalled();
+      expect(f.beforeStop).not.toHaveBeenCalled();
+      expect(f.rawMutations()).toEqual([]);
+    },
+  );
 
   it.each(["id", "name", "workspace"] as const)(
     "rejects gateway %s mismatch before mutation",

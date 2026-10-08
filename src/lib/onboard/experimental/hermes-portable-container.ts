@@ -309,6 +309,7 @@ function parseInspection(
     readonly sandboxName: string;
     readonly sandboxId: string;
     readonly containerId: string;
+    readonly role?: "sandbox" | "supervisor";
   },
 ): HermesPortableContainerInspection {
   let decoded: unknown;
@@ -325,8 +326,11 @@ function parseInspection(
   const config = record(row.Config, "inspect Config");
   const containerLabels = labels(config.Labels);
   const isolationRole = containerLabels[PODMAN_ISOLATION_ROLE_LABEL];
-  if (isolationRole !== undefined && isolationRole !== "sandbox") {
-    fail("inspect isolation role does not identify a sandbox workload");
+  const role = expected.role ?? "sandbox";
+  if (isolationRole !== role && !(role === "sandbox" && isolationRole === undefined)) {
+    fail(
+      `inspect isolation role does not identify a ${role === "sandbox" ? "sandbox workload" : "supervisor"}`,
+    );
   }
   const required = {
     [PODMAN_MANAGED_LABEL]: "true",
@@ -338,7 +342,10 @@ function parseInspection(
   for (const [key, value] of Object.entries(required)) {
     if (containerLabels[key] !== value) fail(`inspect label '${key}' disagrees with OpenShell`);
   }
-  const expectedName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${expected.sandboxName}-${expected.sandboxId}`;
+  const expectedName =
+    role === "supervisor"
+      ? `openshell-supervisor-${expected.sandboxId}`
+      : `${PODMAN_SANDBOX_CONTAINER_PREFIX}${expected.sandboxName}-${expected.sandboxId}`;
   const name = text(row.Name, "container name");
   if (name !== expectedName) fail("inspect container name disagrees with OpenShell identity");
   const state = record(row.State, "inspect State");
@@ -381,6 +388,7 @@ function inspectExact(
   sandboxId: string,
   containerId: string,
   deps: HermesPortableContainerDeps,
+  role: "sandbox" | "supervisor" = "sandbox",
 ): HermesPortableContainerInspection {
   const measure = deps.inspectionTiming?.measure ?? ((_stage, operation) => operation());
   measure("preGuard", () => assertSocket(receipt, deps));
@@ -396,8 +404,59 @@ function inspectExact(
       sandboxName: receipt.sandboxName,
       sandboxId,
       containerId,
+      role,
     }),
   );
+}
+
+/** Pin the companion before stop; never accept workload-only exit for an isolated pair. */
+export function prepareHermesPortableSupervisorStopCheck(
+  receipt: HermesPortableConfiguredReceipt,
+  deps: HermesPortableContainerDeps,
+  workload: HermesPortableContainerInspection,
+): () => boolean {
+  if (workload.labels[PODMAN_ISOLATION_ROLE_LABEL] !== "sandbox") return () => true;
+  assertSocket(receipt, deps);
+  const output = requireCommand(
+    deps.podman(
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `label=${PODMAN_MANAGED_LABEL}=true`,
+        "--filter",
+        `label=${PODMAN_SANDBOX_NAME_LABEL}=${receipt.sandboxName}`,
+        "--filter",
+        `label=${PODMAN_ISOLATION_ROLE_LABEL}=supervisor`,
+        "--format",
+        "{{.ID}}",
+      ],
+      INSPECT_TIMEOUT_MS,
+    ),
+    "supervisor lookup",
+  );
+  assertSocket(receipt, deps);
+  const ids = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (ids.length !== 1 || !FULL_ID.test(ids[0]!)) {
+    fail("stop requires exactly one full supervisor container ID");
+  }
+  const inspect = () =>
+    inspectExact(receipt, receipt.container.sandboxId, ids[0]!, deps, "supervisor");
+  const initial = inspect();
+  return () => {
+    const current = inspect();
+    if (
+      current.authority.imageId !== initial.authority.imageId ||
+      current.authority.labelsSha256 !== initial.authority.labelsSha256
+    ) {
+      fail("supervisor immutable identity changed during stop");
+    }
+    return !current.authority.running && !current.paused && current.status === "exited";
+  };
 }
 
 /** Enroll exactly one live OpenShell-managed container after Ready. */

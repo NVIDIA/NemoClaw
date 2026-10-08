@@ -247,6 +247,7 @@ export function createHermesPortableLifecycleTestDeps(
     readonly startStatus?: number;
     readonly initialPhase?: "Ready" | "Error" | "Stopped";
     readonly nonRunningStatus?: string;
+    readonly labels?: Readonly<Record<string, string>>;
   } = {},
 ) {
   let running = initiallyRunning,
@@ -270,7 +271,7 @@ export function createHermesPortableLifecycleTestDeps(
                   Id: CONTAINER_ID,
                   Image: IMAGE,
                   Name: receipt.container.name,
-                  Config: { Labels: LABELS },
+                  Config: { Labels: options.labels ?? LABELS },
                   State: {
                     Running: running,
                     Paused: false,

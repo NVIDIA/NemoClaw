@@ -30,6 +30,7 @@ import type { SandboxEntry } from "../../state/registry/types";
 import { SANITIZED_PRIVILEGED_ENV } from "../runtime-provider/privileged-sandbox-environment";
 import { PinnedSandboxResourceIdentityChangedError } from "../runtime-provider/privileged-sandbox-control-errors";
 import {
+  PODMAN_ISOLATION_ROLE_LABEL,
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
   PODMAN_SANDBOX_WORKSPACE,
@@ -41,6 +42,7 @@ import {
   assertCurrentHermesPortableContainer,
   createHermesPortableContainerInspectionTiming,
   observeHermesPortableAuthenticatedHealth,
+  prepareHermesPortableSupervisorStopCheck,
   type HermesPortableContainerDeps,
   type HermesPortableContainerInspection,
   type HermesPortablePodmanResult,
@@ -1286,7 +1288,15 @@ async function rollbackStartedHermesPortableRecovery(
       qualified.assertTransactionCurrent();
     }
     failureClass = "container-stop-settlement";
-    if (qualified.openShellPhase === "Stopped") {
+    const supervisorStopped = prepareHermesPortableSupervisorStopCheck(
+      qualified.receipt,
+      qualified.containerDeps,
+      qualified.container,
+    );
+    if (
+      qualified.openShellPhase === "Stopped" &&
+      qualified.container.labels[PODMAN_ISOLATION_ROLE_LABEL] !== "sandbox"
+    ) {
       armOpenShellV0116StopAssist(qualified);
     }
     captureRetainedLifecycleCommand(
@@ -1296,7 +1306,14 @@ async function rollbackStartedHermesPortableRecovery(
       OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
     );
     failureClass = "openshell-terminal-settlement";
-    await settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified, timing);
+    await settleStoppedHermesPortableLifecycle(
+      sandboxName,
+      context,
+      deps,
+      qualified,
+      timing,
+      supervisorStopped,
+    );
   } catch (error) {
     throw new HermesPortableRollbackAttemptError(failureClass, error);
   }
@@ -1307,7 +1324,8 @@ async function settleStoppedHermesPortableLifecycle(
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps,
   authority: QualifiedHermesPortableLifecycle,
-  timing?: HermesPortableLifecycleTimingRecorder,
+  timing: HermesPortableLifecycleTimingRecorder | undefined,
+  supervisorStopped: () => boolean,
 ): Promise<QualifiedHermesPortableLifecycle> {
   let stopped: QualifiedHermesPortableLifecycle | null = null;
   const settled = await waitFor(STOP_SETTLEMENT_TIMEOUT_MS, deps, async () => {
@@ -1330,7 +1348,13 @@ async function settleStoppedHermesPortableLifecycle(
       if (container.authority.running || container.status !== "exited") return false;
       return false;
     }
-    if (current.container.authority.running || current.container.status !== "exited") return false;
+    const companionExited = supervisorStopped();
+    if (
+      current.container.authority.running ||
+      current.container.status !== "exited" ||
+      !companionExited
+    )
+      return false;
     if (current.openShellPhase === "Error" || current.openShellPhase === "Stopped") {
       stopped = current;
       return true;
@@ -2336,6 +2360,11 @@ export async function stopHermesPortableSandboxLifecycle(
     "Error",
     "Stopped",
   ]);
+  const supervisorStopped = prepareHermesPortableSupervisorStopCheck(
+    qualified.receipt,
+    qualified.containerDeps,
+    qualified.container,
+  );
   if (!qualified.container.authority.running && qualified.container.status === "exited") {
     if (qualified.openShellPhase === "Ready") {
       qualified.capture(
@@ -2343,13 +2372,21 @@ export async function stopHermesPortableSandboxLifecycle(
         OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
       );
     }
-    await settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
+    await settleStoppedHermesPortableLifecycle(
+      sandboxName,
+      context,
+      deps,
+      qualified,
+      undefined,
+      supervisorStopped,
+    );
     return { kind: "already-stopped" };
   }
   if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
     fail("OpenShell Stopped phase disagrees with the running receipt container");
   }
   if (qualified.container.authority.running) beforeStop();
+  supervisorStopped();
   qualified = await qualify(sandboxName, context, deps, qualified.snapshot, [
     "Ready",
     "Error",
@@ -2358,7 +2395,10 @@ export async function stopHermesPortableSandboxLifecycle(
   if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
     fail("OpenShell Stopped phase disagrees with the running receipt container");
   }
-  if (qualified.openShellPhase === "Ready") {
+  if (
+    qualified.openShellPhase === "Ready" &&
+    qualified.container.labels[PODMAN_ISOLATION_ROLE_LABEL] !== "sandbox"
+  ) {
     // OpenShell 0.0.116's rootless Podman supervisor drops CAP_KILL, so its
     // SIGTERM cannot reach the sandbox-UID workload (OpenShell #3036). Arm one
     // same-UID, exact-entrypoint signal before the authenticated stop request;
@@ -2369,7 +2409,14 @@ export async function stopHermesPortableSandboxLifecycle(
     openshellLifecycleMutationArgs(qualified.receipt, "stop"),
     OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
   );
-  await settleStoppedHermesPortableLifecycle(sandboxName, context, deps, qualified);
+  await settleStoppedHermesPortableLifecycle(
+    sandboxName,
+    context,
+    deps,
+    qualified,
+    undefined,
+    supervisorStopped,
+  );
   return { kind: "stopped" };
 }
 

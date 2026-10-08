@@ -417,6 +417,11 @@
       "category": "security"
     },
     {
+      "file": "test/install/installer-hash-check.test.ts",
+      "test": "does not base-trust the obsolete Brev npm replacement digest",
+      "category": "security"
+    },
+    {
       "file": "test/install/installer-supervisor-manifest-trust.test.ts",
       "test": "accepts the prospective shared gateway state resolver template (#10544)",
       "category": "security"

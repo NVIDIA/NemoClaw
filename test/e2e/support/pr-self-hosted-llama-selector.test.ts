@@ -294,6 +294,11 @@ describe.concurrent("generic NVIDIA GPU PR selection", () => {
     await expect(selectHermesRootEntrypoint(["src/lib/hermes-managed-route.ts"])).resolves.toBe(
       "selected=true",
     );
+    await expect(
+      selectHermesRootEntrypoint([
+        "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.2.json",
+      ]),
+    ).resolves.toBe("selected=true");
   });
 
   // source-shape-contract: security -- Changed-file discovery failures must stop trusted copied-PR qualification instead of silently skipping it

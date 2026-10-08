@@ -797,6 +797,7 @@ describe("inference selection validation", () => {
           "COMPATIBLE_API_KEY",
         ),
       ).resolves.toEqual({ ok: false, retry: "retry" });
+      expect(error).toHaveBeenCalledWith('  Endpoint: "https://example.invalid/v1"');
       expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
       expect(promptValidationRecovery).toHaveBeenCalledWith(
         "Custom endpoint",
