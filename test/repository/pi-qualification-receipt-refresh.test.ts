@@ -77,6 +77,7 @@ describe("Pi qualification receipt refresh", () => {
   function run(
     changedPaths: readonly string[],
     options: {
+      allowPendingPublication?: boolean;
       accepted?: ReadonlySet<string>;
       headRevision?: string | null;
       mergeInProgress?: boolean;
@@ -84,8 +85,9 @@ describe("Pi qualification receipt refresh", () => {
       sourceParity?: boolean;
       stagedPaths?: readonly string[];
     } = {},
-  ): void {
-    checkPiQualificationReceiptRefresh({
+  ): "pending-publication" | undefined {
+    return checkPiQualificationReceiptRefresh({
+      allowPendingPublication: options.allowPendingPublication,
       acceptedDigests: options.accepted ?? acceptedDigests,
       baseBranch: "main",
       git: (args) =>
@@ -138,6 +140,61 @@ describe("Pi qualification receipt refresh", () => {
 
   it("rejects a partial architecture receipt refresh", () => {
     expect(() => run(["protected/base/config.json", RECEIPTS[0].path])).toThrow(RECEIPTS[1].path);
+  });
+
+  it("allows a local source commit before image publication without treating it as qualification", () => {
+    expect(
+      run(["protected/app/config.json"], {
+        allowPendingPublication: true,
+        sourceParity: false,
+      }),
+    ).toBe("pending-publication");
+  });
+
+  it("keeps CI strict even when the local-publication option is supplied", () => {
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    expect(() =>
+      run(["protected/app/config.json"], {
+        allowPendingPublication: true,
+      }),
+    ).toThrow("Pi image inputs changed without refreshing both qualification receipts");
+  });
+
+  it.each([RECEIPTS[0].path, "src/lib/agent/candidate-authority.ts"])(
+    "does not defer a local refresh that changes %s",
+    (changedPath) => {
+      expect(() =>
+        run(["protected/app/config.json"], {
+          allowPendingPublication: true,
+          stagedPaths: [changedPath],
+        }),
+      ).toThrow("Pi image inputs changed without refreshing both qualification receipts");
+    },
+  );
+
+  it("does not accept broken receipt authority during source-only publication", () => {
+    expect(() =>
+      run(["protected/app/config.json"], {
+        allowPendingPublication: true,
+        accepted: new Set(),
+      }),
+    ).toThrow("is not present in the Pi candidate receipt authority");
+  });
+
+  it("requires source parity once both receipts are added to the same local PR", () => {
+    expect(() =>
+      run(["protected/app/config.json"], {
+        allowPendingPublication: true,
+        stagedPaths: RECEIPTS.map(({ path: receiptPath }) => receiptPath),
+        sourceParity: false,
+      }),
+    ).toThrow(`Pi image inputs changed after receipt source revision ${SOURCE_REVISION}`);
+    expect(
+      run(["protected/app/config.json"], {
+        allowPendingPublication: true,
+        stagedPaths: RECEIPTS.map(({ path: receiptPath }) => receiptPath),
+      }),
+    ).toBeUndefined();
   });
 
   it.each(RECEIPTS)("rejects deletion of the $platform qualification receipt", (candidate) => {

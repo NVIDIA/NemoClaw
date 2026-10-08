@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { requiresManagedImages } from "../../../tools/e2e/workflow-prerequisites.mts";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
@@ -9,6 +13,22 @@ import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/w
 
 describe("selected E2E prerequisites", () => {
   it.each([
+    {
+      name: "unconditional version resolution",
+      mutate: (workflow: Workflow) => {
+        delete workflow.jobs["generate-matrix"]!.steps!.find(
+          (step) => step.id === "openshell_version",
+        )!.if;
+      },
+    },
+    {
+      name: "skipped version resolution",
+      mutate: (workflow: Workflow) => {
+        workflow.jobs["generate-matrix"]!.steps!.find(
+          (step) => step.id === "openshell_version",
+        )!.if = "false";
+      },
+    },
     {
       name: "version output",
       mutate: (workflow: Workflow) => {
@@ -77,6 +97,44 @@ describe("selected E2E prerequisites", () => {
     expect(requiresManagedImages(["nested", "independent"], jobs)).toBe(true);
     expect(() => requiresManagedImages(["nested", "unknown"], jobs)).toThrow("Unknown");
     expect(requiresManagedImages([], jobs)).toBe(false);
+  });
+
+  it("emits the native producer selection without a managed image prerequisite", () => {
+    const workflow = readWorkflow() as unknown as Workflow;
+    const script = workflow.jobs["generate-matrix"]!.steps!.find(
+      (step) => step.id === "matrix",
+    )!.run!;
+    const directory = mkdtempSync(join(tmpdir(), "native-producer-plan-"));
+    const output = join(directory, "output");
+    try {
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          JOBS: "native-runtime-qualification-producer",
+          TARGETS: "",
+          GITHUB_OUTPUT: output,
+        },
+        timeout: 10_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const values = Object.fromEntries(
+        readFileSync(output, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => {
+            const separator = line.indexOf("=");
+            return [line.slice(0, separator), line.slice(separator + 1)];
+          }),
+      );
+      expect(values.managed_image_required).toBe("false");
+      expect(JSON.parse(values.selected_workflow_jobs!)).toEqual([
+        "native-runtime-qualification-producer",
+      ]);
+      expect(JSON.parse(values.matrix!)).toEqual([]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("rejects cycles and malformed dependencies", () => {

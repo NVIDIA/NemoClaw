@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PROTECTED_MANAGED_IMAGE_AGENTS } from "./protected-managed-image-contract.ts";
 
 export const PROTECTED_DCODE_BASE_REPOSITORY =
   "localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code";
@@ -139,8 +140,12 @@ function verifiedJsonBlob(layout: string, entry: { digest: string; size: number 
 export function inspectProtectedDcodeBase(
   layout: string,
   expected: ProtectedDcodeBaseIdentity,
+  agent: (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number] = "langchain-deepagents-code",
 ): ProtectedDcodeBaseReceipt {
   validateIdentity(expected);
+  if (!PROTECTED_MANAGED_IMAGE_AGENTS.includes(agent)) {
+    throw new Error("protected base agent is not supported");
+  }
   for (const directory of [layout, path.join(layout, "blobs"), path.join(layout, "blobs/sha256")]) {
     if (!fs.lstatSync(directory).isDirectory()) {
       throw new Error("protected DCode base layout directories must not be symlinks");
@@ -175,7 +180,7 @@ export function inspectProtectedDcodeBase(
     labels["org.opencontainers.image.revision"] !== expected.sourceRevision ||
     labels["org.opencontainers.image.source"] !== "https://github.com/NVIDIA/NemoClaw" ||
     labels["io.nvidia.nemoclaw.managed-image.cohort"] !== expected.cohort ||
-    labels["io.nvidia.nemoclaw.agent"] !== "langchain-deepagents-code"
+    labels["io.nvidia.nemoclaw.agent"] !== agent
   ) {
     throw new Error(
       "protected DCode base config does not match the selected source, run or platform",
@@ -186,7 +191,7 @@ export function inspectProtectedDcodeBase(
     ...expected,
     digest: manifestDescriptor.digest,
     imageId: configDescriptor.digest,
-    reference: `${PROTECTED_DCODE_BASE_REPOSITORY}@${manifestDescriptor.digest}`,
+    reference: `localhost:5000/nemoclaw-managed-protected-base/${agent}@${manifestDescriptor.digest}`,
   };
 }
 
@@ -194,9 +199,10 @@ export function verifyProtectedDcodeBaseReceipt(
   layout: string,
   receiptPath: string,
   expected: ProtectedDcodeBaseIdentity,
+  agent: (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number] = "langchain-deepagents-code",
 ): ProtectedDcodeBaseReceipt {
   const receipt = readJson(receiptPath);
-  const actual = inspectProtectedDcodeBase(layout, expected);
+  const actual = inspectProtectedDcodeBase(layout, expected, agent);
   const keys = Object.keys(actual) as (keyof ProtectedDcodeBaseReceipt)[];
   if (
     Object.keys(receipt).length !== keys.length ||
@@ -210,10 +216,11 @@ export function verifyProtectedDcodeBaseReceipt(
 }
 
 function main(): void {
-  const [command, layout, receiptPath, ...extra] = process.argv.slice(2);
+  const [command, layout, receiptPath, agent = "langchain-deepagents-code", ...extra] =
+    process.argv.slice(2);
   if (!["write", "verify"].includes(command) || !layout || !receiptPath || extra.length) {
     throw new Error(
-      "usage: protected-dcode-base-receipt.mts <write|verify> <OCI layout> <receipt>",
+      "usage: protected-dcode-base-receipt.mts <write|verify> <OCI layout> <receipt> [agent]",
     );
   }
   const expected: ProtectedDcodeBaseIdentity = {
@@ -225,8 +232,17 @@ function main(): void {
   };
   const receipt =
     command === "write"
-      ? inspectProtectedDcodeBase(layout, expected)
-      : verifyProtectedDcodeBaseReceipt(layout, receiptPath, expected);
+      ? inspectProtectedDcodeBase(
+          layout,
+          expected,
+          agent as (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number],
+        )
+      : verifyProtectedDcodeBaseReceipt(
+          layout,
+          receiptPath,
+          expected,
+          agent as (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number],
+        );
   if (command === "write") {
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, {
       flag: "wx",

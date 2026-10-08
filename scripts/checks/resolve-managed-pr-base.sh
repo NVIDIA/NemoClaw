@@ -55,17 +55,13 @@ build_local_base() {
   local local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
   local local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
   local local_base_oci="$RUNNER_TEMP/pr-base.oci"
-  local base_labels=()
-  if [ "$AGENT" = "langchain-deepagents-code" ]; then
-    base_labels+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
-  fi
   docker buildx build \
     --platform linux/amd64 \
     --provenance=false \
     --sbom=false \
     --file "$BASE_DOCKERFILE" \
     --tag "$LOCAL_BASE_REFERENCE" \
-    "${base_labels[@]}" \
+    --label "org.opencontainers.image.revision=${CANDIDATE_SHA}" \
     --output "type=docker,dest=${local_base_archive}" \
     --output "type=oci,dest=${local_base_oci_archive}" \
     .
@@ -97,8 +93,8 @@ build_local_base() {
     "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" "$reason" \
     >>"$GITHUB_STEP_SUMMARY"
 }
-DCODE_COPY_PARSER_INPUT="scripts/lib/dockerfile-copy-sources.mts"
-dcode_changed_inputs() {
+COPY_PARSER_INPUT="scripts/lib/dockerfile-copy-sources.mts"
+changed_base_inputs() {
   local source_revision="$1" candidate_revision="$2" input
   local literal_inputs=()
   shift 2
@@ -108,10 +104,10 @@ dcode_changed_inputs() {
   git diff --name-only "$source_revision" "$candidate_revision" -- \
     "${literal_inputs[@]}"
 }
-read_dcode_base_inputs() {
+read_base_inputs() {
   local dockerfile="$1" parser parsed_inputs source
   parser="${BASH_SOURCE[0]%/*}/../lib/dockerfile-copy-sources.mts"
-  DCODE_BASE_INPUTS=("$dockerfile" .dockerignore "$DCODE_COPY_PARSER_INPUT")
+  BASE_INPUTS=("$dockerfile" .dockerignore "$COPY_PARSER_INPUT")
   parsed_inputs="$(
     node --experimental-strip-types --input-type=module -e '
       import { pathToFileURL } from "node:url";
@@ -124,14 +120,13 @@ read_dcode_base_inputs() {
   while IFS= read -r source; do
     [ -n "$source" ] || continue
     git cat-file -e "${CANDIDATE_SHA}:${source}" 2>/dev/null || return 1
-    DCODE_BASE_INPUTS+=("$source")
+    BASE_INPUTS+=("$source")
   done <<<"$parsed_inputs"
-  [ "${#DCODE_BASE_INPUTS[@]}" -gt 1 ]
+  [ "${#BASE_INPUTS[@]}" -gt 1 ]
 }
-published_dcode_base_matches_candidate_contract() {
-  [ "$AGENT" = "langchain-deepagents-code" ] || return 0
+published_base_matches_candidate_contract() {
   local reference="$1" image_json source_revision changed_inputs
-  local bootstrap_inputs=("$BASE_DOCKERFILE" .dockerignore "$DCODE_COPY_PARSER_INPUT")
+  local bootstrap_inputs=("$BASE_DOCKERFILE" .dockerignore "$COPY_PARSER_INPUT")
   docker pull --platform "$PLATFORM" "$reference" >/dev/null || return 1
   image_json="$(docker image inspect "$reference")" || return 1
   source_revision="$(
@@ -143,24 +138,24 @@ published_dcode_base_matches_candidate_contract() {
     ' <<<"$image_json"
   )" || return 1
   [[ "$source_revision" =~ ^[0-9a-f]{40}$ ]] || return 1
-  PUBLISHED_DCODE_SOURCE_REVISION="$source_revision"
+  PUBLISHED_BASE_SOURCE_REVISION="$source_revision"
   if ! git cat-file -e "${source_revision}^{commit}" 2>/dev/null; then
     git fetch --no-tags --depth=1 origin "$source_revision" || return 1
   fi
   changed_inputs="$(
-    dcode_changed_inputs "$source_revision" "$CANDIDATE_SHA" \
+    changed_base_inputs "$source_revision" "$CANDIDATE_SHA" \
       "${bootstrap_inputs[@]}"
   )" || return 1
   if [ -n "$changed_inputs" ]; then
-    PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
+    PUBLISHED_BASE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
     return 1
   fi
-  read_dcode_base_inputs "$BASE_DOCKERFILE" || return 1
+  read_base_inputs "$BASE_DOCKERFILE" || return 1
   changed_inputs="$(
-    dcode_changed_inputs "$source_revision" "$CANDIDATE_SHA" \
-      "${DCODE_BASE_INPUTS[@]}"
+    changed_base_inputs "$source_revision" "$CANDIDATE_SHA" \
+      "${BASE_INPUTS[@]}"
   )" || return 1
-  PUBLISHED_DCODE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
+  PUBLISHED_BASE_CHANGED_INPUTS="${changed_inputs//$'\n'/, }"
   [ -z "$changed_inputs" ]
 }
 if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -216,14 +211,14 @@ if [ "$actual" != "$digest" ]; then
   echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
   exit 1
 fi
-PUBLISHED_DCODE_SOURCE_REVISION=""
-PUBLISHED_DCODE_CHANGED_INPUTS=""
-if ! published_dcode_base_matches_candidate_contract "$reference"; then
+PUBLISHED_BASE_SOURCE_REVISION=""
+PUBLISHED_BASE_CHANGED_INPUTS=""
+if ! published_base_matches_candidate_contract "$reference"; then
   reason="published base ${reference} could not be proven compatible with candidate ${CANDIDATE_SHA}"
-  if [ -n "$PUBLISHED_DCODE_SOURCE_REVISION" ] && [ -n "$PUBLISHED_DCODE_CHANGED_INPUTS" ]; then
-    reason="published base ${reference} from ${PUBLISHED_DCODE_SOURCE_REVISION} differs from candidate ${CANDIDATE_SHA} at ${PUBLISHED_DCODE_CHANGED_INPUTS}"
-  elif [ -n "$PUBLISHED_DCODE_SOURCE_REVISION" ]; then
-    reason="published base ${reference} from ${PUBLISHED_DCODE_SOURCE_REVISION} could not be proven compatible with candidate ${CANDIDATE_SHA}"
+  if [ -n "$PUBLISHED_BASE_SOURCE_REVISION" ] && [ -n "$PUBLISHED_BASE_CHANGED_INPUTS" ]; then
+    reason="published base ${reference} from ${PUBLISHED_BASE_SOURCE_REVISION} differs from candidate ${CANDIDATE_SHA} at ${PUBLISHED_BASE_CHANGED_INPUTS}"
+  elif [ -n "$PUBLISHED_BASE_SOURCE_REVISION" ]; then
+    reason="published base ${reference} from ${PUBLISHED_BASE_SOURCE_REVISION} could not be proven compatible with candidate ${CANDIDATE_SHA}"
   fi
   build_local_base "$reason"
   exit 0

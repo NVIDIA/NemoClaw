@@ -1264,7 +1264,10 @@ function isReviewedLocalAction(jobName: string, step: WorkflowStep): boolean {
       step.uses === REVIEWED_HERMES_PLATFORM_ACTION) ||
     (jobName === "managed-image-protected-runtime" &&
       step.name === "Reuse or refresh reviewed audit evidence before the offline build" &&
-      step.uses === "./.github/actions/ci-reviewed-npm-audit")
+      step.uses === "./.github/actions/ci-reviewed-npm-audit") ||
+    (jobName === "managed-image-protected-runtime" &&
+      step.name === "Install reviewed OpenShell SDK from trusted controller" &&
+      step.uses === "./.github/actions/install-reviewed-openshell-sdk")
   );
 }
 
@@ -2651,7 +2654,7 @@ const PRE_CANDIDATE_RUN_SHA256: Readonly<Record<string, string>> = {
     "ee0b2e6c6aa4552b228bd1cc3ba4e1f9cd72701c30b81f7d5fbf9bc011fb51c7",
   "Authorize Launchable E2E maintainer dispatch":
     "bbf442a006b47016eda56133eb400a48c6931c55364c1220b84327b5ffd6f171",
-  "Generate E2E target matrix": "7b250c79a05973c6bc2f904195c174ddd6ffee80c62a2ff3362d7362e075b0ef",
+  "Generate E2E target matrix": "ee26da3b8da6b988773803d2a05f7763d560b565f145599c39d22b2e528e8c6b",
 };
 
 function requirePreCandidateEnvironment(

@@ -209,13 +209,10 @@ function receiptComparisonRevision(git: GitRunner, explicit?: string): string | 
 }
 
 function validateReceiptPair(
-  git: GitRunner,
   rootDir: string,
-  imageSourcePaths: readonly string[],
   receipts: readonly { path: string; platform: ManagedImagePlatform }[],
   acceptedDigests: ReadonlySet<string>,
-  comparisonRevision: string | null,
-): void {
+): string {
   const validated = receipts.map((receipt) => parseReceipt(rootDir, receipt, acceptedDigests));
   const contracts = validated.map(({ contract }) => contract);
   const revisions = new Set(contracts.map(({ source }) => source.revision));
@@ -231,15 +228,11 @@ function validateReceiptPair(
   ) {
     throw new Error("Pi candidate receipt authority must exactly match both published receipts");
   }
-  requireReceiptSourceParity(
-    git,
-    contracts[0]!.source.revision,
-    comparisonRevision,
-    imageSourcePaths,
-  );
+  return contracts[0]!.source.revision;
 }
 
 type PiReceiptRefreshCheckOptions = {
+  allowPendingPublication?: boolean;
   acceptedDigests?: ReadonlySet<string>;
   baseBranch?: string;
   git?: GitRunner;
@@ -250,7 +243,7 @@ type PiReceiptRefreshCheckOptions = {
 
 export function checkPiQualificationReceiptRefresh(
   options: PiReceiptRefreshCheckOptions = {},
-): void {
+): "pending-publication" | undefined {
   const git = options.git ?? runGit;
   const rootDir = options.rootDir ?? REPO_ROOT;
   const baseBranch = options.baseBranch ?? process.env.GITHUB_BASE_REF?.trim();
@@ -275,8 +268,15 @@ export function checkPiQualificationReceiptRefresh(
   );
   if (!imageInputsChanged && !receiptAuthorityChanged) return;
 
+  // A source commit must reach image CI before its receipts can exist. Only local
+  // source-only publication can defer freshness; CI and receipt edits stay strict.
+  const pendingPublication =
+    options.allowPendingPublication === true &&
+    process.env.GITHUB_ACTIONS !== "true" &&
+    imageInputsChanged &&
+    !receiptAuthorityChanged;
   const missingReceipts = receiptPaths.filter((receipt) => !changedPaths.includes(receipt));
-  if (imageInputsChanged && missingReceipts.length > 0) {
+  if (imageInputsChanged && missingReceipts.length > 0 && !pendingPublication) {
     throw new Error(
       [
         "Pi image inputs changed without refreshing both qualification receipts.",
@@ -287,17 +287,28 @@ export function checkPiQualificationReceiptRefresh(
       ].join("\n"),
     );
   }
-  validateReceiptPair(
+  const sourceRevision = validateReceiptPair(rootDir, receipts, acceptedDigests);
+  if (pendingPublication) return "pending-publication";
+  requireReceiptSourceParity(
     git,
-    rootDir,
-    imageSourcePaths,
-    receipts,
-    acceptedDigests,
+    sourceRevision,
     receiptComparisonRevision(git, options.headRevision),
+    imageSourcePaths,
   );
 }
 
 const currentModule = fileURLToPath(import.meta.url);
 if (process.argv[1] && path.resolve(process.argv[1]) === currentModule) {
-  checkPiQualificationReceiptRefresh();
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== "--local-publication")) {
+    throw new Error("Expected no arguments or --local-publication");
+  }
+  const result = checkPiQualificationReceiptRefresh({
+    allowPendingPublication: args[0] === "--local-publication",
+  });
+  if (result === "pending-publication") {
+    console.warn(
+      "Pi source publication only; qualification is pending. CI requires both newly published receipts and matching authority before merge.",
+    );
+  }
 }

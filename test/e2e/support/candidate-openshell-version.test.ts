@@ -2,11 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
+import * as installerPins from "../../../scripts/checks/extract-installer-pins.mts";
 import { candidateOpenShellVersion } from "../../../tools/e2e/candidate-openshell-version.mts";
 
 const sha = "a".repeat(40);
 const repository = "NVIDIA/NemoClaw";
+const blueprint = readFileSync(
+  new URL("../../../nemoclaw-blueprint/blueprint.yaml", import.meta.url),
+  "utf8",
+);
+const blueprintVersions = [...blueprint.matchAll(/^max_openshell_version: "(\d+\.\d+\.\d+)"$/gm)];
+assert.equal(blueprintVersions.length, 1, "Expected one blueprint OpenShell pin");
+const pinnedVersion = blueprintVersions[0]![1]!;
 function sourceResponse(url: string) {
   const parsed = new URL(url, "https://api.github.com");
   expect(parsed.searchParams.get("ref")).toBe(sha);
@@ -24,8 +33,37 @@ function sourceResponse(url: string) {
 describe("candidate OpenShell selection", () => {
   it("reads only immutable candidate data and selects the reviewed runtime", async () => {
     const request = vi.fn(async (url: string) => sourceResponse(url));
-    await expect(candidateOpenShellVersion(repository, sha, request)).resolves.toBe("0.0.116");
+    await expect(candidateOpenShellVersion(repository, sha, request)).resolves.toMatch(
+      /^\d+\.\d+\.\d+$/,
+    );
     expect(request).toHaveBeenCalledTimes(4);
+  });
+
+  it("returns the trusted verifier's selection without substituting a workflow pin", async () => {
+    const verifier = vi.spyOn(installerPins, "validateInstallerSources").mockReturnValueOnce({
+      releaseVersion: "9.8.7",
+      pins: [],
+      installerReleases: [],
+      installerTemplateSha256: "",
+      brevTemplateSha256: "",
+    });
+    try {
+      await expect(
+        candidateOpenShellVersion(repository, sha, async (url) => {
+          const blob = sourceResponse(url);
+          const source = `fixture ${blob.path}`;
+          return { ...blob, content: Buffer.from(source).toString("base64"), size: source.length };
+        }),
+      ).resolves.toBe("9.8.7");
+      expect(verifier).toHaveBeenCalledExactlyOnceWith({
+        blueprintSource: "fixture nemoclaw-blueprint/blueprint.yaml",
+        installerSource: "fixture scripts/install-openshell.sh",
+        brevInstallerSource: "fixture scripts/brev-launchable-ci-cpu.sh",
+        supervisorRuntimeSource: "fixture src/lib/onboard/docker-driver-gateway-runtime.ts",
+      });
+    } finally {
+      verifier.mockRestore();
+    }
   });
 
   it.each(["main", "a".repeat(39), `${sha}\nversion=9.9.9`])(
@@ -75,7 +113,7 @@ describe("candidate OpenShell selection", () => {
     {
       name: "unknown release",
       target: /.*/,
-      rewrite: (source: string) => source.replaceAll("0.0.116", "9.9.9"),
+      rewrite: (source: string) => source.replaceAll(pinnedVersion, "9.9.9"),
     },
     {
       name: "mismatched blueprint",
