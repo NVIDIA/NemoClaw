@@ -1001,7 +1001,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       const adapter = providerAdapter({
         deleteProvider,
         detachProvider,
-        getProvider: vi.fn(async () => ({
+        getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
           ok: false,
           error: { kind: "command", reason: "not_found", message: "absent" },
         })),
@@ -1037,7 +1037,7 @@ describe("credential actions use typed OpenShell provider results", () => {
   it("clears native NVIDIA gateway authority only after provider deletion is confirmed", async () => {
     const clearNativeNvidiaProviderAuthority = vi.fn();
     const adapter = providerAdapter({
-      getProvider: vi.fn(async () => ({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
         ok: false,
         error: { kind: "command", reason: "not_found", message: "absent" },
       })),
@@ -1061,7 +1061,7 @@ describe("credential actions use typed OpenShell provider results", () => {
   it("clears native NVIDIA authority when the provider is already absent", async () => {
     const clearNativeNvidiaProviderAuthority = vi.fn();
     const adapter = providerAdapter({
-      getProvider: vi.fn(async () => ({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
         ok: false,
         error: { kind: "command", reason: "not_found", message: "absent" },
       })),
