@@ -98,7 +98,10 @@ import {
   selectSandboxRecreateTargetIntentFingerprint,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
-import { sandboxCreateInferenceSelection } from "../../sandbox-registration";
+import {
+  sandboxCreateInferenceSelection,
+  withSandboxImageRegistrationFence,
+} from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
@@ -2403,17 +2406,19 @@ class SandboxStateFlow<
       );
       return { ...state, sandboxName, session: recordedSession };
     };
-    const withGatewayLock = () =>
-      this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
-    const withDashboardPortLock =
-      this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
-    const withDashboardAndGatewayLocks = () =>
-      shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
-        ? withDashboardPortLock(withGatewayLock)
-        : withGatewayLock();
-    return this.deps.withSandboxMutationLock
-      ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
-      : withDashboardAndGatewayLocks();
+    return withSandboxImageRegistrationFence(async () => {
+      const withGatewayLock = () =>
+        this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
+      const withDashboardPortLock =
+        this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
+      const withDashboardAndGatewayLocks = () =>
+        shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
+          ? withDashboardPortLock(withGatewayLock)
+          : withGatewayLock();
+      return this.deps.withSandboxMutationLock
+        ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
+        : withDashboardAndGatewayLocks();
+    });
   }
 
   private resolveSandboxMessagingAuthority(
