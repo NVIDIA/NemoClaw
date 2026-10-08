@@ -52,7 +52,7 @@ fn bound_spec(kind: &str, want: &Spec, binding: Option<&StateBinding>) -> Result
     let Some(binding) = binding else {
         return Ok(want.clone());
     };
-    let mut bound = binding.gateway_values();
+    let mut bound = binding.typed_values();
     bound.insert("spec".into(), binding.spec.clone());
     let old = Spec::from_values(kind, &bound)
         .map_err(|_| Error::Conflict("bound runtime specification is incomplete"))?;

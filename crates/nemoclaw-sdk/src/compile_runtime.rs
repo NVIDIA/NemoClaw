@@ -61,7 +61,7 @@ fn runtime_targets_with_plans(
             Ok(Target {
                 kind: kind.into(),
                 address: format!("nemoclaw_{kind}.runtime"),
-                values: Row::from([("spec".into(), spec.encode()?)]),
+                values: spec.row()?,
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -147,8 +147,16 @@ pub(crate) fn runtime_graph(
             .iter()
             .filter(|target| target.kind != "helm_release")
         {
-            let mut attributes =
-                json!({"spec": target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
+            // The environment list travels as JSON in the target row.
+            let mut attributes = json!({});
+            for (name, value) in &target.values {
+                if name == crate::kubernetes::ENVIRONMENT_FIELD {
+                    attributes["environment"] = serde_json::from_str(value)
+                        .map_err(|_| Error::State("invalid Kubernetes environment"))?;
+                } else {
+                    attributes[name] = json!(value.replace("${", "$${").replace("%{", "%%{"));
+                }
+            }
             attributes["lifecycle"] = json!({"postcondition": [{
                 "condition": "${self.running == \"true\"}",
                 "error_message": "Managed Kubernetes reconciliation is incomplete; retain the same configuration and state directory, resolve prerequisites, then run apply again."
@@ -167,7 +175,7 @@ pub(crate) fn runtime_graph(
             .iter()
             .find(|target| target.kind == crate::kubernetes::GATEWAY_KIND)
             .expect("Kubernetes gateway target");
-        let spec = crate::kubernetes::Spec::decode(&gateway.values["spec"])?;
+        let spec = crate::kubernetes::Spec::from_row(&gateway.kind, &gateway.values)?;
         crate::kubernetes::gateway::configure(&mut graph, &spec)?;
         return Ok((graph, targets));
     }

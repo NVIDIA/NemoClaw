@@ -285,7 +285,7 @@ fn bind_teardown_processes(
             crate::kubernetes::GATEWAY_KIND | crate::kubernetes::AUTH_KIND
         ) {
             if let Some(binding) = bindings.get(&target.address)
-                && binding.spec != target.values["spec"]
+                && binding.differs(&target.values)
             {
                 return Err(Error::Conflict(
                     "Kubernetes gateway binding differs from retained intent",

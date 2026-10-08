@@ -124,8 +124,7 @@ fn openshift_compiles_platform_identity_and_wire_driver_without_docker() {
                 .iter()
                 .filter(|target| target.kind != "helm_release")
             {
-                let spec: Value = serde_json::from_str(&target.values["spec"]).unwrap();
-                assert_eq!(spec["settings"]["runtime"]["provider"], "openshift");
+                assert_eq!(target.values["compute_driver"], "openshift");
             }
             let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
             // The platform stage has no gateway, so it omits the gateway providers.

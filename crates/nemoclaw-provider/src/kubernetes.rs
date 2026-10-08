@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Kubernetes preparation, authentication and gateway observation resources.
 //!
-//! Each row carries the encoded specification. Operations connect with the
-//! kubeconfig and context it names and keep their receipt in the directory
+//! Each row carries the cluster target and identity as attributes. Operations
+//! connect with the kubeconfig and context they name and keep their receipt in the directory
 //! the SDK passes through `NEMOCLAW_KUBERNETES_STATE`.
 
 use crate::{
@@ -39,34 +39,22 @@ fn bound_id(row: &Row) -> Option<&str> {
 }
 
 fn spec(kind: &str, row: &Row) -> Result<Spec, ObservationError> {
-    let spec = Spec::decode(row.get("spec").ok_or(ObservationError::Incomplete)?)
-        .map_err(|_| ObservationError::Query)?;
-    if spec.kind != kind {
-        return Err(ObservationError::BindingMismatch);
-    }
-    Ok(spec)
+    Spec::from_row(kind, row).map_err(|error| match error {
+        Error::Observation(error) => error,
+        _ => ObservationError::Query,
+    })
 }
 
 /// The provider row for an observation, or `None` when nothing exists.
-fn row(source: &Row, response: Response) -> Result<Option<Row>, ObservationError> {
+fn row(spec: &Spec, response: Response) -> Result<Option<Row>, ObservationError> {
     let Some(id) = response.id else {
         return Ok(None);
     };
-    let spec = source
-        .get("spec")
-        .ok_or(ObservationError::Incomplete)?
-        .clone();
     let running = response.running.ok_or(ObservationError::Incomplete)?;
-    let authentication = Spec::decode(&spec)
-        .map_err(|_| ObservationError::Query)?
-        .kind
-        == AUTH_KIND;
-    let mut result = Row::from([
-        ("spec".into(), spec),
-        ("id".into(), id),
-        ("running".into(), running.to_string()),
-    ]);
-    if authentication {
+    let mut result = spec.row().map_err(|_| ObservationError::Query)?;
+    result.insert("id".into(), id);
+    result.insert("running".into(), running.to_string());
+    if spec.kind == AUTH_KIND {
         let release_present = response
             .release_present
             .ok_or(ObservationError::Incomplete)?;
@@ -121,14 +109,14 @@ fn failed_mutation(
 #[async_trait]
 impl Backend for KubernetesBackend {
     async fn plan(&self, kind: &str, desired: &Row, prior: Option<&Row>) -> Result<(), Error> {
+        let want = spec(kind, desired)?;
         if let Some(prior) = prior
-            && prior.get("spec") != desired.get("spec")
+            && spec(kind, prior)? != want
         {
             return Err(Error::Conflict(
                 "managed Kubernetes target or identity changed; resources retained",
             ));
         }
-        spec(kind, desired)?;
         Ok(())
     }
 
@@ -145,7 +133,7 @@ impl Backend for KubernetesBackend {
         } else {
             operations.read(&spec, bound_id(prior)).await?
         };
-        let row = row(prior, response)?;
+        let row = row(&spec, response)?;
         // Storage is retained: once recorded, it never reads as absent.
         if row.is_none() && kind == STORAGE_KIND && bound_id(prior).is_some() {
             return Err(ObservationError::Incomplete);
@@ -163,7 +151,7 @@ impl Backend for KubernetesBackend {
             Err(error) => return Mutation::failed(error),
         };
         match operations.ensure(&spec, bound_id(desired)).await {
-            Ok(response) => match row(desired, response) {
+            Ok(response) => match row(&spec, response) {
                 Ok(Some(row)) => Mutation::complete(row),
                 Ok(None) => Mutation::failed(ObservationError::Incomplete),
                 Err(error) => Mutation::failed(error),
@@ -175,7 +163,7 @@ impl Backend for KubernetesBackend {
                 let observed = operations
                     .read_for_removal(&spec, bound_id(desired))
                     .await
-                    .and_then(|response| row(desired, response));
+                    .and_then(|response| row(&spec, response));
                 failed_mutation(error, observed)
             }
         }
@@ -202,20 +190,30 @@ impl Backend for KubernetesBackend {
 /// Kubernetes platform resources and their planning rules.
 pub(crate) fn definitions() -> [crate::Definition; 3] {
     use crate::{Protection, carry_prior, rerun_when_stopped};
-    let validate = nemoclaw_sdk::services::validate_resource_spec;
+    use nemoclaw_sdk::kubernetes::{ENVIRONMENT_FIELD, check_attribute};
+    use nemoclaw_tofu::shape::Shape;
+    let typed = |kind| {
+        crate::services::schema_definition(kind)
+            .optional(&[ENVIRONMENT_FIELD])
+            .structured(
+                "environment",
+                ENVIRONMENT_FIELD,
+                Shape::List(Box::new(Shape::String)),
+            )
+            .validate_attribute(check_attribute)
+            .generated("owner", nemoclaw_backend::generate_owner)
+            .generated("generation", nemoclaw_backend::generate_generation)
+    };
     [
-        crate::services::schema_definition(STORAGE_KIND)
-            .validate_spec(validate)
+        typed(STORAGE_KIND)
             .computed("running", rerun_when_stopped)
             .protect(Protection::Always)
             .refuse_replacement()
             .keep_running_during_destroy(),
-        crate::services::schema_definition(GATEWAY_KIND)
-            .validate_spec(validate)
+        typed(GATEWAY_KIND)
             .computed("running", rerun_when_stopped)
             .refuse_replacement(),
-        crate::services::schema_definition(AUTH_KIND)
-            .validate_spec(validate)
+        typed(AUTH_KIND)
             .computed("running", rerun_when_stopped)
             .computed("release_present", carry_prior)
             .computed("gateway_values", prepared_gateway_values),
@@ -249,6 +247,7 @@ mod tests {
             "layout": 1, "kind": kind, "name": "nc-0123456789abcdef-gateway",
             "owner": "11111111-1111-4111-8111-111111111111", "generation": "0123456789abcdef0123456789abcdef",
             "settings": {
+                "runtime": {"provider": "kubernetes"},
                 "endpoint": "https://127.0.0.1:17671",
                 "kubernetes": {
                     "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
@@ -257,7 +256,25 @@ mod tests {
             }
         }))
         .unwrap();
-        Row::from([("spec".into(), spec.encode().unwrap())])
+        spec.row().unwrap()
+    }
+
+    fn fixture(kind: &str) -> Spec {
+        Spec::from_row(kind, &spec_row(kind)).unwrap()
+    }
+
+    /// Recorded state for a bound `kind` resource.
+    fn bound(kind: &str, observed: &[(&str, &str)]) -> crate::State {
+        use tf_provider::value::Value;
+        spec_row(kind)
+            .into_iter()
+            .map(|(name, value)| (name, Value::Value(value)))
+            .chain(
+                observed
+                    .iter()
+                    .map(|(name, value)| ((*name).into(), Value::Value((*value).into()))),
+            )
+            .collect()
     }
 
     #[test]
@@ -272,7 +289,7 @@ mod tests {
 
     #[test]
     fn an_observation_without_running_is_incomplete() {
-        let source = spec_row(GATEWAY_KIND);
+        let source = fixture(GATEWAY_KIND);
         let missing = Response {
             id: Some("uid-1".into()),
             running: None,
@@ -285,7 +302,7 @@ mod tests {
 
     #[test]
     fn authentication_requires_an_independent_release_observation() {
-        let source = spec_row(AUTH_KIND);
+        let source = fixture(AUTH_KIND);
         let missing = Response {
             id: Some("issuer-uid".into()),
             running: Some(true),
@@ -323,24 +340,14 @@ mod tests {
     fn authentication_planning_preserves_only_refreshed_release_observation() {
         let definition = crate::resource_definition(AUTH_KIND).unwrap();
         for present in ["false", "true"] {
-            let prior = crate::State::from([
-                (
-                    "id".into(),
-                    tf_provider::value::Value::Value("issuer-uid".into()),
-                ),
-                (
-                    "spec".into(),
-                    tf_provider::value::Value::Value(spec_row(AUTH_KIND)["spec"].clone()),
-                ),
-                (
-                    "running".into(),
-                    tf_provider::value::Value::Value("true".into()),
-                ),
-                (
-                    "release_present".into(),
-                    tf_provider::value::Value::Value(present.into()),
-                ),
-            ]);
+            let prior = bound(
+                AUTH_KIND,
+                &[
+                    ("id", "issuer-uid"),
+                    ("running", "true"),
+                    ("release_present", present),
+                ],
+            );
             let mut proposed = prior.clone();
             proposed.insert("release_present".into(), tf_provider::value::Value::Unknown);
             let (planned, replacements) = crate::plan_update(&definition, &prior, proposed);
@@ -354,16 +361,15 @@ mod tests {
         use tf_provider::value::Value;
         let definition = crate::resource_definition(AUTH_KIND).unwrap();
         for running in ["true", "false"] {
-            let prior = crate::State::from([
-                ("id".into(), Value::Value("issuer-uid".into())),
-                (
-                    "spec".into(),
-                    Value::Value(spec_row(AUTH_KIND)["spec"].clone()),
-                ),
-                ("running".into(), Value::Value(running.into())),
-                ("release_present".into(), Value::Value("false".into())),
-                ("gateway_values".into(), Value::Value("{}".into())),
-            ]);
+            let prior = bound(
+                AUTH_KIND,
+                &[
+                    ("id", "issuer-uid"),
+                    ("running", running),
+                    ("release_present", "false"),
+                    ("gateway_values", "{}"),
+                ],
+            );
             let mut proposed = prior.clone();
             if running == "true" {
                 proposed.insert("gateway_values".into(), Value::Unknown);
@@ -383,7 +389,7 @@ mod tests {
 
     #[test]
     fn an_incomplete_apply_retains_a_verified_partial_binding_and_its_error() {
-        let source = spec_row(AUTH_KIND);
+        let source = fixture(AUTH_KIND);
         let observed = row(
             &source,
             Response {
@@ -400,7 +406,8 @@ mod tests {
             .expect("retain the verified identity for teardown");
         assert_eq!(state["id"], "recorded-issuer-uid");
         assert_eq!(state["running"], "false");
-        assert_eq!(state["spec"], source["spec"]);
+        assert_eq!(state["namespace"], "agents");
+        assert_eq!(state["kubeconfig_env"], "TEST_CLUSTER_CONFIG");
     }
 
     #[test]
@@ -422,9 +429,7 @@ mod tests {
     async fn a_changed_specification_is_never_planned_as_an_update() {
         let prior = spec_row(GATEWAY_KIND);
         let mut desired = spec_row(GATEWAY_KIND);
-        let mut spec = Spec::decode(&desired["spec"]).unwrap();
-        spec.settings.kubernetes.as_mut().unwrap().namespace = "elsewhere".into();
-        desired.insert("spec".into(), spec.encode().unwrap());
+        desired.insert("namespace".into(), "elsewhere".into());
         assert!(matches!(
             KubernetesBackend::new()
                 .plan(GATEWAY_KIND, &desired, Some(&prior))
@@ -438,10 +443,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_row_for_the_other_kind_is_refused() {
+    async fn a_row_for_another_resource_type_is_refused() {
         let storage = spec_row(STORAGE_KIND);
         assert_eq!(
-            spec(GATEWAY_KIND, &storage).err(),
+            spec("managed_gateway", &storage).err(),
             Some(ObservationError::BindingMismatch)
         );
     }

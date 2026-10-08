@@ -581,6 +581,21 @@ The runtime graph for a managed Kubernetes or OpenShift gateway declares four re
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.
 4. `nemoclaw_kubernetes_gateway.runtime` records the chart's StatefulSet identity and reports readiness in `running`.
 
+The three NemoClaw resources take the same cluster target and identity:
+
+- `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
+- `compute_driver`: `kubernetes` or `openshift`.
+- `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
+- `kubeconfig_env`: the environment variable whose value is the kubeconfig file path.
+- `context` and `namespace`: the exact kubeconfig context and the namespace for the gateway.
+- `authentication_profile`: `development`.
+- Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs.
+- Optional `owner` and `generation`, generated on create when omitted.
+
+The three resources share one private receipt, keyed by `owner` and `name`, so give `nemoclaw_kubernetes_auth` and `nemoclaw_kubernetes_gateway` the storage's `owner`, for example `owner = nemoclaw_kubernetes_storage.platform.owner`.
+Generated graphs also give the authentication resource the gateway's `generation`.
+Changing any of these settings after creation fails planning and leaves the resources unchanged.
+
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
 The Helm provider receives only the authored kubeconfig path and context; ambient Helm and Kubernetes settings are excluded.
@@ -603,6 +618,5 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
-Kubernetes resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

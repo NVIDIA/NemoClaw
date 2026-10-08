@@ -281,3 +281,51 @@ fn service_observations_take_typed_inputs_instead_of_compiled_specs() {
     }
     assert!(diagnostics.errors.is_empty());
 }
+
+#[test]
+fn kubernetes_resources_take_typed_settings() {
+    use tf_provider::schema::{
+        AttributeConstraint::{OptionalComputed, Required},
+        AttributeType,
+    };
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let resources = provider.get_resources(&mut diagnostics).unwrap();
+    for kind in [
+        "kubernetes_storage",
+        "kubernetes_auth",
+        "kubernetes_gateway",
+    ] {
+        let schema = resources[kind].schema(&mut diagnostics).unwrap();
+        let attributes = &schema.block.attributes;
+        assert!(!attributes.contains_key("spec"), "{kind}");
+        for attribute in [
+            "name",
+            "compute_driver",
+            "endpoint",
+            "kubeconfig_env",
+            "context",
+            "namespace",
+            "authentication_profile",
+        ] {
+            assert!(
+                matches!(attributes[attribute].constraint, Required),
+                "{kind}.{attribute}"
+            );
+        }
+        for attribute in ["owner", "generation"] {
+            assert!(
+                matches!(attributes[attribute].constraint, OptionalComputed),
+                "{kind}.{attribute}"
+            );
+        }
+        assert!(
+            matches!(
+                &attributes["environment"].attr_type,
+                AttributeType::List(item) if matches!(**item, AttributeType::String)
+            ),
+            "{kind}.environment"
+        );
+    }
+    assert!(diagnostics.errors.is_empty());
+}

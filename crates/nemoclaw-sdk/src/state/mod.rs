@@ -319,6 +319,26 @@ impl Record {
 fn nullable<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
+fn nullable_list<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+/// String attributes typed resources record in state.
+const TYPED_ATTRIBUTES: [&str; 12] = [
+    "name",
+    "owner",
+    "generation",
+    "compute_driver",
+    "engine",
+    "endpoint",
+    "image",
+    "network_cidr",
+    "kubeconfig_env",
+    "context",
+    "namespace",
+    "authentication_profile",
+];
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct StateBinding {
     pub id: String,
@@ -346,14 +366,24 @@ pub(crate) struct StateBinding {
     pub image: String,
     #[serde(default, deserialize_with = "nullable")]
     pub network_cidr: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub kubeconfig_env: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub context: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub authentication_profile: String,
+    #[serde(default, deserialize_with = "nullable_list")]
+    pub environment: Vec<String>,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
 }
 
 impl StateBinding {
-    /// Bound gateway or storage attributes; empty values were not set.
-    pub(crate) fn gateway_values(&self) -> crate::backend::Row {
-        crate::managed::GATEWAY_ATTRIBUTES
+    /// Bound typed attributes of gateways, their storage, and managed
+    /// Kubernetes resources, as their compiled rows carry them; empty values
+    /// were not set.
+    pub(crate) fn typed_values(&self) -> crate::backend::Row {
+        let mut values: crate::backend::Row = TYPED_ATTRIBUTES
             .into_iter()
             .zip([
                 &self.name,
@@ -364,10 +394,21 @@ impl StateBinding {
                 &self.endpoint,
                 &self.image,
                 &self.network_cidr,
+                &self.kubeconfig_env,
+                &self.context,
+                &self.namespace,
+                &self.authentication_profile,
             ])
             .filter(|(_, value)| !value.is_empty())
             .map(|(attribute, value)| (attribute.to_owned(), value.clone()))
-            .collect()
+            .collect();
+        if !self.environment.is_empty() {
+            values.insert(
+                crate::kubernetes::ENVIRONMENT_FIELD.into(),
+                serde_json::to_string(&self.environment).unwrap_or_default(),
+            );
+        }
+        values
     }
     /// Whether bound configuration differs from compiled values. An encoded
     /// specification compares whole; typed resources compare their attributes.
@@ -375,14 +416,15 @@ impl StateBinding {
         match values.get("spec") {
             Some(spec) => *spec != self.spec,
             None => {
-                let bound = self.gateway_values();
-                crate::managed::GATEWAY_ATTRIBUTES
-                    .into_iter()
-                    .any(|attribute| {
-                        values
-                            .get(attribute)
-                            .is_some_and(|want| bound.get(attribute) != Some(want))
-                    })
+                let bound = self.typed_values();
+                // An omitted environment list is still part of a Kubernetes target.
+                let environment = crate::kubernetes::ENVIRONMENT_FIELD;
+                TYPED_ATTRIBUTES.into_iter().any(|attribute| {
+                    values
+                        .get(attribute)
+                        .is_some_and(|want| bound.get(attribute) != Some(want))
+                }) || (values.contains_key("kubeconfig_env")
+                    && values.get(environment) != bound.get(environment))
             }
         }
     }
@@ -612,6 +654,10 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.endpoint = attributes.endpoint;
                 binding.image = attributes.image;
                 binding.network_cidr = attributes.network_cidr;
+                binding.kubeconfig_env = attributes.kubeconfig_env;
+                binding.context = attributes.context;
+                binding.authentication_profile = attributes.authentication_profile;
+                binding.environment = attributes.environment;
             }
         }
     }

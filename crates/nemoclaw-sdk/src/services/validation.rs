@@ -7,20 +7,6 @@ use crate::{Error, managed::Spec};
 /// Validate a compiled resource without opening connections or reading secrets.
 /// Parse errors deliberately omit serialized source values.
 pub fn validate_resource_spec(kind: &str, encoded: &str) -> Result<(), Error> {
-    if matches!(
-        kind,
-        crate::kubernetes::STORAGE_KIND
-            | crate::kubernetes::GATEWAY_KIND
-            | crate::kubernetes::AUTH_KIND
-    ) {
-        let spec = crate::kubernetes::Spec::decode(encoded)?;
-        if spec.kind != kind {
-            return Err(Error::Conflict(
-                "Kubernetes specification does not match the resource kind",
-            ));
-        }
-        return spec.validate();
-    }
     if !matches!(kind, vllm::SERVICE_KIND | ollama::SERVICE_KIND) {
         return Ok(());
     }
