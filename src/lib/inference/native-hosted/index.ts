@@ -218,6 +218,14 @@ export async function ensureNativeHostedProvider(input: {
   const { adapter, target, profile } = input;
   assertExpectedProfile(profile, input.expected);
   await requireNativeHostedProviderProfileBoundary(adapter, target, profile, input.profilePath);
+  const activatePolicy = async () => {
+    const policy = await adapter.ensureProviderPolicyComposition({ target });
+    if (!policy.ok) {
+      throw new NativeHostedProviderError(
+        `Could not activate native ${profile.label} provider policy: ${providerErrorDetail(policy.error)}`,
+      );
+    }
+  };
 
   const before = await inspectNativeProvider(adapter, target, profile);
   if (before) {
@@ -232,6 +240,7 @@ export async function ensureNativeHostedProvider(input: {
         `OpenShell provider '${profile.providerName}' changed identity. Recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
       );
     }
+    await activatePolicy();
     if (!input.credentialValue) return receipt;
     const updated = await adapter.updateProvider({
       target,
@@ -275,6 +284,7 @@ export async function ensureNativeHostedProvider(input: {
       `A host credential is required to create OpenShell provider '${profile.providerName}'.`,
     );
   }
+  await activatePolicy();
   const created = await adapter.createProvider({
     target,
     name: profile.providerName,

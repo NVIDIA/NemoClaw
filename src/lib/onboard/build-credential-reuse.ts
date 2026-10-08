@@ -30,15 +30,19 @@ import { logMissingNvidiaApiKeyHelp } from "./missing-credential-hints";
 export async function resolveNonInteractiveBuildCredential(opts: {
   helpUrl: string | null | undefined;
   recovery: { recoveredFromSandbox: boolean; sandboxName?: string | null };
-  getSandbox: (name: string) => { nativeNvidiaProviderAttachment?: unknown } | null;
+  getSandbox: (name: string) => {
+    nativeNvidiaProviderAttachment?: unknown;
+    nativeHostedProviderAttachment?: unknown;
+  } | null;
   providerExistsInGateway: (name: string) => boolean | Promise<boolean>;
 }): Promise<boolean> {
   const { helpUrl, recovery, providerExistsInGateway } = opts;
   const { recoveredFromSandbox, sandboxName } = recovery;
+  const recovered = recoveredFromSandbox && sandboxName ? opts.getSandbox(sandboxName) : null;
   const recordedAttachment =
-    recoveredFromSandbox && sandboxName
-      ? opts.getSandbox(sandboxName)?.nativeNvidiaProviderAttachment
-      : undefined;
+    recovered?.nativeHostedProviderAttachment !== undefined
+      ? recovered.nativeHostedProviderAttachment
+      : recovered?.nativeNvidiaProviderAttachment;
   const nativeAttachment = normalizeNativeNvidiaProviderAttachment(recordedAttachment);
   if (recordedAttachment !== undefined && !nativeAttachment) {
     throw new Error("Malformed native NVIDIA provider attachment");

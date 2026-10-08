@@ -20,7 +20,7 @@ import type { ReasoningEffort } from "../../onboard/reasoning-mode";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import * as onboardSession from "../../state/onboard-session";
 import type { AmbientRecreateEnvAssessment } from "./rebuild-env-isolation";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { resolveSandboxGatewayName, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   assessRebuildAmbientEnv,
   assessRebuildInferencePreflight,
@@ -46,6 +46,7 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  * from ambient selection env.
  */
 export interface RebuildResumeConfig {
+  readonly gatewayName?: string;
   readonly nativeHostedProviderAttachment?: import("../../inference/native-hosted").NativeHostedProviderAttachment;
   readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   readonly agent: string | null;
@@ -251,6 +252,7 @@ export function prepareRebuildResumeConfig(
     return null;
   }
   return {
+    gatewayName: resolveSandboxGatewayName(sb),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     agent: rebuildAgent,
     provider: trustedSelection.provider,

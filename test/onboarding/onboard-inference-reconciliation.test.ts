@@ -319,7 +319,6 @@ const prompts = [];
 const registryUpdates = [];
 const done = new Error("INFERENCE_STEP_DONE");
 let inferenceSessionSnapshot = null;
-const hermesApiKeyProviderMetadata = ${JSON.stringify(HERMES_API_KEY_PROVIDER_METADATA)};
 
 delete process.env.NEMOCLAW_NON_INTERACTIVE;
 delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -343,9 +342,10 @@ try {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("settings get")) return { status: 0, stdout: JSON.stringify({ scope: "global", settings: { providers_v2_enabled: "true" } }), stderr: "" };
   if (normalized.includes("provider profile") && normalized.includes("export")) return { status: 0, stdout: ${JSON.stringify(HERMES_NATIVE_PROFILE_JSON)}, stderr: "" };
   if (normalized.includes("provider get") && normalized.includes("nemoclaw-hermes-provider-v1")) {
-    return { status: 0, stdout: hermesApiKeyProviderMetadata, stderr: "" };
+    return { status: 0, stdout: ${JSON.stringify(HERMES_API_KEY_PROVIDER_METADATA)}, stderr: "" };
   }
   return { status: 0, stdout: "", stderr: "" };
 };

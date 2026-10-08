@@ -38,20 +38,39 @@ it.each([
   },
 );
 
-it("rejects malformed persisted native authority before looking up a provider", async () => {
+it.each(["nativeNvidiaProviderAttachment", "nativeHostedProviderAttachment"])(
+  "rejects malformed persisted %s before looking up a provider",
+  async (field) => {
+    vi.spyOn(credentials, "resolveProviderCredential").mockReturnValue(null);
+    const getSandbox = vi.fn().mockReturnValue({
+      name: "alpha",
+      [field]: { ...attachment, providerId: "" },
+    });
+    const providerExistsInGateway = vi.fn().mockResolvedValue(true);
+    await expect(
+      resolveNonInteractiveBuildCredential({
+        helpUrl: null,
+        recovery: { recoveredFromSandbox: true, sandboxName: "alpha" },
+        getSandbox,
+        providerExistsInGateway,
+      }),
+    ).rejects.toThrow("Malformed native NVIDIA provider attachment");
+    expect(providerExistsInGateway).not.toHaveBeenCalled();
+  },
+);
+
+it("reuses the generic persisted NVIDIA receipt during keyless recreation", async () => {
   vi.spyOn(credentials, "resolveProviderCredential").mockReturnValue(null);
-  const getSandbox = vi.fn().mockReturnValue({
-    name: "alpha",
-    nativeNvidiaProviderAttachment: { ...attachment, providerId: "" },
-  });
   const providerExistsInGateway = vi.fn().mockResolvedValue(true);
-  await expect(
-    resolveNonInteractiveBuildCredential({
-      helpUrl: null,
-      recovery: { recoveredFromSandbox: true, sandboxName: "alpha" },
-      getSandbox,
-      providerExistsInGateway,
+  const result = await resolveNonInteractiveBuildCredential({
+    helpUrl: null,
+    recovery: { recoveredFromSandbox: true, sandboxName: "alpha" },
+    getSandbox: () => ({
+      nativeNvidiaProviderAttachment: undefined,
+      nativeHostedProviderAttachment: attachment,
     }),
-  ).rejects.toThrow("Malformed native NVIDIA provider attachment");
-  expect(providerExistsInGateway).not.toHaveBeenCalled();
+    providerExistsInGateway,
+  });
+  expect(result).toBe(true);
+  expect(providerExistsInGateway).toHaveBeenCalledExactlyOnceWith("nemoclaw-nvidia-prod-v1");
 });

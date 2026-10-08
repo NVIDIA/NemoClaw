@@ -33,6 +33,9 @@ describe.each(NATIVE_HOSTED_PROFILES)("native $label OpenShell provider", (profi
 
   function adapter(overrides: Partial<OpenShellProviderAdapter> = {}): OpenShellProviderAdapter {
     return {
+      ensureProviderPolicyComposition: vi.fn<
+        OpenShellProviderAdapter["ensureProviderPolicyComposition"]
+      >(async () => ({ ok: true, value: undefined })),
       importProviderProfile: vi.fn(() => ({ ok: true })),
       getProvider: vi.fn(async () => ({ ok: true, value: metadata() })),
       createProvider: vi.fn(async () => ({ ok: true })),
@@ -51,6 +54,46 @@ describe.each(NATIVE_HOSTED_PROFILES)("native $label OpenShell provider", (profi
       ...overrides,
     } as OpenShellProviderAdapter;
   }
+
+  it.each(["create", "update", "reuse"])(
+    "refuses %s when provider policy activation fails",
+    async (operation) => {
+      const providerAdapter = adapter({
+        ensureProviderPolicyComposition: vi.fn(async () => ({
+          ok: false as const,
+          error: {
+            kind: "command" as const,
+            reason: "failed" as const,
+            message: "policy unavailable",
+          },
+        })),
+      });
+      vi.mocked(providerAdapter.getProvider).mockResolvedValue(
+        operation === "create"
+          ? { ok: false, error: { kind: "command", reason: "not_found", message: "missing" } }
+          : { ok: true, value: metadata() },
+      );
+      await expect(
+        ensureNativeHostedProvider({
+          profile,
+          adapter: providerAdapter,
+          target,
+          credentialValue: operation === "reuse" ? null : "test-host-credential",
+          expected:
+            operation === "create"
+              ? undefined
+              : {
+                  schemaVersion: 1,
+                  profileId: profile.profileId,
+                  providerName: profile.providerName,
+                  providerId: "provider-id",
+                },
+        }),
+      ).rejects.toThrow(/policy/);
+      expect(providerAdapter.updateProvider).not.toHaveBeenCalled();
+      expect(providerAdapter.createProvider).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([verifyNativeHostedProviderAttachment, ensureNativeHostedProviderAttached])(
     "refuses a widened profile before observing or attaching a provider (%s)",

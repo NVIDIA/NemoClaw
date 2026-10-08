@@ -35,6 +35,13 @@ export function createNativeProviderCommandRuntime(
   ].join("\n");
   let exists = initiallyExists;
   const run = (args: string[]) => {
+    if (args[0] === "settings" && args[1] === "get") {
+      const output = JSON.stringify({
+        scope: "global",
+        settings: { providers_v2_enabled: "true" },
+      });
+      return { status: 0, output, stdout: output, stderr: "" };
+    }
     if (args[0] !== "provider") return undefined;
     if (args[1] === "profile")
       return { status: 0, output: profileJson, stdout: profileJson, stderr: "" };

@@ -103,6 +103,71 @@ describe("canRecreateMissingRebuildGatewayProvider", () => {
 
 describe("inspectRebuildGatewayProviderRegistration", () => {
   it.each([
+    ["recorded", {}, "registered"],
+    ["replaced", { revision: { id: "foreign", resourceVersion: 2 } }, "indeterminate"],
+    ["expired", { credentialExpiresAtMs: { OPENAI_API_KEY: 1 } }, "expired"],
+  ] as const)("checks generic hosted receipt %s", async (_label, changes, expected) => {
+    const adapter = createCliOpenShellProviderAdapter();
+    const get = vi.spyOn(adapter, "getProvider").mockResolvedValue({
+      ok: true,
+      value: {
+        name: "nemoclaw-openai-api-v1",
+        type: "nemoclaw-openai-inference-v1",
+        credentialKeys: ["OPENAI_API_KEY"],
+        configKeys: [],
+        credentialExpiresAtMs: {},
+        revision: { id: "recorded-id", resourceVersion: 1 },
+        ...changes,
+      },
+    });
+    await expect(
+      inspectRebuildGatewayProviderRegistration(
+        "openai-api",
+        vi.fn(),
+        "Preflight",
+        undefined,
+        adapter,
+        "OPENAI_API_KEY",
+        {
+          schemaVersion: 1,
+          profileId: "nemoclaw-openai-inference-v1",
+          providerName: "nemoclaw-openai-api-v1",
+          providerId: "recorded-id",
+        },
+      ),
+    ).resolves.toBe(expected);
+    expect(get).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerName: "nemoclaw-openai-api-v1",
+        includeCredentialExpirations: true,
+      }),
+    );
+  });
+  it("inspects the logical legacy registration without a native receipt", async () => {
+    const adapter = createCliOpenShellProviderAdapter();
+    const get = vi.spyOn(adapter, "getProvider").mockResolvedValue({
+      ok: true,
+      value: {
+        name: "openai-api",
+        type: "openai",
+        credentialKeys: ["OPENAI_API_KEY"],
+        configKeys: ["OPENAI_BASE_URL"],
+        credentialExpiresAtMs: {},
+      },
+    });
+    await expect(
+      inspectRebuildGatewayProviderRegistration(
+        "openai-api",
+        vi.fn(),
+        "Preflight",
+        undefined,
+        adapter,
+        "OPENAI_API_KEY",
+      ),
+    ).resolves.toBe("registered");
+    expect(get).toHaveBeenCalledWith(expect.objectContaining({ providerName: "openai-api" }));
+  });
+  it.each([
     ["exact native binding", {}, "registered"],
     ["replaced provider", { revision: { id: "foreign", resourceVersion: 2 } }, "indeterminate"],
     ["wrong profile", { type: "openai" }, "indeterminate"],
@@ -197,6 +262,83 @@ describe("inspectRebuildGatewayProviderRegistration", () => {
 });
 
 describe("checkRebuildGatewayCredentialReuseOrBail", () => {
+  it.each(["missing", "owned", "unowned", "replaced", "indeterminate", "keyless"] as const)(
+    "checks receiptless migration target %s on recorded gateway",
+    async (state) => {
+      const native = {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "recorded-id",
+      } as const;
+      const providerAdapter = createCliOpenShellProviderAdapter();
+      const get = vi.spyOn(providerAdapter, "getProvider").mockResolvedValue(
+        state === "missing" || state === "indeterminate"
+          ? {
+              ok: false,
+              error: {
+                kind: "command",
+                reason: state === "missing" ? "not_found" : "failed",
+                message: "unavailable",
+              },
+            }
+          : {
+              ok: true,
+              value: {
+                name: native.providerName,
+                type: native.profileId,
+                credentialKeys: ["OPENAI_API_KEY"],
+                configKeys: [],
+                revision: {
+                  id: state === "replaced" ? "foreign" : native.providerId,
+                  resourceVersion: 1,
+                },
+              },
+            },
+      );
+      const readNativeAuthority = vi
+        .fn()
+        .mockReturnValue(state === "owned" || state === "replaced" ? native : undefined);
+      const outcome = checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        config({
+          gatewayName: "nemoclaw",
+          provider: "openai-api",
+          credentialEnv: "OPENAI_API_KEY",
+        }),
+        state !== "keyless",
+        vi.fn(),
+        throwingBail,
+        {
+          providerAdapter,
+          readNativeAuthority,
+          readGatewayProviderMetadata: vi.fn(),
+          readRecordedProviderEndpoints: vi.fn(),
+        },
+      );
+      await expect(
+        outcome.then(
+          (result) => ({ result }),
+          (error) => ({ error: error.message }),
+        ),
+      ).resolves.toEqual(
+        state === "missing" || state === "owned"
+          ? { result: true }
+          : { error: expect.stringContaining("sandbox is untouched") },
+      );
+      expect(
+        get.mock.calls.every(
+          ([request]) =>
+            request.target.kind === "named" && request.target.gatewayName === "nemoclaw",
+        ),
+      ).toBe(true);
+      expect(
+        readNativeAuthority.mock.calls.every(
+          ([gateway, profile]) => gateway === "nemoclaw" && profile === native.profileId,
+        ),
+      ).toBe(true);
+    },
+  );
   it("accepts an exact complete registry route and gateway provider identity", async () => {
     await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {

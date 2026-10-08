@@ -9,18 +9,16 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import type { RunProviderCommand } from "../../adapters/openshell/provider-adapter-cli";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
+import {
+  normalizeNativeHostedProviderAttachment,
+  type NativeHostedProviderAttachment,
+} from "../../inference/native-hosted/contract";
 import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
-import {
-  isNativeNvidiaProvider,
-  nativeNvidiaProviderAttachmentFromMetadata,
-  type NativeNvidiaProviderAttachment,
-} from "../../inference/native-nvidia";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
   assessRecoveredProviderCredentialReuse,
@@ -73,10 +71,16 @@ export async function inspectRebuildGatewayProviderRegistration(
   runtimeSelection?: OpenShellRuntimeSelection,
   providerAdapter = rebuildProviderAdapter(runtimeSelection),
   credentialKey?: string | null,
-  nativeAttachment?: NativeNvidiaProviderAttachment,
+  nativeAttachment?: NativeHostedProviderAttachment,
 ): Promise<RebuildGatewayProviderRegistration> {
-  const nativeProfile = nativeHostedProfile(provider);
-  if (nativeAttachment && !isNativeNvidiaProvider(provider)) return "indeterminate";
+  const nativeProfile = nativeAttachment ? nativeHostedProfile(provider) : undefined;
+  if (
+    nativeAttachment &&
+    (!nativeProfile ||
+      nativeAttachment.profileId !== nativeProfile.profileId ||
+      nativeAttachment.providerName !== nativeProfile.providerName)
+  )
+    return "indeterminate";
   const effectiveCredentialKey = nativeProfile
     ? credentialKey
       ? nativeProfile.credentialEnv
@@ -87,17 +91,8 @@ export async function inspectRebuildGatewayProviderRegistration(
     target: managedProviderGatewayTarget,
     ...(effectiveCredentialKey ? { includeCredentialExpirations: true } : {}),
   });
-  if (result.ok && nativeAttachment) {
-    try {
-      if (
-        nativeNvidiaProviderAttachmentFromMetadata(result.value).providerId !==
-        nativeAttachment.providerId
-      )
-        return "indeterminate";
-    } catch {
-      return "indeterminate";
-    }
-  }
+  if (result.ok && nativeAttachment && result.value.revision?.id !== nativeAttachment.providerId)
+    return "indeterminate";
   const expiresAtMs =
     result.ok && effectiveCredentialKey ? result.value.credentialExpiresAtMs : undefined;
   const credentialExpiresAtMs = effectiveCredentialKey
@@ -146,6 +141,8 @@ export async function inspectRebuildGatewayProviderRegistration(
 }
 
 type GatewayCredentialReusePreflightDeps = {
+  providerAdapter?: OpenShellProviderAdapter;
+  readNativeAuthority?: typeof registry.getNativeHostedProviderAuthority;
   hasBedrockRuntimeAwsAuth?(): boolean;
   readGatewayProviderMetadata(
     provider: string,
@@ -264,7 +261,7 @@ export async function checkRebuildGatewayProviderOrBail(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   options: {
-    nativeAttachment?: NativeNvidiaProviderAttachment;
+    nativeAttachment?: NativeHostedProviderAttachment;
     allowProviderReconfigure?: boolean;
     hostCredentialAvailable?: boolean;
     onProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
@@ -323,7 +320,7 @@ function defaultGatewayCredentialReusePreflightDeps(): GatewayCredentialReusePre
   return {
     readGatewayProviderMetadata: async (provider) => {
       const result = await providerAdapter.getProvider({
-        providerName: nativeHostedProfile(provider)?.providerName ?? provider,
+        providerName: provider,
         target: managedProviderGatewayTarget,
       });
       return result.ok ? result.value : null;
@@ -354,6 +351,47 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
 ): Promise<boolean> {
   const native = nativeHostedProfile(config.provider);
   if (native) {
+    if (
+      config.nativeHostedProviderAttachment === undefined &&
+      config.nativeNvidiaProviderAttachment === undefined
+    ) {
+      if (hostCredentialAvailable && config.gatewayName) {
+        const authority = (deps.readNativeAuthority ?? registry.getNativeHostedProviderAuthority)(
+          config.gatewayName,
+          native.profileId,
+        );
+        const result = await (deps.providerAdapter ?? rebuildProviderAdapter()).getProvider({
+          providerName: native.providerName,
+          target: { kind: "named", gatewayName: config.gatewayName },
+        });
+        if (
+          !result.ok &&
+          result.error.kind === "command" &&
+          result.error.reason === "not_found" &&
+          !authority
+        )
+          return true;
+        if (
+          result.ok &&
+          authority &&
+          authority.profileId === native.profileId &&
+          authority.providerName === native.providerName &&
+          authority.providerId === result.value.revision?.id &&
+          result.value.name === native.providerName &&
+          result.value.type === native.profileId &&
+          result.value.configKeys.length === 0 &&
+          result.value.credentialKeys.length === 1 &&
+          result.value.credentialKeys[0] === native.credentialEnv
+        )
+          return true;
+        bail(
+          "Native rebuild migration target ownership could not be verified; sandbox is untouched.",
+        );
+        return false;
+      }
+      bail("Native rebuild migration requires a host credential; sandbox is untouched.");
+      return false;
+    }
     if (config.nativeNvidiaProviderAttachment) {
       return checkRebuildGatewayProviderOrBail(config.provider, config.credentialEnv, log, bail, {
         nativeAttachment: config.nativeNvidiaProviderAttachment,

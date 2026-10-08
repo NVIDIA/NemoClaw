@@ -74,6 +74,7 @@ import {
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
 import {
+  checkRebuildGatewayCredentialReuseOrBail,
   inspectRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
@@ -831,6 +832,18 @@ async function rebuildSandboxUnlocked(
         validateAtDeleteEdge: async (runtimeSelection) => {
           stoppedSource?.assertCurrent();
           if (
+            !resumeConfig.nativeHostedProviderAttachment &&
+            !resumeConfig.nativeNvidiaProviderAttachment
+          ) {
+            await checkRebuildGatewayCredentialReuseOrBail(
+              sandboxName,
+              resumeConfig,
+              Boolean(credentialEnv && hydrateCredentialEnv(credentialEnv)),
+              log,
+              bail,
+            );
+          }
+          if (
             !recreateOptions.rebuildProviderReconfigure &&
             shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
           ) {
@@ -841,7 +854,8 @@ async function rebuildSandboxUnlocked(
               runtimeSelection,
               undefined,
               resumeConfig.credentialEnv,
-              resumeConfig.nativeNvidiaProviderAttachment,
+              resumeConfig.nativeHostedProviderAttachment ??
+                resumeConfig.nativeNvidiaProviderAttachment,
             );
             if (registration !== "registered") {
               return {

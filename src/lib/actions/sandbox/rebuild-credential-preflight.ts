@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
+import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -66,7 +66,10 @@ async function preflightHermesProviderCredentials(
 
   if (binding.exists) {
     const matches =
-      binding.credentialKeys?.length === 1 && binding.credentialKeys[0] === expectedCredentialEnv;
+      binding.credentialKeys?.length === 1 &&
+      (binding.credentialKeys[0] === expectedCredentialEnv ||
+        (authMethod === "api_key" &&
+          binding.credentialKeys[0] === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV));
     if (matches) {
       log("Hermes Provider rebuild preflight: credential binding matches");
       return true;
@@ -116,9 +119,15 @@ export async function preflightRebuildCredentials(
     sb.endpointUrl,
   );
   const rebuildProvider = sb.provider;
-  const nativeAttachment = normalizeNativeNvidiaProviderAttachment(
-    sb.nativeNvidiaProviderAttachment,
-  );
+  const rawAttachment =
+    sb.nativeHostedProviderAttachment !== undefined
+      ? sb.nativeHostedProviderAttachment
+      : sb.nativeNvidiaProviderAttachment;
+  const nativeAttachment = normalizeNativeHostedProviderAttachment(rawAttachment);
+  if (rawAttachment !== undefined && !nativeAttachment) {
+    bail("Malformed native provider attachment; sandbox is untouched.");
+    return false;
+  }
   if (nativeAttachment) {
     return checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
       nativeAttachment,

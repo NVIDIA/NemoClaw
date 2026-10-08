@@ -336,7 +336,8 @@ export async function runRebuildPreflightPhase(
       // but before backup or any destructive rebuild work begins.
       const { resumeConfig } = preparedTarget.targetConfig;
       const hostCredentialAvailable = Boolean(
-        resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
+        preparedTarget.targetConfig.credentialEnv &&
+        hydrateCredentialEnv(preparedTarget.targetConfig.credentialEnv),
       );
       if (
         !(await checkRebuildGatewayCredentialReuseOrBail(

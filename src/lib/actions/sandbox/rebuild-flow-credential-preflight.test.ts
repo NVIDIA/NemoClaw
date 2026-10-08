@@ -13,7 +13,10 @@ import {
   nativeHostedProfile,
   NATIVE_HOSTED_PROFILES,
 } from "../../inference/native-hosted/profiles";
-import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import {
+  makePreparedRecoveryManifest,
+  nativeProviderRebuildScenario,
+} from "./rebuild-flow-test-fixtures";
 
 function createRebuildFlowHarness(
   options: NonNullable<Parameters<typeof createBaseRebuildFlowHarness>[0]>,
@@ -37,9 +40,12 @@ function createRebuildFlowHarness(
       : {}),
     ...(profile?.logicalProvider === "hermes-provider" && !options.runOpenshell
       ? {
-          runOpenshell: providerRuntime(["hermes-provider"], {
-            "hermes-provider": "OPENAI_API_KEY",
-          }),
+          runOpenshell: providerRuntime(
+            options.hermesProviderExists === false ? [] : ["hermes-provider"],
+            {
+              "hermes-provider": "OPENAI_API_KEY",
+            },
+          ),
         }
       : {}),
   });
@@ -275,10 +281,27 @@ describe("rebuildSandbox flow: credential preflight", () => {
         provider: "nvidia-prod",
         model: MODEL,
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        nativeHostedProviderAttachment: undefined,
       },
       hydrateCredentialEnv: (credentialEnv) =>
         credentialEnv === "NVIDIA_INFERENCE_API_KEY" ? "saved-provider-key" : null,
-      runOpenshell: providerRuntime(["nvidia-prod"]),
+      runOpenshell: (args) => {
+        const stdout =
+          args[1] === "get"
+            ? "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: NVIDIA_BASE_URL"
+            : JSON.stringify([
+                {
+                  name: "nvidia-prod",
+                  credential_keys: ["NVIDIA_INFERENCE_API_KEY"],
+                  credential_expires_at_ms: {},
+                },
+              ]);
+        return args.includes("nemoclaw-nvidia-prod-v1")
+          ? { status: 1, output: "provider not found", stdout: "", stderr: "provider not found" }
+          : args[0] === "provider" && ["get", "list"].includes(args[1])
+            ? { status: 0, output: stdout, stdout, stderr: "" }
+            : undefined;
+      },
     });
     configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
 
@@ -888,16 +911,24 @@ describe("rebuildSandbox flow: credential preflight", () => {
         hermesAuthMethod: "api_key",
       });
 
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("Missing Hermes Provider credentials");
+      const failure = await harness
+        .rebuildSandbox("alpha", ["--yes"], { throwOnError: true })
+        .catch((error: Error) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain(
+        "Native inference provider identity changed or is missing",
+      );
 
       expect(harness.registerHermesInferenceProviderSpy).not.toHaveBeenCalled();
-      const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
+      const output = [
+        [(failure as Error).message],
+        ...harness.logSpy.mock.calls,
+        ...harness.errorSpy.mock.calls,
+      ]
         .flat()
         .map(String)
         .join("\n");
-      expect(output).toContain("Hermes Provider is not registered in OpenShell");
+      expect(output).toContain("sandbox is untouched");
       expect(output).not.toContain("nous-key-from-env");
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expectNoSandboxDelete(harness.runOpenshellSpy);
@@ -923,13 +954,17 @@ describe("rebuildSandbox flow: credential preflight", () => {
       hermesAuthMethod: "oauth",
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Missing Hermes Provider credentials");
+    const failure = await harness
+      .rebuildSandbox("alpha", ["--yes"], { throwOnError: true })
+      .catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "Native inference provider identity changed or is missing",
+    );
 
-    const output = diagnostics(harness);
-    expect(output).toContain("Hermes Provider is not registered in OpenShell");
-    expect(output).toContain("credentials must be stored in OpenShell");
+    const output = `${(failure as Error).message}\n${diagnostics(harness)}`;
+    expect(output).toContain("sandbox is untouched");
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   });

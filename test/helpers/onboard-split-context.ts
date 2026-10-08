@@ -116,6 +116,9 @@ export function createNativeSetupProviderAdapter(
     throw new Error("Unexpected provider operation");
   };
   const adapter = {
+    ensureProviderPolicyComposition: vi.fn<
+      OpenShellProviderAdapter["ensureProviderPolicyComposition"]
+    >(async () => ({ ok: true, value: undefined })),
     importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(() => ({
       ok: true,
     })),

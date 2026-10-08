@@ -144,12 +144,70 @@ describe("rebuildSandbox flow: target credentials", () => {
     expect(harness.session.credentialEnv).toBe("OPENAI_API_KEY");
   });
 
+  it.each([false, true])(
+    "rechecks legacy Hermes migration target before deletion (changed: %s)",
+    async (changed) => {
+      const restoreEnv = snapshotEnv(["NOUS_API_KEY"]);
+      process.env.NOUS_API_KEY = "fixture-legacy-nous-key";
+      let backupStarted = false;
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "hermes-provider",
+          model: "hermes-model",
+          hermesAuthMethod: "api_key",
+          credentialEnv: "NOUS_API_KEY",
+        },
+        beforeBackup: () => {
+          backupStarted = true;
+        },
+        hermesCredentialKeys: ["NOUS_API_KEY"],
+        hydrateCredentialEnv: (key) => (key === "NOUS_API_KEY" ? "fixture-legacy-nous-key" : null),
+        runOpenshell: (args) => {
+          const result =
+            args[0] === "provider" &&
+            args[1] === "get" &&
+            args.includes("nemoclaw-hermes-provider-v1")
+              ? changed && backupStarted
+                ? {
+                    status: 0,
+                    stdout:
+                      "Name: nemoclaw-hermes-provider-v1\nType: nemoclaw-hermes-inference-v1\nId: unowned-id\nResource version: 1\nCredential keys: OPENAI_API_KEY\nConfig keys: <none>",
+                    stderr: "",
+                  }
+                : { status: 1, stdout: "", stderr: "provider not found" }
+              : undefined;
+          return result && { ...result, output: result.stdout || result.stderr };
+        },
+      });
+      try {
+        const outcome = await harness
+          .rebuildSandbox("alpha", ["--yes"], { throwOnError: true })
+          .then(
+            () => "rebuilt",
+            (error: Error) => error.message,
+          );
+        expect(outcome).toEqual(
+          changed ? expect.stringContaining("Replacement validation failed") : "rebuilt",
+        );
+        expect(harness.onboardSpy).toHaveBeenCalledTimes(changed ? 0 : 1);
+        expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+        expect(
+          harness.runOpenshellSpy.mock.calls.some(
+            ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+          ),
+        ).toBe(!changed);
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
+
   it("rejects a shared Hermes Provider whose credential binding changed", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         provider: "hermes-provider",
         model: "hermes-model",
-        hermesAuthMethod: "api_key",
+        hermesAuthMethod: "oauth",
       },
       hermesCredentialKeys: ["NOUS_API_KEY"],
     });

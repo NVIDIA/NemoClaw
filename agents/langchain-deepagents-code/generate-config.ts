@@ -15,6 +15,7 @@ import {
   normalizeManagedDcodeEndpointUrl,
   resolveManagedDcodeIdentity,
 } from "../../src/lib/inference/managed-dcode/identity.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../src/lib/inference/native-nvidia/contract.ts";
 import { NATIVE_HOSTED_PROFILES } from "../../src/lib/inference/native-hosted/profiles.ts";
 
 import { OPENROUTER_DEFAULT_HEADERS } from "../../src/lib/inference/native-hosted/openrouter-headers.ts";
