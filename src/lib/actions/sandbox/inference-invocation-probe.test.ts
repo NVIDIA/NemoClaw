@@ -3,6 +3,7 @@
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import {
   existsSync,
   mkdtempSync,
@@ -22,6 +23,7 @@ import {
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationInput,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -56,7 +58,8 @@ function runProbeCommandWithBody(
   code: string,
   body: string,
   parentDirectory: string = tmpdir(),
-  probeInput = input,
+  probeInput: SandboxInferenceInvocationInput = input,
+  probeEnvironment: NodeJS.ProcessEnv = {},
 ): { stdout: string; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
@@ -77,7 +80,7 @@ function runProbeCommandWithBody(
     );
     const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}`, ...probeEnvironment },
     });
     return {
       stdout: run.stdout || "",
@@ -141,11 +144,37 @@ describe("sandbox inference invocation probe", () => {
     });
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
-    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).toContain("openshell:resolve:env:");
   });
+
+  it.each(["nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-ultra-550b-a55b"])(
+    "sends the supervisor placeholder for the reported native model %s (#12822)",
+    (model) => {
+      const placeholder = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+      const servedBody = '{"choices":[{"message":{"content":"OK"}}]}';
+      const result = runProbeCommandWithBody(
+        "200",
+        servedBody,
+        tmpdir(),
+        {
+          ...input,
+          provider: "nvidia-prod",
+          model,
+          nativeProvider: true,
+        },
+        { NVIDIA_INFERENCE_API_KEY: placeholder },
+      );
+
+      expect(result.stdout).toBe(`200\n${servedBody}`);
+      expect(result.argv).toContain(`Authorization: Bearer ${placeholder}`);
+      expect(result.argv.at(-1)).toBe("https://integrate.api.nvidia.com/v1/chat/completions");
+      expect(JSON.parse(result.argv[result.argv.indexOf("--data-binary") + 1]).model).toBe(model);
+      expect(result.argv.join("\n")).not.toContain("nemoclaw-openshell-provider");
+    },
+  );
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
     const execute = vi.fn(async () => ({
@@ -444,9 +473,59 @@ describe("sandbox inference invocation probe", () => {
       ),
     ).resolves.toEqual({
       ok: false,
-      detail: "sandbox inference invocation probe was unavailable",
+      detail: "sandbox inference invocation probe exited with status 127",
       httpStatus: null,
       endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it.each([
+    [56, "curl-error:56\n", null, "exited with status 56"],
+    [1, "401\n", 401, "returned HTTP 401"],
+  ] as const)(
+    "preserves DCode failure diagnostics with stderr (exit %s) (#12822)",
+    async (exitCode, stdout, httpStatus, detail) => {
+      const runBuffered = vi.fn(async () =>
+        bufferedResult(exitCode, stdout, "curl: failure with nvapi-private-canary"),
+      );
+
+      const result = await probeSandboxInferenceInvocation(
+        {
+          ...input,
+          agentName: "langchain-deepagents-code",
+          provider: "nvidia-prod",
+          nativeProvider: true,
+        },
+        { commandExecutor: { runBuffered } },
+      );
+
+      expect(result).toEqual({
+        ok: false,
+        detail: `sandbox inference invocation probe ${detail}`,
+        httpStatus,
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      });
+      expect(JSON.stringify(result)).not.toContain("nvapi-private-canary");
+      expect(runBuffered).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects successful DCode evidence with startup stderr (#10080)", async () => {
+    const runBuffered = vi.fn(async () =>
+      bufferedResult(
+        0,
+        '200\n{"choices":[{"message":{"content":"OK"}}]}',
+        "untrusted startup output",
+      ),
+    );
+    await expect(
+      probeSandboxInferenceInvocation(
+        { ...input, agentName: "langchain-deepagents-code" },
+        { commandExecutor: { runBuffered } },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      detail: "sandbox inference invocation probe was unavailable",
     });
   });
 
@@ -644,4 +723,28 @@ describe("native inference transport failures", () => {
       probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
     ).rejects.toBe(error);
   });
+});
+
+it.each(["", "opaque-real-token"])(
+  "rejects non-placeholder native probe credentials before use (%s)",
+  (value) => {
+    const result = spawnSync("sh", ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf used`], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  },
+);
+
+it("uses the current supervisor credential generation for native probes", () => {
+  const value = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+  const result = spawnSync(
+    "sh",
+    ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf '%s' "$AUTH_HEADER"`],
+    { encoding: "utf8", env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value } },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe(`Authorization: Bearer ${value}`);
 });
