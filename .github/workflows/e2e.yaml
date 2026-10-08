@@ -177,6 +177,8 @@ jobs:
           retention-days: 1
 
   base-image-publication:
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.managed_image_required != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
@@ -356,7 +358,6 @@ jobs:
         run: node --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"
 
   generate-matrix:
-    needs: base-image-publication
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -374,6 +375,8 @@ jobs:
       release_required_jobs: ${{ steps.matrix.outputs.release_required_jobs }}
       selected_jobs: ${{ steps.matrix.outputs.selected_jobs }}
       selected_workflow_jobs: ${{ steps.matrix.outputs.selected_workflow_jobs }}
+      managed_image_required: ${{ steps.matrix.outputs.managed_image_required }}
+      openshell_version: ${{ steps.openshell_version.outputs.version }}
       catalogue_standard_matrix: ${{ steps.matrix.outputs.catalogue_standard_matrix }}
       catalogue_nvidia_api_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_api_matrix }}
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
@@ -696,6 +699,14 @@ jobs:
             export CHANGED_FILES
           fi
           npx --no-install tsx tools/e2e/workflow-plan.mts --ci-output
+
+      - id: openshell_version
+        name: Resolve reviewed candidate OpenShell version
+        env:
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --no-warnings tools/e2e/candidate-openshell-version.mts
 
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
@@ -3468,8 +3479,8 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_CANDIDATE_VERSION: "0.0.116"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
+      NEMOCLAW_CANDIDATE_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
+      NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       DOCKER_GRPC_PROBE_IMAGE: "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3543,11 +3554,11 @@ jobs:
       E2E_TARGET_ID: "external-gateway-health"
       E2E_AGENT_RUNTIME: "none"
       E2E_OBSERVABLE_OUTCOME: "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.116; no inference endpoint"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with reviewed candidate OpenShell; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -6308,6 +6319,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: Require every selected E2E result
         env:
+          MANAGED_IMAGE_REQUIRED: ${{ needs.generate-matrix.outputs.managed_image_required }}
           NEEDS_JSON: ${{ toJSON(needs) }}
           RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
           E2E_RESULT_PATH: ${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}

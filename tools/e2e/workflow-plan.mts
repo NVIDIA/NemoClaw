@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { appendFileSync } from "node:fs";
+import { requiresManagedImages } from "./workflow-prerequisites.mts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -1176,6 +1177,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
       `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
+      `managed_image_required=${requiresManagedImages(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
       `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,

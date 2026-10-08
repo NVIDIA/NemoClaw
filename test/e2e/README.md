@@ -1836,6 +1836,15 @@ The API must report `NVIDIA/NemoClaw` as the PR source repository. Empty `jobs` 
 
 A same-repository PR may also select any supported E2E job or target.
 Main and manual PR runs use the same typed planner from the trusted workflow revision.
+The planner derives managed-image prerequisites from the selected jobs' dependency graph.
+Gateway auth and external gateway health can run without managed-agent image publication;
+selecting an image consumer alongside them retains that consumer's publication gate.
+Before candidate execution, the trusted installer verifier reads the exact candidate's blueprint,
+installer, Brev installer, and supervisor pins as data and selects its reviewed OpenShell release.
+Gateway auth and external gateway health use that version, not the version pinned on `main`.
+Unreviewed releases, inconsistent pins, and modified installer templates fail admission.
+Adding release trust remains a reviewed change; selecting an already trusted version needs no
+version-specific workflow change. A focused pass is not full release qualification.
 PRs from forks, including other NVIDIA repositories, are rejected before candidate execution.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 Jetson and Launchable retain their operator and image-producer requirements.

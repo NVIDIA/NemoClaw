@@ -1764,15 +1764,14 @@ function parseCliOptions(argv: string[]): CliOptions {
   return { blueprint, brevInstaller, format, installer, supervisorRuntime };
 }
 
-function runCli(): void {
-  const options = parseCliOptions(process.argv.slice(2));
-  const blueprintSource = readInstallerInput(options.blueprint, "blueprint");
-  const installerSource = readInstallerInput(options.installer, "installer");
-  const brevInstallerSource = readInstallerInput(options.brevInstaller, "Brev launchable");
-  const supervisorRuntimeSource = readInstallerInput(
-    options.supervisorRuntime,
-    "supervisor runtime",
-  );
+export function validateInstallerSources(sources: {
+  blueprintSource: string;
+  installerSource: string;
+  brevInstallerSource: string;
+  supervisorRuntimeSource: string;
+}) {
+  const { blueprintSource, installerSource, brevInstallerSource, supervisorRuntimeSource } =
+    sources;
   const installerPins = extractInstallerPins(installerSource, {
     functionName: "openshell_pinned_sha256",
     sourceLabel: "installer",
@@ -1851,6 +1850,18 @@ function runCli(): void {
       fail(`installer pin-table release ${releaseVersion} must match ${label} ${runtimeVersion}`);
     }
   }
+  return { releaseVersion, pins, installerReleases, installerTemplateSha256, brevTemplateSha256 };
+}
+
+function runCli(): void {
+  const options = parseCliOptions(process.argv.slice(2));
+  const { pins, installerReleases, installerTemplateSha256, brevTemplateSha256 } =
+    validateInstallerSources({
+      blueprintSource: readInstallerInput(options.blueprint, "blueprint"),
+      installerSource: readInstallerInput(options.installer, "installer"),
+      brevInstallerSource: readInstallerInput(options.brevInstaller, "Brev launchable"),
+      supervisorRuntimeSource: readInstallerInput(options.supervisorRuntime, "supervisor runtime"),
+    });
   if (options.format === "json") {
     process.stdout.write(
       `${JSON.stringify(

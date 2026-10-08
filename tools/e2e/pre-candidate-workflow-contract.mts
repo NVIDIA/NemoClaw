@@ -73,6 +73,11 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
       "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}",
   },
   "Stage immutable native Podman E2E toolchains": {},
+  "Resolve reviewed candidate OpenShell version": {
+    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    GITHUB_TOKEN: "${{ github.token }}",
+  },
 };
 
 export const PRE_CANDIDATE_STEP_CONDITIONS: Readonly<Record<string, string | undefined>> = {
