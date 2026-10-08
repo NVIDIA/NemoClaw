@@ -89,6 +89,7 @@ NemoClaw-E2E-Growth: approve <change-sha256>
 ```
 
 Post the command as the entire comment, without a code fence or explanatory text.
+Edited comments are ineligible because moderation can preserve the original author. Post a new record to change a decision.
 Inspect the reported budget changes before recording approval.
 A request to repair CI does not itself authorize increasing the assertion budget. Use `revoke` instead of `approve` to revoke it.
 The independent check reads paginated comments from GitHub and verifies each author's current maintain

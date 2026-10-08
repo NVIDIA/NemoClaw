@@ -40,7 +40,12 @@ export function e2eBudgetChangeDigest(baseSource: string, headSource: string): s
 }
 
 type Api = (endpoint: string) => unknown;
-type Comment = { body?: unknown; user?: { login?: unknown; type?: unknown } };
+type Comment = {
+  body?: unknown;
+  created_at?: unknown;
+  updated_at?: unknown;
+  user?: { login?: unknown; type?: unknown };
+};
 
 function githubApi(endpoint: string): unknown {
   return JSON.parse(
@@ -71,6 +76,13 @@ export function hasMaintainerBudgetApproval(
     for (const value of comments) {
       const comment = value as Comment | null;
       if (!comment || typeof comment.body !== "string" || comment.user?.type !== "User") continue;
+      // GitHub preserves the original author when a moderator edits a comment.
+      if (
+        typeof comment.created_at !== "string" ||
+        !Number.isFinite(Date.parse(comment.created_at)) ||
+        comment.created_at !== comment.updated_at
+      )
+        continue;
       const record = comment.body
         .trim()
         .match(/^NemoClaw-E2E-Growth: (approve|revoke) ([a-f0-9]{64})$/);

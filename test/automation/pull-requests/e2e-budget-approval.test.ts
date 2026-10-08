@@ -28,7 +28,12 @@ function changedBudget(increase = 1) {
 }
 
 function record(action = "approve", digest = HASH, login = "maintainer", type = "User") {
-  return { body: `NemoClaw-E2E-Growth: ${action} ${digest}`, user: { login, type } };
+  return {
+    body: `NemoClaw-E2E-Growth: ${action} ${digest}`,
+    user: { login, type },
+    created_at: "2026-10-08T00:00:00Z",
+    updated_at: "2026-10-08T00:00:00Z",
+  };
 }
 
 describe("E2E budget change approval", () => {
@@ -147,6 +152,8 @@ describe("GitHub maintainer budget records", () => {
 
   it.each([
     record("approve", "b".repeat(64)),
+    { ...record(), updated_at: "2026-10-08T00:00:01Z" },
+    { ...record(), created_at: undefined, updated_at: undefined },
     record("approve", HASH, "maintainer", "Bot"),
     { ...record(), body: `Example:\nNemoClaw-E2E-Growth: approve ${HASH}` },
     { ...record(), body: "```text\n" + record().body + "\n```" },
