@@ -39,10 +39,17 @@ describe("onboard build recreate credential reuse (#5441)", () => {
 
       // Fake openshell: the gateway already holds an nvidia-prod inference route
       // (recovered via `inference get`) and the provider exists (`provider get`
-      // returns success). Everything else is a no-op success.
+      // returns success). Provider-derived policy is enabled on this gateway.
+      // Everything else is a no-op success.
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
+if [ "$*" = "settings get -g nemoclaw --global --json" ]; then
+  cat <<'EOF'
+{"scope":"global","settings":{"providers_v2_enabled":"true"}}
+EOF
+  exit 0
+fi
 if [ "$1" = "inference" ] && [ "$2" = "get" ]; then
   cat <<'EOF'
 Gateway inference:
