@@ -44,6 +44,34 @@ fn agrees_at(
 }
 
 #[test]
+fn unsupported_health_policy_is_a_per_sandbox_boolean_and_round_trips() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let original = input("local.yaml");
+    agrees(&validator, &original, true);
+    for policy in [
+        json!(true),
+        json!(false),
+        json!("true"),
+        Value::Null,
+        json!({}),
+    ] {
+        let mut value = original.clone();
+        value["spec"]["sandboxes"][0]["allowUnsupportedHealth"] = policy.clone();
+        agrees(&validator, &value, policy.is_boolean());
+        if policy.is_boolean() {
+            let document = Document::parse(value.to_string().as_bytes()).unwrap();
+            assert_eq!(
+                Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+                document
+            );
+        }
+    }
+    let mut misplaced = original;
+    misplaced["spec"]["allowUnsupportedHealth"] = json!(true);
+    agrees(&validator, &misplaced, false);
+}
+
+#[test]
 fn image_pull_policy_accepts_only_supported_values_on_managed_containers() {
     let validator = jsonschema::validator_for(&input_schema()).unwrap();
     for (file, path) in [

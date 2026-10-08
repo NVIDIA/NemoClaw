@@ -3,5 +3,6 @@
 
 //! Package-specific service installers.
 
+pub mod container;
 pub mod ollama;
 pub mod vllm;

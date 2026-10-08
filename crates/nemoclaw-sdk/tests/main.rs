@@ -38,6 +38,8 @@ mod config_scenarios;
 mod config_schema;
 #[path = "config_validation.rs"]
 mod config_validation;
+#[path = "container_inputs.rs"]
+mod container_inputs;
 #[path = "deployment.rs"]
 mod deployment;
 #[path = "discovery_graph.rs"]

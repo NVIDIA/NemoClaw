@@ -307,7 +307,7 @@ pub(crate) fn deployment_graph(
     let mut graph = compile_with_plans(document, version, &service_plans, &raw)?;
     crate::docker_compute::configure(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid Docker compute graph"))?;
-    crate::services::configure_proxy_readiness(&mut graph, &raw)
+    crate::services::configure_readiness(&mut graph, &raw)
         .map_err(|_| ConfigError::new("invalid proxy readiness graph"))?;
     let targets = crate::docker_compute::targets(&raw)
         .map_err(|_| ConfigError::new("invalid Docker compute plan"))?;
@@ -429,6 +429,12 @@ fn compile_with_plans(
                 .expect("Fabric configuration JSON");
             attributes["config_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
         }
+        if target.kind == crate::services::installers::container::inputs::INPUTS_KIND {
+            let value = attributes["spec"]
+                .as_str()
+                .expect("application input specification");
+            attributes["spec"] = json!(value.replace("${", "$${").replace("%{", "%%{"));
+        }
         // OpenShell objects take typed inputs; their rows carry the JSON.
         for input in nemoclaw_openshell::structured_inputs(&target.kind) {
             let encoded = attributes
@@ -524,6 +530,7 @@ fn compile_with_plans(
         }]});
         if crate::backend::openshell_lifecycle(&target.kind)
             != Some(crate::backend::OpenShellLifecycle::Reconstructible)
+            && target.kind != crate::services::installers::container::inputs::INPUTS_KIND
         {
             attributes["lifecycle"]["prevent_destroy"] = json!(true);
         }
@@ -561,13 +568,18 @@ fn compile_with_plans(
             "${{merge({{for key, value in {reference} : key => value if !contains({typed}, key)}}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}",
             sandbox.name
         );
+        let condition = if sandbox.allow_unsupported_health {
+            "${self.ready || try(jsondecode(self.health_json).supported == false && jsondecode(self.health_json).report == null && jsondecode(self.health_json).reason_code == \"fabric_health_unsupported\", false)}"
+        } else {
+            "${self.ready}"
+        };
         Ok((sandbox.name.clone(), json!({
             "sandbox":binding,
             // uuid() is unknown in a saved plan and records a unique observation
             // token, so failed applies cannot report stale health as a new result.
             "read_trigger":"${uuid()}",
             "lifecycle":{"postcondition":[{
-                "condition":"${self.ready}",
+                "condition":condition,
                 "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
             }]}
         })))

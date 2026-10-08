@@ -9,6 +9,8 @@ use serde_json::Value;
 #[serde(deny_unknown_fields)]
 pub struct RuntimeHealth {
     pub supported: bool,
+    // An unsupported observation must carry explicit null, not omit the report.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub report: Option<Value>,
     pub reason_code: Option<String>,
 }
@@ -44,6 +46,13 @@ impl RuntimeHealth {
     /// Health succeeds only when the bridge confirmed a successful Fabric report.
     pub fn allows_apply_completion(&self) -> bool {
         self.supported && self.report.is_some() && self.reason_code.is_none()
+    }
+
+    /// Only this explicit capability result can qualify for an installation exception.
+    pub fn is_unsupported(&self) -> bool {
+        !self.supported
+            && self.report.is_none()
+            && self.reason_code.as_deref() == Some("fabric_health_unsupported")
     }
 }
 

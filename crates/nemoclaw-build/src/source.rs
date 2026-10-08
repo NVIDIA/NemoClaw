@@ -14,6 +14,7 @@ pub const SOURCE_ROOTS: &[&str] = &[
     "image/fabric/catalog.json",
     "image/fabric/Dockerfile",
     "image/fabric/FABRIC-LICENSE",
+    "image/container-inputs/Dockerfile",
     "image/NOTICE.md",
 ];
 pub fn source_version(files: &[(String, Vec<u8>)]) -> String {

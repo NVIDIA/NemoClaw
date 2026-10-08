@@ -62,3 +62,25 @@ Exercise SDK apply, CLI export, SDK unchanged apply, and CLI destroy against the
 Qualify the provider against pinned OpenTofu and use an explicitly verified bundle for deployment tests.
 Separate deterministic tests from opt-in live qualification; record a live run's revision, platform, and environment in its CI results or the commit that relies on it.
 Compilation alone does not qualify migration or platforms.
+
+## Local Container Connection Decision
+
+Decision: Accept, authorized by San Dang in the operator conversation on October 6, 2026: “Ok let's do it from nemoclaw side as well.”
+Accountable maintainer: San Dang.
+Reason: the fresh DGX Station VoiceClaw manual test needs to connect to the gateway that NemoClaw installs, rather than an externally provisioned HTTPS/OIDC gateway.
+Placement: the existing generic container connection validator, compiler, and protected descriptor delivery; VoiceClaw owns the matching application transport.
+
+The development-only connection explicitly selects `authentication.mode: none`, `refreshMode: none`, and `tls.trust: none`, without an OpenShell credential reference.
+It is restricted to this deployment's managed local Docker gateway and the same owned Docker network and engine.
+The compiler derives the gateway container's private IPv4 address and listen port; an authored endpoint must match that binding exactly.
+The gateway's host publication stays on loopback.
+HTTPS/OIDC behavior remains unchanged, and authentication or transport failure never selects anonymous mode automatically.
+
+This profile provides neither encryption nor client authentication or per-application authorization.
+Any process able to reach the gateway can use its API; use only for an isolated, trusted local development deployment, not production or shared untrusted workloads.
+No issuer, proxy, Docker socket grant to the application, operator credential copying, new lifecycle manager, or native-health claim is accepted.
+Protected speech input delivery, target/workspace binding, application health, owned removal, and dependency preservation remain unchanged.
+
+Validation: deterministic parser/schema, compilation, provider-side binding, descriptor, export/reapply, and negative transport/authentication/placement tests, followed by the separate manual Station installation and voice turn.
+Local tests do not establish image or live qualification.
+Changing network exposure, authentication authority, supported platforms, or application transport requires a new joint decision.

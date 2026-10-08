@@ -127,6 +127,27 @@ fn image_checks_include_the_reference_contract() {
         return;
     };
     assert!(targets.contains_key("reference-tests"));
+    assert!(targets.contains_key("container-input-tests"));
+}
+
+#[test]
+fn protected_input_helper_and_linux_tests_build_alone_for_the_selected_platform() {
+    for platform in ["linux/arm64", "linux/amd64"] {
+        let Some(targets) = plan(platform, &["container-inputs", "container-input-tests"]) else {
+            return;
+        };
+        assert_eq!(
+            names(&targets),
+            BTreeSet::from(["container-inputs", "container-input-tests"])
+        );
+        for target in targets.values() {
+            assert_eq!(target["dockerfile"], "image/container-inputs/Dockerfile");
+            assert_eq!(target["platforms"], serde_json::json!([platform]));
+            assert!(!target["output"].to_string().contains("registry"));
+        }
+        assert_eq!(targets["container-inputs"]["target"], "runtime");
+        assert_eq!(targets["container-input-tests"]["target"], "test");
+    }
 }
 
 #[test]

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 pub mod authentication;
+pub(crate) mod inputs;
 mod registry;
 pub use registry::BackendRegistry;
 pub(crate) mod capacity;
@@ -33,9 +34,10 @@ fn storage_definition(kind: &str) -> crate::Definition {
 }
 
 /// Installer-owned service storage and external model resources.
-pub(crate) fn definitions() -> [crate::Definition; 4] {
+pub(crate) fn definitions() -> [crate::Definition; 5] {
     use nemoclaw_sdk::services::installers::{ollama, vllm};
     [
+        inputs::definition(),
         generated_identity(schema_definition(ollama::proxy::STORAGE)),
         generated_identity(
             schema_definition(ollama::proxy::MODEL)

@@ -70,6 +70,7 @@ fn bundle_rejects_a_builder_compiled_from_different_source_inputs() {
         "image/fabric/catalog.json",
         "image/fabric/Dockerfile",
         "image/fabric/FABRIC-LICENSE",
+        "image/container-inputs/Dockerfile",
         "image/NOTICE.md",
     ] {
         fs::create_dir_all(root.path().join(name).parent().unwrap()).unwrap();

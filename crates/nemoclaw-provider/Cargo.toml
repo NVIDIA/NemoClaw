@@ -20,6 +20,7 @@ nemoclaw-docker = { path = "../nemoclaw-docker" }
 openshell-provider = { path = "../openshell-provider" }
 nemoclaw-discovery = { path = "../nemoclaw-discovery" }
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+nemoclaw-container-inputs = { path = "../nemoclaw-container-inputs" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 bollard.workspace = true
 futures-util.workspace = true

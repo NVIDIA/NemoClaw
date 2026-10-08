@@ -486,13 +486,21 @@ impl Resource for ResourceAdapter {
             diags.root_error_short("Update forbidden during destroy");
             return Some((prior, private));
         }
-        let row = match self.row(&planned, false) {
+        let mut row = match self.row(&planned, false) {
             Ok(row) => row,
             Err(error) => {
                 diags.root_error_short(error.to_string());
                 return Some((prior, private));
             }
         };
+        if self.definition.is_computed("id")
+            && row.get("id").is_none_or(String::is_empty)
+            && let Some(Value::Value(id)) = prior.get("id")
+        {
+            // A repair may replace a disposable backend object. Keep its old
+            // binding available for ownership checks, outside public state.
+            row.insert("prior_id".into(), id.clone());
+        }
         let mutation = self.backend.ensure(self.definition.kind, &row).await;
         self.finish(diags, mutation, &row, Some(prior))
             .map(|state| (state, private))
@@ -526,5 +534,67 @@ impl Resource for ResourceAdapter {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct RepairedInputs;
+    #[async_trait]
+    impl Backend for RepairedInputs {
+        async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+            unreachable!("update must not refresh through this fixture")
+        }
+        async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+            assert_eq!(kind, "container_inputs");
+            assert_eq!(desired["prior_id"], "old-helper");
+            assert!(desired["id"].is_empty());
+            let mut observed = desired.clone();
+            observed.remove("prior_id");
+            observed.insert("id".into(), "new-helper".into());
+            observed.insert("complete".into(), "true".into());
+            Mutation::complete(observed)
+        }
+        async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+            unreachable!("update must not destroy through this fixture")
+        }
+    }
+    #[tokio::test]
+    async fn partial_input_update_preserves_old_binding_and_accepts_only_the_new_computed_id() {
+        let definition = Definition::new("container_inputs", &["spec", "sandbox_id"], &[])
+            .computed("complete", crate::rerun_when_stopped)
+            .computed("id", |name, prior| {
+                if prior.get("complete") == Some(&Value::Value("false".into())) {
+                    Some(Value::Unknown)
+                } else {
+                    crate::carry_prior(name, prior)
+                }
+            });
+        let prior: State = [
+            ("spec".into(), Value::Value("{}".into())),
+            ("sandbox_id".into(), Value::Value("none".into())),
+            ("id".into(), Value::Value("old-helper".into())),
+            ("complete".into(), Value::Value("false".into())),
+        ]
+        .into();
+        let (planned, _) = plan_update(&definition, &prior, prior.clone());
+        let adapter = ResourceAdapter::new(definition, Arc::new(RepairedInputs));
+        let mut diags = Diagnostics::default();
+        let (state, _) = adapter
+            .update(
+                &mut diags,
+                prior,
+                planned,
+                State::default(),
+                ValueEmpty::default(),
+                ValueEmpty::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state["id"], Value::Value("new-helper".into()));
+        assert_eq!(state["complete"], Value::Value("true".into()));
+        assert!(!state.contains_key("prior_id"));
+        assert!(diags.errors.is_empty(), "{diags:?}");
     }
 }
