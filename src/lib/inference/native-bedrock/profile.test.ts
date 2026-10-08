@@ -51,6 +51,7 @@ function fixture() {
     createProvider,
     updateProvider,
     importProviderProfile,
+    ensureProviderPolicyComposition: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as OpenShellProviderAdapter;
   return { profile, adapter, getProvider, createProvider, updateProvider, importProviderProfile };
 }

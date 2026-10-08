@@ -60,7 +60,7 @@ function exactNativeProvider(
   );
 }
 
-function attachmentFromMetadata(
+export function attachmentFromMetadata(
   metadata: OpenShellProviderMetadata,
   profile: NativeProviderProfile,
 ): NativeProviderAttachment {
@@ -225,6 +225,15 @@ export async function ensureNativeProvider(input: {
   assertExpectedProfile(profile, input.expected);
   await requireNativeProviderProfileBoundary(adapter, target, profile, input.profilePath);
 
+  const activatePolicy = async () => {
+    const policy = await adapter.ensureProviderPolicyComposition({ target });
+    if (!policy.ok) {
+      throw new NativeProviderError(
+        `Could not activate native ${profile.label} provider policy: ${providerErrorDetail(policy.error)}`,
+      );
+    }
+  };
+
   const before = await inspectNativeProvider(adapter, target, profile);
   if (before) {
     const receipt = attachmentFromMetadata(before, profile);
@@ -238,6 +247,7 @@ export async function ensureNativeProvider(input: {
         `OpenShell provider '${profile.providerName}' changed identity. Recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
       );
     }
+    await activatePolicy();
     if (!input.credentialValue) return receipt;
     const updated = await adapter.updateProvider({
       target,
@@ -281,6 +291,7 @@ export async function ensureNativeProvider(input: {
       `A host credential is required to create OpenShell provider '${profile.providerName}'.`,
     );
   }
+  await activatePolicy();
   const created = await adapter.createProvider({
     target,
     name: profile.providerName,

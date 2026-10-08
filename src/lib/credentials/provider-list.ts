@@ -5,7 +5,7 @@ import { listMessagingProviderSuffixes } from "../messaging/channels";
 import {
   NVIDIA_HOSTED_LOGICAL_PROVIDER,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
-} from "../inference/native-nvidia";
+} from "../inference/native-nvidia/contract";
 
 const BRIDGE_PROVIDER_SUFFIXES: readonly string[] = [...listMessagingProviderSuffixes()];
 

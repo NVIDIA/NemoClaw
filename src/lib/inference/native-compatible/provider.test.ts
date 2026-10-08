@@ -44,6 +44,7 @@ async function fixture() {
     createProvider,
     updateProvider,
     importProviderProfile,
+    ensureProviderPolicyComposition: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as OpenShellProviderAdapter;
   return {
     profile,
@@ -266,6 +267,7 @@ it("uses a separate immutable profile when a selection resolves a new address se
       createProvider,
       updateProvider,
       importProviderProfile,
+      ensureProviderPolicyComposition: vi.fn().mockResolvedValue({ ok: true }),
     } as unknown as OpenShellProviderAdapter,
     credentialValue: "test-secret",
     resolveExpected,

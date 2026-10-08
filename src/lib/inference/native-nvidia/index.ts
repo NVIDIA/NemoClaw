@@ -9,6 +9,7 @@ import {
   verifyNativeProviderAttachment,
   ensureNativeProviderAttached,
   detachNativeProvider,
+  attachmentFromMetadata,
   type NativeProviderAttachment,
 } from "../native-provider/lifecycle";
 
@@ -86,6 +87,13 @@ function nvidiaReceipt(receipt: NativeProviderAttachment): NativeNvidiaProviderA
     throw new NativeNvidiaProviderError("OpenShell returned an invalid NVIDIA provider identity.");
   return normalized;
 }
+/** Validate observed NVIDIA metadata before accepting its recorded identity. */
+export function nativeNvidiaProviderAttachmentFromMetadata(
+  metadata: Parameters<typeof attachmentFromMetadata>[0],
+): NativeNvidiaProviderAttachment {
+  return nvidiaReceipt(attachmentFromMetadata(metadata, nativeProfile()));
+}
+
 export async function ensureNativeNvidiaProvider(
   input: Omit<Parameters<typeof ensureNativeProvider>[0], "profile" | "expected"> & {
     expected?: NativeNvidiaProviderAttachment;
