@@ -131,15 +131,13 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
                 .map(|kind| (kind.into(), "a".repeat(32)))
                 .into();
         let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
-        let encoded = graph["data"]["nemoclaw_service_readiness"]
-            .as_object()
-            .unwrap()
-            .values()
-            .next()
-            .unwrap()["spec"]
-            .as_str()
-            .unwrap();
-        let spec: Spec = serde_json::from_str(encoded).unwrap();
+        let spec = service_spec(&document, &generations);
+        let readiness = crate::services::Readiness::new(
+            spec.engine(),
+            &spec.name,
+            spec.runtime_configuration().unwrap(),
+        )
+        .unwrap();
         let name = spec.name.clone();
         let status = Arc::new(Mutex::new(
             json!({"phase":"ready","updated":"2026-09-15T00:00:01Z","detail":"","pid":42}),
@@ -186,7 +184,7 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
         let cancel = crate::CancellationToken::new();
         crate::services::wait_service_ready(
             &connections,
-            encoded,
+            &readiness,
             "provider-container",
             std::time::Duration::from_secs(2),
             &cancel,
@@ -197,7 +195,7 @@ async fn managed_installers_accept_current_runtime_readiness_without_collecting_
         assert!(
             crate::services::wait_service_ready(
                 &connections,
-                encoded,
+                &readiness,
                 "provider-container",
                 std::time::Duration::from_secs(2),
                 &cancel
@@ -553,16 +551,13 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
             ("managed_gateway".into(), "a".repeat(32)),
         ]
         .into();
-        let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
-        let encoded = graph["data"]["nemoclaw_service_readiness"]
-            .as_object()
-            .unwrap()
-            .values()
-            .next()
-            .unwrap()["spec"]
-            .as_str()
-            .unwrap();
-        let spec: Spec = serde_json::from_str(encoded).unwrap();
+        let spec = service_spec(&document, &generations);
+        let readiness = crate::services::Readiness::new(
+            spec.engine(),
+            &spec.name,
+            spec.runtime_configuration().unwrap(),
+        )
+        .unwrap();
         let container = serde_json::to_vec(&json!({"Id":"provider-container","Name":format!("/{}", spec.name),"State":{"Running":true,"StartedAt":"2026-09-15T00:00:00Z"}})).unwrap();
         let status = crate::docker::archive(&[(
             "status.json",
@@ -612,7 +607,7 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
         let connections = crate::docker::Connections::fixed([engine]).unwrap();
         let result = crate::services::wait_service_ready(
             &connections,
-            encoded,
+            &readiness,
             "provider-container",
             std::time::Duration::from_secs(2),
             &crate::CancellationToken::new(),
@@ -625,4 +620,17 @@ async fn authenticated_vllm_readiness_rechecks_key_permissions() {
             "credential mode must be checked even when runtime is ready: {result:?}"
         );
     }
+}
+
+/// The compiled specification of the document's managed service.
+fn service_spec(
+    document: &crate::config::Document,
+    generations: &crate::compile::Generations,
+) -> Spec {
+    let target = crate::compile::runtime_targets(document, generations)
+        .unwrap()
+        .into_iter()
+        .find(|target| matches!(target.kind.as_str(), "inference_service" | "ollama_service"))
+        .unwrap();
+    serde_json::from_str(&target.values["spec"]).unwrap()
 }

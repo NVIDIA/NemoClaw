@@ -39,7 +39,7 @@ fn gateway_spec(variable: &str) -> Spec {
         .iter()
         .find(|target| target.kind == "gateway_storage")
         .unwrap();
-    let mut spec: Spec = serde_json::from_str(&storage.values["spec"]).unwrap();
+    let mut spec = Spec::from_gateway_row(&storage.kind, &storage.values).unwrap();
     spec.layout = 2;
     spec.gateway.endpoint = document.spec.gateway.endpoint().into();
     spec

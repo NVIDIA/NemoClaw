@@ -310,15 +310,13 @@ fn bind_teardown_processes(
                 "destroy requires independent storage bindings before removing a managed process",
             ));
         }
-        let want: Spec = serde_json::from_str(&target.values["spec"])
+        let want = Spec::from_values(&target.kind, &target.values)
             .map_err(|_| Error::State("invalid runtime intent"))?;
         if plan::disposable(&target.address) {
             continue;
         }
-        target.values.insert(
-            "spec".into(),
-            bound_spec(&want, bindings.get(&target.address))?.json()?,
-        );
+        bound_spec(&target.kind, &want, bindings.get(&target.address))?
+            .write_values(&target.kind, &mut target.values)?;
     }
     Ok(())
 }
@@ -546,6 +544,10 @@ mod tests {
             owner: value("owner"),
             generation: value("generation"),
             engine: value("engine"),
+            compute_driver: value("compute_driver"),
+            endpoint: value("endpoint"),
+            image: value("image"),
+            network_cidr: value("network_cidr"),
             ..Default::default()
         }
     }

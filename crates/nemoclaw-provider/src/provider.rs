@@ -124,6 +124,10 @@ impl Provider for NemoClawProvider {
                     as Box<dyn DynamicDataSource>,
             ),
             (
+                nemoclaw_sdk::managed::GATEWAY_RUNTIME_DATA_SOURCE.into(),
+                Box::new(crate::gateway::GatewayRuntimeDataSource) as Box<dyn DynamicDataSource>,
+            ),
+            (
                 "inference_capabilities".into(),
                 Box::new(crate::inference_discovery::InferenceDataSource)
                     as Box<dyn DynamicDataSource>,

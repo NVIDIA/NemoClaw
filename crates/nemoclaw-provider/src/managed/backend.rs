@@ -48,10 +48,7 @@ impl ManagedBackend {
         };
         let mut result = match &storage {
             Some(storage) => storage.row()?,
-            None => Row::from([(
-                "spec".into(),
-                row.get("spec").ok_or(ObservationError::Incomplete)?.clone(),
-            )]),
+            None => specification(kind, row)?.gateway_row(kind)?,
         };
         if let Some(policy) = row.get("image_pull_policy") {
             result.insert("image_pull_policy".into(), policy.clone());
@@ -94,21 +91,14 @@ impl ManagedBackend {
         }))
     }
 }
-fn specification(kind: &str, encoded: &str) -> Result<Spec, Error> {
-    let spec: Spec = serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
-    let expected = if kind == GATEWAY_STORAGE_KIND {
-        GATEWAY_KIND
-    } else {
-        kind
-    };
-    if spec.kind != expected {
+fn specification(kind: &str, row: &Row) -> Result<Spec, Error> {
+    if !ManagedBackend::supports(kind) {
         return Err(ObservationError::BindingMismatch.into());
     }
-    spec.validate()?;
-    Ok(spec)
+    Spec::from_gateway_row(kind, row)
 }
 fn configured_specification(kind: &str, row: &Row) -> Result<Spec, Error> {
-    let mut spec = specification(kind, row.get("spec").ok_or(ObservationError::Incomplete)?)?;
+    let mut spec = specification(kind, row)?;
     let policy = crate::config::ImagePullPolicy::from_row(row)?;
     if let Some(process) = &mut spec.process {
         process.image_pull_policy = policy;
@@ -141,11 +131,10 @@ impl Backend for ManagedBackend {
             }
             return Ok(());
         }
-        let encoded = desired.get("spec").ok_or(ObservationError::Incomplete)?;
-        nemoclaw_sdk::services::validate_resource_spec(kind, encoded)?;
         let want = configured_specification(kind, desired)?;
+        want.validate_runtime()?;
         let old = prior
-            .map(|row| specification(kind, row.get("spec").ok_or(ObservationError::Incomplete)?))
+            .map(|row| specification(kind, row))
             .transpose()?
             .unwrap_or_else(|| want.clone());
         if self.engine.endpoint() != want.engine()
@@ -218,8 +207,7 @@ impl Backend for ManagedBackend {
                 "persistent storage deletion is forbidden",
             ));
         }
-        let spec = specification(kind, prior.get("spec").ok_or(ObservationError::Incomplete)?)
-            .map_err(|error| diagnostic(&error))?;
+        let spec = specification(kind, prior).map_err(|error| diagnostic(&error))?;
         let id = prior
             .get("id")
             .filter(|id| !id.is_empty())
@@ -309,19 +297,18 @@ mod tests {
 
 /// Extract connection selection before constructing the resource backend.
 pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationError> {
+    if ManagedBackend::supports(kind) {
+        return specification(kind, row)
+            .map(|spec| spec.engine().to_owned())
+            .map_err(|error| diagnostic(&error));
+    }
     let Some(encoded) = row.get("spec") else {
         return Storage::from_row(row)
             .map(|storage| storage.engine)
             .map_err(|error| diagnostic(&error));
     };
     if let Ok(spec) = serde_json::from_str::<Spec>(encoded) {
-        if spec.kind
-            != if kind == GATEWAY_STORAGE_KIND {
-                GATEWAY_KIND
-            } else {
-                kind
-            }
-        {
+        if spec.kind != kind {
             return Err(ObservationError::BindingMismatch);
         }
         spec.validate().map_err(|error| diagnostic(&error))?;

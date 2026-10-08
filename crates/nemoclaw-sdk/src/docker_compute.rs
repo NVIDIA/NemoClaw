@@ -53,13 +53,7 @@ fn digest(engine: &str, name: &str) -> String {
         .collect()
 }
 fn spec(target: &Target) -> Result<Spec, Error> {
-    serde_json::from_str(
-        target
-            .values
-            .get("spec")
-            .ok_or(Error::State("missing runtime spec"))?,
-    )
-    .map_err(|_| Error::State("invalid runtime spec"))
+    Spec::from_values(&target.kind, &target.values)
 }
 fn image(target: &Target) -> Result<Target, Error> {
     let (engine, name, platform) = if target.kind == "ollama_proxy" {
@@ -356,6 +350,21 @@ pub(crate) fn configure(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             )]);
         }
         if target.kind == crate::managed::GATEWAY_KIND {
+            // The launch comes from typed settings and the storage's data path.
+            let gateway = spec(target)?;
+            let source = format!("nemoclaw_{}", crate::managed::GATEWAY_RUNTIME_DATA_SOURCE);
+            let logical = address(&target.address)
+                .split_once('.')
+                .ok_or(Error::State("invalid gateway address"))?
+                .1
+                .to_owned();
+            let mut settings = json!({"name": gateway.name, "endpoint": gateway.gateway.endpoint});
+            literal(&mut settings);
+            settings["data_path"] = json!("${nemoclaw_gateway_storage.runtime.data_path}");
+            graph["data"][&source][&logical] = settings;
+            for attribute in ["entrypoint", "command", "env"] {
+                attrs[attribute] = json!(format!("${{data.{source}.{logical}.{attribute}}}"));
+            }
             fn storage_path(value: &mut Value) {
                 match value {
                     Value::String(text) => {
@@ -448,8 +457,18 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .1;
         let present = format!("runtime_image_present_{name}");
         let acquired = format!("runtime_image_acquired_{name}");
-        let mut config =
-            json!({"spec":target.values["spec"],"allow_missing":image.kind == "docker_image"});
+        let service = spec(target)?;
+        let process = service
+            .process
+            .as_ref()
+            .ok_or(Error::State("missing runtime process"))?;
+        let mut config = json!({
+            "engine": service.engine(),
+            "image": service.image(),
+            "architecture": process.architecture,
+            "labels": process.image_labels,
+            "allow_missing": image.kind == "docker_image",
+        });
         literal(&mut config);
         graph["data"]["nemoclaw_runtime_image"][&present] = config.clone();
         let present_address = format!("data.nemoclaw_runtime_image.{present}");
@@ -561,18 +580,30 @@ mod tests {
             .generations;
         let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
         let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
-        let storage: Spec = serde_json::from_str(
-            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-                .as_str()
-                .unwrap(),
+        let storage = Spec::from_values(
+            crate::managed::GATEWAY_STORAGE_KIND,
+            &graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+                .collect(),
         )
         .unwrap();
-        let command = gateway["command"].as_array().unwrap();
-        let gateway_port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
-            .as_str()
-            .unwrap()
-            .parse::<u16>()
-            .unwrap();
+        let endpoint = document.spec.gateway.endpoint();
+        let gateway_port = url::Url::parse(endpoint).unwrap().port().unwrap();
+        let launch = "data.nemoclaw_gateway_runtime.managed_gateway_runtime";
+        for attribute in ["entrypoint", "command", "env"] {
+            assert_eq!(gateway[attribute], format!("${{{launch}.{attribute}}}"));
+        }
+        assert_eq!(
+            graph["data"]["nemoclaw_gateway_runtime"]["managed_gateway_runtime"],
+            json!({
+                "name": gateway["name"],
+                "endpoint": endpoint,
+                "data_path": "${nemoclaw_gateway_storage.runtime.data_path}",
+            })
+        );
         assert!(gateway.get("network_mode").is_none());
         assert_eq!(
             gateway["networks_advanced"],
@@ -653,10 +684,14 @@ mod tests {
             graph["resource"]["nemoclaw_managed_gateway"]["runtime"]["image_pull_policy"],
             "Always"
         );
-        let storage: Spec = serde_json::from_str(
-            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-                .as_str()
-                .unwrap(),
+        let storage = Spec::from_values(
+            crate::managed::GATEWAY_STORAGE_KIND,
+            &graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+                .collect(),
         )
         .unwrap();
         assert_eq!(storage.layout, 0);

@@ -100,8 +100,14 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
     );
     assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
     assert_eq!(readiness["wait_timeout_seconds"], 30);
-    let spec: Value = serde_json::from_str(readiness["spec"].as_str().unwrap()).unwrap();
-    assert_eq!(spec["kind"], "ollama_proxy");
+    assert_eq!(
+        readiness["contract"],
+        "${data.nemoclaw_ollama_proxy_runtime.ollama_proxy_ollama-auth.spec}"
+    );
+    assert_eq!(
+        readiness["name"],
+        graph["resource"]["docker_container"]["ollama_proxy_ollama-auth"]["name"]
+    );
     assert!(
         provider_scope::resource(
             &graph["resource"]["openshell_provider_registration"],

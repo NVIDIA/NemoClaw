@@ -93,10 +93,39 @@ fn gateway_targets() -> (Spec, Vec<Target>) {
         targets.push(Target {
             kind: kind.into(),
             address: address.into(),
-            values: [("spec".into(), spec.json().unwrap())].into(),
+            values: spec.gateway_row(kind).unwrap(),
         });
     }
     (spec, targets)
+}
+
+/// The binding OpenTofu state records for a compiled target.
+fn bound(id: impl Into<String>, target: &Target) -> StateBinding {
+    let value = |name: &str| target.values.get(name).cloned().unwrap_or_default();
+    StateBinding {
+        id: id.into(),
+        spec: value("spec"),
+        name: value("name"),
+        owner: value("owner"),
+        generation: value("generation"),
+        engine: value("engine"),
+        compute_driver: value("compute_driver"),
+        endpoint: value("endpoint"),
+        image: value("image"),
+        network_cidr: value("network_cidr"),
+        ..Default::default()
+    }
+}
+
+/// Planned prior attributes of a bound resource.
+fn before(binding: &StateBinding) -> Value {
+    let mut before = json!(binding.gateway_values());
+    before["id"] = json!(binding.id);
+    if !binding.spec.is_empty() {
+        before["spec"] = json!(binding.spec);
+    }
+    before["running"] = json!("true");
+    before
 }
 
 #[test]
@@ -108,24 +137,19 @@ fn gateway_deferral_uses_refreshed_plan_observations() {
         .map(|target| {
             (
                 target.address.clone(),
-                StateBinding {
-                    id: format!("physical-{}", target.kind),
-                    spec: target.values["spec"].clone(),
-                    ..Default::default()
-                },
+                bound(format!("physical-{}", target.kind), target),
             )
         })
         .collect();
-    let mut want: Spec = serde_json::from_str(&targets[1].values["spec"]).unwrap();
+    let mut want = Spec::from_values(GATEWAY_KIND, &targets[1].values).unwrap();
     want.gateway.endpoint = "http://127.0.0.1:17682".into();
-    targets[1]
-        .values
-        .insert("spec".into(), want.json().unwrap());
+    want.write_values(GATEWAY_KIND, &mut targets[1].values)
+        .unwrap();
     let changes: Vec<Value> = targets.iter().map(|target| json!({
         "address": target.address,
         "change": {
             "actions": if target.kind == GATEWAY_KIND { vec!["delete", "create"] } else { vec!["no-op"] },
-            "before": {"id": bindings[&target.address].id, "spec": bindings[&target.address].spec, "running": "true"}
+            "before": before(&bindings[&target.address])
         }
     })).collect();
     let mut plan: Plan = serde_json::from_value(json!({"resource_changes": changes})).unwrap();
@@ -163,11 +187,7 @@ fn opentofu_can_replace_an_unchanged_gateway_with_retained_storage() {
         .map(|target| {
             (
                 target.address.clone(),
-                StateBinding {
-                    id: format!("physical-{}", target.kind),
-                    spec: target.values["spec"].clone(),
-                    ..Default::default()
-                },
+                bound(format!("physical-{}", target.kind), target),
             )
         })
         .collect();
@@ -177,7 +197,7 @@ fn opentofu_can_replace_an_unchanged_gateway_with_retained_storage() {
         "address": target.address,
         "change": {
             "actions": if target.kind == GATEWAY_KIND { vec!["delete", "create"] } else { vec!["no-op"] },
-            "before": {"id": bindings[&target.address].id, "spec": bindings[&target.address].spec, "running": "true"}
+            "before": before(&bindings[&target.address])
         }
     })).collect::<Vec<_>>()})).unwrap();
     let checked = runtime_observations(&document, &targets, &bindings, &plan).unwrap();
@@ -193,14 +213,7 @@ fn opentofu_can_replace_an_unchanged_gateway_with_retained_storage() {
 fn bound_podman_gateway_requires_its_retained_storage_binding() {
     let (_, targets) = gateway_targets();
     let gateway = &targets[1];
-    let bindings = BTreeMap::from([(
-        gateway.address.clone(),
-        StateBinding {
-            id: "bound-gateway".into(),
-            spec: gateway.values["spec"].clone(),
-            ..Default::default()
-        },
-    )]);
+    let bindings = BTreeMap::from([(gateway.address.clone(), bound("bound-gateway", gateway))]);
     assert!(runtime_bindings(&targets, &bindings).is_err());
 }
 
@@ -225,9 +238,8 @@ fn unbound_gateway_is_deferred_and_retained_intent_is_checked_locally() {
     let mut bindings = BTreeMap::from([(
         GATEWAY_STORAGE.into(),
         StateBinding {
-            id: "storage".into(),
-            spec: "changed".into(),
-            ..Default::default()
+            image: "changed".into(),
+            ..bound("storage", &targets[0])
         },
     )]);
     assert!(runtime_bindings(&targets, &bindings).is_err());
@@ -331,14 +343,7 @@ fn docker_gateway_plan_uses_provider_reconciliation_but_requires_durable_identit
         },
     )]);
     assert!(runtime_bindings(&targets, &bindings).is_err());
-    bindings.insert(
-        storage.address.clone(),
-        StateBinding {
-            id: "durable".into(),
-            spec: storage.values["spec"].clone(),
-            ..Default::default()
-        },
-    );
+    bindings.insert(storage.address.clone(), bound("durable", storage));
     for (actions, running) in [
         (vec!["no-op"], true),
         (vec!["delete", "create"], false),
