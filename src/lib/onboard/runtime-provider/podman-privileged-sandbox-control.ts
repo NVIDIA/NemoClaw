@@ -53,6 +53,7 @@ function resolveTarget(
 function execute(
   engine: PodmanContainerEngine,
   input: RuntimeProviderPrivilegedSandboxCommandInput,
+  user = "root",
 ): RuntimeProviderPrivilegedSandboxCommandResult {
   const target = resolveTarget(engine, input);
   if (
@@ -71,7 +72,7 @@ function execute(
       ...(input.input ? ["--interactive"] : []),
       ...environment,
       "--user",
-      "root",
+      user,
       target.resourceHandle,
       ...input.command,
     ],
@@ -144,6 +145,10 @@ export function createPodmanPrivilegedSandboxControl(
       > & { readonly timeoutMs?: number },
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
+    // The caller restricts this to the native-home image whose sandbox user
+    // is UID/GID 999; target resolution still pins the exact managed container.
+    executeAsSandboxUser: (input: RuntimeProviderPrivilegedSandboxCommandInput) =>
+      execute(engine, input, "999:999"),
     ...(cleanupEngine
       ? {
           clearStoppedStateRoots: (

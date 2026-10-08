@@ -449,6 +449,38 @@ describe("managed Podman runtime provider", () => {
     ).not.toContain("docker");
   });
 
+  it("pins Deep Agents sandbox-user cleanup to the owned Podman resource", () => {
+    const runtime = providerHarness("langchain-deepagents-code");
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    expect(lifecycle).toMatchObject({ supported: true });
+    const control = (
+      lifecycle as Extract<NonNullable<typeof lifecycle>, { readonly supported: true }>
+    ).privilegedSandboxControl;
+    runtime.lifecycle.capture(["start", CONTAINER_ID]);
+    const input = {
+      registeredSandboxNames: [runtime.sandboxName],
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+      command: ["/usr/bin/id", "-u"],
+      expectedResourceHandle: CONTAINER_ID,
+      sanitizeEnvironment: true,
+      timeoutMs: 9000,
+    };
+
+    expect(control.executeAsSandboxUser?.(input).status).toBe(0);
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
+      expect.arrayContaining(["--user", "999:999", CONTAINER_ID, "/usr/bin/id", "-u"]),
+      9000,
+      undefined,
+    );
+    expect(() =>
+      control.executeAsSandboxUser?.({
+        ...input,
+        expectedResourceHandle: "b".repeat(64),
+      }),
+    ).toThrow();
+  });
+
   it("keeps a stopped Podman container terminal for privileged control (#11107)", () => {
     const runtime = providerHarness("hermes");
     const lifecycle = runtime.providers.podman?.lifecycle;
