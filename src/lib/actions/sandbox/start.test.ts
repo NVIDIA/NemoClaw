@@ -17,6 +17,8 @@ import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provi
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type SandboxStartDeps, startSandbox } from "./start";
+import { resolveSandboxInferenceInvocationEndpoint } from "./inference-invocation-probe";
+import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -638,6 +640,63 @@ describe("startSandbox native lifecycle", () => {
     expect(delayGatewayProcessProbe).not.toHaveBeenCalled();
     expect(h.verifyGateway).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    {
+      provider: "openai-api",
+      attachmentKey: "nativeHostedProviderAttachment",
+      endpoint: "https://api.openai.com/v1/chat/completions",
+    },
+    {
+      provider: "nvidia-prod",
+      attachmentKey: "nativeHostedProviderAttachment",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    },
+    {
+      provider: "nvidia-prod",
+      attachmentKey: "nativeNvidiaProviderAttachment",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+    },
+    {
+      provider: "nvidia-prod",
+      attachmentKey: null,
+      endpoint: "https://inference.local/v1/chat/completions",
+    },
+  ] as const)(
+    "probes $provider through its recorded $attachmentKey path after start",
+    async ({ provider, attachmentKey, endpoint }) => {
+      const profile = nativeHostedProfile(provider)!;
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async (input) => {
+        expect(resolveSandboxInferenceInvocationEndpoint(input)).toBe(endpoint);
+        return { ok: true };
+      });
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          agent: "langchain-deepagents-code",
+          gatewayName: "nemoclaw-18080",
+          stopped: true,
+          provider,
+          model: provider === "nvidia-prod" ? "nvidia/nemotron-3-super-120b-a12b" : "gpt-4o",
+          preferredInferenceApi: "openai-completions",
+          ...(attachmentKey
+            ? {
+                [attachmentKey]: {
+                  schemaVersion: 1,
+                  profileId: profile.profileId,
+                  providerName: profile.providerName,
+                  providerId: "native-provider-id",
+                },
+              }
+            : {}),
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    },
+  );
 
   it("returns nonzero when the native gateway cannot serve an agent request", async () => {
     const probeInferenceInvocation = vi.fn(

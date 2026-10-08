@@ -17,6 +17,7 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -164,6 +165,11 @@ async function checkStartedSandboxInference(
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    ...(normalizeNativeHostedProviderAttachment(
+      sandbox.nativeHostedProviderAttachment ?? sandbox.nativeNvidiaProviderAttachment,
+    )
+      ? { nativeProvider: true }
+      : {}),
   };
   const probe = () =>
     (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(
