@@ -25,7 +25,7 @@ impl Storage {
     pub const ATTRIBUTES: [&str; 4] = ["name", "owner", "generation", "engine"];
 
     /// Check one storage attribute, explaining a rejected value without echoing it.
-    pub fn check(attribute: &str, value: &str) -> Result<(), &'static str> {
+    pub fn check(attribute: &str, value: &str) -> Result<(), std::borrow::Cow<'static, str>> {
         let (pattern, requirement) = match attribute {
             "name" => (
                 r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,254}$",
@@ -38,14 +38,14 @@ impl Storage {
             ),
             "engine" => {
                 return crate::validate_engine_endpoint(value)
-                    .map_err(|_| "must be a supported Docker or Podman engine endpoint");
+                    .map_err(|_| "must be a supported Docker or Podman engine endpoint".into());
             }
-            _ => return Err("is not a storage attribute"),
+            _ => return Err("is not a storage attribute".into()),
         };
         if regex::Regex::new(pattern).unwrap().is_match(value) {
             Ok(())
         } else {
-            Err(requirement)
+            Err(requirement.into())
         }
     }
     pub fn validate(&self) -> Result<(), Error> {
