@@ -72,7 +72,7 @@ Legacy entries without a source, endpoints recorded by `inference set`, and diff
 
 ## Use a Public Endpoint
 
-For a public HTTP URL, NemoClaw stores the validated IP address so the downstream runtime cannot resolve the hostname again and reach another address.
+Hosted compatible endpoints require HTTPS. Retained shared-route paths that accept a public HTTP URL store the validated IP address so the downstream runtime cannot resolve the hostname again and reach another address.
 
 NemoClaw rejects DNS-backed HTTPS URLs for Hermes Provider setup, Hermes host-side `config set`, and a direct blueprint run because it cannot pin the downstream peer address while preserving TLS Server Name Indication and host validation across the OpenShell runtime boundary.
 For those paths, use an HTTPS IP-literal endpoint with a certificate valid for that address, or use a public HTTP endpoint if your deployment permits unencrypted traffic.
