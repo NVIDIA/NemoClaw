@@ -5,6 +5,7 @@ members = [
     "crates/nemoclaw-openshell",
     "crates/nemoclaw-docker",
     "crates/openshell-provider",
+    "crates/fabric-provider",
     "crates/nemoclaw-sdk",
     "crates/nemoclaw-authoring",
     "crates/nemoclaw-discovery",

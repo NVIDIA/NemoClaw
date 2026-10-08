@@ -6,8 +6,86 @@
 use crate::{EnvironmentSecrets, OpenShell};
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use tf_provider::value::Value;
+use tf_provider::{
+    Diagnostics,
+    schema::{Attribute, AttributeConstraint, AttributeType, Block, Description, Schema},
+    value::Value,
+};
+
+/// Configuration of a provider that reaches objects through one gateway.
+#[derive(Default, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    pub endpoint: Value<String>,
+    pub credential_env: Value<String>,
+    pub tls_ca_env: Value<String>,
+    pub tls_certificate_env: Value<String>,
+    pub tls_key_env: Value<String>,
+    pub destroy: Value<bool>,
+}
+
+impl GatewayConfig {
+    /// The provider configuration schema: the gateway connection and teardown permission.
+    pub fn schema() -> Schema {
+        let attribute = |attr_type, description: &str| Attribute {
+            attr_type,
+            constraint: AttributeConstraint::Optional,
+            description: Description::plain(description.to_owned()),
+            ..Default::default()
+        };
+        Schema {
+            version: 0,
+            block: Block {
+                attributes: [
+                    (
+                        "endpoint",
+                        attribute(AttributeType::String, "Gateway HTTP(S) origin."),
+                    ),
+                    (
+                        "credential_env",
+                        attribute(
+                            AttributeType::String,
+                            "Environment variable holding the bearer credential.",
+                        ),
+                    ),
+                    (
+                        "tls_ca_env",
+                        attribute(
+                            AttributeType::String,
+                            "Environment variable naming the CA certificate file.",
+                        ),
+                    ),
+                    (
+                        "tls_certificate_env",
+                        attribute(
+                            AttributeType::String,
+                            "Environment variable naming the client certificate file.",
+                        ),
+                    ),
+                    (
+                        "tls_key_env",
+                        attribute(
+                            AttributeType::String,
+                            "Environment variable naming the client key file.",
+                        ),
+                    ),
+                    (
+                        "destroy",
+                        attribute(
+                            AttributeType::Bool,
+                            "Permit deleting sandboxes during explicit teardown.",
+                        ),
+                    ),
+                ]
+                .into_iter()
+                .map(|(name, attribute)| (name.into(), attribute))
+                .collect(),
+                ..Default::default()
+            },
+        }
+    }
+}
 
 #[derive(Default)]
 enum State {
@@ -135,6 +213,49 @@ impl GatewayClient {
     }
 }
 
+impl GatewayClient {
+    /// Connect for `config`, forgetting any earlier client first. Returns
+    /// whether teardown may delete objects, or `None` after reporting an error.
+    pub fn configure(&self, diags: &mut Diagnostics, config: &GatewayConfig) -> Option<bool> {
+        // Reconfiguration must not retain a client or teardown permission from
+        // an earlier configuration when inputs become unknown or invalid.
+        let settings = GatewaySettings {
+            endpoint: &config.endpoint,
+            credential_env: &config.credential_env,
+            tls_ca_env: &config.tls_ca_env,
+            tls_certificate_env: &config.tls_certificate_env,
+            tls_key_env: &config.tls_key_env,
+        };
+        let deferred = settings.unknown() || matches!(config.destroy, Value::Unknown);
+        if let Err(error) = self.reset(deferred) {
+            diags.root_error_short(error);
+            return None;
+        }
+        if deferred {
+            return Some(false);
+        }
+        let connection = match settings.connection() {
+            Ok(Some(connection)) => connection,
+            Ok(None) => {
+                if settings.credentials() || matches!(config.destroy, Value::Value(true)) {
+                    diags.root_error_short("Gateway credentials and teardown require an endpoint");
+                    return None;
+                }
+                return Some(false);
+            }
+            Err(error) => {
+                diags.root_error_short(error);
+                return None;
+            }
+        };
+        if let Err(error) = self.connect(&connection) {
+            diags.root_error("Gateway connection", error);
+            return None;
+        }
+        Some(matches!(config.destroy, Value::Value(true)))
+    }
+}
+
 /// Reconciles OpenShell objects through the configured gateway client.
 pub struct OpenShellBackend(pub Arc<GatewayClient>);
 
@@ -170,5 +291,80 @@ impl Backend for OpenShellBackend {
         destroying: bool,
     ) -> Result<(), ObservationError> {
         self.0.client()?.remove(kind, prior, destroying).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn known() -> GatewayConfig {
+        GatewayConfig {
+            endpoint: Value::Value("http://127.0.0.1:1".into()),
+            destroy: Value::Value(true),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_connection_inputs_clear_old_clients_and_only_defer_fresh_planning() {
+        for field in 0..6 {
+            let client = Arc::new(GatewayClient::default());
+            let mut diagnostics = Diagnostics::default();
+            assert_eq!(client.configure(&mut diagnostics, &known()), Some(true));
+            assert!(client.client().is_ok());
+            let mut config = known();
+            match field {
+                0 => config.endpoint = Value::Unknown,
+                1 => config.credential_env = Value::Unknown,
+                2 => config.tls_ca_env = Value::Unknown,
+                3 => config.tls_certificate_env = Value::Unknown,
+                4 => config.tls_key_env = Value::Unknown,
+                _ => config.destroy = Value::Unknown,
+            }
+            assert_eq!(client.configure(&mut diagnostics, &config), Some(false));
+            assert!(diagnostics.errors.is_empty());
+            assert!(client.client().is_err());
+            let backend = OpenShellBackend(client);
+            let row = Row::new();
+            assert!(backend.plan("workspace", &row, None).await.is_ok());
+            assert!(backend.plan("workspace", &row, Some(&row)).await.is_err());
+            assert!(backend.read("workspace", &row, false).await.is_err());
+            assert!(backend.ensure("workspace", &row).await.error().is_some());
+            assert!(backend.remove("workspace", &row, true).await.is_err());
+        }
+    }
+
+    // Connecting starts a lazy channel, which needs a runtime.
+    #[tokio::test]
+    async fn missing_or_invalid_endpoints_clear_the_previous_client() {
+        for endpoint in [Value::Null, Value::Value("invalid".into())] {
+            let client = GatewayClient::default();
+            let mut diagnostics = Diagnostics::default();
+            client.configure(&mut diagnostics, &known()).unwrap();
+            let config = GatewayConfig {
+                endpoint,
+                ..known()
+            };
+            // Teardown without an endpoint, or an invalid endpoint, is refused.
+            assert!(client.configure(&mut diagnostics, &config).is_none());
+            assert!(!diagnostics.errors.is_empty());
+            assert!(client.client().is_err());
+            assert!(!client.deferred().unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_configuration_has_no_client_and_no_teardown_permission() {
+        let client = GatewayClient::default();
+        let mut diagnostics = Diagnostics::default();
+        client.configure(&mut diagnostics, &known()).unwrap();
+        assert_eq!(
+            client.configure(&mut diagnostics, &GatewayConfig::default()),
+            Some(false)
+        );
+        assert!(diagnostics.errors.is_empty());
+        assert!(client.client().is_err());
+        assert!(!client.deferred().unwrap());
     }
 }

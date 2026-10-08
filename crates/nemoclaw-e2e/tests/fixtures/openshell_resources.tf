@@ -3,8 +3,8 @@
 terraform {
   required_version = "= 1.12.6"
   required_providers {
-    nemoclaw  = { source = "registry.opentofu.org/nvidia/nemoclaw" }
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
+    fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
   }
 }
 variable "endpoint" { type = string }
@@ -13,7 +13,7 @@ variable "binaries" { type = list(string) }
 variable "enabled" { default = true }
 variable "destroying" { default = false }
 variable "image" { default = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
-provider "nemoclaw" {
+provider "fabric" {
   endpoint = var.endpoint
   destroy  = var.destroying
 }

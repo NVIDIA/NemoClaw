@@ -42,7 +42,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
             "nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"},
             "openshell":{"source":"registry.opentofu.org/nvidia/openshell"}
         }},
-        "provider":{"nemoclaw":{"endpoint":gateway.endpoint},"openshell":{"endpoint":gateway.endpoint}},
+        "provider":{"nemoclaw":{},"openshell":{"endpoint":gateway.endpoint}},
         "resource":{"terraform_data":{"bootstrap":{"input":"bound"}}},
         "data":{
             "nemoclaw_gateway_readiness":{"current":{

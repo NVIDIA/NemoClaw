@@ -11,10 +11,10 @@ Complete the [build prerequisites](../build.md) first.
 
 The private `nemoclaw-e2e` crate runs the actual provider protocol through OpenTofu 1.12.6.
 Build the production providers and supply absolute executable paths explicitly.
-Tests install `terraform-provider-openshell` from the directory that holds `NEMOCLAW_TEST_PROVIDER`:
+Tests install `terraform-provider-openshell` and `terraform-provider-fabric` from the directory that holds `NEMOCLAW_TEST_PROVIDER`:
 
 ```sh
-cargo build -p nemoclaw-provider -p openshell-provider
+cargo build -p nemoclaw-provider -p openshell-provider -p fabric-provider
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
   cargo test -p nemoclaw-e2e --test integration provider_protocol:: -- --ignored

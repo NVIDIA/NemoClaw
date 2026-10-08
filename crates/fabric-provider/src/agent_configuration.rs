@@ -1,14 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Fabric agents hosted in OpenShell sandboxes.
+//! The agent configuration resource and its backend.
 
-pub mod bridge;
-pub(crate) mod configuration;
-
-pub use bridge::{AgentBridge, AgentSnapshot};
-
-use crate::openshell::OpenShell;
+use crate::configuration;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
+use openshell_provider::OpenShell;
 
 /// Reconciles agent configurations through the Fabric bridge of their sandbox.
 #[derive(Clone)]
@@ -36,8 +32,8 @@ impl Backend for AgentConfigurationBackend {
 }
 
 /// The Fabric agent configuration resource and its planning rules.
-pub(crate) fn definitions() -> [crate::Definition; 1] {
-    use crate::{Definition, rerun_when_stopped};
+pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
+    use nemoclaw_tofu::{Definition, rerun_when_stopped};
     [Definition::new(
         "agent_configuration",
         &[

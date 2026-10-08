@@ -186,7 +186,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         assert_eq!(planned.changes.len(), 1, "{harness}");
         assert_eq!(
             planned.changes[0].resource,
-            "nemoclaw_agent_configuration.assistant"
+            "fabric_agent_configuration.assistant"
         );
         assert_eq!(
             writes(),
@@ -241,7 +241,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
         let planned = deployment.plan(&changed_model, &cancel).await.unwrap();
         assert!(planned.changes.iter().any(|change| change.resource
             == format!(
-                "nemoclaw_agent_configuration.{}",
+                "fabric_agent_configuration.{}",
                 document.spec.sandboxes[0].name
             )));
         assert_eq!(writes(), initial_writes, "plan must not configure Pi");

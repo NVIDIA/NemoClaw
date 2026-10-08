@@ -37,15 +37,9 @@ async fn exited_gateway_stops_readiness_without_waiting_for_a_stalled_api() {
     .await;
     let provider = NemoClawProvider::default();
     let mut diags = Diagnostics::default();
+    // Readiness takes its gateway endpoint as an input, not from the provider.
     provider
-        .configure(
-            &mut diags,
-            String::new(),
-            ProviderConfig {
-                endpoint: Value::Value(spec.gateway.endpoint.clone()),
-                ..Default::default()
-            },
-        )
+        .configure(&mut diags, String::new(), ProviderConfig::default())
         .await
         .unwrap();
     let config = serde_json::from_value(json!({

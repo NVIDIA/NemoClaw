@@ -643,7 +643,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
         assert!(retained.pending(), "{field}");
         let unresolved = retained.pending_creations;
         assert!(unresolved.contains_key(sandbox));
-        assert!(unresolved.contains_key("nemoclaw_agent_configuration.assistant"));
+        assert!(unresolved.contains_key("fabric_agent_configuration.assistant"));
     }
     let missing = bindings
         .keys()
@@ -772,6 +772,8 @@ async fn state_with_openshell_types_from_the_nemoclaw_provider_is_rejected_befor
         "nemoclaw_provider_profile",
         "nemoclaw_sandbox",
         "nemoclaw_gateway_capabilities",
+        "nemoclaw_agent_configuration",
+        "nemoclaw_sandbox_readiness",
     ] {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(

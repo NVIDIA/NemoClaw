@@ -115,7 +115,7 @@ impl Record {
             // Fabric configuration has no independent runtime: its sandbox owns
             // any partial effects, and its configuration binding uses that ID.
             let address = address
-                .strip_prefix("nemoclaw_agent_configuration.")
+                .strip_prefix("fabric_agent_configuration.")
                 .map(|name| format!("openshell_sandbox.{name}"))
                 .unwrap_or_else(|| address.clone());
             !bindings.get(&address).is_some_and(|binding| {
@@ -428,13 +428,16 @@ pub(crate) fn schema_environment(directory: &Path) -> BTreeMap<String, String> {
         ),
     ])
 }
-/// Resource types that served OpenShell objects before the `openshell` provider.
-const EARLIER_TYPES: [&str; 5] = [
+/// Resource types that served OpenShell objects and Fabric agents before the
+/// `openshell` and `fabric` providers.
+const EARLIER_TYPES: [&str; 7] = [
     "nemoclaw_workspace",
     "nemoclaw_provider",
     "nemoclaw_provider_profile",
     "nemoclaw_sandbox",
     "nemoclaw_gateway_capabilities",
+    "nemoclaw_agent_configuration",
+    "nemoclaw_sandbox_readiness",
 ];
 
 /// Refuse state that an earlier release wrote with OpenShell types of the

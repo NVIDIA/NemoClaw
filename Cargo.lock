@@ -937,6 +937,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemo-fabric-core",
+ "nemoclaw-backend",
+ "nemoclaw-tofu",
+ "openshell-provider",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tf-provider",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "fancy-regex"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2362,6 +2379,7 @@ name = "nemoclaw-e2e"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "fabric-provider",
  "getrandom 0.4.3",
  "http",
  "nemoclaw-openshell",
@@ -2446,6 +2464,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bollard",
+ "fabric-provider",
  "futures-util",
  "getrandom 0.4.3",
  "interprocess",

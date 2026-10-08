@@ -3,9 +3,9 @@
 //! The Fabric bridge: one JSON envelope per command run in a Fabric sandbox
 //! through OpenShell, for validation, configuration, invocation, and health.
 
-use crate::openshell::{self, OpenShell, SandboxPhase};
 use async_trait::async_trait;
 use nemoclaw_backend::{Error, ObservationError, Row, RuntimeHealth};
+use openshell_provider::{self as openshell, OpenShell, SandboxPhase};
 use serde::Deserialize;
 use serde_json::Value;
 use std::time::Duration;
@@ -310,7 +310,7 @@ impl AgentBridge for OpenShell {
     }
 
     async fn configure_agent(&self, binding: &Row) -> Result<(), Error> {
-        crate::fabric::configuration::configure_agent(self, binding).await
+        crate::configuration::configure_agent(self, binding).await
     }
 
     async fn configuration(&self, binding: &Row) -> Result<(), Error> {

@@ -379,7 +379,7 @@ impl Plan {
                 drifted,
                 agent_running: change
                     .address
-                    .starts_with("nemoclaw_agent_configuration.")
+                    .starts_with("fabric_agent_configuration.")
                     .then(|| {
                         change.change.before["running"]
                             .as_str()

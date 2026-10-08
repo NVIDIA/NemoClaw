@@ -127,7 +127,7 @@ async fn standalone_readiness(proxy: bool) {
     // fails only when the wait expires, so its wait stays short; every expected
     // proxy failure is immediate, so the proxy wait can be generous.
     let wait = if proxy { 30 } else { 3 };
-    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
+    let graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},"provider":{"nemoclaw":{}},"data":{"nemoclaw_service_readiness":{"model":{"spec":encoded,"container_id":"owned","wait_timeout_seconds":wait,"read_trigger":"${timestamp() != \"\"}"}}},"resource":{"terraform_data":{"consumer":{"input":"${data.nemoclaw_service_readiness.model.ready}"}}}});
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
         let output = directory

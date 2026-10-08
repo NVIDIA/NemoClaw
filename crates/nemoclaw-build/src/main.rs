@@ -282,7 +282,12 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
     build(
-        &["nemoclaw-cli", "nemoclaw-provider", "openshell-provider"],
+        &[
+            "nemoclaw-cli",
+            "nemoclaw-provider",
+            "openshell-provider",
+            "fabric-provider",
+        ],
         target,
     )?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
@@ -296,6 +301,8 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let openshell =
         format!("providers/registry.opentofu.org/nvidia/openshell/{version}/{platform}");
     fs::create_dir_all(root.join(&openshell))?;
+    let fabric = format!("providers/registry.opentofu.org/nvidia/fabric/{version}/{platform}");
+    fs::create_dir_all(root.join(&fabric))?;
     let extension = if platform.starts_with("windows") {
         ".exe"
     } else {
@@ -321,6 +328,10 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
         (
             format!("terraform-provider-openshell{extension}"),
             format!("{openshell}/terraform-provider-openshell_v{version}{extension}"),
+        ),
+        (
+            format!("terraform-provider-fabric{extension}"),
+            format!("{fabric}/terraform-provider-fabric_v{version}{extension}"),
         ),
     ] {
         fs::copy(
