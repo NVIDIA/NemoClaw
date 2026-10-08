@@ -95,16 +95,24 @@ describe("abandoned inference route reservation (#11051)", () => {
     const { baseOptions, baseSelection, createDeps } =
       await import("./machine/handlers/provider-inference.test-support");
     const session = sessionStore.loadSession()!;
-    Object.assign(session, baseSelection, { sandboxName: SANDBOX });
+    const legacySelection = {
+      ...baseSelection,
+      provider: "compatible-endpoint",
+      model: "local/test",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    };
+    Object.assign(session, legacySelection, { sandboxName: SANDBOX });
     session.steps.provider_selection.status = "complete";
     session.steps.inference.status = "complete";
     sessionStore.saveSession(session);
     const route = {
-      provider: baseSelection.provider,
-      model: baseSelection.model,
-      endpointUrl: baseSelection.endpointUrl,
-      credentialEnv: baseSelection.credentialEnv,
-      preferredInferenceApi: baseSelection.preferredInferenceApi,
+      provider: legacySelection.provider,
+      model: legacySelection.model,
+      endpointUrl: legacySelection.endpointUrl,
+      credentialEnv: legacySelection.credentialEnv,
+      preferredInferenceApi: legacySelection.preferredInferenceApi,
       endpointSource: null,
       gatewayName: GATEWAY,
     };
