@@ -233,49 +233,91 @@ describe("showSandboxLogsWithDeps", () => {
     ]);
   });
 
-  it("caps follow history at the requested tail count, then follows without replay (#12666)", async () => {
-    const gatewayLines = Array.from(
-      { length: 5 },
-      (_, index) => `2026-05-22T20:55:3${index}.000+00:00 [gateway] gateway ${index}`,
-    );
-    const openshellLines = Array.from(
-      { length: 10 },
-      (_, index) => `[177948879${index}.000] [sandbox] [OCSF] sandbox ${index}`,
-    );
-    const result = await captureLogsRun(
-      { follow: true, lines: "5", since: null },
-      {
-        settings: { status: 0 },
-        sandbox: { status: 0, stdout: `${gatewayLines.join("\n")}\n` },
-        logs: { status: 0, stdout: `${openshellLines.join("\n")}\n` },
+  it("caps follow history at --tail N and keeps entries written during setup (#12666)", async () => {
+    const gatewayLine = (second: number, text: string) =>
+      `2026-05-22T20:55:${second}.000+00:00 [gateway] ${text}`;
+    const sandboxLine = (epoch: number, text: string) => `[${epoch}.000] [sandbox] [OCSF] ${text}`;
+    const logsBySource = {
+      gateway: Array.from({ length: 6 }, (_, index) => gatewayLine(30 + index, `gateway ${index}`)),
+      openshell: Array.from({ length: 10 }, (_, index) =>
+        sandboxLine(1779488790 + index, `sandbox ${index}`),
+      ),
+    };
+    const lastLines = (source: "gateway" | "openshell", lines: string) =>
+      Number(lines) > 0 ? logsBySource[source].slice(-Number(lines)) : [];
+    const handoffLine = sandboxLine(1779488800, "written during setup");
+    const followers: Partial<Record<"gateway" | "openshell", StreamingChild>> = {};
+    const written: string[] = [];
+    const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
+    const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
+    let settle: (code: number) => void = () => {};
+    const exited = new Promise<number>((resolve) => {
+      settle = resolve;
+    });
+    // Followers honor `lines` the way `tail -n N -f` and `openshell logs -n N --tail` do.
+    const logs: OpenShellSandboxLogs = {
+      checkAvailability: () => null,
+      async read(request) {
+        if (request.source === "openshell") {
+          logsBySource.openshell.push(handoffLine);
+          followers.openshell?.stdout.write(`${handoffLine}\n`);
+        }
+        return {
+          content: lastLines(request.source, request.lines)
+            .map((line) => `${line}\n`)
+            .join(""),
+          diagnostic: "",
+          outcome: { kind: "completed", exitCode: 0 },
+        };
       },
-    );
+      follow(request) {
+        const follower = createStreamingChild();
+        followers[request.source] = follower;
+        for (const line of lastLines(request.source, request.lines)) {
+          follower.stdout.write(`${line}\n`);
+        }
+        return follower.session;
+      },
+    };
 
-    expect(result.exitCode).toBe(0);
-    expect(result.signalListenersRestored).toBe(true);
-    expect(result.stdout.split("\n").filter(Boolean)).toHaveLength(5);
-    expect(result.reads.map(({ source, lines }) => ({ source, lines }))).toEqual([
-      { source: "gateway", lines: "5" },
-      { source: "openshell", lines: "5" },
-    ]);
-    expect(result.follows).toEqual([
-      {
-        target: { kind: "selected" },
-        sandboxName: "alpha",
-        source: "gateway",
-        lines: "0",
-        since: null,
-        timeoutMs: 5000,
-      },
-      {
-        target: { kind: "selected" },
-        sandboxName: "alpha",
-        source: "openshell",
-        lines: "0",
-        since: null,
-        timeoutMs: 5000,
-      },
-    ]);
+    try {
+      await showSandboxLogsWithDeps(
+        "alpha",
+        { follow: true, lines: "5", since: null },
+        {
+          exit: ((code: number) => {
+            settle(code);
+            return undefined as never;
+          }) as never,
+          getSessionAgent: () => null,
+          isDockerRuntimeDown: () => false,
+          logs,
+          enableAuditLogs: async () => ({ ok: true, value: undefined }),
+          stdout: createCapturedOutput(written),
+          writeStderr: () => true,
+        },
+      );
+      const liveGateway = gatewayLine(59, "live gateway");
+      const liveSandbox = sandboxLine(1779488801, "live sandbox");
+      followers.gateway?.stdout.end(`${liveGateway}\n`);
+      followers.openshell?.stdout.end(`${liveSandbox}\n`);
+      followers.gateway?.child.emit("exit", 0, null);
+      followers.openshell?.child.emit("exit", 0, null);
+      await expect(exited).resolves.toBe(0);
+
+      expect(written.join("").split("\n").filter(Boolean)).toEqual([
+        gatewayLine(34, "gateway 4"),
+        gatewayLine(35, "gateway 5"),
+        sandboxLine(1779488798, "sandbox 8"),
+        sandboxLine(1779488799, "sandbox 9"),
+        handoffLine,
+        liveGateway,
+        liveSandbox,
+      ]);
+    } finally {
+      restoreProcessSignalListeners("SIGINT", sigintListeners);
+      restoreProcessSignalListeners("SIGTERM", sigtermListeners);
+    }
   });
 
   it("streams follow logs with --since through OpenShell without an unfiltered gateway tail", async () => {
@@ -302,8 +344,8 @@ describe("showSandboxLogsWithDeps", () => {
         target: { kind: "selected" },
         sandboxName: "alpha",
         source: "openshell",
-        lines: "0",
-        since: null,
+        lines: "200",
+        since: "5m",
         timeoutMs: 5000,
       },
     ]);

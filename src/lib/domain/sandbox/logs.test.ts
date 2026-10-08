@@ -36,7 +36,7 @@ describe("sandbox logs helpers", () => {
   });
 });
 
-import { mergeTailLogLines, parseLineTimestamp } from "./logs";
+import { createReplayLineFilter, mergeTailLogLines, parseLineTimestamp } from "./logs";
 
 describe("parseLineTimestamp", () => {
   it("parses the bracketed epoch-seconds format from OpenShell OCSF audit", () => {
@@ -260,5 +260,50 @@ describe("relay write failures (#10340)", () => {
 
   it("returns 141 when a downstream reader closes the pipe (#10340)", () => {
     expect(LOG_RELAY_BROKEN_PIPE_EXIT_CODE).toBe(141);
+  });
+});
+
+describe("createReplayLineFilter (#12666)", () => {
+  const line = (epoch: number, text: string) => `[${epoch}.000] [sandbox] ${text}`;
+  const history = [line(10, "a"), line(11, "b"), line(11, "b"), line(12, "c")].join("\n") + "\n";
+
+  it("drops replayed history and older lines, then passes live output through", () => {
+    const filter = createReplayLineFilter(history);
+    const replay = [line(9, "older"), "  continuation of older", line(10, "a")];
+    const output =
+      filter.write(`${replay.join("\n")}\n${line(11, "b")}\n${line(11, "new in overlap")}\n`) +
+      filter.write(
+        `${line(11, "b")}\n${line(12, "c")}\n${line(13, "live")}\n${line(9, "late")}\n`,
+      ) +
+      filter.finish();
+
+    expect(output).toBe(`${line(11, "new in overlap")}\n${line(13, "live")}\n${line(9, "late")}\n`);
+  });
+
+  it("matches lines split across chunks and CRLF endings", () => {
+    const filter = createReplayLineFilter(history);
+    const stream = `${line(10, "a")}\r\n${line(13, "live")}\n`;
+    const output =
+      filter.write(stream.slice(0, 7)) +
+      filter.write(stream.slice(7, 30)) +
+      filter.write(stream.slice(30)) +
+      filter.finish();
+
+    expect(output).toBe(`${line(13, "live")}\n`);
+  });
+
+  it("drops a replayed final line without a newline", () => {
+    const filter = createReplayLineFilter(history);
+    expect(filter.write(line(12, "c")) + filter.finish()).toBe("");
+  });
+
+  it("passes everything through without history or for an oversized line", () => {
+    expect(createReplayLineFilter("").write(`${line(10, "a")}\n`)).toBe(`${line(10, "a")}\n`);
+
+    const oversized = "x".repeat(5_000);
+    const filter = createReplayLineFilter(history);
+    expect(filter.write(oversized) + filter.write(`\n${line(10, "a")}\n`)).toBe(
+      `${oversized}\n${line(10, "a")}\n`,
+    );
   });
 });

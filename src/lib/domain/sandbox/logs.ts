@@ -245,3 +245,86 @@ function sortChronologically(entries: ScoredLine[]): void {
     return a.lineIndex - b.lineIndex;
   });
 }
+
+// A replay line longer than this is relayed instead of buffered for matching.
+const MAX_REPLAY_FILTER_LINE_CHARS = 4_096;
+
+export type ReplayLineFilter = {
+  finish: () => string;
+  write: (chunk: string) => string;
+};
+
+/**
+ * Drop the part of a follow stream's replay that a history read already covered.
+ *
+ * Follow mode starts each follower with its own `--tail N` replay before it
+ * reads the merged, capped history, so the two overlap and nothing written
+ * during setup is lost. This filter removes that overlap from the follower
+ * (#12666). Each history line suppresses one identical follower line, and a
+ * line older than the oldest timestamped history line is dropped because the
+ * history cap already excluded it; untimestamped lines follow the entry above
+ * them. The filter stops at the first line newer than the newest history line,
+ * so live output passes through unchanged.
+ */
+export function createReplayLineFilter(history: string): ReplayLineFilter {
+  const pending = new Map<string, number>();
+  let oldest: number | null = null;
+  let newest: number | null = null;
+  for (const line of history.split(LINE_SPLIT_RE)) {
+    if (!line) continue;
+    pending.set(line, (pending.get(line) ?? 0) + 1);
+    const timestamp = parseLineTimestamp(line);
+    if (timestamp === null) continue;
+    oldest = oldest === null ? timestamp : Math.min(oldest, timestamp);
+    newest = newest === null ? timestamp : Math.max(newest, timestamp);
+  }
+  let active = pending.size > 0;
+  let partial = "";
+  // Untimestamped lines belong to the entry above them, as in mergeTailLogLines.
+  let lastSeen: number | null = null;
+
+  const keepLine = (line: string): boolean => {
+    const timestamp = parseLineTimestamp(line);
+    if (timestamp !== null) lastSeen = timestamp;
+    if (timestamp !== null && newest !== null && timestamp > newest) {
+      active = false;
+      return true;
+    }
+    const count = pending.get(line) ?? 0;
+    if (count > 0) {
+      pending.set(line, count - 1);
+      return false;
+    }
+    return lastSeen === null || oldest === null || lastSeen >= oldest;
+  };
+
+  return {
+    write(chunk: string): string {
+      if (!active) return chunk;
+      const segments = `${partial}${chunk}`.split("\n");
+      partial = segments.pop() ?? "";
+      const output: string[] = [];
+      for (const [index, segment] of segments.entries()) {
+        if (!active) {
+          output.push(...segments.slice(index).map((line) => `${line}\n`));
+          break;
+        }
+        if (keepLine(segment.endsWith("\r") ? segment.slice(0, -1) : segment)) {
+          output.push(`${segment}\n`);
+        }
+      }
+      if (!active || partial.length > MAX_REPLAY_FILTER_LINE_CHARS) {
+        active = false;
+        output.push(partial);
+        partial = "";
+      }
+      return output.join("");
+    },
+    finish(): string {
+      const rest = partial;
+      partial = "";
+      if (!active || !rest) return rest;
+      return keepLine(rest) ? rest : "";
+    },
+  };
+}
