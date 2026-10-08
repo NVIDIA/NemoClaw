@@ -429,9 +429,25 @@ fn compile_with_plans(
                 .expect("Fabric configuration JSON");
             attributes["config_json"] = json!(model.replace("${", "$${").replace("%{", "%%{"));
         }
+        // OpenShell objects take typed inputs; their rows carry the JSON.
+        for input in nemoclaw_openshell::structured_inputs(&target.kind) {
+            let encoded = attributes
+                .as_object_mut()
+                .expect("attribute object")
+                .remove(input.field);
+            if let Some(encoded) = encoded.as_ref().and_then(Value::as_str)
+                && !encoded.is_empty()
+            {
+                let mut value = input.configuration(encoded).map_err(ConfigError::new)?;
+                // Values are still OpenTofu templates; keep literal policy
+                // paths and matchers intact through that interpretation.
+                crate::docker_compute::literal(&mut value);
+                attributes[input.attribute] = value;
+            }
+        }
         if target.kind == "provider_profile" {
-            attributes["binaries_json"] = json!(format!(
-                "${{{}.binaries_json}}",
+            attributes["binaries"] = json!(format!(
+                "${{jsondecode({}.binaries_json)}}",
                 profile_sources[&target.values["name"]]
             ));
         }
@@ -440,13 +456,6 @@ fn compile_with_plans(
                 "${{{}.runtime_json}}",
                 runtime_sources[&target.values["name"]]
             ));
-            // JSON configuration strings are still OpenTofu templates. Preserve
-            // literal policy paths and matchers across that interpretation layer.
-            for field in ["policy_json", "provider_names_json"] {
-                if let Some(value) = attributes[field].as_str() {
-                    attributes[field] = json!(value.replace("${", "$${").replace("%{", "%%{"));
-                }
-            }
             let sandbox = document.sandbox(&target.values["name"])?;
             let mut dependencies: Vec<_> = document
                 .sandbox_inference_providers(sandbox)?
@@ -540,7 +549,18 @@ fn compile_with_plans(
     });
     let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
         let reference = format!("openshell_sandbox.{}", sandbox.name);
-        let binding = format!("${{merge({reference}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}", sandbox.name);
+        // Readiness takes the sandbox's string attributes; typed inputs stay behind.
+        let typed = serde_json::to_string(
+            &nemoclaw_openshell::structured_inputs("sandbox")
+                .iter()
+                .map(|input| input.attribute)
+                .collect::<Vec<_>>(),
+        )
+        .expect("attribute names");
+        let binding = format!(
+            "${{merge({{for key, value in {reference} : key => value if !contains({typed}, key)}}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}",
+            sandbox.name
+        );
         Ok((sandbox.name.clone(), json!({
             "sandbox":binding,
             // uuid() is unknown in a saved plan and records a unique observation

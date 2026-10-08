@@ -376,11 +376,8 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         .unwrap()
         .values()
     {
-        assert!(
-            profile["binaries_json"]
-                .as_str()
-                .unwrap()
-                .contains("nemoclaw_fabric_capabilities")
-        );
+        let binaries = profile["binaries"].as_str().unwrap();
+        assert!(binaries.starts_with("${jsondecode(data.nemoclaw_fabric_capabilities."));
+        assert!(binaries.ends_with(".binaries_json)}"));
     }
 }

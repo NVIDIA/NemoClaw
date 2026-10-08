@@ -13,6 +13,7 @@ workspace = true
 # Hardware diagnostics and configuration errors originate in the runtime.
 nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
 async-trait.workspace = true
+getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

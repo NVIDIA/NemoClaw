@@ -66,6 +66,8 @@ pub struct Definition {
     pub validate_spec: Option<ValidateSpec>,
     pub validate_attribute: Option<ValidateAttribute>,
     pub describe: Option<Describe>,
+    /// Typed inputs carried as JSON in row fields.
+    pub structured: Vec<crate::Structured>,
 }
 
 impl Definition {
@@ -85,6 +87,7 @@ impl Definition {
             validate_spec: None,
             validate_attribute: None,
             describe: None,
+            structured: Vec::new(),
         }
     }
     pub fn optional(mut self, fields: &[&'static str]) -> Self {
@@ -125,6 +128,20 @@ impl Definition {
     }
     pub fn validate_attribute(mut self, validate: ValidateAttribute) -> Self {
         self.validate_attribute = Some(validate);
+        self
+    }
+    /// Expose row `field`, which holds JSON, as the typed input `attribute`.
+    pub fn structured(
+        mut self,
+        attribute: &'static str,
+        field: &'static str,
+        shape: crate::shape::Shape,
+    ) -> Self {
+        self.structured.push(crate::Structured {
+            attribute,
+            field,
+            shape,
+        });
         self
     }
     pub fn describe(mut self, describe: Describe) -> Self {
@@ -200,5 +217,8 @@ pub fn plan_update(
 }
 
 mod resource;
+pub mod shape;
+mod structured;
 pub use nemoclaw_backend::{Backend, Mutation, Row};
 pub use resource::{ResourceAdapter, observation_message};
+pub use structured::{Structured, StructuredAdapter, StructuredState};

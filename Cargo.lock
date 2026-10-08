@@ -2264,6 +2264,7 @@ name = "nemoclaw-backend"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.4.3",
  "nemoclaw-runtime",
  "serde",
  "serde_json",
@@ -2363,6 +2364,7 @@ dependencies = [
  "async-trait",
  "getrandom 0.4.3",
  "http",
+ "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
@@ -2426,6 +2428,7 @@ version = "0.1.0"
 dependencies = [
  "jsonschema 0.56.0",
  "nemoclaw-backend",
+ "nemoclaw-tofu",
  "openshell-policy",
  "openshell-sdk",
  "schemars",
@@ -2524,6 +2527,7 @@ dependencies = [
  "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
+ "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",
  "process-wrap",
@@ -2553,7 +2557,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "nemoclaw-backend",
+ "serde",
+ "serde_json",
  "tf-provider",
+ "tokio",
 ]
 
 [[package]]

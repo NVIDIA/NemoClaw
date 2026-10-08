@@ -5,28 +5,13 @@
 
 use async_trait::async_trait;
 use nemoclaw_runtime::schema::PathSegment;
-use nemoclaw_sdk::hcl_schema::{Fields, Shape, from_hcl};
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use nemoclaw_tofu::shape::{Dynamic, Fields, Shape, block, from_hcl, json, single_blocks};
+use std::collections::BTreeMap;
 use tf_provider::{
     AttributePath, DataSource, Diagnostics,
-    schema::{
-        Attribute, AttributeConstraint, AttributeType, Block, Description, NestedBlock, Schema,
-    },
+    schema::{Attribute, AttributeConstraint, AttributeType, Description, Schema},
     value::{Value, ValueEmpty},
 };
-
-/// An OpenTofu value of any type, including unknown values at any depth.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum Dynamic {
-    Bool(bool),
-    Integer(i64),
-    Float(f64),
-    String(String),
-    List(Vec<Value<Dynamic>>),
-    Map(BTreeMap<String, Value<Dynamic>>),
-}
 
 pub(crate) type RuntimeState = BTreeMap<String, Value<Dynamic>>;
 
@@ -37,7 +22,7 @@ pub(crate) struct VllmRuntimeDataSource {
 }
 
 impl VllmRuntimeDataSource {
-    pub(crate) fn new() -> Result<Self, nemoclaw_sdk::hcl_schema::Unmappable> {
+    pub(crate) fn new() -> Result<Self, nemoclaw_tofu::shape::Unmappable> {
         Ok(Self {
             fields: nemoclaw_sdk::services::installers::vllm::runtime_fields()?,
         })
@@ -104,53 +89,6 @@ impl VllmRuntimeDataSource {
     }
 }
 
-/// Optional blocks arrive as lists of at most one object.
-fn single_blocks(shape: &Shape, value: serde_json::Value) -> serde_json::Value {
-    match (shape, value) {
-        (Shape::Object(fields), serde_json::Value::Object(object)) => object
-            .into_iter()
-            .map(|(name, value)| {
-                let Some(field) = fields.get(&name) else {
-                    return (name, value);
-                };
-                let value = match (&field.shape, value) {
-                    (Shape::Object(_), serde_json::Value::Array(mut items)) if !field.required => {
-                        items.pop().unwrap_or(serde_json::Value::Null)
-                    }
-                    (_, value) => value,
-                };
-                (name, single_blocks(&field.shape, value))
-            })
-            .collect(),
-        (Shape::ObjectList(fields), serde_json::Value::Array(items)) => items
-            .into_iter()
-            .map(|item| single_blocks(&Shape::Object(fields.clone()), item))
-            .collect(),
-        (_, value) => value,
-    }
-}
-
-fn json(value: &Value<Dynamic>) -> Option<serde_json::Value> {
-    Some(match value {
-        Value::Unknown => return None,
-        Value::Null => serde_json::Value::Null,
-        Value::Value(Dynamic::Bool(value)) => (*value).into(),
-        Value::Value(Dynamic::Integer(value)) => (*value).into(),
-        Value::Value(Dynamic::Float(value)) => serde_json::Number::from_f64(*value)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        Value::Value(Dynamic::String(value)) => value.clone().into(),
-        Value::Value(Dynamic::List(values)) => {
-            serde_json::Value::Array(values.iter().map(json).collect::<Option<_>>()?)
-        }
-        Value::Value(Dynamic::Map(entries)) => serde_json::Value::Object(
-            entries
-                .iter()
-                .map(|(key, value)| Some((key.clone(), json(value)?)))
-                .collect::<Option<_>>()?,
-        ),
-    })
-}
-
 /// The OpenTofu attribute path, and its dotted spelling, for the declared
 /// fields and indices of a violation. Undeclared keys end the path.
 fn attribute_path(fields: &Fields, segments: &[PathSegment]) -> (AttributePath, String) {
@@ -192,60 +130,6 @@ fn attribute_path(fields: &Fields, segments: &[PathSegment]) -> (AttributePath, 
         }
     }
     (path, spelled)
-}
-
-fn attribute_type(shape: &Shape) -> AttributeType {
-    match shape {
-        Shape::String => AttributeType::String,
-        Shape::Number => AttributeType::Number,
-        Shape::Bool => AttributeType::Bool,
-        Shape::List(item) => AttributeType::List(Box::new(attribute_type(item))),
-        Shape::Map(item) => AttributeType::Map(Box::new(attribute_type(item))),
-        // Objects are nested blocks (see `block`), and the schema
-        // conversion rejects lists and maps of objects.
-        Shape::Object(_) | Shape::ObjectList(_) => unreachable!("objects are nested blocks"),
-    }
-}
-
-/// Objects become nested blocks, as in other providers' configuration.
-fn block(fields: &Fields, description: &str) -> Block {
-    let mut attributes = HashMap::new();
-    let mut blocks = HashMap::new();
-    for (name, field) in fields {
-        let nested = |fields| block(fields, &field.description);
-        match &field.shape {
-            Shape::Object(fields) if field.required => {
-                blocks.insert(name.clone(), NestedBlock::Single(nested(fields)));
-            }
-            Shape::Object(fields) => {
-                blocks.insert(name.clone(), NestedBlock::Optional(nested(fields)));
-            }
-            Shape::ObjectList(fields) => {
-                blocks.insert(name.clone(), NestedBlock::List(nested(fields)));
-            }
-            shape => {
-                attributes.insert(
-                    name.clone(),
-                    Attribute {
-                        attr_type: attribute_type(shape),
-                        description: Description::plain(field.description.clone()),
-                        constraint: if field.required {
-                            AttributeConstraint::Required
-                        } else {
-                            AttributeConstraint::Optional
-                        },
-                        ..Default::default()
-                    },
-                );
-            }
-        }
-    }
-    Block {
-        attributes,
-        blocks,
-        description: Description::plain(description.to_owned()),
-        ..Default::default()
-    }
 }
 
 #[async_trait]

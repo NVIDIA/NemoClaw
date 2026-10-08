@@ -176,7 +176,8 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     result.extend(ancillary.into_values());
     Ok(result)
 }
-fn literal(value: &mut Value) {
+/// Escape OpenTofu template sequences in every string of `value`.
+pub(crate) fn literal(value: &mut Value) {
     match value {
         Value::String(text) => *text = text.replace("${", "$${").replace("%{", "%%{"),
         Value::Array(values) => values.iter_mut().for_each(literal),
