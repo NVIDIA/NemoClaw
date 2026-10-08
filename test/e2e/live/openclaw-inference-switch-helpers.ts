@@ -26,21 +26,6 @@ export type ExhaustedPostSwitchEvidence =
   | { outcome: "failed"; message: string }
   | { outcome: "skipped"; reason: string };
 
-export type UnavailableInitialProviderEvidence =
-  | { outcome: "failed"; message: string }
-  | { outcome: "skipped"; reason: string };
-
-/** Required provider qualification cannot succeed by skipping failed onboarding validation. */
-export function classifyUnavailableInitialProviderEvidence(input: {
-  required: boolean;
-  detail: string;
-}): UnavailableInitialProviderEvidence {
-  const detail = `External provider validation was unavailable during onboarding: ${input.detail}`;
-  return input.required
-    ? { outcome: "failed", message: `Required native provider evidence failed: ${detail}` }
-    : { outcome: "skipped", reason: detail };
-}
-
 /** Required provider evidence fails closed after bounded transient retries. */
 export function classifyExhaustedPostSwitchEvidence(input: {
   required: boolean;
@@ -144,9 +129,8 @@ export function parseOpenClawGatewayModelRun(raw: string): OpenClawGatewayModelR
   };
 }
 
-// Baseline (mock-Anthropic) inference config the live target builds when
-// NEMOCLAW_SWITCH_MOCK_ANTHROPIC=1 points OpenClaw at a local fake OpenAI-
-// compatible server. Extracted so the fast e2e-support project can assert the
+// Authenticated baseline inference config the live target uses for every
+// switch variant. Extracted so the fast e2e-support project can assert the
 // exact env wiring (credential, model, endpoint, preferred API, provider)
 // without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 export const MOCK_BASELINE_API_KEY = "openclaw-switch-baseline-credential";

@@ -10,7 +10,6 @@ import {
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
-  classifyUnavailableInitialProviderEvidence,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
@@ -125,30 +124,6 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
         "Sandbox inference transient failure after switch; route/config checks already passed: HTTP 503: unavailable",
     });
   });
-
-  it("fails closed when required native-provider validation is unavailable during onboarding", () => {
-    expect(
-      classifyUnavailableInitialProviderEvidence({
-        required: true,
-        detail: "HTTP 429: rate limited",
-      }),
-    ).toEqual({
-      outcome: "failed",
-      message:
-        "Required native provider evidence failed: External provider validation was unavailable during onboarding: HTTP 429: rate limited",
-    });
-
-    expect(
-      classifyUnavailableInitialProviderEvidence({
-        required: false,
-        detail: "HTTP 429: rate limited",
-      }),
-    ).toEqual({
-      outcome: "skipped",
-      reason:
-        "External provider validation was unavailable during onboarding: HTTP 429: rate limited",
-    });
-  });
 });
 
 describe("openclaw-inference-switch agent reply matching", () => {
@@ -219,7 +194,7 @@ describe("openclaw-inference-switch gateway model-run output", () => {
   });
 });
 
-describe("openclaw-inference-switch mock-Anthropic baseline", () => {
+describe("openclaw-inference-switch authenticated baseline", () => {
   it("serves authenticated PONG replies for the lifecycle gateway checks", async () => {
     const progress = startTestProgress("OpenClaw baseline", ["serve baseline", "verify baseline"], {
       logLine: () => undefined,

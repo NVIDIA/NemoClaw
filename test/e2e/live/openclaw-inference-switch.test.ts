@@ -36,7 +36,6 @@ import {
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { selectedE2eManagedImageReference } from "../fixtures/managed-image-receipt.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import {
@@ -54,7 +53,6 @@ import {
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
   classifyOpenClawPostSwitchInferenceAttempt,
-  classifyUnavailableInitialProviderEvidence,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
   parseOpenClawGatewayModelRun,
@@ -165,18 +163,7 @@ interface MockAnthropicRequest {
   toolCount: number | null;
 }
 
-function proveMockBaselineAuthentication(
-  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
-  sandbox: SandboxClient,
-  home: string,
-  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
-): Promise<void> {
-  return baseline
-    ? proveSelectedMockBaselineAuthentication(baseline, sandbox, home, artifacts)
-    : Promise.resolve(expect(baseline).toBeUndefined());
-}
-
-async function proveSelectedMockBaselineAuthentication(
+async function proveMockBaselineAuthentication(
   baseline: Pick<FakeOpenAiCompatibleServer, "requests">,
   sandbox: SandboxClient,
   home: string,
@@ -964,7 +951,7 @@ exit "$rc"
 
 async function runInitialRouteLifecycle(options: {
   artifacts: ArtifactSink;
-  baselineProvider?: Pick<FakeOpenAiCompatibleServer, "requests">;
+  baselineProvider: Pick<FakeOpenAiCompatibleServer, "requests">;
   home: string;
   host: HostCliClient;
   model: string;
@@ -1024,13 +1011,6 @@ async function runInitialRouteLifecycle(options: {
 // lived here as test(...) blocks (which only run under the opt-in live lane)
 // are covered in the fast e2e-support project instead:
 // test/e2e/support/openclaw-inference-switch-helpers.test.ts.
-
-function isExternalProviderValidationFailure(text: string): boolean {
-  return (
-    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
-    /HTTP 429|rate limit|quota|temporarily unavailable|timed out|timeout/i.test(text)
-  );
-}
 
 async function runOpenClawInferenceSetWithRetry(
   host: HostCliClient,
@@ -1095,7 +1075,7 @@ test(
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm the selected runtime and choose the baseline provider",
+        "confirm the selected runtime and start the authenticated baseline provider",
         "clear existing inference-switch state",
         "onboard a custom-image baseline OpenClaw",
         "prove the selected route after custom-image onboarding",
@@ -1123,8 +1103,8 @@ test(
         "fresh custom-image onboarding replaces the baked primary route with the selected model",
         "stale baked context-window and output-token limits are absent after gateway restart and rebuild",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
-        "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
-        "when selected, the mock baseline route completes one explicit authenticated fixture request",
+        "the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
+        "the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
         "NemoClaw reports the switched provider/model",
@@ -1145,22 +1125,15 @@ test(
       scenarioLabel: "OpenClaw inference switch",
     });
 
-    const useMockBaseline =
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
-    // OpenShell reaches this fixture from its gateway network namespace, where
-    // the runner's loopback address is not routable.
-    const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
-      ? await startMockOpenClawBaselineProvider(progress)
-      : undefined;
     const publicApiKey =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
         ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
         : null;
-    const baseline = baselineProvider
-      ? mockBaselineInference(baselineProvider.baseUrl)
-      : requireHostedInferenceConfig({
-          required: (name) => publicApiKey ?? secrets.required(name),
-        });
+    // OpenShell reaches this fixture from its gateway network namespace, where
+    // the runner's loopback address is not routable.
+    const baselineProvider = await startMockOpenClawBaselineProvider(progress);
+    cleanup.trackDisposable("close baseline inference provider", () => baselineProvider.close());
+    const baseline = mockBaselineInference(baselineProvider.baseUrl);
     const apiKey = baseline.apiKey;
     const redactionValues = [apiKey, publicApiKey].filter(
       (value): value is string => typeof value === "string",
@@ -1176,9 +1149,6 @@ test(
     );
     cleanup.trackDisposable("close switched Anthropic provider", async () => {
       await mockProvider?.close();
-    });
-    cleanup.trackDisposable("close baseline inference provider", async () => {
-      await baselineProvider?.close();
     });
     const customDockerfile = writeCustomOpenClawDockerfile(home);
     cleanup.trackGateway(host, "nemoclaw", {
@@ -1216,21 +1186,6 @@ test(
       },
     );
     const onboardText = resultText(onboard);
-    const providerValidationUnavailable =
-      onboard.exitCode !== 0 && isExternalProviderValidationFailure(onboardText);
-    const unavailable = classifyUnavailableInitialProviderEvidence({
-      required: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
-      detail: onboardText,
-    });
-    if (providerValidationUnavailable && unavailable.outcome === "skipped") {
-      await artifacts.target.complete({
-        id: "openclaw-inference-switch",
-        status: "skipped",
-        reason: "external-provider-validation-unavailable-before-inference-switch",
-        onboardExitCode: onboard.exitCode,
-      });
-      skip(unavailable.reason);
-    }
     expect(onboard.exitCode, onboardText).toBe(0);
     await proveMockBaselineAuthentication(baselineProvider, sandbox, home, artifacts);
 
@@ -1261,7 +1216,7 @@ test(
       });
     }
     // Only the explicit Anthropic bridge supplies endpoint metadata. The
-    // compatible baseline reuses its registered OpenShell provider, while the
+    // local compatible baseline reuses its registered OpenShell provider, while the
     // public NVIDIA provider has no caller-supplied endpoint identity.
     const switchBinding =
       SWITCH_PROVIDER === "compatible-anthropic-endpoint"
@@ -1373,7 +1328,7 @@ test(
         customImageModelMetadataPreserved: true,
         customImageRouteSurvivedGatewayRestart: true,
         customImageRouteSurvivedRebuild: true,
-        customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
+        customImageGatewayReachedBaselineFixture: true,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
         gatewayPidStable,
