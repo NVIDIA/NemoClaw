@@ -1362,6 +1362,10 @@ function commandDetail(result: CommandResult): string {
   return [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
 }
 
+function requireSuccessfulCommand(result: CommandResult, message: string): void {
+  if (result.exitCode !== 0) throw new Error(`${message}: ${commandDetail(result)}`);
+}
+
 async function runCommand(
   file: string,
   args: readonly string[],
@@ -1452,7 +1456,6 @@ async function observeWindowsProcessIdentity(
 export function parseWindowsMxcInteractiveHostContext(
   result: CommandResult,
 ): WindowsMxcHostLaunchContext {
-  if (result.exitCode !== 0) throw new Error("Windows host launch-context query failed");
   let value: unknown;
   try {
     value = JSON.parse(result.stdout);
@@ -1464,21 +1467,27 @@ export function parseWindowsMxcInteractiveHostContext(
     string,
     unknown
   >;
-  if (
+  const invalidOutput =
     typeof processElevated !== "boolean" ||
     typeof processUserInteractive !== "boolean" ||
     typeof processSessionId !== "number" ||
     !Number.isInteger(processSessionId) ||
     processSessionId < 0 ||
-    processSessionId > 0xffffffff
-  )
-    throw new Error("Windows host launch-context output is invalid");
-  if (processSessionId === 0 || !processUserInteractive) {
-    throw new Error(
-      `Windows MXC qualification requires a logged-in interactive Windows session (observed session ${processSessionId}, interactive=${processUserInteractive}); launch from that user's desktop session, not a service or session-0 shell. Elevation alone does not establish an interactive session.`,
-    );
-  }
-  return { processElevated, processSessionId, processUserInteractive };
+    processSessionId > 0xffffffff;
+  const failure =
+    result.exitCode !== 0
+      ? "Windows host launch-context query failed"
+      : invalidOutput
+        ? "Windows host launch-context output is invalid"
+        : processSessionId === 0 || !processUserInteractive
+          ? `Windows MXC qualification requires a logged-in interactive Windows session (observed session ${processSessionId}, interactive=${processUserInteractive}); launch from that user's desktop session, not a service or session-0 shell. Elevation alone does not establish an interactive session.`
+          : null;
+  if (failure) throw new Error(failure);
+  return {
+    processElevated: processElevated as boolean,
+    processSessionId: processSessionId as number,
+    processUserInteractive: processUserInteractive as boolean,
+  };
 }
 
 async function observeHostLaunchContext(
@@ -1927,25 +1936,15 @@ function trustedWindowsSystemExecutable(
   return realRegularFile(path.join(systemRoot, ...segments), name);
 }
 
-function assertExactFileIdentity(file: string, expectedSha256: string, name: string): void {
-  if (sha256File(file) !== expectedSha256) {
-    throw new Error(`${name} does not match the expected exact identity`);
-  }
-}
-
-export function assertExactArtifactIdentities(inputs: WindowsMxcOpenClawQualificationInputs): void {
-  const observed = {
-    nodeSha256: sha256File(inputs.openClaw.nodePath),
-    openClawArchiveSha256: sha256File(inputs.openClaw.archivePath),
-    openClawEntrySha256: sha256File(inputs.openClaw.entryPath),
-    openShellDistributionSha256: sha256File(inputs.openShell.distributionArtifactPath),
-    openShellCliSha256: sha256File(inputs.openShell.cliPath),
-    openShellGatewaySha256: sha256File(inputs.openShell.gatewayPath),
-    openShellRelaySha256: sha256File(inputs.openShell.relayPath),
-    wxcExecSha256: sha256File(inputs.mxc.wxcExecPath),
-  };
-  for (const [name, value] of Object.entries(observed)) {
-    if (value !== inputs.expected[name as keyof typeof observed]) {
+function assertExactFileIdentities(
+  identities: readonly {
+    readonly file: string;
+    readonly expectedSha256: string;
+    readonly name: string;
+  }[],
+): void {
+  for (const { file, expectedSha256, name } of identities) {
+    if (sha256File(file) !== expectedSha256) {
       throw new Error(`${name} does not match the expected exact identity`);
     }
   }
@@ -1956,8 +1955,7 @@ function assertExactPreparedArtifactIdentities(
   prepared: WindowsMxcPreparedOpenClawArtifact,
 ): void {
   const observed = {
-    nodeSha256: sha256File(prepared.nodePath),
-    openClawEntrySha256: sha256File(prepared.entryPath),
+    openClawArchiveSha256: prepared.archiveSha256,
     openShellDistributionSha256: sha256File(inputs.openShell.distributionArtifactPath),
     openShellCliSha256: sha256File(inputs.openShell.cliPath),
     openShellGatewaySha256: sha256File(inputs.openShell.gatewayPath),
@@ -1968,9 +1966,6 @@ function assertExactPreparedArtifactIdentities(
     if (value !== inputs.expected[name as keyof typeof observed]) {
       throw new Error(`${name} does not match the expected exact identity`);
     }
-  }
-  if (prepared.archiveSha256 !== inputs.expected.openClawArchiveSha256) {
-    throw new Error("openClawArchiveSha256 does not match the prepared exact identity");
   }
 }
 
@@ -2061,26 +2056,6 @@ function createWindowsMxcOpenClawCompositionInput(input: {
   };
 }
 
-export async function stageWindowsMxcOpenClawArtifact(
-  sourceRoot: string,
-  stagingRoot: string,
-  prepareAccess: (directory: string) => Promise<void>,
-): Promise<void> {
-  // Refuse existing roots. Children inherit access when created, avoiding a
-  // recursive ACL rewrite after the large artifact tree has been populated.
-  fs.mkdirSync(stagingRoot, { recursive: false });
-  await prepareAccess(stagingRoot);
-  // Copy to new entries, not the already-created root. The pinned Node rejects
-  // existing directory destinations with errorOnExist; its sync path can abort.
-  for (const entry of fs.readdirSync(sourceRoot)) {
-    await fs.promises.cp(path.join(sourceRoot, entry), path.join(stagingRoot, entry), {
-      errorOnExist: true,
-      force: false,
-      recursive: true,
-    });
-  }
-}
-
 export async function copyWindowsMxcOpenClawArchiveWithSha256(
   sourceArchive: string,
   destinationArchive: string,
@@ -2095,6 +2070,7 @@ export async function copyWindowsMxcOpenClawArchiveWithSha256(
       callback(null, chunk);
     },
   });
+  let completed = false;
   try {
     await pipeline(
       fs.createReadStream(sourceArchive),
@@ -2108,10 +2084,10 @@ export async function copyWindowsMxcOpenClawArchiveWithSha256(
     if (fs.statSync(destinationArchive).size !== bytes) {
       throw new Error("OpenClaw archive copy did not preserve its exact byte length");
     }
+    completed = true;
     return observedSha256;
-  } catch (error) {
-    fs.rmSync(destinationArchive, { force: true });
-    throw error;
+  } finally {
+    if (!completed) fs.rmSync(destinationArchive, { force: true });
   }
 }
 
@@ -2158,6 +2134,7 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
     `nemoclaw-mxc-openclaw-archive-${randomBytes(12).toString("hex")}.zip`,
   );
   let released = false;
+  let completed = false;
   try {
     await copyWindowsMxcOpenClawArchiveWithSha256(
       inputs.openClaw.archivePath,
@@ -2171,9 +2148,7 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
       progress,
       "command: windows-mxc-openclaw-artifact-owner",
     );
-    if (owner.exitCode !== 0 || !owner.stdout.trim()) {
-      throw new Error(`OpenClaw artifact owner observation failed: ${commandDetail(owner)}`);
-    }
+    requireSuccessfulCommand(owner, "OpenClaw artifact owner observation failed");
     const acl = await runCommand(
       icaclsPath,
       windowsMxcAppContainerReadOnlyAclArguments(artifactRoot, owner.stdout.trim()),
@@ -2181,9 +2156,7 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
       progress,
       "command: windows-mxc-openclaw-read-only-artifact-dacl",
     );
-    if (acl.exitCode !== 0) {
-      throw new Error(`OpenClaw read-only DACL preparation failed: ${commandDetail(acl)}`);
-    }
+    requireSuccessfulCommand(acl, "OpenClaw read-only DACL preparation failed");
     const extracted = await runCommand(
       tarPath,
       ["-xf", archiveCopyPath, "-C", artifactRoot],
@@ -2192,9 +2165,7 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
       "command: windows-mxc-openclaw-archive-extract",
       10 * 60_000,
     );
-    if (extracted.exitCode !== 0) {
-      throw new Error(`OpenClaw archive extraction failed: ${commandDetail(extracted)}`);
-    }
+    requireSuccessfulCommand(extracted, "OpenClaw archive extraction failed");
     const nodePath = realRegularFile(
       path.join(artifactRoot, path.relative(inputs.openClaw.root, inputs.openClaw.nodePath)),
       "staged OpenClaw Node.js executable",
@@ -2202,12 +2173,6 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
     const entryPath = realRegularFile(
       path.join(artifactRoot, path.relative(inputs.openClaw.root, inputs.openClaw.entryPath)),
       "staged OpenClaw entrypoint",
-    );
-    assertExactFileIdentity(nodePath, inputs.expected.nodeSha256, "stagedNodeSha256");
-    assertExactFileIdentity(
-      entryPath,
-      inputs.expected.openClawEntrySha256,
-      "stagedOpenClawEntrySha256",
     );
     const tree: MxcWindowsOpenShellArtifactTree = Object.freeze({
       directories: Object.freeze([artifactRoot]),
@@ -2226,15 +2191,17 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
       ) {
         throw new Error("prepared OpenClaw artifact root identity drifted");
       }
-      assertExactFileIdentity(nodePath, inputs.expected.nodeSha256, "stagedNodeSha256");
-      assertExactFileIdentity(
-        entryPath,
-        inputs.expected.openClawEntrySha256,
-        "stagedOpenClawEntrySha256",
-      );
+      assertExactFileIdentities([
+        { file: nodePath, expectedSha256: inputs.expected.nodeSha256, name: "stagedNodeSha256" },
+        {
+          file: entryPath,
+          expectedSha256: inputs.expected.openClawEntrySha256,
+          name: "stagedOpenClawEntrySha256",
+        },
+      ]);
       return tree;
     };
-    return Object.freeze({
+    const prepared = Object.freeze({
       archiveSha256: inputs.expected.openClawArchiveSha256,
       entryPath,
       nodePath,
@@ -2251,10 +2218,13 @@ export async function prepareWindowsMxcOpenClawArchiveArtifact(
         released = true;
       },
     });
-  } catch (error) {
-    fs.rmSync(preparedRoot, { force: true, recursive: true });
-    fs.rmSync(archiveCopyPath, { force: true });
-    throw error;
+    completed = true;
+    return prepared;
+  } finally {
+    if (!completed) {
+      fs.rmSync(preparedRoot, { force: true, recursive: true });
+      fs.rmSync(archiveCopyPath, { force: true });
+    }
   }
 }
 
@@ -2359,11 +2329,13 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
       const token = randomBytes(32).toString("base64url");
 
       fs.copyFileSync(input.inputs.openShell.relayPath, relayPath);
-      assertExactFileIdentity(
-        relayPath,
-        input.inputs.expected.openShellRelaySha256,
-        "stagedRelaySha256",
-      );
+      assertExactFileIdentities([
+        {
+          file: relayPath,
+          expectedSha256: input.inputs.expected.openShellRelaySha256,
+          name: "stagedRelaySha256",
+        },
+      ]);
 
       const gatewayConfiguration = createWindowsMxcGatewayConfiguration({
         distributionRevision: input.inputs.openShell.revision,
@@ -2548,7 +2520,6 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   if (!host.candidate) throw new Error(host.detail);
   requireWindowsDriveRoot(inputs.workDirectory);
   assertCurrentCheckoutIdentity(inputs.expected.nemoClawRevision);
-  assertExactPreparedArtifactIdentities(inputs, preparedOpenClaw);
   const powershellPath = trustedWindowsSystemExecutable(
     environment,
     ["System32", "WindowsPowerShell", "v1.0", "powershell.exe"],
@@ -2711,11 +2682,13 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     activityLabel: string,
     timeoutMs = COMMAND_TIMEOUT_MS,
   ): Promise<CommandResult> => {
-    assertExactFileIdentity(
-      inputs.openShell.cliPath,
-      inputs.expected.openShellCliSha256,
-      "openShellCliSha256",
-    );
+    assertExactFileIdentities([
+      {
+        file: inputs.openShell.cliPath,
+        expectedSha256: inputs.expected.openShellCliSha256,
+        name: "openShellCliSha256",
+      },
+    ]);
     return await runCommand(
       inputs.openShell.cliPath,
       args,
@@ -2771,11 +2744,13 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     providerLifecycle = lifecycle;
     await lifecycle.qualify();
     checks = { ...checks, attachmentObserved: true };
-    assertExactFileIdentity(
-      inputs.openShell.gatewayPath,
-      inputs.expected.openShellGatewaySha256,
-      "openShellGatewaySha256",
-    );
+    assertExactFileIdentities([
+      {
+        file: inputs.openShell.gatewayPath,
+        expectedSha256: inputs.expected.openShellGatewaySha256,
+        name: "openShellGatewaySha256",
+      },
+    ]);
     gateway = spawnObservedChild(
       inputs.openShell.gatewayPath,
       [
@@ -2918,11 +2893,13 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     ) {
       progress.phase("forward authenticated traffic and require the exact mock-backed chat reply");
     }
-    assertExactFileIdentity(
-      inputs.openShell.cliPath,
-      inputs.expected.openShellCliSha256,
-      "openShellCliSha256",
-    );
+    assertExactFileIdentities([
+      {
+        file: inputs.openShell.cliPath,
+        expectedSha256: inputs.expected.openShellCliSha256,
+        name: "openShellCliSha256",
+      },
+    ]);
     forward = spawnObservedChild(
       inputs.openShell.cliPath,
       [

@@ -12,7 +12,6 @@ import { sha256WindowsOpenClawArtifactTree } from "../../../tools/e2e/windows-mx
 import {
   allowlistedWindowsProcessEnvironment,
   assertCleanCheckoutIdentity,
-  assertExactArtifactIdentities,
   buildWindowsMxcSetupFailureReceipt,
   classifyWindowsMxcOpenClawStartupObservation,
   classifyWindowsMxcForwardHealthObservation,
@@ -36,7 +35,6 @@ import {
   runWindowsMxcForwardCleanup,
   sanitizeWindowsMxcOpenClawGatewayOutput,
   readWindowsMxcOpenClawGatewayOutput,
-  stageWindowsMxcOpenClawArtifact,
   sha256File,
   withWindowsMxcLocalSetupOwnership,
   windowsMxcAppContainerAclArguments,
@@ -575,30 +573,6 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     );
   });
 
-  it("rejects an artifact replaced after its initial identity check (#8178)", () => {
-    const { environment } = fixture();
-    const parsed = parseFixtureEnvironment(environment);
-    assertExactArtifactIdentities(parsed);
-
-    fs.writeFileSync(parsed.openShell.cliPath, "replacement", "utf8");
-
-    expect(() => assertExactArtifactIdentities(parsed)).toThrow(
-      /openShellCliSha256 does not match the expected exact identity/u,
-    );
-  });
-
-  it("rejects substitution of the original OpenShell distribution artifact (#8178)", () => {
-    const { environment } = fixture();
-    const parsed = parseFixtureEnvironment(environment);
-    assertExactArtifactIdentities(parsed);
-
-    fs.writeFileSync(parsed.openShell.distributionArtifactPath, "replacement", "utf8");
-
-    expect(() => assertExactArtifactIdentities(parsed)).toThrow(
-      /openShellDistributionSha256 does not match the expected exact identity/u,
-    );
-  });
-
   it("rejects dirty source identity and version-prefix matches (#8178)", () => {
     expect(() =>
       assertCleanCheckoutIdentity({
@@ -796,132 +770,6 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     ).rejects.toThrow(/expected exact identity/u);
     expect(fs.existsSync(destination)).toBe(false);
   });
-
-  it("prepares an empty staging root before copying the artifact (#10585)", async () => {
-    const { root } = fixture();
-    const source = path.join(root, "openclaw");
-    const staged = path.join(root, "staged");
-    const digest = sha256WindowsOpenClawArtifactTree(source);
-    const prepareAccess = vi.fn(async (directory: string) => {
-      expect(directory).toBe(staged);
-      expect(fs.readdirSync(directory)).toEqual([]);
-    });
-    await stageWindowsMxcOpenClawArtifact(source, staged, prepareAccess);
-    expect(prepareAccess).toHaveBeenCalledOnce();
-    expect(sha256WindowsOpenClawArtifactTree(staged)).toBe(digest);
-    expect(sha256WindowsOpenClawArtifactTree(source)).toBe(digest);
-  });
-
-  it("rejects an existing staging root without changing its contents or permissions (#10585)", async () => {
-    const { root } = fixture();
-    const staged = path.join(root, "staged");
-    fs.mkdirSync(staged);
-    fs.writeFileSync(path.join(staged, "existing"), "keep");
-    const prepareAccess = vi.fn();
-    await expect(
-      stageWindowsMxcOpenClawArtifact(path.join(root, "openclaw"), staged, prepareAccess),
-    ).rejects.toMatchObject({ code: "EEXIST" });
-    expect(prepareAccess).not.toHaveBeenCalled();
-    expect(fs.readdirSync(staged)).toEqual(["existing"]);
-    expect(fs.readFileSync(path.join(staged, "existing"), "utf8")).toBe("keep");
-  });
-
-  it("rejects a destination entry created during access preparation without overwriting it (#10585)", async () => {
-    const { root } = fixture();
-    const staged = path.join(root, "staged");
-    await expect(
-      stageWindowsMxcOpenClawArtifact(path.join(root, "openclaw"), staged, async (directory) => {
-        fs.mkdirSync(path.join(directory, "node"));
-        fs.writeFileSync(path.join(directory, "node", "node.exe"), "keep");
-      }),
-    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
-    expect(fs.readFileSync(path.join(staged, "node", "node.exe"), "utf8")).toBe("keep");
-  });
-
-  it("removes the owned empty root after a permission failure without copying artifacts (#10585)", async () => {
-    const { root } = fixture();
-    const staged = path.join(root, "staged");
-    await expect(
-      withWindowsMxcLocalSetupOwnership({
-        receiptPath: path.join(root, "setup-failure.json"),
-        failureReceipt: (removed) => ({ removed }),
-        operation: async (ownership) =>
-          await stageWindowsMxcOpenClawArtifact(
-            path.join(root, "openclaw"),
-            staged,
-            async (directory) => {
-              ownership.trackRoot(directory);
-              expect(fs.readdirSync(directory)).toEqual([]);
-              throw new Error("permission failure");
-            },
-          ),
-      }),
-    ).rejects.toMatchObject({
-      errors: [expect.objectContaining({ message: "permission failure" })],
-    });
-    expect(fs.existsSync(staged)).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(root, "setup-failure.json"), "utf8"))).toEqual({
-      removed: true,
-    });
-  });
-
-  it.skipIf(process.platform !== "win32")(
-    "inherits package-group modify access on copied and newly created files (#10585)",
-    async () => {
-      const { root } = fixture();
-      const source = path.join(root, "openclaw");
-      const staged = path.join(root, "staged");
-      const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-      const inspect = (script: string) => {
-        const result = spawnSync(
-          powershell,
-          ["-NoProfile", "-NonInteractive", "-Command", script],
-          {
-            encoding: "utf8",
-            windowsHide: true,
-            timeout: 30_000,
-            env: {
-              ...allowlistedWindowsProcessEnvironment(process.env),
-              NEMOCLAW_ACL_FIXTURE: root,
-            },
-          },
-        );
-        expect(result.status, result.stderr).toBe(0);
-        return JSON.parse(result.stdout);
-      };
-      const sourceAcl = inspect(
-        "(Get-Acl -LiteralPath (Join-Path $env:NEMOCLAW_ACL_FIXTURE 'openclaw')).Sddl | ConvertTo-Json -Compress",
-      );
-      await stageWindowsMxcOpenClawArtifact(source, staged, async (directory) => {
-        expect(fs.readdirSync(directory)).toEqual([]);
-        const result = spawnSync(
-          "C:\\Windows\\System32\\icacls.exe",
-          windowsMxcAppContainerAclArguments(directory),
-          { encoding: "utf8", windowsHide: true, timeout: 30_000 },
-        );
-        expect(result.status).toBe(0);
-      });
-      fs.writeFileSync(path.join(staged, "runtime", "later.txt"), "new");
-      const grants = inspect(
-        "$ErrorActionPreference='Stop'; $sids=@('S-1-15-2-1','S-1-15-2-2'); $paths=@('staged/node/node.exe','staged/runtime/openclaw.mjs','staged/runtime/later.txt'); $rows=@(foreach($relative in $paths) { $acl=Get-Acl -LiteralPath (Join-Path $env:NEMOCLAW_ACL_FIXTURE $relative); foreach($sid in $sids) { $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Where-Object {$_.IdentityReference.Value -eq $sid -and $_.AccessControlType -eq 'Allow'}); [pscustomobject]@{sid=$sid; inheritedModify=[bool](@($rules | Where-Object {$_.IsInherited -and ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Modify) -eq [Security.AccessControl.FileSystemRights]::Modify}).Count -gt 0); fullControl=[bool](@($rules | Where-Object {($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl}).Count -gt 0)} } }); ConvertTo-Json -InputObject $rows -Compress",
-      );
-      expect(grants).toEqual(
-        Array.from({ length: 3 }, () => [
-          { sid: "S-1-15-2-1", inheritedModify: true, fullControl: false },
-          { sid: "S-1-15-2-2", inheritedModify: true, fullControl: false },
-        ]).flat(),
-      );
-      expect(
-        inspect(
-          "(Get-Acl -LiteralPath (Join-Path $env:NEMOCLAW_ACL_FIXTURE 'openclaw')).Sddl | ConvertTo-Json -Compress",
-        ),
-      ).toBe(sourceAcl);
-      expect(sha256WindowsOpenClawArtifactTree(source)).not.toBe(
-        sha256WindowsOpenClawArtifactTree(staged),
-      );
-    },
-    90_000,
-  );
 
   it("serializes a generated probe startup failure without raw diagnostics (#8178)", async () => {
     const { root } = fixture();
