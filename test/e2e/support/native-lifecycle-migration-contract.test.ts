@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { restorationScript } from "./native-lifecycle-restoration.ts";
+import { restorationScript } from "../live/openclaw-restoration.ts";
 
 const LIVE_ROOT = path.join(import.meta.dirname, "..", "live");
 
@@ -57,7 +57,7 @@ describe("OpenClaw rebuild restoration verification", () => {
   let directory: string;
 
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "rebuild-restoration-"));
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "rebuild restoration'-"));
     for (const marker of RESTORED_MARKERS) {
       const filename = path.join(directory, marker);
       fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -84,17 +84,15 @@ exit 2
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  function runRestoration(
-    overrides: Record<string, string> = {},
-    restoration = restorationScript(liveSource("rebuild-openclaw.test.ts")),
-  ) {
-    const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-    const openclaw = quote(path.join(directory, "openclaw"));
-    const script = restoration
-      .replaceAll("/sandbox", quote(directory))
-      .replaceAll("openclaw config", `${openclaw} config`)
-      .replaceAll("openclaw plugins", `${openclaw} plugins`)
-      .replace("| node -e", `| ${quote(process.execPath)} -e`);
+  function restorationCommand(): string {
+    return restorationScript({
+      home: directory,
+      openclaw: path.join(directory, "openclaw"),
+      node: process.execPath,
+    });
+  }
+
+  function runRestoration(overrides: Record<string, string> = {}, script = restorationCommand()) {
     const result = spawnSync("/bin/sh", ["-lc", script], {
       encoding: "utf8",
       timeout: 5_000,
@@ -142,10 +140,7 @@ exit 2
       "config get agents.defaults.timeoutSeconds",
     ],
   ])("rejects %s in the restoration command", (_name, command, replacement) => {
-    const script = restorationScript(liveSource("rebuild-openclaw.test.ts")).replace(
-      command,
-      replacement,
-    );
+    const script = restorationCommand().replace(command, replacement);
     expect(runRestoration({}, script)).toEqual({ status: 2, stdout: "" });
   });
 
