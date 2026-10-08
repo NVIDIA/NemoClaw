@@ -230,13 +230,26 @@ pub(crate) fn compiled_runtime(
     if let Some(gateway) = targets.iter().find(|target| target.kind == GATEWAY_KIND)
         && document.spec.gateway.runtime().provider == ComputeDriver::Docker
     {
-        let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
-        readiness["managed_spec"] = json!(
-            gateway.values["spec"]
-                .replace("${", "$${")
-                .replace("%{", "%%{")
-        );
-        readiness["container_id"] = json!("${docker_container.managed_gateway_runtime.id}");
+        // The process must serve its API before the authenticated capability
+        // read; its readiness fails quickly when the container stops.
+        let spec: crate::managed::Spec = serde_json::from_str(&gateway.values["spec"])
+            .map_err(|_| Error::State("invalid managed gateway specification"))?;
+        let literal = |value: &str| json!(value.replace("${", "$${").replace("%{", "%%{"));
+        graph["data"]["nemoclaw_gateway_readiness"]["current"] = json!({
+            "engine": literal(spec.engine()),
+            "container_id": "${docker_container.managed_gateway_runtime.id}",
+            "name": literal(&spec.name),
+            "owner": literal(&spec.owner),
+            "endpoint": literal(&spec.gateway.endpoint),
+            "wait_timeout_seconds": 90,
+        });
+        let capabilities = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+        let mut dependencies = capabilities["depends_on"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        dependencies.push(json!("data.nemoclaw_gateway_readiness.current"));
+        capabilities["depends_on"] = json!(dependencies);
     }
     for target in targets
         .iter()

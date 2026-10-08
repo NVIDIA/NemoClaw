@@ -99,6 +99,7 @@ To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid
 | `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
 | `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
 | `nemoclaw_gateway_capabilities` | [Gateway version and compute drivers](#gateway-capabilities) |
+| `nemoclaw_gateway_readiness` | [Managed Docker gateway process and health](#gateway-capabilities) |
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
 | `nemoclaw_service_readiness` | [vLLM, Ollama, and proxy readiness](#runtime-capacity-and-readiness) |
 | `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
@@ -287,15 +288,16 @@ A positive timeout retries only transport failures, not authentication failures,
 For a managed gateway, the runtime stage sets this timeout to 90 seconds and reads capabilities after gateway reconciliation.
 The capability postcondition must succeed before OpenShell resource refresh proceeds.
 
-For managed Docker gateways, the runtime graph also passes `managed_spec` and `container_id` from the Docker provider's process resource.
-These optional inputs must be supplied together and may remain unknown until apply.
-The data source validates the specification and checks the exact container ID, name, and owner through read-only engine inspection while waiting for the API.
+For managed Docker gateways, the runtime graph first reads `data.nemoclaw_gateway_readiness.current` and orders the capability read after it.
+`nemoclaw_gateway_readiness` takes the container's `engine`, `container_id`, `name`, and `owner`, the gateway `endpoint`, and optional `wait_timeout_seconds` and `read_trigger`.
+The runtime graph waits 90 seconds and takes `container_id` from the Docker provider's process resource, so the read waits until apply.
+The data source checks the exact container ID, name, and owner through read-only engine inspection while waiting for the gateway to answer its OpenShell health call without credentials, then returns `ready`.
 Two matching stopped or absent observations, separated by 200 milliseconds, stop a positive readiness wait; a restarting process can recover within the existing timeout.
 A zero timeout reports a stopped process on its first observation and continues inspecting a running process while the single API request is pending.
 A running but unreachable gateway remains a transport failure; failed or incomplete engine observations are not treated as process absence.
 The error names the container, includes its observed exit code when available, and points to its logs without copying raw engine errors or log text.
 The observation neither restarts nor deletes the process; follow [gateway startup recovery](troubleshooting.md#recover-a-managed-gateway-startup-failure).
-Podman and external gateway capability reads retain their API-only wait.
+Podman and external gateways have no process readiness read; their capability read retains its API wait.
 
 A known data-source result can be retained in a saved plan.
 The deployment graph also declares `data.nemoclaw_gateway_capabilities.apply`, with a `read_trigger` that is unknown during planning.

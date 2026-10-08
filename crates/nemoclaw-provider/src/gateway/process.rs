@@ -4,25 +4,10 @@
 use crate::{
     Error, ObservationError,
     docker::{Connections, Engine},
-    managed::{GATEWAY_KIND, OWNER_LABEL, Spec},
+    managed::OWNER_LABEL,
 };
 use bollard::models::ContainerStateStatusEnum;
 use std::{future::Future, time::Duration};
-
-pub(super) fn specification(encoded: &str) -> Result<Spec, Error> {
-    let spec: Spec = serde_json::from_str(encoded)
-        .map_err(|_| Error::State("invalid managed gateway readiness specification"))?;
-    spec.validate_runtime()?;
-    if spec.kind != GATEWAY_KIND
-        || spec.process.is_some()
-        || spec.compute_driver != crate::config::ComputeDriver::Docker
-    {
-        return Err(Error::State(
-            "gateway process readiness requires a managed Docker gateway",
-        ));
-    }
-    Ok(spec)
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Failure {
@@ -57,28 +42,33 @@ enum Phase {
     Stopped(Failure),
 }
 
+/// A managed gateway container bound by its engine, ID, name, and owner label.
 pub(super) struct ManagedGateway {
-    spec: Spec,
     engine: Engine,
     id: String,
+    name: String,
+    owner: String,
 }
 impl ManagedGateway {
     pub(super) fn new(
-        spec: Spec,
+        engine: &str,
         id: &str,
+        name: &str,
+        owner: &str,
         connections: &Connections,
     ) -> Result<Self, ObservationError> {
         let engine = connections
-            .resolve(spec.engine())
+            .resolve(engine)
             .map_err(Error::into_observation)?;
         Ok(Self {
-            spec,
             engine,
             id: id.into(),
+            name: name.into(),
+            owner: owner.into(),
         })
     }
     pub(super) fn name(&self) -> &str {
-        &self.spec.name
+        &self.name
     }
 
     async fn phase(&self) -> Result<Phase, Failure> {
@@ -104,7 +94,7 @@ impl ManagedGateway {
                 .as_ref()
                 .and_then(|config| config.labels.as_ref())
                 .and_then(|labels| labels.get(OWNER_LABEL))
-                != Some(&self.spec.owner)
+                != Some(&self.owner)
         {
             return Err(ObservationError::BindingMismatch.into());
         }
@@ -178,12 +168,12 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    fn spec() -> Spec {
+    fn spec() -> crate::managed::Spec {
         let fixtures: Vec<Value> =
             serde_json::from_str(include_str!("../managed/reference.json")).unwrap();
         serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap()
     }
-    fn container(spec: &Spec) -> Value {
+    fn container(spec: &crate::managed::Spec) -> Value {
         json!({"Id":"bound", "Name":format!("/{}",spec.name),
             "Config":{"Labels":{OWNER_LABEL:spec.owner},"Env":["KEY=PRIVATE_SENTINEL"]},
             "State":{"Status":"running","Running":true,"ExitCode":0,"Error":"PRIVATE_SENTINEL"}})
@@ -204,9 +194,15 @@ mod tests {
             Some((status, serde_json::to_vec(&value).unwrap()))
         })
         .await;
-        let mut spec = spec();
-        spec.gateway.engine = fixture.endpoint.clone();
-        let managed = ManagedGateway::new(spec, "bound", &Connections::default()).unwrap();
+        let spec = spec();
+        let managed = ManagedGateway::new(
+            &fixture.endpoint,
+            "bound",
+            &spec.name,
+            &spec.owner,
+            &Connections::default(),
+        )
+        .unwrap();
         (fixture, managed)
     }
 
