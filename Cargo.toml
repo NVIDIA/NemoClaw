@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/nemoclaw-backend",
+    "crates/nemoclaw-tofu",
     "crates/nemoclaw-sdk",
     "crates/nemoclaw-authoring",
     "crates/nemoclaw-discovery",

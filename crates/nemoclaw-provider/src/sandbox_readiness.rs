@@ -143,9 +143,7 @@ impl DataSource for SandboxReadinessDataSource {
                     _ => None,
                 };
                 config.error_message = Value::Value(match error {
-                    Error::Observation(error) => {
-                        crate::resource::observation_message(error, sandbox)
-                    }
+                    Error::Observation(error) => crate::observation_message(error, sandbox),
                     other => other.to_string(),
                 });
                 Some(config)

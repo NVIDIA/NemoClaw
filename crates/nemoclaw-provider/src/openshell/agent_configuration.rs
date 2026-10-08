@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn pi_model_failure_keeps_the_code_and_named_sandbox_without_native_details() {
         let error = super::configuration_failure("start", "pi_model_unknown", Some("stopped"));
-        let message = crate::resource::observation_message(error, Some("coder"));
+        let message = crate::observation_message(error, Some("coder"));
         for expected in [
             "sandbox/coder",
             "pi_model_unknown",

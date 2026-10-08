@@ -603,7 +603,7 @@ mod tests {
             let direct = failure.to_string();
             let observation = failure.into_observation();
             assert_eq!(direct, observation.to_string());
-            let message = crate::resource::observation_message(observation, Some("coder"));
+            let message = crate::observation_message(observation, Some("coder"));
             for expected in ["sandbox/coder", reason, guidance, "resources retained"] {
                 assert!(message.contains(expected), "{message}");
             }
