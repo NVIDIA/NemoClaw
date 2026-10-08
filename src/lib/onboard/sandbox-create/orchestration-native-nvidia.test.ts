@@ -28,9 +28,13 @@ function providerAdapter(providerId: string): OpenShellProviderAdapter {
   } as unknown as OpenShellProviderAdapter;
 }
 
-function nativeProviderBoundary(adapter: OpenShellProviderAdapter, missingReceipt = false) {
+function nativeProviderBoundary(
+  adapter: OpenShellProviderAdapter,
+  missingReceipt = false,
+  deferred = false,
+) {
   return createProviderEffectBoundary({
-    deferred: false,
+    deferred,
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
     expectedNativeNvidiaProviderAttachment: missingReceipt
@@ -73,12 +77,18 @@ function verifiedCreateContext(revalidateSandboxIdentity = vi.fn()) {
 }
 
 describe("native NVIDIA post-create provider verification", () => {
-  it("rejects a missing native receipt before creation", async () => {
-    const boundary = nativeProviderBoundary(providerAdapter(recordedProviderId), true);
-    await expect(boundary.validateBeforeCreate()).rejects.toThrow(
-      "native NVIDIA provider identity receipt",
-    );
-  });
+  it.each([false, true])(
+    "rejects a missing native receipt before creation with deferred=%s",
+    async (deferred) => {
+      const adapter = providerAdapter(recordedProviderId);
+      const boundary = nativeProviderBoundary(adapter, true, deferred);
+      await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+        "native NVIDIA provider identity receipt",
+      );
+      expect(adapter.getProvider).not.toHaveBeenCalled();
+      expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
+    },
+  );
 
   it("confirms the recorded provider is attached after sandbox identity is verified", async () => {
     const adapter = providerAdapter(recordedProviderId);
