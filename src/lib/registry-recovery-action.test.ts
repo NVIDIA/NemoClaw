@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import os from "node:os";
+
+import { acquireProcessBoundLockAt, releaseProcessBoundLock } from "./state/registry/lock.js";
+import { portableHostFencePath } from "./state/portable-uninstall-retirement.js";
 
 import type { SandboxEntry } from "./state/registry.js";
 
@@ -190,6 +194,30 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
 
     expect(result.recoveredFromSession).toBe(false);
     expect(result.sandboxes).toEqual([]);
+  });
+
+  it("rejects seeded recovery when another lock owner holds the host fence", async () => {
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia",
+      model: "nemotron",
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    const homeDir = process.env.HOME || os.homedir();
+    const owner = acquireProcessBoundLockAt(portableHostFencePath(homeDir));
+    try {
+      await expect(recoverRegistryEntries()).rejects.toThrow("Host maintenance is in progress");
+
+      expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+      expect(getNamedGatewayLifecycleState).not.toHaveBeenCalled();
+      expect(captureOpenshell).not.toHaveBeenCalled();
+      expect(mockRegistryState.sandboxes).toEqual({});
+    } finally {
+      releaseProcessBoundLock(owner);
+    }
   });
 
   it("preserves a persisted Hermes agent when the session re-seeds the same sandbox", async () => {

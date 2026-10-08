@@ -349,6 +349,62 @@ describe("portable resume command lock boundary", () => {
     expect(process.listenerCount("exit")).toBe(exitListeners);
   });
 
+  it(
+    "fails fast against a process-bound host-fence owner without corrupting lock state",
+    testTimeoutOptions(30_000),
+    async () => {
+      const { portableHostFencePath, withPortableHostFenceTry } = boundaryModules.retirement;
+      const moduleUrl = new URL("../state/portable-uninstall-retirement.ts", import.meta.url).href;
+      const readyFile = path.join(tempHome, "host-fence-ready");
+      const releaseFile = path.join(tempHome, "host-fence-release");
+      const script = String.raw`
+      const fs = await import('node:fs');
+      const loaded = await import(process.argv[2]);
+      const { withPortableHostFence } = loaded.default ?? loaded;
+      await withPortableHostFence(process.argv[1], async () => {
+        fs.writeFileSync(process.argv[3], 'ready');
+        while (!fs.existsSync(process.argv[4])) await new Promise(resolve => setTimeout(resolve, 10));
+      });
+    `;
+      const child = spawn(
+        process.execPath,
+        [
+          "--no-warnings",
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          script,
+          tempHome,
+          moduleUrl,
+          readyFile,
+          releaseFile,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let childOutput = "";
+      child.stdout?.on("data", (chunk: Buffer) => (childOutput += chunk.toString()));
+      child.stderr?.on("data", (chunk: Buffer) => (childOutput += chunk.toString()));
+      try {
+        await vi.waitFor(
+          () => expect(fs.existsSync(readyFile)).toBe(true),
+          testTimeoutOptions(30_000),
+        );
+        expect(fs.existsSync(portableHostFencePath(tempHome))).toBe(true);
+        await expect(withPortableHostFenceTry(tempHome, () => undefined)).rejects.toThrow(
+          /Host maintenance is in progress/,
+        );
+        expect(fs.existsSync(portableHostFencePath(tempHome))).toBe(true);
+      } finally {
+        fs.writeFileSync(releaseFile, "release");
+        const [code] = await once(child, "exit");
+        expect(code, childOutput).toBe(0);
+      }
+      expect(fs.existsSync(portableHostFencePath(tempHome))).toBe(false);
+      await expect(withPortableHostFenceTry(tempHome, () => "acquired")).resolves.toBe("acquired");
+    },
+  );
+
   it("drains an admitted detached reentry before releasing the physical fence (#9189)", async () => {
     const { portableHostFencePath, withPortableHostFence } = boundaryModules.retirement;
     const events: string[] = [];
