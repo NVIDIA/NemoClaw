@@ -362,6 +362,7 @@ test(
         "onboard sandbox on default gateway",
         "onboard sandbox on alternate gateway",
         "verify isolated gateways and dashboard forwards",
+        "garbage-collect an orphan without deleting the sibling gateway image",
         "uninstall alternate gateway without disrupting default",
       ],
     },
@@ -406,6 +407,7 @@ test(
         "sandbox B onboards with NEMOCLAW_GATEWAY_PORT on a non-default gateway",
         "both sandboxes, gateways, and dashboard forwards coexist without port collision",
         "each port-scoped registry lists only the sandbox owned by that gateway",
+        "gc on gateway A preserves gateway B's registered image while removing a true orphan tag",
         "uninstalling gateway B removes only its scoped state and leaves gateway A plus the shared CLI healthy",
       ],
       gatewayA,
@@ -502,8 +504,10 @@ test(
       gatewayB,
       "phase-3-sandbox-b-ready",
     );
-    expect(["Ready", "Running"]).toContain(phaseAAfterB);
-    expect(["Ready", "Running"]).toContain(phaseBAfterB);
+    expect(
+      [phaseAAfterB, phaseBAfterB].every((phase) => phase === "Ready" || phase === "Running"),
+      `gateway A=${phaseAAfterB}, gateway B=${phaseBAfterB}`,
+    ).toBe(true);
     await expectPortListening(host, GATEWAY_PORT_A, "phase-3-gateway-port-a-still-listening");
     await expectPortListening(host, GATEWAY_PORT_B, "phase-3-gateway-port-b-listening");
 
@@ -512,24 +516,96 @@ test(
       env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
       timeoutMs: 60_000,
     });
-    expect(listGatewayA.exitCode, resultText(listGatewayA)).toBe(0);
-    expect(outputIncludesSandbox(listGatewayA.stdout, SANDBOX_A), listGatewayA.stdout).toBe(true);
-    expect(outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B), listGatewayA.stdout).toBe(false);
-
     const listGatewayB = await command(host, ["list"], {
       artifactName: "phase-3-nemoclaw-list-gateway-b",
       env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
       timeoutMs: 60_000,
     });
-    expect(listGatewayB.exitCode, resultText(listGatewayB)).toBe(0);
-    expect(outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B), listGatewayB.stdout).toBe(true);
-    expect(outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A), listGatewayB.stdout).toBe(false);
+    expect(
+      listGatewayA.exitCode === 0 &&
+        listGatewayB.exitCode === 0 &&
+        outputIncludesSandbox(listGatewayA.stdout, SANDBOX_A) &&
+        !outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B) &&
+        outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B) &&
+        !outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A),
+      `gateway A list:\n${resultText(listGatewayA)}\ngateway B list:\n${resultText(listGatewayB)}`,
+    ).toBe(true);
 
     const dashboardAAfterB = dashboardPortFromList(listGatewayA.stdout, SANDBOX_A);
     const dashboardB = dashboardPortFromList(listGatewayB.stdout, SANDBOX_B);
-    expect(dashboardAAfterB, listGatewayA.stdout).toBe(dashboardA);
-    expect(dashboardB, listGatewayB.stdout).toBeTruthy();
-    expect(dashboardB).not.toBe(dashboardA);
+    expect(
+      dashboardAAfterB === dashboardA && Boolean(dashboardB) && dashboardB !== dashboardA,
+      `dashboard A before=${dashboardA}, after=${dashboardAAfterB}, gateway B=${dashboardB}`,
+    ).toBe(true);
+
+    progress.phase("garbage-collect an orphan without deleting the sibling gateway image");
+    const registeredImage = await host.command(
+      "bash",
+      [
+        "-lc",
+        `jq -er --arg name '${SANDBOX_B}' '.sandboxes[$name].imageTag | select(type == "string" and length > 0)' "$HOME/.nemoclaw/gateways/${GATEWAY_PORT_B}/sandboxes.json"`,
+      ],
+      {
+        artifactName: "phase-3-gateway-b-registered-image",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const registeredImageTag = resultText(registeredImage).trim();
+
+    const orphanTag = `nemoclaw-sandbox-local:concurrent-gc-orphan-${Date.now()}`;
+    const taggedOrphan = await host.command(
+      "docker",
+      ["image", "tag", registeredImageTag, orphanTag],
+      {
+        artifactName: "phase-3-create-gc-orphan-tag",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    cleanup.trackDisposable("remove temporary concurrent gateway GC tag", async () => {
+      await host.command("docker", ["image", "rm", orphanTag], {
+        artifactName: "cleanup-remove-gc-orphan-tag",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      });
+    });
+
+    const garbageCollect = await command(host, ["gc", "--yes"], {
+      artifactName: "phase-3-gc-from-gateway-a",
+      env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
+      timeoutMs: 5 * 60_000,
+    });
+
+    const retainedSiblingImage = await host.command(
+      "docker",
+      ["image", "inspect", "--format", "{{.Id}}", registeredImageTag],
+      {
+        artifactName: "phase-3-gateway-b-image-retained-after-gc",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    const removedOrphanImage = await host.command(
+      "docker",
+      ["image", "inspect", "--format", "{{.Id}}", orphanTag],
+      {
+        artifactName: "phase-3-gc-orphan-tag-removed",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      registeredImage.exitCode === 0 &&
+        /^(?:openshell\/sandbox-from|nemoclaw-sandbox-local|localhost:5000\/nemoclaw-sandbox-local):/u.test(
+          registeredImageTag,
+        ) &&
+        taggedOrphan.exitCode === 0 &&
+        garbageCollect.exitCode === 0 &&
+        retainedSiblingImage.exitCode === 0 &&
+        removedOrphanImage.exitCode !== 0,
+      `registered image=${resultText(registeredImage)}, tag=${registeredImageTag}; orphan tag=${resultText(taggedOrphan)}; gc=${resultText(garbageCollect)}; sibling=${resultText(retainedSiblingImage)}; orphan inspect=${resultText(removedOrphanImage)}`,
+    ).toBe(true);
 
     progress.phase("uninstall alternate gateway without disrupting default");
     const gatewayPair = [
@@ -638,6 +714,8 @@ test(
           !outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B) &&
           outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B) &&
           !outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A),
+        siblingGatewayImagePreservedByGc: retainedSiblingImage.exitCode === 0,
+        gcRemovedOnlyOrphanTag: removedOrphanImage.exitCode !== 0,
         dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
         gatewayBUninstalled: uninstallB.exitCode === 0 && scopedStateRemoved.exitCode === 0,
         sandboxAPreservedAfterUninstallB:

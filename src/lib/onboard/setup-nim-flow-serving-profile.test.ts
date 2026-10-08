@@ -3,16 +3,16 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { servingProfileModel as resolveServingProfileModel } from "../inference/serving/requested-profile-model";
 import type { VllmProfile } from "../inference/vllm";
 import { makeDeps, makeHostState } from "./__test-helpers__/setup-nim-flow";
 import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
 
-const servingProfileModel = {
-  presetId: "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
-  backend: "vllm",
-  servedName: "muse-glimmer",
-  modelId: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
-};
+const servingProfileModel = resolveServingProfileModel(
+  loadServingCatalog(),
+  "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
+)!;
 
 const routeGuard = () => ({
   requiredModel: null,
@@ -83,6 +83,7 @@ describe("serving profile onboarding against a running vLLM", () => {
       expect.objectContaining({ managedInstall: false, servingProfileModel }),
     );
     expect(result).toMatchObject({ provider: "vllm", model: "muse-glimmer" });
+    expect(result.servingProfileProvenance).toBeUndefined();
   });
 
   it("passes no profile model when the run requested no profile", async () => {
