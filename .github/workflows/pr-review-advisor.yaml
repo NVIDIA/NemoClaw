@@ -527,6 +527,7 @@ jobs:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       EXPECTED_HEAD_SHA: ${{ needs.require-green-checks.outputs.head_sha }}
       EXPECTED_BASE_SHA: ${{ needs.require-green-checks.outputs.base_sha }}
+      COORDINATOR_REQUIRED_CHECKS: ${{ github.event_name == 'workflow_run' && 'pass' || 'pending' }}
       PR_NUMBER: ${{ needs.require-green-checks.outputs.pr_number }}
       TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo || github.repository }}
     steps:
