@@ -13,7 +13,7 @@ function captureConsoleLog(): { lines: () => string; restore: () => void } {
   return { lines: () => out.join("\n"), restore: () => spy.mockRestore() };
 }
 
-async function printGuidance({
+function printGuidance({
   phase,
   dockerRuntime,
   openshellDriver = "docker",
@@ -29,8 +29,8 @@ async function printGuidance({
     containerName: string | null;
     containerAbsenceConfirmed?: boolean;
   } | null;
-}): Promise<void> {
-  await printSandboxGatewayLookupStatus({
+}): Promise<1 | undefined> {
+  return printSandboxGatewayLookupStatus({
     sandboxName: "beta",
     registered: true,
     lookup: { state: "present", output: `Sandbox:\n  Name: beta\n  Phase: ${phase}` },
@@ -81,7 +81,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("stopped container");
   });
 
-  it("fails for an owned stopped container without crash guidance (#8695, #12746)", async () => {
+  it("returns exit code 1 for an owned stopped container without crash guidance (#8695, #12746)", async () => {
     const cap = captureConsoleLog();
     await expect(
       printGuidance({
@@ -93,7 +93,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
           containerName: "openshell-beta-abc",
         },
       }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    ).resolves.toBe(1);
     const text = cap.lines();
     cap.restore();
 
@@ -105,14 +105,14 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
-  it("fails with clean stopped guidance when phase is Stopped (#11025, #12746)", async () => {
+  it("returns exit code 1 with clean stopped guidance when phase is Stopped (#11025, #12746)", async () => {
     const cap = captureConsoleLog();
     await expect(
       printGuidance({
         phase: "Stopped",
         dockerRuntime: null,
       }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    ).resolves.toBe(1);
     const text = cap.lines();
     cap.restore();
 
@@ -124,7 +124,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
-  it("fails for a missing provider-confirmed intentional stop with clean guidance (#11025, #12746)", async () => {
+  it("returns exit code 1 for a missing provider-confirmed intentional stop with clean guidance (#11025, #12746)", async () => {
     const cap = captureConsoleLog();
     await expect(
       printSandboxGatewayLookupStatus({
@@ -143,7 +143,7 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
           exitCode: 0,
         },
       }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    ).resolves.toBe(1);
     const text = cap.lines();
     cap.restore();
 

@@ -602,6 +602,7 @@ describe.concurrent("CLI sandbox status text output", () => {
       writeSandboxRegistry(home, "alpha", {
         openshellDriver: "docker",
         openshellVersion: "0.0.44",
+        nimContainer: "nemoclaw-nim-alpha",
         stopped: true,
       });
       fs.writeFileSync(stoppedState, "stopped\n");
@@ -663,7 +664,7 @@ describe.concurrent("CLI sandbox status text output", () => {
           '    case "$a" in',
           `      *Running*) if [ -f ${JSON.stringify(stoppedState)} ]; then echo "false"; else echo "true"; fi; exit 0 ;;`,
           '      *Paused*) echo "false"; exit 0 ;;',
-          '      *Health*) echo "none"; exit 0 ;;',
+          '      *Health*) echo "unhealthy"; exit 0 ;;',
           "    esac",
           "  done",
           '  echo ""; exit 0',
@@ -690,6 +691,11 @@ describe.concurrent("CLI sandbox status text output", () => {
       expect(r.out).toContain("Sandbox 'alpha' is stopped.");
       expect(r.out).toContain("Workspace state is preserved.");
       expect(r.out).toContain("Start it again with `nemoclaw alpha start`.");
+      const startGuidanceIndex = r.out.indexOf("Start it again with `nemoclaw alpha start`.");
+      const dockerHealthIndex = r.out.indexOf("Docker health: unhealthy");
+      expect(dockerHealthIndex > startGuidanceIndex).toBe(gatewayState === "present");
+      const nimDiagnosticIndex = r.out.indexOf("NIM:      not running");
+      expect(nimDiagnosticIndex > startGuidanceIndex).toBe(true);
       expect(r.out).not.toContain("rebuild --yes");
       expect(r.out).not.toContain("The sandbox is alive but the");
 
