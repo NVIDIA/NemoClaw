@@ -318,6 +318,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
 
   it("rejects CUDA success without valid provider-visible device rows", () => {
     const base = proofProvider("docker");
+    const logs: string[] = [];
     const provider = {
       ...base,
       containerEngine: {
@@ -333,10 +334,11 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       platform: "linux",
       arch: "arm64",
       resolveRuntimeProvider: () => provider,
-      log: () => undefined,
+      log: (message) => logs.push(message),
     })(["NVIDIA RTX Spark N1X"]);
-    expect(result).toMatchObject({ passed: false });
+    expect(result).toMatchObject({ passed: false, failurePhase: "device-evidence" });
     expect(result).not.toHaveProperty("verifiedDevices");
+    expect(logs.join("\n")).toContain("GPU identity or capacity rows were invalid");
   });
 
   it("aggregates multiple device rows from the provider-owned capture", () => {
@@ -513,6 +515,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
 
   it("maps a nonzero provider-owned container capture to a failed proof", () => {
     const base = proofProvider("docker");
+    const logs: string[] = [];
     const captureNvidiaContainer = vi.fn(() => ({
       status: 1,
       stdout: "",
@@ -531,16 +534,19 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
           },
         },
       }),
-      log: () => undefined,
+      log: (message) => logs.push(message),
     });
 
     expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
       providerId: "docker",
       passed: false,
+      failurePhase: "capture",
       timedOut: false,
       exitCode: 1,
       diagnostic: "no CUDA-capable device is detected",
     });
+    expect(logs.join("\n")).toContain("Container capture exit status: 1.");
+    expect(logs.join("\n")).not.toContain("no CUDA-capable device is detected");
   });
 
   it("reports failed reconciliation after a successful proof capture", () => {
@@ -572,6 +578,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     const result = prover(["JMJWOA-Generic-GPU"]);
     expect(result).toMatchObject({
       passed: false,
+      failurePhase: "cleanup",
       cleanup: { resourceName, status: "failed" },
     });
     expect(result).not.toHaveProperty("verifiedCapacity");
@@ -631,6 +638,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(result).toMatchObject({
       providerId: "podman",
       passed: false,
+      failurePhase: "capture",
       timedOut: true,
       exitCode: 1,
       cleanup: { status: "failed" },
