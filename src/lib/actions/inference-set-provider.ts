@@ -527,6 +527,8 @@ export const __test = {
   providerSurface,
 };
 
+export { retireUnselectedNativeLocalProviders } from "../inference/native-local/selection";
+
 // Provider selection owns attachment preparation and compensation for both paths.
 export {
   prepareNativeLocalSwitch,

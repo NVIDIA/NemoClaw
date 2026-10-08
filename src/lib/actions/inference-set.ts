@@ -13,6 +13,7 @@ import {
   prepareNativeLocalSelectionBoundary,
   detachPreviousNativeLocalBeforePublish,
   nativeLocalSelectionRegistryFields,
+  retireUnselectedNativeLocalProviders,
 } from "./inference-set-provider";
 import { captureResolvedOpenshellAsync, getOpenshellBinary } from "../adapters/openshell/runtime";
 import type {
@@ -202,6 +203,8 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   prepareNativeLocalSwitch?: typeof prepareNativeLocalSwitch;
   getNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").getNativeLocalProviderAuthority;
   setNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").setNativeLocalProviderAuthority;
+  listNativeLocalProviderAuthorities?: typeof import("../state/registry/native-local-provider-authority").listNativeLocalProviderAuthorities;
+  clearNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").clearNativeLocalProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
@@ -2202,6 +2205,19 @@ export async function runInferenceSet(
     if (mutation.openClawConfigSyncPending) {
       clearOpenClawConfigSyncPending(selected.sandboxName, deps);
     }
+    const committed = deps.getSandbox(selected.sandboxName);
+    if (!committed)
+      throw new InferenceSetError(
+        "Sandbox cleanup authority is unavailable after inference selection.",
+      );
+    await retireUnselectedNativeLocalProviders({
+      adapter: deps.providerAdapter,
+      sandboxName: selected.sandboxName,
+      gatewayName,
+      selected: committed.nativeLocalProviderAttachment,
+      listAuthorities: deps.listNativeLocalProviderAuthorities,
+      clearAuthority: deps.clearNativeLocalProviderAuthority,
+    });
     return mutation.result;
   });
 }

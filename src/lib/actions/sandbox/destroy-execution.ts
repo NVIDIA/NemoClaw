@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { retireNativeLocalProvider } from "../../inference/native-local/profile";
+import { retireUnselectedNativeLocalProviders } from "../../inference/native-local/selection";
 import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
-import { clearNativeLocalProviderAuthority } from "../../state/registry/native-local-provider-authority";
+import { listNativeLocalProviderAuthorities } from "../../state/registry/native-local-provider-authority";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -878,6 +878,9 @@ export async function executeSandboxDestroy({
       pendingCreateIdentity?.gatewayName ??
       destroyRuntimeSelection?.gatewayName ??
       deleteGatewayName;
+    const hasNativeLocalAuthority =
+      Boolean(sandbox?.nativeLocalProviderAttachment) ||
+      listNativeLocalProviderAuthorities(sandboxName, effectiveDeleteGatewayName).length > 0;
     // A successful preflight absence is already the required OpenShell
     // lifecycle proof. Do not issue a later mutable-name delete that could
     // target a same-name replacement created after that observation.
@@ -943,7 +946,7 @@ export async function executeSandboxDestroy({
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
-      !sandbox?.nativeLocalProviderAttachment &&
+      !hasNativeLocalAuthority &&
       portableContainerAuthority === undefined;
 
     if (deleteFailed && !forcedLocalCleanup) {
@@ -957,8 +960,7 @@ export async function executeSandboxDestroy({
         gatewayUnreachable,
         ...(timedOut ? { timedOut: true as const } : {}),
         hostLocalInferenceOwnershipRequiresGateway:
-          gatewayUnreachable &&
-          (hasHostLocalInferenceOwnership || Boolean(sandbox?.nativeLocalProviderAttachment)),
+          gatewayUnreachable && (hasHostLocalInferenceOwnership || hasNativeLocalAuthority),
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
         portableLifecycleOwnershipRequiresGateway:
@@ -1088,17 +1090,10 @@ export async function retireDestroyedSandboxNativeLocalProvider(
   sandbox: SandboxEntry,
   gatewayName: string,
 ): Promise<void> {
-  if (!sandbox.nativeLocalProviderAttachment) return;
-  const retirement = await retireNativeLocalProvider({
+  await retireUnselectedNativeLocalProviders({
     adapter: createManagedProviderAdapter(),
-    expected: sandbox.nativeLocalProviderAttachment,
+    destroyedAttachment: sandbox.nativeLocalProviderAttachment,
     sandboxName: sandbox.name,
     gatewayName,
-    clearAuthority: clearNativeLocalProviderAuthority,
   });
-  if (retirement.status === "attached") {
-    throw new Error(
-      "Native inference provider remains attached; recovery authority retained. Inspect its attachments before retrying destroy.",
-    );
-  }
 }

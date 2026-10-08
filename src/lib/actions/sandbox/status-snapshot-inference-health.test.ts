@@ -111,6 +111,52 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     },
   );
 
+  it("reports bounded redacted native local verification details and recovery (#12558)", async () => {
+    const binding = {
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+    } as const;
+    const receipt = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-local-provider",
+    };
+    const secret = `nvapi-${"a".repeat(40)}`;
+    const options = snapshotDeps(
+      null,
+      null,
+      { ok: true },
+      {
+        provider: binding.provider,
+        gatewayName: binding.gatewayName,
+        nativeLocalProviderAttachment: receipt,
+      },
+    );
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        verifyNativeLocalProviderAttachmentImpl: async () => {
+          throw new Error(
+            `profile changed\nAuthorization: Bearer ${secret} ${"detail ".repeat(100)}`,
+          );
+        },
+      },
+    });
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, probed: false });
+    expect(snapshot.inferenceHealth?.detail).toContain("profile changed");
+    expect(snapshot.inferenceHealth?.detail).toContain(receipt.providerName);
+    expect(snapshot.inferenceHealth?.detail).toContain("Recreate");
+    expect(snapshot.inferenceHealth?.detail).not.toContain(secret);
+    expect(snapshot.inferenceHealth?.detail).not.toMatch(/[\u0000-\u001f\u007f]/u);
+    expect(snapshot.inferenceHealth?.detail?.length).toBeLessThan(600);
+  });
+
   it("restores the guarded agent and host-forward chain before probing a Docker-recovered sandbox", async () => {
     const order: string[] = [];
     const gateway: SandboxInferenceRouteHealth = {

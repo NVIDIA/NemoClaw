@@ -83,4 +83,24 @@ describe("native local provider destroy", () => {
     expect(harness.retireNativeLocalProviderSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
+  it("retains detached provider cleanup authority after an unreachable forced destroy (#12558)", async () => {
+    const harness = createDestroyHarness({ deleteStatus: 1, deleteOutput: "connection refused" });
+    const authority = harness.nativeLocalProviderAuthority;
+    authority.setNativeLocalProviderAuthority(attachment);
+    await expect(harness.destroySandbox("alpha", { yes: true, force: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(authority.getNativeLocalProviderAuthority(attachment.providerName)).toEqual(attachment);
+  });
+
+  it("runs native authority cleanup after confirmed destroy even when the current route is shared (#12558)", async () => {
+    const harness = createDestroyHarness({});
+    await harness.destroySandbox("alpha", { yes: true });
+    expect(harness.retireNativeLocalProviderSpy).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ name: "alpha" }),
+      "nemoclaw-19080",
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
+  });
 });

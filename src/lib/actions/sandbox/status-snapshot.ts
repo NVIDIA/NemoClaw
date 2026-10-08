@@ -666,8 +666,11 @@ export async function collectSandboxStatusSnapshot(
           opts.deps?.verifyNativeLocalProviderAttachmentImpl ?? verifyNativeLocalStatusAttachment
         )({ sandboxName, gatewayName, expected: nativeLocalAttachment });
         nativeAttachmentFailure = null;
-      } catch {
-        nativeAttachmentFailure = "Native local provider attachment could not be verified.";
+      } catch (error) {
+        const detail = sanitizedStatusDetail(error);
+        nativeAttachmentFailure =
+          `Native local provider '${nativeLocalAttachment.providerName}' is unavailable for sandbox '${sandboxName}'` +
+          `${detail ? `: ${detail}` : "."} Recreate the sandbox to restore native local inference.`;
       }
     }
   }

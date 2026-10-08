@@ -193,3 +193,51 @@ it.each([
     }
   },
 );
+
+it("enumerates cleanup authority only for the exact sandbox and gateway (#12558)", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-native-cleanup-"));
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+  try {
+    const authority = await import("./registry/native-local-provider-authority");
+    const { nativeLocalIdentity } = await import("../inference/native-local/contract");
+    const binding = {
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "selected",
+      sandboxName: "alpha",
+    } as const;
+    const own = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "own",
+    };
+    const siblingBinding = { ...binding, sandboxName: "beta" };
+    const sibling = {
+      ...siblingBinding,
+      ...nativeLocalIdentity(siblingBinding),
+      schemaVersion: 1 as const,
+      providerId: "sibling",
+    };
+    const otherBinding = { ...binding, gatewayName: "other" };
+    const other = {
+      ...otherBinding,
+      ...nativeLocalIdentity(otherBinding),
+      schemaVersion: 1 as const,
+      providerId: "other",
+    };
+    authority.setNativeLocalProviderAuthority(own);
+    authority.setNativeLocalProviderAuthority(sibling);
+    authority.setNativeLocalProviderAuthority(other);
+    expect(authority.listNativeLocalProviderAuthorities("alpha", "selected")).toEqual([own]);
+    expect(authority.getNativeLocalProviderAuthority(sibling.providerName)).toEqual(sibling);
+    expect(authority.getNativeLocalProviderAuthority(other.providerName)).toEqual(other);
+  } finally {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});

@@ -166,7 +166,7 @@ export async function detachNativeLocalProvider(input: AttachmentInput) {
   await detachNativeProvider({ ...input, ...checked });
 }
 
-/** Retire the exact instance after its sandbox is confirmed absent. */
+/** Retire the exact instance after selection detaches it or its sandbox is confirmed absent. */
 export async function retireNativeLocalProvider(input: {
   adapter: OpenShellProviderAdapter;
   expected: NativeLocalProviderAttachment;

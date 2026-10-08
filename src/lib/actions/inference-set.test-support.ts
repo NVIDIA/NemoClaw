@@ -465,6 +465,7 @@ export function createDeps(options: {
         },
       };
     },
+    listNativeLocalProviderAuthorities: () => [],
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),

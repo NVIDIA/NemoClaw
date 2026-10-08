@@ -1094,7 +1094,7 @@ async function destroySandboxUnlocked(
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
   }
-  if (deleteSucceededOrAlreadyGone && sandbox?.nativeLocalProviderAttachment) {
+  if (deleteSucceededOrAlreadyGone && sandbox) {
     await retireDestroyedSandboxNativeLocalProvider(sandbox, cleanupGatewayName).catch((error) => {
       preparedManagedLlamaCppCleanup?.abort();
       throw error;

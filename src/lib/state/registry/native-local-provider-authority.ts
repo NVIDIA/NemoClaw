@@ -43,3 +43,13 @@ export function clearNativeLocalProviderAuthority(expected: NativeLocalProviderA
     save(data);
   });
 }
+
+/** Return only validated cleanup authority belonging to one sandbox and gateway. */
+export function listNativeLocalProviderAuthorities(
+  sandboxName: string,
+  gatewayName: string,
+): NativeLocalProviderAttachment[] {
+  return Object.values(load().nativeLocalProviderAuthorities ?? {}).filter(
+    (receipt) => receipt.sandboxName === sandboxName && receipt.gatewayName === gatewayName,
+  );
+}
