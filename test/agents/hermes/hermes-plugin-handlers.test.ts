@@ -314,7 +314,7 @@ print(json.dumps(result))
       );
       expect(report.status).toContain(`Provider: ${provider}`);
       expect(JSON.stringify(report)).not.toMatch(
-        /vllm-local|nemotron-3-nano|this chat does not use it/,
+        /vllm-local|nemotron-3-nano|not used by the configured chat route/,
       );
     },
   );
@@ -362,15 +362,55 @@ print(json.dumps(result))
         `- Hermes chat route: model=qwen/qwen3-32b, provider=custom:My Lab, endpoint=${LAB_ENDPOINT}, gateway=stopped.`,
       );
       expect(report.context).toContain(
-        "- NemoClaw-managed inference route (this chat does not use it): model=nvidia/nemotron-3-nano, provider=vllm-local, endpoint=https://inference.local/v1.",
+        "- NemoClaw-managed inference route (not used by the configured chat route): model=nvidia/nemotron-3-nano, provider=vllm-local, endpoint=https://inference.local/v1.",
       );
       expect(report.context).not.toContain("NemoClaw provider state");
       expect(report.status).toContain("Model:    qwen/qwen3-32b");
       expect(report.status).toContain(
-        "Managed:  model=nvidia/nemotron-3-nano, provider=vllm-local, endpoint=https://inference.local/v1 (NemoClaw-managed inference route; this chat does not use it)",
+        "Managed:  model=nvidia/nemotron-3-nano, provider=vllm-local, endpoint=https://inference.local/v1 (NemoClaw-managed inference route; not used by the configured chat route)",
       );
     },
   );
+
+  it.each(["my-lab", "MY-LAB"])(
+    "prefers the exact provider key over an earlier display-name alias for %s",
+    (provider) => {
+      const report = reportHermesRoute({
+        ...ONBOARDED_CONFIG,
+        model: { ...LAB_MODEL, provider },
+        providers: {
+          shadow: { name: "My Lab", api: "https://shadow.example/v1" },
+          ...ONBOARDED_CONFIG.providers,
+          "my-lab": { name: "Selected Lab", api: LAB_ENDPOINT },
+        },
+      });
+
+      expect(report.info).toMatchObject({ provider, base_url: LAB_ENDPOINT });
+      expect(report.context).toContain(`provider=${provider}, endpoint=${LAB_ENDPOINT}`);
+      expect(report.status).toContain(`Endpoint: ${LAB_ENDPOINT}`);
+      expect(JSON.stringify(report)).not.toContain("shadow.example");
+    },
+  );
+
+  it("prefers the managed route's provider key over an earlier display-name alias", () => {
+    const report = reportHermesRoute({
+      ...ONBOARDED_CONFIG,
+      model: LAB_MODEL,
+      providers: {
+        shadow: { name: "vllm-local", api: "https://shadow.example/v1" },
+        ...ONBOARDED_CONFIG.providers,
+        "my-lab": { name: "My Lab", api: LAB_ENDPOINT },
+      },
+    });
+
+    expect(report.info).toMatchObject({
+      base_url: LAB_ENDPOINT,
+      managed_route: { provider: "vllm-local", base_url: "https://inference.local/v1" },
+    });
+    expect(report.context).toContain("provider=vllm-local, endpoint=https://inference.local/v1");
+    expect(report.status).toContain("provider=vllm-local, endpoint=https://inference.local/v1");
+    expect(JSON.stringify(report)).not.toContain("shadow.example");
+  });
 
   it("reports a user-defined endpoint without its user info, query, or fragment", () => {
     const report = reportHermesRoute({
@@ -394,14 +434,36 @@ print(json.dumps(result))
     );
   });
 
-  it("names the live Hermes model in runtime context when the hook receives one", () => {
-    const report = reportHermesRoute(ONBOARDED_CONFIG, "qwen/qwen3-32b");
+  it.each([
+    { model: "qwen/qwen3-32b", provider: "custom" },
+    { model: ONBOARDED_CONFIG.model.default, provider: "custom" },
+    { model: "qwen/qwen3-32b", provider: "custom:My Lab" },
+  ])(
+    "omits configured route details from runtime context when Hermes supplies live model $model and configured provider is $provider",
+    ({ model, provider }) => {
+      const report = reportHermesRoute(
+        {
+          ...ONBOARDED_CONFIG,
+          model: { ...ONBOARDED_CONFIG.model, provider },
+          providers: {
+            ...ONBOARDED_CONFIG.providers,
+            "my-lab": { name: "My Lab", api: LAB_ENDPOINT },
+          },
+        },
+        model,
+      );
 
-    expect(report.context).toContain(
-      "- NemoClaw provider state: model=qwen/qwen3-32b, provider=vllm-local, endpoint=https://inference.local/v1, gateway=stopped.",
-    );
-    expect(report.info).toMatchObject({ model: "nvidia/nemotron-3-nano" });
-  });
+      expect(report.context).toContain(`- Hermes chat model: ${model}.`);
+      expect(report.context).toContain(
+        "Hermes does not supply the active provider or endpoint to this hook.",
+      );
+      expect(report.context).not.toMatch(
+        /NemoClaw provider state|Hermes chat route|provider=|endpoint=|not used by the configured chat route/,
+      );
+      expect(report.info).toMatchObject({ model: "nvidia/nemotron-3-nano" });
+      expect(report.status).toContain("Model:    nvidia/nemotron-3-nano");
+    },
+  );
 
   it("patches Hermes managed-tool modules for NemoClaw broker mode", () => {
     const output = runPython(`

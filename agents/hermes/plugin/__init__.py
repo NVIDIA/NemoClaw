@@ -1067,6 +1067,9 @@ def _named_provider_url(hermes_cfg, provider):
     wanted = _provider_alias(provider)
     providers = hermes_cfg.get("providers")
     if wanted and isinstance(providers, dict):
+        entry = providers.get(_config_text(provider).lower())
+        if isinstance(entry, dict):
+            return entry.get("api") or entry.get("url") or entry.get("base_url")
         for key, entry in providers.items():
             if isinstance(entry, dict) and wanted in (
                 _provider_alias(str(key)),
@@ -1298,7 +1301,7 @@ def _should_inject_nemoclaw_context(user_message=None, is_first_turn=False):
 def _build_nemoclaw_agent_context(platform=None, model=None):
     """Build quiet, ephemeral context for Hermes' pre_llm_call hook."""
     info = _get_sandbox_info()
-    chat_model = _config_text(model) or info["model"]
+    live_model = _config_text(model)
     managed_route = _unused_managed_route(info)
     hermes_home = (
         os.getenv("HERMES_HOME")
@@ -1344,18 +1347,24 @@ def _build_nemoclaw_agent_context(platform=None, model=None):
     tools_line = (
         "- NemoClaw tools available: nemoclaw_status, nemoclaw_info, transcribe_audio."
     )
-    route_lines = [
-        f"- NemoClaw provider state: model={chat_model}, "
-        f"provider={info['provider']}, endpoint={info['base_url']}, "
-        f"gateway={info['gateway']}.",
-    ]
-    if managed_route:
+    if live_model:
         route_lines = [
-            f"- Hermes chat route: model={chat_model}, provider={info['provider']}, "
+            f"- Hermes chat model: {live_model}.",
+            "- Hermes does not supply the active provider or endpoint to this hook.",
+        ]
+    elif managed_route:
+        route_lines = [
+            f"- Hermes chat route: model={info['model']}, provider={info['provider']}, "
             f"endpoint={info['base_url']}, gateway={info['gateway']}.",
-            "- NemoClaw-managed inference route (this chat does not use it): "
+            "- NemoClaw-managed inference route (not used by the configured chat route): "
             f"model={managed_route['model']}, provider={managed_route['provider']}, "
             f"endpoint={managed_route['base_url']}.",
+        ]
+    else:
+        route_lines = [
+            f"- NemoClaw provider state: model={info['model']}, "
+            f"provider={info['provider']}, endpoint={info['base_url']}, "
+            f"gateway={info['gateway']}.",
         ]
 
     lines = [
@@ -1413,7 +1422,7 @@ def _handle_status(tool_input=None, context=None, **_kwargs):
         lines.append(
             f"  Managed:  model={managed_route['model']}, "
             f"provider={managed_route['provider']}, endpoint={managed_route['base_url']} "
-            "(NemoClaw-managed inference route; this chat does not use it)"
+            "(NemoClaw-managed inference route; not used by the configured chat route)"
         )
     lines.append(f"  API:      http://localhost:{info['port']}/v1")
     return "\n".join(lines)
