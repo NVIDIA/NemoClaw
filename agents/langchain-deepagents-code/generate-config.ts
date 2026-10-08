@@ -131,13 +131,14 @@ function tomlArray(values: readonly string[]): string {
 function openAiModelRequestParamLines(
   model: string,
   reasoningEffort: ReasoningEffort | null,
+  baseUrl: string,
 ): string[] {
   // Source boundary: NVIDIA's Ultra serving template owns the empty assistant
   // content behavior; this generator owns only the managed per-model request
   // parameters. Keep the exact invalid state, regression proof, and separate
   // removal conditions for this option and the dispatch guard in
   // dependency-review.md under "Managed Ultra compatibility workarounds."
-  const isUltra = NEMOTRON_ULTRA_MODEL_IDS.has(model);
+  const isUltra = NEMOTRON_ULTRA_MODEL_IDS.has(model) && baseUrl !== NVIDIA_HOSTED_NATIVE_ENDPOINT;
   const extraBodyEntries = [
     ...(isUltra ? ["chat_template_kwargs = { force_nonempty_content = true }"] : []),
     ...(reasoningEffort ? [`reasoning_effort = ${tomlString(reasoningEffort)}`] : []),
@@ -187,7 +188,7 @@ function providerConfigLines(
           "# NemoClaw-managed OpenAI-compatible routes use Chat Completions.",
           "# Remove this override when the selected route supports OpenAI Responses API.",
           "use_responses_api = false",
-          ...openAiModelRequestParamLines(model, reasoningEffort),
+          ...openAiModelRequestParamLines(model, reasoningEffort, baseUrl),
         ]
       : []),
   ];

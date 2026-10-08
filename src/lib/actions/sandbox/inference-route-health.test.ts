@@ -136,7 +136,7 @@ describe("sandbox inference route health", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("${NVIDIA_INFERENCE_API_KEY:-}")],
+        command: ["sh", "-c", expect.stringContaining("NVIDIA_INFERENCE_API_KEY")],
       }),
     );
   });

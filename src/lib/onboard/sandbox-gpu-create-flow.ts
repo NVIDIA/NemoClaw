@@ -169,7 +169,7 @@ export function resolveAgentCreateInput(
 ) {
   return {
     dockerDriverGateway,
-    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway, env),
+    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     portableLifecycle: resolvePortableLifecycleMode(agent, env),
     hermesPortableLifecycle: isHermesPortableLifecycleMode(agent, env),
   };

@@ -145,10 +145,10 @@ describe("sandbox inference invocation probe", () => {
     });
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer ");
-    expect(command).toContain('native_handle="${NVIDIA_INFERENCE_API_KEY:-}"');
+    expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
+    expect(command).toContain("openshell:resolve:env:");
     expect(command).not.toContain("nemoclaw-openshell-provider");
   });
 

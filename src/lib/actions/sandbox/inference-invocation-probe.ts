@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { nativeInferenceProbeAuthScript } from "../../inference/probe/native-inference-probe-auth";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
@@ -178,10 +179,12 @@ export function buildSandboxInferenceInvocationCommand(
         ? "NVIDIA_INFERENCE_API_KEY"
         : null;
   const authScript = nativeCredentialEnv
-    ? nativeInferenceProbeAuthScript(
-        nativeCredentialEnv,
-        request.headers.includes("anthropic-version: 2023-06-01"),
-      )
+    ? nativeCredentialEnv === "NVIDIA_INFERENCE_API_KEY"
+      ? [NATIVE_NVIDIA_AUTH_HEADER_SCRIPT]
+      : nativeInferenceProbeAuthScript(
+          nativeCredentialEnv,
+          request.headers.includes("anthropic-version: 2023-06-01"),
+        )
     : [];
   const authArg = nativeCredentialEnv ? ' -H "$AUTH_HEADER"' : "";
   const payload = shellQuote(JSON.stringify(request.payload));

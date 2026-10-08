@@ -91,6 +91,7 @@ describe("LangChain Deep Agents Code config generator", () => {
       NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
     });
 
+    expect(config).not.toContain("force_nonempty_content");
     expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
     expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
