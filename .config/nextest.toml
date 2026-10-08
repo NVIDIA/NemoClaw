@@ -20,7 +20,7 @@ test(native_state_json_preserves_module_and_instance_identity_without_refresh)
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^provider_protocol::/) | test(/^service_capacity::/) | test(/^service_readiness::/)
     | test(/^sandbox_readiness::/) | test(/^opentofu_openshell::/) | test(/^deployment::/)
-    | test(/^service_storage::/)
+    | test(/^service_storage::/) | test(/^vllm_runtime::/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)
     | test(/^multiple_providers::/) | test(/^remote_service::/)
     | test(/^discovery::/) | test(/^inference_discovery::/) | test(/^gateway_readiness::/)

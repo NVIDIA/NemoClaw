@@ -103,6 +103,7 @@ To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid
 | `nemoclaw_service_readiness` | [vLLM, Ollama, and proxy readiness](#runtime-capacity-and-readiness) |
 | `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
 | `nemoclaw_sandbox_readiness` | [Sandbox completion](#sandbox-completion) |
+| `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
 
 ### Docker and Helm Types
 
@@ -313,6 +314,41 @@ Teardown omits the capability gates so a version or driver mismatch alone does n
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
 Fabric configuration writes are owned by `nemoclaw_agent_configuration`; unchanged apply preserves the active runtime handle.
 Its `config_json` is the canonical public Fabric configuration, separate from immutable sandbox identity.
+
+## vLLM Runtime Contract
+
+`nemoclaw_vllm_runtime` computes the settings that a vLLM container's runtime supervisor reads, without contacting any host.
+Its blocks and attributes follow the runtime contract with snake_case names: `model`, `serving`, `memory`, `hardware`, `authentication`, and `recipe`.
+`model` is required, and the contract requires either `hardware` or `recipe`.
+Omitted or zero settings select the same defaults as service YAML.
+Validation reports a rejected setting at its attribute, and the `spec` output is the validated specification.
+
+```hcl
+data "nemoclaw_vllm_runtime" "qwen" {
+  hardware {
+    profile = "dgx-spark"
+  }
+  model {
+    repository = "Qwen/Qwen3-4B"
+    revision   = "1cfa9a7208912126459214e8b04321603b3df60c"
+  }
+  serving {
+    port = 18898
+  }
+}
+```
+
+A vLLM `docker_container` passes `spec` as `NEMOCLAW_RUNTIME_SPEC` and declares the rest of its configuration directly.
+Generated graphs declare:
+
+- `entrypoint = ["/usr/local/bin/nemoclaw-runtime"]` and `env = ["NEMOCLAW_RUNTIME_SPEC=${data.nemoclaw_vllm_runtime.NAME.spec}"]`.
+- The model cache volume at `/data` and, with bearer authentication, the `nemoclaw_inference_storage` credential volume at `/credentials`.
+- The serving port, published on the service's bind address.
+- `gpus = "all"`, `memory` and `memory_swap` of 106496 MiB, and `shm_size` of 8192 MiB unless the service sets another size.
+- Private IPC unless the service selects host IPC, an unlimited `memlock` ulimit, and a `stack` ulimit of 67108864.
+- All capabilities dropped, `no-new-privileges`, restart policy `no`, and JSON-file logs rotated at 32 MB across three files.
+
+OpenTofu shows a changed setting as a replacement of the whole `NEMOCLAW_RUNTIME_SPEC` environment entry.
 
 ## Runtime Image Compatibility
 
