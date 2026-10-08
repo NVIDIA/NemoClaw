@@ -739,7 +739,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
   });
 
-  it("selects the latest trusted human review on a prior commit as the follow-up contract", () => {
+  it("does not retain a prior blocker after the same reviewer approves the current head", () => {
     const currentHead = "c".repeat(40);
     const selected = selectFollowUpReview(
       [
@@ -791,22 +791,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       "maintainer",
     );
 
-    expect(selected).toEqual({
-      reviewId: 10,
-      reviewedHeadSha: "a".repeat(40),
-      state: "CHANGES_REQUESTED",
-      submittedAt: "2026-09-14T10:00:00Z",
-      reviewer: "maintainer",
-      authorAssociation: "MEMBER",
-      body: "Preserve the remote result when cleanup fails.",
-      inlineComments: [
-        {
-          path: "src/lib/transport.ts",
-          line: 42,
-          body: "Keep both outcomes.",
-        },
-      ],
-    });
+    expect(selected).toBeUndefined();
   });
 
   it("bounds large overlap path sets before serializing sandbox context", async () => {

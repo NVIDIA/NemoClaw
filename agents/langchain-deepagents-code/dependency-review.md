@@ -46,9 +46,19 @@ The managed image patches the exact `quickjs-rs==0.2.5` engine constructor to
 set `Config.memory_init_cow = False`. This Wasmtime option uses ordinary memory
 initialization and does not require NemoClaw to weaken the OpenShell sandbox
 restriction. The image build rejects another `quickjs-rs` version or source
-shape and initializes the real QuickJS runtime after applying the patch. The
-live Deep Agents TUI check separately requires `memfd_create` to remain denied,
-initializes the real QuickJS runtime, and completes an interactive model turn.
+shape. After patching, the image build runs `validate-quickjs-runtime.py` through
+the pinned LangChain REPL. It exercises the worker thread, OXC transform, async
+shell-tool bridge, snapshot restoration, and a second synchronous tool call.
+The live Deep Agents TUI check runs the same validator with
+`--require-memfd-denied` before its interactive sessions. That mode requires
+`EPERM` before importing Wasmtime, so cached artifacts cannot hide initialization
+failures. It adds no syscall permissions. The build and sandbox probes have
+bounded process deadlines, and failure messages omit third-party exception text.
+
+PR #11972 first appears in release source at `v0.0.128`. The reopened #11847 report used
+`v0.0.127`, whose source does not contain the patch. That report does not
+establish a regression of the patch. Existing sandboxes require a rebuilt
+managed image; updating the host CLI alone does not patch installed packages.
 
 Remove this patch when a reviewed `quickjs-rs` or Deep Agents Code release
 provides an equivalent non-memfd Wasmtime configuration and the live check

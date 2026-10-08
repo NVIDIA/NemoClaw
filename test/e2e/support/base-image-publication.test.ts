@@ -37,6 +37,10 @@ const RUN_URL_ROOT = "https://github.com/NVIDIA/NemoClaw/actions/runs";
 const RUN_URL = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`;
 const MANAGED_IMAGE_PROMOTION_JOB =
   "Publish complete managed images / Promote complete multi-platform managed image cohort";
+const BASE_IMAGE_WORKFLOW_SOURCE = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
+  "utf8",
+);
 const WORKFLOW_SOURCE = `on:
   push:
     branches: [main]
@@ -173,15 +177,22 @@ function successfulManualJobs(): Record<string, unknown>[] {
 
 describe("base-image publication evidence", () => {
   it("publishes after a root package manifest changes", () => {
-    const workflowSource = fs.readFileSync(
-      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
-      "utf8",
-    );
-    const reviewedPaths = parseBaseImagePushPaths(workflowSource);
+    const reviewedPaths = parseBaseImagePushPaths(BASE_IMAGE_WORKFLOW_SOURCE);
 
     expect(reviewedPaths).toEqual(expect.arrayContaining(["package.json", "package-lock.json"]));
     expect(baseImageInputsChanged(["package.json"], reviewedPaths)).toBe(true);
     expect(baseImageInputsChanged(["package-lock.json"], reviewedPaths)).toBe(true);
+  });
+
+  it.each([
+    ["src/lib/adapters/container-engine.ts", "src/lib/adapters/container-engine.ts"],
+    ["src/lib/adapters/podman/**", "src/lib/adapters/podman/index.ts"],
+    ["test/e2e/fixtures/docker-build-guard.ts", "test/e2e/fixtures/docker-build-guard.ts"],
+  ])("publishes after managed-image input %s changes", (publisherPath, changedPath) => {
+    const reviewedPaths = parseBaseImagePushPaths(BASE_IMAGE_WORKFLOW_SOURCE);
+
+    expect(reviewedPaths).toContain(publisherPath);
+    expect(baseImageInputsChanged([changedPath], reviewedPaths)).toBe(true);
   });
 
   it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
