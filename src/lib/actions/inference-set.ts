@@ -1079,26 +1079,48 @@ async function detachPreviousNativeHostedBeforePublish(input: {
 async function restorePreviousNativeHostedAfterFailedPublish(input: {
   detached: boolean;
   committed: boolean;
+  routeApplied: boolean;
+  routeAmbiguous: boolean;
+  restoreRoute: () => Promise<string | null>;
   previousAttachment?: NativeHostedProviderAttachment;
   gatewayName: string;
   sandboxName: string;
   error: unknown;
   deps: InferenceSetDeps;
 }): Promise<void> {
-  if (!input.detached || input.committed || !input.previousAttachment) return;
-  try {
-    await ensureNativeHostedProviderAttached({
-      adapter: input.deps.providerAdapter,
-      target: { kind: "named", gatewayName: input.gatewayName },
-      sandboxName: input.sandboxName,
-      expected: input.previousAttachment,
-    });
-  } catch (reattachError) {
+  if (input.committed || !input.previousAttachment) return;
+  const recoveryErrors: string[] = [];
+  if (input.routeApplied && !input.routeAmbiguous) {
+    try {
+      const failure = await input.restoreRoute();
+      if (failure)
+        recoveryErrors.push(
+          `Failed to restore the previous OpenShell inference selection: ${failure}`,
+        );
+    } catch (error) {
+      recoveryErrors.push(
+        `Failed to restore the previous OpenShell inference selection: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (input.detached) {
+    try {
+      await ensureNativeHostedProviderAttached({
+        adapter: input.deps.providerAdapter,
+        target: { kind: "named", gatewayName: input.gatewayName },
+        sandboxName: input.sandboxName,
+        expected: input.previousAttachment,
+      });
+    } catch (error) {
+      recoveryErrors.push(
+        `Native hosted-provider access was detached before the failed switch, but restoring the attachment failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (recoveryErrors.length > 0) {
     const detail = input.error instanceof Error ? input.error.message : String(input.error);
-    const recoveryDetail =
-      reattachError instanceof Error ? reattachError.message : String(reattachError);
     throw new InferenceSetError(
-      `${detail}\n  Native hosted-provider access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}`,
+      `${detail}\n  ${recoveryErrors.join("\n  ")}`,
       input.error instanceof InferenceSetError ? input.error.exitCode : 1,
     );
   }
@@ -1329,11 +1351,10 @@ function recordNativeProviderAuthority(
 
 function inferenceSelectionRecoveryDetail(
   selectingNativeHosted: boolean,
-  previousNativeAttachment: NativeHostedProviderAttachment | null | undefined,
   previousProvider: string,
   previousModel: string,
 ): string {
-  if (selectingNativeHosted || previousNativeAttachment) {
+  if (selectingNativeHosted) {
     return "The shared OpenShell inference selection was not changed.";
   }
   return `The previous OpenShell inference selection was restored to '${previousProvider}' / '${previousModel}'.`;
@@ -1659,7 +1680,7 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeHostedDetached = false;
   let previousNativeHostedDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
-    if (selectingNativeHosted || previousNativeHostedAttachment) {
+    if (selectingNativeHosted) {
       appliedInferenceSelection = false;
       return null;
     }
@@ -1844,7 +1865,6 @@ async function runInferenceSetWithoutHostLock(
           `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
             inferenceSelectionRecoveryDetail(
               selectingNativeHosted,
-              previousNativeHostedAttachment,
               rollbackRoute?.provider ?? previousProvider,
               rollbackRoute?.model ?? previousModel,
             ),
@@ -2092,6 +2112,9 @@ async function runInferenceSetWithoutHostLock(
     await restorePreviousNativeHostedAfterFailedPublish({
       detached: previousNativeHostedDetached,
       committed: previousNativeHostedDetachCommitted,
+      routeApplied: appliedInferenceSelection,
+      routeAmbiguous: ambiguousInferenceSelection,
+      restoreRoute: restorePreviousInferenceSelection,
       previousAttachment: previousNativeHostedAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,

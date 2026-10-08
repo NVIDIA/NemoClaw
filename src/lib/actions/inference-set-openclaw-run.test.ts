@@ -502,6 +502,17 @@ describe("runInferenceSet OpenClaw routing", () => {
       }),
     ).toEqual({ ok: true, value: { names: [original.providerName] } });
     expect(deps.calls.updateSandbox.mock.calls.every(([name]) => name === "alpha")).toBe(true);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        endpointUrl: profile.endpoint,
+        credentialEnv: profile.credentialEnv,
+        preferredInferenceApi:
+          profile.logicalProvider === "anthropic-prod"
+            ? "anthropic-messages"
+            : "openai-completions",
+      }),
+    );
     expect(
       deps.calls.captureOpenshell.mock.calls.some(
         ([args]) => args[0] === "inference" && args[1] === "set",
@@ -715,10 +726,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       expect.objectContaining({
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
-        endpointUrl: null,
-        credentialEnv: null,
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         nimContainer: null,
-        preferredInferenceApi: null,
+        preferredInferenceApi: "openai-completions",
         nativeHostedProviderAttachment: expect.objectContaining({
           providerName: "nemoclaw-nvidia-prod-v1",
         }),

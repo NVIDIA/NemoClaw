@@ -25,6 +25,7 @@ import { ConfigUrlValidationError } from "../sandbox/config";
 import type { ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import { resolveNativeInferenceRegistryMetadata } from "./inference-route-api";
 import { InferenceSetError } from "./inference-set-error";
 
 /**
@@ -381,6 +382,13 @@ function registryMetadataForProviderSwitch(options: {
 }): RegistryInferenceMetadata {
   const { entry, provider, model, sandboxName, session, explicitMetadata } = options;
   if (explicitMetadata) return explicitMetadata;
+  const nativeMetadata = resolveNativeInferenceRegistryMetadata({
+    provider,
+    model,
+    previousProvider: entry.provider,
+    previousApi: entry.preferredInferenceApi,
+  });
+  if (nativeMetadata) return nativeMetadata;
   if (entry.provider === provider) {
     return {
       endpointUrl: entry.endpointUrl ?? null,

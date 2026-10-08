@@ -27,6 +27,45 @@ const entry = (name: string, overrides: Partial<SandboxEntry> = {}): SandboxEntr
 });
 
 describe("runtime shared gateway route containment", () => {
+  it.each([
+    ["openai-api", "openai-api", "openai-responses"],
+    ["hermes-provider", "hermes-provider", "openai-responses"],
+    ["gemini-api", "openai-api", "openai-completions"],
+    ["anthropic-prod", "openai-api", "anthropic-messages"],
+  ])("persists native %s protocol from prior %s", (provider, previousProvider, api) => {
+    const prepared = prepareInferenceSetRoute({
+      entry: entry("alpha", {
+        provider: previousProvider,
+        preferredInferenceApi: "openai-responses",
+      }),
+      sandboxName: "alpha",
+      provider,
+      model: "model-a",
+      customRoute: {},
+      session: null,
+      sandboxes: [],
+    });
+    expect(prepared.preliminaryRegistryMetadata.preferredInferenceApi).toBe(api);
+  });
+
+  it("refuses custom endpoint metadata for a fixed native provider", () => {
+    expect(() =>
+      prepareInferenceSetRoute({
+        entry: entry("alpha"),
+        sandboxName: "alpha",
+        provider: "openai-api",
+        model: "model-a",
+        customRoute: {
+          endpointUrl: "https://untrusted.example/v1",
+          credentialEnv: "OTHER_KEY",
+          inferenceApi: "openai-completions",
+        },
+        session: null,
+        sandboxes: [],
+      }),
+    ).toThrow();
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     delete process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];

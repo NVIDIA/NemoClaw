@@ -309,10 +309,15 @@ export async function runInferenceGet(
   options: InferenceGetOptions = {},
   deps: InferenceGetDeps = defaultDeps(),
 ): Promise<InferenceGetResult> {
-  const selectedSandboxName = options.sandboxName ?? deps.getDefaultSandbox?.() ?? null;
-  const selectedSandbox = selectedSandboxName
-    ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
-    : null;
+  let selectedSandbox: ReturnType<typeof getKnownSandboxTarget> | null;
+  try {
+    const selectedSandboxName = options.sandboxName ?? deps.getDefaultSandbox?.() ?? null;
+    selectedSandbox = selectedSandboxName
+      ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
+      : null;
+  } catch (error) {
+    throw new InferenceGetError(formatGatewayResolutionFailure(error, options.sandboxName));
+  }
   const receipt = normalizeNativeHostedProviderAttachment(
     selectedSandbox?.nativeHostedProviderAttachment,
   );

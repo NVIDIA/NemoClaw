@@ -1449,7 +1449,17 @@ export function createProviderEffectBoundary(input: {
   };
   if (!input.deferred) {
     return {
-      validateBeforeCreate: validate,
+      validateBeforeCreate: async () => {
+        if (
+          usesNativeHostedProvider(input.preparationInput.inferenceProvider) &&
+          !input.expectedNativeHostedProviderAttachment
+        ) {
+          throw new Error(
+            `Sandbox '${input.sandboxName}' is missing its native hosted provider identity receipt.`,
+          );
+        }
+        await validate();
+      },
       publishBeforeCreate: async () => {
         input.revalidateSandboxIdentityBeforeCreate();
         await publish();
