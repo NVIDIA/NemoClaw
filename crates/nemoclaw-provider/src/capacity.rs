@@ -15,13 +15,13 @@ pub(crate) struct CapacityDataSource(pub Arc<ConfiguredBackend>);
 #[derive(Serialize, Deserialize)]
 pub(crate) struct CapacityState {
     engine: Value<String>,
-    specs: Value<Vec<Value<String>>>,
+    contracts: Value<Vec<Value<String>>>,
     required_bytes: Value<u64>,
     observed_bytes: Value<u64>,
     compatible: Value<bool>,
 }
 fn requirements(config: &CapacityState) -> Result<(), nemoclaw_sdk::Error> {
-    use crate::{Error, services::validate_capacity_specs};
+    use crate::{Error, services::validate_capacity_contracts};
     let engine = match &config.engine {
         Value::Value(engine) => {
             crate::config::validate_engine_endpoint(engine)?;
@@ -30,25 +30,25 @@ fn requirements(config: &CapacityState) -> Result<(), nemoclaw_sdk::Error> {
         Value::Unknown => None,
         Value::Null => return Err(Error::Conflict("capacity engine is required")),
     };
-    let specs = match &config.specs {
+    let contracts = match &config.contracts {
         Value::Unknown => return Ok(()),
-        Value::Value(specs) if !specs.is_empty() => specs,
+        Value::Value(contracts) if !contracts.is_empty() => contracts,
         _ => {
             return Err(Error::Conflict(
-                "service capacity requires at least one specification",
+                "service capacity requires at least one runtime contract",
             ));
         }
     };
     let mut known = Vec::new();
-    for spec in specs {
-        match spec {
-            Value::Value(spec) => known.push(spec.clone()),
+    for contract in contracts {
+        match contract {
+            Value::Value(contract) => known.push(contract.clone()),
             Value::Unknown => {}
-            Value::Null => return Err(Error::Conflict("capacity specification is required")),
+            Value::Null => return Err(Error::Conflict("capacity runtime contract is required")),
         }
     }
     if !known.is_empty() {
-        validate_capacity_specs(engine, &known)?;
+        validate_capacity_contracts(engine, &known)?;
     }
     Ok(())
 }
@@ -67,7 +67,7 @@ impl DataSource for CapacityDataSource {
                         AttributeConstraint::Required,
                     ),
                     (
-                        "specs",
+                        "contracts",
                         AttributeType::List(Box::new(AttributeType::String)),
                         AttributeConstraint::Required,
                     ),
@@ -110,7 +110,7 @@ impl DataSource for CapacityDataSource {
                 diags.error(
                     "Invalid service capacity requirements",
                     error.to_string(),
-                    AttributePath::new("specs"),
+                    AttributePath::new("contracts"),
                 );
                 None
             }
@@ -124,22 +124,24 @@ impl DataSource for CapacityDataSource {
     ) -> Option<CapacityState> {
         let work = async {
             requirements(&config)?;
-            let (Value::Value(engine), Value::Value(specs)) = (&config.engine, &config.specs)
+            let (Value::Value(engine), Value::Value(contracts)) =
+                (&config.engine, &config.contracts)
             else {
                 return Err(nemoclaw_sdk::Error::State(
                     "capacity requirements are not yet known",
                 ));
             };
-            let specs = specs
+            let contracts = contracts
                 .iter()
-                .map(|spec| match spec {
-                    Value::Value(spec) => Ok(spec.clone()),
+                .map(|contract| match contract {
+                    Value::Value(contract) => Ok(contract.clone()),
                     _ => Err(nemoclaw_sdk::Error::State(
                         "capacity requirements are not yet known",
                     )),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            crate::services::observe_service_capacity(self.0.connections(), engine, &specs).await
+            crate::services::observe_service_capacity(self.0.connections(), engine, &contracts)
+                .await
         }
         .await;
         match work {
@@ -163,7 +165,7 @@ mod tests {
     #[tokio::test]
     async fn capacity_inputs_validate_offline_and_defer_unknown_values_without_echoing_input() {
         let source = CapacityDataSource(Arc::new(ConfiguredBackend::default()));
-        for (engine, specs, valid) in [
+        for (engine, contracts, valid) in [
             (Value::Unknown, Value::Unknown, true),
             (
                 Value::Value("ssh://gpu-box".into()),
@@ -194,7 +196,7 @@ mod tests {
                     &mut diagnostics,
                     CapacityState {
                         engine,
-                        specs,
+                        contracts,
                         required_bytes: Value::Null,
                         observed_bytes: Value::Null,
                         compatible: Value::Null,

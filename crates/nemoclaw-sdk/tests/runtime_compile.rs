@@ -337,7 +337,13 @@ fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply()
         "${docker_container.inference_service_inference_qwen.id}"
     );
     assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
-    assert!(readiness["spec"].is_string());
+    assert_eq!(
+        readiness["contract"],
+        "${data.nemoclaw_vllm_runtime.inference_service_inference_qwen.spec}"
+    );
+    let container = &graph["resource"]["docker_container"]["inference_service_inference_qwen"];
+    assert_eq!(readiness["name"], container["name"]);
+    assert!(readiness["engine"].as_str().unwrap().starts_with("unix://"));
 }
 
 #[test]
