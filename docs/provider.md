@@ -74,6 +74,41 @@ The bundled OpenShell provider includes NemoClaw's managed-service identity and 
 During apply, it reads Docker vLLM and Ollama proxy keys from their owning containers, and authenticated cluster vLLM keys through the verified model Pod from its separate credential PVC.
 The key never enters OpenTofu state.
 
+Inputs are typed:
+
+- `openshell_sandbox` takes a `policy` block and a `provider_names` list.
+  The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
+  A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
+- `openshell_provider_profile` takes a `binaries` list.
+- `runtime_json` stays the JSON string that `nemoclaw_fabric_capabilities` returns.
+- `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [service storage](#nemoclaw-resources).
+
+```hcl
+resource "openshell_sandbox" "assistant" {
+  workspace      = openshell_workspace.example.name
+  name           = "assistant"
+  image          = var.image
+  agent_name     = "assistant"
+  runtime_json   = data.nemoclaw_fabric_capabilities.assistant.runtime_json
+  provider_names = [openshell_provider_registration.local.name]
+  policy {
+    explicit {
+      version = 1
+      network_policies "docs" {
+        name = "docs"
+        endpoints {
+          host = "docs.example.com"
+          port = 443
+        }
+        binaries {
+          path = "/usr/bin/curl"
+        }
+      }
+    }
+  }
+}
+```
+
 ### NemoClaw Resources
 
 | Resource | Manages |
@@ -249,8 +284,8 @@ The runtime consumes the same canonical public configuration through Fabric; see
 Generated graphs observe each sandbox image independently of resource creation or image acquisition.
 Managed gateways use their configured engine; external gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
 With `requirements_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
-The sandbox consumes `runtime_json`; its `policy_json` retains authored policy and managed endpoint inputs, resolved against that layout before creation.
-Provider profiles require nonempty `binaries_json`; search registrations retain their scoped `profile_name`.
+The sandbox consumes `runtime_json`; its `policy` block retains authored policy and managed endpoint inputs, resolved against that layout before creation.
+Provider profiles require a nonempty `binaries` list, which graphs decode from `binaries_json`; search registrations retain their scoped `profile_name`.
 Refresh verifies the actual launch and policy against retained metadata, and export and teardown do not need another image inspection.
 
 Inference registrations are scoped by authored provider identity, image digest, and adapter ID; search registrations also include the credential reference.

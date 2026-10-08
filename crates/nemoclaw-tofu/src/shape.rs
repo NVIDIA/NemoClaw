@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! OpenTofu attribute shapes derived from a JSON schema, with snake_case names.
+//! OpenTofu attribute and block shapes derived from a JSON schema, with
+//! snake_case names, and the conversions between their values and JSON.
 //!
 //! The JSON schema keeps its value constraints; these shapes carry only what
 //! OpenTofu can type-check. A schema construct without an OpenTofu equivalent
@@ -22,6 +23,8 @@ pub enum Shape {
     Object(Fields),
     /// A list of nested objects.
     ObjectList(Fields),
+    /// Nested objects keyed by arbitrary names, which keep their JSON spelling.
+    ObjectMap(Fields),
 }
 
 /// One nested attribute and the JSON property it carries.
@@ -35,6 +38,14 @@ pub struct Field {
 
 /// Attributes by OpenTofu name.
 pub type Fields = BTreeMap<String, Field>;
+
+/// The attribute that holds the scalar alternative of an object union; its
+/// field has an empty JSON name.
+pub const CHOICE: &str = "value";
+
+fn choice(fields: &Fields) -> Option<&Field> {
+    fields.get(CHOICE).filter(|field| field.json.is_empty())
+}
 
 /// A JSON schema location whose construct has no OpenTofu equivalent.
 #[derive(Debug, PartialEq, Eq)]
@@ -114,12 +125,46 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
     if schema.get("type").is_none()
         && let Some(variants) = variants(schema)
     {
+        // An optional value is its type or null; omission already expresses null.
         let resolved = variants
             .iter()
             .map(|variant| resolve(root, variant, pointer))
+            .filter(|variant| {
+                variant.as_ref().map_or(true, |variant| {
+                    variant.get("type") != Some(&Value::from("null"))
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
+        if let [only] = resolved.as_slice() {
+            return shape(root, only, pointer);
+        }
         if resolved.iter().all(|variant| is_object(variant)) {
             return merged(root, &resolved, pointer).map(Shape::Object);
+        }
+        // A scalar alternative to objects becomes their `value` attribute.
+        let (objects, scalars): (Vec<_>, Vec<_>) =
+            resolved.into_iter().partition(|variant| is_object(variant));
+        if let [scalar] = scalars.as_slice()
+            && !objects.is_empty()
+        {
+            let scalar = shape(root, scalar, pointer)?;
+            if matches!(
+                scalar,
+                Shape::Object(_) | Shape::ObjectList(_) | Shape::ObjectMap(_)
+            ) {
+                return Err(unmappable(pointer, "union of non-object types"));
+            }
+            let mut fields = merged(root, &objects, pointer)?;
+            let choice = Field {
+                json: String::new(),
+                shape: scalar,
+                required: false,
+                description: "The value itself, instead of the other attributes.".into(),
+            };
+            if fields.insert(CHOICE.into(), choice).is_some() {
+                return Err(unmappable(pointer, "duplicate OpenTofu name"));
+            }
+            return Ok(Shape::Object(fields));
         }
         return Err(unmappable(pointer, "union of non-object types"));
     }
@@ -147,7 +192,9 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
             let pointer = format!("{pointer}/items");
             match shape(root, items, &pointer)? {
                 Shape::Object(fields) => Shape::ObjectList(fields),
-                Shape::ObjectList(_) => return Err(unmappable(&pointer, "nested object lists")),
+                Shape::ObjectList(_) | Shape::ObjectMap(_) => {
+                    return Err(unmappable(&pointer, "list of object collections"));
+                }
                 item => Shape::List(Box::new(item)),
             }
         }
@@ -156,8 +203,9 @@ fn shape(root: &Value, schema: &Value, pointer: &str) -> Result<Shape, Unmappabl
             Some(values) if values.is_object() => {
                 let pointer = format!("{pointer}/additionalProperties");
                 match shape(root, values, &pointer)? {
-                    Shape::Object(_) | Shape::ObjectList(_) => {
-                        return Err(unmappable(&pointer, "map of objects"));
+                    Shape::Object(fields) => Shape::ObjectMap(fields),
+                    Shape::ObjectList(_) | Shape::ObjectMap(_) => {
+                        return Err(unmappable(&pointer, "map of object collections"));
                     }
                     item => Shape::Map(Box::new(item)),
                 }
@@ -238,6 +286,16 @@ pub fn from_hcl(fields: &Fields, value: &Value) -> Value {
 }
 
 fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
+    if let Shape::Object(fields) = shape
+        && let Some(alternative) = choice(fields)
+    {
+        if outward && !value.is_object() && !value.is_null() {
+            return serde_json::json!({ CHOICE: convert(&alternative.shape, value, true) });
+        }
+        if !outward && let Some(scalar) = value.get(CHOICE).filter(|scalar| !scalar.is_null()) {
+            return convert(&alternative.shape, scalar, false);
+        }
+    }
     match (shape, value) {
         (Shape::Object(fields), Value::Object(object)) => Value::Object(
             object
@@ -249,14 +307,20 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                             .find(|(_, field)| field.json == *key)
                             .map(|(name, field)| (name.clone(), field))?
                     } else {
-                        fields.get(key).map(|field| (field.json.clone(), field))?
+                        fields
+                            .get(key)
+                            .filter(|field| !field.json.is_empty())
+                            .map(|field| (field.json.clone(), field))?
                     };
                     // OpenTofu sends an omitted attribute or block as null and
                     // an omitted list block as an empty list.
                     let omitted = value.is_null()
                         || (!field.required
-                            && matches!(field.shape, Shape::ObjectList(_))
-                            && value.as_array().is_some_and(Vec::is_empty));
+                            && match field.shape {
+                                Shape::ObjectList(_) => value.as_array().is_some_and(Vec::is_empty),
+                                Shape::ObjectMap(_) => value.as_object().is_some_and(Map::is_empty),
+                                _ => false,
+                            });
                     if !outward && omitted {
                         return None;
                     }
@@ -276,6 +340,17 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                 .map(|value| convert(item, value, outward))
                 .collect(),
         ),
+        (Shape::ObjectMap(fields), Value::Object(entries)) => Value::Object(
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        convert(&Shape::Object(fields.clone()), value, outward),
+                    )
+                })
+                .collect(),
+        ),
         (Shape::Map(item), Value::Object(entries)) => Value::Object(
             entries
                 .iter()
@@ -284,6 +359,161 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                 .collect(),
         ),
         _ => value.clone(),
+    }
+}
+
+// --- OpenTofu values -------------------------------------------------------
+
+/// An OpenTofu value of any type, including unknown values at any depth.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum Dynamic {
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    String(String),
+    List(Vec<tf_provider::value::Value<Dynamic>>),
+    Map(BTreeMap<String, tf_provider::value::Value<Dynamic>>),
+}
+
+use std::collections::BTreeMap as DynamicMap;
+
+/// Optional blocks arrive as lists of at most one object.
+pub fn single_blocks(shape: &Shape, value: Value) -> Value {
+    match (shape, value) {
+        (Shape::Object(fields), Value::Object(object)) => object
+            .into_iter()
+            .map(|(name, value)| {
+                let Some(field) = fields.get(&name) else {
+                    return (name, value);
+                };
+                let value = match (&field.shape, value) {
+                    (Shape::Object(_), Value::Array(mut items)) if !field.required => {
+                        items.pop().unwrap_or(Value::Null)
+                    }
+                    (_, value) => value,
+                };
+                (name, single_blocks(&field.shape, value))
+            })
+            .collect(),
+        (Shape::ObjectList(fields), Value::Array(items)) => items
+            .into_iter()
+            .map(|item| single_blocks(&Shape::Object(fields.clone()), item))
+            .collect(),
+        (Shape::ObjectMap(fields), Value::Object(entries)) => entries
+            .into_iter()
+            .map(|(key, item)| (key, single_blocks(&Shape::Object(fields.clone()), item)))
+            .collect(),
+        (_, value) => value,
+    }
+}
+
+/// JSON for a known value; `None` when any part is unknown.
+pub fn json(value: &tf_provider::value::Value<Dynamic>) -> Option<Value> {
+    Some(match value {
+        tf_provider::value::Value::Unknown => return None,
+        tf_provider::value::Value::Null => Value::Null,
+        tf_provider::value::Value::Value(Dynamic::Bool(value)) => (*value).into(),
+        tf_provider::value::Value::Value(Dynamic::Integer(value)) => (*value).into(),
+        tf_provider::value::Value::Value(Dynamic::Float(value)) => {
+            serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number)
+        }
+        tf_provider::value::Value::Value(Dynamic::String(value)) => value.clone().into(),
+        tf_provider::value::Value::Value(Dynamic::List(values)) => {
+            Value::Array(values.iter().map(json).collect::<Option<_>>()?)
+        }
+        tf_provider::value::Value::Value(Dynamic::Map(entries)) => Value::Object(
+            entries
+                .iter()
+                .map(|(key, value)| Some((key.clone(), json(value)?)))
+                .collect::<Option<_>>()?,
+        ),
+    })
+}
+
+/// The OpenTofu value of known JSON.
+pub fn dynamic(value: &Value) -> tf_provider::value::Value<Dynamic> {
+    use tf_provider::value::Value as Tofu;
+    match value {
+        Value::Null => Tofu::Null,
+        Value::Bool(value) => Tofu::Value(Dynamic::Bool(*value)),
+        Value::Number(number) => Tofu::Value(match number.as_i64() {
+            Some(integer) => Dynamic::Integer(integer),
+            None => Dynamic::Float(number.as_f64().unwrap_or_default()),
+        }),
+        Value::String(value) => Tofu::Value(Dynamic::String(value.clone())),
+        Value::Array(values) => Tofu::Value(Dynamic::List(values.iter().map(dynamic).collect())),
+        Value::Object(entries) => Tofu::Value(Dynamic::Map(
+            entries
+                .iter()
+                .map(|(key, value)| (key.clone(), dynamic(value)))
+                .collect::<DynamicMap<_, _>>(),
+        )),
+    }
+}
+
+// --- OpenTofu schema -------------------------------------------------------
+
+use tf_provider::schema::{
+    Attribute, AttributeConstraint, AttributeType, Block, Description, NestedBlock,
+};
+
+pub fn attribute_type(shape: &Shape) -> AttributeType {
+    match shape {
+        Shape::String => AttributeType::String,
+        Shape::Number => AttributeType::Number,
+        Shape::Bool => AttributeType::Bool,
+        Shape::List(item) => AttributeType::List(Box::new(attribute_type(item))),
+        Shape::Map(item) => AttributeType::Map(Box::new(attribute_type(item))),
+        // Objects are nested blocks (see `block`), and the schema
+        // conversion rejects lists and maps of objects.
+        Shape::Object(_) | Shape::ObjectList(_) | Shape::ObjectMap(_) => {
+            unreachable!("objects are nested blocks")
+        }
+    }
+}
+
+/// Objects become nested blocks, as in other providers' configuration.
+pub fn block(fields: &Fields, description: &str) -> Block {
+    let mut attributes = std::collections::HashMap::new();
+    let mut blocks = std::collections::HashMap::new();
+    for (name, field) in fields {
+        let nested = |fields| block(fields, &field.description);
+        match &field.shape {
+            Shape::Object(fields) if field.required => {
+                blocks.insert(name.clone(), NestedBlock::Single(nested(fields)));
+            }
+            Shape::Object(fields) => {
+                blocks.insert(name.clone(), NestedBlock::Optional(nested(fields)));
+            }
+            Shape::ObjectList(fields) => {
+                blocks.insert(name.clone(), NestedBlock::List(nested(fields)));
+            }
+            Shape::ObjectMap(fields) => {
+                blocks.insert(name.clone(), NestedBlock::Map(nested(fields)));
+            }
+            shape => {
+                attributes.insert(
+                    name.clone(),
+                    Attribute {
+                        attr_type: attribute_type(shape),
+                        description: Description::plain(field.description.clone()),
+                        constraint: if field.required {
+                            AttributeConstraint::Required
+                        } else {
+                            AttributeConstraint::Optional
+                        },
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+    Block {
+        attributes,
+        blocks,
+        description: Description::plain(description.to_owned()),
+        ..Default::default()
     }
 }
 
@@ -362,14 +592,38 @@ mod tests {
     }
 
     #[test]
+    fn a_scalar_alternative_to_objects_is_their_value_attribute() {
+        let root = json!({"type": "object", "properties": {
+            "tool": {"anyOf": [{"type": "string"}, {"type": "object", "properties": {"any": {"type": "array", "items": {"type": "string"}}}}]}
+        }});
+        let fields = fields(&root, &[]).unwrap();
+        let Shape::Object(tool) = &fields["tool"].shape else {
+            panic!("the union is an object")
+        };
+        assert_eq!(tool[CHOICE].shape, Shape::String);
+        for value in [
+            json!({"tool": "read_*"}),
+            json!({"tool": {"any": ["a", "b"]}}),
+        ] {
+            let hcl = to_hcl(&fields, &value);
+            assert!(hcl["tool"].is_object(), "{hcl}");
+            assert_eq!(from_hcl(&fields, &hcl), value);
+        }
+    }
+
+    #[test]
     fn constructs_without_an_opentofu_type_are_errors() {
         for (property, reason) in [
             (
-                json!({"anyOf": [{"type": "string"}, {"type": "object"}]}),
+                json!({"anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "object"}]}),
                 "union of non-object types",
             ),
             (json!({"type": ["string", "integer"]}), "multiple types"),
             (json!({"type": "array"}), "array without item schema"),
+            (
+                json!({"type": "object", "additionalProperties": {"type": "array", "items": {"type": "object", "properties": {}}}}),
+                "map of object collections",
+            ),
             (json!({}), "untyped schema"),
         ] {
             let root = json!({"type": "object", "properties": {"value": property}});

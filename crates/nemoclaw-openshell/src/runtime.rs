@@ -92,7 +92,7 @@ pub struct RuntimeBinding {
 }
 
 /// Authored policy and deployment-owned endpoint grants before image resolution.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyInput {
     pub explicit: Option<ExplicitPolicy>,

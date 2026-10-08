@@ -183,7 +183,19 @@ impl Deployment {
             if target.address.starts_with("data.") || plan::disposable(&target.address) {
                 continue;
             }
-            let observed: Row = serde_json::from_value(observations[&target.address].clone())
+            let mut observation = observations[&target.address].clone();
+            // Typed OpenShell inputs return to the JSON their rows carry.
+            for input in nemoclaw_openshell::structured_inputs(&target.kind) {
+                if let Some(object) = observation.as_object_mut()
+                    && let Some(value) = object.remove(input.attribute)
+                {
+                    let encoded = input
+                        .row_value(value)
+                        .map_err(|_| Error::State("invalid provider export observation"))?;
+                    object.insert(input.field.into(), json!(encoded.unwrap_or_default()));
+                }
+            }
+            let observed: Row = serde_json::from_value(observation)
                 .map_err(|_| Error::State("invalid provider export observation"))?;
             let mut expected = target.values;
             expected.insert("id".into(), observed["id"].clone());
@@ -230,11 +242,32 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
     }
     // Authored configuration cannot be exported as unchanged intent when the
     // provider reports drift. Compare JSON semantically, without harness dispatch.
+    let inputs = nemoclaw_openshell::structured_inputs(&target.kind);
     for (field, expected) in &target.values {
         if field.ends_with("_json") || field == "cluster_source" {
-            let expected: Value = serde_json::from_str(expected)
+            // Typed OpenShell inputs return to the JSON their rows carry; the
+            // authored JSON takes the same path, which omits absent values.
+            let (expected, observed) = match inputs.iter().find(|input| input.field == field) {
+                Some(input) => {
+                    let invalid = |_| Error::State("invalid authored export configuration");
+                    let expected = input
+                        .row_value(input.configuration(expected).map_err(invalid)?)
+                        .map_err(invalid)?
+                        .unwrap_or_default();
+                    let observed = input
+                        .row_value(observed[input.attribute].clone())
+                        .map_err(|_| Error::State("invalid observed export configuration"))?
+                        .unwrap_or_default();
+                    (expected, observed)
+                }
+                None => (
+                    expected.clone(),
+                    observed[field].as_str().unwrap_or("").to_owned(),
+                ),
+            };
+            let expected: Value = serde_json::from_str(&expected)
                 .map_err(|_| Error::State("invalid authored export configuration"))?;
-            let actual: Value = serde_json::from_str(observed[field].as_str().unwrap_or(""))
+            let actual: Value = serde_json::from_str(&observed)
                 .map_err(|_| Error::State("invalid observed export configuration"))?;
             if actual != expected {
                 return Err(Error::Conflict(
@@ -342,19 +375,33 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
     Ok(())
 }
 
+/// A JSON input as its provider records it: typed OpenShell inputs omit
+/// absent values. `None` for an empty or invalid input.
+fn recorded(kind: &str, field: &str, encoded: &str) -> Option<Value> {
+    if encoded.is_empty() {
+        return None;
+    }
+    let encoded = match nemoclaw_openshell::structured_inputs(kind)
+        .into_iter()
+        .find(|input| input.field == field)
+    {
+        Some(input) => input.row_value(input.configuration(encoded).ok()?).ok()??,
+        None => encoded.to_owned(),
+    };
+    serde_json::from_str(&encoded).ok()
+}
+
 fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
-    if [
-        "image",
-        "agent_name",
-        "agent_runtime",
-        "policy_json",
-        "provider_names_json",
-    ]
-    .iter()
-    .any(|key| {
-        observed.get(*key).map(String::as_str).unwrap_or("")
-            != expected.get(*key).map(String::as_str).unwrap_or("")
-    }) {
+    let value = |row: &Row, key: &str| row.get(key).map(String::as_str).unwrap_or("").to_owned();
+    // JSON inputs compare as the provider records them.
+    let json = |row: &Row, key: &str| recorded("sandbox", key, &value(row, key));
+    if ["image", "agent_name", "agent_runtime"]
+        .iter()
+        .any(|key| value(observed, key) != value(expected, key))
+        || ["policy_json", "provider_names_json"]
+            .iter()
+            .any(|key| json(observed, key) != json(expected, key))
+    {
         return Err(Error::Conflict(
             "sandbox configuration drift requires inspection",
         ));
@@ -541,12 +588,17 @@ mod tests {
         let target = Target {
             address: "openshell_provider_profile.inference_qwen".into(),
             kind: "provider_profile".into(),
-            values: Row::from([(
-                "cluster_source".into(),
-                r#"{"name":"owned-service","generation":"bound"}"#.into(),
-            )]),
+            values: Row::from([
+                (
+                    "cluster_source".into(),
+                    r#"{"name":"owned-service","generation":"bound"}"#.into(),
+                ),
+                ("binaries_json".into(), r#"["/usr/bin/python3"]"#.into()),
+            ]),
         };
         let mut observed = serde_json::to_value(&target.values).unwrap();
+        observed.as_object_mut().unwrap().remove("binaries_json");
+        observed["binaries"] = json!(["/usr/bin/python3"]);
         validate_projection(&target, &observed).unwrap();
         observed["cluster_source"] = json!(r#"{"name":"another-service","generation":"bound"}"#);
         assert!(validate_projection(&target, &observed).is_err());

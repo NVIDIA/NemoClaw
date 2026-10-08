@@ -29,6 +29,7 @@ tokio = { workspace = true, features = ["test-util"] }
 
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
+nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 # Only the endpoint policy and retained identity types, without the engine client.
 nemoclaw-docker = { path = "../nemoclaw-docker", default-features = false }

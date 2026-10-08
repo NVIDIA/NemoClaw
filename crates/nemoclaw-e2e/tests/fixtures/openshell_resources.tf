@@ -9,8 +9,7 @@ terraform {
 }
 variable "endpoint" { type = string }
 variable "runtime_json" { type = string }
-variable "policy_json" { type = string }
-variable "binaries_json" { type = string }
+variable "binaries" { type = list(string) }
 variable "enabled" { default = true }
 variable "destroying" { default = false }
 variable "image" { default = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
@@ -36,7 +35,7 @@ resource "openshell_provider_profile" "inference" {
   generation    = "provider-generation"
   endpoint      = "http://127.0.0.1:11434/v1"
   authenticated = "false"
-  binaries_json = var.binaries_json
+  binaries      = var.binaries
 }
 resource "openshell_provider_registration" "inference" {
   count      = var.enabled ? 1 : 0
@@ -55,7 +54,7 @@ resource "openshell_sandbox" "agent" {
   image               = var.image
   agent_name          = "assistant"
   agent_runtime       = "fabric"
-  runtime_json        = var.runtime_json
-  policy_json         = var.policy_json
-  provider_names_json = jsonencode([openshell_provider_registration.inference[0].name])
+  runtime_json   = var.runtime_json
+  provider_names = [openshell_provider_registration.inference[0].name]
+@POLICY@
 }

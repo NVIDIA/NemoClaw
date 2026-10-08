@@ -13,11 +13,6 @@ impl Standalone {
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider"));
         assert!(tofu.is_absolute() && provider.is_absolute());
         let root = TofuWorkspace::new(tofu, provider);
-        fs::write(
-            root.path().join("main.tf"),
-            include_str!("openshell_resources.tf"),
-        )
-        .unwrap();
         let runtime = nemoclaw_e2e::image_runtime::binding("nvidia.fabric.pi");
         let mut document = nemoclaw_sdk::config::Document::parse(
             include_str!("../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
@@ -27,13 +22,31 @@ impl Standalone {
         let policy =
             nemoclaw_sdk::image_runtime::policy_input(&document, &document.spec.sandboxes[0])
                 .unwrap();
+        // Write the policy as an author would: a typed block, not JSON.
+        let input = nemoclaw_openshell::structured_inputs("sandbox")
+            .into_iter()
+            .find(|input| input.attribute == "policy")
+            .unwrap();
+        let nemoclaw_tofu::shape::Shape::Object(fields) = &input.shape else {
+            unreachable!("the policy is a block")
+        };
+        let policy = input
+            .configuration(&serde_json::to_string(&policy).unwrap())
+            .unwrap();
+        fs::write(
+            root.path().join("main.tf"),
+            include_str!("openshell_resources.tf").replace(
+                "@POLICY@\n",
+                &nemoclaw_e2e::hcl::block("policy", fields, &policy, 2),
+            ),
+        )
+        .unwrap();
         fs::write(
             root.path().join("terraform.tfvars.json"),
             json!({
                 "endpoint": endpoint,
                 "runtime_json": serde_json::to_string(&runtime).unwrap(),
-                "policy_json": serde_json::to_string(&policy).unwrap(),
-                "binaries_json": serde_json::to_string(runtime.binaries()).unwrap(),
+                "binaries": runtime.binaries(),
             })
             .to_string(),
         )

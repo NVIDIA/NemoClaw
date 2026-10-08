@@ -47,6 +47,41 @@ fn bound_cluster_port_change_explains_required_teardown_before_runtime_reconcili
 #[tokio::test]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; separate local OpenTofu states"]
 async fn plan_and_apply_refuse_cluster_port_changes_with_separate_state_files() {
+    fn state_block(fields: &nemoclaw_tofu::shape::Fields, value: &Value) -> Value {
+        use nemoclaw_tofu::shape::Shape;
+
+        fields
+            .iter()
+            .map(|(name, field)| {
+                let value = &value[name];
+                let value = match &field.shape {
+                    Shape::Object(fields) if field.required => state_block(fields, value),
+                    Shape::Object(fields) => {
+                        if value.is_null() {
+                            json!([])
+                        } else {
+                            json!([state_block(fields, value)])
+                        }
+                    }
+                    Shape::ObjectList(fields) => value
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|item| state_block(fields, item))
+                        .collect(),
+                    Shape::ObjectMap(fields) => value
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .map(|(key, item)| (key.clone(), state_block(fields, item)))
+                        .collect(),
+                    _ => value.clone(),
+                };
+                (name.clone(), value)
+            })
+            .collect()
+    }
+
     let bundle_path = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     for source in [
         include_str!("../../../../../examples/kubernetes/local-vllm.yaml"),
@@ -76,6 +111,20 @@ async fn plan_and_apply_refuse_cluster_port_changes_with_separate_state_files() 
                 compile::PROVIDER_ADDRESS
             };
             let mut attributes = serde_json::to_value(&target.values).unwrap();
+            for input in nemoclaw_openshell::structured_inputs(&target.kind) {
+                let encoded = attributes
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(input.field)
+                    .unwrap();
+                let value = input.configuration(encoded.as_str().unwrap()).unwrap();
+                attributes[input.attribute] = match &input.shape {
+                    nemoclaw_tofu::shape::Shape::Object(fields) => {
+                        json!([state_block(fields, &value)])
+                    }
+                    _ => value,
+                };
+            }
             attributes["id"] = json!(format!("physical-{}", target.kind));
             json!({
                 "version": 4, "terraform_version": compile::OPENTOFU_VERSION,

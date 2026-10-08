@@ -150,10 +150,12 @@ fn policy_template_markers_remain_literal_in_opentofu_configuration() {
         .map(|k| (k.into(), format!("{k}-generation")))
         .into();
     let graph = nemoclaw_sdk::compile::compile(&document, &generations, "0.1.0").unwrap();
-    let encoded = graph["resource"]["openshell_sandbox"]["assistant"]["policy_json"]
-        .as_str()
-        .unwrap();
-    assert!(encoded.contains("/docs/$${file}/%%{literal}"));
+    let policy = &graph["resource"]["openshell_sandbox"]["assistant"]["policy"];
+    assert_eq!(
+        policy["explicit"]["network_policies"]["docs"]["endpoints"][0]["rules"][0]["allow"]["path"],
+        "/docs/$${file}/%%{literal}",
+        "{policy}"
+    );
     let rows = targets(&document, &generations).unwrap();
     assert!(
         rows.iter()

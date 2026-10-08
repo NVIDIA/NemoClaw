@@ -73,7 +73,7 @@ fn cluster_services_provision_before_agents_and_publish_their_cluster_endpoint()
                 .get("docker")
                 .is_none()
         );
-        compile::compile(&document, &generations(), "0.1.0").unwrap();
+        let main = compile::compile(&document, &generations(), "0.1.0").unwrap();
         let targets = compile::targets(&document, &generations()).unwrap();
         let provider = targets
             .iter()
@@ -83,6 +83,15 @@ fn cluster_services_provision_before_agents_and_publish_their_cluster_endpoint()
             .iter()
             .find(|target| target.kind == "provider_profile")
             .unwrap();
+        let sandbox = targets
+            .iter()
+            .find(|target| target.kind == "sandbox")
+            .unwrap();
+        let policy: Value = serde_json::from_str(&sandbox.values["policy_json"]).unwrap();
+        assert_eq!(
+            main["resource"]["openshell_sandbox"][&sandbox.values["name"]]["policy"]["cluster_grants"],
+            policy["cluster_grants"]
+        );
         let storage: Value = serde_json::from_str(
             profile
                 .values

@@ -33,6 +33,29 @@ fn provider_serves_openshell_objects_under_their_resource_names() {
             "native inference fields must be optional for the Brave profile"
         );
     }
+    let sandbox = resources["sandbox"].schema(&mut diagnostics).unwrap();
+    assert!(sandbox.block.blocks.contains_key("policy"));
+    for (name, attribute) in [
+        (
+            "provider_names",
+            &sandbox.block.attributes["provider_names"],
+        ),
+        ("owner", &sandbox.block.attributes["owner"]),
+        ("generation", &sandbox.block.attributes["generation"]),
+        ("binaries", &profile.block.attributes["binaries"]),
+    ] {
+        assert!(
+            !matches!(
+                attribute.attr_type,
+                tf_provider::schema::AttributeType::String
+            ) || matches!(attribute.constraint, AttributeConstraint::OptionalComputed),
+            "{name}"
+        );
+    }
+    for json in ["policy_json", "provider_names_json"] {
+        assert!(!sandbox.block.attributes.contains_key(json), "{json}");
+    }
+    assert!(!profile.block.attributes.contains_key("binaries_json"));
     let registration = resources["provider_registration"]
         .schema(&mut diagnostics)
         .unwrap();
