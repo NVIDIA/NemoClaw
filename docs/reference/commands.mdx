@@ -3776,13 +3776,15 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 Remove a provider credential from the OpenShell gateway by provider name. After removal, re-running `$$nemoclaw onboard` re-prompts for that provider's credential. Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
 
 `$$nemoclaw credentials reset nvidia-prod` removes only NemoClaw's native NVIDIA provider, `nemoclaw-nvidia-prod-v1`.
-It first checks that the legacy `nvidia-prod` provider is absent.
+Reset first refuses if NemoClaw records any sandbox attached to the native provider.
+Only when no recorded attachment blocks reset does it check that the legacy `nvidia-prod` provider is absent.
 If that provider exists or cannot be checked, reset stops with an ownership conflict without changing either provider or NemoClaw's ownership records.
 Inspect the legacy provider with its owner before retrying.
 
 When the native NVIDIA provider is attached to a sandbox, reset stops without detaching or deleting it.
 Rotate its credential in place by setting `NVIDIA_INFERENCE_API_KEY` and rerunning `$$nemoclaw onboard --name <sandbox>`.
-To remove it completely, preserve required sandbox state, destroy every attached sandbox, and then retry reset.
+Before destroying sandboxes, inspect the legacy `nvidia-prod` provider with its owner and resolve any ownership conflict.
+Then preserve required sandbox state, destroy every attached sandbox, and retry reset.
 
 ```bash
 $$nemoclaw credentials reset nvidia-prod
