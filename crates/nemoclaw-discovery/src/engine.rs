@@ -4,7 +4,7 @@
 //! Engine prerequisite checks for an OpenShell gateway.
 use bollard::models::SystemInfo;
 pub use nemoclaw_docker::{Direct, Engine, Engines, is_missing, optional, remote};
-use nemoclaw_sdk::{Error, ObservationError, config::ComputeDriver};
+use nemoclaw_sdk::{Error, config::ComputeDriver};
 
 /// Read the engine and check existing gateway prerequisites without changing resources.
 /// Passing this check does not establish image, GPU, or deployment readiness.
@@ -18,7 +18,7 @@ pub async fn gateway_engine_info(
             let native = engine.podman_json("info").await?;
             let rootless = native["host"]["security"]["rootless"]
                 .as_bool()
-                .ok_or(ObservationError::Incomplete)?;
+                .ok_or(nemoclaw_sdk::ObservationError::Incomplete)?;
             if rootless && native["host"]["rootlessNetworkCmd"] != serde_json::json!("pasta") {
                 return Err(Error::Conflict(
                     "managed rootless Podman requires an API that reports pasta networking for OpenShell callbacks",
