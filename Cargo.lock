@@ -2469,7 +2469,6 @@ dependencies = [
  "getrandom 0.4.3",
  "interprocess",
  "ipnet",
- "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-discovery",
  "nemoclaw-docker",

@@ -74,7 +74,7 @@ impl GatewayConfig {
                         "destroy",
                         attribute(
                             AttributeType::Bool,
-                            "Permit deleting sandboxes during explicit teardown.",
+                            "Permit removing this provider's objects during explicit teardown.",
                         ),
                     ),
                 ]
@@ -215,10 +215,11 @@ impl GatewayClient {
 
 impl GatewayClient {
     /// Connect for `config`, forgetting any earlier client first. Returns
-    /// whether teardown may delete objects, or `None` after reporting an error.
+    /// whether teardown may delete objects, or `None` after reporting an error;
+    /// callers withdraw any earlier teardown permission before calling.
     pub fn configure(&self, diags: &mut Diagnostics, config: &GatewayConfig) -> Option<bool> {
-        // Reconfiguration must not retain a client or teardown permission from
-        // an earlier configuration when inputs become unknown or invalid.
+        // Reconfiguration must not retain a client from an earlier
+        // configuration when inputs become unknown or invalid.
         let settings = GatewaySettings {
             endpoint: &config.endpoint,
             credential_env: &config.credential_env,

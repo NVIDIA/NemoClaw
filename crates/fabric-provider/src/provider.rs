@@ -85,6 +85,9 @@ impl Provider for FabricProvider {
         _: String,
         config: GatewayConfig,
     ) -> Option<()> {
+        // Withdraw teardown permission before validating, so a rejected
+        // reconfiguration cannot keep an earlier grant.
+        self.destroying.store(false, Ordering::Release);
         let destroying = self.client.configure(diags, &config)?;
         self.destroying.store(destroying, Ordering::Release);
         Some(())
@@ -116,5 +119,40 @@ impl Provider for FabricProvider {
             "sandbox_readiness".into(),
             Box::new(SandboxReadinessDataSource(self.client.clone())) as Box<dyn DynamicDataSource>,
         )]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tf_provider::value::Value;
+
+    // Connecting starts a lazy channel, which needs a runtime.
+    #[tokio::test]
+    async fn rejected_reconfiguration_withdraws_teardown_permission() {
+        let provider = FabricProvider::default();
+        let permitted = GatewayConfig {
+            endpoint: Value::Value("http://127.0.0.1:1".into()),
+            destroy: Value::Value(true),
+            ..Default::default()
+        };
+        let mut diagnostics = Diagnostics::default();
+        provider
+            .configure(&mut diagnostics, String::new(), permitted)
+            .await
+            .unwrap();
+        assert!(provider.destroying.load(Ordering::Acquire));
+        // Teardown without an endpoint is refused.
+        let rejected = GatewayConfig {
+            destroy: Value::Value(true),
+            ..Default::default()
+        };
+        assert!(
+            provider
+                .configure(&mut diagnostics, String::new(), rejected)
+                .await
+                .is_none()
+        );
+        assert!(!provider.destroying.load(Ordering::Acquire));
     }
 }
