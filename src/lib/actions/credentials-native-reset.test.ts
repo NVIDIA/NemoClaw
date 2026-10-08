@@ -126,8 +126,8 @@ describe("native NVIDIA credential reset ownership", () => {
       );
       expect(result.exitCode).toBe(0);
       expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
-        profile.providerName,
         profile.logicalProvider,
+        profile.providerName,
       ]);
       expect(clearNativeHostedProviderAuthority).toHaveBeenCalledExactlyOnceWith(
         "nemoclaw",
@@ -160,8 +160,8 @@ describe("native NVIDIA credential reset ownership", () => {
       "nemoclaw",
     );
     expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
-      "nemoclaw-nvidia-prod-v1",
       "nvidia-prod",
+      "nemoclaw-nvidia-prod-v1",
     ]);
     expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledExactlyOnceWith("nemoclaw");
   });
@@ -208,10 +208,9 @@ describe("native NVIDIA credential reset ownership", () => {
         },
       );
       expect(result.exitCode).toBe(1);
-      expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual([
-        "nemoclaw-nvidia-prod-v1",
-        "nvidia-prod",
-      ]);
+      expect(deleteProvider.mock.calls.map(([input]) => input.providerName)).toEqual(
+        failedName === "nvidia-prod" ? ["nvidia-prod"] : ["nvidia-prod", "nemoclaw-nvidia-prod-v1"],
+      );
       expect(clearNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
       expect(result.failureLines.join("\n")).toContain(failedName);
     },

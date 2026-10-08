@@ -933,7 +933,7 @@ describe("credential actions use typed OpenShell provider results", () => {
   });
 
   it.each(["nvidia-prod", "nemoclaw-nvidia-prod-v1"])(
-    "preserves attached native NVIDIA providers during credential reset via %s",
+    "preserves attached NVIDIA providers during credential reset via %s",
     async (provider) => {
       const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
         ok: false,
@@ -960,7 +960,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       expect(deleteProvider).toHaveBeenCalledOnce();
       expect(deleteProvider).toHaveBeenCalledWith({
         target: { kind: "named", gatewayName: "nemoclaw" },
-        providerName: "nemoclaw-nvidia-prod-v1",
+        providerName: provider,
         timeoutMs: 30_000,
       });
       expect(detachProvider).not.toHaveBeenCalled();
@@ -985,7 +985,6 @@ describe("credential actions use typed OpenShell provider results", () => {
           error: { kind: "command", reason: "failed", message: "failed" },
         })
         .mockResolvedValueOnce({ ok: true })
-        .mockResolvedValueOnce({ ok: true })
         .mockResolvedValueOnce({ ok: true });
       const adapter = providerAdapter({ deleteProvider: deletion });
       const failed = await runCredentialsResetAction(
@@ -1000,10 +999,9 @@ describe("credential actions use typed OpenShell provider results", () => {
       );
       expect(succeeded.exitCode).toBe(0);
       expect(deletion.mock.calls.map(([request]) => request.providerName)).toEqual([
-        profile.providerName,
+        profile.logicalProvider,
         profile.logicalProvider,
         profile.providerName,
-        profile.logicalProvider,
       ]);
       expect(clear).toHaveBeenCalledExactlyOnceWith("nemoclaw", profile.profileId);
     },

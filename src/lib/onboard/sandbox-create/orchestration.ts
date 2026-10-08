@@ -1447,17 +1447,20 @@ export function createProviderEffectBoundary(input: {
       deps: input.preparationDeps,
     });
   };
+  const validateNativeHostedReceipt = async () => {
+    if (
+      usesNativeHostedProvider(input.preparationInput.inferenceProvider) &&
+      !input.expectedNativeHostedProviderAttachment
+    ) {
+      throw new Error(
+        `Sandbox '${input.sandboxName}' is missing its native hosted provider identity receipt.`,
+      );
+    }
+  };
   if (!input.deferred) {
     return {
       validateBeforeCreate: async () => {
-        if (
-          usesNativeHostedProvider(input.preparationInput.inferenceProvider) &&
-          !input.expectedNativeHostedProviderAttachment
-        ) {
-          throw new Error(
-            `Sandbox '${input.sandboxName}' is missing its native hosted provider identity receipt.`,
-          );
-        }
+        await validateNativeHostedReceipt();
         await validate();
       },
       publishBeforeCreate: async () => {
@@ -1470,7 +1473,7 @@ export function createProviderEffectBoundary(input: {
     };
   }
   return {
-    validateBeforeCreate: async () => undefined,
+    validateBeforeCreate: validateNativeHostedReceipt,
     publishBeforeCreate: async () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(

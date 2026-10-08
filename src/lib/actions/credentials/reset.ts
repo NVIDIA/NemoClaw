@@ -200,8 +200,7 @@ export async function runCredentialsResetAction(
     }
     if (nativeProfile && key === nativeProfile.logicalProvider) {
       const lines: string[] = [];
-      let complete = true;
-      for (const name of [nativeProfile.providerName, nativeProfile.logicalProvider]) {
+      for (const name of [nativeProfile.logicalProvider, nativeProfile.providerName]) {
         const result = await deleteProviderWithRecovery(name, target, providerAdapter, {
           detachAttached: false,
         });
@@ -216,12 +215,9 @@ export async function runCredentialsResetAction(
             target.gatewayName,
           );
           lines.push(...outcome.lines);
-          complete = outcome.ok && complete;
-          if (!result.ok && result.error?.kind === "command" && result.error.reason === "attached")
-            return fail(lines);
+          if (!outcome.ok) return fail(lines);
         }
       }
-      if (!complete) return fail(lines);
       forgetExtraProvider(publicKey);
       if (nativeProfile.logicalProvider === "nvidia-prod") {
         (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(

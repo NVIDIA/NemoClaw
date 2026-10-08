@@ -32,9 +32,10 @@ function nativeProviderBoundary(
   adapter: OpenShellProviderAdapter,
   inferenceProvider = "nemoclaw-nvidia-prod-v1",
   missingReceipt = false,
+  deferred = false,
 ) {
   return createProviderEffectBoundary({
-    deferred: false,
+    deferred,
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
     expectedNativeHostedProviderAttachment: missingReceipt
@@ -77,16 +78,23 @@ function verifiedCreateContext(revalidateSandboxIdentity = vi.fn()) {
 }
 
 describe("native NVIDIA post-create provider verification", () => {
-  it("rejects a missing native receipt before creation", async () => {
-    const boundary = nativeProviderBoundary(
-      providerAdapter(recordedProviderId),
-      "nemoclaw-nvidia-prod-v1",
-      true,
-    );
-    await expect(boundary.validateBeforeCreate()).rejects.toThrow(
-      "native hosted provider identity receipt",
-    );
-  });
+  it.each([
+    [false, "nemoclaw-nvidia-prod-v1"],
+    [true, "nemoclaw-nvidia-prod-v1"],
+    [false, "nemoclaw-openai-api-v1"],
+    [true, "nemoclaw-openai-api-v1"],
+  ] as const)(
+    "rejects a missing native receipt before creation with deferred=%s for %s",
+    async (deferred, inferenceProvider) => {
+      const adapter = providerAdapter(recordedProviderId);
+      const boundary = nativeProviderBoundary(adapter, inferenceProvider, true, deferred);
+      await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+        "native hosted provider identity receipt",
+      );
+      expect(adapter.getProvider).not.toHaveBeenCalled();
+      expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
+    },
+  );
 
   it("confirms the recorded provider is attached after sandbox identity is verified", async () => {
     const adapter = providerAdapter(recordedProviderId);
