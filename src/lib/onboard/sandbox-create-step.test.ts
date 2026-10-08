@@ -202,7 +202,7 @@ describe("runSandboxCreateStep", () => {
     );
   });
 
-  it("persists DCode startup with its exact Docker resource limits", async () => {
+  it("keeps DCode startup native while retaining limits for GPU compatibility", async () => {
     const launch = makeLaunch({
       sandboxStartupCommand: ["env", "nemoclaw-start"],
     });
@@ -226,7 +226,8 @@ describe("runSandboxCreateStep", () => {
 
     expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        persistStartupCommand: true,
+        persistStartupCommand: false,
+        openshellSandboxCommand: ["env", "nemoclaw-start"],
         requiredUlimits: [
           { name: "nproc", soft: 512, hard: 512 },
           { name: "nofile", soft: 65_536, hard: 65_536 },
