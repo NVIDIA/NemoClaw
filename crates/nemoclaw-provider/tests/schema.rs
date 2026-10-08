@@ -37,7 +37,6 @@ fn production_provider_serves_platform_resources_but_not_openshell_objects() {
     let mut diagnostics = Diagnostics::default();
     let resources = provider.get_resources(&mut diagnostics).unwrap();
     for name in [
-        "agent_configuration",
         "managed_gateway",
         "gateway_storage",
         "inference_storage",
@@ -47,24 +46,27 @@ fn production_provider_serves_platform_resources_but_not_openshell_objects() {
     ] {
         assert!(resources.contains_key(name), "{name}");
     }
-    for name in ["workspace", "provider", "provider_profile", "sandbox"] {
+    // OpenShell objects and Fabric agents have their own providers.
+    for name in [
+        "workspace",
+        "provider",
+        "provider_profile",
+        "sandbox",
+        "agent_configuration",
+    ] {
         assert!(!resources.contains_key(name), "{name}");
     }
     let sources = provider.get_data_sources(&mut diagnostics).unwrap();
-    assert!(!sources.contains_key("gateway_capabilities"));
-    let schema = provider.schema(&mut diagnostics).unwrap();
-    for name in [
-        "endpoint",
-        "credential_env",
-        "tls_ca_env",
-        "tls_certificate_env",
-        "tls_key_env",
-        "destroy",
-        "platform_only",
-    ] {
-        assert!(schema.block.attributes.contains_key(name));
+    for name in ["gateway_capabilities", "sandbox_readiness"] {
+        assert!(!sources.contains_key(name), "{name}");
     }
-    assert!(!schema.block.attributes.contains_key("ollama_engine"));
+    // Every resource names its own engine or cluster; the provider only
+    // grants teardown permission.
+    let schema = provider.schema(&mut diagnostics).unwrap();
+    assert_eq!(
+        schema.block.attributes.keys().collect::<Vec<_>>(),
+        ["destroy"]
+    );
     assert!(diagnostics.errors.is_empty());
 }
 
@@ -160,7 +162,7 @@ fn engine_discovery_is_available_without_a_gateway() {
         ));
     }
     assert!(matches!(
-        provider.schema(&mut diagnostics).unwrap().block.attributes["endpoint"].constraint,
+        provider.schema(&mut diagnostics).unwrap().block.attributes["destroy"].constraint,
         AttributeConstraint::Optional
     ));
 }

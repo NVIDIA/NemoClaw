@@ -457,8 +457,9 @@ mod tests {
             BTreeSet::from([KUBERNETES_STORAGE.into()])
         );
         let graph = compiled.graph;
-        assert_eq!(graph["provider"]["nemoclaw"]["platform_only"], true);
-        assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
+        assert_eq!(graph["provider"]["nemoclaw"], json!({"destroy": true}));
+        assert!(graph["provider"].get("openshell").is_none());
+        assert!(graph["provider"].get("fabric").is_none());
         assert_eq!(graph["resource"].as_object().unwrap().len(), 1);
         assert_eq!(
             graph["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],

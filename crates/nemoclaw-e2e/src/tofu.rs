@@ -16,7 +16,7 @@ pub struct TofuWorkspace {
 
 impl TofuWorkspace {
     /// A workspace whose OpenTofu uses `provider` and, beside it, the
-    /// `openshell` provider built with it.
+    /// `openshell` and `fabric` providers built with it.
     pub fn new(tofu: impl AsRef<Path>, provider: impl AsRef<Path>) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let provider = provider.as_ref();
@@ -27,15 +27,22 @@ impl TofuWorkspace {
             )),
         )
         .unwrap();
-        let openshell = nemoclaw_sdk::bundle::executable("terraform-provider-openshell");
-        let sibling = provider.with_file_name(&openshell);
-        if sibling.exists() {
-            fs::copy(sibling, directory.path().join(openshell)).unwrap();
+        for name in ["openshell", "fabric"] {
+            let binary = nemoclaw_sdk::bundle::executable(&format!("terraform-provider-{name}"));
+            let sibling = provider.with_file_name(&binary);
+            if sibling.exists() {
+                fs::copy(sibling, directory.path().join(binary)).unwrap();
+            }
         }
         let path = serde_json::to_string(directory.path()).unwrap();
-        fs::write(directory.path().join("tofu.rc"), format!(
-            "provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {path} \"registry.opentofu.org/nvidia/openshell\" = {path} }} direct {{}} }}",
-        )).unwrap();
+        let overrides = ["nemoclaw", "openshell", "fabric"]
+            .map(|name| format!("\"registry.opentofu.org/nvidia/{name}\" = {path}"))
+            .join(" ");
+        fs::write(
+            directory.path().join("tofu.rc"),
+            format!("provider_installation {{ dev_overrides {{ {overrides} }} direct {{}} }}"),
+        )
+        .unwrap();
         Self {
             directory,
             tofu: tofu.as_ref().to_owned(),

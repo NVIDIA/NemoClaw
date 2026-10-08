@@ -78,7 +78,7 @@ nemoclaw plan --state-dir .local/kubernetes deployment.yaml
 nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 ```
 
-Apply creates the gateway and every sandbox, then fails at the agent health check with `data.nemoclaw_sandbox_readiness`; that is the expected result at this Fabric pin.
+Apply creates the gateway and every sandbox, then fails at the agent health check with `data.fabric_sandbox_readiness`; that is the expected result at this Fabric pin.
 The resources stay in place, and a later apply with the same state checks them again.
 Keep the state directory: it holds the cluster ownership receipt and the development issuer's keys, and destroy needs both.
 [Managed Kubernetes ownership](design/architecture.md#managed-kubernetes-ownership) describes which component owns each resource.

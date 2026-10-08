@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+//! Waits for a sandbox's Fabric runtime to report ready.
 
-use crate::{fabric::AgentBridge, provider::ConfiguredBackend};
+use crate::AgentBridge;
 use async_trait::async_trait;
-use nemoclaw_sdk::{CancellationToken, Error, backend::Row};
+use nemoclaw_backend::{Error, Row};
+use openshell_provider::GatewayClient;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 use tf_provider::{
@@ -11,10 +13,12 @@ use tf_provider::{
     schema::{Attribute, AttributeConstraint, AttributeType, Block, Schema},
     value::{Value, ValueEmpty},
 };
+use tokio_util::sync::CancellationToken;
 
-pub(crate) struct SandboxReadinessDataSource(pub Arc<ConfiguredBackend>);
+/// Data source for a sandbox's Fabric runtime readiness.
+pub struct SandboxReadinessDataSource(pub Arc<GatewayClient>);
 #[derive(Default, Serialize, Deserialize)]
-pub(crate) struct SandboxReadinessState {
+pub struct SandboxReadinessState {
     sandbox: Value<BTreeMap<String, Value<String>>>,
     read_trigger: Value<String>,
     health_json: Value<String>,
@@ -143,7 +147,7 @@ impl DataSource for SandboxReadinessDataSource {
                     _ => None,
                 };
                 config.error_message = Value::Value(match error {
-                    Error::Observation(error) => crate::observation_message(error, sandbox),
+                    Error::Observation(error) => nemoclaw_tofu::observation_message(error, sandbox),
                     other => other.to_string(),
                 });
                 Some(config)
@@ -158,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn offline_validation_defers_unknown_bindings_and_rejects_missing_identity() {
-        let source = SandboxReadinessDataSource(Arc::new(ConfiguredBackend::default()));
+        let source = SandboxReadinessDataSource(Arc::new(GatewayClient::default()));
         for (sandbox, valid) in [
             (Value::Unknown, true),
             (Value::Null, false),

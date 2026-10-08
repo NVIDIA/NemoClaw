@@ -276,9 +276,7 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
     nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
   }}
 }}
-provider "nemoclaw" {{
-  endpoint = "http://127.0.0.1:1"
-}}
+provider "nemoclaw" {{}}
 resource "nemoclaw_managed_gateway" "gateway" {{
 {attributes}}}
 "#

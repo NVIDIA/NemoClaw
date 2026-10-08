@@ -48,7 +48,11 @@ fn kubernetes_compiles_only_openshell_resources_and_checks_the_driver_before_mut
         );
     }
     for (kind, resources) in graph["resource"].as_object().unwrap() {
-        assert!(kind.starts_with("nemoclaw_") || kind.starts_with("openshell_"));
+        assert!(
+            ["nemoclaw_", "openshell_", "fabric_"]
+                .iter()
+                .any(|prefix| kind.starts_with(prefix))
+        );
         for resource in resources.as_object().unwrap().values() {
             assert!(
                 resource["depends_on"]

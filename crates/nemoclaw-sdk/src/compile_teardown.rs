@@ -64,9 +64,12 @@ pub fn compile_teardown(
         .as_object_mut()
         .expect("compiled graph")
         .remove("output");
-    graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    if graph["provider"].get("openshell").is_some() {
-        graph["provider"]["openshell"]["destroy"] = json!(true);
+    // Explicit teardown is the only graph that permits deletion. Docker and
+    // Helm configurations are left as compiled.
+    for name in crate::compile::NEMOCLAW_PROVIDERS {
+        if graph["provider"].get(name).is_some() {
+            graph["provider"][name]["destroy"] = json!(true);
+        }
     }
     let resources = graph["resource"]
         .as_object_mut()
@@ -188,8 +191,9 @@ mod tests {
                 graph.get("output").is_none(),
                 "teardown must not retain discovery references"
             );
-            assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
-            assert_eq!(graph["provider"]["openshell"]["destroy"], true);
+            for provider in ["nemoclaw", "openshell", "fabric"] {
+                assert_eq!(graph["provider"][provider]["destroy"], true, "{provider}");
+            }
             assert_eq!(graph["provider"]["docker"], full["provider"]["docker"]);
             for address in &established {
                 let (kind, name) = address.split_once('.').unwrap();
@@ -242,11 +246,17 @@ mod tests {
                 .collect();
             assert_eq!(compiled.retained, expected);
             assert_eq!(addresses(&compiled.graph), expected);
+            // The platform stage has no gateway, so only nemoclaw is configured.
             assert_eq!(
-                compiled.graph["provider"]["nemoclaw"]["platform_only"],
-                true
+                compiled.graph["provider"]["nemoclaw"],
+                json!({"destroy": true})
             );
-            assert_eq!(compiled.graph["provider"]["nemoclaw"]["destroy"], true);
+            for provider in crate::compile::GATEWAY_PROVIDERS {
+                assert!(
+                    compiled.graph["provider"].get(provider).is_none(),
+                    "{provider}"
+                );
+            }
             assert!(compiled.graph.get("data").is_none());
             assert!(compiled.graph.get("output").is_none());
             if compiled.retained.contains(&storage) {

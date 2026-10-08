@@ -1,0 +1,30 @@
+[package]
+name = "fabric-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "terraform-provider-fabric"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+nemoclaw-backend = { path = "../nemoclaw-backend" }
+nemoclaw-tofu = { path = "../nemoclaw-tofu" }
+openshell-provider = { path = "../openshell-provider" }
+nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
+async-trait.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tf-provider.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

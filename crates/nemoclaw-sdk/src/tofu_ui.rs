@@ -65,7 +65,7 @@ impl Ui {
         let resource = match kind {
             Some("openshell_workspace") => "workspace",
             Some("openshell_sandbox") => "sandbox",
-            Some("nemoclaw_sandbox_readiness") => "sandbox readiness",
+            Some("fabric_sandbox_readiness") => "sandbox readiness",
             Some("openshell_provider_registration") => "provider",
             Some("openshell_provider_profile") => "provider profile",
             Some("nemoclaw_managed_gateway") => "gateway",
@@ -180,7 +180,7 @@ mod tests {
         ui.feed(b"{\"type\":\"version\",\"ui\":\"1.0\"}\n");
         let line = serde_json::json!({
             "type":"apply_progress", "@message":"private-health-detail",
-            "hook":{"resource":{"resource_type":"nemoclaw_sandbox_readiness", "addr":"data.nemoclaw_sandbox_readiness.private-name"},
+            "hook":{"resource":{"resource_type":"fabric_sandbox_readiness", "addr":"data.fabric_sandbox_readiness.private-name"},
                 "action":"read", "elapsed_seconds":30}
         }).to_string() + "\n";
         ui.feed(line.as_bytes());
@@ -189,7 +189,7 @@ mod tests {
             *received.lock().unwrap(),
             [Progress::Resource {
                 resource: "sandbox readiness",
-                address: Some("data.nemoclaw_sandbox_readiness.private-name".into()),
+                address: Some("data.fabric_sandbox_readiness.private-name".into()),
                 action: "read",
                 status: "waiting",
                 elapsed: Duration::from_secs(30)

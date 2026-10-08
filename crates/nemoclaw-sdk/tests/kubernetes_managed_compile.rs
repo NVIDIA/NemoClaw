@@ -156,7 +156,17 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             .iter()
             .all(|target| target.kind.starts_with("kubernetes_") || target.kind == "helm_release")
     );
-    assert_eq!(platform["provider"]["nemoclaw"]["platform_only"], true);
+    // The platform stage has no gateway, so it omits the gateway providers.
+    assert_eq!(platform["provider"]["nemoclaw"], json!({}));
+    for provider in ["openshell", "fabric"] {
+        assert!(platform["provider"].get(provider).is_none(), "{provider}");
+        assert!(
+            platform["terraform"]["required_providers"]
+                .get(provider)
+                .is_none(),
+            "{provider}"
+        );
+    }
     assert!(platform.get("data").is_none());
     assert!(
         platform["terraform"]["required_providers"]
@@ -193,22 +203,21 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
     );
     assert_eq!(spec["generation"], "a".repeat(32));
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["credential_env"],
-        "NEMOCLAW_MANAGED_K8S_TOKEN"
-    );
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["tls_ca_env"],
-        "NEMOCLAW_MANAGED_K8S_CA"
-    );
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["tls_certificate_env"],
-        "NEMOCLAW_MANAGED_K8S_CERT"
-    );
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["tls_key_env"],
-        "NEMOCLAW_MANAGED_K8S_KEY"
-    );
+    // The managed gateway's credentials reach both gateway providers.
+    for provider in ["openshell", "fabric"] {
+        for (field, expected) in [
+            ("credential_env", "NEMOCLAW_MANAGED_K8S_TOKEN"),
+            ("tls_ca_env", "NEMOCLAW_MANAGED_K8S_CA"),
+            ("tls_certificate_env", "NEMOCLAW_MANAGED_K8S_CERT"),
+            ("tls_key_env", "NEMOCLAW_MANAGED_K8S_KEY"),
+        ] {
+            assert_eq!(
+                agents["provider"][provider][field], expected,
+                "{provider}.{field}"
+            );
+        }
+    }
+    assert_eq!(agents["provider"]["nemoclaw"], json!({}));
     assert!(
         agents["resource"]
             .get("nemoclaw_kubernetes_gateway")

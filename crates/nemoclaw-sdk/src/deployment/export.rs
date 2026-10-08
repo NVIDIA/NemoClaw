@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
         let target = Target {
-            address: "nemoclaw_agent_configuration.agent".into(),
+            address: "fabric_agent_configuration.agent".into(),
             kind: "agent_configuration".into(),
             values: Row::from([
                 ("owner".into(), "deployment".into()),

@@ -84,9 +84,7 @@ resource "docker_container" "qwen" {{
   }}
 }}
 
-provider "nemoclaw" {{
-  endpoint = "http://127.0.0.1:1"
-}}
+provider "nemoclaw" {{}}
 
 provider "docker" {{
   host = "{engine}"
