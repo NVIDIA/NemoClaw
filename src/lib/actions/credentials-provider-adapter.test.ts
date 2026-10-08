@@ -984,6 +984,8 @@ describe("credential actions use typed OpenShell provider results", () => {
           ok: false,
           error: { kind: "command", reason: "failed", message: "failed" },
         })
+        .mockResolvedValueOnce({ ok: true })
+        .mockResolvedValueOnce({ ok: true })
         .mockResolvedValueOnce({ ok: true });
       const adapter = providerAdapter({ deleteProvider: deletion });
       const failed = await runCredentialsResetAction(
@@ -997,6 +999,12 @@ describe("credential actions use typed OpenShell provider results", () => {
         { providerAdapter: adapter, clearNativeHostedProviderAuthority: clear },
       );
       expect(succeeded.exitCode).toBe(0);
+      expect(deletion.mock.calls.map(([request]) => request.providerName)).toEqual([
+        profile.providerName,
+        profile.logicalProvider,
+        profile.providerName,
+        profile.logicalProvider,
+      ]);
       expect(clear).toHaveBeenCalledExactlyOnceWith("nemoclaw", profile.profileId);
     },
   );
