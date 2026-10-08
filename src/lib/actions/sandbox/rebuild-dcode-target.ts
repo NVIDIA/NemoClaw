@@ -25,6 +25,7 @@ export type DcodeRebuildResumeConfig = {
 };
 
 export type ResolvedDcodeRebuildTarget = {
+  nativeProvider?: boolean;
   agent: typeof DCODE_AGENT_NAME;
   gatewayName: string;
   gatewayPort: number;

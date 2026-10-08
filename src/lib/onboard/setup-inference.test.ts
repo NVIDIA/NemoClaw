@@ -208,6 +208,7 @@ describe("native NVIDIA onboarding", () => {
       ok: true,
     }));
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
       importProviderProfile,
       getProvider,
       createProvider,
@@ -326,6 +327,7 @@ describe("native NVIDIA onboarding", () => {
       return { ok: true };
     });
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider,
       createProvider: vi.fn(async () => {
@@ -426,6 +428,7 @@ describe("native NVIDIA onboarding", () => {
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
       providerAdapter: {
+        ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
         importProviderProfile,
         getProvider,
         createProvider,
@@ -469,6 +472,7 @@ describe("native NVIDIA onboarding", () => {
 
   it("requires recreation instead of recording a receipt for a legacy NVIDIA sandbox", async () => {
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
       importProviderProfile: vi.fn(),
       getProvider: vi.fn(),
       updateProvider: vi.fn(),

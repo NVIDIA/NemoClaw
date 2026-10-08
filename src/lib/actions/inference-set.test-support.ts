@@ -90,6 +90,7 @@ function nativeAwareProviderAdapter(
   );
   return {
     ...base,
+    ensureProviderPolicyComposition: async () => ({ ok: true, value: undefined }),
     importProviderProfile: async (request) =>
       NATIVE_HOSTED_PROFILES.some((profile) =>
         request.profilePath.endsWith(`${profile.profileId}.yaml`),

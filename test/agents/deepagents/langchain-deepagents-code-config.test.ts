@@ -91,8 +91,10 @@ describe("LangChain Deep Agents Code config generator", () => {
     const config = runGenerator({
       NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
       NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
     });
 
+    expect(config).not.toContain("force_nonempty_content");
     expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
     expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });

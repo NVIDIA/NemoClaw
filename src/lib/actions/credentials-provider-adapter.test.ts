@@ -25,6 +25,7 @@ vi.mock("../gateway-start-guidance", () => ({
   gatewayStartGuidance: () => "Start the gateway again with `nemoclaw onboard`.",
 }));
 
+
 function nativeNvidiaProviderAdapter(): OpenShellProviderAdapter {
   let providerPresent = false;
   return providerAdapter({

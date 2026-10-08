@@ -4,6 +4,8 @@
 import { nativeHostedProfile } from "../../inference/native-hosted/profiles";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
+import { getChatCompletionsProbePayload } from "../../inference/openai-probe-models";
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import {
   existsSync,
   mkdtempSync,
@@ -208,7 +210,6 @@ describe("sandbox inference invocation probe", () => {
       nativeProvider: true,
     });
 
-    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
     expect(command).toContain("Authorization: Bearer ");
     expect(command).toContain("${NVIDIA_INFERENCE_API_KEY:-}");
     expect(command).not.toContain("https://inference.local");
@@ -713,4 +714,55 @@ describe("native inference transport failures", () => {
       probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
     ).rejects.toBe(error);
   });
+});
+
+it.each([
+  "",
+  "opaque-real-token",
+  "openshell:resolve:env:OTHER_API_KEY",
+  "openshell:resolve:env:v123_OTHER_API_KEY",
+  "openshell:resolve:env:v_NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v123x_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:v${"1".repeat(21)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"a".repeat(63)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"A".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY_suffix",
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY\nother",
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY\n",
+])("rejects non-placeholder native probe credentials before use (%s)", (value) => {
+  const result = spawnSync("sh", ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf used`], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value },
+  });
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("");
+});
+
+it.each([
+  "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:v${"1".repeat(20)}_NVIDIA_INFERENCE_API_KEY`,
+  `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+])("uses the exact supervisor NVIDIA placeholder %s for native probes", (value) => {
+  const result = spawnSync(
+    "sh",
+    ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf '%s' "$AUTH_HEADER"`],
+    { encoding: "utf8", env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value } },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe(`Authorization: Bearer ${value}`);
+});
+
+it("gives native Ultra readiness the same reasoning budget as host onboarding", () => {
+  const model = "nvidia/nemotron-3-ultra-550b-a55b";
+  const command = buildSandboxInferenceInvocationCommand({
+    ...input,
+    provider: "nvidia-prod",
+    model,
+    nativeProvider: true,
+  });
+  const payload = getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload: true });
+  expect(payload.max_tokens).toBe(256);
+  expect(command).toContain('"max_tokens":256');
 });
