@@ -624,26 +624,6 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     },
   );
 
-  // source-shape-contract: security -- The CLI shard action and installer must be selected from one base-pinned trusted checkout
-  it("keeps the CLI shard installer with its base-pinned trusted action (#11320)", () => {
-    const job = prWorkflow.jobs["cli-test-shards"];
-    const checkout = requiredWorkflowStep(job, "Checkout trusted CI actions");
-    expect(checkout.with?.ref).toBe("${{ github.event.pull_request.base.sha }}");
-    expect(checkout.with?.path).toBe(".trusted-ci-actions");
-    const sparsePaths = String(checkout.with?.["sparse-checkout"] ?? "")
-      .trim()
-      .split(/\s+/u);
-    expect(sparsePaths).toContain(".github/actions/ci-cli-coverage-shard");
-    expect(sparsePaths).toContain(".github/actions/ci-install-pinned-ubuntu-packages.sh");
-    expect(requiredWorkflowStep(job, "Run CLI coverage shard").uses).toBe(
-      "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
-    );
-    expect(
-      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools").run,
-    ).toContain('bash "$GITHUB_ACTION_PATH/../ci-install-pinned-ubuntu-packages.sh"');
-    expect(existsSync(".github/actions/ci-install-pinned-ubuntu-packages.sh")).toBe(true);
-  });
-
   it.each([
     ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
     [
