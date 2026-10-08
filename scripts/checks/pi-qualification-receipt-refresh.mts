@@ -199,9 +199,9 @@ function receiptComparisonRevision(git: GitRunner, explicit?: string): string | 
       `Could not detect an in-progress merge: git exited ${mergeHead.status ?? "without status"}${detail ? ` (${detail})` : ""}`,
     );
   }
-  if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_EVENT_NAME !== "pull_request") {
-    return "HEAD";
-  }
+  // Local hooks validate the tree being committed, including staged image inputs.
+  if (process.env.GITHUB_ACTIONS !== "true") return null;
+  if (process.env.GITHUB_EVENT_NAME !== "pull_request") return "HEAD";
   const result = git(["rev-parse", "--verify", "HEAD^2"]);
   const revision = requireGitOutput(result, "Could not resolve the exact pull-request head").trim();
   if (!/^[0-9a-f]{40}$/u.test(revision)) {
