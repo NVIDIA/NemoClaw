@@ -199,6 +199,46 @@ impl Backend for KubernetesBackend {
     }
 }
 
+/// Kubernetes platform resources and their planning rules.
+pub(crate) fn definitions() -> [crate::Definition; 3] {
+    use crate::{Protection, carry_prior, rerun_when_stopped};
+    let validate = nemoclaw_sdk::services::validate_resource_spec;
+    [
+        crate::services::schema_definition(STORAGE_KIND)
+            .validate_spec(validate)
+            .computed("running", rerun_when_stopped)
+            .protect(Protection::Always)
+            .refuse_replacement()
+            .keep_running_during_destroy(),
+        crate::services::schema_definition(GATEWAY_KIND)
+            .validate_spec(validate)
+            .computed("running", rerun_when_stopped)
+            .refuse_replacement(),
+        crate::services::schema_definition(AUTH_KIND)
+            .validate_spec(validate)
+            .computed("running", rerun_when_stopped)
+            .computed("release_present", carry_prior)
+            .computed("gateway_values", prepared_gateway_values),
+    ]
+}
+
+/// Gateway values exist only after identity preparation completes, which the
+/// prior observation reports as running.
+fn prepared_gateway_values(
+    name: &str,
+    prior: &crate::State,
+) -> Option<tf_provider::value::Value<String>> {
+    use tf_provider::value::Value;
+    let prepared = matches!(prior.get("running"), Some(Value::Value(value)) if value == "true");
+    Some(
+        prior
+            .get(name)
+            .filter(|_| prepared)
+            .cloned()
+            .unwrap_or(Value::Unknown),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,11 +321,7 @@ mod tests {
 
     #[test]
     fn authentication_planning_preserves_only_refreshed_release_observation() {
-        let definition = crate::Definition::new(
-            AUTH_KIND,
-            &["spec", "running", "release_present"],
-            &["running", "release_present"],
-        );
+        let definition = crate::resource_definition(AUTH_KIND).unwrap();
         for present in ["false", "true"] {
             let prior = crate::State::from([
                 (
@@ -316,11 +352,7 @@ mod tests {
     #[test]
     fn authentication_values_are_unknown_until_identity_preparation_is_complete() {
         use tf_provider::value::Value;
-        let definition = crate::Definition::new(
-            AUTH_KIND,
-            &["spec", "running", "release_present", "gateway_values"],
-            &["running", "release_present", "gateway_values"],
-        );
+        let definition = crate::resource_definition(AUTH_KIND).unwrap();
         for running in ["true", "false"] {
             let prior = crate::State::from([
                 ("id".into(), Value::Value("issuer-uid".into())),

@@ -3,7 +3,7 @@
 use crate::support;
 
 use async_trait::async_trait;
-use nemoclaw_provider::{Backend, Definition, Mutation, ResourceAdapter, Row, State};
+use nemoclaw_provider::{Backend, Mutation, ResourceAdapter, Row, State};
 use nemoclaw_sdk::ObservationError;
 use std::sync::Arc;
 use tf_provider::{Diagnostics, Resource, value::Value};
@@ -38,34 +38,36 @@ fn state(row: Row) -> State {
 
 #[tokio::test]
 async fn kubernetes_storage_absence_and_destroy_preserve_its_binding() {
-    let resource = ResourceAdapter::new(
-        Definition::new("kubernetes_storage", &["spec", "running"], &["running"]),
-        Arc::new(Fixture(Ok(None))),
-    );
-    let prior = state(Row::from([
-        ("id".into(), "namespace-and-storage-binding".into()),
-        ("spec".into(), "retained-spec".into()),
-        ("running".into(), "false".into()),
-    ]));
-    for destroying in [false, true] {
-        resource
-            .destroying
-            .store(destroying, std::sync::atomic::Ordering::Release);
-        let mut diagnostics = Diagnostics::default();
-        let observed = resource
-            .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
-            .await
-            .unwrap();
-        assert_eq!(observed.0, prior);
-        assert!(!diagnostics.errors.is_empty());
-        let mut diagnostics = Diagnostics::default();
-        assert!(
-            resource
-                .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
-                .await
-                .is_none()
+    for kind in ["kubernetes_storage", "kubernetes_service_storage"] {
+        let resource = ResourceAdapter::new(
+            support::definition(kind, &["spec", "running"], &["running"]),
+            Arc::new(Fixture(Ok(None))),
         );
-        assert!(!diagnostics.errors.is_empty());
+        let prior = state(Row::from([
+            ("id".into(), "namespace-and-storage-binding".into()),
+            ("spec".into(), "retained-spec".into()),
+            ("running".into(), "false".into()),
+        ]));
+        for destroying in [false, true] {
+            resource
+                .destroying
+                .store(destroying, std::sync::atomic::Ordering::Release);
+            let mut diagnostics = Diagnostics::default();
+            let observed = resource
+                .read(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                .await
+                .unwrap();
+            assert_eq!(observed.0, prior);
+            assert!(!diagnostics.errors.is_empty());
+            let mut diagnostics = Diagnostics::default();
+            assert!(
+                resource
+                    .plan_destroy(&mut diagnostics, prior.clone(), Value::Null, Value::Null)
+                    .await
+                    .is_none()
+            );
+            assert!(!diagnostics.errors.is_empty());
+        }
     }
 }
 
@@ -87,7 +89,7 @@ async fn teardown_does_not_resume_incomplete_retained_kubernetes_storage() {
         .values["spec"]
         .clone();
     let resource = ResourceAdapter::new(
-        Definition::new("kubernetes_storage", &["spec", "running"], &["running"]),
+        support::definition("kubernetes_storage", &["spec", "running"], &["running"]),
         Arc::new(Fixture(Ok(None))),
     );
     let prior = state(Row::from([
@@ -128,7 +130,7 @@ async fn teardown_does_not_resume_incomplete_retained_kubernetes_storage() {
 #[tokio::test]
 async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_is_unknown() {
     let resource = ResourceAdapter::new(
-        Definition::new(
+        support::definition(
             "provider",
             &["name", "endpoint", "credential_env"],
             &["endpoint", "credential_env"],
@@ -159,7 +161,7 @@ async fn omitted_optional_computed_values_get_defaults_when_the_proposed_value_i
 #[tokio::test]
 async fn removing_image_pull_policy_restores_the_default_without_replacement() {
     let resource = ResourceAdapter::new(
-        Definition::new(
+        support::definition(
             "managed_gateway",
             &["spec", "running", "image_pull_policy"],
             &["running", "image_pull_policy"],
@@ -214,7 +216,7 @@ async fn failed_and_partial_observations_retain_protocol_state() {
             Ok(Some(foreign.clone())),
         ] {
             let resource = ResourceAdapter::new(
-                Definition::new(kind, &["name", "owner", "generation"], &[]),
+                support::definition(kind, &["name", "owner", "generation"], &[]),
                 Arc::new(Fixture(observation)),
             );
             let mut diagnostics = Diagnostics::default();
@@ -239,7 +241,7 @@ async fn confirmed_absence_reconciles_registrations_but_preserves_stateful_bindi
     ] {
         for destroying in [false, true] {
             let resource = ResourceAdapter::new(
-                Definition::new(kind, &["name", "owner", "generation"], &[]),
+                support::definition(kind, &["name", "owner", "generation"], &[]),
                 Arc::new(Fixture(Ok(None))),
             );
             resource
@@ -282,7 +284,7 @@ impl Backend for CreatedIncomplete {
 #[tokio::test]
 async fn incomplete_mutation_results_fail_without_overwriting_established_identity() {
     let resource = ResourceAdapter::new(
-        Definition::new("workspace", &["name", "owner", "generation"], &[]),
+        support::definition("workspace", &["name", "owner", "generation"], &[]),
         Arc::new(CreatedIncomplete),
     );
     let mut diagnostics = Diagnostics::default();
@@ -321,7 +323,7 @@ impl Backend for ExitedAfterStart {
 #[tokio::test]
 async fn immediate_exit_establishes_state_and_restart_preserves_identity() {
     let resource = ResourceAdapter::new(
-        Definition::new("managed_gateway", &["spec", "running"], &["running"]),
+        support::definition("managed_gateway", &["spec", "running"], &["running"]),
         Arc::new(ExitedAfterStart),
     );
     let mut diagnostics = Diagnostics::default();
@@ -393,7 +395,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
         "agent_configuration",
     ] {
         let resource = ResourceAdapter::new(
-            Definition::new(kind, &["name", "owner", "generation"], &[]),
+            support::definition(kind, &["name", "owner", "generation"], &[]),
             Arc::new(Fixture(Ok(None))),
         );
         let prior = state(row());
@@ -441,7 +443,7 @@ async fn reconstructible_resources_plan_replacement_and_deletion_without_teardow
 #[tokio::test]
 async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
     let resource = ResourceAdapter::new(
-        Definition::new(
+        support::definition(
             "sandbox",
             &["name", "workspace", "owner", "generation"],
             &[],
@@ -482,7 +484,7 @@ async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
 #[tokio::test]
 async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile() {
     let resource = ResourceAdapter::new(
-        Definition::new("provider_profile", &["endpoint", "cluster_source"], &[]),
+        support::definition("provider_profile", &["endpoint", "cluster_source"], &[]),
         Arc::new(Fixture(Ok(None))),
     );
     let prior = state(Row::from([
@@ -545,7 +547,7 @@ async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile(
 #[tokio::test]
 async fn removing_credential_reference_plans_unauthenticated_replacement() {
     let resource = ResourceAdapter::new(
-        Definition::new(
+        support::definition(
             "provider",
             &["credential_env", "credential_source"],
             &["credential_env"],
@@ -584,7 +586,7 @@ async fn external_ollama_observation_names_the_authored_upstream_without_url_cre
         "http://user:PRIVATE_URL@127.0.0.1:11434/v1",
     ] {
         let resource = ResourceAdapter::new(
-            Definition::new(
+            support::definition(
                 "ollama_external_model",
                 &["name", "owner", "generation", "upstream"],
                 &[],

@@ -102,12 +102,12 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
         },
         ResourceSchema {
             kind: installers::ollama::STORAGE_KIND,
-            fields: &["spec"],
+            fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],
         },
         ResourceSchema {
             kind: installers::vllm::STORAGE_KIND,
-            fields: &["spec"],
+            fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],
         },
     ]
@@ -636,6 +636,16 @@ pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>,
         }
     }
     Ok(kinds.into_iter().collect())
+}
+
+pub(crate) fn supported_generation_kind(kind: &str) -> bool {
+    // Removed services may still own resources under their retained generation.
+    matches!(
+        kind,
+        installers::ollama::SERVICE_KIND
+            | installers::ollama::proxy::PROXY
+            | installers::vllm::SERVICE_KIND
+    )
 }
 
 pub(crate) fn remove_plans(

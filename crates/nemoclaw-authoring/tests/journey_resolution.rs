@@ -1759,14 +1759,11 @@ fn sparse_journey_delegates_suggestions_with_compatible_current_observations() {
 
 #[test]
 fn delegation_is_refused_with_the_diagnostic_of_the_one_fact_that_fails() {
-    use nemoclaw_sdk::{
-        discovery::ObservationStatus,
-        inference_discovery::{AuthenticationStatus, EndpointObservation},
-    };
+    use nemoclaw_sdk::inference_discovery::{AuthenticationStatus, EndpointObservation};
     let capabilities = Capabilities::available();
     // (row name, the one fact to break, the refusal it must produce)
     type Row = (&'static str, fn(&mut DelegationFacts), &'static str);
-    let rows: [Row; 8] = [
+    let rows: [Row; 7] = [
         (
             "engine unavailable",
             |facts| facts.engine = Some(crate::support::rejecting_engine()),
@@ -1802,11 +1799,6 @@ fn delegation_is_refused_with_the_diagnostic_of_the_one_fact_that_fails() {
             |facts| facts.endpoint.as_mut().unwrap().models = vec!["another-model".into()],
             "The selected model was not advertised by the endpoint.",
         ),
-        (
-            "credential unavailable",
-            |facts| facts.credentials[0].status = ObservationStatus::Unavailable,
-            "Required credentials are unavailable or unverified.",
-        ),
     ];
     for (name, break_fact, message) in rows {
         let mut facts = delegation_facts(&capabilities);
@@ -1824,13 +1816,94 @@ fn delegation_is_refused_with_the_diagnostic_of_the_one_fact_that_fails() {
 }
 
 #[test]
-fn delegation_is_refused_when_a_credential_was_never_observed() {
+fn delegation_accepts_when_a_credential_was_never_observed() {
     let capabilities = Capabilities::available();
     let mut facts = delegation_facts(&capabilities);
     facts.credentials.clear();
+    assert_eq!(facts.delegation_refusal(&capabilities), "delegated");
+}
+
+#[test]
+fn missing_credentials_are_informational_and_do_not_block_delegation() {
+    use nemoclaw_sdk::discovery::ObservationStatus;
+    let capabilities = Capabilities::available();
+    for status in [ObservationStatus::Unavailable, ObservationStatus::Unknown] {
+        let mut facts = delegation_facts(&capabilities);
+        facts.credentials[0].status = status;
+        facts.credentials[0].reason = Some("PRIVATE_SENTINEL".into());
+        assert_eq!(facts.delegation_refusal(&capabilities), "delegated");
+        let resolution = facts
+            .state
+            .resolve_with_observations(&capabilities, &facts.observations())
+            .unwrap();
+        let note = resolution.information().join(" ");
+        assert!(note.contains(&facts.credentials[0].reference), "{note}");
+        assert!(
+            note.contains("plan") && note.contains("non-interactive"),
+            "{note}"
+        );
+        assert!(!note.contains("PRIVATE_SENTINEL"));
+    }
+    let facts = delegation_facts(&capabilities);
+    assert!(
+        facts
+            .state
+            .resolve_with_observations(&capabilities, &facts.observations())
+            .unwrap()
+            .information()
+            .is_empty()
+    );
+}
+
+#[test]
+fn missing_catalog_key_offers_information_without_model_suggestions() {
+    use nemoclaw_sdk::{discovery::ObservationStatus, inference_discovery::AuthenticationStatus};
+    let capabilities = Capabilities::available();
+    let mut facts = delegation_facts(&capabilities);
+    for _ in 0..64 {
+        let resolution = facts.state.resolve(&capabilities).unwrap();
+        let question = resolution.next_question().unwrap();
+        if question.kind() == nemoclaw_authoring::JourneyQuestionKind::InferenceModel {
+            break;
+        }
+        facts
+            .state
+            .answer(&capabilities, question.id(), question.suggestion().cloned())
+            .unwrap();
+    }
+    let endpoint = facts.endpoint.as_mut().unwrap();
+    endpoint.status = ObservationStatus::Unavailable;
+    endpoint.authentication = AuthenticationStatus::Required;
+    endpoint.models.clear();
+    facts.credentials[0].status = ObservationStatus::Unavailable;
+    let resolution = facts
+        .state
+        .resolve_with_observations(&capabilities, &facts.observations())
+        .unwrap();
+    let note = resolution.information().join(" ");
+    assert!(note.contains("Model catalog needs credential"), "{note}");
+    let model = resolution
+        .questions()
+        .iter()
+        .find(|q| q.kind() == nemoclaw_authoring::JourneyQuestionKind::InferenceModel)
+        .unwrap();
+    assert!(model.choices().is_empty());
+    assert!(model.suggestion().is_none());
+    // Without the catalog, bulk acceptance cannot establish model compatibility.
+    // The frontend can keep this separate from actual compatibility errors.
+    let diagnostics = facts
+        .state
+        .delegate_remaining(&capabilities, &facts.observations())
+        .unwrap_err();
+    assert_eq!(
+        diagnostics.items()[0].field(),
+        "inference:catalog:credential"
+    );
+    assert!(!diagnostics.to_string().contains("could not be verified"));
+    facts.engine = Some(crate::support::rejecting_engine());
     assert_eq!(
         facts.delegation_refusal(&capabilities),
-        "delegation: Required credentials are unavailable or unverified."
+        "delegation: Target engine and image compatibility is not verified."
     );
 }
 

@@ -154,7 +154,7 @@ fn runtime_bindings(
                 .insert("spec".into(), old.json()?);
         } else if bindings
             .get(&target.address)
-            .is_some_and(|binding| binding.spec != target.values["spec"])
+            .is_some_and(|binding| binding.differs(&target.values))
         {
             return Err(Error::Conflict(
                 "bound storage specification differs from retained intent",
@@ -238,12 +238,6 @@ impl Deployment {
             }
             return Ok((Vec::new(), false, Vec::new(), DiscoveryReport::default()));
         }
-        let generated = Record::new(document.clone())?;
-        for (kind, generation) in generated.generations {
-            if record.generations.get(&kind).is_none_or(String::is_empty) {
-                record.generations.insert(kind, generation);
-            }
-        }
         let stage = Store::open(&store.directory.join("runtime"))?;
         let (graph, targets) =
             compile::compiled_runtime(document, &record.generations, &bundle.manifest.version)?;
@@ -254,7 +248,11 @@ impl Deployment {
             .saved_plan(bundle, &stage, document, "apply.plan", cancel)
             .await?;
         let checked = runtime_observations(document, &targets, &bindings, &plan)?;
-        let changes = check_runtime_plan(&plan, &checked.expected, &bindings)?;
+        let changes = check_runtime_plan(
+            &plan,
+            &with_observations(&checked.expected, &compile::observations(&graph)),
+            &bindings,
+        )?;
         if !apply {
             if !checked.gateway_running
                 && !self

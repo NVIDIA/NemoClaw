@@ -38,27 +38,67 @@ pub(crate) struct Record {
 fn is_false(value: &bool) -> bool {
     !*value
 }
-impl Record {
-    pub fn new(document: Document) -> Result<Self, Error> {
-        document.validate()?;
-        let mut generations = Generations::new();
-        let mut kinds = vec!["workspace", "provider", "sandbox", "managed_gateway"];
-        if document.spec.gateway.as_kubernetes().is_some() {
-            kinds.push(crate::kubernetes::GATEWAY_KIND);
-            kinds.push(crate::kubernetes::STORAGE_KIND);
-        }
-        kinds.extend(crate::services::generation_kinds(&document)?);
-        kinds.sort_unstable();
-        kinds.dedup();
-        for kind in kinds {
+fn required_generation_kinds(document: &Document) -> Result<Vec<&'static str>, Error> {
+    let mut kinds = vec!["workspace", "provider", "sandbox", "managed_gateway"];
+    if document.spec.gateway.as_kubernetes().is_some() {
+        kinds.push(crate::kubernetes::GATEWAY_KIND);
+        kinds.push(crate::kubernetes::STORAGE_KIND);
+    }
+    kinds.extend(crate::services::generation_kinds(document)?);
+    kinds.sort_unstable();
+    kinds.dedup();
+    Ok(kinds)
+}
+fn valid_generation(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+fn supported_generation_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "workspace" | "provider" | "sandbox" | "managed_gateway"
+    ) || kind == crate::kubernetes::GATEWAY_KIND
+        || kind == crate::kubernetes::STORAGE_KIND
+        || crate::services::supported_generation_kind(kind)
+}
+fn allocate_missing_generation_values(
+    generations: &mut Generations,
+    document: &Document,
+) -> Result<(), Error> {
+    document.validate()?;
+    if generations
+        .iter()
+        .any(|(kind, value)| !supported_generation_kind(kind) || !valid_generation(value))
+    {
+        return Err(Error::State(
+            "deployment intent record is invalid; retain it for recovery",
+        ));
+    }
+    let additions = required_generation_kinds(document)?
+        .into_iter()
+        .filter(|kind| !generations.contains_key(*kind))
+        .map(|kind| {
             let mut random = [0_u8; 16];
             getrandom::fill(&mut random)
                 .map_err(|_| Error::State("cannot generate resource identities"))?;
-            generations.insert(
+            Ok((
                 kind.into(),
-                random.iter().map(|b| format!("{b:02x}")).collect(),
-            );
-        }
+                random.iter().map(|byte| format!("{byte:02x}")).collect(),
+            ))
+        })
+        .collect::<Result<Vec<(String, String)>, Error>>()?;
+    generations.extend(additions);
+    Ok(())
+}
+impl Record {
+    pub fn allocate_missing_generations(&mut self, document: &Document) -> Result<(), Error> {
+        allocate_missing_generation_values(&mut self.generations, document)
+    }
+    pub fn new(document: Document) -> Result<Self, Error> {
+        let mut generations = Generations::new();
+        allocate_missing_generation_values(&mut generations, &document)?;
         Ok(Self {
             version: 7,
             digest: document.digest(),
@@ -264,14 +304,15 @@ impl Record {
                 "deployment predates Docker-provider model cache ownership; retain state and use the original NemoClaw version for recovery or teardown",
             ));
         }
-        let service_generations_valid = crate::services::generation_kinds(&self.document)
-            .is_ok_and(|kinds| {
-                kinds.iter().all(|kind| {
-                    self.generations
-                        .get(*kind)
-                        .is_some_and(|value| !value.is_empty())
-                })
-            });
+        let generations_valid = required_generation_kinds(&self.document).is_ok_and(|kinds| {
+            kinds
+                .iter()
+                .all(|kind| self.generations.contains_key(*kind))
+                && self
+                    .generations
+                    .iter()
+                    .all(|(kind, value)| supported_generation_kind(kind) && valid_generation(value))
+        });
         let has_pending_creations = !self.pending_creations.is_empty();
         if has_pending_creations != (self.pending && !self.runtime_pending)
             || (self.runtime_pending && !self.document.has_runtime())
@@ -281,10 +322,7 @@ impl Record {
         }
         if self.document.validate().is_err()
             || self.digest != self.document.digest()
-            || ["workspace", "provider", "sandbox"]
-                .iter()
-                .any(|kind| self.generations.get(*kind).is_none_or(String::is_empty))
-            || !service_generations_valid
+            || !generations_valid
         {
             return Err(Error::State(
                 "deployment intent record is invalid; retain it for recovery",
@@ -310,8 +348,28 @@ pub(crate) struct StateBinding {
     pub generation: String,
     #[serde(default)]
     pub spec: String,
+    #[serde(default)]
+    pub engine: String,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
+}
+
+impl StateBinding {
+    /// Whether bound configuration differs from compiled values. An encoded
+    /// specification compares whole; typed storage compares its identity.
+    pub(crate) fn differs(&self, values: &crate::backend::Row) -> bool {
+        match values.get("spec") {
+            Some(spec) => *spec != self.spec,
+            None => [
+                ("name", &self.name),
+                ("owner", &self.owner),
+                ("generation", &self.generation),
+                ("engine", &self.engine),
+            ]
+            .into_iter()
+            .any(|(attribute, bound)| values.get(attribute).is_some_and(|want| want != bound)),
+        }
+    }
 }
 
 pub(crate) struct Store {
@@ -497,6 +555,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.workspace = attributes.workspace;
                 binding.owner = attributes.owner;
                 binding.generation = attributes.generation;
+                binding.engine = attributes.engine;
             }
         }
     }

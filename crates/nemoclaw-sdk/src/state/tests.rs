@@ -422,6 +422,113 @@ fn pending_creation_requires_current_per_resource_evidence() {
 }
 
 #[test]
+fn malformed_or_unknown_generations_are_rejected_without_rewriting_state() {
+    let document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let record = serde_json::to_value(Record::new(document).unwrap()).unwrap();
+    for (kind, value) in [
+        ("workspace", serde_json::json!("not-a-generation")),
+        ("managed_gateway", serde_json::json!("")),
+        ("unsupported_service", serde_json::json!("a".repeat(32))),
+    ] {
+        let mut malformed = record.clone();
+        malformed["generations"][kind] = value;
+        assert_rejected_record_preserves_state(malformed);
+    }
+}
+
+/// A managed Kubernetes deployment's two resource kinds get generations and
+/// survive a save and reload, like every other kind.
+#[test]
+fn a_kubernetes_records_generations_reload_and_stay_stable() {
+    let mut value = serde_json::to_value(
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap(),
+    )
+    .unwrap();
+    value["spec"]["gateway"] = serde_json::json!({
+        "management": "managed", "runtime": {"provider": "kubernetes"},
+        "endpoint": "https://127.0.0.1:17671",
+        "kubernetes": {
+            "kubeconfig": {"env": "TEST_KUBECONFIG"}, "context": "test-cluster",
+            "namespace": "test-agents", "authentication": {"profile": "development"}
+        }
+    });
+    value["spec"]["sandboxes"][0]["image"]["metadata"] =
+        serde_json::json!({"env": "TEST_IMAGE_METADATA"});
+    let document = Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    let mut record = Record::new(document.clone()).unwrap();
+    for kind in [
+        crate::kubernetes::GATEWAY_KIND,
+        crate::kubernetes::STORAGE_KIND,
+    ] {
+        assert_eq!(record.generations[kind].len(), 32, "{kind}");
+    }
+    let generations = record.generations.clone();
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    let mut reloaded = store.load().unwrap().unwrap();
+    reloaded.allocate_missing_generations(&document).unwrap();
+    assert_eq!(reloaded.generations, generations);
+    record.allocate_missing_generations(&document).unwrap();
+    assert_eq!(record.generations, generations);
+}
+
+#[test]
+fn adding_a_service_allocates_one_generation_and_preserves_checkpoint_identity() {
+    let mut document =
+        Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
+            .unwrap();
+    let managed = Document::parse(
+        include_bytes!("../../tests/fixtures/config/managed-ollama.yaml").as_slice(),
+    )
+    .unwrap();
+    document.spec.gateway = managed.spec.gateway.clone();
+    let mut record = Record::new(document.clone()).unwrap();
+    let original = record.generations.clone();
+    document.spec.services = managed.spec.services;
+
+    record.allocate_missing_generations(&document).unwrap();
+    assert_eq!(record.generations.len(), original.len() + 1);
+    for (kind, generation) in original {
+        assert_eq!(record.generations[&kind], generation);
+    }
+    let added = record.generations["ollama_service"].clone();
+    assert_eq!(added.len(), 32);
+    assert!(
+        added
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    );
+
+    record.allocate_missing_generations(&document).unwrap();
+    let generations = record.generations.clone();
+    record.begin_runtime_apply(&document);
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path()).unwrap();
+    store.save(&record).unwrap();
+    let mut recovered = store.load().unwrap().unwrap();
+    assert_eq!(recovered.generations, generations);
+    recovered.finish_runtime_apply();
+    recovered.begin_apply(&document, BTreeMap::new());
+    store.save(&recovered).unwrap();
+    let mut recovered = store.load().unwrap().unwrap();
+    assert_eq!(recovered.generations, generations);
+    recovered.allocate_missing_generations(&document).unwrap();
+    recovered.begin_apply(&document, BTreeMap::new());
+    store.save(&recovered).unwrap();
+    let mut recovered = store.load().unwrap().unwrap();
+    assert_eq!(recovered.generations, generations);
+
+    document.spec.services.clear();
+    recovered.begin_apply(&document, BTreeMap::new());
+    store.save(&recovered).unwrap();
+    assert_eq!(store.load().unwrap().unwrap().generations, generations);
+}
+
+#[test]
 fn runtime_pending_without_a_runtime_is_rejected_without_rewriting_state() {
     let document =
         Document::parse(include_bytes!("../../tests/fixtures/config/local.yaml").as_slice())
@@ -654,5 +761,28 @@ fn bound_sandbox_guard_allows_configuration_updates_additions_and_explicit_recre
         record
             .validate_bound_sandboxes(&changed, &BTreeMap::new())
             .unwrap();
+    }
+}
+
+#[test]
+fn typed_storage_bindings_compare_their_complete_identity() {
+    let values = serde_json::json!({
+        "id":"engine/nc-0123456789abcdef-inference-qwen-auth/created",
+        "name":"nc-0123456789abcdef-inference-qwen-auth",
+        "owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13",
+        "generation":"b".repeat(32),
+        "engine":"unix:///var/run/docker.sock",
+    });
+    let address = "nemoclaw_inference_storage.inference_qwen_auth";
+    let bindings = read(&state(serde_json::json!([
+        {"address":address, "mode":"managed", "values":values}
+    ])))
+    .unwrap();
+    let compiled: crate::backend::Row = serde_json::from_value(values.clone()).unwrap();
+    assert!(!bindings[address].differs(&compiled));
+    for attribute in ["name", "owner", "generation", "engine"] {
+        let mut changed = compiled.clone();
+        changed.insert(attribute.into(), "changed".into());
+        assert!(bindings[address].differs(&changed), "{attribute}");
     }
 }

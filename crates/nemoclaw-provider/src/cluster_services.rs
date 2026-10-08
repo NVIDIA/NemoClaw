@@ -20,6 +20,25 @@ impl ClusterServicesBackend {
         matches!(kind, SERVICE_KIND | STORAGE_KIND)
     }
 }
+
+/// Cluster model compute and retained storage use the same observation rules
+/// while retaining separate replacement and teardown protections.
+pub(crate) fn definitions() -> [crate::Definition; 2] {
+    use crate::{Protection, rerun_when_stopped};
+    let validate = nemoclaw_sdk::services::validate_resource_spec;
+    [
+        crate::services::schema_definition(STORAGE_KIND)
+            .validate_spec(validate)
+            .computed("running", rerun_when_stopped)
+            .protect(Protection::Always)
+            .refuse_replacement()
+            .keep_running_during_destroy(),
+        crate::services::schema_definition(SERVICE_KIND)
+            .validate_spec(validate)
+            .computed("running", rerun_when_stopped)
+            .refuse_replacement(),
+    ]
+}
 fn bound(row: &Row) -> Option<&str> {
     row.get("id")
         .map(String::as_str)

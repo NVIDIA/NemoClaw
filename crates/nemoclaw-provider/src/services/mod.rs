@@ -10,3 +10,33 @@ mod status;
 pub use readiness::{validate_readiness_spec, wait_service_ready};
 pub mod installers;
 use nemoclaw_sdk::services::validate_resource_spec;
+
+/// Provider definition for an installer-owned SDK resource schema.
+pub(crate) fn schema_definition(kind: &str) -> crate::Definition {
+    let schema = nemoclaw_sdk::services::resource_schemas()
+        .into_iter()
+        .find(|schema| schema.kind == kind)
+        .unwrap_or_else(|| panic!("the SDK defines no {kind} resource schema"));
+    crate::Definition::new(schema.kind, schema.fields, schema.mutable)
+}
+
+/// Service storage whose omitted identity the provider generates on create.
+fn storage_definition(kind: &str) -> crate::Definition {
+    use crate::managed::Storage;
+    schema_definition(kind)
+        .validate_attribute(Storage::check)
+        .generated("owner", Storage::generate_owner)
+        .generated("generation", Storage::generate_generation)
+}
+
+/// Installer-owned service storage and external model resources.
+pub(crate) fn definitions() -> [crate::Definition; 4] {
+    use nemoclaw_sdk::services::installers::{ollama, vllm};
+    [
+        schema_definition(ollama::proxy::STORAGE),
+        schema_definition(ollama::proxy::MODEL)
+            .describe(installers::ollama::proxy::describe_model_error),
+        storage_definition(ollama::STORAGE_KIND),
+        storage_definition(vllm::STORAGE_KIND),
+    ]
+}

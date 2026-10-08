@@ -156,9 +156,9 @@ A runtime no engine answered for gets no engine, and the target assessment's fir
 Hosts are built from the engines they named and what each answered, and one recorded host in `tests/fixtures/observations` pins the replay format.
 Hardware and gateway observations do not affect questions or readiness yet.
 `resolve_with_observations` supplements current model suggestions with the matching inference observation and assesses target compatibility with `assess_target`.
-An empty `DiscoveryObservations` leaves the resolution unchanged.
+An empty `DiscoveryObservations` leaves compatibility unverified; referenced credentials appear in informational guidance.
 Observations do not silently replace authored values.
-`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target observations, an advertised model, and available credential references.
+`delegate_remaining` is an explicit bulk answer transition gated by an accepted harness, compatible current target observations, and an advertised model. Missing or unverified local credential references appear in `JourneyResolution::information()` and do not block delegation. A reachable catalog that requires an absent key supplies an informational note, clears model suggestions, and defers the catalog gate under the `inference:catalog:credential` diagnostic field. The TUI renders that note separately from errors and leaves individual model entry available; it does not bypass the bulk model check. Denied authentication, missing observations, and other catalog failures remain blocking.
 
 The [TUI](../../examples/onboarding-tui/README.md) owns keys, rendering, state snapshots for Back, discovery calls, cancellation, and saving the returned document.
 Authoring owns question resolution and answer transitions; the SDK owns discovery operations and subsequent plan/apply behavior.

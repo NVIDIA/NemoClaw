@@ -23,6 +23,8 @@ mod fern;
 mod image_metadata;
 #[path = "images.rs"]
 mod images;
+#[path = "qualify.rs"]
+mod qualify;
 #[path = "runtime_engine.rs"]
 mod runtime_engine;
 #[path = "schema.rs"]

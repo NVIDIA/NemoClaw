@@ -136,30 +136,29 @@ fn targets(
         generation: spec.generation.clone(),
         engine: spec.engine().to_owned(),
     };
-    let mut result = Vec::new();
-    for (kind, encoded) in [
-        (STORAGE_KIND, storage.json()?),
-        (SERVICE_KIND, spec.json()?),
-    ] {
-        let mut values = crate::backend::Row::from([("spec".into(), encoded)]);
-        if kind == SERVICE_KIND
-            && let Some(policy) = service.image_pull_policy
-        {
-            values.insert("image_pull_policy".into(), policy.as_str().into());
-        }
-        result.push(Target {
-            kind: kind.into(),
-            address: address(kind, name),
-            values,
-        });
+    let mut values = crate::backend::Row::from([("spec".into(), spec.json()?)]);
+    if let Some(policy) = service.image_pull_policy {
+        values.insert("image_pull_policy".into(), policy.as_str().into());
     }
+    let mut result = vec![
+        Target {
+            kind: STORAGE_KIND.into(),
+            address: address(STORAGE_KIND, name),
+            values: storage.row()?,
+        },
+        Target {
+            kind: SERVICE_KIND.into(),
+            address: address(SERVICE_KIND, name),
+            values,
+        },
+    ];
     if service.authentication.is_some() {
         let mut credentials = storage.clone();
         credentials.name = format!("{}-auth", spec.name);
         result.push(Target {
             kind: STORAGE_KIND.into(),
             address: address(STORAGE_KIND, &format!("{name}_auth")),
-            values: crate::backend::Row::from([("spec".into(), credentials.json()?)]),
+            values: credentials.row()?,
         });
     }
     Ok((result, spec))

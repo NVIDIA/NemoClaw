@@ -36,6 +36,7 @@ MESSAGES = {
     "health_observation_changed": "The runtime changed during the health observation.",
     "operational_unsupported": "Operational checks are deferred; use explicit invocation.",
     "streaming_unsupported": "Streaming invocation is not supported.",
+    "text_input_required": 'This agent takes a text prompt; send {"text": "..."} as the input.',
     "host_unavailable": "The runtime host is unavailable.",
     "host_stopping": "The runtime host is shutting down.",
     "runtime_unavailable": "No active runtime is available.",
@@ -209,6 +210,31 @@ def validate_request(request, name=None):
     if len(encode(request)) > REQUEST_LIMIT:
         raise ProtocolError("request_too_large")
     return operation
+
+
+def takes_text(config):
+    """Whether the configured adapter accepts only a text prompt. Fabric does
+    not declare an adapter's input type, so the bridge names the one that does."""
+    harness = config.get("harness") if isinstance(config, dict) else None
+    if not isinstance(harness, dict):
+        return False
+    settings = harness.get("settings")
+    return (
+        harness.get("adapter_id") == "nvidia.fabric.hermes"
+        and isinstance(settings, dict)
+        and settings.get("mode") == "service"
+    )
+
+
+def adapter_input(config, value):
+    """The input Fabric receives. A caller always sends an object; for an
+    adapter that takes text, the object must be exactly {"text": "..."} and
+    the bridge passes the string. Other adapters receive the object as sent."""
+    if not takes_text(config):
+        return value
+    if set(value) != {"text"} or not isinstance(value["text"], str):
+        raise ProtocolError("text_input_required", "invoke")
+    return value["text"]
 
 
 def parse_command(arguments):
@@ -399,9 +425,11 @@ class RuntimeHost:
                 stage = "invoke"
                 if self.snapshot()["runtime_state"] != "running":
                     raise ProtocolError("runtime_unavailable", stage)
+                # Refusing the input sends nothing, so its effects are none.
+                native_input = adapter_input(self.config, request["input"])
                 changed, effects = None, "unknown"
                 runtime_id = self.runtime.runtime_id
-                native_result = (await self.runtime.invoke(input=request["input"])).to_mapping()
+                native_result = (await self.runtime.invoke(input=native_input)).to_mapping()
                 result = {"runtime_id": runtime_id, "fabric_result": native_result}
                 if native_result.get("status") != "succeeded":
                     raise ProtocolError("fabric_invoke_failed", stage)

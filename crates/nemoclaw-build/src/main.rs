@@ -121,6 +121,12 @@ enum ImageAction {
     Qualify {
         #[arg(required = true)]
         images: Vec<String>,
+        /// Also run the shared configure, invoke and prepare assertions with this adapter's offline configuration.
+        #[arg(long, value_enum)]
+        lifecycle: Option<nemoclaw_build::images::Lifecycle>,
+        /// Fail when native readiness is unsupported instead of reporting it as skipped.
+        #[arg(long, requires = "lifecycle")]
+        require_ready: bool,
     },
     /// Write the metadata bundle a Kubernetes sandbox names in image.metadata.
     ExportMetadata {
@@ -411,9 +417,13 @@ async fn main() -> Result<()> {
             ImageAction::Build { platform, targets } => {
                 nemoclaw_build::images::build(root, &platform, &targets)
             }
-            ImageAction::Qualify { images } => images.iter().try_for_each(|image| {
+            ImageAction::Qualify {
+                images,
+                lifecycle,
+                require_ready,
+            } => images.iter().try_for_each(|image| {
                 eprintln!("Qualifying {image}");
-                nemoclaw_build::images::qualify(root, image)
+                nemoclaw_build::images::qualify(root, image, lifecycle, require_ready)
             }),
             ImageAction::ExportMetadata {
                 image,

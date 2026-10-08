@@ -10,6 +10,7 @@ tests/native/qualify.py, Apache-2.0. 2026-09-28: moved to NemoClaw, whose
 image CI is its only caller; the usage line names this file, and the code
 is formatted for NemoClaw's line length.
 2026-09-28: use a Pi-known model identifier for the owned inference fixture.
+2026-10-02: share an isolated inference server with image command qualification.
 """
 
 import argparse
@@ -18,15 +19,12 @@ import json
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from nemo_fabric import Fabric, FabricConfig
-
 
 class Inference(BaseHTTPRequestHandler):
-    requests = []
-
     def log_message(self, *_args):
         pass
 
@@ -41,8 +39,10 @@ class Inference(BaseHTTPRequestHandler):
         if self.path.rstrip("/") != "/v1/chat/completions":
             self.send_error(404)
             return
-        self.requests.append(request)
-        assert self.headers.get("Authorization") == "Bearer fabric-native-key"
+        if self.headers.get("Authorization") != "Bearer fabric-native-key":
+            self.send_error(401)
+            return
+        self.server.requests.append(request)
         response = {
             "id": "native-test",
             "object": "chat.completion",
@@ -79,12 +79,26 @@ class Inference(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response).encode())
 
 
-async def qualify(adapter_id, settings):
-    os.environ["FABRIC_NATIVE_TEST_KEY"] = "fabric-native-key"
+@contextmanager
+def local_inference():
+    """Own one loopback server and its request history, without importing Fabric."""
     server = ThreadingHTTPServer(("127.0.0.1", 0), Inference)
+    server.requests = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+async def qualify(adapter_id, settings):
+    from nemo_fabric import Fabric, FabricConfig
+
+    os.environ["FABRIC_NATIVE_TEST_KEY"] = "fabric-native-key"
+    with local_inference() as server:
         with tempfile.TemporaryDirectory(prefix="fabric-native-") as directory:
             config = FabricConfig.from_mapping(
                 {
@@ -110,23 +124,19 @@ async def qualify(adapter_id, settings):
                     assert "fabric-native-ok" in json.dumps(result.to_mapping()["output"]), (
                         result.to_mapping()
                     )
-                assert len(Inference.requests) >= 2, "native process did not use owned inference"
+                assert len(server.requests) >= 2, "native process did not use owned inference"
                 print(
                     json.dumps(
                         {
                             "adapter_id": adapter_id,
                             "native_invocations": 2,
-                            "inference_requests": len(Inference.requests),
+                            "inference_requests": len(server.requests),
                             "result": "passed",
                         }
                     )
                 )
             finally:
                 await runtime.stop()
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
 
 
 if __name__ == "__main__":

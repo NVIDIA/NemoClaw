@@ -49,6 +49,10 @@ mod sandbox_readiness;
 mod service_capacity;
 #[path = "service_readiness.rs"]
 mod service_readiness;
+// The fixture engine listens on a Unix socket.
+#[cfg(unix)]
+#[path = "service_storage.rs"]
+mod service_storage;
 #[path = "spark.rs"]
 mod spark;
 #[path = "tls.rs"]

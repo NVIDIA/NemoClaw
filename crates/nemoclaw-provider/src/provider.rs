@@ -334,85 +334,7 @@ impl Provider for NemoClawProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicResource>>> {
-        let mut definitions: Vec<_> = nemoclaw_sdk::services::resource_schemas()
-            .into_iter()
-            .map(|schema| Definition::new(schema.kind, schema.fields, schema.mutable))
-            .collect();
-        definitions.extend([
-            Definition::new(
-                "managed_gateway",
-                &["spec", "running", "image_pull_policy"],
-                &["running", "image_pull_policy"],
-            ),
-            Definition::new(
-                "gateway_storage",
-                &["spec", "image_pull_policy"],
-                &["image_pull_policy"],
-            ),
-            Definition::new(
-                "provider_profile",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "endpoint",
-                    "provider_type",
-                    "authenticated",
-                    "binaries_json",
-                    "cluster_source",
-                ],
-                &[],
-            ),
-            Definition::new(
-                "agent_configuration",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "sandbox_id",
-                    "config_json",
-                    "running",
-                ],
-                &["config_json", "running"],
-            ),
-            Definition::new("workspace", &["name", "owner", "generation"], &[]),
-            Definition::new(
-                "provider",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "endpoint",
-                    "credential_env",
-                    "provider_type",
-                    "credential_source",
-                    "profile_name",
-                ],
-                // Endpoint and authentication-mode changes also replace the
-                // imported profile. Delete the registration first so the API
-                // permits profile deletion; ordinary key rotation stays mutable.
-                &["credential_env"],
-            ),
-            Definition::new(
-                "sandbox",
-                &[
-                    "workspace",
-                    "name",
-                    "owner",
-                    "generation",
-                    "image",
-                    "agent_name",
-                    "agent_runtime",
-                    "policy_json",
-                    "runtime_json",
-                    "provider_names_json",
-                ],
-                &[],
-            ),
-        ]);
+        let definitions = definitions();
         Some(
             definitions
                 .into_iter()
@@ -427,6 +349,17 @@ impl Provider for NemoClawProvider {
     }
 }
 
+/// Resource definitions served by this provider.
+pub(crate) fn definitions() -> Vec<Definition> {
+    let mut definitions = Vec::new();
+    definitions.extend(crate::kubernetes::definitions());
+    definitions.extend(crate::cluster_services::definitions());
+    definitions.extend(crate::services::definitions());
+    definitions.extend(crate::managed::definitions());
+    definitions.extend(crate::openshell::definitions());
+    definitions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +369,20 @@ mod tests {
             endpoint: Value::Value("http://127.0.0.1:1".into()),
             destroy: Value::Value(true),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn every_sdk_resource_schema_is_served_once_with_its_fields() {
+        let served = definitions();
+        for schema in nemoclaw_sdk::services::resource_schemas() {
+            let matching: Vec<_> = served
+                .iter()
+                .filter(|definition| definition.kind == schema.kind)
+                .collect();
+            assert_eq!(matching.len(), 1, "{}", schema.kind);
+            assert_eq!(matching[0].fields, schema.fields, "{}", schema.kind);
+            assert_eq!(matching[0].mutable, schema.mutable, "{}", schema.kind);
         }
     }
 

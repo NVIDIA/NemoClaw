@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::support;
 use nemoclaw_provider::{Definition, plan_update};
 use std::collections::BTreeMap;
 use tf_provider::value::Value;
@@ -37,8 +38,10 @@ fn stopped_managed_process_reapplies_install_without_promising_readiness_or_repl
         "agent_configuration",
         "kubernetes_gateway",
         "kubernetes_storage",
+        "kubernetes_service",
+        "kubernetes_service_storage",
     ] {
-        let definition = Definition::new(kind, &["spec", "running"], &["running"]);
+        let definition = support::definition(kind, &["spec", "running"], &["running"]);
         for running in ["true", "false"] {
             let prior = BTreeMap::from([
                 ("id".into(), Value::Value("durable".into())),
@@ -62,7 +65,7 @@ fn stopped_managed_process_reapplies_install_without_promising_readiness_or_repl
 
 #[test]
 fn provider_authentication_mode_requires_replacement_but_reference_rotation_updates() {
-    let definition = Definition::new(
+    let definition = support::definition(
         "provider",
         &["credential_env", "credential_source"],
         &["credential_env"],

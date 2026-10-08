@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Backend, Definition, Mutation, Row, State, plan_update};
+use crate::{Backend, Definition, Mutation, Protection, Row, State, plan_update};
 use async_trait::async_trait;
-use nemoclaw_sdk::backend::{OpenShellLifecycle, openshell_lifecycle};
 use nemoclaw_sdk::{Binding, Bound, Observation, ObservationError, refresh};
 use std::sync::{
     Arc,
@@ -36,6 +35,16 @@ fn attribute<'a>(state: &'a State, name: &str) -> Option<&'a str> {
     }
 }
 
+fn known(state: &State) -> Row {
+    state
+        .iter()
+        .filter_map(|(name, value)| match value {
+            Value::Value(value) => Some((name.clone(), value.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 pub struct ResourceAdapter {
     definition: Definition,
     backend: Arc<dyn Backend>,
@@ -49,84 +58,31 @@ impl ResourceAdapter {
             destroying: Arc::new(AtomicBool::new(false)),
         }
     }
-    fn message(&self, error: String, name: Option<&str>, upstream: Option<&str>) -> String {
-        if self.definition.kind != "ollama_external_model" {
-            return error;
+    fn message(&self, error: String, attributes: &Row) -> String {
+        match self.definition.describe {
+            Some(describe) => describe(error, attributes),
+            None => error,
         }
-        let name = name.unwrap_or("unknown");
-        let source = name.split_once("-ollama-proxy-").map_or_else(
-            || format!("external Ollama model/{}", name.escape_default()),
-            |(_, service)| format!("services.{}.upstream", service.escape_default()),
-        );
-        // This package accepts only local, unauthenticated HTTP upstreams.
-        // Invalid state must not echo userinfo, query strings, or fragments.
-        let endpoint = upstream
-            .and_then(|endpoint| url::Url::parse(endpoint).ok())
-            .filter(|url| {
-                url.scheme() == "http"
-                    && url.path() == "/v1"
-                    && url.port().is_some()
-                    && url.username().is_empty()
-                    && url.password().is_none()
-                    && url.query().is_none()
-                    && url.fragment().is_none()
-                    && match url.host() {
-                        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-                        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-                        _ => false,
-                    }
-            });
-        let endpoint = endpoint.map(|url| format!(" ({url})")).unwrap_or_default();
-        format!("{source}{endpoint}: {error}")
     }
 
     fn protected_binding(&self) -> bool {
-        if matches!(
-            self.definition.kind,
-            nemoclaw_sdk::kubernetes::STORAGE_KIND
-                | nemoclaw_sdk::kubernetes::services::STORAGE_KIND
-        ) {
-            return true;
-        }
-        match openshell_lifecycle(self.definition.kind) {
-            Some(OpenShellLifecycle::Retained) => true,
-            Some(OpenShellLifecycle::Stateful) => !self.destroying.load(Ordering::Acquire),
-            _ => false,
+        match self.definition.protection {
+            Protection::Always => true,
+            Protection::UnlessDestroying => !self.destroying.load(Ordering::Acquire),
+            Protection::None => false,
         }
     }
     fn optional(&self, field: &str) -> bool {
-        (self.definition.kind == "provider_profile"
-            && matches!(field, "endpoint" | "authenticated" | "cluster_source"))
-            || matches!(
-                field,
-                "image_pull_policy"
-                    | "credential_source"
-                    | "profile_name"
-                    | "credential_env"
-                    | "agent_runtime"
-                    | "provider_type"
-                    | "policy_json"
-                    | "provider_names_json"
-            )
-    }
-    fn observed_running(&self) -> bool {
-        self.definition.observed_running
-    }
-    fn observed_data_path(&self) -> bool {
-        self.definition.kind == "gateway_storage"
-    }
-    fn observed_authentication(&self) -> bool {
-        self.definition.kind == nemoclaw_sdk::kubernetes::AUTH_KIND
+        self.definition.is_optional(field)
     }
     fn validate_config(&self, diags: &mut Diagnostics, config: &State) -> Option<()> {
         if self.definition.fields.contains(&"spec") {
             match config.get("spec") {
                 Some(Value::Unknown) => {}
                 Some(Value::Value(encoded)) => {
-                    if let Err(error) = nemoclaw_sdk::services::validate_resource_spec(
-                        self.definition.kind,
-                        encoded,
-                    ) {
+                    if let Some(validate) = self.definition.validate_spec
+                        && let Err(error) = validate(self.definition.kind, encoded)
+                    {
                         diags.error(
                             "Invalid resource specification",
                             error.to_string(),
@@ -142,6 +98,24 @@ impl ResourceAdapter {
                     );
                     return None;
                 }
+            }
+        }
+        if let Some(check) = self.definition.validate_attribute {
+            let mut valid = true;
+            for field in &self.definition.fields {
+                if let Some(Value::Value(value)) = config.get(*field)
+                    && let Err(requirement) = check(field, value)
+                {
+                    diags.error(
+                        format!("Invalid {field}"),
+                        format!("{field} {requirement}"),
+                        AttributePath::new(*field),
+                    );
+                    valid = false;
+                }
+            }
+            if !valid {
+                return None;
             }
         }
         Some(())
@@ -165,6 +139,16 @@ impl ResourceAdapter {
         {
             return Some(());
         }
+        // Omitted identity is generated during apply, so the backend cannot
+        // observe the binding this plan would create.
+        if self
+            .definition
+            .generated
+            .iter()
+            .any(|(name, _)| matches!(proposed.get(*name), Some(Value::Unknown)))
+        {
+            return Some(());
+        }
         let result = async {
             let desired = self.row(proposed, true)?;
             let prior = prior.map(|state| self.row(state, false)).transpose()?;
@@ -176,11 +160,7 @@ impl ResourceAdapter {
         match result {
             Ok(()) => Some(()),
             Err(error) => {
-                let message = self.message(
-                    error.to_string(),
-                    attribute(proposed, "name"),
-                    attribute(proposed, "upstream"),
-                );
+                let message = self.message(error.to_string(), &known(proposed));
                 if self.definition.fields.contains(&"spec") {
                     diags.error(
                         "Resource planning failed",
@@ -199,12 +179,7 @@ impl ResourceAdapter {
             .iter()
             .map(|(k, v)| match v {
                 Value::Value(v) => Ok((k.clone(), v.clone())),
-                Value::Unknown | Value::Null
-                    if (k == "running" && self.observed_running())
-                        || (k == "data_path" && self.observed_data_path())
-                        || (matches!(k.as_str(), "release_present" | "gateway_values")
-                            && self.observed_authentication()) =>
-                {
+                Value::Unknown | Value::Null if self.definition.is_computed(k) => {
                     Ok((k.clone(), String::new()))
                 }
                 Value::Null if self.optional(k) => Ok((k.clone(), String::new())),
@@ -216,26 +191,14 @@ impl ResourceAdapter {
             .collect()
     }
     fn checked(&self, prior: &Row, observed: Row) -> Result<Row, ObservationError> {
-        if self.definition.kind == "provider_profile"
-            && prior
-                .get("cluster_source")
-                .map(String::as_str)
-                .unwrap_or("")
-                != observed
-                    .get("cluster_source")
-                    .map(String::as_str)
-                    .unwrap_or("")
-        {
-            return Err(ObservationError::BindingMismatch);
+        for field in &self.definition.bound_fields {
+            if prior.get(*field).map(String::as_str).unwrap_or("")
+                != observed.get(*field).map(String::as_str).unwrap_or("")
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
         }
-        for field in self
-            .definition
-            .fields
-            .iter()
-            .copied()
-            .chain(["id"])
-            .chain(self.observed_data_path().then_some("data_path"))
-        {
+        for field in self.definition.attributes() {
             if observed
                 .get(field)
                 .is_none_or(|value| value.is_empty() && !self.optional(field))
@@ -291,8 +254,7 @@ impl ResourceAdapter {
                 "Apply incomplete",
                 self.message(
                     observation_message(error, desired.get("name").map(String::as_str)),
-                    desired.get("name").map(String::as_str),
-                    desired.get("upstream").map(String::as_str),
+                    desired,
                 ),
             );
         }
@@ -322,24 +284,15 @@ impl Resource for ResourceAdapter {
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         let attributes = self
             .definition
-            .fields
-            .iter()
-            .copied()
-            .chain(["id"])
-            .chain(self.observed_data_path().then_some("data_path"))
+            .attributes()
             .map(|name| {
                 (
                     name.into(),
                     Attribute {
                         attr_type: AttributeType::String,
-                        constraint: if name == "id"
-                            || (name == "running" && self.observed_running())
-                            || (name == "data_path" && self.observed_data_path())
-                            || (matches!(name, "release_present" | "gateway_values")
-                                && self.observed_authentication())
-                        {
+                        constraint: if name == "id" || self.definition.is_computed(name) {
                             AttributeConstraint::Computed
-                        } else if self.optional(name) {
+                        } else if self.optional(name) || self.definition.is_generated(name) {
                             AttributeConstraint::OptionalComputed
                         } else {
                             AttributeConstraint::Required
@@ -390,11 +343,7 @@ impl Resource for ResourceAdapter {
                 let name = attribute(&state, "name");
                 diags.root_error(
                     "Resource observation",
-                    self.message(
-                        observation_message(error, name),
-                        name,
-                        attribute(&state, "upstream"),
-                    ),
+                    self.message(observation_message(error, name), &known(&state)),
                 );
                 Some((state, private))
             }
@@ -412,21 +361,19 @@ impl Resource for ResourceAdapter {
             return None;
         }
         proposed.insert("id".into(), Value::Unknown);
-        if self.observed_data_path() {
-            proposed.insert("data_path".into(), Value::Unknown);
-        }
-        if self.observed_running() {
-            proposed.insert("running".into(), Value::Unknown);
-        }
-        if self.observed_authentication() {
-            proposed.insert("release_present".into(), Value::Unknown);
-            proposed.insert("gateway_values".into(), Value::Unknown);
+        for (name, _) in &self.definition.computed {
+            proposed.insert((*name).into(), Value::Unknown);
         }
         for field in &self.definition.fields {
             // Core may propose unknown for an omitted OptionalComputed value.
             // Choose its default only when the configuration itself is null.
             if self.optional(field) && matches!(config.get(*field), Some(Value::Null) | None) {
                 proposed.insert((*field).into(), Value::Value(String::new()));
+            }
+        }
+        for (name, _) in &self.definition.generated {
+            if matches!(config.get(*name), Some(Value::Null) | None) {
+                proposed.insert((*name).into(), Value::Unknown);
             }
         }
         self.check_plan(diags, &proposed, &config, None).await?;
@@ -443,45 +390,23 @@ impl Resource for ResourceAdapter {
     ) -> Option<(State, ValueEmpty, Vec<AttributePath>)> {
         // OptionalComputed normally carries the prior value forward. Omission
         // here means the runtime's default policy, not the previous selection.
-        for field in [
-            "image_pull_policy",
-            "credential_env",
-            "credential_source",
-            "cluster_source",
-            "provider_type",
-        ] {
-            if self.definition.fields.contains(&field)
-                && matches!(config.get(field), None | Some(Value::Null))
-            {
-                proposed.insert(field.into(), Value::Value(String::new()));
+        for field in &self.definition.reset_when_omitted {
+            if matches!(config.get(*field), None | Some(Value::Null)) {
+                proposed.insert((*field).into(), Value::Value(String::new()));
             }
         }
         self.check_plan(diags, &proposed, &config, Some(&prior))
             .await?;
         let (mut state, replacements) = plan_update(&self.definition, &prior, proposed);
         if self.destroying.load(Ordering::Acquire)
-            && matches!(
-                self.definition.kind,
-                nemoclaw_sdk::kubernetes::STORAGE_KIND
-                    | nemoclaw_sdk::kubernetes::services::STORAGE_KIND
-            )
+            && self.definition.keep_running_during_destroy
             && let Some(running) = prior.get("running")
         {
             // Teardown retains incomplete platform storage without retrying its
             // installation. Ordinary apply still reconciles running:false.
             state.insert("running".into(), running.clone());
         }
-        if (matches!(
-            openshell_lifecycle(self.definition.kind),
-            Some(OpenShellLifecycle::Retained | OpenShellLifecycle::Stateful)
-        ) || matches!(
-            self.definition.kind,
-            nemoclaw_sdk::kubernetes::STORAGE_KIND
-                | nemoclaw_sdk::kubernetes::GATEWAY_KIND
-                | nemoclaw_sdk::kubernetes::services::STORAGE_KIND
-                | nemoclaw_sdk::kubernetes::services::SERVICE_KIND
-        )) && !replacements.is_empty()
-        {
+        if self.definition.refuse_replacement && !replacements.is_empty() {
             let name = match prior.get("name") {
                 Some(Value::Value(name)) => name.as_str(),
                 _ => "unknown",
@@ -524,6 +449,21 @@ impl Resource for ResourceAdapter {
         if self.destroying.load(Ordering::Acquire) {
             diags.root_error_short("Creation forbidden during destroy");
             return None;
+        }
+        let mut planned = planned;
+        for (name, generate) in &self.definition.generated {
+            if matches!(
+                planned.get(*name),
+                Some(Value::Unknown | Value::Null) | None
+            ) {
+                match generate() {
+                    Ok(value) => planned.insert((*name).into(), Value::Value(value)),
+                    Err(error) => {
+                        diags.root_error_short(error.to_string());
+                        return None;
+                    }
+                };
+            }
         }
         let row = match self.row(&planned, true) {
             Ok(row) => row,
@@ -623,12 +563,10 @@ mod tests {
     use super::*;
     #[test]
     fn profile_refresh_preserves_the_bound_cluster_source() {
+        let mut definition = crate::resource_definition("provider_profile").unwrap();
+        definition.fields = vec!["name", "workspace", "cluster_source"];
         let adapter = ResourceAdapter::new(
-            Definition::new(
-                "provider_profile",
-                &["name", "workspace", "cluster_source"],
-                &[],
-            ),
+            definition,
             Arc::new(crate::cluster_services::ClusterServicesBackend::new()),
         );
         let prior: Row = [

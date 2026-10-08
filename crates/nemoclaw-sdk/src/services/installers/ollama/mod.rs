@@ -210,24 +210,22 @@ fn managed_targets(
         generation: spec.generation.clone(),
         engine: spec.engine().into(),
     };
-    let mut targets = Vec::new();
-    for (kind, encoded) in [
-        (STORAGE_KIND, storage.json()?),
-        (SERVICE_KIND, spec.json()?),
-    ] {
-        let mut values = crate::backend::Row::from([("spec".into(), encoded)]);
-        if kind == SERVICE_KIND
-            && let Some(policy) = service.image_pull_policy
-        {
-            values.insert("image_pull_policy".into(), policy.as_str().into());
-        }
-        targets.push(Target {
-            kind: kind.into(),
-            address: address(kind, name),
-            values,
-        });
+    let mut values = crate::backend::Row::from([("spec".into(), spec.json()?)]);
+    if let Some(policy) = service.image_pull_policy {
+        values.insert("image_pull_policy".into(), policy.as_str().into());
     }
-    Ok(targets)
+    Ok(vec![
+        Target {
+            kind: STORAGE_KIND.into(),
+            address: address(STORAGE_KIND, name),
+            values: storage.row()?,
+        },
+        Target {
+            kind: SERVICE_KIND.into(),
+            address: address(SERVICE_KIND, name),
+            values,
+        },
+    ])
 }
 
 impl Installer for ManagedOllama {
