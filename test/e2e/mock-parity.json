@@ -4,7 +4,10 @@
   "entries": [
     {
       "live": "test/e2e/live/brave-search.test.ts",
-      "liveSources": ["test/e2e/live/brave-search-helpers.ts", "test/e2e/fixtures/brave-backend.ts"],
+      "liveSources": [
+        "test/e2e/live/brave-search-helpers.ts",
+        "test/e2e/fixtures/brave-backend.ts"
+      ],
       "fast": [
         "test/onboarding/brave-search-integration.test.ts",
         "test/e2e/support/brave-search-isolation.test.ts",
@@ -1012,7 +1015,8 @@
       "live": "test/e2e/live/token-rotation.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/e2e-phase-environment.test.ts"
       ]
     },
     {
