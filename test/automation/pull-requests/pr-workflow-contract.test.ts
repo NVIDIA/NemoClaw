@@ -103,18 +103,42 @@ function runPinnedAptFixture(
   const runnerTemp = join(temp, "runner-temp");
   const aptCalls = join(temp, "apt-calls");
   const timeoutCalls = join(temp, "timeout-calls");
+  const sourceCapture = join(temp, "source-capture");
+  const fakeUbuntuSources = join(temp, "ubuntu.sources");
   mkdirSync(fakeBin);
   mkdirSync(runnerTemp, { mode: 0o700 });
   writeFileSync(aptCalls, "");
   writeFileSync(timeoutCalls, "");
+  writeFileSync(sourceCapture, "");
+  writeFileSync(
+    fakeUbuntuSources,
+    `Types: deb
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
+Suites: noble noble-updates noble-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: ${mode === "unexpected-source" ? "mirror+file:/etc/apt/unexpected.txt" : "mirror+file:/etc/apt/apt-mirrors.txt"}
+Suites: noble-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+`,
+  );
   writeFileSync(
     join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$APT_CALLS"
-if [[ "$1" == chmod && "$3" == "$RUNNER_TEMP" ]]; then
-  command chmod "$2" "$3" || exit $?
+if [[ "$1" == rm && "$2" == -rf && "$3" == -- && "$4" == /tmp/nemoclaw-apt-lists.* ]]; then
+  command rm -rf -- "$4" || exit $?
+fi
+if [[ "$1" == chmod ]]; then command chmod "$2" "$3"; exit $?; fi
+if [[ "$1" == install ]]; then
+  [[ "$*" == "install -d -o _apt -g root -m 0700 /tmp/nemoclaw-apt-lists."*"/partial" ]] || exit 93
+  command install -d -m 0700 "\${@: -1}"; exit $?
 fi
 if [[ "$1" == test && "$FAKE_APT_MODE" == missing-source ]]; then exit 1; fi
+if [[ "$1" == awk ]]; then command awk "$2" "$FAKE_UBUNTU_SOURCES"; exit $?; fi
 if [[ "$1" == timeout ]]; then shift; timeout "$@"; exit $?; fi
 if [[ "$1" == apt-get ]]; then echo 'apt-get must run under sudo timeout' >&2; exit 99; fi
 exit 0
@@ -125,6 +149,20 @@ exit 0
     join(fakeBin, "apt-get"),
     `#!/usr/bin/env bash
 printf 'apt-get %s\\n' "$*" >> "$APT_CALLS"
+source_path=''
+lists_path=''
+for arg in "$@"; do
+  if [[ "$arg" == Dir::Etc::sourcelist=* ]]; then source_path="\${arg#*=}"; fi
+  if [[ "$arg" == Dir::State::lists=* ]]; then lists_path="\${arg#*=}"; fi
+done
+node -e 'const fs=require("node:fs"),path=require("node:path"),[source,lists]=process.argv.slice(1); for(const file of [source,lists]) for(let dir=path.dirname(file);dir!=="/";dir=path.dirname(dir)) if(!(fs.statSync(dir).mode&1)) process.exit(91); if(!(fs.statSync(source).mode&4)||!(fs.statSync(lists).mode&1)||(fs.statSync(path.join(lists,"partial")).mode&0o777)!==0o700) process.exit(92)' "$source_path" "$lists_path" || exit $?
+if [[ -n "$source_path" && -f "$source_path" ]]; then cp "$source_path" "$SOURCE_CAPTURE"; fi
+if [[ "$FAKE_APT_MODE" == mirror-file-failure && "$*" == *' install '* ]]; then
+  if [[ "$source_path" == /etc/apt/sources.list.d/ubuntu.sources ]] || grep -q 'mirror+file:' "$source_path"; then
+    echo 'Downloading mirror file failed' >&2
+    exit 100
+  fi
+fi
 if [[ "$FAKE_APT_MODE" == update-error ]]; then
   for ((line=1; line<=100; line++)); do printf 'apt diagnostic %s\\n' "$line" >&2; done
   exit 86
@@ -165,12 +203,14 @@ if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TI
     ...process.env,
     ADVISOR_DIR: process.cwd(),
     APT_CALLS: aptCalls,
+    FAKE_UBUNTU_SOURCES: fakeUbuntuSources,
     FAKE_APT_MODE: mode,
     FD_FIND_VERSION: "9.0.0-1",
     GITHUB_ACTION_PATH: join(process.cwd(), ".github/actions/ci-cli-coverage-shard"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     RIPGREP_VERSION: "14.1.0-1",
     RUNNER_TEMP: runnerTemp,
+    SOURCE_CAPTURE: sourceCapture,
     TIMEOUT_CALLS: timeoutCalls,
   };
   try {
@@ -187,8 +227,10 @@ if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TI
     return {
       status: result.status,
       stderr: String(result.stderr),
+      runnerTemp,
       runnerTempMode: statSync(runnerTemp).mode & 0o777,
       calls: readFileSync(aptCalls, "utf8").trim().split("\n"),
+      sourceText: readFileSync(sourceCapture, "utf8"),
       timeoutCalls: readFileSync(timeoutCalls, "utf8").trim().split("\n"),
     };
   } finally {
@@ -642,7 +684,9 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
       const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
       expect(aptCalls).toHaveLength(1);
       expect(result.timeoutCalls).toHaveLength(1);
-      expect(aptCalls[0]).toContain("Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources");
+      expect(aptCalls[0]).toMatch(
+        /Dir::Etc::sourcelist=\S+\/nemoclaw-ubuntu-sources\.\S+\/ubuntu\.sources/u,
+      );
       expect(aptCalls[0]).toContain("Dir::Etc::sourceparts=-");
       expect(aptCalls[0]).toMatch(/Dir::State::lists=\S+\/nemoclaw-apt-lists\.\S+/u);
       expect(aptCalls[0]).toMatch(/ update$/u);
@@ -655,13 +699,47 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
     expect(aptCalls).toHaveLength(2);
     const lists = aptCalls.map((call) => call.match(/Dir::State::lists=(\S+)/u)?.[1]);
-    expect(lists[0]).toMatch(/\/nemoclaw-apt-lists\.\S+$/u);
+    expect(lists[0]).toMatch(/^\/tmp\/nemoclaw-apt-lists\.\S+$/u);
     expect(lists[1]).toBe(lists[0]);
-    expect(aptCalls[1]).toContain("Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources");
+    expect(
+      result.calls.filter(
+        (call) => call.startsWith("chmod ") && call.endsWith(` ${result.runnerTemp}`),
+      ),
+    ).toEqual([]);
+    expect(result.calls.filter((call) => call.startsWith("rm -rf -- "))).toEqual([
+      `rm -rf -- ${lists[0]}`,
+    ]);
+    expect(existsSync(lists[0] ?? "")).toBe(false);
+    const sources = aptCalls.map((call) => call.match(/Dir::Etc::sourcelist=(\S+)/u)?.[1]);
+    expect(sources[0]).toMatch(/\/nemoclaw-ubuntu-sources\.\S+\/ubuntu\.sources$/u);
+    expect(sources[1]).toBe(sources[0]);
     expect(aptCalls[1]).toContain("Dir::Etc::sourceparts=-");
     expect(aptCalls[1]).toContain(
       "install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
     );
+  });
+
+  it("resolves the runner mirrorlist before pinned install with isolated APT lists (#11320)", () => {
+    const result = runPinnedAptFixture("mirror-file-failure");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.sourceText.match(/URIs: https:\/\/archive\.ubuntu\.com\/ubuntu/gu)).toHaveLength(
+      2,
+    );
+    expect(result.sourceText).not.toContain("mirror+file:");
+    expect(result.sourceText).toContain("Suites: noble noble-updates noble-backports");
+    expect(result.sourceText).toContain("Components: main restricted universe multiverse");
+    expect(
+      result.sourceText.match(/Signed-By: \/usr\/share\/keyrings\/ubuntu-archive-keyring\.gpg/gu),
+    ).toHaveLength(2);
+    expect(result.sourceText).toContain("Suites: noble-security");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(2);
+  });
+
+  it("rejects an unexpected runner mirrorlist before APT runs (#11320)", () => {
+    const result = runPinnedAptFixture("unexpected-source");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Unsupported Ubuntu APT source");
+    expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(0);
   });
 
   it.each([
