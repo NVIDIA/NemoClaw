@@ -280,6 +280,38 @@ export async function runCredentialsResetAction(
           compatibleAuthority,
         );
     };
+
+    if (key === NVIDIA_HOSTED_LOGICAL_PROVIDER) {
+      const lines: string[] = [];
+      let complete = true;
+      for (const name of [NVIDIA_HOSTED_NATIVE_PROVIDER, NVIDIA_HOSTED_LOGICAL_PROVIDER]) {
+        const result = await deleteProviderWithRecovery(name, target, providerAdapter, {
+          detachAttached: false,
+        });
+        if (!result.ok && result.error?.kind === "command" && result.error.reason === "not_found") {
+          lines.push(`  Provider '${name}' is already absent from the OpenShell gateway.`);
+        } else {
+          const outcome = formatResetOutcome(
+            !result.ok && result.error?.kind === "command" && result.error.reason === "attached"
+              ? publicKey
+              : name,
+            result,
+            target.gatewayName,
+          );
+          lines.push(...outcome.lines);
+          complete = outcome.ok && complete;
+          if (!result.ok && result.error?.kind === "command" && result.error.reason === "attached")
+            return fail(lines);
+        }
+      }
+      if (!complete) return fail(lines);
+      forgetExtraProvider(publicKey);
+      (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
+        target.gatewayName,
+      );
+      return ok(lines);
+    }
+
     const recovery = await deleteProviderWithRecovery(providerName, target, providerAdapter, {
       detachAttached: !nativeNvidiaProvider && !nativeCompatibleProvider,
     });

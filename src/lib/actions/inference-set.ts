@@ -1942,12 +1942,7 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeNvidiaDetached = false;
   let previousNativeNvidiaDetachCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
-    if (
-      selectingNative ||
-      previousNativeNvidiaAttachment ||
-      previousNativeCompatibleAttachment ||
-      previousNativeBedrockAttachment
-    ) {
+    if (selectingNative) {
       appliedInferenceSelection = false;
       return null;
     }
@@ -2417,6 +2412,24 @@ async function runInferenceSetWithoutHostLock(
   } catch (error) {
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
     const recoveredError = await collectNativeRollbackErrors(error, [
+      async () => {
+        if (
+          nativeCompatibleRegistryCommitted ||
+          !appliedInferenceSelection ||
+          ambiguousInferenceSelection ||
+          !(
+            previousNativeNvidiaAttachment ||
+            previousNativeCompatibleAttachment ||
+            previousNativeBedrockAttachment
+          )
+        )
+          return;
+        const restoreFailure = await restorePreviousInferenceSelection();
+        if (restoreFailure)
+          throw new Error(
+            `Failed to restore the previous OpenShell inference selection: ${restoreFailure}`,
+          );
+      },
       () =>
         rollbackNativeBedrockSelection({
           committed: nativeCompatibleRegistryCommitted,

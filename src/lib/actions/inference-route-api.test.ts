@@ -94,6 +94,21 @@ describe("readOpenClawPrimaryRouteApi", () => {
 });
 
 describe("resolveRuntimeInferenceApi", () => {
+  it("uses native NVIDIA Completions despite stale route history", () => {
+    expect(
+      resolve(
+        {},
+        {
+          provider: "nvidia-prod",
+          currentProvider: "nvidia-prod",
+          session: session({
+            provider: "nvidia-prod",
+            preferredInferenceApi: "anthropic-messages",
+          }),
+        },
+      ),
+    ).toBe("openai-completions");
+  });
   it("uses the current config route API before matching onboard history", () => {
     expect(
       resolve(

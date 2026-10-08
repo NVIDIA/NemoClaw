@@ -253,6 +253,13 @@ describe("native Bedrock inference selection", () => {
   it("restores Bedrock access when the new selection cannot be recorded", async () => {
     const f = fixture();
     f.deps.calls.updateSandbox.mockReturnValue(false);
+    f.deps.inferenceRouteObserver.observeInferenceRoute = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        state: "configured" as const,
+        route: { provider: "peer-provider", model: "peer-model" },
+      },
+    }));
     await expect(
       runInferenceSet(
         { sandboxName: "alpha", provider: "openai", model: "gpt-4o", noVerify: true },
@@ -262,6 +269,9 @@ describe("native Bedrock inference selection", () => {
     expect(f.adapter.detachProvider).toHaveBeenCalledOnce();
     expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
     expect(f.attachments.has(f.receipt.providerName)).toBe(true);
+    expect(f.sharedRoute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ route: { provider: "peer-provider", model: "peer-model" } }),
+    );
     expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
     expect(f.deps.clearNativeBedrockProviderAuthority).not.toHaveBeenCalled();
   });

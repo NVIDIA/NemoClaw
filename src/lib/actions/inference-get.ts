@@ -317,10 +317,16 @@ export async function runInferenceGet(
   options: InferenceGetOptions = {},
   deps: InferenceGetDeps = defaultDeps(),
 ): Promise<InferenceGetResult> {
-  const selectedSandboxName = options.sandboxName ?? deps.getDefaultSandbox?.() ?? null;
-  const selectedSandbox = selectedSandboxName
-    ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
-    : null;
+  let selectedSandboxName: string | null;
+  let selectedSandbox: ReturnType<typeof getKnownSandboxTarget> | null;
+  try {
+    selectedSandboxName = options.sandboxName ?? deps.getDefaultSandbox?.() ?? null;
+    selectedSandbox = selectedSandboxName
+      ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
+      : null;
+  } catch (error) {
+    throw new InferenceGetError(formatGatewayResolutionFailure(error, options.sandboxName));
+  }
   if (selectedSandbox && isNativeBedrockSelection(selectedSandbox)) {
     let receipt;
     try {

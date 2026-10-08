@@ -334,6 +334,43 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("restores the peer shared route after a failed departure from native NVIDIA", async () => {
+    const setInferenceRoute = vi.fn<
+      import("../adapters/openshell/inference-route").OpenShellInferenceRouteMutator["setInferenceRoute"]
+    >(async () => ({ ok: true as const }));
+    const deps = createDeps({
+      config: { models: { providers: {} } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/old-model",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "11111111-2222-4333-8444-555555555555",
+        },
+      },
+      inferenceRouteMutator: { setInferenceRoute },
+      inferenceRouteObserver: {
+        observeInferenceRoute: async () => ({
+          ok: true,
+          value: { state: "configured", route: { provider: "anthropic", model: "peer-model" } },
+        }),
+      },
+      probeSandboxRoute: async () => ({ ok: false, detail: "probe refused", httpStatus: 401 }),
+    });
+    await expect(
+      runInferenceSet({ provider: "openrouter-api", model: "openai/gpt-5.4" }, deps),
+    ).rejects.toThrow("probe refused");
+    expect(setInferenceRoute.mock.calls.map(([input]) => input.route)).toEqual([
+      { provider: "openrouter-api", model: "openai/gpt-5.4" },
+      { provider: "anthropic", model: "peer-model" },
+    ]);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("detaches native NVIDIA access only after another provider is healthy", async () => {
     let attached = true;
     const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => {
@@ -767,10 +804,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       expect.objectContaining({
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
-        endpointUrl: null,
-        credentialEnv: null,
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         nimContainer: null,
-        preferredInferenceApi: null,
+        preferredInferenceApi: "openai-completions",
         nativeNvidiaProviderAttachment: expect.objectContaining({
           providerName: "nemoclaw-nvidia-prod-v1",
         }),

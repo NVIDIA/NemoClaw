@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../inference/config";
+import {
+  getSandboxInferenceConfig,
+  resolveAgentInferenceApi,
+  isNativeNvidiaProvider,
+} from "../inference/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { isConfigObject } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
@@ -106,6 +110,7 @@ export function resolveRuntimeInferenceApi(options: {
   session: Session | null;
 }): InferenceApi | null {
   const { agentName, config, currentProvider, provider, sandboxName, session } = options;
+  if (isNativeNvidiaProvider(provider)) return "openai-completions";
   if (provider === "anthropic-prod") return "anthropic-messages";
   const agentApi = resolveAgentInferenceApi(agentName, provider, null);
   if (agentApi) return normalizeInferenceApi(agentApi);

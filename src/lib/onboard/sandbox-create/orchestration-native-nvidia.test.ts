@@ -30,17 +30,19 @@ function providerAdapter(providerId: string): OpenShellProviderAdapter {
   } as unknown as OpenShellProviderAdapter;
 }
 
-function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
+function nativeProviderBoundary(adapter: OpenShellProviderAdapter, missingReceipt = false) {
   return createProviderEffectBoundary({
     deferred: false,
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
-    expectedNativeNvidiaProviderAttachment: {
-      schemaVersion: 1,
-      profileId: "nemoclaw-nvidia-inference-v1",
-      providerName: "nemoclaw-nvidia-prod-v1",
-      providerId: recordedProviderId,
-    },
+    expectedNativeNvidiaProviderAttachment: missingReceipt
+      ? undefined
+      : {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: recordedProviderId,
+        },
     preparationInput: {
       openshellDriver: "docker",
       inferenceProvider: "nemoclaw-nvidia-prod-v1",
@@ -73,6 +75,13 @@ function verifiedCreateContext(revalidateSandboxIdentity = vi.fn()) {
 }
 
 describe("native NVIDIA post-create provider verification", () => {
+  it("rejects a missing native receipt before creation", async () => {
+    const boundary = nativeProviderBoundary(providerAdapter(recordedProviderId), true);
+    await expect(boundary.validateBeforeCreate()).rejects.toThrow(
+      "native NVIDIA provider identity receipt",
+    );
+  });
+
   it("confirms the recorded provider is attached after sandbox identity is verified", async () => {
     const adapter = providerAdapter(recordedProviderId);
     const revalidateSandboxIdentity = vi.fn();

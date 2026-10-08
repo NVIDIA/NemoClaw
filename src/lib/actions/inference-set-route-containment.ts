@@ -25,6 +25,11 @@ import { ConfigUrlValidationError } from "../sandbox/config";
 import type { ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import {
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  isNativeNvidiaProvider,
+} from "../inference/native-nvidia";
 import { InferenceSetError } from "./inference-set-error";
 
 /**
@@ -381,6 +386,15 @@ function registryMetadataForProviderSwitch(options: {
 }): RegistryInferenceMetadata {
   const { entry, provider, model, sandboxName, session, explicitMetadata } = options;
   if (explicitMetadata) return explicitMetadata;
+  if (isNativeNvidiaProvider(provider)) {
+    return {
+      endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      endpointSource: null,
+      credentialEnv: NVIDIA_HOSTED_CREDENTIAL_ENV,
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
+    };
+  }
   if (entry.provider === provider) {
     return {
       endpointUrl: entry.endpointUrl ?? null,

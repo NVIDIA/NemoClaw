@@ -108,6 +108,12 @@ function identity() {
   };
 }
 
+function replaceModelWithSameSizeContent() {
+  const replacement = `${modelPath}.replacement`;
+  fs.writeFileSync(replacement, Buffer.alloc(MODEL_CONTENT.length, 0x62), { mode: 0o600 });
+  fs.renameSync(replacement, modelPath);
+}
+
 function keyRootIdentitySha256(): string {
   const status = fs.lstatSync(apiKeyRoot, { bigint: true });
   return rawDigest({
@@ -1155,7 +1161,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     });
     const lifecycle = controller(fixture, store);
     expect(() => lifecycle.start(unavailableWriter)).toThrow("writer unavailable");
-    fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    replaceModelWithSameSizeContent();
     const replayWriter = receiptWriter();
 
     const recovery = lifecycle.recoverUnfinished(replayWriter);
@@ -1412,7 +1418,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const modelFixture = dockerFixture();
     const modelLifecycle = controller(modelFixture);
     const modelReceipt = modelLifecycle.start(receiptWriter());
-    fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    replaceModelWithSameSizeContent();
     expect(() => modelLifecycle.runtime.inspectManaged(modelReceipt)).toThrow(
       "filesystem identity",
     );
@@ -1433,11 +1439,19 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     const fixture = dockerFixture();
     const store = journalStore();
     const persistedAuthority = authorityStore();
-    const initial = createLifecycle(options(fixture, store, bindings(), persistedAuthority));
+    const privateBridge = privateBridgeFixture();
+    const initial = createLifecycle(
+      options(fixture, store, bindings(), persistedAuthority),
+      {},
+      privateBridge,
+    );
     const receipt = initial.start(receiptWriter());
-    fs.writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    expect(initial.runtime.inspectManaged(receipt).running).toBe(true);
+    replaceModelWithSameSizeContent();
     const currentIdentityInspector = createLifecycle(
       options(fixture, store, bindings(), persistedAuthority),
+      {},
+      privateBridge,
     );
     expect(() => currentIdentityInspector.runtime.inspectManaged(receipt)).toThrow(
       "durable create journal",

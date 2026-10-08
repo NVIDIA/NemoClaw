@@ -1007,6 +1007,33 @@ describe("runInferenceGet", () => {
     },
   );
 
+  it.each(
+    ["default", "named"].flatMap((lookup) =>
+      [false, true].map((permission) => ({ lookup, permission })),
+    ),
+  )(
+    "maps $lookup registry lookup errors with permission=$permission to recovery guidance",
+    async ({ lookup, permission }) => {
+      const deps = createDeps({ ok: true, value: { state: "unconfigured" } });
+      const fail = () => {
+        throw permission
+          ? new ConfigPermissionError("/safe/state/sandboxes.json", "read")
+          : new ConfigCorruptError("/safe/state/sandboxes.json");
+      };
+      deps.getDefaultSandbox = lookup === "default" ? fail : () => "alpha";
+      deps.getSandbox = fail;
+      await expect(runInferenceGet({}, deps)).rejects.toMatchObject({
+        name: "InferenceGetError",
+        message: expect.stringContaining(
+          permission
+            ? "Cannot read config file: /safe/state/sandboxes.json"
+            : "Configuration file is present but is not valid JSON: /safe/state/sandboxes.json",
+        ),
+      });
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    },
+  );
+
   it("sanitizes route values only for human-readable output", async () => {
     const deps = createDeps(configuredRoute("openai\u001b[2J", "gpt\u0007-5.4"));
 
