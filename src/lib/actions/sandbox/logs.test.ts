@@ -247,6 +247,12 @@ describe("showSandboxLogsWithDeps", () => {
       Number(lines) > 0 ? logsBySource[source].slice(-Number(lines)) : [];
     const handoffLine = sandboxLine(1779488800, "written during setup");
     const followers: Partial<Record<"gateway" | "openshell", StreamingChild>> = {};
+    // The entry lands after the OpenShell history snapshot and reaches only a
+    // follower that is already running, so a follower started later misses it.
+    const afterRead = {
+      gateway: () => {},
+      openshell: () => followers.openshell?.stdout.write(`${handoffLine}\n`),
+    };
     const written: string[] = [];
     const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
     const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
@@ -258,24 +264,20 @@ describe("showSandboxLogsWithDeps", () => {
     const logs: OpenShellSandboxLogs = {
       checkAvailability: () => null,
       async read(request) {
-        if (request.source === "openshell") {
-          logsBySource.openshell.push(handoffLine);
-          followers.openshell?.stdout.write(`${handoffLine}\n`);
-        }
-        return {
-          content: lastLines(request.source, request.lines)
-            .map((line) => `${line}\n`)
-            .join(""),
-          diagnostic: "",
-          outcome: { kind: "completed", exitCode: 0 },
-        };
+        const content = lastLines(request.source, request.lines)
+          .map((line) => `${line}\n`)
+          .join("");
+        afterRead[request.source]();
+        return { content, diagnostic: "", outcome: { kind: "completed", exitCode: 0 } };
       },
       follow(request) {
         const follower = createStreamingChild();
         followers[request.source] = follower;
-        for (const line of lastLines(request.source, request.lines)) {
-          follower.stdout.write(`${line}\n`);
-        }
+        follower.stdout.write(
+          lastLines(request.source, request.lines)
+            .map((line) => `${line}\n`)
+            .join(""),
+        );
         return follower.session;
       },
     };
@@ -297,6 +299,7 @@ describe("showSandboxLogsWithDeps", () => {
           writeStderr: () => true,
         },
       );
+      await new Promise<void>((resolve) => setImmediate(resolve));
       const liveGateway = gatewayLine(59, "live gateway");
       const liveSandbox = sandboxLine(1779488801, "live sandbox");
       followers.gateway?.stdout.end(`${liveGateway}\n`);
@@ -308,6 +311,7 @@ describe("showSandboxLogsWithDeps", () => {
       expect(written.join("").split("\n").filter(Boolean)).toEqual([
         gatewayLine(34, "gateway 4"),
         gatewayLine(35, "gateway 5"),
+        sandboxLine(1779488797, "sandbox 7"),
         sandboxLine(1779488798, "sandbox 8"),
         sandboxLine(1779488799, "sandbox 9"),
         handoffLine,

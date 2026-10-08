@@ -260,42 +260,62 @@ export type ReplayLineFilter = {
  * Follow mode starts each follower with its own `--tail N` replay before it
  * reads the merged, capped history, so the two overlap and nothing written
  * during setup is lost. This filter removes that overlap from the follower
- * (#12666). Each history line suppresses one identical follower line, and a
- * line older than the oldest timestamped history line is dropped because the
- * history cap already excluded it; untimestamped lines follow the entry above
- * them. The filter stops at the first line newer than the newest history line,
- * so live output passes through unchanged.
+ * (#12666). A follower stream is an older prefix, then lines the history also
+ * holds, then new lines. Each history line suppresses one identical follower
+ * line. With timestamps, a line older than the oldest history line is dropped
+ * and the filter stops at the first line newer than the newest history line;
+ * untimestamped lines follow the entry above them. Without timestamps, stream
+ * order decides: unmatched lines before a history match belong to the older
+ * prefix and are dropped, and the first unmatched line after a match ends the
+ * filter. Lines that never resolve are relayed rather than lost.
  */
 export function createReplayLineFilter(history: string): ReplayLineFilter {
   const pending = new Map<string, number>();
+  let historyLineCount = 0;
   let oldest: number | null = null;
   let newest: number | null = null;
   for (const line of history.split(LINE_SPLIT_RE)) {
     if (!line) continue;
+    historyLineCount += 1;
     pending.set(line, (pending.get(line) ?? 0) + 1);
     const timestamp = parseLineTimestamp(line);
     if (timestamp === null) continue;
     oldest = oldest === null ? timestamp : Math.min(oldest, timestamp);
     newest = newest === null ? timestamp : Math.max(newest, timestamp);
   }
-  let active = pending.size > 0;
+  let active = historyLineCount > 0;
   let partial = "";
+  let matched = false;
+  let held: string[] = [];
   // Untimestamped lines belong to the entry above them, as in mergeTailLogLines.
   let lastSeen: number | null = null;
 
-  const keepLine = (line: string): boolean => {
+  const deactivate = (): string => {
+    active = false;
+    const released = held.join("");
+    held = [];
+    return released;
+  };
+
+  // `segment` is one line with its original line ending, if any.
+  const filterLine = (segment: string): string => {
+    const line = segment.replace(/\r?\n$/u, "");
     const timestamp = parseLineTimestamp(line);
     if (timestamp !== null) lastSeen = timestamp;
     if (timestamp !== null && newest !== null && timestamp > newest) {
-      active = false;
-      return true;
+      return deactivate() + segment;
     }
     const count = pending.get(line) ?? 0;
     if (count > 0) {
       pending.set(line, count - 1);
-      return false;
+      matched = true;
+      held = [];
+      return "";
     }
-    return lastSeen === null || oldest === null || lastSeen >= oldest;
+    if (lastSeen !== null && oldest !== null) return lastSeen >= oldest ? segment : "";
+    if (matched) return deactivate() + segment;
+    held.push(segment);
+    return held.length > historyLineCount ? deactivate() : "";
   };
 
   return {
@@ -309,13 +329,10 @@ export function createReplayLineFilter(history: string): ReplayLineFilter {
           output.push(...segments.slice(index).map((line) => `${line}\n`));
           break;
         }
-        if (keepLine(segment.endsWith("\r") ? segment.slice(0, -1) : segment)) {
-          output.push(`${segment}\n`);
-        }
+        output.push(filterLine(`${segment}\n`));
       }
       if (!active || partial.length > MAX_REPLAY_FILTER_LINE_CHARS) {
-        active = false;
-        output.push(partial);
+        output.push(active ? deactivate() : "", partial);
         partial = "";
       }
       return output.join("");
@@ -323,8 +340,9 @@ export function createReplayLineFilter(history: string): ReplayLineFilter {
     finish(): string {
       const rest = partial;
       partial = "";
-      if (!active || !rest) return rest;
-      return keepLine(rest) ? rest : "";
+      if (!active) return rest;
+      const output = rest ? filterLine(rest) : "";
+      return deactivate() + output;
     },
   };
 }

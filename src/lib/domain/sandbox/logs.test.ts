@@ -297,6 +297,17 @@ describe("createReplayLineFilter (#12666)", () => {
     expect(filter.write(line(12, "c")) + filter.finish()).toBe("");
   });
 
+  it("uses stream order when the history has no timestamps", () => {
+    const filter = createReplayLineFilter("B\nC\n");
+    expect(filter.write("A\nB\n") + filter.write("D\n") + filter.finish()).toBe("D\n");
+  });
+
+  it("relays untimestamped lines that never meet the history", () => {
+    const filter = createReplayLineFilter("B\nC\n");
+    expect(filter.write("X\n") + filter.finish()).toBe("X\n");
+    expect(createReplayLineFilter("B\n").write("X\nY\n")).toBe("X\nY\n");
+  });
+
   it("passes everything through without history or for an oversized line", () => {
     expect(createReplayLineFilter("").write(`${line(10, "a")}\n`)).toBe(`${line(10, "a")}\n`);
 
