@@ -227,8 +227,8 @@ impl Service {
             return Ok(None);
         }
         let (_, spec) = targets(document, name, self, generations)?;
-        Ok(Some(
-            crate::services::authentication::Source::ManagedService {
+        Ok(Some(crate::services::authentication::source_json(
+            &crate::services::authentication::Source::ManagedService {
                 storage: crate::managed::Storage {
                     name: format!("{}-auth", spec.name),
                     owner: spec.owner.clone(),
@@ -243,9 +243,8 @@ impl Service {
                         .ok_or(Error::State("missing service process"))?;
                     format!("http://{}:{}/v1", process.bind_address, process.port)
                 },
-            }
-            .json()?,
-        ))
+            },
+        )?))
     }
 }
 

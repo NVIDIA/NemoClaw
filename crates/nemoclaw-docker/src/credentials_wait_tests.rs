@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::Engine;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -35,7 +36,7 @@ async fn proxy_key_waits_only_for_a_running_uninitialized_volume() {
                 "GET",
                 200,
                 "",
-                crate::docker::archive(&[(
+                crate::archive(&[(
                     "inference-key",
                     b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     0o600,

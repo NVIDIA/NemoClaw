@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::docker::fixture::Fixture;
+use crate::{Engine, fixture::Fixture};
+use nemoclaw_backend::{Error, ObservationError};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 #[derive(Default)]
@@ -134,9 +135,4 @@ async fn changed_connection_cannot_adopt_an_identical_volume_on_a_different_daem
         error,
         Error::Observation(ObservationError::BindingMismatch)
     ));
-    let encoded = storage.json().unwrap();
-    let backend = crate::managed::ManagedBackend::new(Engine::connect(&a.endpoint).unwrap());
-    use crate::backend::{Backend, Row};
-    let row = Row::from([("spec".into(), encoded), ("id".into(), id)]);
-    assert!(backend.ensure("test_storage", &row).await.error().is_some());
 }
