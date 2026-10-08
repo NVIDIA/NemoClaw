@@ -7,6 +7,8 @@
 mod agent_compatibility;
 #[path = "cache_provider.rs"]
 mod cache_provider;
+#[path = "cluster_credentials.rs"]
+mod cluster_credentials;
 #[path = "deployment.rs"]
 mod deployment;
 #[path = "discovery.rs"]

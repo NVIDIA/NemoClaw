@@ -331,6 +331,105 @@ pub async fn endpoint_addresses(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn cluster_credentials_validate_identity_before_resolving_the_kubernetes_target() {
+        use openshell_provider::Services as _;
+        use serde_json::json;
+
+        let missing_kubeconfig = format!(
+            "NEMOCLAW_TEST_ABSENT_KUBECONFIG_{}",
+            nemoclaw_backend::generate_generation()
+                .unwrap()
+                .to_ascii_uppercase()
+        );
+        assert!(std::env::var_os(&missing_kubeconfig).is_none());
+        let document = nemoclaw_sdk::config::Document::parse(
+            include_bytes!("../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let mut input = serde_json::to_value(document).unwrap();
+        input["spec"]["gateway"]["kubernetes"]["kubeconfig"]["env"] = json!(missing_kubeconfig);
+        input["spec"]["services"]["qwen"]["authentication"] = json!("bearer");
+        let document = nemoclaw_sdk::config::Document::parse(input.to_string().as_bytes()).unwrap();
+        let generations = [
+            "workspace",
+            "provider",
+            "sandbox",
+            "kubernetes_storage",
+            "kubernetes_gateway",
+            "inference_service",
+        ]
+        .map(|kind| (kind.into(), "a".repeat(32)))
+        .into();
+        let registration = nemoclaw_sdk::compile::targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.kind == "provider")
+            .unwrap()
+            .values;
+        let source = &registration["credential_source"];
+        let owner = &registration["owner"];
+        let endpoint = &registration["endpoint"];
+        assert_eq!(
+            OpenShellServices.validate_credential_source(source, owner, endpoint),
+            Ok(())
+        );
+        // A valid cluster source reaches its Kubernetes credential reference.
+        // No environment mutation, kubeconfig file, or live cluster is needed.
+        assert_eq!(
+            OpenShellServices
+                .resolve_credential_source(source, owner, endpoint)
+                .await,
+            Err(ObservationError::Authentication)
+        );
+
+        let original: serde_json::Value = serde_json::from_str(source).unwrap();
+        let foreign_endpoint = endpoint.replacen("http://", "http://other-", 1);
+        let mut foreign_host = original.clone();
+        foreign_host["endpoint"] = json!(foreign_endpoint);
+        let mut unauthenticated = original;
+        unauthenticated["storage"]["authenticated"] = json!(false);
+        for (case, source, owner, endpoint) in [
+            (
+                "owner",
+                source.clone(),
+                "foreign-owner".into(),
+                endpoint.clone(),
+            ),
+            (
+                "published endpoint",
+                source.clone(),
+                owner.clone(),
+                foreign_endpoint.clone(),
+            ),
+            (
+                "Service host",
+                foreign_host.to_string(),
+                owner.clone(),
+                foreign_endpoint,
+            ),
+            (
+                "authentication",
+                unauthenticated.to_string(),
+                owner.clone(),
+                endpoint.clone(),
+            ),
+        ] {
+            assert_eq!(
+                OpenShellServices.validate_credential_source(&source, &owner, &endpoint),
+                Err(ObservationError::BindingMismatch),
+                "{case}"
+            );
+            assert_eq!(
+                OpenShellServices
+                    .resolve_credential_source(&source, &owner, &endpoint)
+                    .await,
+                Err(ObservationError::BindingMismatch),
+                "{case} must be rejected before Kubernetes credential lookup"
+            );
+        }
+    }
+
     #[test]
     fn openshell_service_adapter_validates_compiled_cluster_profile_identity() {
         use openshell_provider::Services as _;
