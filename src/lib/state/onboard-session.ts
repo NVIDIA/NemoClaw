@@ -327,18 +327,6 @@ export interface Session {
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
-  // SHA-256 hex digest of every legacy credential value successfully
-  // written to the OpenShell gateway during this onboard session, keyed by
-  // env-name. Persisted across process restarts so a `--resume` run that
-  // skips already-completed upserts still knows the migration completed
-  // earlier and can safely remove ~/.nemoclaw/credentials.json on the
-  // final completeSession. Storing the hash (not just the env-name) lets
-  // us detect when the legacy file value was edited between runs, when
-  // the gateway provider was reset out-of-band, or when an unrelated
-  // session is found on disk — in any of those cases the in-memory
-  // migrated set is NOT seeded from the persisted record, so the cleanup
-  // gate keeps the file until the *current* value is actually re-migrated.
-  migratedLegacyValueHashes: Record<string, string> | null;
   gpuPassthrough: boolean;
   telegramConfig: TelegramConfig | null;
   wechatConfig: WechatConfig | null;
@@ -388,7 +376,6 @@ export interface SessionUpdates {
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
-  migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
@@ -598,15 +585,6 @@ function readCanonicalIsoTimestamp(value: SessionJsonValue | undefined): string 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((entry): entry is string => typeof entry === "string");
-}
-
-function readStringRecord(value: SessionJsonValue | undefined): Record<string, string> | null {
-  if (!isObject(value)) return null;
-  const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof k === "string" && typeof v === "string") result[k] = v;
-  }
-  return result;
 }
 
 function isStepStatus(value: string): value is StepStatus {
@@ -1056,9 +1034,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
-      ? readStringRecord(overrides.migratedLegacyValueHashes)
-      : null,
     gpuPassthrough: overrides.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     wechatConfig: parseWechatConfig(overrides.wechatConfig),
@@ -1196,7 +1171,6 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
     wechatConfig: parseWechatConfig(data.wechatConfig),
@@ -1793,13 +1767,6 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else {
     const messagingPlan = parseSandboxMessagingPlan(updates.messagingPlan);
     if (messagingPlan) safe.messagingPlan = messagingPlan;
-  }
-  if (isObject(updates.migratedLegacyValueHashes)) {
-    const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
-      if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
-    }
-    safe.migratedLegacyValueHashes = cleaned;
   }
   if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
     safe.gpuPassthrough = updates.gpuPassthrough;

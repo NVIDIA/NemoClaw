@@ -165,8 +165,7 @@ export async function collectOperationEvent(
   };
   if (
     event.parameters.collectionStatus !== "collection_error" &&
-    (event.parameters.location.locationStatus !== "reported" ||
-      missingObservation(event.parameters))
+    missingObservation(event.parameters)
   )
     event.parameters.collectionStatus = "partial";
   return event;

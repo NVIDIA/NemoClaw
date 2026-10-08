@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
-
 import { legacyCredentialAliases } from "../credentials/legacy-env-aliases";
 import type { WebSearchConfig } from "../inference/web-search";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
@@ -56,66 +54,6 @@ export interface CredentialProviderRegistrationDeps {
   updateSession(mutator: (session: Session) => Session | void): Session;
   stagedLegacyValues: ReadonlyMap<string, string>;
   migratedLegacyKeys: Set<string>;
-  persistMigratedLegacyKeys(): void;
-}
-
-// SHA-256 hex digest of `value`. Used to fingerprint migrated legacy
-// secrets in the persisted onboard session so a later `--resume` can
-// detect when the legacy file value was edited between runs (or another
-// session is on disk with stale entries) and refuse to inherit a stale
-// "migrated" mark.
-function legacyValueHash(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-// Mirror the in-memory `migratedLegacyKeys` set into the persisted onboard
-// session along with each entry's value hash. `--resume` invocations that
-// skip the upsert wrappers entirely use this to inherit migration state
-// from the previous attempt — but only when the staged value at restore
-// time still hashes to the same digest, so an edit to the legacy file or
-// an out-of-band gateway reset cannot satisfy the cleanup gate.
-export function persistMigratedLegacyKeys(
-  deps: Pick<
-    CredentialProviderRegistrationDeps,
-    "migratedLegacyKeys" | "stagedLegacyValues" | "updateSession"
-  >,
-): void {
-  const { migratedLegacyKeys, stagedLegacyValues } = deps;
-  try {
-    const hashes: Record<string, string> = {};
-    for (const key of migratedLegacyKeys) {
-      const stagedValue = stagedLegacyValues.get(key);
-      if (stagedValue !== undefined) {
-        hashes[key] = legacyValueHash(stagedValue);
-      }
-    }
-    deps.updateSession((current: Session) => {
-      current.migratedLegacyValueHashes = hashes;
-      return current;
-    });
-  } catch {
-    // updateSession can throw if the session file isn't yet writable
-    // (e.g. very early in the run before lockless state is established).
-    // The cleanup gate in this same process still consults the in-memory
-    // set, so a missed write only matters if THIS run later crashes and
-    // a future --resume needs the persisted value. Best effort.
-  }
-}
-
-/** Resume accepts migration receipts only while their staged values still match. */
-export function inheritMigratedLegacyKeys(
-  resume: boolean,
-  persistedHashes: NonNullable<Session["migratedLegacyValueHashes"]>,
-  stagedLegacyValues: ReadonlyMap<string, string>,
-  migratedLegacyKeys: Set<string>,
-): void {
-  if (!resume) return;
-  for (const [key, hash] of Object.entries(persistedHashes)) {
-    if (typeof key !== "string" || typeof hash !== "string") continue;
-    const currentValue = stagedLegacyValues.get(key);
-    if (currentValue === undefined || legacyValueHash(currentValue) !== hash) continue;
-    migratedLegacyKeys.add(key);
-  }
 }
 
 /** Credential identity comes from the declared alias relationship, not shared values. */
@@ -143,7 +81,6 @@ function recordMigratedLegacyMessagingCredentials(
     if (migration.migrated) deps.migratedLegacyKeys.add(migration.envKey);
     else deps.migratedLegacyKeys.delete(migration.envKey);
   }
-  deps.persistMigratedLegacyKeys();
 }
 
 function setStagedCredentialProviderReceipts(
@@ -339,7 +276,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
             deps.migratedLegacyKeys.delete(key);
           }
         }
-        deps.persistMigratedLegacyKeys();
       }
     }
     return result;

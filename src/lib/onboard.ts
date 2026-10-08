@@ -794,23 +794,15 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
 // branch that upserts a placeholder under the same env-key name).
 const stagedLegacyValues: Map<string, string> = new Map<string, string>();
 
-// Env-keys whose successful gateway upsert actually used the staged legacy
-// value. Seeded from the persisted onboard session at the start of every
-// run so a `--resume` invocation that skips already-completed upserts still
-// remembers the migrations the prior attempt committed. The post-onboard
+// Env-keys whose successful gateway upsert used the staged legacy value in
+// this run. A resumed run starts empty because an earlier write cannot prove
+// the gateway still holds the credential. The post-onboard
 // legacy-file cleanup is gated on `stagedLegacyKeys ⊆ migratedLegacyKeys`
 // so picking a local inference provider, disabling a preselected messaging
 // channel, or any other path that upserts a different value under the same
 // env-key name leaves the file alone instead of stranding the user's only
 // copy.
 const migratedLegacyKeys: Set<string> = new Set<string>();
-
-const persistMigratedLegacyKeys = () =>
-  credentialProviderRegistration.persistMigratedLegacyKeys({
-    migratedLegacyKeys,
-    stagedLegacyValues,
-    updateSession: onboardSession.updateSession,
-  });
 
 const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifier({
   runOpenshell,
@@ -826,7 +818,6 @@ const registration = credentialProviderRegistration.createCredentialProviderRegi
   updateSession: onboardSession.updateSession,
   stagedLegacyValues,
   migratedLegacyKeys,
-  persistMigratedLegacyKeys,
 });
 const { applyMessagingProviders, upsertProvider, providerMatchesGatewayCredential } = registration;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
@@ -2696,12 +2687,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         const value = process.env[key];
         if (value) stagedLegacyValues.set(key, value);
       }
-      credentialProviderRegistration.inheritMigratedLegacyKeys(
-        resume,
-        session?.migratedLegacyValueHashes ?? {},
-        stagedLegacyValues,
-        migratedLegacyKeys,
-      );
       if (stagedLegacyKeys.length > 0) {
         console.error(
           `  Staged ${String(stagedLegacyKeys.length)} legacy credential(s) for migration to the OpenShell gateway.`,
