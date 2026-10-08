@@ -139,6 +139,10 @@ If a create succeeds but its reply is lost, OpenTofu state has no record of a ge
 The next apply generates another, finds the volume labelled with the lost one, and stops.
 To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid` and `nemoclaw.nvidia.com/generation` labels and apply again.
 
+`nemoclaw_ollama_proxy_storage` takes `name` and `engine`, and keeps the proxy credential in a volume named `<name>-auth`.
+`nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
+Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
+
 ### NemoClaw Data Sources
 
 | Data source | Observes |
@@ -153,6 +157,8 @@ To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid
 | `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
 | `nemoclaw_sandbox_readiness` | [Sandbox completion](#sandbox-completion) |
 | `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
+| `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
+| `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
 
 ### Docker and Helm Types
 
@@ -399,6 +405,15 @@ Generated graphs declare:
 - All capabilities dropped, `no-new-privileges`, restart policy `no`, and JSON-file logs rotated at 32 MB across three files.
 
 OpenTofu shows a changed setting as a replacement of the whole `NEMOCLAW_RUNTIME_SPEC` environment entry.
+
+## Ollama Runtime Contracts
+
+`nemoclaw_ollama_runtime` computes the managed Ollama runtime's `NEMOCLAW_RUNTIME_SPEC` the same way.
+Its blocks follow the Ollama runtime contract with snake_case names: `hardware`, `model` with `name` and `digest`, `serving`, and `memory`.
+
+`nemoclaw_ollama_proxy_runtime` computes the external Ollama proxy's `NEMOCLAW_OLLAMA_PROXY` value from `bind_address`, `upstream`, `model`, and `digest`.
+`bind_address` is a loopback or private address with a port, and `upstream` a loopback HTTP endpoint ending in `/v1`; the output `spec` names the endpoint the proxy serves on `bind_address`.
+Generated graphs pass each `spec` to its container's environment variable.
 
 ## Runtime Image Compatibility
 

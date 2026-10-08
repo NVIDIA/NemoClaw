@@ -187,3 +187,23 @@ fn inference_discovery_keeps_credentials_as_optional_references() {
     ));
     assert!(!schema.block.attributes.contains_key("credential"));
 }
+
+#[test]
+fn ollama_proxy_identity_is_optional_and_computed() {
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let resources = provider.get_resources(&mut diagnostics).unwrap();
+    for kind in ["ollama_proxy_storage", "ollama_external_model"] {
+        let schema = resources[kind].schema(&mut diagnostics).unwrap();
+        for attribute in ["owner", "generation"] {
+            assert!(
+                matches!(
+                    schema.block.attributes[attribute].constraint,
+                    tf_provider::schema::AttributeConstraint::OptionalComputed
+                ),
+                "{kind}.{attribute}"
+            );
+        }
+    }
+    assert!(diagnostics.errors.is_empty());
+}

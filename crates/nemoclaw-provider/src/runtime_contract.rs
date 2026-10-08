@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Computes the validated vLLM runtime contract from typed settings, the way
-//! a policy document data source computes a policy.
+//! Computes a validated runtime contract (vLLM or Ollama) from typed
+//! settings, the way a policy document data source computes a policy.
 
 use async_trait::async_trait;
 use nemoclaw_runtime::schema::PathSegment;
@@ -17,14 +17,38 @@ pub(crate) type RuntimeState = BTreeMap<String, Value<Dynamic>>;
 
 const SPEC: &str = "spec";
 
-pub(crate) struct VllmRuntimeDataSource {
+/// One runtime's contract: its settings schema and its encoding.
+pub(crate) struct RuntimeDataSource {
     fields: Fields,
+    /// The specification's `kind` tag.
+    kind: &'static str,
+    /// Apply defaults to settings and tag them as this runtime's specification.
+    encode: fn(serde_json::Value) -> Option<nemoclaw_runtime::RuntimeSpec>,
 }
 
-impl VllmRuntimeDataSource {
-    pub(crate) fn new() -> Result<Self, nemoclaw_tofu::shape::Unmappable> {
+impl RuntimeDataSource {
+    pub(crate) fn vllm() -> Result<Self, nemoclaw_tofu::shape::Unmappable> {
         Ok(Self {
             fields: nemoclaw_sdk::services::installers::vllm::runtime_fields()?,
+            kind: "vllm",
+            encode: |settings| {
+                let mut service: nemoclaw_runtime::vllm::Service =
+                    serde_json::from_value(settings).ok()?;
+                service.defaults();
+                Some(nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(service)))
+            },
+        })
+    }
+    pub(crate) fn ollama() -> Result<Self, nemoclaw_tofu::shape::Unmappable> {
+        Ok(Self {
+            fields: nemoclaw_sdk::services::installers::ollama::runtime_fields()?,
+            kind: "ollama",
+            encode: |settings| {
+                let mut service: nemoclaw_runtime::ollama::ManagedOllama =
+                    serde_json::from_value(settings).ok()?;
+                service.defaults();
+                Some(nemoclaw_runtime::RuntimeSpec::Ollama(Box::new(service)))
+            },
         })
     }
 
@@ -46,19 +70,16 @@ impl VllmRuntimeDataSource {
         );
         let settings = from_hcl(&self.fields, &settings);
         let tagged = |mut value: serde_json::Value| {
-            value["kind"] = serde_json::json!("vllm");
+            value["kind"] = serde_json::json!(self.kind);
             value
         };
         // Omitted or zero settings select their defaults, as in YAML.
-        let mut service: nemoclaw_runtime::vllm::Service = serde_json::from_value(settings.clone())
-            .map_err(|_| {
-                self.located(
-                    &tagged(settings),
-                    "settings do not match the vLLM runtime contract".into(),
-                )
-            })?;
-        service.defaults();
-        let spec = nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(service));
+        let spec = (self.encode)(settings.clone()).ok_or_else(|| {
+            self.located(
+                &tagged(settings),
+                format!("settings do not match the {} runtime contract", self.kind),
+            )
+        })?;
         let normalized = serde_json::to_value(&spec).map_err(|_| {
             (
                 AttributePath::root(),
@@ -133,14 +154,14 @@ fn attribute_path(fields: &Fields, segments: &[PathSegment]) -> (AttributePath, 
 }
 
 #[async_trait]
-impl DataSource for VllmRuntimeDataSource {
+impl DataSource for RuntimeDataSource {
     type State<'a> = RuntimeState;
     type ProviderMetaState<'a> = ValueEmpty;
 
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
         let mut block = block(
             &self.fields,
-            "Computes the vLLM runtime contract from typed settings without contacting any host.",
+            "Computes a runtime contract from typed settings without contacting any host.",
         );
         block.attributes.insert(
             SPEC.into(),
@@ -160,7 +181,7 @@ impl DataSource for VllmRuntimeDataSource {
         match self.specification(&config) {
             Ok(_) => Some(()),
             Err((path, detail)) => {
-                diags.error("Invalid vLLM runtime settings", detail, path);
+                diags.error("Invalid runtime settings", detail, path);
                 None
             }
         }
@@ -178,11 +199,11 @@ impl DataSource for VllmRuntimeDataSource {
                 Some(config)
             }
             Ok(None) => {
-                diags.root_error_short("vLLM runtime settings are not yet known");
+                diags.root_error_short("Runtime settings are not yet known");
                 None
             }
             Err((path, detail)) => {
-                diags.error("Invalid vLLM runtime settings", detail, path);
+                diags.error("Invalid runtime settings", detail, path);
                 None
             }
         }
@@ -199,7 +220,7 @@ mod tests {
 
     #[test]
     fn omitted_blocks_and_attributes_do_not_reach_the_runtime_contract() {
-        let source = VllmRuntimeDataSource::new().unwrap();
+        let source = RuntimeDataSource::vllm().unwrap();
         // OpenTofu sends optional blocks as lists of at most one block, and
         // every attribute of a present block, null when omitted.
         let config = RuntimeState::from([
@@ -234,11 +255,28 @@ mod tests {
     #[test]
     fn generated_settings_reproduce_the_compiled_runtime_contract() {
         use nemoclaw_sdk::{compile, config::Document};
-        let source = VllmRuntimeDataSource::new().unwrap();
-        for yaml in [
-            include_str!("../../../examples/spark/vllm.yaml"),
-            include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
+        for (kind, data, yaml) in [
+            (
+                "inference_service",
+                "nemoclaw_vllm_runtime",
+                include_str!("../../../examples/spark/vllm.yaml"),
+            ),
+            (
+                "inference_service",
+                "nemoclaw_vllm_runtime",
+                include_str!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml"),
+            ),
+            (
+                "ollama_service",
+                "nemoclaw_ollama_runtime",
+                include_str!("../../../examples/managed-ollama.yaml"),
+            ),
         ] {
+            let source = if kind == "ollama_service" {
+                RuntimeDataSource::ollama().unwrap()
+            } else {
+                RuntimeDataSource::vllm().unwrap()
+            };
             let document = Document::parse(yaml.as_bytes()).unwrap();
             let generations = [
                 "workspace",
@@ -246,6 +284,7 @@ mod tests {
                 "sandbox",
                 "managed_gateway",
                 "inference_service",
+                "ollama_service",
             ]
             .map(|kind| (kind.into(), "a".repeat(32)))
             .into();
@@ -253,11 +292,11 @@ mod tests {
             let target = compile::runtime_targets(&document, &generations)
                 .unwrap()
                 .into_iter()
-                .find(|target| target.kind == "inference_service")
+                .find(|target| target.kind == kind)
                 .unwrap();
             let spec: nemoclaw_sdk::managed::Spec =
                 serde_json::from_str(&target.values["spec"]).unwrap();
-            let settings = graph["data"]["nemoclaw_vllm_runtime"]
+            let settings = graph["data"][data]
                 .as_object()
                 .unwrap()
                 .values()
@@ -277,7 +316,7 @@ mod tests {
 
     #[test]
     fn rejected_settings_name_their_block_attribute() {
-        let source = VllmRuntimeDataSource::new().unwrap();
+        let source = RuntimeDataSource::vllm().unwrap();
         let config = RuntimeState::from([
             (
                 "hardware".into(),

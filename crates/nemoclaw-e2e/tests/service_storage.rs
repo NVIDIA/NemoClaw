@@ -295,3 +295,42 @@ async fn lost_reply_with_omitted_identity_stops_until_its_identity_is_supplied()
         assert_eq!(volumes.lock().unwrap().creates, 1, "{kind}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+async fn omitted_proxy_storage_identity_is_generated_and_labels_its_credential_volume() {
+    let (engine, volumes) = volume_engine().await;
+    let workspace = workspace();
+    configure(
+        &workspace,
+        "nemoclaw_ollama_proxy_storage",
+        "authored-proxy",
+        None,
+        &engine.endpoint,
+    );
+    success(
+        &workspace,
+        &["apply", "-input=false", "-auto-approve", "-no-color"],
+    );
+    let attributes = state_attributes(&workspace);
+    let owner = attributes["owner"].as_str().unwrap().to_owned();
+    let generation = attributes["generation"].as_str().unwrap().to_owned();
+    assert_eq!(owner.len(), 36, "{owner}");
+    assert!(
+        generation.len() == 32 && lowercase_hex(&generation),
+        "{generation}"
+    );
+    let labels = volumes.lock().unwrap().volumes["authored-proxy-auth"]["Labels"].clone();
+    assert_eq!(labels["nemoclaw.nvidia.com/uid"], owner);
+    assert_eq!(labels["nemoclaw.nvidia.com/generation"], generation);
+    let output = run(
+        &workspace,
+        &["plan", "-input=false", "-no-color", "-detailed-exitcode"],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "generated identity must not change: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
