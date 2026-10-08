@@ -86,5 +86,14 @@ describe("Docker-driver gateway binding persistence", () => {
       dockerNetworkName: undefined,
     });
     expect(env).toEqual({});
+    fs.unlinkSync(receipt);
+    fs.writeFileSync(receipt, JSON.stringify({ stateDir: home, dockerNetworkName: "foreign" }), {
+      mode: 0o600,
+    });
+    expect(readDockerDriverGatewayBinding(home, 18080)).toBeNull();
+    expect(resolveDockerDriverGatewayBinding(env, home, 18080)).toEqual({
+      stateDir: undefined,
+      dockerNetworkName: undefined,
+    });
   });
 });

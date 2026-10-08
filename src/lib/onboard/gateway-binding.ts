@@ -19,6 +19,7 @@
  * ports never collide.
  */
 
+import os from "node:os";
 import type { GatewayReuseState } from "../state/gateway";
 import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
@@ -27,7 +28,28 @@ import {
   resolveGatewayCompatContainerName,
   resolveGatewayName,
 } from "./gateway-binding/identity";
-import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
+import {
+  DEFAULT_GATEWAY_PORT,
+  resolveGatewayStateDirForPort as resolveConfiguredGatewayStateDirForPort,
+} from "./gateway/state-dir";
+import {
+  readDockerDriverGatewayBinding,
+  resolveDockerDriverGatewayBinding,
+} from "./gateway/runtime-binding";
+
+export { resolveDockerDriverGatewayBinding };
+
+/** Resolve explicit or saved inputs through the existing directory validator. */
+export function resolveGatewayStateDirForPort(
+  options: Parameters<typeof resolveConfiguredGatewayStateDirForPort>[0],
+): string {
+  return resolveConfiguredGatewayStateDirForPort({
+    ...options,
+    configured: options.configured?.trim()
+      ? options.configured
+      : readDockerDriverGatewayBinding(options.home, options.port)?.stateDir,
+  });
+}
 
 export {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
@@ -44,7 +66,6 @@ export {
   isManagedGatewayStateRootReservation,
   managedGatewayStateRootOwnershipFailure,
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
-  resolveGatewayStateDirForPort,
   resolveGatewayStateDirName,
   UnsafeGatewayStateDirectoryError,
 } from "./gateway/state-dir";
@@ -277,4 +298,23 @@ export function createDynamicGatewayRuntimeHelpers(deps: DynamicGatewayRuntimeDe
     waitForGatewayHttpReady,
     isGatewayTcpReady,
   };
+}
+
+/** Supply recovered network inputs through the runtime's existing dependency hook. */
+export function createGatewayEnvLoader(
+  module: typeof import("./docker-driver-gateway-env"),
+): () => typeof import("./docker-driver-gateway-env") {
+  return () => ({
+    ...module,
+    buildDockerDriverGatewayEnv: (options) =>
+      module.buildDockerDriverGatewayEnv({
+        ...options,
+        dockerNetworkName:
+          resolveDockerDriverGatewayBinding(
+            process.env,
+            os.homedir(),
+            options.gatewayPort ?? DEFAULT_GATEWAY_PORT,
+          ).dockerNetworkName ?? options.dockerNetworkName,
+      }),
+  });
 }

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
+import { createGatewayEnvLoader } from "./gateway-binding";
 import { writeDockerDriverGatewayBinding } from "./gateway/runtime-binding";
 import {
   gatewayIdForStateDir,
@@ -38,7 +39,7 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
     getBlueprintMaxOpenshellVersion: () => null,
     getInstalledOpenshellVersion: parseVersion,
     isOpenshellDevVersion: () => false,
-    loadDockerDriverGatewayEnv: () => dockerDriverGatewayEnv,
+    loadDockerDriverGatewayEnv: createGatewayEnvLoader(dockerDriverGatewayEnv),
     runCapture,
     shouldUseOpenshellDevChannel: () => false,
     supportedOpenshellFallbackVersion: "0.0.116",

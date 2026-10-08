@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { writeConfigFile } from "../../state/config-io";
+import { resolveGatewayStateDirForPort } from "./state-dir";
 
 const MAX_BINDING_BYTES = 256 * 1024;
 const NETWORK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
@@ -57,7 +58,13 @@ export function readDockerDriverGatewayBinding(
     )
       return null;
     const parsed: unknown = JSON.parse(fs.readFileSync(descriptor, "utf8"));
-    return validBinding(parsed) ? { ...parsed } : null;
+    if (!validBinding(parsed)) return null;
+    const stateDir = resolveGatewayStateDirForPort({
+      configured: parsed.stateDir,
+      home,
+      port: gatewayPort,
+    });
+    return { stateDir, dockerNetworkName: parsed.dockerNetworkName };
   } catch {
     return null;
   } finally {
