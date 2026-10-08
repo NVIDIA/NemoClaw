@@ -107,3 +107,15 @@ then call `release()` in `finally`. Check `wasInterrupted()` before publication 
 success, since interruption can arrive during post-transfer verification or lock release. Do not
 retry an interrupted or indeterminate transfer. Session exports, onboarding downloads, and plugin
 copy remain assigned to later #9810 deliveries.
+
+Native NVIDIA policy preparation and invocation probes are shared across agent
+integrations. When NVIDIA is selected, policy preparation adds the mandatory
+`native_nvidia_inference` entry from the checked-in provider profile's endpoint,
+method, path, and binary scope. Setup does not
+change the gateway's `providers_v2_enabled` setting. OpenShell resolves the attached
+credential at its profile endpoints even when provider-derived policy composition
+is disabled. Existing sandboxes receive the required entry during a native rebuild;
+a conflicting host-defined entry stops rebuild before the sandbox is replaced.
+DCode reads the attached `NVIDIA_INFERENCE_API_KEY` placeholder from its runtime
+environment. Its managed runtime maps the legacy config key to that current
+placeholder, so a restored config does not keep sending the retired fixed value.

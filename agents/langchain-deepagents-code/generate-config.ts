@@ -41,7 +41,7 @@ const NEMOTRON_ULTRA_MODEL_IDS = new Set([
   "nvidia/nvidia/nemotron-3-ultra",
 ]);
 const MANAGED_INFERENCE_API_KEY_ENV = "DEEPAGENTS_CODE_OPENAI_API_KEY";
-const ATTACHED_PROVIDER_API_KEY_ENV = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY";
+const ATTACHED_PROVIDER_API_KEY_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 function readSettings(env: NodeJS.ProcessEnv): Settings {
   const providerKey = normalizeCommentMetadata(

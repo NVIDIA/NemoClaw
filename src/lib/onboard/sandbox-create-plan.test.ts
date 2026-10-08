@@ -190,10 +190,11 @@ async function expectCredentialBindingFailure({
 }
 
 describe("prepareSandboxCreatePolicy", () => {
-  it("passes the sandbox name so credential-binding presets can materialize", () => {
+  it("passes the sandbox name and selected provider into policy preparation (#12822)", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",
       sandboxName: "bound-sandbox",
+      inferenceProvider: "nemoclaw-nvidia-prod-v1",
       channels,
       enabledChannels: ["telegram"],
       disabledChannelNames: new Set(),
@@ -222,6 +223,7 @@ describe("prepareSandboxCreatePolicy", () => {
 
     expect(seenOptions[0]).toMatchObject({
       sandboxName: "bound-sandbox",
+      inferenceProvider: "nemoclaw-nvidia-prod-v1",
       messagingConfig,
     });
   });
