@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
+import * as importedSandboxNameContract from "../../nemoclaw/src/shared/sandbox-name.cts";
 import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
 import {
   E2E_GATEWAY_RUNTIMES,
@@ -30,6 +31,13 @@ import {
 } from "./openshell-gateway-upgrade-fixture.mts";
 import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
+
+const sandboxNameContract = (
+  "default" in importedSandboxNameContract && importedSandboxNameContract.default
+    ? importedSandboxNameContract.default
+    : importedSandboxNameContract
+) as typeof import("../../nemoclaw/src/shared/sandbox-name.cts");
+const { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } = sandboxNameContract;
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -941,7 +949,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "hermes",
-      NEMOCLAW_SANDBOX_NAME: "e2e-hm-compatible-anthropic-switch",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hm-anthropic",
       NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
       NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
@@ -1244,7 +1252,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_E2E_SHARD: "anthropic",
-      NEMOCLAW_SANDBOX_NAME: "e2e-oc-compatible-anthropic-switch",
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-anthropic",
       NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
       NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
@@ -1782,6 +1790,12 @@ export function validateE2eTargetCatalogue(
       if (!ENVIRONMENT_NAME_PATTERN.test(name) || value.includes("\n") || value.includes("\r")) {
         throw new Error(`E2E target ${entry.id} has an invalid environment entry`);
       }
+    }
+    const sandboxName = entry.environment.NEMOCLAW_SANDBOX_NAME;
+    if (sandboxName !== undefined && !isValidName(sandboxName)) {
+      throw new Error(
+        `E2E target ${entry.id} has invalid sandbox name ${diagnosticPreview(sandboxName)}; expected ${NAME_ALLOWED_FORMAT}`,
+      );
     }
     validateE2eExecutionMetadata(
       {

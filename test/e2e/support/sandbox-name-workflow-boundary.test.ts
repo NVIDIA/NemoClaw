@@ -7,11 +7,31 @@ import {
   resolveWorkflowSandboxIdentities,
   validateWorkflowSandboxNames,
 } from "../../../tools/e2e/sandbox-name-workflow-boundary.mts";
+import {
+  catalogueTarget,
+  validateE2eTargetCatalogue,
+} from "../../../tools/e2e/target-catalogue.mts";
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATHS = [".github/workflows/e2e.yaml"] as const;
 
-describe("live workflow sandbox name boundary", () => {
+describe("E2E sandbox name boundary", () => {
+  it("rejects a catalogue target with an invalid sandbox name", () => {
+    const target = catalogueTarget("network-policy");
+
+    expect(() =>
+      validateE2eTargetCatalogue([
+        {
+          ...target,
+          environment: {
+            ...target.environment,
+            NEMOCLAW_SANDBOX_NAME: "e2e-overlong-catalogue-name",
+          },
+        },
+      ]),
+    ).toThrow("invalid sandbox name");
+  });
+
   it.each(WORKFLOW_PATHS)(
     "keeps every literal and matrix-generated sandbox identity canonical in %s (#8497)",
     (workflowPath) => {
