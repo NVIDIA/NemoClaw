@@ -12,8 +12,11 @@ use nemoclaw_sdk::{
     },
 };
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 
 const OWNER: &str = "00000000-0000-4000-8000-000000000001";
+const IDENTITY_PATH: &str = "/api/v1/namespaces/kube-system";
+const STORAGE_CLASSES_PATH: &str = "/apis/storage.k8s.io/v1/storageclasses";
 
 /// A cluster with kube-system, one default StorageClass, and optionally the
 /// Agent Sandbox controller already installed.
@@ -135,4 +138,124 @@ async fn a_rebuilt_cluster_at_the_same_address_is_refused() {
         ensure_storage(&cluster, &storage(directory.path())).await,
         Err(ObservationError::BindingMismatch)
     ));
+}
+
+/// How the API server fails the request under test: with an HTTP status, or
+/// by closing the connection without answering.
+#[derive(Clone, Copy)]
+enum Fault {
+    Status(u16),
+    Dropped,
+}
+
+/// Apply storage against a cluster that fails every GET of `faulted` as
+/// `fault` and answers everything else normally. Returns what storage
+/// reports and checks what a failed read must leave behind: the cluster
+/// unchanged and no write sent. The identity read comes before storage binds
+/// the cluster, so a failure there must leave no receipt.
+async fn apply_with_fault(
+    faulted: &'static str,
+    fault: Fault,
+) -> Result<Receipt, ObservationError> {
+    let objects = cluster(true);
+    let before = objects.0.lock().unwrap().clone();
+    let requests = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+    let (served, log) = (objects.clone(), requests.clone());
+    let fixture = crate::transport::Fixture::start_tcp(move |request| {
+        // The kube client appends a query string to every path.
+        let path = request
+            .path
+            .split('?')
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        log.lock()
+            .unwrap()
+            .push((request.method.clone(), path.clone()));
+        if request.method == "GET" && path == faulted {
+            return match fault {
+                Fault::Status(code) => Some((
+                    code,
+                    json!({"apiVersion": "v1", "kind": "Status", "status": "Failure",
+                        "code": code, "reason": "Denied"})
+                    .to_string()
+                    .into_bytes(),
+                )),
+                Fault::Dropped => None,
+            };
+        }
+        served.answer(&request.method, &request.path, &request.body)
+    })
+    .await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    let result = ensure_storage(&cluster, &storage(directory.path())).await;
+    let requests = requests.lock().unwrap();
+    assert!(
+        requests
+            .iter()
+            .any(|(method, path)| method == "GET" && path == faulted),
+        "the faulted request was never made"
+    );
+    assert!(
+        requests.iter().all(|(method, _)| method == "GET"),
+        "a failed read was followed by a write"
+    );
+    assert_eq!(*objects.0.lock().unwrap(), before, "the cluster changed");
+    if faulted == IDENTITY_PATH {
+        assert_eq!(
+            Receipt::load(directory.path(), OWNER, "nc-0123456789abcdef-gateway").unwrap(),
+            None,
+            "a failed identity read left a receipt"
+        );
+    }
+    result
+}
+
+#[tokio::test]
+async fn an_unauthorized_cluster_identity_read_is_an_authentication_failure() {
+    assert_eq!(
+        apply_with_fault(IDENTITY_PATH, Fault::Status(401)).await,
+        Err(ObservationError::Authentication)
+    );
+}
+
+#[tokio::test]
+async fn a_forbidden_cluster_identity_read_is_a_permission_failure() {
+    assert_eq!(
+        apply_with_fault(IDENTITY_PATH, Fault::Status(403)).await,
+        Err(ObservationError::Permission)
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_connection_during_the_cluster_identity_read_is_a_transport_failure() {
+    assert_eq!(
+        apply_with_fault(IDENTITY_PATH, Fault::Dropped).await,
+        Err(ObservationError::Transport)
+    );
+}
+
+#[tokio::test]
+async fn an_unauthorized_storage_class_list_is_an_authentication_failure() {
+    assert_eq!(
+        apply_with_fault(STORAGE_CLASSES_PATH, Fault::Status(401)).await,
+        Err(ObservationError::Authentication)
+    );
+}
+
+#[tokio::test]
+async fn a_forbidden_storage_class_list_is_a_permission_failure() {
+    assert_eq!(
+        apply_with_fault(STORAGE_CLASSES_PATH, Fault::Status(403)).await,
+        Err(ObservationError::Permission)
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_connection_during_the_storage_class_list_is_a_transport_failure() {
+    assert_eq!(
+        apply_with_fault(STORAGE_CLASSES_PATH, Fault::Dropped).await,
+        Err(ObservationError::Transport)
+    );
 }
