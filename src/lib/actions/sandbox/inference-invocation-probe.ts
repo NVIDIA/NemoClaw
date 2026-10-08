@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
@@ -119,10 +120,10 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   return {
     endpoint: `${apiBaseUrl}/chat/completions`,
-    headers: useNativeNvidia ? ["Authorization: Bearer nemoclaw-openshell-provider"] : [],
+    headers: [],
     payload: {
       model: input.model,
-      [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider),
+      [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
       messages: [{ role: "user", content: "Reply with OK" }],
       stream: false,
     },
@@ -140,13 +141,16 @@ export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
 ): string {
   const request = buildProbeRequest(input);
-  const headerArgs = ["Content-Type: application/json", ...request.headers]
-    .map((header) => `-H ${shellQuote(header)}`)
-    .join(" ");
+  const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const headerArgs =
+    ["Content-Type: application/json", ...request.headers]
+      .map((header) => `-H ${shellQuote(header)}`)
+      .join(" ") + (useNativeNvidia ? ' -H "$AUTH_HEADER"' : "");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
+    ...(useNativeNvidia ? [NATIVE_NVIDIA_AUTH_HEADER_SCRIPT] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
     `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
