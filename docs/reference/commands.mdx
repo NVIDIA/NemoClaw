@@ -314,7 +314,8 @@ If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports Docker-managed OpenClaw sandboxes and canonical managed Hermes or LangChain Deep Agents Code sandboxes in the default workspace.
-Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Supported sandboxes use hosted external inference or a fixed native hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Native hosted export requires a matching provider profile, attachment receipt, endpoint, API family, and credential reference.
 OpenClaw exports for attached Ollama with a managed proxy and the fixed managed vLLM profile include a named service with `image: null`.
 Replace only that value with an official, immutable, compatible v1 runtime image before v1 parsing or planning.
 Other local inference and Podman exports remain deferred.

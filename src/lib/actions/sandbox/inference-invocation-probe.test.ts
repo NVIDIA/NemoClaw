@@ -118,6 +118,12 @@ describe("native hosted inference protocol requests", () => {
       ["HTTP-Referer: https://www.nvidia.com/nemoclaw/", "X-OpenRouter-Title: NVIDIA NemoClaw"],
     ],
     [
+      "openrouter-api",
+      "openai-responses",
+      "https://openrouter.ai/api/v1/chat/completions",
+      ["HTTP-Referer: https://www.nvidia.com/nemoclaw/", "X-OpenRouter-Title: NVIDIA NemoClaw"],
+    ],
+    [
       "hermes-provider",
       "openai-responses",
       "https://inference-api.nousresearch.com/v1/responses",
