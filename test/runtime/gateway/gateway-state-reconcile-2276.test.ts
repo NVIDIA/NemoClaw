@@ -316,7 +316,7 @@ if (a[0] === "image" && a[1] === "inspect") {
   const formatIndex = a.indexOf("--format");
   const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
   if (format === "{{.Id}}") process.stdout.write("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n");
-  if (format === "{{json .RepoDigests}}") process.stdout.write('[{"name":"nvidia-prod","credential_keys":["NVIDIA_INFERENCE_API_KEY"]}]\\n');
+  if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
   process.exit(0);
 }
 if (a[0] === "tag" || a[0] === "rmi") process.exit(0);
