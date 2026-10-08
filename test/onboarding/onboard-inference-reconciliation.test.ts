@@ -518,11 +518,11 @@ const { onboard } = require(${onboardPath});
         .trim()
         .split("\n")
         .filter(Boolean);
-      assert.deepEqual(inferenceCommands, [], "native resume must not consult the shared route");
       assert.ok(
         !inferenceCommands.some((command) => command.startsWith("inference set")),
         `native Hermes must not mutate the shared route: ${JSON.stringify(inferenceCommands)}`,
       );
+      assert.deepEqual(inferenceCommands, [], "native resume must not consult the shared route");
       assert.doesNotMatch(
         `${result.stderr}\n${result.stdout}`,
         /Hermes Provider requires a sandbox name/,
