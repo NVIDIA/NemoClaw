@@ -2,10 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
+import { GATEWAY_PORT } from "../core/ports";
+import { nemoclawStateRoot } from "../state/state-root";
+const dockerAdapterMocks = vi.hoisted(() => ({
+  dockerCapture: vi.fn((args: readonly string[]) =>
+    args[0] === "ps" ? "default-container-id\n" : "",
+  ),
+  dockerLogs: vi.fn(() => ""),
+}));
+
+vi.mock("../adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/docker")>()),
+  dockerCapture: dockerAdapterMocks.dockerCapture,
+  dockerLogs: dockerAdapterMocks.dockerLogs,
+}));
+
 import {
+  applyDockerGpuPatchOrExit,
   buildDockerGpuMode,
   type DockerGpuPatchFailureClassification,
   printDockerGpuPatchFailureAndExit,
@@ -49,6 +68,193 @@ function printAndCapture(deps: Parameters<typeof printDockerGpuPatchFailureAndEx
 }
 
 describe("Docker GPU patch failure reporting (#7996)", () => {
+  it("keeps the GPU headline and GPU-only escape hatches for a GPU operation", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => JSON.stringify({ Status: "running", Running: true, ExitCode: 0 })),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode: buildDockerGpuMode("gpus"),
+      },
+    });
+
+    expect(stderr).toContain("Docker GPU patch failed.");
+    expect(stderr).toContain("Escape hatches:");
+    expect(stderr).toContain("--no-gpu");
+    expect(stderr).toContain("NEMOCLAW_SANDBOX_GPU=0");
+    expect(stderr).toContain("NEMOCLAW_DOCKER_GPU_PATCH=1");
+    expect(stderr).not.toContain("Next action:");
+    expect(stderr).not.toContain("Docker startup-command patch failed.");
+  });
+
+  it("reports the selected startup-command operation without GPU-only wording (#12080)", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode: buildDockerGpuMode("startup-command"),
+      },
+    });
+
+    expect(stderr).toContain("Docker startup-command patch failed.");
+    expect(stderr).toContain("startup-command restart persistence");
+    expect(stderr).toContain("patched_create_option=persistent sandbox startup command");
+    expect(stderr).toContain("Next action:");
+    expect(stderr).toContain("Rebuild the sandbox image, then rerun onboarding to recreate it.");
+    expect(stderr).not.toContain("Docker GPU patch failed.");
+    expect(stderr).not.toContain("Escape hatches:");
+    expect(stderr).not.toContain("--no-gpu");
+    expect(stderr).not.toContain("NEMOCLAW_SANDBOX_GPU=0");
+    expect(stderr).not.toContain("NEMOCLAW_DOCKER_GPU_PATCH");
+  });
+
+  it("preserves typed OpenShell artifacts through the recreation-failure wrapper", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-wrapper-"));
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Phase: Error\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tmpDir);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("__test_exit__");
+    }) as never);
+
+    try {
+      await expect(
+        applyDockerGpuPatchOrExit(
+          { sandboxName: "alpha", timeoutSecs: 1 },
+          { openShellGpuDiagnostics: { collect } },
+        ),
+      ).rejects.toThrow(/__test_exit__/);
+
+      expect(collect).toHaveBeenCalledExactlyOnceWith({
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        timeoutMs: 30_000,
+        redact: expect.any(Function),
+      });
+      expect(errorSpy.mock.calls.map((args) => args.map(String).join(" ")).join("\n")).toContain(
+        "OpenShell sandbox entered Error phase",
+      );
+      const failuresDir = path.join(nemoclawStateRoot(tmpDir, GATEWAY_PORT), "onboard-failures");
+      const [failureDir] = fs.readdirSync(failuresDir);
+      expect(failureDir).toBeTruthy();
+      expect(
+        fs.readFileSync(path.join(failuresDir, failureDir!, "openshell-sandbox-get.txt"), "utf8"),
+      ).toBe("Phase: Error\n");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      homeSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not retry a typed diagnostic collection that throws", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-collect-failure-"));
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => {
+      throw new Error("typed diagnostics unavailable");
+    });
+    const runCaptureOpenshell = vi.fn(() => "alpha   Ready   1m ago\n");
+    const output: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(" "));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("__test_exit__");
+    }) as never);
+
+    try {
+      expect(() =>
+        printDockerGpuPatchFailureAndExit("alpha", new Error("supervisor did not reconnect"), {
+          openShellGpuDiagnostics: { collect },
+          runCaptureOpenshell,
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "new-container-id",
+            rolledBack: true,
+            replacementPresence: "unknown",
+          },
+        }),
+      ).toThrow(/__test_exit__/);
+
+      expect(collect).toHaveBeenCalledOnce();
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(output.join("\n")).toContain("supervisor did not reconnect");
+      expect(output.join("\n")).toContain("Replacement container cleanup could not be confirmed");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps original failure reporting when a retained artifact cannot be written", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-write-failure-"));
+    const collect = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: "Phase: Error\n",
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
+    const writeFileSync = fs.writeFileSync.bind(fs);
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(((file, data, options) => {
+      return String(file).endsWith("openshell-sandbox-get.txt")
+        ? (() => {
+            throw new Error("artifact write denied");
+          })()
+        : writeFileSync(file, data, options);
+    }) as typeof fs.writeFileSync);
+    const output: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(" "));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("__test_exit__");
+    }) as never);
+
+    try {
+      expect(() =>
+        printDockerGpuPatchFailureAndExit("alpha", new Error("supervisor did not reconnect"), {
+          openShellGpuDiagnostics: { collect },
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "new-container-id",
+            rolledBack: true,
+            replacementPresence: "unknown",
+          },
+        }),
+      ).toThrow(/__test_exit__/);
+
+      expect(collect).toHaveBeenCalledOnce();
+      expect(output.join("\n")).toContain("supervisor did not reconnect");
+      expect(output.join("\n")).toContain("Replacement container cleanup could not be confirmed");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      writeSpy.mockRestore();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("prefers the pre-rollback verdict when fresh inspection cannot find the replacement", () => {
     // Fresh inspection returns nothing after rollback, and the sandbox only
     // shows a generic Error phase.

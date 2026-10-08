@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { AgentDefinition } from "../agent/definition-types";
-import { buildSubprocessEnv } from "../subprocess-env";
+import { buildOpenShellSandboxCreateEnvironment } from "../adapters/openshell/sandbox-lifecycle-cli";
 import {
   buildSandboxRuntimeEnvArgs,
   type SandboxRuntimeEnvArgsInput,
@@ -63,6 +63,8 @@ export interface SandboxCreateLaunch {
   managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
+export type SandboxRuntimeLaunch = Omit<SandboxCreateLaunch, "createCommand" | "createArgv">;
+
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
   sandboxName: string;
   prebuild: Omit<SandboxPrebuildInput, "createArgs" | "sandboxName">;
@@ -70,6 +72,10 @@ export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunc
 
 export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
   prebuild: SandboxPrebuildResult;
+}
+
+export interface SandboxRuntimeLaunchWithPrebuild extends SandboxRuntimeLaunch {
+  prebuild: Omit<SandboxPrebuildResult, "createArgs">;
 }
 
 export function renderSandboxCreateCommand(
@@ -86,9 +92,25 @@ export function renderSandboxCreateCommand(
   ])} 2>&1`;
 }
 
-export { buildSandboxRuntimeEnvArgs, type SandboxRuntimeEnvArgsInput };
+export {
+  buildSandboxRuntimeEnvArgs,
+  type SandboxRuntimeEnvArgsInput,
+  prebuildSandboxImageIfEligible,
+};
 
-export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
+export function requiresLocalSandboxBuildKit(
+  origin: SandboxPrebuildInput["origin"],
+  agent: Pick<AgentDefinition, "name"> | null | undefined,
+): boolean {
+  return (
+    origin === "generated" &&
+    (agent == null || agent.name === "openclaw" || agent.name === "hermes")
+  );
+}
+
+export function prepareSandboxRuntimeLaunch(
+  input: Omit<SandboxCreateLaunchInput, "createArgs"> & { readonly policyAttached: boolean },
+): SandboxRuntimeLaunch {
   const env = input.env ?? process.env;
   const manageDashboard = input.manageDashboard ?? true;
   const { envArgs, effectiveDashboardPort } = buildSandboxRuntimeEnvArgs({
@@ -104,14 +126,10 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     allowHermesApiPortOverride: true,
     env,
   });
-  const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
-  // Remove host-infrastructure credentials that the generic allowlist
-  // permits for host-side processes but that must not enter the sandbox.
-  delete sandboxEnv.KUBECONFIG;
-  delete sandboxEnv.SSH_AUTH_SOCK;
-  if (!input.createArgs.includes("--policy")) {
-    delete sandboxEnv.OPENSHELL_SANDBOX_POLICY;
-  }
+  const sandboxEnv = buildOpenShellSandboxCreateEnvironment(
+    input.buildEnv ? input.buildEnv() : env,
+    { policyAttached: input.policyAttached },
+  );
 
   // Run without piping through awk; the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
@@ -147,20 +165,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
           MANAGED_STARTUP_EXECUTABLE,
         ]
       : intendedSandboxStartupCommand;
-  const createArgs = [...input.createArgs];
-  const openshellArgs = ["sandbox", "create", ...createArgs, "--", ...sandboxStartupCommand];
-  const createCommand = renderSandboxCreateCommand(
-    createArgs,
-    sandboxStartupCommand,
-    input.openshellShellCommand,
-  );
-  const createArgv = input.openshellArgv
-    ? input.openshellArgv(openshellArgs)
-    : ["bash", "-lc", createCommand];
-
   return {
-    createCommand,
-    createArgv,
     effectiveDashboardPort,
     envArgs,
     sandboxEnv,
@@ -171,18 +176,42 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   };
 }
 
+export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
+  const runtime = prepareSandboxRuntimeLaunch({
+    ...input,
+    policyAttached: input.createArgs.includes("--policy"),
+  });
+  const createArgs = [...input.createArgs];
+  const openshellArgs = [
+    "sandbox",
+    "create",
+    ...createArgs,
+    "--",
+    ...runtime.sandboxStartupCommand,
+  ];
+  const createCommand = renderSandboxCreateCommand(
+    createArgs,
+    runtime.sandboxStartupCommand,
+    input.openshellShellCommand,
+  );
+  return {
+    ...runtime,
+    createCommand,
+    createArgv: input.openshellArgv
+      ? input.openshellArgv(openshellArgs)
+      : ["bash", "-lc", createCommand],
+  };
+}
+
 /** Coordinate the optional local image build with the canonical launch renderer. */
 export async function prepareSandboxCreateLaunchWithPrebuild(
   input: SandboxCreateLaunchWithPrebuildInput,
 ): Promise<SandboxCreateLaunchWithPrebuild> {
   const { prebuild: prebuildInput, ...launchInput } = input;
-  const requiresLocalBuildKit =
-    prebuildInput.origin === "generated" &&
-    (input.agent == null || input.agent.name === "openclaw" || input.agent.name === "hermes");
   const prebuild = await prebuildSandboxImageIfEligible({
     ...prebuildInput,
     createArgs: input.createArgs,
-    requiresLocalBuildKit,
+    requiresLocalBuildKit: requiresLocalSandboxBuildKit(prebuildInput.origin, input.agent),
     sandboxName: input.sandboxName,
   });
   return {

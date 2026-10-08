@@ -33,12 +33,14 @@ import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gatewa
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import {
   checkLaunchReadinessMutationAuthority,
+  classifyLaunchReadinessStoreFailure,
   fenceLaunchReadinessLease,
   type LaunchReadinessFence,
   LaunchReadinessFenceError,
   type LaunchReadinessIdentity,
   type LaunchReadinessLeaseRead,
   type LaunchReadinessStoreOptions,
+  type LaunchReadinessUnsafeAuthorityEvidence,
   publishLaunchReadinessLease,
   readLaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
@@ -63,6 +65,7 @@ import {
   type LaunchReadinessObservationStage,
   LaunchReadinessObservationError as ObservationError,
   recordLaunchReadinessObservationFailure,
+  getNativeNvidiaProviderAttachment,
   requireLaunchSemanticHealth,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
@@ -84,6 +87,10 @@ import {
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 export { createBoundLaunchReadinessDeps };
+export {
+  getNativeNvidiaProviderAttachment,
+  requireNativeNvidiaInferenceHealth,
+} from "./launch-readiness/health";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const LIVE_AGENT_VERSION_MAX_BYTES = 4 * 1_024;
@@ -162,12 +169,54 @@ export type LaunchReadinessPublicationResult =
       failedCheck?: LaunchReadinessFailedCheck;
     }
   | { kind: "policy-observation-failed"; error: OpenShellSandboxError }
-  | { kind: "evidence-failed" };
+  | {
+      kind: "evidence-failed";
+      diagnostic?: {
+        stage:
+          | "publication-input"
+          | "publication-validation"
+          | "publication-store"
+          | "publication-lock";
+        reason:
+          | ReturnType<typeof classifyLaunchReadinessStoreFailure>
+          | "missing-authority"
+          | "pairing-observation-failed"
+          | "runtime-observation-failed";
+      };
+    };
 
 export type LaunchReadinessMutationGateResult<T> =
   | { kind: "entered"; value: T }
   | { kind: "changed" }
-  | { kind: "unsafe" };
+  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+/** Render only structured authority metadata; never include receipt contents or OS error messages. */
+export function formatLaunchReadinessUnsafeAuthorityEvidence(
+  evidence: LaunchReadinessUnsafeAuthorityEvidence | undefined,
+): string {
+  if (!evidence) {
+    return " Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.";
+  }
+  const displayPath = JSON.stringify(evidence.path);
+  const observedUid = evidence.observedUid === null ? "unavailable" : String(evidence.observedUid);
+  const observedMode = evidence.observedMode ?? "unavailable";
+  const repair =
+    evidence.repair === "chmod"
+      ? `Repair it with: chmod ${evidence.expectedMode} -- ${shellQuote(evidence.path)}.`
+      : "Repair this path only after verifying it is owned by the current user and has no links.";
+  const writeGuidance =
+    evidence.operation === "write"
+      ? " Check that the containing directory and filesystem allow writes and have free space."
+      : "";
+  const errorCode = evidence.errorCode
+    ? ` (${evidence.operation} error ${evidence.errorCode})`
+    : "";
+  return ` ${evidence.resource} ${displayPath} is unsafe: expected current-user UID ${evidence.expectedUid}, observed owner UID ${observedUid}; expected mode ${evidence.expectedMode}, observed mode ${observedMode}${errorCode}. ${repair}${writeGuidance} Then retry.`;
+}
 
 export type PortableOpenClawPairingSettlementResult =
   | { readonly kind: "not-portable" }
@@ -341,6 +390,16 @@ function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown 
       corporateCaSha256: workload.corporateCaB64
         ? exactContentDigest(workload.corporateCaB64)
         : null,
+      shared: workload.shared,
+    };
+  }
+  if (workload.kind === "external-image") {
+    return {
+      schemaVersion: workload.schemaVersion,
+      kind: workload.kind,
+      reference: workload.reference,
+      platform: workload.platform,
+      runtimeImageContentId: workload.runtimeImageContentId,
       shared: workload.shared,
     };
   }
@@ -767,49 +826,55 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const inferenceGetStartedAt = performance.now();
-  let inferenceResult: Awaited<
-    ReturnType<NonNullable<LaunchReadinessDeps["inferenceRouteObserver"]>["observeInferenceRoute"]>
-  >;
-  try {
-    const observer =
-      deps.inferenceRouteObserver ??
-      createLaunchReadinessInferenceRouteObserver(
-        deps.capture ?? ((args, options) => captureLaunchReadiness(args, options)),
-      );
-    inferenceResult = await observer.observeInferenceRoute({
-      target: namedOpenShellGateway(gatewayName),
-    });
-  } catch (error) {
-    recordLaunchReadinessObservationFailure(deps, "inference-get");
-    throw error;
-  } finally {
-    recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
-  }
-  if (!inferenceResult.ok) {
-    recordLaunchReadinessObservationFailure(deps, "inference-get");
-    throw new LaunchReadinessEvidenceError();
-  }
-  const liveInference =
-    inferenceResult.value.state === "configured" ? inferenceResult.value.route : null;
-  const liveInferenceAbsent = inferenceResult.value.state === "unconfigured";
-  if (inference.kind === "configured") {
-    if (!liveInference && !liveInferenceAbsent) {
+  const nativeNvidia = Boolean(getNativeNvidiaProviderAttachment(entry));
+  let liveInference: { provider: string; model: string } | null = null;
+  if (!nativeNvidia) {
+    const inferenceGetStartedAt = performance.now();
+    let inferenceResult: Awaited<
+      ReturnType<
+        NonNullable<LaunchReadinessDeps["inferenceRouteObserver"]>["observeInferenceRoute"]
+      >
+    >;
+    try {
+      const observer =
+        deps.inferenceRouteObserver ??
+        createLaunchReadinessInferenceRouteObserver(
+          deps.capture ?? ((args, options) => captureLaunchReadiness(args, options)),
+        );
+      inferenceResult = await observer.observeInferenceRoute({
+        target: namedOpenShellGateway(gatewayName),
+      });
+    } catch (error) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw error;
+    } finally {
+      recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
+    }
+    if (!inferenceResult.ok) {
       recordLaunchReadinessObservationFailure(deps, "inference-get");
       throw new LaunchReadinessEvidenceError();
     }
-    if (planInferenceRouteReconcile(liveInference, inference).kind !== "aligned") {
-      recordLaunchReadinessObservationFailure(deps, "inference-get");
-      throw new ObservationError("config");
-    }
-  } else {
-    if (liveInference) {
-      recordLaunchReadinessObservationFailure(deps, "inference-get");
-      throw new ObservationError("config");
-    }
-    if (!liveInferenceAbsent) {
-      recordLaunchReadinessObservationFailure(deps, "inference-get");
-      throw new LaunchReadinessEvidenceError();
+    liveInference =
+      inferenceResult.value.state === "configured" ? inferenceResult.value.route : null;
+    const liveInferenceAbsent = inferenceResult.value.state === "unconfigured";
+    if (inference.kind === "configured") {
+      if (!liveInference && !liveInferenceAbsent) {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new LaunchReadinessEvidenceError();
+      }
+      if (planInferenceRouteReconcile(liveInference, inference).kind !== "aligned") {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new ObservationError("config");
+      }
+    } else {
+      if (liveInference) {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new ObservationError("config");
+      }
+      if (!liveInferenceAbsent) {
+        recordLaunchReadinessObservationFailure(deps, "inference-get");
+        throw new LaunchReadinessEvidenceError();
+      }
     }
   }
 
@@ -1375,7 +1440,8 @@ export async function withLaunchReadinessMutationGate<T>(
         epochId,
         deps.storeOptions,
       );
-      if (authority !== "current") return { kind: authority };
+      if (authority === "changed") return { kind: "changed" };
+      if (authority !== "current") return { kind: "unsafe", evidence: authority.evidence };
       return { kind: "entered", value: await operation() };
     });
   });
@@ -1387,7 +1453,11 @@ export async function publishLaunchReadiness(
   deps: LaunchReadinessDeps = {},
 ): Promise<LaunchReadinessPublicationResult> {
   const { sandboxName, gatewayName, gatewayPort, epochId } = publication;
-  if (!gatewayName || !gatewayPort || !epochId) return { kind: "evidence-failed" };
+  if (!gatewayName || !gatewayPort || !epochId)
+    return {
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-input", reason: "missing-authority" },
+    };
   const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
   try {
@@ -1423,12 +1493,23 @@ export async function publishLaunchReadiness(
           const validation = publicationValidationCategory(error);
           return validation
             ? ({ kind: "validation-failed", ...validation } as const)
-            : ({ kind: "evidence-failed" } as const);
+            : ({
+                kind: "evidence-failed",
+                diagnostic: {
+                  stage: "publication-validation",
+                  reason:
+                    error instanceof OpenClawPairingQualificationError
+                      ? "pairing-observation-failed"
+                      : error instanceof LaunchReadinessEvidenceError
+                        ? "runtime-observation-failed"
+                        : classifyLaunchReadinessStoreFailure(error),
+                },
+              } as const);
         } finally {
           recordPerformanceStage("publication-validation", validationStartedAt);
         }
         const publicationStartedAt = performance.now();
-        let publicationFailed = false;
+        let publicationFailure: ReturnType<typeof classifyLaunchReadinessStoreFailure> | undefined;
         try {
           deps.assertPublicationCurrent?.();
           (deps.publishLease ?? publishLaunchReadinessLease)(
@@ -1440,17 +1521,30 @@ export async function publishLaunchReadiness(
             deps.storeOptions,
             deps.assertPublicationCurrent,
           );
-        } catch {
-          publicationFailed = true;
+        } catch (error) {
+          publicationFailure = classifyLaunchReadinessStoreFailure(error);
         } finally {
           recordPerformanceStage("publication-store", publicationStartedAt);
         }
-        if (publicationFailed) return { kind: "evidence-failed" } as const;
+        if (publicationFailure)
+          return {
+            kind: "evidence-failed",
+            diagnostic: {
+              stage: "publication-store",
+              reason: publicationFailure,
+            },
+          } as const;
         return { kind: "published" } as const;
       });
     });
-  } catch {
-    return { kind: "evidence-failed" };
+  } catch (error) {
+    return {
+      kind: "evidence-failed",
+      diagnostic: {
+        stage: "publication-lock",
+        reason: classifyLaunchReadinessStoreFailure(error),
+      },
+    };
   }
 }
 

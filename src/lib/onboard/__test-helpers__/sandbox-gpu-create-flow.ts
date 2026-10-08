@@ -45,11 +45,17 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
     sandboxReadyTimeoutSecs: 60,
-    createArgv: ["openshell", "sandbox", "create", "--gpu"],
+    createRequest: {
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      source: { reference: "openshell/sandbox-from:test" },
+      gpu: {},
+      startupCommand: ["nemoclaw-start"],
+      environment: {},
+    },
     sandboxEnv: {},
     sandboxStartupCommand: ["nemoclaw-start"],
     prebuild: {
-      createArgs: ["--from", "openshell/sandbox-from:test", "--name", "alpha", "--gpu"],
       imageRef: "openshell/sandbox-from:test",
       imageId: GPU_IMAGE_ID,
     },
@@ -221,26 +227,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     runtimeDir: "/run/user/1001",
     socketPath: "/run/user/1001/podman/podman.sock",
   };
-  const managedDockerConfigPreservationCases = [
-    {
-      title: "the Desktop helper responds",
-      helperResponds: true,
-      dockerHost: "unix:///var/run/docker.sock",
-      contextStdout: "default\n",
-    },
-    {
-      title: "the Docker context is not default",
-      helperResponds: false,
-      dockerHost: undefined,
-      contextStdout: "remote-builder\n",
-    },
-    {
-      title: "an explicit remote Docker host is selected",
-      helperResponds: false,
-      dockerHost: "tcp://remote-builder.example:2376",
-      contextStdout: "default\n",
-    },
-  ];
   const temporaryDirectories: string[] = [];
 
   type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
@@ -309,7 +295,7 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
   function createSourceInput(): SandboxGpuCreateFlowInput {
     const input = createGpuFlowInput();
     input.prebuild = {
-      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
+      sourceReference: "/tmp/build/Dockerfile",
       imageRef: null,
       imageId: null,
     };
@@ -326,14 +312,10 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     return dockerConfig;
   }
 
-  function captureCreateEnv(): {
-    env: NodeJS.ProcessEnv;
-    configExisted: boolean;
-  } {
-    const captured = { env: {} as NodeJS.ProcessEnv, configExisted: false };
+  function captureCreateEnv(): { env: NodeJS.ProcessEnv } {
+    const captured = { env: {} as NodeJS.ProcessEnv };
     mocks.streamSandboxCreate.mockImplementation((_exe, _args, env: NodeJS.ProcessEnv) => {
       captured.env = env;
-      captured.configExisted = fs.existsSync(String(env.DOCKER_CONFIG));
       return Promise.resolve({
         status: 0,
         output: "Created sandbox: alpha",
@@ -371,7 +353,6 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     NVIDIA_SMI_FAILED_PROOF: nvidiaSmiFailedProof,
     DEFAULT_RUNTIME_SNAPSHOT: defaultRuntimeSnapshot,
     PORTABLE_RUNTIME_AUTHORITY: portableRuntimeAuthority,
-    managedDockerConfigPreservationCases,
     readySandboxGetResult,
     createSequencedOpenShellRunner,
     failNativeCreate,

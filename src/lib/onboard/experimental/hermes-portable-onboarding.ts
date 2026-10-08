@@ -7,6 +7,13 @@ import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import type { AgentDefinition } from "../../agent/defs";
+import type { OpenShellGpuDiagnostics } from "../../adapters/openshell/gpu-diagnostics";
+import { createRunnerOpenShellGpuDiagnostics } from "../../adapters/openshell/gpu-diagnostics-cli";
+import type {
+  CreateOpenShellSandboxRequest,
+  OpenShellSandboxLifecycle,
+} from "../../adapters/openshell/sandbox-lifecycle";
+import { createCliOpenShellSandboxLifecycle } from "../../adapters/openshell/sandbox-lifecycle-cli";
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import {
   fingerprintOpenShellSandboxLiveIdentity,
@@ -130,7 +137,7 @@ export interface HermesPortableOnboardingInput {
   readonly runtimeAuthority: CheckpointPortableRuntimeAuthority;
   readonly openshellExecutableAuthority: HermesPortableOpenShellExecutableAuthority;
   readonly stateDir: string;
-  readonly createArgv: readonly string[];
+  readonly createRequest: CreateOpenShellSandboxRequest;
   readonly createPolicyPath: string;
   readonly createPolicySourceBytes?: Buffer;
   readonly buildContext: HermesPortableBuildContextPlan;
@@ -164,8 +171,7 @@ export interface HermesPortableOnboardingDeps<T> {
   readonly delaySandboxReadyPublicationPoll?: (milliseconds: number) => Promise<void>;
   readonly readSandboxReadyPublicationClockMs?: () => number;
   readonly createSandbox: (
-    createArgv: readonly string[],
-    buildContextPath: string,
+    createRequest: CreateOpenShellSandboxRequest,
     effectivePolicySourcePath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
@@ -377,8 +383,10 @@ export function createHermesPortableReadyRunner(
   sandboxName: string,
   gatewayName: string,
   capture: ReturnType<typeof createHermesPortableOpenShellCapture>,
-): (args: string[], options?: Record<string, unknown>) => HermesPortableOpenShellResult {
-  return (args) => {
+): ((args: string[], options?: Record<string, unknown>) => HermesPortableOpenShellResult) & {
+  captureGpuDiagnostic(args: string[], timeoutMs: number): HermesPortableOpenShellResult;
+} {
+  const scope = (args: string[]): string[] => {
     const scoped =
       scopeHermesPortableCreatedIdentityArgs(args, gatewayName) ??
       scopeHermesPortableReadyGetArgs(args, sandboxName, gatewayName) ??
@@ -395,22 +403,31 @@ export function createHermesPortableReadyRunner(
           ? args
           : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
-    return capture(scoped);
+    return scoped;
   };
+  const run = (args: string[]): HermesPortableOpenShellResult => capture(scope(args));
+  return Object.assign(run, {
+    captureGpuDiagnostic: (args: string[], timeoutMs: number) => capture(scope(args), timeoutMs),
+  });
+}
+
+/** Keep Docker GPU failure evidence on the exact receipt-owned portable authority. */
+export function createHermesPortableGpuDiagnostics(
+  sandboxName: string,
+  gatewayName: string,
+  run: ReturnType<typeof createHermesPortableReadyRunner>,
+  now: () => number = Date.now,
+): OpenShellGpuDiagnostics {
+  return createRunnerOpenShellGpuDiagnostics({
+    authority: { sandboxName, target: { kind: "named", gatewayName } },
+    decodeOutput: strictOpenShellText,
+    now,
+    run: (args, timeoutMs) => run.captureGpuDiagnostic([...args], timeoutMs),
+    supportsDoctorLogs: false,
+  });
 }
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
-const CREATE_INTENT_VALUE_OPTIONS = new Set([
-  "-g",
-  "--cpu",
-  "--driver-config-json",
-  "--from",
-  "--gpu-device",
-  "--memory",
-  "--name",
-  "--policy",
-  "--provider",
-]);
 const CREATE_INTENT_DRIVER_KEYS = new Set([
   "cdi_devices",
   "docker",
@@ -467,46 +484,15 @@ export function createHermesPortableContainerDeps(
   };
 }
 
-export function rewriteHermesPortableCreatePolicyArgv(
-  createArgv: readonly string[],
+export function rewriteHermesPortableCreatePolicyRequest(
+  createRequest: CreateOpenShellSandboxRequest,
   sourcePath: string,
   durablePath: string,
-): string[] {
-  const rewritten = [...createArgv];
-  let matches = 0;
-  for (let index = 0; index < rewritten.length; index += 1) {
-    const argument = rewritten[index]!;
-    if (argument === "--policy") {
-      matches += 1;
-      if (rewritten[index + 1] !== sourcePath) {
-        fail("create argv policy option does not name the captured source");
-      }
-      rewritten[index + 1] = durablePath;
-      index += 1;
-    } else if (argument.startsWith("--policy=")) {
-      fail("create argv must use one canonical '--policy <path>' option");
-    }
+): CreateOpenShellSandboxRequest {
+  if (createRequest.policyPath !== sourcePath) {
+    fail("create request policy does not name the captured source");
   }
-  if (matches !== 1) fail("create argv must contain exactly one canonical policy option");
-  return rewritten;
-}
-
-/** Bind one Hermes portable create to its receipt-owned OpenShell gateway. */
-export function scopeHermesPortableCreateGatewayArgv(
-  createArgv: readonly string[],
-  gatewayName: string,
-): string[] {
-  if (createArgv[1] !== "sandbox" || createArgv[2] !== "create") {
-    fail("create argv does not use the expected OpenShell create command");
-  }
-  const separator = createArgv.indexOf("--", 3);
-  const optionEnd = separator < 0 ? createArgv.length : separator;
-  if (
-    createArgv.slice(3, optionEnd).some((value) => value === "-g" || value.startsWith("--gateway"))
-  ) {
-    fail("create argv already contains gateway selection authority");
-  }
-  return [...createArgv.slice(0, 3), "-g", gatewayName, ...createArgv.slice(3)];
+  return Object.freeze({ ...createRequest, policyPath: durablePath });
 }
 
 function canonicalCreateIntentValue(value: unknown): unknown {
@@ -558,83 +544,53 @@ function createHermesPortableCreateIntentSha256(
   startup: ReturnType<typeof resolveHermesPortableStartupContract>,
   podmanExecutableAuthority: HermesPortablePodmanExecutableAuthority,
 ): string {
-  const argv = [...input.createArgv];
-  if (argv.length < 9 || argv.length > 256) fail("create argv has an invalid bounded shape");
-  if (!argv[0] || argv[0].length > 4096 || CREATE_INTENT_CONTROL.test(argv[0])) {
-    fail("create argv has an invalid OpenShell executable identity");
+  const request = input.createRequest;
+  if (request.sandboxName !== input.sandboxName) fail("create request sandbox identity changed");
+  if (request.target.gatewayName !== input.gatewayName)
+    fail("create request gateway identity changed");
+  if (request.policyPath !== input.createPolicyPath) {
+    fail("create request policy does not name the captured source");
   }
-  if (argv[1] !== "sandbox" || argv[2] !== "create") {
-    fail("create argv does not use the expected OpenShell create command");
+  if (request.source.reference !== input.buildContext.sourceDockerfilePath) {
+    fail("create source does not name the captured build context source");
   }
-  const separator = argv.indexOf("--", 3);
-  if (separator < 0 || !isDeepStrictEqual(argv.slice(separator + 1), startup.argv)) {
-    fail("create argv startup does not match the accepted Hermes startup contract");
+  if (!isDeepStrictEqual(request.startupCommand, startup.argv)) {
+    fail("create request startup does not match the accepted Hermes startup contract");
   }
-  const canonicalArgs: unknown[] = [];
-  let foundFrom = false;
-  let foundGateway = false;
-  let foundName = false;
-  let foundPolicy = false;
-  let createSourceAuthority: HermesPortableBuildContextPlan["authority"] | null = null;
-  for (let index = 3; index < separator; index += 1) {
-    const option = argv[index]!;
-    if (option === "--gpu") {
-      canonicalArgs.push(option);
-      continue;
-    }
-    if (!CREATE_INTENT_VALUE_OPTIONS.has(option)) {
-      fail("create argv contains an unsupported effect-bearing option");
-    }
-    const value = argv[index + 1];
-    if (!value || value.startsWith("--") || value.length > 32 * 1024) {
-      fail("create argv contains an invalid option value");
-    }
-    index += 1;
-    if (option === "--policy") {
-      if (foundPolicy || value !== input.createPolicyPath) {
-        fail("create argv policy option does not name the captured source");
-      }
-      foundPolicy = true;
-      canonicalArgs.push(option, "<policy-source>");
-      continue;
-    }
-    if (option === "--name") {
-      if (foundName || value !== input.sandboxName) {
-        fail("create argv sandbox identity changed");
-      }
-      foundName = true;
-    }
-    if (option === "-g") {
-      if (foundGateway || value !== input.gatewayName) {
-        fail("create argv gateway identity changed");
-      }
-      foundGateway = true;
-    }
-    if (option === "--from") {
-      if (foundFrom) fail("create argv contains duplicate image authority");
-      foundFrom = true;
-      if (value !== input.buildContext.sourceDockerfilePath) {
-        fail("create source does not name the captured build context source");
-      }
-      createSourceAuthority = input.buildContext.authority;
-    }
-    canonicalArgs.push(
-      option,
-      option === "--driver-config-json" ? parseCreateIntentDriverConfig(value) : value,
-    );
+  if (request.workingDirectory || request.runtimeSelection) {
+    fail("create request contains premature transport authority");
   }
-  if (!foundFrom || !foundName || !foundPolicy || !foundGateway) {
-    fail("create argv is missing required image, sandbox, gateway, or policy state");
+  const driverConfig = request.driverConfigJson
+    ? parseCreateIntentDriverConfig(request.driverConfigJson)
+    : null;
+  if (Object.keys(request.labels ?? {}).length > 0) {
+    fail("create request contains premature create-attempt authority");
   }
+  const canonicalArgs: unknown[] = [
+    "-g",
+    request.target.gatewayName,
+    "--from",
+    request.source.reference,
+    "--name",
+    request.sandboxName,
+    "--policy",
+    "<policy-source>",
+    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
+    ...(request.gpu ? ["--gpu"] : []),
+    ...(request.gpu?.device ? ["--gpu-device", request.gpu.device] : []),
+    ...(request.resources?.cpu ? ["--cpu", request.resources.cpu] : []),
+    ...(request.resources?.memory ? ["--memory", request.resources.memory] : []),
+    ...(request.providers ?? []).flatMap((provider) => ["--provider", provider]),
+  ];
   return createHash("sha256")
     .update(
       JSON.stringify({
         schemaVersion: 1,
         command: "openshell sandbox create",
-        executable: argv[0],
+        executable: input.openshellExecutableAuthority.executable.executablePath,
         podmanExecutableAuthority,
         args: canonicalArgs,
-        createSourceAuthority,
+        createSourceAuthority: input.buildContext.authority,
         inferenceRouteReservation: {
           sessionId: input.inferenceRouteReservation.sessionId,
           selection: normalizeSandboxInferenceRouteSelection(
@@ -647,25 +603,19 @@ function createHermesPortableCreateIntentSha256(
     .digest("hex");
 }
 
-function rewriteHermesPortableCreateSourceArgv(
-  argv: readonly string[],
+function rewriteHermesPortableCreateSourceRequest(
+  request: CreateOpenShellSandboxRequest,
   expectedSource: string,
   context: HermesPortableStagedBuildContext,
-): readonly string[] {
-  const rewritten = [...argv];
-  const separator = rewritten.indexOf("--", 3);
-  let found = false;
-  for (let index = 3; index < separator; index += 1) {
-    if (rewritten[index] !== "--from") continue;
-    if (found || rewritten[index + 1] !== expectedSource) {
-      fail("create source changed before staged-context dispatch");
-    }
-    found = true;
-    rewritten[index + 1] = context.dockerfilePath;
-    index += 1;
+): CreateOpenShellSandboxRequest {
+  if (request.source.reference !== expectedSource) {
+    fail("create source changed before staged-context dispatch");
   }
-  if (!found) fail("create argv is missing the staged-context source");
-  return rewritten;
+  return Object.freeze({
+    ...request,
+    source: Object.freeze({ reference: context.dockerfilePath }),
+    workingDirectory: context.buildContextPath,
+  });
 }
 
 function escapedRegExp(value: string): string {
@@ -1136,8 +1086,8 @@ export async function runHermesPortableOnboardingTransaction<T>(
         assertOpenShellExecutableAuthority();
       }
     };
-    const validatedCreateArgv = rewriteHermesPortableCreatePolicyArgv(
-      input.createArgv,
+    const validatedCreateRequest = rewriteHermesPortableCreatePolicyRequest(
+      input.createRequest,
       input.createPolicyPath,
       input.createPolicyPath,
     );
@@ -1355,7 +1305,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
         fail(`cannot prove sandbox absence before reservation: ${preexisting.detail}`);
       }
     }
-    let createArgv: readonly string[];
+    let createRequest: CreateOpenShellSandboxRequest;
     if (snapshot) {
       snapshot = reconcileHermesPortableCurrentPhasePublication(snapshot, input.stateDir);
       assertCurrentTransaction(
@@ -1365,14 +1315,14 @@ export async function runHermesPortableOnboardingTransaction<T>(
         podmanExecutableAuthority,
         createIntentSha256,
       );
-      createArgv =
+      createRequest =
         snapshot.receipt.phase === "pending"
-          ? rewriteHermesPortableCreatePolicyArgv(
-              validatedCreateArgv,
+          ? rewriteHermesPortableCreatePolicyRequest(
+              validatedCreateRequest,
               input.createPolicyPath,
               snapshot.receipt.policy.sourcePath,
             )
-          : validatedCreateArgv;
+          : validatedCreateRequest;
     } else {
       const transactionId = recoverableTransactionId ?? createHermesPortableTransactionId();
       const policy = publishHermesPortableDurablePolicySource({
@@ -1381,8 +1331,8 @@ export async function runHermesPortableOnboardingTransaction<T>(
         stateDir: input.stateDir,
         source: temporaryPolicy,
       });
-      createArgv = rewriteHermesPortableCreatePolicyArgv(
-        validatedCreateArgv,
+      createRequest = rewriteHermesPortableCreatePolicyRequest(
+        validatedCreateRequest,
         input.createPolicyPath,
         policy.sourcePath,
       );
@@ -1497,12 +1447,11 @@ export async function runHermesPortableOnboardingTransaction<T>(
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();
         createResult = await deps.createSandbox(
-          rewriteHermesPortableCreateSourceArgv(
-            createArgv,
+          rewriteHermesPortableCreateSourceRequest(
+            createRequest,
             input.buildContext.sourceDockerfilePath,
             buildContext,
           ),
-          buildContext.buildContextPath,
           createPolicySourcePath,
         );
         buildContext.assertCurrent();
@@ -1682,7 +1631,7 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
   readonly gatewayName: string;
   readonly lifecycleGeneration: string;
   readonly portableRuntime: PortableOnboardRuntimeContext;
-  readonly createArgv: readonly string[];
+  readonly createRequest: CreateOpenShellSandboxRequest;
   readonly createPolicyPath: string;
   readonly startup: ResolveHermesPortableStartupContractInput;
   readonly inferenceRouteReservation: HermesPortableInferenceRouteReservationAuthority;
@@ -1690,10 +1639,10 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
   readonly childEnv: NodeJS.ProcessEnv;
   readonly openshellArgv: (args: string[]) => string[];
   readonly createSandbox: (
-    createArgv: readonly string[],
+    createRequest: CreateOpenShellSandboxRequest,
     readyCapture: ReturnType<typeof createHermesPortableReadyCapture>,
     readyRunner: ReturnType<typeof createHermesPortableReadyRunner>,
-    buildContextPath: string,
+    lifecycleCreateSandbox: OpenShellSandboxLifecycle["createSandbox"],
     effectivePolicySourcePath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
@@ -1707,13 +1656,13 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
 }
 
 interface RunHermesPortableOnboardCreateInput<T> {
-  readonly argv: readonly string[];
-  readonly buildContextPath: string;
+  readonly request: CreateOpenShellSandboxRequest;
   readonly effectivePolicySourcePath: string;
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly captureOpenShell: ReturnType<typeof createHermesPortableOpenShellCapture>;
   readonly readyRunner: ReturnType<typeof createHermesPortableReadyRunner>;
+  readonly lifecycleCreateSandbox: OpenShellSandboxLifecycle["createSandbox"];
   readonly createSandbox: HermesPortableOnboardingFromOnboardInput<T>["createSandbox"];
 }
 
@@ -1721,16 +1670,16 @@ interface RunHermesPortableOnboardCreateInput<T> {
 export function runHermesPortableOnboardCreate<T>(
   input: RunHermesPortableOnboardCreateInput<T>,
 ): Promise<T> {
-  const verifiedArgv = rewriteHermesPortableCreatePolicyArgv(
-    input.argv,
+  const verifiedRequest = rewriteHermesPortableCreatePolicyRequest(
+    input.request,
     input.effectivePolicySourcePath,
     input.effectivePolicySourcePath,
   );
   return input.createSandbox(
-    verifiedArgv,
+    verifiedRequest,
     createHermesPortableReadyCapture(input.sandboxName, input.gatewayName, input.captureOpenShell),
     input.readyRunner,
-    input.buildContextPath,
+    input.lifecycleCreateSandbox,
     input.effectivePolicySourcePath,
   );
 }
@@ -1744,7 +1693,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
     gatewayName,
     lifecycleGeneration,
     portableRuntime,
-    createArgv,
+    createRequest,
     createPolicyPath,
     startup,
     inferenceRouteReservation,
@@ -1768,9 +1717,8 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
   }
   const podmanSourceEnv =
     portableEnvironmentScope.createHermesPortablePodmanSourceEnvironment(runtimeAuthority);
-  const scopedCreateArgv = scopeHermesPortableCreateGatewayArgv(createArgv, gatewayName);
   const buildContext = createHermesPortableBuildContextPlan(sourceRoot, buildContextSettings);
-  const executablePath = scopedCreateArgv[0];
+  const executablePath = openshellArgv([])[0];
   if (!executablePath) fail("create command has no OpenShell executable authority");
   const commandEnv = createHermesPortableChildEnvironment(childEnv, runtimeAuthority);
   const openshellExecutableAuthority = captureHermesPortableOpenShellExecutableAuthority(
@@ -1797,6 +1745,24 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
     captureOpenShell,
   );
   const readyRunner = createHermesPortableReadyRunner(sandboxName, gatewayName, captureOpenShell);
+  const lifecycleCreateSandbox = createCliOpenShellSandboxLifecycle({
+    capture: async (args, options) => {
+      const result = captureOpenShell(args, options.timeout);
+      return {
+        status: result.status,
+        stdout: strictOpenShellText(result.stdout),
+        stderr: strictOpenShellText(result.stderr),
+        output: `${strictOpenShellText(result.stderr)}\n${strictOpenShellText(result.stdout)}`,
+        ...(result.error ? { error: result.error } : {}),
+      };
+    },
+    resolveBinary: () =>
+      assertHermesPortableOpenShellExecutableAuthority(
+        openshellExecutableAuthority,
+        commandEnv,
+        childEnv,
+      ),
+  }).createSandbox;
   return runHermesPortableOnboardingTransaction(
     {
       sandboxName,
@@ -1805,7 +1771,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
       runtimeAuthority,
       openshellExecutableAuthority,
       stateDir: defaultPortableDemoStateDir(process.env),
-      createArgv: scopedCreateArgv,
+      createRequest,
       createPolicyPath,
       ...(createPolicySourceBytes ? { createPolicySourceBytes } : {}),
       buildContext,
@@ -1836,15 +1802,15 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
       }, 5_000),
       observeSandbox: (timeoutBudgetMs) =>
         observeHermesPortableSandbox(sandboxName, gatewayName, captureOpenShell, timeoutBudgetMs),
-      createSandbox: (argv, buildContextPath, effectivePolicySourcePath) =>
+      createSandbox: (request, effectivePolicySourcePath) =>
         runHermesPortableOnboardCreate({
-          argv,
-          buildContextPath,
+          request,
           effectivePolicySourcePath,
           sandboxName,
           gatewayName,
           captureOpenShell,
           readyRunner,
+          lifecycleCreateSandbox,
           createSandbox,
         }),
       readRegistry,

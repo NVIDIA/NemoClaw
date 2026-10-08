@@ -38,6 +38,7 @@ export type CoordinatorSnapshot = Readonly<{
     productScope: "accepted" | "missing";
   }>;
   history: Readonly<{
+    contractEvidence: "none" | "complete" | "incomplete";
     frozenContractKeys: readonly string[];
     writes: readonly Readonly<{
       headSha: string;
@@ -109,6 +110,20 @@ export function decideReviewAction(snapshot: CoordinatorSnapshot): CoordinatorDe
       "A coordinator review already exists for this exact head.",
     );
   }
+  if (snapshot.readiness.requiredChecks !== "pass") {
+    return quiet(
+      snapshot,
+      "prerequisites-not-ready",
+      "Required checks are not complete for this exact head.",
+    );
+  }
+  if (snapshot.history.contractEvidence === "incomplete") {
+    return quiet(
+      snapshot,
+      "ambiguous-follow-up",
+      "Prior review feedback is not machine-readable, so the coordinator will not publish or approve.",
+    );
+  }
 
   if (snapshot.advisor.status === "blocked") {
     const validated = snapshot.advisor.findings.filter(
@@ -160,7 +175,7 @@ export function decideReviewAction(snapshot: CoordinatorSnapshot): CoordinatorDe
     return quiet(
       snapshot,
       "prerequisites-not-ready",
-      "Advisor is clear, but required checks, mergeability, verification, or product scope is not ready.",
+      "Advisor is clear, but mergeability, verification, or product scope is not ready.",
     );
   }
   return action(
@@ -320,10 +335,23 @@ function validateSnapshot(snapshot: unknown): asserts snapshot is CoordinatorSna
   const history = snapshot.history;
   if (!isRecord(history)) throw new Error("history must be a JSON object");
   if (
+    history.contractEvidence !== "none" &&
+    history.contractEvidence !== "complete" &&
+    history.contractEvidence !== "incomplete"
+  ) {
+    throw new Error("history.contractEvidence is invalid");
+  }
+  if (
     !Array.isArray(history.frozenContractKeys) ||
     history.frozenContractKeys.some((key) => typeof key !== "string")
   ) {
     throw new Error("history.frozenContractKeys must be an array of strings");
+  }
+  if (
+    (history.contractEvidence === "none" && history.frozenContractKeys.length !== 0) ||
+    (history.contractEvidence === "complete" && history.frozenContractKeys.length === 0)
+  ) {
+    throw new Error("history has inconsistent contract evidence");
   }
   if (!Array.isArray(history.writes)) throw new Error("history.writes must be an array");
   for (const write of history.writes) {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { shellQuote } from "../../runner";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -11,7 +12,7 @@ import {
   assertPersistedAuthenticatedBridgeEntry,
   validateMcpCredentialEnvName,
 } from "./mcp-bridge-validation";
-import { executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
 
 const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20}|s[a-f0-9]{64})$/;
 
@@ -49,13 +50,15 @@ function executeMcpCredentialProofCommand(
   command: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   timeoutMs?: number,
-): ReturnType<typeof executeSandboxExecCommand> {
+): Promise<Awaited<ReturnType<typeof executeSandboxExecCommand>> | null> {
   // OpenShell preserves the proof as one multiline command argument. The
   // script classifies placeholder shape/revision only and never prints a raw
   // credential value or writes sandbox state.
   return executeSandboxExecCommand(sandboxName, command, timeoutMs, {
-    localDockerFallbackPolicy: "never",
     runtimeSelection,
+  }).catch((error: unknown) => {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    return null;
   });
 }
 

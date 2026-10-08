@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -130,6 +131,20 @@ describe("sandbox inference invocation probe", () => {
     expect(command).toContain("mktemp /tmp/nemoclaw-inference-invocation.XXXXXX");
     expect(command).toContain("--max-filesize 65536");
     expect(command).not.toContain("-o /dev/null");
+  });
+
+  it("probes native NVIDIA through the attached provider without exposing the host credential", () => {
+    const command = buildSandboxInferenceInvocationCommand({
+      ...input,
+      provider: "nvidia-prod",
+      nativeProvider: true,
+    });
+
+    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).not.toContain("https://inference.local");
+    expect(command).not.toContain("NVIDIA_API_KEY");
+    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
@@ -297,7 +312,7 @@ describe("sandbox inference invocation probe", () => {
       "dcode-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "recorded-gateway", localDockerFallbackPolicy: "never" },
+      { gatewayName: "recorded-gateway" },
     );
   });
 
@@ -323,7 +338,7 @@ describe("sandbox inference invocation probe", () => {
       "hermes-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "nemoclaw-19080", localDockerFallbackPolicy: "never" },
+      { gatewayName: "nemoclaw-19080" },
     );
     expect(execute).toHaveBeenCalledOnce();
   });
@@ -365,6 +380,35 @@ describe("sandbox inference invocation probe", () => {
     ]);
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "preserves filtered runtime authority for Deep Agents Code (selected=%s)",
+    (selected) => {
+      vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+      vi.stubEnv("OPENSHELL_WORKSPACE", "/ambient-workspace");
+      vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient-tls");
+      vi.stubEnv("GITHUB_TOKEN", "fixture-private-token");
+      try {
+        const runtimeSelection = selected
+          ? { gatewayName: "recorded-gateway", workspace: "/recorded-workspace" }
+          : undefined;
+        const request = buildDcodeSandboxInferenceInvocationRequest(
+          { ...input, runtimeSelection },
+          100_000,
+        );
+        expect(request.environment).toMatchObject({
+          OPENSHELL_GATEWAY: selected ? "recorded-gateway" : "ambient-gateway",
+          OPENSHELL_WORKSPACE: selected ? "/recorded-workspace" : "/ambient-workspace",
+        });
+        expect(request.environment?.OPENSHELL_LOCAL_TLS_DIR).toBe(
+          selected ? undefined : "/ambient-tls",
+        );
+        expect(request.environment).not.toHaveProperty("GITHUB_TOKEN");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("rejects startup output before Deep Agents Code invocation evidence (#10080)", async () => {
     const runBuffered = vi.fn(async () =>
@@ -579,4 +623,25 @@ describe("sandbox inference invocation probe", () => {
       expect(Number(budget?.[1])).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
     },
   );
+});
+
+describe("native inference transport failures", () => {
+  it.each(["cancelled", "capture", "invocation", "timeout", "unavailable", "malformed"] as const)(
+    "returns unavailable for %s without retry",
+    async (kind) => {
+      const execute = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+      await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toMatchObject({
+        ok: false,
+        detail: "sandbox inference invocation probe was unavailable",
+        httpStatus: null,
+      });
+      expect(execute).toHaveBeenCalledOnce();
+    },
+  );
+  it("propagates unexpected errors", async () => {
+    const error = new Error("authority refusal");
+    await expect(
+      probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
+    ).rejects.toBe(error);
+  });
 });

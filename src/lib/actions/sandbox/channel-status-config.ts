@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import JSON5 from "json5";
 import YAML from "yaml";
 import type { AgentDefinition } from "../../agent/defs";
 import { CLI_NAME } from "../../cli/branding";
@@ -375,7 +376,7 @@ function parseRenderedConfigSource(
   if (kind === "env") return { ok: true, source: { kind: "env", entries: parseEnvLines(raw) } };
   try {
     const value =
-      target.endsWith(".yaml") || target.endsWith(".yml") ? YAML.parse(raw) : JSON.parse(raw);
+      target.endsWith(".yaml") || target.endsWith(".yml") ? YAML.parse(raw) : JSON5.parse(raw);
     return { ok: true, source: { kind: "structured", value } };
   } catch {
     return { ok: false, error: `could not parse ${target}` };

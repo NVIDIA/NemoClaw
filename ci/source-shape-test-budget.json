@@ -12,16 +12,6 @@
       "category": "compatibility"
     },
     {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "leaves an installed package manifest that names a credential-shaped dependency",
-      "category": "security"
-    },
-    {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "returns a credential-free JSON manifest byte for byte",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"
@@ -112,6 +102,16 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/native-podman-setup-action.test.ts",
+      "test": "builds the Portable Podman toolchain outside candidate execution",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/native-podman-setup-action.test.ts",
+      "test": "runs Portable Hermes only on the explicit Podman 5.7 GPU lane",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "routes rootless job dependency auditing by workflow trigger (#11028)",
       "category": "security"
@@ -134,6 +134,46 @@
     {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "binds the exact PR publication to the generic NVIDIA GPU job",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "runs the Hermes root-entrypoint recovery proof for the copied PR revision",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a Hermes runtime change",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a Hermes lifecycle source-only change",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "selects Hermes qualification for a copied Hermes runtime source",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "fails Hermes qualification when changed files cannot be fetched",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "fails Hermes qualification when changed-file discovery is incomplete",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "skips Hermes qualification for unrelated documentation",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
+      "test": "requires Portable Hermes selection to stage its native helper artifact",
       "category": "security"
     },
     {
@@ -263,7 +303,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "executes pull request installer hash checks only from the PR base SHA",
+      "test": "executes pull request installer hash checks only from the reviewed revision",
       "category": "security"
     },
     {
@@ -372,23 +412,13 @@
       "category": "security"
     },
     {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "emitted openclaw() guard restores the contract even under an inherited `set -e`",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
-      "test": "restore helper re-asserts 2770/660 after the tree is tightened to 700/600",
-      "category": "security"
-    },
-    {
       "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
       "test": "accepts only the reviewed OpenShell 0.0.116 installer template",
+      "category": "security"
+    },
+    {
+      "file": "test/install/installer-hash-check.test.ts",
+      "test": "does not base-trust the obsolete Brev npm replacement digest",
       "category": "security"
     },
     {

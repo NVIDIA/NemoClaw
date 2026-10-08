@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { GATEWAY_PORT } from "../../core/ports";
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
@@ -13,12 +14,14 @@ export const DCODE_AGENT_NAME = "langchain-deepagents-code";
 export type DcodeRebuildRegistryEntry = SandboxGatewayBinding & {
   agent?: string | null;
   dashboardPort?: number | null;
+  nativeNvidiaProviderAttachment?: unknown;
 };
 
 export type DcodeRebuildResumeConfig = {
   provider: string | null;
   model: string | null;
   preferredInferenceApi: string | null;
+  nativeProvider?: boolean;
 };
 
 export type ResolvedDcodeRebuildTarget = {
@@ -67,5 +70,8 @@ export function resolveDcodeRebuildTarget(
     provider: requiredString(resumeConfig.provider, "inference provider"),
     model: requiredString(resumeConfig.model, "inference model"),
     preferredInferenceApi: resumeConfig.preferredInferenceApi,
+    ...(normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
+      ? { nativeProvider: true }
+      : {}),
   };
 }

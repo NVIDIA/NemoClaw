@@ -43,7 +43,7 @@ function runTests(...tests: string[]): () => string[] {
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern:
-      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py|seed-dashboard-config\.py))$/,
+      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py))$/,
     testsToRun: runTests("test/generation/providerless-agent-config.test.ts"),
   },
 
@@ -402,6 +402,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
     testsToRun: runTests("test/e2e/support/pr-review-advisor-workflow-boundary.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/pr-review-coordinator-shadow-sample\.yaml$/,
+    testsToRun: runTests(
+      "test/automation/pull-requests/pr-review-coordinator-shadow-sample-workflow.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
