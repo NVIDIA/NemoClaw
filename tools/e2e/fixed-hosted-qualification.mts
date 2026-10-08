@@ -5,6 +5,7 @@
 export const FIXED_HOSTED_QUALIFICATIONS = [
   {
     id: "hermes-fixed-bearer-inference-switch",
+    sandboxName: "e2e-hm-bearer",
     agent: "hermes",
     provider: "hermes-provider",
     credential: "NOUS_API_KEY",
@@ -12,6 +13,7 @@ export const FIXED_HOSTED_QUALIFICATIONS = [
   },
   {
     id: "hermes-fixed-anthropic-inference-switch",
+    sandboxName: "e2e-hm-anthropic",
     agent: "hermes",
     provider: "anthropic-prod",
     credential: "ANTHROPIC_API_KEY",
@@ -19,6 +21,7 @@ export const FIXED_HOSTED_QUALIFICATIONS = [
   },
   {
     id: "hermes-fixed-openrouter-inference-switch",
+    sandboxName: "e2e-hm-openrouter",
     agent: "hermes",
     provider: "openrouter-api",
     credential: "OPENROUTER_API_KEY",
@@ -26,6 +29,7 @@ export const FIXED_HOSTED_QUALIFICATIONS = [
   },
   {
     id: "openclaw-fixed-openai-inference-switch",
+    sandboxName: "e2e-oc-openai",
     agent: "openclaw",
     provider: "openai-api",
     credential: "OPENAI_API_KEY",
@@ -33,6 +37,7 @@ export const FIXED_HOSTED_QUALIFICATIONS = [
   },
   {
     id: "openclaw-fixed-anthropic-inference-switch",
+    sandboxName: "e2e-oc-anthropic",
     agent: "openclaw",
     provider: "anthropic-prod",
     credential: "ANTHROPIC_API_KEY",
