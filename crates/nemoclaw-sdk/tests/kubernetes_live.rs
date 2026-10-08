@@ -370,7 +370,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         .unwrap()
         .into_iter()
         .find(|target| target.kind == GATEWAY_KIND)
-        .map(|target| Spec::decode(&target.values["spec"]).unwrap())
+        .map(|target| Spec::from_row(&target.kind, &target.values).unwrap())
         .unwrap();
     let tofu = Tofu::new(bundle, target);
     // These private files make a failed run inspectable without logging the
