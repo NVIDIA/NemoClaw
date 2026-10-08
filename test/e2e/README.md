@@ -509,13 +509,13 @@ unchanged because this contract replaces a redundant nonempty-log assertion in t
 
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
-the disabled baseline. Observability turns register unique prompts before execution. Cleanup identifies
-only the exact matching native conversation from the complete listing and requires confirmation of its
-deletion, including when turn output is malformed or the command fails after persisting state. Listing and deletion
-each have a 45-second host and remote limit, with a five-second host kill grace. A timeout fails cleanup
-and preserves the failure diagnostic while allowing capture cleanup to continue. The native listing
-parser accepts at most 1 MiB before decoding JSON. An oversized listing closes the input pipe, fails
-cleanup with its diagnostic, and permits no deletion from incomplete ownership evidence.
+the disabled baseline. Observability turns register unique prompts before execution. Cleanup uses the
+native thread ID from a valid direct-turn result. If that result is malformed or the command fails after
+persisting state, it lists only the probe's private cwd with `--limit 2 --json` and accepts an empty list
+or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup without deleting a
+thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
+a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
+directory and recovery instructions, and allows policy and capture cleanup to continue.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
