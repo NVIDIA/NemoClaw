@@ -300,6 +300,7 @@ pub mod backend;
 pub mod compile;
 pub mod config;
 mod error;
+pub mod hcl_schema;
 mod health;
 pub use health::{RuntimeHealth, SandboxHealth};
 mod secrets;

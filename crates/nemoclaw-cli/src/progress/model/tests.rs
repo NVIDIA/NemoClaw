@@ -124,6 +124,7 @@ fn default_progress_hides_known_supporting_reads_but_preserves_failures_and_unkn
     for address in [
         "data.docker_image.image_abcd",
         "data.nemoclaw_gateway_capabilities.current",
+        "data.nemoclaw_gateway_readiness.current",
         "nemoclaw_provider_profile.inference_hosted",
     ] {
         let event = Progress::Resource {

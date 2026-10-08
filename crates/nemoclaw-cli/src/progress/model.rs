@@ -266,6 +266,7 @@ fn supporting_resource(address: &str) -> bool {
             | "nemoclaw_gateway_storage.runtime"
             | "data.nemoclaw_gateway_capabilities.current"
             | "data.nemoclaw_gateway_capabilities.apply"
+            | "data.nemoclaw_gateway_readiness.current"
     ) || [
         "data.docker_image.image_",
         "docker_image.image_",

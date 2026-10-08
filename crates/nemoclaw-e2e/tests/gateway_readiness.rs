@@ -21,39 +21,38 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
     let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
     assert!(tofu.is_absolute() && provider.is_absolute());
     let gateway = Fixture::start().await;
-    let references: Vec<Value> = serde_json::from_str(include_str!(
-        "../../nemoclaw-provider/src/managed/reference.json"
-    ))
-    .unwrap();
-    let mut spec: nemoclaw_sdk::managed::Spec =
-        serde_json::from_str(references[0]["spec"].as_str().unwrap()).unwrap();
-    spec.gateway.endpoint = gateway.endpoint.clone();
-    let name = spec.name.clone();
-    let owner = spec.owner.clone();
+    let name = "nc-0123456789abcdef-gateway".to_owned();
+    let owner = "302ff5e1-088d-42ce-959f-4ff4c3570c13".to_owned();
+    let (container_name, container_owner) = (name.clone(), owner.clone());
     let running = Arc::new(AtomicBool::new(false));
     let status = running.clone();
     let engine = docker::Fixture::start(move |request| {
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/containers/bound/json");
         let active = status.load(Ordering::SeqCst);
-        Some((200, serde_json::to_vec(&json!({"Id":"bound","Name":format!("/{name}"),
-            "Config":{"Labels":{"nemoclaw.nvidia.com/uid":owner}},
+        Some((200, serde_json::to_vec(&json!({"Id":"bound","Name":format!("/{container_name}"),
+            "Config":{"Labels":{"nemoclaw.nvidia.com/uid":container_owner}},
             "State":{"Running":active,"Status":if active {"running"} else {"exited"},"ExitCode":42,"Error":"PRIVATE_SENTINEL"}
         })).unwrap()))
     }).await;
-    spec.gateway.engine = engine.endpoint.clone();
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     let mut graph = json!({
         "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
         "provider":{"nemoclaw":{"endpoint":gateway.endpoint}},
         "resource":{"terraform_data":{"bootstrap":{"input":"bound"}}},
-        "data":{"nemoclaw_gateway_capabilities":{"current":{
-            "required_compute_drivers":["docker"],"wait_timeout_seconds":90,
-            "managed_spec":spec.json().unwrap(),"container_id":"${terraform_data.bootstrap.output}",
-            "read_trigger":"${timestamp() != \"\"}",
-            "lifecycle":{"postcondition":[{"condition":"${self.compatible}","error_message":"Gateway incompatible"}]}
-        }}}
+        "data":{
+            "nemoclaw_gateway_readiness":{"current":{
+                "engine":engine.endpoint,"container_id":"${terraform_data.bootstrap.output}",
+                "name":name,"owner":owner,"endpoint":gateway.endpoint,
+                "wait_timeout_seconds":90,"read_trigger":"${timestamp() != \"\"}"
+            }},
+            "nemoclaw_gateway_capabilities":{"current":{
+                "required_compute_drivers":["docker"],"wait_timeout_seconds":90,
+                "read_trigger":"${data.nemoclaw_gateway_readiness.current.ready}",
+                "lifecycle":{"postcondition":[{"condition":"${self.compatible}","error_message":"Gateway incompatible"}]}
+            }}
+        }
     });
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let run = |args: &[&str], success: bool| {
@@ -75,8 +74,9 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
     let started = Instant::now();
     let failure = run(&["apply", "-input=false", "-no-color", "first.plan"], false);
     assert!(started.elapsed() < Duration::from_secs(5), "{failure}");
+    assert_eq!(gateway.state.lock().unwrap().health_reads, 0, "{failure}");
     for expected in [
-        spec.name.as_str(),
+        name.as_str(),
         "exit code 42",
         "docker logs",
         "resources retained",
@@ -96,6 +96,8 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
         true,
     );
     nemoclaw_e2e::assert_same_managed_resources(&fs::read(&state_path).unwrap(), &first);
+    assert!(gateway.state.lock().unwrap().health_reads > 0);
+    assert!(gateway.state.lock().unwrap().gateway_reads > 0);
     running.store(false, Ordering::SeqCst);
     run(
         &["plan", "-input=false", "-no-color", "-out=recheck.plan"],

@@ -69,7 +69,25 @@ pub(crate) fn validate_value(value: &Value) -> Result<(), ConfigError> {
         .validate(value)
         .map_err(|error| diagnostic(&error))
 }
-fn diagnostic(error: &jsonschema::ValidationError<'_>) -> ConfigError {
+/// A step toward a schema violation: a declared field, an array index, or
+/// an undeclared key whose spelling is untrusted input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PathSegment {
+    Field(String),
+    Index(usize),
+    Key,
+}
+
+/// Where a runtime specification value first violates the schema.
+pub fn violation(value: &Value) -> Option<Vec<PathSegment>> {
+    let error = VALIDATOR.validate(value).err()?;
+    Some(segments(innermost(&error)))
+}
+
+// Report the failing variant that the instance selected, not the union.
+fn innermost<'e, 'a>(
+    error: &'e jsonschema::ValidationError<'a>,
+) -> &'e jsonschema::ValidationError<'a> {
     use jsonschema::error::ValidationErrorKind as Kind;
     if let Kind::OneOfNotValid { context } | Kind::AnyOf { context } = error.kind()
         && let Some(variants) = SCHEMA
@@ -85,43 +103,67 @@ fn diagnostic(error: &jsonschema::ValidationError<'_>) -> ConfigError {
             if (matches_kind || matches_profile)
                 && let Some(error) = errors.first()
             {
-                return diagnostic(error);
+                return innermost(error);
             }
         }
     }
-    // Only declared schema field names may appear in diagnostics. Map keys,
-    // unknown properties, values and raw parser messages are untrusted.
-    static FIELDS: std::sync::LazyLock<std::collections::BTreeSet<String>> =
-        std::sync::LazyLock::new(|| {
-            fn collect(value: &Value, fields: &mut std::collections::BTreeSet<String>) {
-                match value {
-                    Value::Object(object) => {
-                        if let Some(properties) =
-                            object.get("properties").and_then(Value::as_object)
-                        {
-                            fields.extend(properties.keys().cloned());
-                        }
-                        object.values().for_each(|value| collect(value, fields));
+    error
+}
+
+// Only declared schema field names may appear in diagnostics. Map keys,
+// unknown properties, values and raw parser messages are untrusted.
+static FIELDS: std::sync::LazyLock<std::collections::BTreeSet<String>> =
+    std::sync::LazyLock::new(|| {
+        fn collect(value: &Value, fields: &mut std::collections::BTreeSet<String>) {
+            match value {
+                Value::Object(object) => {
+                    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+                        fields.extend(properties.keys().cloned());
                     }
-                    Value::Array(values) => values.iter().for_each(|value| collect(value, fields)),
-                    _ => {}
+                    object.values().for_each(|value| collect(value, fields));
                 }
+                Value::Array(values) => values.iter().for_each(|value| collect(value, fields)),
+                _ => {}
             }
-            let mut fields = std::collections::BTreeSet::new();
-            collect(&SCHEMA, &mut fields);
-            fields
-        });
+        }
+        let mut fields = std::collections::BTreeSet::new();
+        collect(&SCHEMA, &mut fields);
+        fields
+    });
+
+fn segments(error: &jsonschema::ValidationError<'_>) -> Vec<PathSegment> {
+    use jsonschema::error::ValidationErrorKind as Kind;
     let location = error.instance_path().to_string();
     let mut path: Vec<_> = location
         .split('/')
         .skip(1)
-        .map(|field| if FIELDS.contains(field) { field } else { "*" })
+        .map(|segment| {
+            if FIELDS.contains(segment) {
+                PathSegment::Field(segment.into())
+            } else if let Ok(index) = segment.parse() {
+                PathSegment::Index(index)
+            } else {
+                PathSegment::Key
+            }
+        })
         .collect();
     if let Kind::Required { property } = error.kind()
         && let Some(field) = property.as_str().filter(|field| FIELDS.contains(*field))
     {
-        path.push(field);
+        path.push(PathSegment::Field(field.into()));
     }
+    path
+}
+
+fn diagnostic(error: &jsonschema::ValidationError<'_>) -> ConfigError {
+    let error = innermost(error);
+    let path: Vec<_> = segments(error)
+        .into_iter()
+        .map(|segment| match segment {
+            PathSegment::Field(field) => field,
+            PathSegment::Index(_) | PathSegment::Key => "*".into(),
+        })
+        .collect();
     ConfigError(format!(
         "invalid runtime specification {} at /{} ({})",
         crate::SPEC_VERSION,

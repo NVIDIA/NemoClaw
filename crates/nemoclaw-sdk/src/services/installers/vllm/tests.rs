@@ -129,3 +129,33 @@ fn vllm_emits_only_selected_recipe_options_and_preserves_basic_defaults() {
     assert!(arguments::arguments(&service, "/data/model", 0).is_err());
     assert!(arguments::arguments(&service, "/data/model", GIB).is_err());
 }
+
+#[test]
+fn every_runtime_contract_setting_has_an_opentofu_attribute() {
+    use crate::hcl_schema::Shape;
+    let fields = super::runtime_fields().expect("every vLLM runtime construct maps to OpenTofu");
+    assert_eq!(
+        fields.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "authentication",
+            "hardware",
+            "memory",
+            "model",
+            "recipe",
+            "serving"
+        ]
+    );
+    assert!(fields["model"].required);
+    let object = |shape: &Shape| match shape {
+        Shape::Object(fields) => fields.clone(),
+        other => panic!("expected an object, found {other:?}"),
+    };
+    assert!(object(&fields["serving"].shape).contains_key("model_name"));
+    assert!(object(&fields["memory"].shape).contains_key("gpu_memory_gib"));
+    let hardware = object(&fields["hardware"].shape);
+    assert!(hardware.contains_key("profile") && hardware.contains_key("min_driver_major"));
+    let recipe = object(&fields["recipe"].shape);
+    assert!(recipe["api_version"].required);
+    let snapshot = object(&recipe["snapshot"].shape);
+    assert!(matches!(snapshot["files"].shape, Shape::ObjectList(_)));
+}

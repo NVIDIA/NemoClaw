@@ -98,6 +98,21 @@ pub async fn capabilities(
     response.into_inner().try_into()
 }
 
+/// Whether the gateway answers its health call. The reported status is not
+/// judged: an answer shows the process serves its API.
+pub async fn health(client: &OpenShellClient) -> Result<(), ObservationError> {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        client
+            .raw_grpc()
+            .health(request(openshell_sdk::raw::proto::HealthRequest {}))
+            .await
+    })
+    .await
+    .map_err(|_| ObservationError::Transport)?
+    .map_err(|error| remote_error(&error))?;
+    Ok(())
+}
+
 /// The gateway's capabilities judged against the drivers its sandboxes require.
 /// A failure is an unknown observation, never absence.
 pub async fn observe_gateway(
