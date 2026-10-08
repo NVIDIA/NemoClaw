@@ -3,7 +3,7 @@
 
 use crate::{Backend, Definition, Mutation, Protection, Row, State, plan_update};
 use async_trait::async_trait;
-use nemoclaw_sdk::{Binding, Bound, Observation, ObservationError, refresh};
+use nemoclaw_backend::{Binding, Bound, Observation, ObservationError, refresh};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -12,7 +12,8 @@ use tf_provider::schema::{Attribute, AttributeConstraint, AttributeType, Block, 
 use tf_provider::value::{Value, ValueEmpty};
 use tf_provider::{AttributePath, Diagnostics, Resource};
 
-pub(crate) fn observation_message(error: ObservationError, sandbox: Option<&str>) -> String {
+/// A diagnostic for an observation failure, with sandbox guidance when one is named.
+pub fn observation_message(error: ObservationError, sandbox: Option<&str>) -> String {
     if matches!(
         error,
         ObservationError::SandboxConfigurationRejected { .. }
@@ -465,11 +466,7 @@ impl Resource for ResourceAdapter {
                 return None;
             }
         };
-        let mutation = crate::download::with_provider_download_progress(
-            download_resource(self.definition.kind, &row),
-            self.backend.ensure(self.definition.kind, &row),
-        )
-        .await;
+        let mutation = self.backend.ensure(self.definition.kind, &row).await;
         self.finish(diags, mutation, &row, None)
             .map(|state| (state, private))
     }
@@ -493,11 +490,7 @@ impl Resource for ResourceAdapter {
                 return Some((prior, private));
             }
         };
-        let mutation = crate::download::with_provider_download_progress(
-            download_resource(self.definition.kind, &row),
-            self.backend.ensure(self.definition.kind, &row),
-        )
-        .await;
+        let mutation = self.backend.ensure(self.definition.kind, &row).await;
         self.finish(diags, mutation, &row, Some(prior))
             .map(|state| (state, private))
     }
@@ -530,43 +523,5 @@ impl Resource for ResourceAdapter {
                 None
             }
         }
-    }
-}
-
-fn download_resource(kind: &str, row: &Row) -> String {
-    #[derive(serde::Deserialize)]
-    struct NamedSpec {
-        name: String,
-    }
-    let name = row
-        .get("name")
-        .or_else(|| row.get("model"))
-        .cloned()
-        .or_else(|| {
-            serde_json::from_str::<NamedSpec>(row.get("spec")?)
-                .ok()
-                .map(|spec| spec.name)
-        })
-        .unwrap_or_else(|| "resource".into());
-    format!("{kind}.{name}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn download_labels_distinguish_named_specs_and_models() {
-        for name in ["first", "second"] {
-            let row = Row::from([("spec".into(), serde_json::json!({"name":name}).to_string())]);
-            assert_eq!(
-                download_resource("inference_service", &row),
-                format!("inference_service.{name}")
-            );
-        }
-        let row = Row::from([("model".into(), "llama3:latest".into())]);
-        assert_eq!(
-            download_resource("model_snapshot", &row),
-            "model_snapshot.llama3:latest"
-        );
     }
 }

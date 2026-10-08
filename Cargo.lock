@@ -2340,6 +2340,7 @@ dependencies = [
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
+ "nemoclaw-tofu",
  "openshell-core",
  "prost",
  "rcgen",
@@ -2404,9 +2405,11 @@ dependencies = [
  "interprocess",
  "ipnet",
  "nemo-fabric-core",
+ "nemoclaw-backend",
  "nemoclaw-discovery",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
+ "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",
  "openshell-sdk",
@@ -2494,6 +2497,15 @@ dependencies = [
  "toml",
  "url",
  "widestring",
+]
+
+[[package]]
+name = "nemoclaw-tofu"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-backend",
+ "tf-provider",
 ]
 
 [[package]]

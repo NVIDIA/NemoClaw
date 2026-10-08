@@ -93,15 +93,22 @@ impl Backend for ConfiguredBackend {
         self.client()?.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        match BackendRegistry::new(&self.1).resolve(kind, desired) {
-            Ok(Some(backend)) => return backend.ensure(kind, desired).await,
-            Err(error) => return Mutation::failed(error),
-            Ok(None) => {}
-        }
-        match self.client() {
-            Ok(client) => client.ensure(kind, desired).await,
-            Err(error) => Mutation::failed(error),
-        }
+        // Image and model downloads during a mutation report progress to the SDK.
+        crate::download::with_provider_download_progress(
+            crate::download::resource_label(kind, desired),
+            async {
+                match BackendRegistry::new(&self.1).resolve(kind, desired) {
+                    Ok(Some(backend)) => return backend.ensure(kind, desired).await,
+                    Err(error) => return Mutation::failed(error),
+                    Ok(None) => {}
+                }
+                match self.client() {
+                    Ok(client) => client.ensure(kind, desired).await,
+                    Err(error) => Mutation::failed(error),
+                }
+            },
+        )
+        .await
     }
     async fn remove(
         &self,
