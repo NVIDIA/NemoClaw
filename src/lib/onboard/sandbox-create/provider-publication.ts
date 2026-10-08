@@ -68,6 +68,18 @@ export function usesNativeNvidiaProvider(inferenceProvider: string | null): bool
   return inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER;
 }
 
+export function requireNativeNvidiaProviderReceipt(input: {
+  readonly sandboxName: string;
+  readonly expected: SandboxEntry["nativeNvidiaProviderAttachment"];
+}): NonNullable<SandboxEntry["nativeNvidiaProviderAttachment"]> {
+  if (!input.expected) {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
+    );
+  }
+  return input.expected;
+}
+
 export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
@@ -76,16 +88,12 @@ export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
   readonly deps: ProviderPreparationDeps;
 }): Promise<void> {
   if (!usesNativeNvidiaProvider(input.inferenceProvider)) return;
-  if (!input.expected) {
-    throw new Error(
-      `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
-    );
-  }
+  const expected = requireNativeNvidiaProviderReceipt(input);
   await ensureNativeNvidiaProviderAttached({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
     sandboxName: input.sandboxName,
-    expected: input.expected,
+    expected,
   });
 }
 

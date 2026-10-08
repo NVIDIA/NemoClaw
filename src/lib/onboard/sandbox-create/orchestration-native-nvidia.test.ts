@@ -90,6 +90,17 @@ describe("native NVIDIA post-create provider verification", () => {
     },
   );
 
+  it("rejects a missing native receipt after creation before provider access", async () => {
+    const adapter = providerAdapter(recordedProviderId);
+    const boundary = nativeProviderBoundary(adapter, true);
+
+    await expect(boundary.runAfterVerifiedCreate?.(verifiedCreateContext())).rejects.toThrow(
+      "Sandbox 'alpha' is missing its native NVIDIA provider identity receipt.",
+    );
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.listProviderAttachments).not.toHaveBeenCalled();
+  });
+
   it("confirms the recorded provider is attached after sandbox identity is verified", async () => {
     const adapter = providerAdapter(recordedProviderId);
     const revalidateSandboxIdentity = vi.fn();
