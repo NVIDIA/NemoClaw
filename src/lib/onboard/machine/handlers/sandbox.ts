@@ -1991,8 +1991,16 @@ class SandboxStateFlow<
     const ownsPendingCreateReservation =
       sourceEntry?.pendingRouteReservation === true &&
       sourceEntry.reservationSessionId === state.session?.sessionId;
-    if (!this.options.resume && !existing && sourceEntry && !ownsPendingCreateReservation) {
-      return null;
+    if (!this.options.resume && !existing && sourceEntry) {
+      // A route reservation on a Ready sandbox does not decide whether it needs replacement.
+      // Let createSandbox check selection drift before opening its recreation journal.
+      if (
+        !ownsPendingCreateReservation ||
+        (!createIntent.recreate &&
+          this.deps.getSandboxRecreateObservation(sandboxName).state === "ready")
+      ) {
+        return null;
+      }
     }
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,

@@ -798,6 +798,54 @@ it("opens the lifecycle journal for a fresh route reservation before creation (#
   expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
 });
 
+it("delegates a Ready route reservation to selection checks before journaling (#12667)", async () => {
+  const session = createSession({ sandboxName: "fresh", agent: "openclaw" });
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "fresh", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const reservation: SandboxEntry = {
+    name: "fresh",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    pendingRouteReservation: true,
+    reservationSessionId: session.sessionId,
+  };
+  const createSandbox = vi.fn(async (...args: unknown[]) => {
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+    expect(args.at(-2)).toMatchObject({ recreate: false });
+    return "fresh";
+  });
+  const { deps } = createDeps(
+    {
+      getSandboxRegistryEntry: () => reservation,
+      getSandboxRecreateObservation: () => ({
+        state: "ready",
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue("existing-id"),
+      }),
+      createSandbox,
+    },
+    session,
+  );
+  await handleSandboxState({ ...baseOptions(deps, session), sandboxName: "fresh" });
+  expect(createSandbox).toHaveBeenCalledOnce();
+  expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+});
+
 it("preserves registry state until journaled messaging recreation commits (#7736)", async () => {
   const session = createSession();
   const journal = bindJournaledRecreate(session);
