@@ -400,7 +400,7 @@ Use checked `nemoclaw export` to inspect provider, sandbox, and native agent con
 Observed provider or public-configuration mismatches can produce drift; they are not a NemoClaw reconnect or model-switch procedure.
 Native file changes require an owner observation contract and are not detected by comparing remembered public configuration.
 Follow [the change path](usage.md#choose-the-change-path) to update desired state and verify a reply afterward.
-The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [resource mutation](../crates/nemoclaw-provider/src/openshell/mutation.rs) define workspace ownership.
+The [compiler](../crates/nemoclaw-sdk/src/compile.rs) and [resource mutation](../crates/openshell-provider/src/mutation.rs) define workspace ownership.
 
 ## Understand Timeout Budgets
 
@@ -418,7 +418,7 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 These are phase limits, not a promised total duration for apply.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [bound execution](../crates/nemoclaw-provider/src/openshell/transport.rs), [agent configuration](../crates/nemoclaw-provider/src/openshell/agent_configuration.rs), [agent readiness](../crates/nemoclaw-provider/src/openshell/agent.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/nemoclaw-provider/src/fabric/configuration.rs), [agent readiness](../crates/nemoclaw-provider/src/fabric/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result

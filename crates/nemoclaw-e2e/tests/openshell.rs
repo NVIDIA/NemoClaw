@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+use nemoclaw_provider::fabric::AgentBridge as _;
 
 use nemoclaw_e2e::image_runtime::targets;
 use nemoclaw_e2e::openshell::Fixture;
@@ -659,7 +660,8 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
         .clone();
     desired.insert("sandbox_id".into(), rows[3]["id"].clone());
     fixture.state.lock().unwrap().host_unavailable_checks = 1;
-    let configured = client.ensure("agent_configuration", &desired).await;
+    let fabric = nemoclaw_provider::fabric::AgentConfigurationBackend(client.clone());
+    let configured = fabric.ensure("agent_configuration", &desired).await;
     assert!(configured.error().is_none(), "{:?}", configured.error());
     let binding = configured.into_parts().0.unwrap();
     {
@@ -707,7 +709,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
         .iter()
         .filter(|command| command.get(1).is_some_and(|arg| arg == "configure"))
         .count();
-    client
+    fabric
         .read("agent_configuration", &binding, false)
         .await
         .unwrap()
@@ -732,7 +734,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
     }
     fixture.state.lock().unwrap().exec_exit = 2;
     assert!(
-        client
+        fabric
             .read("agent_configuration", &binding, false)
             .await
             .is_err()
@@ -740,7 +742,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     // An unavailable configuration observation does not prevent owned teardown.
     assert!(
-        client
+        fabric
             .read("agent_configuration", &binding, true)
             .await
             .unwrap()

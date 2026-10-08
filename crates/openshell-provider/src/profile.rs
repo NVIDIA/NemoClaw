@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use nemoclaw_sdk::config::SearchProvider;
+use nemoclaw_openshell::search::SearchProvider;
 
 const PROFILE_METADATA: &str = "nemoclaw.nvidia.com/profile-v1";
 
@@ -42,7 +42,7 @@ fn definition(
     provider: SearchProvider,
     want: &Row,
 ) -> Result<proto::ProviderProfile, ObservationError> {
-    let mut rule = nemoclaw_sdk::config::search_policy(provider);
+    let mut rule = nemoclaw_openshell::search::search_policy(provider);
     let name = &want["name"];
     rule.name = name.clone();
     let policy = openshell_policy::parse_sandbox_policy(
@@ -94,9 +94,9 @@ fn native_definition(want: &Row) -> Result<proto::ProviderProfile, ObservationEr
         name,
         &want["endpoint"],
         if want.get("provider_type").is_some_and(|s| s == "anthropic") {
-            nemoclaw_sdk::config::InferenceProviderKind::Anthropic
+            nemoclaw_openshell::profile::InferenceProviderKind::Anthropic
         } else {
-            nemoclaw_sdk::config::InferenceProviderKind::Openai
+            nemoclaw_openshell::profile::InferenceProviderKind::Openai
         },
         authenticated,
     )?;
@@ -222,7 +222,9 @@ pub(super) fn provider_row(
         .filter(|s| !s.is_empty())
         .ok_or(ObservationError::Incomplete)?
         .clone();
-    if name != nemoclaw_sdk::config::search_provider_name(search, &credential, &provider.r#type) {
+    if name
+        != nemoclaw_openshell::search::search_provider_name(search, &credential, &provider.r#type)
+    {
         return Err(ObservationError::BindingMismatch);
     }
     let mut result = base(provider.metadata, name, removing)?;

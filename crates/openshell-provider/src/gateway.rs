@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::OpenShell;
-use nemoclaw_sdk::{Error, ObservationError, discovery::GatewayCapabilities};
+use nemoclaw_backend::{Error, ObservationError};
+use nemoclaw_openshell::GatewayCapabilities;
 
 impl OpenShell {
     pub async fn gateway_capabilities(&self) -> Result<GatewayCapabilities, ObservationError> {
@@ -11,7 +12,7 @@ impl OpenShell {
 
     pub async fn verify_gateway(
         &self,
-        driver: nemoclaw_sdk::config::ComputeDriver,
+        driver: nemoclaw_openshell::ComputeDriver,
     ) -> Result<(), Error> {
         self.gateway_capabilities().await?.require(driver)
     }

@@ -39,9 +39,8 @@ pub mod backend;
 pub mod compile;
 pub mod config;
 pub mod hcl_schema;
-mod health;
-pub use health::{RuntimeHealth, SandboxHealth};
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
+pub use nemoclaw_backend::{RuntimeHealth, SandboxHealth};
 mod gateway_observation;
 #[doc(hidden)]
 pub mod services;
