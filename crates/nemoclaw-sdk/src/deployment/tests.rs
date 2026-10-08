@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::config::Gateway;
 
+use super::opentofu::{command_environment, credential_environment, gateway_environment};
 use super::*;
 
 pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {

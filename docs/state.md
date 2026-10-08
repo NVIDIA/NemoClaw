@@ -22,7 +22,7 @@ They are implementation details for identifying retained state, not a manual edi
 | `runtime/helm-recovery.json` | Private checkpoint for a bound Helm release during destroy; keep it with the runtime state until recovery or removal completes |
 | `kubernetes/` | Managed Kubernetes ownership receipt, development issuer key material, and gateway client credentials |
 
-The [state store](../crates/nemoclaw-sdk/src/state/mod.rs) and [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs) define these files.
+The [state store](../crates/nemoclaw-sdk/src/state/mod.rs), [deployment lifecycle](../crates/nemoclaw-sdk/src/deployment/mod.rs), and [OpenTofu configuration](../crates/nemoclaw-sdk/src/deployment/opentofu.rs) define these files.
 Keep the whole directory after failure; deleting state does not establish that its runtime resources are absent.
 The local lock does not exclude other clients of the same gateway.
 State records carry a format version; the SDK rejects a different version without rewriting the directory or adopting its resources.
