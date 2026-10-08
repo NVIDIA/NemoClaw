@@ -59,25 +59,6 @@ function requireDriveRoot(value: unknown): string {
   return driveRoot;
 }
 
-function requireSandboxName(value: unknown): string {
-  if (typeof value !== "string" || !isValidName(value)) {
-    throw new MxcNativeArtifactBootstrapError("sandbox name is not a canonical OpenShell name");
-  }
-  return value;
-}
-
-function requireLifecycleGeneration(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 256 ||
-    CONTROL_CHARACTER_PATTERN.test(value)
-  ) {
-    throw new MxcNativeArtifactBootstrapError("lifecycle generation is not a bounded identity");
-  }
-  return value;
-}
-
 function requireDirectChild(
   root: string,
   value: unknown,
@@ -111,19 +92,6 @@ function providerOwnedShareDirectory(
   return path.win32.join(driveRoot, `nemoclaw-${sandboxName}-${generationSha256.slice(0, 12)}`);
 }
 
-/** Resolve the writable share that the provider will bind to one sandbox lifecycle. */
-export function resolveMxcNativeArtifactShareDirectory(input: {
-  readonly driveRoot: string;
-  readonly sandboxName: string;
-  readonly lifecycleGeneration: string;
-}): string {
-  return providerOwnedShareDirectory(
-    requireDriveRoot(input.driveRoot),
-    requireSandboxName(input.sandboxName),
-    requireLifecycleGeneration(input.lifecycleGeneration),
-  );
-}
-
 function sha256Json(input: object): string {
   return createHash("sha256").update(JSON.stringify(input), "utf8").digest("hex");
 }
@@ -134,8 +102,17 @@ function preparePlan(
   if (input.providerId !== MXC_PROVIDER_ID) {
     throw new MxcNativeArtifactBootstrapError("provider identity does not match 'mxc'");
   }
-  const sandboxName = requireSandboxName(input.sandboxName);
-  const lifecycleGeneration = requireLifecycleGeneration(input.lifecycleGeneration);
+  if (!isValidName(input.sandboxName)) {
+    throw new MxcNativeArtifactBootstrapError("sandbox name is not a canonical OpenShell name");
+  }
+  if (
+    typeof input.lifecycleGeneration !== "string" ||
+    input.lifecycleGeneration.length === 0 ||
+    input.lifecycleGeneration.length > 256 ||
+    CONTROL_CHARACTER_PATTERN.test(input.lifecycleGeneration)
+  ) {
+    throw new MxcNativeArtifactBootstrapError("lifecycle generation is not a bounded identity");
+  }
   const workload = parseNativeArtifactWorkloadReceiptV1(input.workload);
   const requiredEnvironmentNames = [
     "HOME",
@@ -159,7 +136,11 @@ function preparePlan(
     "artifact root",
     "drive root",
   );
-  const shareDirectory = providerOwnedShareDirectory(driveRoot, sandboxName, lifecycleGeneration);
+  const shareDirectory = providerOwnedShareDirectory(
+    driveRoot,
+    input.sandboxName,
+    input.lifecycleGeneration,
+  );
   if (
     path.win32.resolve(artifactRoot).toLowerCase() ===
     path.win32.resolve(shareDirectory).toLowerCase()
@@ -182,8 +163,8 @@ function preparePlan(
   const operationIdentity = {
     schemaVersion: RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION,
     providerId: MXC_PROVIDER_ID,
-    sandboxName,
-    lifecycleGeneration,
+    sandboxName: input.sandboxName,
+    lifecycleGeneration: input.lifecycleGeneration,
     driveRoot,
     artifactRoot,
     shareDirectory,

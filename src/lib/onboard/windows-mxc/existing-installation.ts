@@ -68,10 +68,7 @@ export async function attachMxcWindowsExistingInstallation(
   );
   const boundary = defaultBoundary();
   const hostFacts = boundary.observeHostFacts();
-  const assessment = assessWindowsMxcProcessContainerCandidate(
-    hostFacts,
-    openshellAttachmentAuthority.nativeArchitecture,
-  );
+  const assessment = assessWindowsMxcProcessContainerCandidate(hostFacts);
   if (!assessment.candidate) {
     throw new MxcWindowsExistingInstallationError(assessment.detail);
   }

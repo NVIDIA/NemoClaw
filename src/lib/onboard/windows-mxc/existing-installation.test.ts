@@ -122,7 +122,7 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
         attachmentObservation: mxcOpenShellAttachmentObservationRequest(attachment.observation),
         bootstrapControlPlane: controlPlane(),
       }),
-    ).rejects.toThrow(/requires native x64/u);
+    ).rejects.toThrow(/currently qualifies x64 only/u);
     expect(nativeBoundary.observeFileDigest).not.toHaveBeenCalled();
   });
 

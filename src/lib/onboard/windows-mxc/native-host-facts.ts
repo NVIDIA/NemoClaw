@@ -8,20 +8,12 @@ import type { WindowsMxcHostFacts } from "./host-qualification";
 export interface WindowsMxcNativeHostRuntime {
   readonly platform: NodeJS.Platform;
   readonly machine: () => string;
-  readonly nativeArchitectureOverride?: () => string | undefined;
   readonly release: () => string;
 }
 
 const DEFAULT_RUNTIME: WindowsMxcNativeHostRuntime = {
   platform: process.platform,
   machine: () => os.machine(),
-  nativeArchitectureOverride: () => {
-    const wow64Architecture = process.env.PROCESSOR_ARCHITEW6432?.trim();
-    if (wow64Architecture) return wow64Architecture;
-    const processorIdentifier = process.env.PROCESSOR_IDENTIFIER?.trim().toLowerCase() ?? "";
-    if (/\b(?:arm64|armv8|aarch64)\b/u.test(processorIdentifier)) return "arm64";
-    return undefined;
-  },
   release: () => os.release(),
 };
 
@@ -43,9 +35,7 @@ export function observeWindowsMxcNativeHostFacts(
 ): WindowsMxcHostFacts {
   return Object.freeze({
     platform: runtime.platform,
-    nativeArchitecture: normalizeNativeArchitecture(
-      runtime.nativeArchitectureOverride?.()?.trim() || runtime.machine(),
-    ),
+    nativeArchitecture: normalizeNativeArchitecture(runtime.machine()),
     release: runtime.release(),
   });
 }
