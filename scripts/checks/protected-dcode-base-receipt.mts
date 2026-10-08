@@ -92,9 +92,20 @@ function descriptor(value: unknown, types: ReadonlySet<string>) {
   return { digest: entry.digest, size: Number(entry.size) };
 }
 
-function verifyBlob(layout: string, entry: { digest: string; size: number }): string {
+function verifyBlob(layout: string, entry: { digest: string; size: number }, collect: true): Buffer;
+function verifyBlob(layout: string, entry: { digest: string; size: number }, collect?: false): void;
+function verifyBlob(
+  layout: string,
+  entry: { digest: string; size: number },
+  collect = false,
+): Buffer | void {
+  if (collect && entry.size > 8 * 1024 * 1024) {
+    throw new Error("protected DCode base metadata is too large");
+  }
   const filename = path.join(layout, "blobs", "sha256", entry.digest.slice(7));
   const fd = regularFile(filename);
+  const chunks: Buffer[] = [];
+  let total = 0;
   try {
     if (fs.fstatSync(fd).size !== entry.size) {
       throw new Error("protected DCode base blob size does not match its descriptor");
@@ -102,14 +113,26 @@ function verifyBlob(layout: string, entry: { digest: string; size: number }): st
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(1024 * 1024);
     let count: number;
-    while ((count = fs.readSync(fd, buffer)) !== 0) hash.update(buffer.subarray(0, count));
+    while ((count = fs.readSync(fd, buffer)) !== 0) {
+      const bytes = buffer.subarray(0, count);
+      hash.update(bytes);
+      if (collect) chunks.push(Buffer.from(bytes));
+      total += count;
+    }
+    if (total !== entry.size) {
+      throw new Error("protected DCode base blob size does not match its descriptor");
+    }
     if (`sha256:${hash.digest("hex")}` !== entry.digest) {
       throw new Error("protected DCode base blob digest does not match its descriptor");
     }
   } finally {
     fs.closeSync(fd);
   }
-  return filename;
+  if (collect) return Buffer.concat(chunks, total);
+}
+
+function verifiedJsonBlob(layout: string, entry: { digest: string; size: number }) {
+  return record(JSON.parse(verifyBlob(layout, entry, true).toString("utf8")));
 }
 
 /** Verify all OCI content before the protected runner accepts an offline base. */
@@ -135,7 +158,7 @@ export function inspectProtectedDcodeBase(
     throw new Error("protected DCode base must contain one OCI image manifest");
   }
   const manifestDescriptor = descriptor(index.manifests[0], new Set([MANIFEST]));
-  const manifest = readJson(verifyBlob(layout, manifestDescriptor));
+  const manifest = verifiedJsonBlob(layout, manifestDescriptor);
   if (
     manifest.schemaVersion !== 2 ||
     manifest.mediaType !== MANIFEST ||
@@ -144,7 +167,7 @@ export function inspectProtectedDcodeBase(
     throw new Error("protected DCode base image manifest is invalid");
   }
   const configDescriptor = descriptor(manifest.config, new Set([CONFIG]));
-  const config = readJson(verifyBlob(layout, configDescriptor));
+  const config = verifiedJsonBlob(layout, configDescriptor);
   for (const layer of manifest.layers) verifyBlob(layout, descriptor(layer, LAYERS));
   const labels = record(record(config.config).Labels);
   if (
@@ -205,7 +228,10 @@ function main(): void {
       ? inspectProtectedDcodeBase(layout, expected)
       : verifyProtectedDcodeBaseReceipt(layout, receiptPath, expected);
   if (command === "write") {
-    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
   }
   process.stdout.write(`${receipt.reference}\n`);
 }

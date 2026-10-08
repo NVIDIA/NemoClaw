@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   inspectProtectedDcodeBase,
   verifyProtectedDcodeBaseReceipt,
@@ -151,7 +151,10 @@ describe("protected DCode base artifact handoff", () => {
   ])("rejects reuse across a different dispatch identity: %j", (change) => {
     const f = fixture();
     expect(() =>
-      verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, { ...f.expected, ...change }),
+      verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, {
+        ...f.expected,
+        ...change,
+      }),
     ).toThrow();
   });
 
@@ -210,6 +213,31 @@ describe("protected DCode base artifact handoff", () => {
     expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/external content/);
   });
 
+  it("does not accept a manifest swapped after its bytes are verified", () => {
+    const f = fixture();
+    const manifestPath = path.join(f.layout, "blobs/sha256", f.descriptor.digest.slice(7));
+    const layerPath = path.join(f.layout, "blobs/sha256", f.layer.digest.slice(7));
+    const manifestInode = fs.statSync(manifestPath).ino;
+    const originalClose = fs.closeSync.bind(fs);
+    let swapped = false;
+    const close = vi.spyOn(fs, "closeSync");
+    close.mockImplementationOnce(originalClose).mockImplementationOnce(originalClose);
+    close.mockImplementationOnce((fd) => {
+      expect(fs.fstatSync(fd).ino).toBe(manifestInode);
+      originalClose(fd);
+      fs.renameSync(manifestPath, path.join(f.root, "original-manifest"));
+      fs.writeFileSync(manifestPath, JSON.stringify({ ...f.manifest, layers: [] }));
+      fs.truncateSync(layerPath, 1);
+      swapped = true;
+    });
+    try {
+      expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/blob size/);
+      expect(swapped).toBe(true);
+    } finally {
+      close.mockRestore();
+    }
+  });
+
   it("rejects symlinked receipt and blob directories", () => {
     const f = fixture();
     fs.renameSync(f.receiptPath, path.join(f.root, "real-receipt"));
@@ -224,7 +252,10 @@ describe("protected DCode base artifact handoff", () => {
     const f = fixture();
     fs.writeFileSync(
       path.join(f.layout, "index.json"),
-      JSON.stringify({ schemaVersion: 2, manifests: [f.descriptor, f.descriptor] }),
+      JSON.stringify({
+        schemaVersion: 2,
+        manifests: [f.descriptor, f.descriptor],
+      }),
     );
     expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/one OCI image/);
   });
