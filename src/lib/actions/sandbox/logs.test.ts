@@ -23,6 +23,12 @@ function failExit(code: number): never {
   throw new ExitError(code);
 }
 
+const emptyLogRead: OpenShellSandboxLogs["read"] = async () => ({
+  content: "",
+  diagnostic: "",
+  outcome: { kind: "completed", exitCode: 0 },
+});
+
 type CapturedLogsRun = {
   errors: string[];
   exitCode: number | null;
@@ -227,23 +233,37 @@ describe("showSandboxLogsWithDeps", () => {
     ]);
   });
 
-  it("streams follow logs with the requested tail count", async () => {
+  it("caps follow history at the requested tail count, then follows without replay (#12666)", async () => {
+    const gatewayLines = Array.from(
+      { length: 5 },
+      (_, index) => `2026-05-22T20:55:3${index}.000+00:00 [gateway] gateway ${index}`,
+    );
+    const openshellLines = Array.from(
+      { length: 10 },
+      (_, index) => `[177948879${index}.000] [sandbox] [OCSF] sandbox ${index}`,
+    );
     const result = await captureLogsRun(
-      { follow: true, lines: "50", since: null },
+      { follow: true, lines: "5", since: null },
       {
         settings: { status: 0 },
+        sandbox: { status: 0, stdout: `${gatewayLines.join("\n")}\n` },
+        logs: { status: 0, stdout: `${openshellLines.join("\n")}\n` },
       },
     );
 
     expect(result.exitCode).toBe(0);
     expect(result.signalListenersRestored).toBe(true);
-    expect(result.reads).toEqual([]);
+    expect(result.stdout.split("\n").filter(Boolean)).toHaveLength(5);
+    expect(result.reads.map(({ source, lines }) => ({ source, lines }))).toEqual([
+      { source: "gateway", lines: "5" },
+      { source: "openshell", lines: "5" },
+    ]);
     expect(result.follows).toEqual([
       {
         target: { kind: "selected" },
         sandboxName: "alpha",
         source: "gateway",
-        lines: "50",
+        lines: "0",
         since: null,
         timeoutMs: 5000,
       },
@@ -251,7 +271,7 @@ describe("showSandboxLogsWithDeps", () => {
         target: { kind: "selected" },
         sandboxName: "alpha",
         source: "openshell",
-        lines: "50",
+        lines: "0",
         since: null,
         timeoutMs: 5000,
       },
@@ -267,14 +287,23 @@ describe("showSandboxLogsWithDeps", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.reads).toEqual([]);
-    expect(result.follows).toEqual([
+    expect(result.reads).toEqual([
       {
         target: { kind: "selected" },
         sandboxName: "alpha",
         source: "openshell",
         lines: "200",
         since: "5m",
+        timeoutMs: 5000,
+      },
+    ]);
+    expect(result.follows).toEqual([
+      {
+        target: { kind: "selected" },
+        sandboxName: "alpha",
+        source: "openshell",
+        lines: "0",
+        since: null,
         timeoutMs: 5000,
       },
     ]);
@@ -492,7 +521,7 @@ async function startFollowRun(
 
   const logs: OpenShellSandboxLogs = {
     checkAvailability: () => null,
-    read: vi.fn(),
+    read: vi.fn(emptyLogRead),
     follow() {
       spawnCount += 1;
       return spawnCount === 1
@@ -589,7 +618,7 @@ describe("follow-mode log source attribution (#10340)", () => {
                 kind: "unavailable",
                 message: "OpenShell binary not found",
               }),
-              read: vi.fn(),
+              read: vi.fn(emptyLogRead),
               follow,
             },
           },
@@ -607,9 +636,8 @@ describe("follow-mode log source attribution (#10340)", () => {
     }
   });
 
-  it("does not start an OpenShell follower after interruption during audit enablement", async () => {
-    const gateway = createStreamingChild();
-    const follow = vi.fn(() => gateway.session);
+  it("does not start a follower after interruption during audit enablement", async () => {
+    const follow = vi.fn();
     const sigintListeners = process.listeners("SIGINT") as NodeJS.SignalsListener[];
     const sigtermListeners = process.listeners("SIGTERM") as NodeJS.SignalsListener[];
     let resolveAudit: (result: { ok: true; value: undefined }) => void = () => {};
@@ -632,21 +660,15 @@ describe("follow-mode log source attribution (#10340)", () => {
             return undefined as never;
           }) as never,
           isDockerRuntimeDown: () => false,
-          logs: { checkAvailability: () => null, read: vi.fn(), follow },
+          logs: { checkAvailability: () => null, read: vi.fn(emptyLogRead), follow },
           stdout: createCapturedOutput([]),
         },
       );
 
-      expect(follow).toHaveBeenCalledOnce();
       process.emit("SIGINT");
-      expect(gateway.child.kill).toHaveBeenCalledWith("SIGINT");
-
       resolveAudit({ ok: true, value: undefined });
       await setup;
-      expect(follow).toHaveBeenCalledOnce();
-
-      gateway.stdout.end();
-      gateway.child.emit("exit", null, "SIGINT");
+      expect(follow).not.toHaveBeenCalled();
       await expect(exited).resolves.toBe(130);
     } finally {
       restoreProcessSignalListeners("SIGINT", sigintListeners);
@@ -692,7 +714,7 @@ describe("follow-mode log source attribution (#10340)", () => {
             return undefined as never;
           }) as never,
           isDockerRuntimeDown: () => false,
-          logs: { checkAvailability: () => null, read: vi.fn(), follow },
+          logs: { checkAvailability: () => null, read: vi.fn(emptyLogRead), follow },
           stdout: createCapturedOutput([]),
         },
       );

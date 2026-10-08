@@ -252,12 +252,14 @@ async function streamSandboxFollowLogs(
   }
 
   const addSource = (label: string, sourceKind: "gateway" | "openshell", tagged = false) => {
+    // History was already printed as one merged --tail N batch, so followers
+    // replay nothing. Per-source replay exceeded the combined cap (#12666).
     const session = logs.follow({
       target,
       sandboxName,
       source: sourceKind,
-      lines: options.lines,
-      since: sourceKind === "openshell" ? options.since : null,
+      lines: "0",
+      since: null,
       timeoutMs: getLogsProbeTimeoutMs(),
     });
     const diagnostic = session.diagnostic;
@@ -456,14 +458,25 @@ async function streamSandboxFollowLogs(
     });
   };
 
-  if (includeGateway) {
-    addSource("OpenClaw log source", "gateway", true);
-  }
   await enableSandboxAuditLogs(sandboxName, deps);
   if (requestedExitCode !== null) {
     setupComplete = true;
     maybeExit();
     return;
+  }
+  const history = await readSandboxLogHistory(sandboxName, options, deps);
+  if (history === "unavailable") {
+    requestUnavailableExit();
+  } else if (history.kind === "failed" || history.exitCode !== 0) {
+    console.error(`  OpenShell log source failed (${describeLogOutcome(history)}).`);
+  }
+  if (requestedExitCode !== null) {
+    setupComplete = true;
+    maybeExit();
+    return;
+  }
+  if (includeGateway) {
+    addSource("OpenClaw log source", "gateway", true);
   }
   addSource("OpenShell log source", "openshell");
   setupComplete = true;
@@ -482,6 +495,71 @@ async function enableSandboxAuditLogs(sandboxName: string, deps: SandboxLogsRunt
     );
     console.error("  Policy denial events may be missing from OpenShell logs.");
   }
+}
+
+/**
+ * Read both log sources and write at most `options.lines` merged lines.
+ * Returns the OpenShell outcome, or "unavailable" when OpenShell is missing.
+ */
+async function readSandboxLogHistory(
+  sandboxName: string,
+  options: SandboxLogsOptions,
+  deps: SandboxLogsRuntimeDeps,
+): Promise<OpenShellSandboxLogOutcome | "unavailable"> {
+  const logs = deps.logs ?? cliOpenShellSandboxLogs;
+  const target = selectedOpenShellGateway();
+
+  // Capture stdout from both sources so --tail N can be applied once
+  // to the merged stream rather than independently per source
+  // (which previously returned up to 2*N lines). Closes #4100.
+  let gatewayResult: Awaited<ReturnType<OpenShellSandboxLogs["read"]>> | null = null;
+  if (!options.since && shouldIncludeGatewayLogSource(sandboxName, deps)) {
+    gatewayResult = await logs.read({
+      target,
+      sandboxName,
+      source: "gateway",
+      lines: options.lines,
+      since: null,
+      timeoutMs: getLogsProbeTimeoutMs(),
+    });
+    if (gatewayResult.diagnostic) {
+      (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(gatewayResult.diagnostic);
+    }
+    if (isOpenShellUnavailable(gatewayResult.outcome)) return "unavailable";
+    if (gatewayResult.outcome.kind === "failed" || gatewayResult.outcome.exitCode !== 0) {
+      console.error(
+        `  OpenClaw log source unavailable (${describeLogOutcome(gatewayResult.outcome)}).`,
+      );
+    }
+  }
+
+  const openshellResult = await logs.read({
+    target,
+    sandboxName,
+    source: "openshell",
+    lines: options.lines,
+    since: options.since,
+    timeoutMs: getLogsProbeTimeoutMs(),
+  });
+  if (openshellResult.diagnostic) {
+    (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(openshellResult.diagnostic);
+  }
+  if (isOpenShellUnavailable(openshellResult.outcome)) return "unavailable";
+
+  const targetLines = Number(options.lines);
+  const maxLines = Number.isFinite(targetLines) && targetLines > 0 ? targetLines : 0;
+  const sources: string[] = [];
+  // Only the gateway source is rewritten. OpenShell already tags its own lines
+  // ([sandbox], [proxy], ...), so tagging it too would double-tag (#10340).
+  if (gatewayResult?.content) sources.push(tagGatewayLogLines(gatewayResult.content));
+  if (openshellResult.content) sources.push(openshellResult.content);
+  const merged = mergeTailLogLines(sources, maxLines);
+  if (merged) {
+    const stdout = deps.stdout ?? process.stdout;
+    (deps.writeStdout ?? stdout.write.bind(stdout))(merged);
+  }
+
+  return openshellResult.outcome;
 }
 
 export async function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions | boolean) {
@@ -513,70 +591,15 @@ export async function showSandboxLogsWithDeps(
   }
 
   await enableSandboxAuditLogs(sandboxName, deps);
-  const logs = deps.logs ?? cliOpenShellSandboxLogs;
-  const target = selectedOpenShellGateway();
-
-  // Capture stdout from both sources so --tail N can be applied once
-  // to the merged stream rather than independently per source
-  // (which previously returned up to 2*N lines). Closes #4100.
-  let gatewayResult: Awaited<ReturnType<OpenShellSandboxLogs["read"]>> | null = null;
-  if (!logsOptions.since && shouldIncludeGatewayLogSource(sandboxName, deps)) {
-    gatewayResult = await logs.read({
-      target,
-      sandboxName,
-      source: "gateway",
-      lines: logsOptions.lines,
-      since: null,
-      timeoutMs: getLogsProbeTimeoutMs(),
-    });
-    if (gatewayResult.diagnostic) {
-      (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(gatewayResult.diagnostic);
-    }
-    if (isOpenShellUnavailable(gatewayResult.outcome)) {
-      console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
-      (deps.exit ?? process.exit)(1);
-      return;
-    }
-    if (gatewayResult.outcome.kind === "failed" || gatewayResult.outcome.exitCode !== 0) {
-      console.error(
-        `  OpenClaw log source unavailable (${describeLogOutcome(gatewayResult.outcome)}).`,
-      );
-    }
-  }
-
-  const openshellResult = await logs.read({
-    target,
-    sandboxName,
-    source: "openshell",
-    lines: logsOptions.lines,
-    since: logsOptions.since,
-    timeoutMs: getLogsProbeTimeoutMs(),
-  });
-  if (openshellResult.diagnostic) {
-    (deps.writeStderr ?? process.stderr.write.bind(process.stderr))(openshellResult.diagnostic);
-  }
-  if (isOpenShellUnavailable(openshellResult.outcome)) {
+  const history = await readSandboxLogHistory(sandboxName, logsOptions, deps);
+  if (history === "unavailable") {
     console.error(OPENSHELL_UNAVAILABLE_GUIDANCE);
     (deps.exit ?? process.exit)(1);
     return;
   }
 
-  const targetLines = Number(logsOptions.lines);
-  const maxLines = Number.isFinite(targetLines) && targetLines > 0 ? targetLines : 0;
-  const sources: string[] = [];
-  // Only the gateway source is rewritten. OpenShell already tags its own lines
-  // ([sandbox], [proxy], ...), so tagging it too would double-tag (#10340).
-  if (gatewayResult?.content) sources.push(tagGatewayLogLines(gatewayResult.content));
-  if (openshellResult.content) sources.push(openshellResult.content);
-  const merged = mergeTailLogLines(sources, maxLines);
-  if (merged) {
-    (deps.writeStdout ?? process.stdout.write.bind(process.stdout))(merged);
+  if (history.kind === "failed" || history.exitCode !== 0) {
+    console.error(`  OpenShell log source failed (${describeLogOutcome(history)}).`);
   }
-
-  if (openshellResult.outcome.kind === "failed" || openshellResult.outcome.exitCode !== 0) {
-    console.error(
-      `  OpenShell log source failed (${describeLogOutcome(openshellResult.outcome)}).`,
-    );
-  }
-  (deps.exit ?? process.exit)(openshellResult.outcome.exitCode);
+  (deps.exit ?? process.exit)(history.exitCode);
 }
