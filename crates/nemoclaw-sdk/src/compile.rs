@@ -549,7 +549,18 @@ fn compile_with_plans(
     });
     let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
         let reference = format!("openshell_sandbox.{}", sandbox.name);
-        let binding = format!("${{merge({reference}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}", sandbox.name);
+        // Readiness takes the sandbox's string attributes; typed inputs stay behind.
+        let typed = serde_json::to_string(
+            &nemoclaw_openshell::structured_inputs("sandbox")
+                .iter()
+                .map(|input| input.attribute)
+                .collect::<Vec<_>>(),
+        )
+        .expect("attribute names");
+        let binding = format!(
+            "${{merge({{for key, value in {reference} : key => value if !contains({typed}, key)}}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}",
+            sandbox.name
+        );
         Ok((sandbox.name.clone(), json!({
             "sandbox":binding,
             // uuid() is unknown in a saved plan and records a unique observation
