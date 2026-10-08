@@ -74,6 +74,16 @@ None of them exposes ephemeral resources or provider functions.
 
 Generated graphs place vLLM and Ollama model caches in `docker_volume` resources and do not declare `nemoclaw_ollama_service_storage`.
 
+`nemoclaw_inference_storage` and `nemoclaw_ollama_service_storage` take `name`, `owner`, `generation`, and `engine`.
+The provider creates a local volume with that name on that engine and labels it with the owner and generation.
+It rejects a same-named volume with other labels, and never recreates a bound volume that disappears.
+Validation reports an invalid value at its attribute:
+
+- `name` is `nc-`, 16 lowercase hexadecimal characters, a service name, and `-data` or `-auth`.
+- `owner` is a lowercase UUID.
+- `generation` is 32 lowercase hexadecimal characters.
+- `engine` is a supported engine endpoint.
+
 ### NemoClaw Data Sources
 
 | Data source | Observes |
@@ -432,6 +442,6 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 
 The provider is not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
-Most platform resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
+Gateway and Kubernetes resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

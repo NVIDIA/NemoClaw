@@ -100,6 +100,24 @@ impl ResourceAdapter {
                 }
             }
         }
+        if let Some(check) = self.definition.validate_attribute {
+            let mut valid = true;
+            for field in &self.definition.fields {
+                if let Some(Value::Value(value)) = config.get(*field)
+                    && let Err(requirement) = check(field, value)
+                {
+                    diags.error(
+                        format!("Invalid {field}"),
+                        format!("{field} {requirement}"),
+                        AttributePath::new(*field),
+                    );
+                    valid = false;
+                }
+            }
+            if !valid {
+                return None;
+            }
+        }
         Some(())
     }
 

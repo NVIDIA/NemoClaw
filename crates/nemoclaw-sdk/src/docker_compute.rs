@@ -133,8 +133,7 @@ pub(crate) fn targets(raw: &[Target]) -> Result<Vec<Target>, Error> {
     let mut result = raw.to_vec();
     for target in &mut result {
         if address(&target.address).starts_with("docker_volume.") {
-            let storage: crate::managed::Storage = serde_json::from_str(&target.values["spec"])
-                .map_err(|_| Error::State("invalid cache specification"))?;
+            let storage = crate::managed::Storage::from_row(&target.values)?;
             target.address = address(&target.address);
             target.kind = "docker_volume".into();
             target.values = Row::from([
@@ -495,9 +494,7 @@ mod tests {
         assert_eq!(mounts[1]["target"], "/credentials");
         assert_ne!(mounts[0]["source"], mounts[1]["source"]);
         let auth = &graph["resource"]["nemoclaw_inference_storage"]["inference_qwen_auth"];
-        let spec: crate::managed::Storage =
-            serde_json::from_str(auth["spec"].as_str().unwrap()).unwrap();
-        assert!(spec.name.ends_with("-auth"));
+        assert!(auth["name"].as_str().unwrap().ends_with("-auth"));
         assert_eq!(auth["lifecycle"]["prevent_destroy"], true);
     }
     #[test]

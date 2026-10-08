@@ -185,11 +185,16 @@ pub(crate) fn runtime_graph(
     }
     let targets = runtime_targets_with_plans(document, generations, &service_plans)?;
     for target in &targets {
-        let mut attrs =
-            json!({"spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{")});
-        if let Some(policy) = target.values.get("image_pull_policy") {
-            attrs["image_pull_policy"] = json!(policy);
-        }
+        let mut attrs = json!(
+            target
+                .values
+                .iter()
+                .map(|(name, value)| (
+                    name.clone(),
+                    json!(value.replace("${", "$${").replace("%{", "%%{"))
+                ))
+                .collect::<serde_json::Map<_, _>>()
+        );
         if target.kind == GATEWAY_STORAGE_KIND
             || crate::services::resource_behavior(&target.kind).retained_storage
         {

@@ -74,10 +74,9 @@ impl Deployment {
                 "export requires established resource identity",
             ))?;
             if !plan::disposable(&target.address)
-                && target
-                    .values
-                    .get("spec")
-                    .is_some_and(|spec| *spec != binding.spec)
+                && (target.values.contains_key("spec")
+                    || crate::services::resource_behavior(&target.kind).retained_storage)
+                && binding.differs(&target.values)
             {
                 return Err(Error::Conflict(
                     "resource state differs from intent; no YAML exported",

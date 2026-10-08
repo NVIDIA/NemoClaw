@@ -91,7 +91,7 @@ Other pages state a limit where it affects a procedure and link the same issue.
 | A compatibility policy for the SDK, provider, schema and state across releases | [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) |
 | A hosted Rust API reference | [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) |
 | Supported HCL examples, import, adoption and remote-state backends | [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645) |
-| Typed HCL schemas for platform resources, which take one SDK-compiled `spec` string | [#12782](https://github.com/NVIDIA/NemoClaw/issues/12782) |
+| Typed HCL schemas for gateway and Kubernetes resources, which take one SDK-compiled `spec` string | [#12782](https://github.com/NVIDIA/NemoClaw/issues/12782) |
 
 ## Documentation Site
 

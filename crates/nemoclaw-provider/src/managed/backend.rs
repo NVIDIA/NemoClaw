@@ -40,16 +40,23 @@ impl ManagedBackend {
         if self.engine.endpoint() != connection_endpoint(kind, row)? {
             return Err(ObservationError::BindingMismatch.into());
         }
-        let encoded = row.get("spec").ok_or(ObservationError::Incomplete)?;
         let id = row.get("id").map(String::as_str).unwrap_or("");
-        let mut result = Row::from([("spec".into(), encoded.clone())]);
+        let storage = if self.storage_kind == Some(kind) {
+            Some(Storage::from_row(row)?)
+        } else {
+            None
+        };
+        let mut result = match &storage {
+            Some(storage) => storage.row()?,
+            None => Row::from([(
+                "spec".into(),
+                row.get("spec").ok_or(ObservationError::Incomplete)?.clone(),
+            )]),
+        };
         if let Some(policy) = row.get("image_pull_policy") {
             result.insert("image_pull_policy".into(), policy.clone());
         }
-        let identity = if self.storage_kind == Some(kind) {
-            let spec: Storage =
-                serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
-            spec.validate()?;
+        let identity = if let Some(spec) = storage {
             let engine = &self.engine;
             if apply {
                 Some(super::ensure_storage(&spec, engine, id).await?)
@@ -259,10 +266,8 @@ mod tests {
             generation: "b".repeat(32),
             engine: fixture.endpoint.clone(),
         };
-        let mut row = Row::from([
-            ("spec".into(), storage.json().unwrap()),
-            ("id".into(), String::new()),
-        ]);
+        let mut row = storage.row().unwrap();
+        row.insert("id".into(), String::new());
         const STORAGE_KIND: &str = "test_storage";
         let backend =
             ManagedBackend::storage(Engine::connect(&fixture.endpoint).unwrap(), STORAGE_KIND);
@@ -304,7 +309,11 @@ mod tests {
 
 /// Extract connection selection before constructing the resource backend.
 pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationError> {
-    let encoded = row.get("spec").ok_or(ObservationError::Incomplete)?;
+    let Some(encoded) = row.get("spec") else {
+        return Storage::from_row(row)
+            .map(|storage| storage.engine)
+            .map_err(|error| diagnostic(&error));
+    };
     if let Ok(spec) = serde_json::from_str::<Spec>(encoded) {
         if spec.kind
             != if kind == GATEWAY_STORAGE_KIND {
@@ -318,10 +327,7 @@ pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationE
         spec.validate().map_err(|error| diagnostic(&error))?;
         Ok(spec.engine().to_owned())
     } else {
-        let spec: Storage =
-            serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;
-        spec.validate().map_err(|error| diagnostic(&error))?;
-        Ok(spec.engine)
+        Err(ObservationError::Incomplete)
     }
 }
 
