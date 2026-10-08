@@ -38,6 +38,7 @@ export function normalizeNativeNvidiaProviderAttachment(
 
 /** Use only the supervisor-issued placeholder inside the sandbox shell. */
 export const NATIVE_NVIDIA_AUTH_HEADER_SCRIPT = [
-  'case "${NVIDIA_INFERENCE_API_KEY:-}" in openshell:resolve:env:*) ;; *) exit 2 ;; esac',
+  'case "${NVIDIA_INFERENCE_API_KEY:-}" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac',
+  `printf '%s' "\${NVIDIA_INFERENCE_API_KEY:-}" | LC_ALL=C grep -Eq '^openshell:resolve:env:((v[0-9]{1,20}|s[a-f0-9]{64})_)?NVIDIA_INFERENCE_API_KEY$' || exit 2`,
   'AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"',
 ].join("; ");

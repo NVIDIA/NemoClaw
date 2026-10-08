@@ -19,6 +19,29 @@ import {
 describe("rebuildSandbox DCode recovered provider", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
+  it.each([null, {}, { providerId: "" }])(
+    "rejects malformed native authority before any rebuild mutation (%j)",
+    async (nativeNvidiaProviderAttachment) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: {
+          ...makeDcodeSandboxEntry(),
+          provider: "nvidia-prod",
+          nativeNvidiaProviderAttachment,
+        },
+      });
+      configureDcodeSession(harness);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Malformed native NVIDIA provider attachment");
+
+      expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+      expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+      expectNoDcodeMutation(harness);
+    },
+  );
+
   it("rejects incompatible keyless provider reuse after the live DCode route proof", async () => {
     const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
     delete process.env.COMPATIBLE_API_KEY;
