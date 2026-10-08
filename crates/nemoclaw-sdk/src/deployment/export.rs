@@ -242,11 +242,32 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
     }
     // Authored configuration cannot be exported as unchanged intent when the
     // provider reports drift. Compare JSON semantically, without harness dispatch.
+    let inputs = nemoclaw_openshell::structured_inputs(&target.kind);
     for (field, expected) in &target.values {
         if field.ends_with("_json") {
-            let expected: Value = serde_json::from_str(expected)
+            // Typed OpenShell inputs return to the JSON their rows carry; the
+            // authored JSON takes the same path, which omits absent values.
+            let (expected, observed) = match inputs.iter().find(|input| input.field == field) {
+                Some(input) => {
+                    let invalid = |_| Error::State("invalid authored export configuration");
+                    let expected = input
+                        .row_value(input.configuration(expected).map_err(invalid)?)
+                        .map_err(invalid)?
+                        .unwrap_or_default();
+                    let observed = input
+                        .row_value(observed[input.attribute].clone())
+                        .map_err(|_| Error::State("invalid observed export configuration"))?
+                        .unwrap_or_default();
+                    (expected, observed)
+                }
+                None => (
+                    expected.clone(),
+                    observed[field].as_str().unwrap_or("").to_owned(),
+                ),
+            };
+            let expected: Value = serde_json::from_str(&expected)
                 .map_err(|_| Error::State("invalid authored export configuration"))?;
-            let actual: Value = serde_json::from_str(observed[field].as_str().unwrap_or(""))
+            let actual: Value = serde_json::from_str(&observed)
                 .map_err(|_| Error::State("invalid observed export configuration"))?;
             if actual != expected {
                 return Err(Error::Conflict(
@@ -354,10 +375,26 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
     Ok(())
 }
 
+/// A JSON input as its provider records it: typed OpenShell inputs omit
+/// absent values. `None` for an empty or invalid input.
+fn recorded(kind: &str, field: &str, encoded: &str) -> Option<Value> {
+    if encoded.is_empty() {
+        return None;
+    }
+    let encoded = match nemoclaw_openshell::structured_inputs(kind)
+        .into_iter()
+        .find(|input| input.field == field)
+    {
+        Some(input) => input.row_value(input.configuration(encoded).ok()?).ok()??,
+        None => encoded.to_owned(),
+    };
+    serde_json::from_str(&encoded).ok()
+}
+
 fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
     let value = |row: &Row, key: &str| row.get(key).map(String::as_str).unwrap_or("").to_owned();
-    // JSON inputs compare by value; the provider records them canonically.
-    let json = |row: &Row, key: &str| serde_json::from_str::<Value>(&value(row, key)).ok();
+    // JSON inputs compare as the provider records them.
+    let json = |row: &Row, key: &str| recorded("sandbox", key, &value(row, key));
     if ["image", "agent_name", "agent_runtime"]
         .iter()
         .any(|key| value(observed, key) != value(expected, key))
