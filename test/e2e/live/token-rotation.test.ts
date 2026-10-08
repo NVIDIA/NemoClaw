@@ -469,14 +469,9 @@ test(
     await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
     progress.phase("write a user file in /sandbox/work before credential rotation");
-    const writeWorkspaceMarker = await host.command(
-      "openshell",
+    const writeWorkspaceMarker = await sandbox.exec(
+      SANDBOX_NAME,
       [
-        "sandbox",
-        "exec",
-        "--name",
-        SANDBOX_NAME,
-        "--",
         "sh",
         "-lc",
         `set -eu; umask 077; mkdir -p /sandbox/work; printf '%s\\n' '${WORKSPACE_PRESERVATION_MARKER}' > '${WORKSPACE_PRESERVATION_PATH}'; sync`,
