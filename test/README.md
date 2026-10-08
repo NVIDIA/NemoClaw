@@ -101,7 +101,9 @@ The independent status uses the repository's existing required context. The nati
 this workflow writes a separate commit status. GitHub requires [both records to pass when their shared name is required](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
 After invalidation, a failed or incomplete check cannot restore the earlier green commit status.
 PR and comment evaluations run serially per PR and read current comments instead of replaying old decisions.
+Comments quoting the approval marker also trigger reevaluation, but malformed or quoted records are ignored when reading approvals. A quote does not revoke a valid approval. Keeping these events eligible ensures the latest queued evaluation still reads a revocation if GitHub replaces an older pending run in the concurrency group.
 No policy PR or manual rerun is required for an approval change.
+If cancellation or runner loss prevents the final status report, the pending status continues to block merging. Its Details link identifies the interrupted workflow. After diagnosing the interruption, rerun that workflow under the bounded retry policy; it rereads the current PR and approvals before replacing the status. Ordinary validation failures and cancellations that reach the final reporting step publish failure.
 Normal code review and the assertion census still apply. This record authorizes only the stated budget delta.
 
 Local hooks and candidate CI may use the matching branch entry for preliminary validation.
