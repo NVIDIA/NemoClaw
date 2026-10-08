@@ -138,16 +138,15 @@ pub(crate) fn runtime_graph(
     let mut graph = graph_base(document, version)?;
     if document.spec.gateway.as_kubernetes().is_some() {
         // Platform resources must be plannable before their gateway credentials
-        // exist. The following deployment stage verifies the authenticated API.
-        graph["provider"]["nemoclaw"] = json!({"platform_only": true});
-        graph["provider"]
-            .as_object_mut()
-            .unwrap()
-            .remove("openshell");
-        graph["terraform"]["required_providers"]
-            .as_object_mut()
-            .unwrap()
-            .remove("openshell");
+        // exist, so this stage omits the providers that need them. The
+        // following deployment stage verifies the authenticated API.
+        for name in crate::compile::GATEWAY_PROVIDERS {
+            graph["provider"].as_object_mut().unwrap().remove(name);
+            graph["terraform"]["required_providers"]
+                .as_object_mut()
+                .unwrap()
+                .remove(name);
+        }
         graph.as_object_mut().unwrap().remove("data");
         graph.as_object_mut().unwrap().remove("output");
         graph["resource"] = json!({});

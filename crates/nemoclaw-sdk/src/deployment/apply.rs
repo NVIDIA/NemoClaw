@@ -36,7 +36,7 @@ impl ApplyOutcome {
             && let Ok(observations) = observations
             && addresses.iter().all(|address| {
                 observations.0.iter().any(|observed| {
-                    *address == format!("data.nemoclaw_sandbox_readiness.{}", observed.sandbox)
+                    *address == format!("data.fabric_sandbox_readiness.{}", observed.sandbox)
                         && observed.failed
                 })
             })
@@ -90,7 +90,7 @@ impl Readiness {
             .sandboxes
             .iter()
             .map(|sandbox| {
-                let address = format!("data.nemoclaw_sandbox_readiness.{}", sandbox.name);
+                let address = format!("data.fabric_sandbox_readiness.{}", sandbox.name);
                 let observed = observations
                     .get(&address)
                     .ok_or(Error::State("sandbox readiness observation is absent"))?;
@@ -137,7 +137,7 @@ mod tests {
         let document =
             Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes())
                 .unwrap();
-        let address = "data.nemoclaw_sandbox_readiness.assistant";
+        let address = "data.fabric_sandbox_readiness.assistant";
         let plan = serde_json::from_value(json!({"resource_changes": [{
             "address": address, "mode": "data", "change": {
                 "actions": ["read"], "before": {"read_trigger": "previous"}
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn only_fresh_matching_readiness_failures_settle_failed_mutations() {
-        let address = "data.nemoclaw_sandbox_readiness.assistant";
+        let address = "data.fabric_sandbox_readiness.assistant";
         for (token, ready, addresses, settles) in [
             ("current", false, Some(vec![address]), true),
             ("previous", false, Some(vec![address]), false),
@@ -261,7 +261,7 @@ mod tests {
         let state = serde_json::to_vec(&state).unwrap();
         let outcome = ApplyOutcome::classify(
             Err(execution(Some(vec![
-                "data.nemoclaw_sandbox_readiness.assistant",
+                "data.fabric_sandbox_readiness.assistant",
             ]))),
             Readiness::decode(&document, &plan, &state),
         );
@@ -283,7 +283,7 @@ mod tests {
             assert!(matches!(
                 ApplyOutcome::classify(
                     Err(execution(Some(vec![
-                        "data.nemoclaw_sandbox_readiness.assistant"
+                        "data.fabric_sandbox_readiness.assistant"
                     ]))),
                     observed
                 ),

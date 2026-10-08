@@ -3,18 +3,19 @@
 
 # Understand the OpenTofu Provider
 
-The native bundle includes the NemoClaw, OpenShell, Docker, and Helm OpenTofu providers.
+The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
-Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages Fabric runtime configuration, Podman gateway processes, Kubernetes gateway prerequisites, initialization, retained gateway bridges, and durable data bindings.
+Fabric configures the Fabric host in each agent sandbox and waits for its runtime, through the same gateway.
+Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages Podman gateway processes, Kubernetes gateway prerequisites, initialization, retained gateway bridges, and durable data bindings.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
 
 OpenTofu owns graph execution and resource state.
 The SDK retains desired intent, validates plans, coordinates runtime stages, and reports provider observations.
-The NemoClaw and OpenShell providers verify durable data and credential identity; the Docker and Helm providers reconcile their native resource state.
-The SDK refuses state that an earlier release wrote with the NemoClaw provider's OpenShell types, before reading or changing it; keep that state directory and use the release that wrote it.
+The NemoClaw, OpenShell, and Fabric providers verify durable data and credential identity; the Docker and Helm providers reconcile their native resource state.
+The SDK refuses state that an earlier release wrote with the NemoClaw provider's OpenShell or Fabric types, before reading or changing it; keep that state directory and use the release that wrote it.
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
 OpenTofu refresh and provider planning perform environmental checks; the SDK does not run a separate environmental preflight.
@@ -32,11 +33,12 @@ The generated graphs manage these objects and observations:
 |---|---|
 | OpenShell provider | Workspace, provider registration, provider profile, and sandbox |
 | OpenShell provider data source | Gateway version and compute drivers |
-| NemoClaw provider | Fabric runtime configuration |
+| Fabric provider | Fabric runtime configuration |
+| Fabric provider data source | Sandbox completion |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
 | NemoClaw provider | Kubernetes namespace and encryption key (`nemoclaw_kubernetes_storage`), development issuer (`nemoclaw_kubernetes_auth`), and gateway readiness (`nemoclaw_kubernetes_gateway`) |
-| NemoClaw provider data source | Engine and Fabric image capabilities, managed runtime-image compatibility, managed gateway readiness, vLLM/Ollama service or proxy readiness, and sandbox completion |
+| NemoClaw provider data source | Engine and Fabric image capabilities, managed runtime-image compatibility, managed gateway readiness, and vLLM/Ollama service or proxy readiness |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
@@ -53,6 +55,7 @@ The bundle pins these providers:
 |---|---|---|
 | NemoClaw | `registry.opentofu.org/nvidia/nemoclaw` | Source-derived |
 | OpenShell | `registry.opentofu.org/nvidia/openshell` | Source-derived, matching NemoClaw |
+| Fabric | `registry.opentofu.org/nvidia/fabric` | Source-derived, matching NemoClaw |
 | Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
 
@@ -106,11 +109,23 @@ resource "openshell_sandbox" "assistant" {
 }
 ```
 
+### Fabric Resource and Data Source
+
+| Type | Manages or observes |
+|---|---|
+| `fabric_agent_configuration` | Fabric runtime configuration in a sandbox |
+| `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
+
+The `fabric` provider takes the same gateway settings as the `openshell` provider, and `destroy`, which permits removing agent configurations during explicit teardown.
+It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway.
+
 ### NemoClaw Resources
+
+The `nemoclaw` provider's only setting is `destroy`, which permits deleting gateways and proxies during explicit teardown.
+Each resource names the engine or cluster it uses.
 
 | Resource | Manages |
 |---|---|
-| `nemoclaw_agent_configuration` | Fabric runtime configuration in a sandbox |
 | `nemoclaw_managed_gateway` | Podman gateway process |
 | `nemoclaw_gateway_storage` | Gateway storage, initialization, and retained bridge |
 | `nemoclaw_kubernetes_storage` | Kubernetes namespace and encryption key |
@@ -155,7 +170,6 @@ Both take optional `owner` and `generation`, generated the same way; generated g
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
 | `nemoclaw_service_readiness` | [vLLM, Ollama, and proxy readiness](#runtime-capacity-and-readiness) |
 | `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
-| `nemoclaw_sandbox_readiness` | [Sandbox completion](#sandbox-completion) |
 | `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
 | `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
 | `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
@@ -368,7 +382,7 @@ Teardown omits the capability gates so a version or driver mismatch alone does n
 
 [Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
-Fabric configuration writes are owned by `nemoclaw_agent_configuration`; unchanged apply preserves the active runtime handle.
+Fabric configuration writes are owned by `fabric_agent_configuration`; unchanged apply preserves the active runtime handle.
 Its `config_json` is the canonical public Fabric configuration, separate from immutable sandbox identity.
 
 ## vLLM Runtime Contract
@@ -462,7 +476,7 @@ See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and
 
 ## Sandbox Completion
 
-The OpenShell graph uses `nemoclaw_sandbox_readiness` after sandbox creation and any runtime configuration resource.
+The OpenShell graph uses `fabric_sandbox_readiness` after sandbox creation and any runtime configuration resource.
 Its required `sandbox` map carries the sandbox resource's binding and configuration; the provider checks startup and configuration before requesting the packaged bridge's health response.
 It does not invoke an agent or model.
 The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
@@ -539,10 +553,10 @@ The namespace, encryption key, and persistent volumes remain.
 ## Packaging and Qualification
 
 Follow [bundle building](build.md) for matched CLI, SDK contract, provider, schema, and OpenTofu versions.
-The NemoClaw and OpenShell providers use the same source-derived version to prevent stale reuse.
+The NemoClaw, OpenShell, and Fabric providers use the same source-derived version to prevent stale reuse.
 The Docker and Helm providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
 
-[Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [OpenShell provider schema tests](../crates/openshell-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
+[Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [OpenShell provider schema tests](../crates/openshell-provider/tests/schema.rs), [Fabric provider schema tests](../crates/fabric-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
 [Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
 
 ## Direct OpenTofu Usage

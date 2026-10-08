@@ -13,19 +13,12 @@ variable "owner" { type = string }
 variable "port" { type = number }
 variable "subnet" { type = string }
 provider "docker" { host = "@ENGINE@" }
-provider "nemoclaw" {
-  alias = "bootstrap"
-  endpoint = "http://127.0.0.1:1"
-}
-provider "nemoclaw" {
-  endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
-}
+provider "nemoclaw" {}
 provider "openshell" {
   endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
 }
 data "docker_image" "gateway" { name = "@GATEWAY_IMAGE@" }
 resource "nemoclaw_gateway_storage" "gateway" {
-  provider = nemoclaw.bootstrap
   spec = jsonencode({
     layout = 1, kind = "managed_gateway", name = var.name, owner = var.owner,
     generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

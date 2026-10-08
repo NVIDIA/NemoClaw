@@ -43,12 +43,12 @@ openshell-core.workspace = true
 openshell-sdk.workspace = true
 openshell-policy.workspace = true
 tonic.workspace = true
-nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
+fabric-provider = { path = "../fabric-provider" }
 prost.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true

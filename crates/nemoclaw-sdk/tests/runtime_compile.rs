@@ -26,7 +26,7 @@ fn runtime_compilation_does_not_require_openshell_resource_generations() {
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["resource"]["docker_container"].is_object());
     assert!(graph["resource"].get("openshell_sandbox").is_none());
-    assert!(graph["data"].get("nemoclaw_sandbox_readiness").is_none());
+    assert!(graph["data"].get("fabric_sandbox_readiness").is_none());
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
     assert!(
-        graph["data"].get("nemoclaw_sandbox_readiness").is_none(),
+        graph["data"].get("fabric_sandbox_readiness").is_none(),
         "the runtime graph cannot observe sandboxes owned by the deployment graph"
     );
     let readiness = &graph["data"]["openshell_gateway"]["current"];

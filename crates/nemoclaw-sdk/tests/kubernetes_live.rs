@@ -593,7 +593,7 @@ spec:
             ..
         } => assert_eq!(
             failures,
-            &["data.nemoclaw_sandbox_readiness.assistant".to_owned()],
+            &["data.fabric_sandbox_readiness.assistant".to_owned()],
             "apply must stop only at the agent's health check"
         ),
         other => panic!("apply must stop at the agent's health check, not earlier: {other}"),

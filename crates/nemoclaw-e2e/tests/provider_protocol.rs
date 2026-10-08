@@ -260,7 +260,7 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
     let configure = |policy: &str| {
         fs::write(e.dir.path().join("main.tf.json"), json!({
             "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
-            "provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},
+            "provider":{"nemoclaw":{}},
             "resource":{"nemoclaw_managed_gateway":{"gateway":{"spec":spec.to_string(), "image_pull_policy":policy}}}
         }).to_string()).unwrap();
     };

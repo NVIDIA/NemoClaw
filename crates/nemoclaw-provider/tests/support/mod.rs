@@ -30,6 +30,7 @@ pub fn definition(
         .or_else(|| {
             openshell_provider::definitions()
                 .into_iter()
+                .chain(fabric_provider::definitions())
                 .find(|definition| definition.kind == kind)
         })
         .unwrap();

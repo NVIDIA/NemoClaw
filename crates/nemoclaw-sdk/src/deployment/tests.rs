@@ -346,7 +346,7 @@ fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
     for address in [
         "openshell_provider_registration.example",
         "openshell_provider_profile.example",
-        "nemoclaw_agent_configuration.example",
+        "fabric_agent_configuration.example",
         "docker_container.runtime",
     ] {
         let allowed = BTreeMap::from([(address.into(), Row::new())]);

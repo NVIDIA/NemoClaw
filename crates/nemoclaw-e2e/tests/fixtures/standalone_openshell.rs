@@ -721,7 +721,7 @@ async fn standalone_pi_configuration_updates_without_replacing_the_sandbox() {
         source
             + r#"
 variable "model" { default = "first-model" }
-resource "nemoclaw_agent_configuration" "agent" {
+resource "fabric_agent_configuration" "agent" {
   count = var.enabled ? 1 : 0
   workspace = openshell_sandbox.agent[0].workspace
   name = openshell_sandbox.agent[0].name

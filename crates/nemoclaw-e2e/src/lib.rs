@@ -28,7 +28,7 @@ pub fn assert_same_deployment_state(actual: &[u8], expected: &[u8]) {
         if let Some(resources) = state["resources"].as_array_mut() {
             for resource in resources {
                 if resource["mode"] == "data"
-                    && resource["type"] == "nemoclaw_sandbox_readiness"
+                    && resource["type"] == "fabric_sandbox_readiness"
                     && let Some(instances) = resource["instances"].as_array_mut()
                 {
                     for instance in instances {
@@ -136,7 +136,7 @@ fn failed_apply_preserves_managed_resources_but_may_record_failed_observations()
 #[test]
 fn sandbox_completion_state_comparison_ignores_only_the_operation_token() {
     let before = serde_json::json!({"serial":1,"resources":[{
-        "mode":"data","type":"nemoclaw_sandbox_readiness",
+        "mode":"data","type":"fabric_sandbox_readiness",
         "instances":[{"attributes":{"read_trigger":"old", "ready":true, "health_json":"unsupported"}}]
     }]});
     let mut after = before.clone();
