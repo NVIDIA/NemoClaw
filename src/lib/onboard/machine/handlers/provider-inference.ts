@@ -61,6 +61,7 @@ import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result
 import { createRecovery, type RecoveryAuthority } from "./provider-inference-recovery";
 import {
   assertProviderInferenceRouteCompatible,
+  canResumeInferenceRoute,
   guardProviderInferenceRouteSelection,
   type ProviderInferenceProbeRoute,
 } from "./provider-inference-route-containment";
@@ -519,26 +520,6 @@ async function resolveHostLocalResumeSetup(input: {
     );
   }
   return { sandboxName, setupOptions };
-}
-
-function canResumeInferenceRoute(input: {
-  needsBedrockRuntimeAdapter: boolean;
-  provider: string;
-  hasHostLocalInference: boolean;
-  forceProviderSelection: boolean;
-  forceInferenceSetup: boolean;
-  effectiveResume: boolean;
-  routeReady(): boolean;
-}): boolean {
-  return (
-    !input.needsBedrockRuntimeAdapter &&
-    input.provider !== OPENROUTER_PROVIDER_NAME &&
-    !input.hasHostLocalInference &&
-    !input.forceProviderSelection &&
-    !input.forceInferenceSetup &&
-    input.effectiveResume &&
-    input.routeReady()
-  );
 }
 
 function shouldReuseRetainedOpenRouterCredential(input: {
@@ -1776,6 +1757,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     }
     const resumeInference = canResumeInferenceRoute({
       needsBedrockRuntimeAdapter,
+      endpointUrl,
+      credentialEnv,
       provider: selectedProvider,
       hasHostLocalInference: Boolean(resumeHostLocalInferenceSetupOptions.hostLocalInference),
       forceProviderSelection,

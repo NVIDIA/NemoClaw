@@ -10,6 +10,9 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 
+import { isNativeCompatibleHostedSelection } from "../../../inference/native-compatible/contract";
+import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
+
 export interface ProviderInferenceRouteContainmentDeps {
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   preflightGatewayRouteDiscovery: CurrentGatewayRouteDiscoveryPreflight;
@@ -76,4 +79,27 @@ export function guardProviderInferenceRouteSelection(
     assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, { ...route, model });
   }
   return unconstrainedGatewayRouteDiscovery();
+}
+
+export function canResumeInferenceRoute(input: {
+  needsBedrockRuntimeAdapter: boolean;
+  endpointUrl: string | null;
+  credentialEnv: string | null;
+  provider: string;
+  hasHostLocalInference: boolean;
+  forceProviderSelection: boolean;
+  forceInferenceSetup: boolean;
+  effectiveResume: boolean;
+  routeReady(): boolean;
+}): boolean {
+  return (
+    !input.needsBedrockRuntimeAdapter &&
+    !isNativeCompatibleHostedSelection(input) &&
+    input.provider !== OPENROUTER_PROVIDER_NAME &&
+    !input.hasHostLocalInference &&
+    !input.forceProviderSelection &&
+    !input.forceInferenceSetup &&
+    input.effectiveResume &&
+    input.routeReady()
+  );
 }

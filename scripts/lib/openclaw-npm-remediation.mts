@@ -54,12 +54,6 @@ type BuildRequest = RemediationRequest &
     expectedPatchedTreeIntegrity?: string;
   }>;
 
-type InstalledSlackRemediationRequest = Readonly<{
-  env?: NodeJS.ProcessEnv;
-  packageDirectory: string;
-  workingDirectory: string;
-}>;
-
 export type RemediatedArchive = Readonly<
   | {
       archivePath: string;
@@ -147,10 +141,6 @@ const CURRENT_UNDICI_VERSION = "8.10.0";
 const CURRENT_UNDICI_INTEGRITY =
   "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==";
 const CURRENT_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz";
-const CURRENT_PROXY_ADDR_VERSION = "2.0.8";
-const CURRENT_PROXY_ADDR_INTEGRITY =
-  "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==";
-const CURRENT_PROXY_ADDR_TARBALL = "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz";
 const CURRENT_IP_ADDRESS_VERSION = "10.3.1";
 const CURRENT_IP_ADDRESS_INTEGRITY =
   "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
@@ -989,60 +979,24 @@ export function patchOpenClawSlackProxyAddrPackageGraph(
   requirePackageIdentity(
     replacementPackageJson,
     "proxy-addr",
-    CURRENT_PROXY_ADDR_VERSION,
+    PROXY_ADDR_VERSION,
     "OpenClaw Slack proxy-addr remediation package",
   );
   requireDependencyShape(
     replacementPackageJson,
     { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
-    `proxy-addr@${CURRENT_PROXY_ADDR_VERSION}`,
+    `proxy-addr@${PROXY_ADDR_VERSION}`,
   );
   if (
     replacementPackageJson.license !== "MIT" ||
     replacementPackageJson.engines?.node !== ">= 0.10"
   ) {
     throw new Error(
-      `proxy-addr@${CURRENT_PROXY_ADDR_VERSION} package contract changed; review the remediation before updating it`,
+      `proxy-addr@${PROXY_ADDR_VERSION} package contract changed; review the remediation before updating it`,
     );
   }
 
   copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
-}
-
-export function applyOpenClawSlackProxyAddrRemediation(
-  request: InstalledSlackRemediationRequest,
-): void {
-  const packageDirectory = resolve(request.packageDirectory);
-  const packageStat = lstatSync(packageDirectory);
-  if (!packageStat.isDirectory() || packageStat.isSymbolicLink()) {
-    throw new Error("OpenClaw Slack install is not a regular package directory");
-  }
-  const env = {
-    ...process.env,
-    ...request.env,
-    NPM_CONFIG_AUDIT: "false",
-    NPM_CONFIG_FUND: "false",
-    NPM_CONFIG_IGNORE_SCRIPTS: "true",
-    NPM_CONFIG_UPDATE_NOTIFIER: "false",
-    npm_config_ignore_scripts: "true",
-  };
-  const workingDirectory = resolve(request.workingDirectory);
-  mkdirSync(workingDirectory, { recursive: true, mode: 0o700 });
-  const remediationRoot = mkdtempSync(join(workingDirectory, "openclaw-slack-proxy-addr-"));
-  const proxyAddrArchive = packReplacement(
-    `proxy-addr@${CURRENT_PROXY_ADDR_VERSION}`,
-    CURRENT_PROXY_ADDR_INTEGRITY,
-    CURRENT_PROXY_ADDR_TARBALL,
-    remediationRoot,
-    env,
-  );
-  const proxyAddrPackage = extractArchive(
-    proxyAddrArchive.archivePath,
-    join(remediationRoot, "proxy-addr"),
-    remediationRoot,
-    env,
-  );
-  patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, proxyAddrPackage);
 }
 
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {

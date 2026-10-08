@@ -320,16 +320,16 @@ describe("handleProviderInferenceState", () => {
       endpointUrl: "https://compatible.example.test/v1",
       preferredInferenceApi: "openai-completions",
     });
-    expect(calls.reserveRoute).toHaveBeenCalledWith("mcp-rebuild", {
-      provider: "compatible-endpoint",
-      model: "mock/mcp-bridge",
-      endpointUrl: "https://compatible.example.test/v1",
-      endpointSource: null,
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai-completions",
-      gatewayName: "nemoclaw",
-      reservationSessionId: rebuiltSession.sessionId,
-    });
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "mcp-rebuild",
+      "mock/mcp-bridge",
+      "compatible-endpoint",
+      "https://compatible.example.test/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      setupOptions(rebuiltSession, { preferredInferenceApi: "openai-completions" }),
+    );
   });
 
   it("stops an authoritative rebuild before inference state when route persistence throws", async () => {
@@ -835,10 +835,18 @@ describe("handleProviderInferenceState", () => {
       provider: "compatible-anthropic-endpoint",
       preferredInferenceApi: "anthropic-messages",
     });
-    // Unchanged seed keeps the plain-resume shortcut: no re-record, no forced
-    // inference setup.
+    // Preserve the selected protocol while preparing its native attachment.
     expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
-    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "claude-sonnet-proxy",
+      "compatible-anthropic-endpoint",
+      null,
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      setupOptions(session, { preferredInferenceApi: "anthropic-messages" }),
+    );
   });
 
   it("records failed Ollama repair events before propagating resume repair errors", async () => {
@@ -1096,7 +1104,7 @@ describe("handleProviderInferenceState", () => {
     expect(recoveryAuthorization?.()).toBe(true);
   });
 
-  it("keeps the compatible-endpoint resume shortcut when no messaging channels are selected", async () => {
+  it("prepares native hosted-compatible inference on resume without messaging", async () => {
     const session = createSession({
       provider: "compatible-endpoint",
       model: "nvidia/nemotron",
@@ -1115,14 +1123,14 @@ describe("handleProviderInferenceState", () => {
       sandboxName: "my-assistant",
     });
 
-    expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.skipped).toHaveBeenCalledWith(
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.skipped).not.toHaveBeenCalledWith(
       "inference",
       "compatible-endpoint / nvidia/nemotron",
     );
   });
 
-  it("keeps the compatible-endpoint resume shortcut for Hermes messaging", async () => {
+  it("prepares native hosted-compatible inference on resume with Hermes messaging", async () => {
     const session = createSession({
       provider: "compatible-endpoint",
       model: "nvidia/nemotron",
@@ -1143,8 +1151,8 @@ describe("handleProviderInferenceState", () => {
       selectedMessagingChannels: ["slack"],
     });
 
-    expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.skipped).toHaveBeenCalledWith(
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.skipped).not.toHaveBeenCalledWith(
       "inference",
       "compatible-endpoint / nvidia/nemotron",
     );
