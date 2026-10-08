@@ -235,6 +235,7 @@ export interface SandboxStateOptions<
   hostLocalInferenceRouteOnly?: boolean;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   credentialEnv: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -2327,7 +2328,8 @@ class SandboxStateFlow<
                       credentialEnv: this.options.credentialEnv,
                       preferredInferenceApi: this.options.preferredInferenceApi,
                       compatibleEndpointReasoning: this.options.compatibleEndpointReasoning,
-                      compatibleEndpointReasoningEffort: null,
+                      compatibleEndpointReasoningEffort:
+                        this.options.compatibleEndpointReasoningEffort,
                       nimContainer: this.options.nimContainer,
                     }),
                   }

@@ -355,6 +355,7 @@ export function createSandboxOnboardFlowPhase<
       provider: context.provider ?? "",
       endpointUrl: context.endpointUrl,
       compatibleEndpointReasoning: context.compatibleEndpointReasoning,
+      compatibleEndpointReasoningEffort: context.compatibleEndpointReasoningEffort,
       credentialEnv: context.credentialEnv,
       nimContainer: context.nimContainer,
       webSearchConfig: context.webSearchConfig,
