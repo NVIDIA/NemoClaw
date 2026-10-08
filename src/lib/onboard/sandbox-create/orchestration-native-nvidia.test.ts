@@ -83,6 +83,10 @@ describe("native NVIDIA post-create provider verification", () => {
     [true, "nemoclaw-nvidia-prod-v1"],
     [false, "nemoclaw-openai-api-v1"],
     [true, "nemoclaw-openai-api-v1"],
+    [false, "openai-api"],
+    [true, "openai-api"],
+    [false, "nvidia-prod"],
+    [true, "nvidia-prod"],
   ] as const)(
     "rejects a missing native receipt before creation with deferred=%s for %s",
     async (deferred, inferenceProvider) => {

@@ -1449,7 +1449,7 @@ export function createProviderEffectBoundary(input: {
   };
   const validateNativeHostedReceipt = async () => {
     if (
-      usesNativeHostedProvider(input.preparationInput.inferenceProvider) &&
+      usesNativeHostedProvider(preparationInput.inferenceProvider) &&
       !input.expectedNativeHostedProviderAttachment
     ) {
       throw new Error(
