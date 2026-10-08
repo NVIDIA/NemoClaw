@@ -36,16 +36,6 @@ impl Source {
             Self::ClusterService { .. } => None,
         }
     }
-    pub(crate) fn json(&self) -> Result<String, crate::config::ConfigError> {
-        let source = serde_json::to_string(self).expect("typed credential source");
-        crate::config::credential_metadata::pack(&source).map_err(|_| {
-            crate::config::ConfigError::new(
-                "managed credential reference exceeds gateway annotation capacity",
-            )
-        })?;
-        Ok(source)
-    }
-
     pub fn parse(value: &str, owner: &str, endpoint: &str) -> Result<Self, ObservationError> {
         let source: Self = serde_json::from_str(value).map_err(|_| ObservationError::Incomplete)?;
         use sha2::{Digest, Sha256};
@@ -84,42 +74,20 @@ impl Source {
             }
             return Ok(source);
         }
-        let (storage, container, published) =
-            source.fields().ok_or(ObservationError::BindingMismatch)?;
-        let (kind, suffix, local) = match source {
-            Self::OllamaProxy { .. } => ("ollama-proxy-", "auth", true),
-            Self::ManagedService { .. } => ("inference-", "auth", false),
-            Self::ClusterService { .. } => unreachable!("cluster sources validated above"),
-        };
-        let namespace = format!("{prefix}{kind}");
-        let name = container.strip_prefix(&namespace);
-        let address = published
-            .strip_prefix("http://")
-            .and_then(|s| s.strip_suffix("/v1"))
-            .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
-        let private = address.is_some_and(|address| {
-            address.port() != 0
-                && match address.ip() {
-                    std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
-                    std::net::IpAddr::V6(ip) => local && (ip.is_unique_local() || ip.is_loopback()),
-                }
-        });
-        if storage.validate().is_err()
-            || storage.owner != owner
-            || published != endpoint
-            || !private
-            || (local && !storage.engine.starts_with("unix:///"))
-            || !name.is_some_and(|name| {
-                regex::Regex::new(r"^[a-z][a-z0-9-]*$")
-                    .unwrap()
-                    .is_match(name)
-            })
-            || storage.name != format!("{container}-{suffix}")
-        {
-            return Err(ObservationError::BindingMismatch);
-        }
+        nemoclaw_docker::credentials::Source::parse(value, owner, endpoint)?;
         Ok(source)
     }
+}
+
+/// The credential source as a registration annotation value.
+pub(crate) fn source_json(source: &Source) -> Result<String, crate::config::ConfigError> {
+    let source = serde_json::to_string(source).expect("typed credential source");
+    crate::config::credential_metadata::pack(&source).map_err(|_| {
+        crate::config::ConfigError::new(
+            "managed credential reference exceeds gateway annotation capacity",
+        )
+    })?;
+    Ok(source)
 }
 
 #[cfg(test)]

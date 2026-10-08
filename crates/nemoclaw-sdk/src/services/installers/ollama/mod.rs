@@ -297,17 +297,18 @@ impl OllamaProxy {
         generations: &Generations,
     ) -> Result<String, Error> {
         let spec = proxy::specification(document, name, self, generations)?;
-        Ok(crate::services::authentication::Source::OllamaProxy {
-            storage: crate::managed::Storage {
-                name: spec.volume(),
-                owner: spec.owner.clone(),
-                generation: spec.generation.clone(),
-                engine: self.engine(document)?.into(),
+        Ok(crate::services::authentication::source_json(
+            &crate::services::authentication::Source::OllamaProxy {
+                storage: crate::managed::Storage {
+                    name: spec.volume(),
+                    owner: spec.owner.clone(),
+                    generation: spec.generation.clone(),
+                    engine: self.engine(document)?.into(),
+                },
+                container: spec.name.clone(),
+                endpoint: spec.settings.endpoint.clone(),
             },
-            container: spec.name.clone(),
-            endpoint: spec.settings.endpoint.clone(),
-        }
-        .json()?)
+        )?)
     }
 }
 

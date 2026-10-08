@@ -388,13 +388,12 @@ impl ServiceDefinition {
                     return Ok(None);
                 }
                 let spec = super::cluster::spec(self, document, name, generations)?;
-                Ok(Some(
-                    super::authentication::Source::ClusterService {
+                Ok(Some(super::authentication::source_json(
+                    &super::authentication::Source::ClusterService {
                         endpoint: spec.endpoint(),
                         storage: Box::new(spec.storage()),
-                    }
-                    .json()?,
-                ))
+                    },
+                )?))
             }
             ServiceDefinition::Vllm(service) => {
                 service.credential_source(document, name, generations)

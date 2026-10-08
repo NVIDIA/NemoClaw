@@ -2320,6 +2320,7 @@ dependencies = [
  "futures-util",
  "hyper",
  "hyper-util",
+ "nemoclaw-docker",
  "nemoclaw-openshell",
  "nemoclaw-sdk",
  "openshell-sdk",
@@ -2330,6 +2331,27 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
+ "url",
+]
+
+[[package]]
+name = "nemoclaw-docker"
+version = "0.1.0"
+dependencies = [
+ "bollard",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hyper",
+ "hyper-util",
+ "nemoclaw-backend",
+ "regex",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tar",
+ "tempfile",
+ "tokio",
  "url",
 ]
 
@@ -2427,6 +2449,7 @@ dependencies = [
  "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-discovery",
+ "nemoclaw-docker",
  "nemoclaw-openshell",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
@@ -2495,6 +2518,7 @@ dependencies = [
  "kube",
  "nemo-fabric-core",
  "nemoclaw-backend",
+ "nemoclaw-docker",
  "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
