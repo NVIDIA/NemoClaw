@@ -3,7 +3,8 @@
 terraform {
   required_version = "= 1.12.6"
   required_providers {
-    nemoclaw = { source = "registry.opentofu.org/nvidia/nemoclaw" }
+    nemoclaw  = { source = "registry.opentofu.org/nvidia/nemoclaw" }
+    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
   }
 }
 variable "endpoint" { type = string }
@@ -17,40 +18,44 @@ provider "nemoclaw" {
   endpoint = var.endpoint
   destroy  = var.destroying
 }
-resource "nemoclaw_workspace" "example" {
+provider "openshell" {
+  endpoint = var.endpoint
+  destroy  = var.destroying
+}
+resource "openshell_workspace" "example" {
   name       = "standalone"
   owner      = "standalone-owner"
   generation = "workspace-generation"
   lifecycle { prevent_destroy = true }
 }
-resource "nemoclaw_provider_profile" "inference" {
+resource "openshell_provider_profile" "inference" {
   count         = var.enabled ? 1 : 0
-  workspace     = nemoclaw_workspace.example.name
+  workspace     = openshell_workspace.example.name
   name          = "nemoclaw-inference-local"
-  owner         = nemoclaw_workspace.example.owner
+  owner         = openshell_workspace.example.owner
   generation    = "provider-generation"
   endpoint      = "http://127.0.0.1:11434/v1"
   authenticated = "false"
   binaries_json = var.binaries_json
 }
-resource "nemoclaw_provider" "inference" {
+resource "openshell_provider_registration" "inference" {
   count      = var.enabled ? 1 : 0
-  workspace  = nemoclaw_workspace.example.name
+  workspace  = openshell_workspace.example.name
   name       = "local"
-  owner      = nemoclaw_workspace.example.owner
+  owner      = openshell_workspace.example.owner
   generation = "provider-generation"
-  endpoint   = nemoclaw_provider_profile.inference[0].endpoint
+  endpoint   = openshell_provider_profile.inference[0].endpoint
 }
-resource "nemoclaw_sandbox" "agent" {
+resource "openshell_sandbox" "agent" {
   count               = var.enabled ? 1 : 0
-  workspace           = nemoclaw_workspace.example.name
+  workspace           = openshell_workspace.example.name
   name                = "assistant"
-  owner               = nemoclaw_workspace.example.owner
+  owner               = openshell_workspace.example.owner
   generation          = "sandbox-generation"
   image               = var.image
   agent_name          = "assistant"
   agent_runtime       = "fabric"
   runtime_json        = var.runtime_json
   policy_json         = var.policy_json
-  provider_names_json = jsonencode([nemoclaw_provider.inference[0].name])
+  provider_names_json = jsonencode([openshell_provider_registration.inference[0].name])
 }

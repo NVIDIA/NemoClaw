@@ -208,19 +208,20 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     }
 
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
+    graph["provider"]["openshell"]["destroy"] = json!(true);
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
-    graph["resource"]["nemoclaw_workspace"]["deployment"]
+    graph["resource"]["openshell_workspace"]["deployment"]
         .as_object_mut()
         .unwrap()
         .remove("depends_on");
-    graph["resource"]["nemoclaw_workspace"]["deployment"]["lifecycle"] =
+    graph["resource"]["openshell_workspace"]["deployment"]["lifecycle"] =
         json!({"prevent_destroy":true});
     for kind in [
         "nemoclaw_agent_configuration",
-        "nemoclaw_sandbox",
-        "nemoclaw_provider_profile",
-        "nemoclaw_provider",
+        "openshell_sandbox",
+        "openshell_provider_profile",
+        "openshell_provider_registration",
     ] {
         graph["resource"].as_object_mut().unwrap().remove(kind);
     }
@@ -289,14 +290,14 @@ async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     assert!(tofu.is_absolute() && provider.is_absolute());
     let directory = TofuWorkspace::new(tofu, provider);
     fs::write(directory.path().join("main.tf.json"), json!({
-        "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
-        "provider":{"nemoclaw":{"endpoint":fixture.endpoint}},
+        "terraform":{"required_version":"= 1.12.6", "required_providers":{"openshell":{"source":"registry.opentofu.org/nvidia/openshell"}}},
+        "provider":{"openshell":{"endpoint":fixture.endpoint}},
         "resource":{"terraform_data":{"bootstrap":{"input":"docker"}}},
-        "data":{"nemoclaw_gateway_capabilities":{"current":{
+        "data":{"openshell_gateway":{"current":{
             "required_compute_drivers":["${terraform_data.bootstrap.output}"],
             "lifecycle":{"postcondition":[{"condition":"${self.compatible}", "error_message":"Gateway is incompatible."}]}
         }}},
-        "output":{"compatible":{"value":"${data.nemoclaw_gateway_capabilities.current.compatible}"}}
+        "output":{"compatible":{"value":"${data.openshell_gateway.current.compatible}"}}
     }).to_string()).unwrap();
     let run = |args: &[&str]| {
         let output = directory.command().args(args).output().unwrap();

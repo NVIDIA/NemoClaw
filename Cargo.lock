@@ -2853,6 +2853,7 @@ dependencies = [
  "openshell-policy",
  "openshell-sdk",
  "prost",
+ "rustls",
  "serde",
  "serde_json",
  "tf-provider",

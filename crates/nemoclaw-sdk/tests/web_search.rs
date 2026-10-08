@@ -42,24 +42,35 @@ fn search_uses_owned_profile_and_provider_without_exporting_secrets() {
     assert_eq!(search.values["credential_env"], "SEARCH_KEY");
     assert_eq!(search.values["provider_type"], "brave");
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
-    assert!(provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "local").is_object());
+    assert!(
+        provider_scope::resource(
+            &graph["resource"]["openshell_provider_registration"],
+            "local"
+        )
+        .is_object()
+    );
     assert_eq!(
-        graph["resource"]["nemoclaw_provider"][search.address.split_once('.').unwrap().1]["depends_on"],
+        graph["resource"]["openshell_provider_registration"]
+            [search.address.split_once('.').unwrap().1]["depends_on"],
         json!([
             rows.iter()
                 .find(|row| row.kind == "provider_profile"
                     && row.values["name"] == search.values["profile_name"])
                 .unwrap()
                 .address,
-            "data.nemoclaw_gateway_capabilities.apply"
+            "data.openshell_gateway.apply"
         ])
     );
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["assistant"]["depends_on"],
+        graph["resource"]["openshell_sandbox"]["assistant"]["depends_on"],
         json!([
-            provider_scope::address(&graph["resource"]["nemoclaw_provider"], "provider", "local"),
+            provider_scope::address(
+                &graph["resource"]["openshell_provider_registration"],
+                "provider",
+                "local"
+            ),
             search.address,
-            "data.nemoclaw_gateway_capabilities.apply"
+            "data.openshell_gateway.apply"
         ])
     );
 }
@@ -113,10 +124,14 @@ fn shared_integration_references_grant_only_the_selected_agents() {
         .into();
     let graph = compile(&doc, &generations, "0.1.0").unwrap();
     assert_eq!(
-        graph["resource"]["nemoclaw_sandbox"]["reader"]["depends_on"],
+        graph["resource"]["openshell_sandbox"]["reader"]["depends_on"],
         json!([
-            provider_scope::address(&graph["resource"]["nemoclaw_provider"], "provider", "local"),
-            "data.nemoclaw_gateway_capabilities.apply"
+            provider_scope::address(
+                &graph["resource"]["openshell_provider_registration"],
+                "provider",
+                "local"
+            ),
+            "data.openshell_gateway.apply"
         ])
     );
     let rows = targets(&doc, &generations).unwrap();
@@ -124,7 +139,7 @@ fn shared_integration_references_grant_only_the_selected_agents() {
         rows.iter()
             .filter(|row| row
                 .address
-                .starts_with("nemoclaw_provider_profile.web_search_"))
+                .starts_with("openshell_provider_profile.web_search_"))
             .count(),
         1
     );
@@ -351,15 +366,15 @@ fn sandboxes_share_search_registration_only_for_the_same_credential() {
             .find(|provider| provider.values["credential_env"] == credential)
             .unwrap();
         assert_eq!(
-            graph["resource"]["nemoclaw_sandbox"][sandbox]["depends_on"],
+            graph["resource"]["openshell_sandbox"][sandbox]["depends_on"],
             json!([
                 provider_scope::address(
-                    &graph["resource"]["nemoclaw_provider"],
+                    &graph["resource"]["openshell_provider_registration"],
                     "provider",
                     "local"
                 ),
                 selected.address,
-                "data.nemoclaw_gateway_capabilities.apply"
+                "data.openshell_gateway.apply"
             ])
         );
     }
@@ -432,7 +447,7 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
             .iter()
             .find(|row| {
                 row.address
-                    .starts_with("nemoclaw_provider_profile.web_search_tavily_")
+                    .starts_with("openshell_provider_profile.web_search_tavily_")
             })
             .unwrap();
         assert!(profile.values["name"].starts_with("nemoclaw-tavily-"));
@@ -466,8 +481,9 @@ fn tavily_preserves_openclaw_and_hermes_intent_and_credential_references() {
         );
         let graph = compile(&doc, &generations, "0.1.0").unwrap();
         assert_eq!(
-            graph["resource"]["nemoclaw_provider"][provider.address.split_once('.').unwrap().1]["depends_on"],
-            json!([profile.address, "data.nemoclaw_gateway_capabilities.apply"])
+            graph["resource"]["openshell_provider_registration"]
+                [provider.address.split_once('.').unwrap().1]["depends_on"],
+            json!([profile.address, "data.openshell_gateway.apply"])
         );
     }
 }

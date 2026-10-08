@@ -41,7 +41,8 @@ pub fn resource<'a>(instances: &'a serde_json::Value, name: &str) -> &'a serde_j
 #[allow(dead_code)]
 pub fn address(instances: &serde_json::Value, kind: &str, name: &str) -> String {
     format!(
-        "nemoclaw_{kind}.inference_{}",
+        "{}.inference_{}",
+        nemoclaw_sdk::compile::resource_type(kind),
         resource(instances, name)["name"]
             .as_str()
             .unwrap()

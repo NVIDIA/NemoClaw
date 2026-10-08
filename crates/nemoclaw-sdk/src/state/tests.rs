@@ -64,7 +64,7 @@ fn removed_ownership_annotations_preserve_intent_and_resource_bindings_for_recov
     let bytes = serde_json::to_vec(&old).unwrap();
     let intent = dir.path().join("intent.json");
     let state = dir.path().join("terraform.tfstate");
-    let binding = br#"{"resources":[{"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":"owned"}}]}]}"#;
+    let binding = br#"{"resources":[{"type":"openshell_workspace","name":"deployment","instances":[{"attributes":{"id":"owned"}}]}]}"#;
     std::fs::write(&intent, &bytes).unwrap();
     std::fs::write(&state, binding).unwrap();
     assert!(store.load().is_err());
@@ -135,24 +135,24 @@ fn native_helm_state_preserves_its_namespace_and_immutable_chart_binding() {
 fn data_observations_do_not_become_managed_bindings() {
     let data = serde_json::json!({"address":"data.example.observed", "mode":"data", "values":{"id":"observation"}});
     let value = state(serde_json::json!([
-        object("nemoclaw_workspace.deployment", "owned"),
+        object("openshell_workspace.deployment", "owned"),
         data,
         {"address":crate::compile::GATEWAY_CAPABILITIES_ADDRESS, "mode":"data", "values":{"compatible":true}},
         {"address":crate::compile::GATEWAY_APPLY_CAPABILITIES_ADDRESS, "mode":"data", "values":{"compatible":true}}
     ]));
     let observed = read(&value).unwrap();
     assert_eq!(observed.len(), 1);
-    assert_eq!(observed["nemoclaw_workspace.deployment"].id, "owned");
+    assert_eq!(observed["openshell_workspace.deployment"].id, "owned");
 }
 #[test]
 fn malformed_duplicate_and_unsupported_state_is_not_empty() {
-    let owned = object("nemoclaw_workspace.deployment", "owned");
+    let owned = object("openshell_workspace.deployment", "owned");
     for value in [
         serde_json::json!({}),
         serde_json::json!({"format_version":"2.0"}),
         state(serde_json::json!([owned, owned])),
         state(serde_json::json!([object(
-            "nemoclaw_workspace.deployment",
+            "openshell_workspace.deployment",
             ""
         )])),
         state(serde_json::json!([{"address":"x.y", "mode":"unknown", "values":{"id":"x"}}])),
@@ -362,7 +362,7 @@ fn assert_rejected_record_preserves_state(value: serde_json::Value) {
     let intent = directory.path().join("intent.json");
     let resources = directory.path().join("terraform.tfstate");
     let bytes = serde_json::to_vec(&value).unwrap();
-    let binding = br#"{"resources":[{"type":"nemoclaw_workspace","name":"deployment","instances":[{"attributes":{"id":"owned"}}]}]}"#;
+    let binding = br#"{"resources":[{"type":"openshell_workspace","name":"deployment","instances":[{"attributes":{"id":"owned"}}]}]}"#;
     fs::write(&intent, &bytes).unwrap();
     fs::write(&resources, binding).unwrap();
     assert!(
@@ -390,7 +390,7 @@ fn pending_creation_requires_current_per_resource_evidence() {
         serde_json::Value::Null,
         serde_json::json!({}),
         serde_json::json!("invalid"),
-        serde_json::json!({"nemoclaw_sandbox.unknown": {}}),
+        serde_json::json!({"openshell_sandbox.unknown": {}}),
     ] {
         let mut malformed = missing.clone();
         malformed["pendingCreations"] = evidence;
@@ -623,7 +623,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
             )
         })
         .collect();
-    let sandbox = "nemoclaw_sandbox.assistant";
+    let sandbox = "openshell_sandbox.assistant";
     for field in ["id", "name", "workspace", "owner", "generation"] {
         let mut mismatched = bindings.clone();
         let binding = mismatched.get_mut(sandbox).unwrap();
@@ -647,7 +647,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
     }
     let missing = bindings
         .keys()
-        .find(|address| address.starts_with("nemoclaw_provider_profile."))
+        .find(|address| address.starts_with("openshell_provider_profile."))
         .unwrap()
         .clone();
     bindings.remove(&missing);
@@ -684,7 +684,7 @@ fn bound_sandbox_guard_allows_configuration_updates_additions_and_explicit_recre
             .unwrap();
     let record = Record::new(document.clone()).unwrap();
     let bound = BTreeMap::from([(
-        "nemoclaw_sandbox.assistant".into(),
+        "openshell_sandbox.assistant".into(),
         StateBinding {
             id: "saved-sandbox".into(),
             ..Default::default()
@@ -761,5 +761,38 @@ fn typed_storage_bindings_compare_their_complete_identity() {
         let mut changed = compiled.clone();
         changed.insert(attribute.into(), "changed".into());
         assert!(bindings[address].differs(&changed), "{attribute}");
+    }
+}
+
+#[tokio::test]
+async fn state_with_openshell_types_from_the_nemoclaw_provider_is_rejected_before_any_read() {
+    for kind in [
+        "nemoclaw_workspace",
+        "nemoclaw_provider",
+        "nemoclaw_provider_profile",
+        "nemoclaw_sandbox",
+        "nemoclaw_gateway_capabilities",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("terraform.tfstate"),
+            serde_json::json!({"version": 4, "resources": [
+                {"mode": "managed", "type": kind, "name": "example", "instances": []}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        // A missing OpenTofu proves that rejection needs no provider or read.
+        let error = super::bindings(
+            directory.path(),
+            &directory.path().join("missing-tofu"),
+            &crate::CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("earlier release"),
+            "{kind}: {error}"
+        );
     }
 }

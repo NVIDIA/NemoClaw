@@ -140,6 +140,14 @@ pub(crate) fn runtime_graph(
         // Platform resources must be plannable before their gateway credentials
         // exist. The following deployment stage verifies the authenticated API.
         graph["provider"]["nemoclaw"] = json!({"platform_only": true});
+        graph["provider"]
+            .as_object_mut()
+            .unwrap()
+            .remove("openshell");
+        graph["terraform"]["required_providers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("openshell");
         graph.as_object_mut().unwrap().remove("data");
         graph.as_object_mut().unwrap().remove("output");
         graph["resource"] = json!({});
@@ -174,7 +182,7 @@ pub(crate) fn runtime_graph(
     }
     // Readiness follows gateway reconciliation, including restart or replacement.
     // Keeping it in this stage allows recovery before OpenShell resource refresh.
-    let readiness = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+    let readiness = &mut graph["data"]["openshell_gateway"]["current"];
     readiness["wait_timeout_seconds"] = json!(90);
     readiness["lifecycle"] = json!({"postcondition":[{
         "condition":"${self.compatible}",
@@ -243,7 +251,7 @@ pub(crate) fn compiled_runtime(
             "endpoint": literal(&spec.gateway.endpoint),
             "wait_timeout_seconds": 90,
         });
-        let capabilities = &mut graph["data"]["nemoclaw_gateway_capabilities"]["current"];
+        let capabilities = &mut graph["data"]["openshell_gateway"]["current"];
         let mut dependencies = capabilities["depends_on"]
             .as_array()
             .cloned()

@@ -23,7 +23,7 @@ Run the bundle builder:
 cargo run -p nemoclaw-build -- bundle
 ```
 
-The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and NemoClaw provider with the lockfile, and writes `dist/<platform>`.
+The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and the NemoClaw and OpenShell providers with the lockfile, and writes `dist/<platform>`.
 The manifest records each shipped file's hash, including the unchanged upstream licenses.
 The SDK verifies the bundle before use.
 Managed Kubernetes deployment uses the bundled Helm provider and requires no host Helm CLI.

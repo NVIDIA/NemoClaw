@@ -58,7 +58,10 @@ fn explicit_proxy_engine_works_with_an_external_gateway() {
     }
     let graph = compile(&document, &generations, "0.1.0").unwrap();
     let credential: Value = serde_json::from_str(
-        provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "local")["credential_source"]
+        provider_scope::resource(
+            &graph["resource"]["openshell_provider_registration"],
+            "local",
+        )["credential_source"]
             .as_str()
             .unwrap(),
     )
@@ -100,7 +103,10 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
     let spec: Value = serde_json::from_str(readiness["spec"].as_str().unwrap()).unwrap();
     assert_eq!(spec["kind"], "ollama_proxy");
     assert!(
-        provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "local")["depends_on"]
+        provider_scope::resource(
+            &graph["resource"]["openshell_provider_registration"],
+            "local"
+        )["depends_on"]
             .as_array()
             .unwrap()
             .contains(&json!(
@@ -108,7 +114,10 @@ fn proxy_readiness_is_fresh_and_orders_only_its_selected_consumer() {
             ))
     );
     assert!(
-        !provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "other")["depends_on"]
+        !provider_scope::resource(
+            &graph["resource"]["openshell_provider_registration"],
+            "other"
+        )["depends_on"]
             .as_array()
             .unwrap()
             .contains(&json!(
@@ -188,8 +197,8 @@ fn proxy_pull_policy_preserves_credentials_and_other_resource_settings() {
                 .remove("image");
             assert_eq!(changed, original);
             assert_eq!(
-                after["resource"]["nemoclaw_provider"],
-                before["resource"]["nemoclaw_provider"]
+                after["resource"]["openshell_provider_registration"],
+                before["resource"]["openshell_provider_registration"]
             );
             assert_eq!(
                 after["resource"]["nemoclaw_ollama_proxy_storage"],
@@ -244,24 +253,24 @@ fn external_ollama_compiles_only_proxy_and_external_model_observation() {
     assert!(resources["docker_container"]["ollama_proxy_ollama-auth"].is_object());
     assert!(resources["nemoclaw_ollama_external_model"]["ollama-auth"].is_object());
     assert_eq!(
-        provider_scope::resource(&resources["nemoclaw_provider_profile"], "local")["authenticated"],
+        provider_scope::resource(&resources["openshell_provider_profile"], "local")["authenticated"],
         "true"
     );
     assert_eq!(
-        provider_scope::resource(&resources["nemoclaw_provider"], "local")["depends_on"],
+        provider_scope::resource(&resources["openshell_provider_registration"], "local")["depends_on"],
         json!([
             provider_scope::address(
-                &resources["nemoclaw_provider_profile"],
+                &resources["openshell_provider_profile"],
                 "provider_profile",
                 "local"
             ),
             "docker_container.ollama_proxy_ollama-auth",
-            "data.nemoclaw_gateway_capabilities.apply",
+            "data.openshell_gateway.apply",
             "data.nemoclaw_service_readiness.ollama_proxy_ollama-auth"
         ])
     );
     assert!(
-        !provider_scope::resource(&resources["nemoclaw_provider"], "local")["credential_source"]
+        !provider_scope::resource(&resources["openshell_provider_registration"], "local")["credential_source"]
             .as_str()
             .unwrap()
             .is_empty()
@@ -310,7 +319,10 @@ fn deep_agents_and_pi_use_authenticated_ollama_proxy_connections() {
         let graph = compile(&doc, &gens, "0.1.0").unwrap();
         assert!(graph["resource"]["docker_container"]["ollama_proxy_ollama-auth"].is_object());
         assert!(
-            !provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "local")["credential_source"]
+            !provider_scope::resource(
+                &graph["resource"]["openshell_provider_registration"],
+                "local"
+            )["credential_source"]
                 .as_str()
                 .unwrap()
                 .is_empty()
@@ -355,8 +367,14 @@ fn named_proxies_have_distinct_containers_storage_and_credentials() {
     let doc = Document::parse(changed.to_string().as_bytes()).unwrap();
     let other = compile(&doc, &gens, "0.1.0").unwrap();
     assert_ne!(
-        provider_scope::resource(&graph["resource"]["nemoclaw_provider"], "local")["credential_source"],
-        provider_scope::resource(&other["resource"]["nemoclaw_provider"], "local")["credential_source"]
+        provider_scope::resource(
+            &graph["resource"]["openshell_provider_registration"],
+            "local"
+        )["credential_source"],
+        provider_scope::resource(
+            &other["resource"]["openshell_provider_registration"],
+            "local"
+        )["credential_source"]
     );
 }
 

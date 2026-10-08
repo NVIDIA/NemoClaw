@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[[bin]]
+name = "terraform-provider-openshell"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 
@@ -18,6 +22,7 @@ async-trait.workspace = true
 openshell-core.workspace = true
 openshell-policy.workspace = true
 openshell-sdk.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tf-provider.workspace = true

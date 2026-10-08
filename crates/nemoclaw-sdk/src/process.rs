@@ -666,7 +666,7 @@ async fn progress_arrives_before_exit_and_cancellation_still_works() {
     });
     let task = tokio::spawn(async move {
         run_with_progress(directory.path(), Path::new("/bin/sh"),
-            &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"nemoclaw_sandbox"},"action":"create"}}'; sleep 100"#],
+            &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox"},"action":"create"}}'; sleep 100"#],
             &Default::default(), &stop, Some(progress)).await
     });
     let event = tokio::time::timeout(Duration::from_secs(2), receive.recv()).await;
@@ -702,13 +702,13 @@ async fn progress_resource_addresses_redact_credentials() {
     let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let events = received.clone();
     run_with_progress(directory.path(), Path::new("/bin/sh"),
-        &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"nemoclaw_sandbox","addr":"nemoclaw_sandbox.secret-sentinel"},"action":"create"}}'"#],
+        &["-c", r#"printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox","addr":"openshell_sandbox.secret-sentinel"},"action":"create"}}'"#],
         &[("CUSTOM_CREDENTIAL".into(), "secret-sentinel".into())].into(),
         &CancellationToken::new(),
         Some(std::sync::Arc::new(move |event| events.lock().unwrap().push(event))))
         .await.unwrap();
     let events = format!("{:?}", received.lock().unwrap());
-    assert!(events.contains("nemoclaw_sandbox.[redacted]"));
+    assert!(events.contains("openshell_sandbox.[redacted]"));
     assert!(!events.contains("secret-sentinel"));
 }
 
@@ -820,7 +820,7 @@ async fn short_credentials_withhold_child_text_without_preventing_execution() {
         let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let events = received.clone();
         run_with_progress(directory.path(), Path::new("/bin/sh"),
-            &["-c", r#"test -n "$CUSTOM_CREDENTIAL" && printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"nemoclaw_sandbox","addr":"nemoclaw_sandbox.alpha"},"action":"create"}}'"#],
+            &["-c", r#"test -n "$CUSTOM_CREDENTIAL" && printf '%s\n' '{"type":"version","ui":"1.0"}' '{"type":"apply_start","hook":{"resource":{"resource_type":"openshell_sandbox","addr":"openshell_sandbox.alpha"},"action":"create"}}'"#],
             &[("CUSTOM_CREDENTIAL".into(), secret.into())].into(), &CancellationToken::new(),
             Some(std::sync::Arc::new(move |event| events.lock().unwrap().push(event)))).await.unwrap();
         assert!(

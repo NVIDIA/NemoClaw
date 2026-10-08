@@ -27,7 +27,7 @@
   },
   "output": {
     "value": {
-      "gateway": "${data.nemoclaw_gateway_capabilities.current.observation_json}",
+      "gateway": "${data.openshell_gateway.current.observation_json}",
       "sandbox_0": "${data.nemoclaw_fabric_capabilities.sandbox_0.observation_json}",
       "target_0": "${data.nemoclaw_target_hardware.target_0.observation_json}"
     }

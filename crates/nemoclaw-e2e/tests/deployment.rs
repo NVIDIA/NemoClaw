@@ -131,7 +131,9 @@ async fn missing_selected_provider_reconciles_without_sandbox_changes() {
         initial
             .changes
             .iter()
-            .find(|change| change.resource.starts_with("nemoclaw_provider."))
+            .find(|change| change
+                .resource
+                .starts_with("openshell_provider_registration."))
             .unwrap()
             .resource
     );
@@ -1385,7 +1387,7 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
         added
             .changes
             .iter()
-            .any(|change| change.resource == "nemoclaw_sandbox.third")
+            .any(|change| change.resource == "openshell_sandbox.third")
     );
     assert!(
         added
@@ -1569,7 +1571,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
             preview
                 .changes
                 .iter()
-                .any(|change| change.resource == "nemoclaw_sandbox.assistant")
+                .any(|change| change.resource == "openshell_sandbox.assistant")
         );
         assert_eq!(fs::read(&intent_path).unwrap(), intent);
         assert_eq!(fs::read(&state_path).unwrap(), saved);
