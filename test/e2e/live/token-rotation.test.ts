@@ -137,7 +137,6 @@ function expectTelegramRotationOutput(output: string): void {
   expect(rotationLine).not.toContain(`${SANDBOX_NAME}-discord-bridge`);
   expect(rotationLine).not.toContain(`${SANDBOX_NAME}-slack-bridge`);
   expect(rotationLine).not.toContain(`${SANDBOX_NAME}-slack-app`);
-  expect(output).toContain("Rebuilding sandbox to propagate new credentials");
 }
 
 function assertTokenPairsDiffer(): void {
@@ -489,6 +488,10 @@ test(
       },
     );
     expect(writeWorkspaceMarker.exitCode, resultText(writeWorkspaceMarker)).toBe(0);
+    const beforeTelegramRotationId = await sandboxIdentity(
+      host,
+      "phase-1-before-telegram-rotation-identity",
+    );
 
     progress.phase(
       "rotate only the Telegram provider and verify the user file survives recreation",
@@ -503,6 +506,11 @@ test(
     expect(telegram.exitCode, telegramText).toBe(0);
     expectTelegramRotationOutput(telegramText);
     await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
+    const afterTelegramRotationId = await sandboxIdentity(
+      host,
+      "phase-2-after-telegram-rotation-identity",
+    );
+    expect(afterTelegramRotationId).not.toBe(beforeTelegramRotationId);
     const preservedWorkspaceMarker = await host.command(
       "node",
       [
@@ -525,10 +533,6 @@ test(
     expect(preservedWorkspaceMarker.exitCode, resultText(preservedWorkspaceMarker)).toBe(0);
 
     progress.phase("reuse the sandbox and record rotation evidence");
-    const beforeTelegramReuseId = await sandboxIdentity(
-      host,
-      "phase-3-before-same-telegram-identity",
-    );
     const afterTelegramSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -537,7 +541,7 @@ test(
     );
     const afterTelegramSameText = resultText(afterTelegramSame);
     expect(afterTelegramSame.exitCode, afterTelegramSameText).toBe(0);
-    await assertSandboxReused(host, beforeTelegramReuseId, "phase-3-after-same-telegram");
+    await assertSandboxReused(host, afterTelegramRotationId, "phase-3-after-same-telegram");
 
     await artifacts.target.complete({
       id: "token-rotation",

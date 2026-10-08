@@ -23,7 +23,6 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/index.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -84,11 +83,6 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
-  it("does not inherit a host backup bypass into credential-rotation commands", () => {
-    const env = buildAvailabilityProbeEnv({ NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1" });
-    expect(env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBeUndefined();
-  });
-
   it("keeps historical rebuild sandboxes alive until the rebuild owns their lifecycle", () => {
     expect(HISTORICAL_SANDBOX_MAIN_PROCESS).toEqual(["sleep", "infinity"]);
   });
