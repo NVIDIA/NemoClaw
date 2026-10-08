@@ -129,8 +129,13 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
     join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$APT_CALLS"
-if [[ "$1" == chmod && "$3" == "$RUNNER_TEMP" ]]; then
-  command chmod "$2" "$3" || exit $?
+if [[ "$1" == rm && "$2" == -rf && "$3" == -- && "$4" == /tmp/nemoclaw-apt-lists.* ]]; then
+  command rm -rf -- "$4" || exit $?
+fi
+if [[ "$1" == chmod ]]; then command chmod "$2" "$3"; exit $?; fi
+if [[ "$1" == install ]]; then
+  [[ "$*" == "install -d -o _apt -g root -m 0700 /tmp/nemoclaw-apt-lists."*"/partial" ]] || exit 93
+  command install -d -m 0700 "\${@: -1}"; exit $?
 fi
 if [[ "$1" == test && "$FAKE_APT_MODE" == missing-source ]]; then exit 1; fi
 if [[ "$1" == awk ]]; then command awk "$2" "$FAKE_UBUNTU_SOURCES"; exit $?; fi
@@ -145,9 +150,12 @@ exit 0
     `#!/usr/bin/env bash
 printf 'apt-get %s\\n' "$*" >> "$APT_CALLS"
 source_path=''
+lists_path=''
 for arg in "$@"; do
   if [[ "$arg" == Dir::Etc::sourcelist=* ]]; then source_path="\${arg#*=}"; fi
+  if [[ "$arg" == Dir::State::lists=* ]]; then lists_path="\${arg#*=}"; fi
 done
+node -e 'const fs=require("node:fs"),path=require("node:path"),[source,lists]=process.argv.slice(1); for(const file of [source,lists]) for(let dir=path.dirname(file);dir!=="/";dir=path.dirname(dir)) if(!(fs.statSync(dir).mode&1)) process.exit(91); if(!(fs.statSync(source).mode&4)||!(fs.statSync(lists).mode&1)||(fs.statSync(path.join(lists,"partial")).mode&0o777)!==0o700) process.exit(92)' "$source_path" "$lists_path" || exit $?
 if [[ -n "$source_path" && -f "$source_path" ]]; then cp "$source_path" "$SOURCE_CAPTURE"; fi
 if [[ "$FAKE_APT_MODE" == mirror-file-failure && "$*" == *' install '* ]]; then
   if [[ "$source_path" == /etc/apt/sources.list.d/ubuntu.sources ]] || grep -q 'mirror+file:' "$source_path"; then
@@ -219,6 +227,7 @@ if [[ "$FAKE_APT_MODE" == recover-update && "$*" == *' update' && $(wc -l < "$TI
     return {
       status: result.status,
       stderr: String(result.stderr),
+      runnerTemp,
       runnerTempMode: statSync(runnerTemp).mode & 0o777,
       calls: readFileSync(aptCalls, "utf8").trim().split("\n"),
       sourceText: readFileSync(sourceCapture, "utf8"),
@@ -690,8 +699,17 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
     const aptCalls = result.calls.filter((call) => call.startsWith("apt-get "));
     expect(aptCalls).toHaveLength(2);
     const lists = aptCalls.map((call) => call.match(/Dir::State::lists=(\S+)/u)?.[1]);
-    expect(lists[0]).toMatch(/\/nemoclaw-apt-lists\.\S+$/u);
+    expect(lists[0]).toMatch(/^\/tmp\/nemoclaw-apt-lists\.\S+$/u);
     expect(lists[1]).toBe(lists[0]);
+    expect(
+      result.calls.filter(
+        (call) => call.startsWith("chmod ") && call.endsWith(` ${result.runnerTemp}`),
+      ),
+    ).toEqual([]);
+    expect(result.calls.filter((call) => call.startsWith("rm -rf -- "))).toEqual([
+      `rm -rf -- ${lists[0]}`,
+    ]);
+    expect(existsSync(lists[0] ?? "")).toBe(false);
     const sources = aptCalls.map((call) => call.match(/Dir::Etc::sourcelist=(\S+)/u)?.[1]);
     expect(sources[0]).toMatch(/\/nemoclaw-ubuntu-sources\.\S+\/ubuntu\.sources$/u);
     expect(sources[1]).toBe(sources[0]);

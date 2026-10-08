@@ -354,9 +354,56 @@ Fix the host firewall, VPN, or DNS policy so the host can resolve the provider e
 
 ### Port already in use
 
-The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8080`. If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port. If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
+The NemoClaw dashboard uses port `18789` by default, and the gateway uses port `8080`.
+For a new sandbox, onboarding scans dashboard ports `18789` through `18799` and uses the next port verified available.
+It skips occupied candidates and candidates whose OpenShell forward ownership cannot be verified.
+If no candidate is available, the error lists the blocked ports and their observed states or registered owners.
+The list includes a blocked preferred dashboard port outside the default range.
+For occupied dashboard ports, free a sandbox or use `--control-ui-port` with a verified available port outside the range.
 
-NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`, so it rejects every port in that range as a dashboard port for any agent. When all ports in the API range are occupied, the error lists the owner for each port. Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`.
+It rejects every port in that range as a dashboard port for any agent.
+Hermes API allocation also skips unverified candidates and requires a port verified available.
+For occupied API ports, destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+
+For all-unverified or mixed failures, inspect ownership before changing a blocked port.
+For mixed failures, also apply the occupied-port remedies above to ports with known owners.
+A different verified available dashboard port can avoid blocked candidates, but changing the port does not repair ownership verification.
+Repeated onboarding and resume keep registered ports; they stop if ownership of a registered port cannot be verified.
+
+1. Preserve the onboarding error, including each affected port and its observed state.
+   Run the following read-only diagnostics on the same host and as the same user who ran onboarding.
+   Use the gateway name and endpoint selected for that onboarding run:
+
+   ```bash
+   openshell forward list --gateway <gateway-name> --gateway-endpoint <gateway-endpoint>
+   ```
+
+   If onboarding selected an explicit workspace, add `--workspace <workspace>` with that same name.
+   The listing covers legacy and user-managed forwards; it does not establish ownership of receipt-owned ForwardTcp services.
+
+2. Inspect each affected host port, including a preferred port outside the default range:
+
+   ```bash
+   lsof -nP -iTCP:<port> -sTCP:LISTEN
+   ```
+
+   A listener listing or empty output alone does not prove OpenShell ownership.
+   NemoClaw also checks the listener's process identity and whether that identity remains stable.
+   Do not stop a process or delete forwarding state whose owner you cannot verify.
+
+3. If a diagnostic reports missing tooling or a permission error, ask the host administrator to correct that reported problem.
+   After correcting the problem, rerun onboarding and check whether it still reports unverified ownership.
+
+4. If ownership remains unverified, collect the command output, affected ports, onboarding error, and installed versions for a NemoClaw maintainer:
+
+   ```bash
+   $$nemoclaw --version
+   openshell --version
+   ```
+
+   Remove credentials and other sensitive values before sharing the diagnostics.
+   Preserve unknown listeners and forwarding state while the maintainer investigates.
 
 On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts. For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build. If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources. NemoClaw releases the reservation immediately before its receipt-owned ForwardTcp service starts. If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
 
@@ -422,13 +469,13 @@ Refer to [Environment Variables](commands#environment-variables) for the full li
 
 ### Running multiple sandboxes simultaneously
 
-Each sandbox requires its own dashboard port. If you onboard a second sandbox without overriding the port, onboarding uses the next free port in the `18789` to `18799` range. `onboard` checks `openshell forward list` before starting a new forward, so a second onboard cannot silently take over the first sandbox's port.
+Each sandbox requires its own dashboard port. If you onboard a second sandbox without overriding the port, onboarding uses the next verified available port in the `18789` to `18799` range. `onboard` checks `openshell forward list` before starting a new forward, so a second onboard cannot silently take over the first sandbox's port.
 
 Assign a distinct port only when you want a specific value:
 
 ```bash
-$$nemoclaw onboard                                                   # first sandbox uses default 18789
-$$nemoclaw onboard                                                   # second sandbox uses the next free port
+$$nemoclaw onboard                                                   # first sandbox uses 18789 when verified available
+$$nemoclaw onboard                                                   # second sandbox uses the next verified available port
 $$nemoclaw onboard --control-ui-port 19000                          # explicit port override
 ```
 
@@ -3118,7 +3165,7 @@ openshell forward list                       # shows the host bind for each forw
 curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint answers
 ```
 
-If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing. Recovery targets each sandbox's own ports. A second Hermes sandbox on the same host receives the next free API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging. A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`. A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action. To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`. Set `<N>` to a free port from `8642` through `8652`. Onboarding rejects a value outside that range. It also rejects an in-range value that another sandbox or host listener already holds. A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
+If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing. Recovery targets each sandbox's own ports. A second Hermes sandbox on the same host receives the next verified available API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging. A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`. A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action. To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`. Set `<N>` to a free port from `8642` through `8652`. Onboarding rejects a value outside that range. It also rejects an in-range value that another sandbox or host listener already holds. A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
 
 ### Install reports `Could not restore the Hermes forward`
 
