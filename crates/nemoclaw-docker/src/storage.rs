@@ -210,7 +210,8 @@ mod operations {
             ))
     }
 }
-#[cfg(all(test, feature = "client"))]
+// Only the Unix storage tests build volumes with the ownership labels.
+#[cfg(all(test, unix, feature = "client"))]
 use operations::labels;
 #[cfg(feature = "client")]
 pub use operations::{ensure_storage, observe_storage};
