@@ -1087,7 +1087,7 @@ impl Operations {
                 .ok_or(ObservationError::Incomplete)?;
             let object = self.verify(&receipt.storage, pod).await?;
             Self::verify_pod(&receipt, &object)?;
-            if let Some(error) = super::status::terminal(&object) {
+            if let Some(error) = super::status::terminal(&object, &pod.name) {
                 return Err(error);
             }
             self.read_with_exec(spec, None, executor).await

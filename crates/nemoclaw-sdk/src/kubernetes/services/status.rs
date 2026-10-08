@@ -57,7 +57,7 @@ struct Status {
 }
 
 /// Prefer authoritative Pod failures over the container's generic exit reason.
-pub(super) fn terminal(pod: &DynamicObject) -> Option<ObservationError> {
+pub(super) fn terminal(pod: &DynamicObject, owned_name: &str) -> Option<ObservationError> {
     use serde_json::Value;
     let phase = pod.data.pointer("/status/phase").and_then(Value::as_str);
     let container = pod
@@ -127,7 +127,7 @@ pub(super) fn terminal(pod: &DynamicObject) -> Option<ObservationError> {
     Some(ObservationError::ModelRuntimeStopped {
         reason,
         exit_code,
-        detail: ObservationError::sanitized_detail(detail),
+        detail: ObservationError::sanitized_resource_detail(detail, owned_name),
     })
 }
 
@@ -265,7 +265,7 @@ mod tests {
                     "containerStatuses": [{"name":"runtime", "state": {"terminated": {"reason": container_reason, "exitCode": 1}}}]}
             })).unwrap();
             assert_eq!(
-                terminal(&pod),
+                terminal(&pod, "model"),
                 Some(ObservationError::ModelRuntimeStopped {
                     reason: expected,
                     exit_code: Some(1),
@@ -277,7 +277,7 @@ mod tests {
             "apiVersion": "v1", "kind": "Pod", "metadata": {},
             "status": {"phase": "Pending", "containerStatuses": [{"name":"runtime", "state": {"waiting": {"reason": "CreateContainerConfigError", "message": "failed to sync configmap cache"}}}]}
         })).unwrap();
-        assert_eq!(terminal(&pod), None);
+        assert_eq!(terminal(&pod, "model"), None);
     }
 
     #[test]

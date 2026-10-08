@@ -940,12 +940,30 @@ async fn terminal_pods_are_replaced_only_by_explicit_apply_and_only_when_owned()
         }
         objects.insert(pod);
         let before = objects.0.lock().unwrap().clone();
+        let receipt = directory
+            .path()
+            .join("services")
+            .join(&spec.name)
+            .join("receipt.json");
+        let recorded = std::fs::read(&receipt).unwrap();
         let read = operations.read(&spec, first.id.as_deref()).await;
         assert_eq!(*objects.0.lock().unwrap(), before);
+        assert_eq!(std::fs::read(&receipt).unwrap(), recorded);
         if foreign {
-            assert_binding_mismatch(read);
-            assert!(operations.ensure(&spec, first.id.as_deref()).await.is_err());
+            diagnostics::assert_named_mismatch(
+                &read.unwrap_err(),
+                "Pod",
+                "agents",
+                &spec.name,
+                "metadata.uid",
+            );
+            let error = operations
+                .ensure(&spec, first.id.as_deref())
+                .await
+                .unwrap_err();
+            diagnostics::assert_named_mismatch(&error, "Pod", "agents", &spec.name, "metadata.uid");
             assert_eq!(*objects.0.lock().unwrap(), before);
+            assert_eq!(std::fs::read(&receipt).unwrap(), recorded);
         } else {
             assert_eq!(read.unwrap().running, Some(false));
             operations.ensure(&spec, first.id.as_deref()).await.unwrap();

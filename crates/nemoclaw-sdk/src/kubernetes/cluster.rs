@@ -158,7 +158,10 @@ impl Cluster {
                     ObservationError::Admission {
                         kind: address.kind.clone(),
                         name: address.name.clone(),
-                        detail: ObservationError::sanitized_detail(&status.message),
+                        detail: ObservationError::sanitized_resource_detail(
+                            &status.message,
+                            &address.name,
+                        ),
                     }
                 }
                 other => failure(other),

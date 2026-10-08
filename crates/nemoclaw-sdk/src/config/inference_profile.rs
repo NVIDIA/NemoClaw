@@ -141,6 +141,85 @@ mod tests {
     }
 
     #[test]
+    fn bound_cluster_profiles_require_the_exact_service_host_and_authentication_mode() {
+        for example in [
+            include_bytes!("../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+            include_bytes!("../../../../examples/kubernetes/local-ollama.yaml").as_slice(),
+        ] {
+            let document = crate::config::Document::parse(example).unwrap();
+            let record = crate::state::Record::new(document.clone()).unwrap();
+            let targets = crate::compile::runtime_targets(&document, &record.generations).unwrap();
+            let spec = crate::kubernetes::services::Spec::decode(
+                &targets
+                    .iter()
+                    .find(|target| target.kind == crate::kubernetes::services::SERVICE_KIND)
+                    .unwrap()
+                    .values["spec"],
+            )
+            .unwrap();
+            let storage = spec.storage();
+            let addresses = ["10.96.0.42".parse().unwrap()];
+            let endpoint = spec.endpoint();
+            let profile = cluster_definition(
+                "model",
+                &endpoint,
+                InferenceProviderKind::Openai,
+                spec.authenticated(),
+                &storage,
+                &addresses,
+            )
+            .unwrap();
+            assert_eq!(
+                profile.endpoints[0].host,
+                format!("{}.{}.svc.cluster.local", spec.name, spec.namespace())
+            );
+            assert_eq!(profile.endpoints[0].allowed_ips, ["10.96.0.42/32"]);
+            assert_eq!(profile.credentials.len(), usize::from(spec.authenticated()));
+
+            let other_service = format!(
+                "http://other-{}.{}.svc.cluster.local:{}/v1",
+                spec.name,
+                spec.namespace(),
+                spec.port()
+            );
+            let other_namespace = format!(
+                "http://{}.other-{}.svc.cluster.local:{}/v1",
+                spec.name,
+                spec.namespace(),
+                spec.port()
+            );
+            for (endpoint, authenticated) in [
+                (other_service.as_str(), spec.authenticated()),
+                (other_namespace.as_str(), spec.authenticated()),
+                (endpoint.as_str(), !spec.authenticated()),
+            ] {
+                // These URLs retain the valid cluster shape. Only the SDK's
+                // comparison with the bound storage can reject this mismatch.
+                nemoclaw_openshell::profile::cluster_definition(
+                    "model",
+                    endpoint,
+                    InferenceProviderKind::Openai,
+                    authenticated,
+                    &addresses,
+                )
+                .unwrap();
+                assert_eq!(
+                    cluster_definition(
+                        "model",
+                        endpoint,
+                        InferenceProviderKind::Openai,
+                        authenticated,
+                        &storage,
+                        &addresses,
+                    )
+                    .unwrap_err(),
+                    ObservationError::BindingMismatch
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cluster_model_projection_accepts_owned_dns_without_allowing_authored_http_dns() {
         assert!(
             crate::config::validate_endpoint("http://arbitrary.default.svc:8000/v1", false)

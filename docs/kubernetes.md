@@ -189,6 +189,7 @@ The first plan cannot dry-run namespace-scoped workloads when the managed namesp
 For a changed existing workload, preflight checks the replacement Pod and ConfigMap under temporary names without persisting them, before stopping the current Pod.
 Rejection preserves the current Pod, configuration, and saved service receipt.
 The check can reject a replacement at full namespace quota because the existing Pod still counts toward usage.
+Use the [quota recovery procedure](#recover-a-quota-rejection-during-a-model-update) to obtain temporary admission headroom while preserving the running workload.
 Temporary names and existing referenced objects can affect admission; a successful check does not reserve quota or capacity, and admission can change before the real create.
 After preflight passes, replacement stops the old Pod; a later create failure can leave the service down until a corrected apply completes recovery from the saved state.
 Apply creates retained storage and disposable service resources, starts the hosted runtime, and checks its bounded readiness before configuring dependent agents.
@@ -214,6 +215,31 @@ A ready model service does not establish a real agent reply.
 The current Fabric pin still reports agent health as unsupported, so apply stops at agent readiness even when model startup succeeds.
 Use [inference verification](inference.md#verify-the-result) to distinguish service readiness, adapter health, and an explicit model request.
 The [compatibility baseline](design/cluster-inference-compatibility.md) records exact inputs and the remaining Fabric, authentication, and qualification gaps.
+
+### Recover a Quota Rejection During a Model Update
+
+A replacement dry run can exceed namespace quota even when the new workload would fit after the old Pod is removed.
+The rejection leaves the current workload and saved service receipt intact.
+Keep the deployment YAML, matching bundle, state directory, and owned resources while the platform operator inspects the reported quota.
+Ask the operator to temporarily raise each exhausted quota enough to admit the replacement Pod or ConfigMap alongside current usage.
+The dry run does not create or schedule an extra Pod, but its admission check still counts the requested resources against quota.
+
+After the operator provides that headroom, run the preview from the directory containing `deployment.yaml`, using the existing state path:
+
+```sh
+nemoclaw plan --state-dir .local/kubernetes deployment.yaml
+```
+
+If quota admission now passes, review the planned workload replacement and request the update:
+
+```sh
+nemoclaw apply --state-dir .local/kubernetes deployment.yaml
+```
+
+Keep the quota headroom through apply; afterward, the operator must check actual usage before restoring a previous quota.
+If apply fails after stopping the old Pod, preserve state, correct the reported cause, and resume with the same YAML and state directory.
+If the operator cannot provide headroom, defer the update; NemoClaw has no option to skip this admission check.
+Whole-deployment [destroy](#destroy-a-deployment) is a separate decision that deletes every sandbox's files and history, not a data-preserving quota workaround.
 
 ## Deploy to OpenShift
 

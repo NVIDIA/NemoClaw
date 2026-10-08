@@ -53,7 +53,8 @@ The cluster implementation does not replace those contracts with cluster-specifi
 ## OpenClaw Context Budget
 
 The [cluster examples](../kubernetes.md#run-a-managed-model-service) use a `32768`-token service context and matching OpenClaw `model_metadata.contextWindow`.
-An operator reported real OpenClaw turns at NemoClaw revision `3c94fda7b`, using images built from revision `377912705` on a kind cluster with one GB300 GPU, through OpenShell `ExecSandbox` and `fabric-agent invoke`.
+An earlier deployment report identified NemoClaw revision `3c94fda7b` and images built from revision `377912705`.
+The context comparison below was reported separately at NemoClaw revision `4dedf0a82` on a kind cluster with one GB300 GPU, through OpenShell `ExecSandbox` and `fabric-agent invoke`; that report did not identify image build revisions.
 With Ollama `qwen3:0.6b` at `32768`, its log recorded `n_tokens=19947` and `truncated=0`, and the reply followed the instruction.
 At `8192`, the turn reported success but the reply ignored the instruction; context truncation is an inference from the changed behavior, not a confirmed truncation log from that run.
 With vLLM `Qwen/Qwen3-4B`, the `8192` setting produced context-overflow HTTP 400 responses and failed automatic compaction; `32768` produced three HTTP 200 chat-completion responses through the supervisor.

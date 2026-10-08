@@ -58,7 +58,11 @@ async fn terminal_runtime_status_reports_the_stop_detail_before_attempting_exec(
         .unwrap();
     operations.ensure(&spec, None).await.unwrap();
     let mut pod = objects.get("v1", "Pod", "agents", &spec.name).unwrap();
-    pod["status"] = json!({"phase": "Failed", "containerStatuses": [{"name":"runtime", "state": {"terminated": {"reason": "Error", "exitCode": 1, "message": "model output\nstopped: Ollama tag differs from the pinned manifest digest"}}}]});
+    let message = format!(
+        "model output\nstopped: Pod {:?}: Ollama tag differs from the pinned manifest digest; Bearer {}; token=secret-sentinel; opaque=nc-unverified-0123456789abcdef0123456789abcdef",
+        spec.name, spec.name
+    );
+    pod["status"] = json!({"phase": "Failed", "containerStatuses": [{"name":"runtime", "state": {"terminated": {"reason": "Error", "exitCode": 1, "message": message}}}]});
     objects.insert(pod);
     let executor = Exec::new(Vec::new());
     let error = operations
@@ -71,6 +75,18 @@ async fn terminal_runtime_status_reports_the_stop_detail_before_attempting_exec(
             .contains("Ollama tag differs from the pinned manifest digest"),
         "{error}"
     );
+    let message = error.to_string();
+    assert!(
+        message.contains(&format!("Pod {:?}:", spec.name)),
+        "{message}"
+    );
+    assert_eq!(message.matches(&spec.name).count(), 1, "{message}");
+    for secret in [
+        "secret-sentinel",
+        "nc-unverified-0123456789abcdef0123456789abcdef",
+    ] {
+        assert!(!message.contains(secret), "{message}");
+    }
     assert!(matches!(
         error,
         ObservationError::ModelRuntimeStopped {

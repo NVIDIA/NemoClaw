@@ -6,6 +6,41 @@ use nemoclaw_sdk::ObservationError;
 use serde_json::json;
 use std::error::Error;
 
+#[tokio::test]
+async fn admission_details_preserve_the_requested_pod_name_without_exposing_credentials() {
+    let spec = spec("ollama", false);
+    let objects = crate::kube_api::Objects::default();
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path(), &spec).await;
+    operations
+        .ensure_storage(&spec.storage(), None)
+        .await
+        .unwrap();
+    objects.reject_create("Pod");
+    let error = operations.preflight_workload(&spec).await.unwrap_err();
+    let ObservationError::Admission { kind, name, detail } = error else {
+        panic!("expected admission rejection, got {error:?}");
+    };
+    assert_eq!(kind, "Pod");
+    assert!(name.starts_with(&spec.name), "{name}");
+    assert!(
+        detail.contains(&format!("Pod {name:?} is forbidden")),
+        "{detail}"
+    );
+    assert_eq!(
+        detail.matches(&name).count(),
+        1,
+        "credential values must stay redacted: {detail}"
+    );
+    for secret in [
+        "secret-sentinel",
+        "nc-unverified-0123456789abcdef0123456789abcdef",
+    ] {
+        assert!(!detail.contains(secret), "{detail}");
+    }
+    assert!(detail.contains("exceeded quota"), "{detail}");
+}
+
 pub(super) fn assert_named_mismatch(
     error: &ObservationError,
     kind: &str,

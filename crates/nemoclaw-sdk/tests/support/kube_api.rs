@@ -239,7 +239,12 @@ impl Objects {
                     }
                 };
                 if let Some((false, code)) = failure {
-                    return Some((code, json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":code,"message":"exceeded quota: requested nvidia.com/gpu=1; token=secret-sentinel"}).to_string().into_bytes()));
+                    let name = object["metadata"]["name"].as_str().unwrap_or("");
+                    let message = format!(
+                        "{} {name:?} is forbidden: exceeded quota: requested nvidia.com/gpu=1; token=secret-sentinel; Bearer {name}; password='{name}'; opaque=nc-unverified-0123456789abcdef0123456789abcdef",
+                        object["kind"].as_str().unwrap_or("object")
+                    );
+                    return Some((code, json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":code,"message":message}).to_string().into_bytes()));
                 }
                 if object["kind"] == "SelfSubjectAccessReview" {
                     let denied =

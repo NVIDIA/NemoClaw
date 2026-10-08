@@ -209,6 +209,16 @@ impl std::error::Error for ObservationError {
 impl ObservationError {
     /// Bound backend diagnostics and remove credentials before they enter public errors.
     pub fn sanitized_detail(detail: &str) -> Box<str> {
+        Self::sanitize_detail(detail, None)
+    }
+
+    /// Preserve an exact non-secret resource name obtained from the request or
+    /// verified binding, never from the diagnostic. Credential fields remain redacted.
+    pub fn sanitized_resource_detail(detail: &str, resource_name: &str) -> Box<str> {
+        Self::sanitize_detail(detail, Some(resource_name))
+    }
+
+    fn sanitize_detail(detail: &str, resource_name: Option<&str>) -> Box<str> {
         use std::sync::OnceLock;
         static CREDENTIALS: OnceLock<regex::Regex> = OnceLock::new();
         static BEARER: OnceLock<regex::Regex> = OnceLock::new();
@@ -237,7 +247,15 @@ impl ObservationError {
         // Redact Bearer first: a key/value match alone would consume only the scheme.
         let hidden = bearer.replace_all(&printable, "[REDACTED]");
         let hidden = credentials.replace_all(&hidden, "[REDACTED]");
-        let hidden = tokens.replace_all(&hidden, "[REDACTED]");
+        let hidden = tokens.replace_all(&hidden, |matched: &regex::Captures<'_>| {
+            // Long generated object names resemble tokens. Only the caller's
+            // known name is exempt, after credential values have been removed.
+            if Some(&matched[0]) == resource_name {
+                matched[0].to_owned()
+            } else {
+                "[REDACTED]".into()
+            }
+        });
         let mut result = hidden.split_whitespace().collect::<Vec<_>>().join(" ");
         if result.len() > 1024 {
             result.truncate(1021);
