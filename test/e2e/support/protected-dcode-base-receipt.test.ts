@@ -1,0 +1,231 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  inspectProtectedDcodeBase,
+  verifyProtectedDcodeBaseReceipt,
+  type ProtectedDcodeBaseIdentity,
+} from "../../../scripts/checks/protected-dcode-base-receipt.mts";
+
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0))
+    fs.rmSync(directory, { recursive: true, force: true });
+});
+
+function fixture(platform: ProtectedDcodeBaseIdentity["platform"] = "linux/amd64") {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "protected-dcode-base-"));
+  directories.push(root);
+  const layout = path.join(root, "base");
+  fs.mkdirSync(path.join(layout, "blobs/sha256"), { recursive: true });
+  const expected: ProtectedDcodeBaseIdentity = {
+    sourceRevision: "a".repeat(40),
+    workflowSha: "b".repeat(40),
+    cohort: "protected-37164014229-1",
+    platform,
+  };
+  function blob(body: Buffer, mediaType: string) {
+    const digest = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    fs.writeFileSync(path.join(layout, "blobs/sha256", digest.slice(7)), body);
+    return { digest, size: body.length, mediaType };
+  }
+  function jsonBlob(value: unknown, mediaType: string) {
+    return blob(Buffer.from(JSON.stringify(value)), mediaType);
+  }
+  const config = jsonBlob(
+    {
+      os: "linux",
+      architecture: platform.slice(6),
+      config: {
+        Labels: {
+          "org.opencontainers.image.revision": expected.sourceRevision,
+          "org.opencontainers.image.source": "https://github.com/NVIDIA/NemoClaw",
+          "io.nvidia.nemoclaw.managed-image.cohort": expected.cohort,
+          "io.nvidia.nemoclaw.agent": "langchain-deepagents-code",
+        },
+      },
+    },
+    "application/vnd.oci.image.config.v1+json",
+  );
+  const layer = blob(
+    Buffer.alloc(2 * 1024 * 1024 + 7, 42),
+    "application/vnd.oci.image.layer.v1.tar",
+  );
+  const manifest = {
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config,
+    layers: [layer],
+  };
+  function setManifest(value: unknown) {
+    const descriptor = jsonBlob(value, "application/vnd.oci.image.manifest.v1+json");
+    fs.writeFileSync(
+      path.join(layout, "index.json"),
+      JSON.stringify({ schemaVersion: 2, manifests: [descriptor] }),
+    );
+    return descriptor;
+  }
+  const descriptor = setManifest(manifest);
+  fs.writeFileSync(
+    path.join(layout, "oci-layout"),
+    JSON.stringify({ imageLayoutVersion: "1.0.0" }),
+  );
+  const receiptPath = path.join(root, "receipt.json");
+  const receipt = inspectProtectedDcodeBase(layout, expected);
+  fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+  return {
+    layout,
+    root,
+    expected,
+    receiptPath,
+    receipt,
+    layer,
+    config,
+    manifest,
+    descriptor,
+    setManifest,
+  };
+}
+
+describe("protected DCode base artifact handoff", () => {
+  it("writes receipts once and refuses to overwrite existing evidence", () => {
+    const f = fixture();
+    const receiptPath = path.join(f.root, "cli-receipt.json");
+    const args = [
+      fileURLToPath(
+        new URL("../../../scripts/checks/protected-dcode-base-receipt.mts", import.meta.url),
+      ),
+      "write",
+      f.layout,
+      receiptPath,
+    ];
+    const options = {
+      encoding: "utf8" as const,
+      env: {
+        ...process.env,
+        CHECKOUT_SHA: f.expected.sourceRevision,
+        NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: f.expected.workflowSha,
+        NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: f.expected.cohort,
+        NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: f.expected.platform,
+      },
+    };
+    const first = spawnSync(process.execPath, args, options);
+    expect(first.status, first.stderr).toBe(0);
+    expect(first.stdout.trim()).toBe(f.receipt.reference);
+    expect(fs.statSync(receiptPath).mode & 0o777).toBe(0o600);
+    const bytes = fs.readFileSync(receiptPath);
+    const second = spawnSync(process.execPath, args, options);
+    expect(second.status, second.stderr).toBe(1);
+    expect(second.stderr).toContain("EEXIST");
+    expect(fs.readFileSync(receiptPath)).toEqual(bytes);
+  });
+
+  it.each(["linux/amd64", "linux/arm64"] as const)(
+    "binds the complete OCI image on %s",
+    (platform) => {
+      const f = fixture(platform);
+      expect(verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, f.expected)).toEqual(
+        f.receipt,
+      );
+      expect(f.receipt.digest).toBe(f.descriptor.digest);
+      expect(f.receipt.imageId).toBe(f.config.digest);
+      expect(f.receipt.reference).toBe(
+        `localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code@${f.descriptor.digest}`,
+      );
+    },
+  );
+
+  it.each([
+    { sourceRevision: "c".repeat(40) },
+    { workflowSha: "d".repeat(40) },
+    { cohort: "protected-37164014229-2" },
+    { cohort: "protected-37164014230-1" },
+    { platform: "linux/arm64" as const },
+  ])("rejects reuse across a different dispatch identity: %j", (change) => {
+    const f = fixture();
+    expect(() =>
+      verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, { ...f.expected, ...change }),
+    ).toThrow();
+  });
+
+  it.each(["digest", "imageId", "reference", "unexpected"])(
+    "rejects substituted receipt field %s",
+    (field) => {
+      const f = fixture();
+      fs.writeFileSync(f.receiptPath, JSON.stringify({ ...f.receipt, [field]: "substituted" }));
+      expect(() => verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, f.expected)).toThrow(
+        /receipt/,
+      );
+    },
+  );
+
+  it.each([
+    {
+      kind: "corrupt",
+      mutate: (filename: string, _f: ReturnType<typeof fixture>) => {
+        const fd = fs.openSync(filename, "r+");
+        fs.writeSync(fd, Buffer.from([0]), 0, 1, 1024 * 1024 + 2);
+        fs.closeSync(fd);
+      },
+    },
+    {
+      kind: "truncate",
+      mutate: (filename: string, f: ReturnType<typeof fixture>) => {
+        fs.truncateSync(filename, f.layer.size - 1);
+      },
+    },
+    {
+      kind: "missing",
+      mutate: (filename: string, f: ReturnType<typeof fixture>) => {
+        fs.renameSync(filename, path.join(f.root, "outside"));
+      },
+    },
+    {
+      kind: "symlink",
+      mutate: (filename: string, f: ReturnType<typeof fixture>) => {
+        fs.renameSync(filename, path.join(f.root, "outside"));
+        fs.symlinkSync(path.join(f.root, "outside"), filename);
+      },
+    },
+  ])("rejects a $kind layer before using its image", ({ mutate }) => {
+    const f = fixture();
+    const filename = path.join(f.layout, "blobs/sha256", f.layer.digest.slice(7));
+    mutate(filename, f);
+    expect(() => verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, f.expected)).toThrow();
+  });
+
+  it("rejects a remote layer even when its local bytes match", () => {
+    const f = fixture();
+    f.setManifest({
+      ...f.manifest,
+      layers: [{ ...f.layer, urls: ["https://example.invalid/layer"] }],
+    });
+    expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/external content/);
+  });
+
+  it("rejects symlinked receipt and blob directories", () => {
+    const f = fixture();
+    fs.renameSync(f.receiptPath, path.join(f.root, "real-receipt"));
+    fs.symlinkSync(path.join(f.root, "real-receipt"), f.receiptPath);
+    expect(() => verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, f.expected)).toThrow();
+    fs.renameSync(path.join(f.layout, "blobs"), path.join(f.root, "real-blobs"));
+    fs.symlinkSync(path.join(f.root, "real-blobs"), path.join(f.layout, "blobs"));
+    expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/symlinks/);
+  });
+
+  it("rejects ambiguous multi-image indexes", () => {
+    const f = fixture();
+    fs.writeFileSync(
+      path.join(f.layout, "index.json"),
+      JSON.stringify({ schemaVersion: 2, manifests: [f.descriptor, f.descriptor] }),
+    );
+    expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/one OCI image/);
+  });
+});

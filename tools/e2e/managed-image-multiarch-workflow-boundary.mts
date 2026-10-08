@@ -62,7 +62,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "3838afa4f7e9fd98e182a5dc320a122751981a26c606732f240b5edb65ffcf16";
+  "8a44ba348ebc4a839b91006a3b385506706b8c072b0d634251fd9a6670ff8458";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -357,6 +357,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   }
 
   const activation = requireStep(errors, steps, "Validate candidate activation contract");
+  if (activation?.id !== "candidate-contract")
+    errors.push(`${JOB_ID} activation must bind the DCode base source`);
   requireFragments(errors, activation, [
     `activation="${ACTIVATION_PATH}"`,
     '[[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]',
@@ -364,6 +366,10 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '(keys | sort) == ["agents", "contractVersion", "jobId", "platforms"]',
     '.agents == ["openclaw", "hermes", "langchain-deepagents-code"]',
     '.platforms == ["linux/amd64", "linux/arm64"]',
+    ".contractVersion == 1",
+    '.contractVersion == 2 and .dcodeBaseSource == "candidate"',
+    '(keys | sort) == ["agents", "contractVersion", "dcodeBaseSource", "jobId", "platforms"]',
+    "dcode_source=%s",
   ]);
 
   const hermesBase = requireStep(errors, steps, "Resolve reviewed Hermes platform base image");
@@ -428,6 +434,10 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   ]);
 
   const build = requireStep(errors, steps, "Build exact all-agent protected managed images");
+  requireValues(errors, `${JOB_ID} candidate base selection`, record(build?.env), {
+    BASE_DCODE:
+      "${{ steps.candidate-contract.outputs.dcode_source == 'candidate' && 'candidate' || steps.bases.outputs.dcode }}",
+  });
   requireFragments(errors, build, [
     "scripts/checks/build-protected-managed-images.sh",
     '--revision "$CHECKOUT_SHA"',
