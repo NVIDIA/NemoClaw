@@ -367,7 +367,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
             "The previous package is preserved at '.proxy-addr-replacement-",
           );
         failRestore &&
-          expect(result.stderr).toContain("Rerun the plugin installation before retrying.");
+          expect(result.stderr).toContain(
+            "Rerun the original onboarding or rebuild command; its managed plugin-install phase restores the previous package before retrying the replacement.",
+          );
         expect(result.stderr).not.toContain(fixture.root);
         expect(result.stderr).not.toContain("rename-failure-canary");
         expect(fs.readdirSync(packageParent).sort()).toEqual(
@@ -496,7 +498,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           "OpenClaw dependency 'proxy-addr' was replaced, but recovery-directory cleanup failed",
         );
         expect(failedAttempt.stderr).toContain(
-          "Rerun the plugin installation to reconcile recovery state before retrying.",
+          "Rerun the original onboarding or rebuild command so the managed plugin-install phase can reconcile recovery state.",
         );
         expect(failedAttempt.stderr).not.toContain("OPENAI_API_KEY=cleanup-failure-canary");
         expect(failedAttempt.stderr).not.toContain(fixture.root);
