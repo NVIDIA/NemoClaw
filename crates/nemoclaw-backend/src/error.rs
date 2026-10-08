@@ -4,7 +4,7 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
-    Configuration(#[from] crate::config::ConfigError),
+    Configuration(#[from] nemoclaw_runtime::config::ConfigError),
     #[error("{0}")]
     Observation(#[from] crate::ObservationError),
     #[error("{0}")]
