@@ -81,17 +81,19 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("stopped container");
   });
 
-  it("reports an owned stopped container without crash guidance (#8695)", async () => {
+  it("fails for an owned stopped container without crash guidance (#8695, #12746)", async () => {
     const cap = captureConsoleLog();
-    await printGuidance({
-      phase: "Provisioning",
-      dockerRuntime: {
-        health: "none",
-        paused: false,
-        running: false,
-        containerName: "openshell-beta-abc",
-      },
-    });
+    await expect(
+      printGuidance({
+        phase: "Provisioning",
+        dockerRuntime: {
+          health: "none",
+          paused: false,
+          running: false,
+          containerName: "openshell-beta-abc",
+        },
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
     const text = cap.lines();
     cap.restore();
 
@@ -103,12 +105,14 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
-  it("renders Phase: Stopped and clean stopped guidance when phase is Stopped (#11025)", async () => {
+  it("fails with clean stopped guidance when phase is Stopped (#11025, #12746)", async () => {
     const cap = captureConsoleLog();
-    await printGuidance({
-      phase: "Stopped",
-      dockerRuntime: null,
-    });
+    await expect(
+      printGuidance({
+        phase: "Stopped",
+        dockerRuntime: null,
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
     const text = cap.lines();
     cap.restore();
 
@@ -120,24 +124,26 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
-  it("renders a missing provider-confirmed intentional stop as cleanly stopped (#11025)", async () => {
+  it("fails for a missing provider-confirmed intentional stop with clean guidance (#11025, #12746)", async () => {
     const cap = captureConsoleLog();
-    await printSandboxGatewayLookupStatus({
-      sandboxName: "beta",
-      registered: true,
-      lookup: { state: "missing", output: "sandbox beta not found" },
-      phase: "Stopped",
-      openshellDriver: "docker",
-      dockerRuntime: null,
-      dockerRuntimeDown: false,
-      effectivePreflight: {
-        failure: null,
-        failureLayer: null,
-        intentionalStopConfirmed: true,
-        suppressInferenceProbe: true,
-        exitCode: 0,
-      },
-    });
+    await expect(
+      printSandboxGatewayLookupStatus({
+        sandboxName: "beta",
+        registered: true,
+        lookup: { state: "missing", output: "sandbox beta not found" },
+        phase: "Stopped",
+        openshellDriver: "docker",
+        dockerRuntime: null,
+        dockerRuntimeDown: false,
+        effectivePreflight: {
+          failure: null,
+          failureLayer: null,
+          intentionalStopConfirmed: true,
+          suppressInferenceProbe: true,
+          exitCode: 0,
+        },
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
     const text = cap.lines();
     cap.restore();
 

@@ -49,7 +49,7 @@ export async function printSandboxGatewayLookupStatus(
     case "missing":
       if (context.effectivePreflight.intentionalStopConfirmed) {
         printConfirmedStoppedSandboxStatus(context.sandboxName);
-        return;
+        return deferSandboxLifecycleExit(1);
       }
       printMissingLiveSandboxStatusGuidance(context);
       deferSandboxLifecycleExit(1);
@@ -296,7 +296,7 @@ function printNonReadySandboxPhaseGuidance({
     console.log(`  Sandbox '${sandboxName}' is stopped.`);
     console.log("  Workspace state is preserved.");
     console.log(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
-    return;
+    deferSandboxLifecycleExit(1);
   }
   // A non-ready, non-terminal phase can mean two very different things. If
   // the Docker daemon is down, OpenShell can still return a present-but-

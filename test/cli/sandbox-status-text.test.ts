@@ -592,7 +592,7 @@ describe.concurrent("CLI sandbox status text output", () => {
   );
 
   it.each(["missing", "present"] as const)(
-    "sandbox <name> status reports Stopped state with a %s live lookup (#11025)",
+    "sandbox <name> status fails for Stopped state with a %s live lookup (#11025, #12746)",
     testTimeoutOptions(30_000),
     async (gatewayState) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-stopped-"));
@@ -682,7 +682,7 @@ describe.concurrent("CLI sandbox status text output", () => {
         30000,
       );
 
-      expect(r.code, r.out).toBe(gatewayState === "present" ? 1 : 0);
+      expect(r.code, r.out).toBe(1);
       expect(r.out).not.toContain("Failure layer:");
       expect(r.out).toContain("Phase: Stopped");
       expect(r.out).not.toContain("Phase: Provisioning");
@@ -701,8 +701,8 @@ describe.concurrent("CLI sandbox status text output", () => {
         },
         30000,
       );
-      expect(j.code).toBe(0);
-      const parsed = JSON.parse(j.out);
+      expect(j.code).toBe(1);
+      const parsed = JSON.parse(j.stdout ?? j.out);
       expect(parsed.phase).toBe("Stopped");
       expect(parsed.gatewayState).toBe(gatewayState);
       expect(parsed.failureLayer).toBeNull();
