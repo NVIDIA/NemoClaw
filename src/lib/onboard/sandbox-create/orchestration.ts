@@ -404,7 +404,12 @@ export function selectRebuildCreatePolicy(
       ...requiredNetworkPolicyKeys,
       ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
     ],
-    removedNetworkPolicyKeys,
+    removedNetworkPolicyKeys: [
+      ...removedNetworkPolicyKeys,
+      ...(inferenceProvider !== null && !usesNativeNvidiaProvider(inferenceProvider)
+        ? ["native_nvidia_inference"]
+        : []),
+    ],
     requiredNetworkPolicySources,
     authorizedCredentialBindingProviders,
   });

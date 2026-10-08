@@ -25,7 +25,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function rebuild(inferenceProvider: string, nativePolicy?: unknown) {
+function rebuild(inferenceProvider: string | null, nativePolicy?: unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-rebuild-policy-test-"));
   roots.push(root);
   const livePath = path.join(root, "live.yaml");
@@ -80,6 +80,21 @@ describe("native NVIDIA rebuild policy", () => {
 
   it("preserves a removed native route when another inference provider is selected (#12822)", () => {
     expect(rebuild("openai").selected.network_policies).toEqual({ host_rule: hostPolicy });
+  });
+
+  it("removes the generated native grant when rebuilding with OpenAI (#12822)", () => {
+    const native = rebuild(nativeProvider).replacement.network_policies.native_nvidia_inference;
+    const result = rebuild("openai", native);
+    expect(result.selected.network_policies).toEqual({ host_rule: hostPolicy });
+    expect(fs.readFileSync(result.livePath, "utf8")).toBe(result.source);
+  });
+
+  it("preserves native access when no replacement provider is selected (#12822)", () => {
+    const native = rebuild(nativeProvider).replacement.network_policies.native_nvidia_inference;
+    expect(rebuild(null, native).selected.network_policies).toEqual({
+      host_rule: hostPolicy,
+      native_nvidia_inference: native,
+    });
   });
 
   it("refuses a conflicting host native rule before replacing the sandbox (#12822)", () => {
