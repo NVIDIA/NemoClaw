@@ -97,8 +97,9 @@ import {
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
 import {
-  sandboxCreateInferenceSelection,
   nativeProviderCreateIntentFields,
+  sandboxCreateInferenceSelection,
+  withSandboxImageRegistrationFence,
 } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
@@ -2401,17 +2402,19 @@ class SandboxStateFlow<
       );
       return { ...state, sandboxName, session: recordedSession };
     };
-    const withGatewayLock = () =>
-      this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
-    const withDashboardPortLock =
-      this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
-    const withDashboardAndGatewayLocks = () =>
-      shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
-        ? withDashboardPortLock(withGatewayLock)
-        : withGatewayLock();
-    return this.deps.withSandboxMutationLock
-      ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
-      : withDashboardAndGatewayLocks();
+    return withSandboxImageRegistrationFence(async () => {
+      const withGatewayLock = () =>
+        this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
+      const withDashboardPortLock =
+        this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
+      const withDashboardAndGatewayLocks = () =>
+        shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
+          ? withDashboardPortLock(withGatewayLock)
+          : withGatewayLock();
+      return this.deps.withSandboxMutationLock
+        ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
+        : withDashboardAndGatewayLocks();
+    });
   }
 
   private resolveSandboxMessagingAuthority(
