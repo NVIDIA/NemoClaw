@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
+nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 jsonschema.workspace = true
 openshell-policy.workspace = true
 openshell-sdk.workspace = true

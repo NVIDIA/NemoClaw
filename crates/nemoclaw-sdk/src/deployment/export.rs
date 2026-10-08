@@ -183,7 +183,19 @@ impl Deployment {
             if target.address.starts_with("data.") || plan::disposable(&target.address) {
                 continue;
             }
-            let observed: Row = serde_json::from_value(observations[&target.address].clone())
+            let mut observation = observations[&target.address].clone();
+            // Typed OpenShell inputs return to the JSON their rows carry.
+            for input in nemoclaw_openshell::structured_inputs(&target.kind) {
+                if let Some(object) = observation.as_object_mut()
+                    && let Some(value) = object.remove(input.attribute)
+                {
+                    let encoded = input
+                        .row_value(value)
+                        .map_err(|_| Error::State("invalid provider export observation"))?;
+                    object.insert(input.field.into(), json!(encoded.unwrap_or_default()));
+                }
+            }
+            let observed: Row = serde_json::from_value(observation)
                 .map_err(|_| Error::State("invalid provider export observation"))?;
             let mut expected = target.values;
             expected.insert("id".into(), observed["id"].clone());
@@ -343,18 +355,16 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
 }
 
 fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
-    if [
-        "image",
-        "agent_name",
-        "agent_runtime",
-        "policy_json",
-        "provider_names_json",
-    ]
-    .iter()
-    .any(|key| {
-        observed.get(*key).map(String::as_str).unwrap_or("")
-            != expected.get(*key).map(String::as_str).unwrap_or("")
-    }) {
+    let value = |row: &Row, key: &str| row.get(key).map(String::as_str).unwrap_or("").to_owned();
+    // JSON inputs compare by value; the provider records them canonically.
+    let json = |row: &Row, key: &str| serde_json::from_str::<Value>(&value(row, key)).ok();
+    if ["image", "agent_name", "agent_runtime"]
+        .iter()
+        .any(|key| value(observed, key) != value(expected, key))
+        || ["policy_json", "provider_names_json"]
+            .iter()
+            .any(|key| json(observed, key) != json(expected, key))
+    {
         return Err(Error::Conflict(
             "sandbox configuration drift requires inspection",
         ));

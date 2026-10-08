@@ -7,7 +7,7 @@ use crate::{
     gateway_source::GatewayDataSource,
 };
 use async_trait::async_trait;
-use nemoclaw_tofu::ResourceAdapter;
+use nemoclaw_tofu::{ResourceAdapter, StructuredAdapter};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -171,7 +171,10 @@ impl Provider for OpenShellProvider {
                         .to_owned();
                     let mut resource = ResourceAdapter::new(definition, backend.clone());
                     resource.destroying = self.destroying.clone();
-                    (name, Box::new(resource) as Box<dyn DynamicResource>)
+                    (
+                        name,
+                        Box::new(StructuredAdapter(resource)) as Box<dyn DynamicResource>,
+                    )
                 })
                 .collect(),
         )

@@ -334,6 +334,12 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 4] {
         .optional(&["agent_runtime", "policy_json", "provider_names_json"]),
     ]
     .map(lifecycle_rules)
+    .map(|mut definition| {
+        definition.structured = nemoclaw_openshell::structured_inputs(definition.kind);
+        definition
+            .generated("owner", nemoclaw_backend::generate_owner)
+            .generated("generation", nemoclaw_backend::generate_generation)
+    })
 }
 
 /// Retained and stateful objects keep their bindings and refuse replacement.
