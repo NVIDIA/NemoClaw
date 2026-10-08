@@ -29,6 +29,7 @@ pub struct State {
     pub driver: Option<String>,
     pub gateway_info: Option<p::GetGatewayInfoResponse>,
     pub gateway_reads: usize,
+    pub health_reads: usize,
     pub workspaces: HashMap<String, p::Workspace>,
     pub profiles: HashMap<String, p::ProviderProfile>,
     pub providers: HashMap<String, p::Provider>,
@@ -214,6 +215,16 @@ impl tower::Service<http::Request<Body>> for Service {
                 }
                 "/openshell.v1.OpenShell/GetGatewayInfo" => {
                     unary(request, state, gateway_info).await
+                }
+                "/openshell.v1.OpenShell/Health" => {
+                    unary(request, state, |state, _: p::HealthRequest| {
+                        state.health_reads += 1;
+                        Ok(p::HealthResponse {
+                            status: p::ServiceStatus::Healthy as i32,
+                            ..Default::default()
+                        })
+                    })
+                    .await
                 }
                 "/openshell.v1.OpenShell/CreateSandbox" => {
                     let delay = {

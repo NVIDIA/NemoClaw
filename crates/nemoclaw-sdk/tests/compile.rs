@@ -34,8 +34,11 @@ fn gateway_capabilities_gate_deployment_and_follow_bootstrap_reconciliation() {
     let bootstrap = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert_eq!(
         bootstrap["data"]["nemoclaw_gateway_capabilities"]["current"]["depends_on"],
-        serde_json::json!(["docker_container.managed_gateway_runtime"]),
-        "bootstrap must reconcile its gateway before observing readiness"
+        serde_json::json!([
+            "docker_container.managed_gateway_runtime",
+            "data.nemoclaw_gateway_readiness.current"
+        ]),
+        "bootstrap must reconcile its gateway and wait for its process before observing capabilities"
     );
 }
 

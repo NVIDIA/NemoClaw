@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::{
-    docker::fixture::Fixture,
-    gateway::{GatewayDataSource, GatewayState},
-};
+use crate::{docker::fixture::Fixture, gateway::GatewayReadinessDataSource};
 use serde_json::json;
 use std::{sync::atomic::AtomicUsize, time::Duration};
 use tf_provider::DataSource;
@@ -38,7 +35,6 @@ async fn exited_gateway_stops_readiness_without_waiting_for_a_stalled_api() {
         ))
     })
     .await;
-    spec.gateway.engine = fixture.endpoint.clone();
     let provider = NemoClawProvider::default();
     let mut diags = Diagnostics::default();
     provider
@@ -52,15 +48,13 @@ async fn exited_gateway_stops_readiness_without_waiting_for_a_stalled_api() {
         )
         .await
         .unwrap();
-    let config: GatewayState = serde_json::from_value(json!({
-        "required_compute_drivers":["docker"], "wait_timeout_seconds":90,
-        "managed_spec":spec.json().unwrap(), "container_id":"provider-gateway-id",
-        "read_trigger":true, "gateway_version":null, "compute_drivers":null,
-        "compute_driver_count":null, "compatible":null, "observation_json":null,
-        "status":null, "incompatibility":null
+    let config = serde_json::from_value(json!({
+        "engine":fixture.endpoint, "container_id":"provider-gateway-id",
+        "name":spec.name, "owner":spec.owner, "endpoint":spec.gateway.endpoint,
+        "wait_timeout_seconds":90, "read_trigger":true, "ready":null
     }))
     .unwrap();
-    let source = GatewayDataSource(provider.backend.clone());
+    let source = GatewayReadinessDataSource(provider.backend.clone());
     let result = tokio::time::timeout(
         Duration::from_secs(2),
         DataSource::read(&source, &mut diags, config, ValueEmpty::default()),

@@ -195,6 +195,12 @@ impl Provider for NemoClawProvider {
                 Box::new(crate::gateway::GatewayDataSource(self.backend.clone()))
                     as Box<dyn DynamicDataSource>,
             ),
+            (
+                "gateway_readiness".into(),
+                Box::new(crate::gateway::GatewayReadinessDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
+            ),
         ]))
     }
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
