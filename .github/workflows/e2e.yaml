@@ -1272,17 +1272,37 @@ jobs:
             "pkg-config=1.8.1-2build1"
             "protobuf-compiler=3.21.12-8.2ubuntu0.3"
           )
+          snapshot_sources="$RUNNER_TEMP/ubuntu-snapshot.sources"
+          snapshot_lists="$RUNNER_TEMP/ubuntu-snapshot-lists"
+          snapshot_preferences="$RUNNER_TEMP/ubuntu-snapshot.pref"
+          cat >"$snapshot_sources" <<EOF
+          Types: deb
+          URIs: https://snapshot.ubuntu.com/ubuntu/$UBUNTU_SNAPSHOT_ID
+          Suites: noble noble-updates noble-backports noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          cat >"$snapshot_preferences" <<'EOF'
+          Package: *
+          Pin: origin snapshot.ubuntu.com
+          Pin-Priority: 1001
+          EOF
+          sudo install -d -m 0755 -o root -g root "$snapshot_lists"
+          sudo install -d -m 0700 -o _apt -g root "$snapshot_lists/partial"
           apt_sources=(
-            -o 'Dir::Etc::sourcelist=sources.list.d/ubuntu.sources'
+            -o "Dir::Etc::sourcelist=$snapshot_sources"
             -o 'Dir::Etc::sourceparts=-'
+            -o "Dir::Etc::preferences=$snapshot_preferences"
+            -o 'Dir::Etc::preferencesparts=-'
+            -o "Dir::State::lists=$snapshot_lists"
             -o 'APT::Get::AllowUnauthenticated=false'
             -o 'Acquire::AllowInsecureRepositories=false'
           )
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get \
-            "${apt_sources[@]}" update --snapshot "$UBUNTU_SNAPSHOT_ID"
+            "${apt_sources[@]}" update
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get \
-            "${apt_sources[@]}" install --yes --no-install-recommends \
-            --snapshot "$UBUNTU_SNAPSHOT_ID" "${packages[@]}"
+            "${apt_sources[@]}" install --yes --no-install-recommends --allow-downgrades \
+            "${packages[@]}"
           for package_spec in "${packages[@]}"; do
             package_name="${package_spec%%=*}"
             expected_version="${package_spec#*=}"

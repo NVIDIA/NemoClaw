@@ -10,6 +10,7 @@ import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -36,6 +37,7 @@ import {
   hasRawNodeStackTrace,
   inferenceSandboxName,
   onboardSandbox,
+  providerPolicyRestoreArgs,
   redactedResultText,
   requireLivePrerequisites,
   runNemoclawCli,
@@ -52,7 +54,7 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 test(
   "TC-INF-06 invalid API key fails with credential classification and cleanup",
   {
-    timeout: 5 * 60_000,
+    timeout: INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm live inference prerequisites",
@@ -104,7 +106,7 @@ test(
 test(
   "TC-INF-07 unreachable endpoint fails with transport classification and cleanup",
   {
-    timeout: 5 * 60_000,
+    timeout: INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm live inference prerequisites",
@@ -277,7 +279,7 @@ async function runRuntimeIdentityE2EScenario(
     chatContent: "PONG",
     host: "0.0.0.0",
     model,
-    port: 8000,
+    port: 0,
     progress,
     publicHost: "localhost",
     requireAuth: true,
@@ -329,17 +331,7 @@ async function runRuntimeIdentityE2EScenario(
     settings?: Record<string, string>;
   };
   const priorProvidersV2Setting = settingsDocument.settings?.providers_v2_enabled;
-  const restoreSettingArgs = new Map<string, string[]>([
-    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
-    [
-      "false",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
-    ],
-    [
-      "true",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
-    ],
-  ]).get(priorProvidersV2Setting ?? "");
+  const restoreSettingArgs = providerPolicyRestoreArgs(priorProvidersV2Setting);
   expect(restoreSettingArgs).toBeDefined();
   cleanup.add("restore OpenShell provider-derived policy setting", async () => {
     const restored = await sandbox.openshell(restoreSettingArgs!, {
@@ -952,8 +944,8 @@ test(
     // and onboarding never wires that adapter itself (only
     // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
     // the `inference set --endpoint-url` path). Onboard with a disposable
-    // plain-HTTP placeholder endpoint first -- the same shape TC-INF-09 already
-    // onboards successfully with -- then switch to the DNS-backed HTTPS
+    // plain-HTTP placeholder on an ephemeral port so it retains the managed
+    // compatible-endpoint route, then switch to the DNS-backed HTTPS
     // endpoint through `inference set --endpoint-url`, the actual #6141 call
     // site this test exercises.
     // Advertise localhost so onboarding exercises its host-bridge rewrite, but
@@ -963,7 +955,7 @@ test(
       chatContent: "placeholder",
       host: "0.0.0.0",
       model,
-      port: 8000,
+      port: 0,
       progress,
       publicHost: "localhost",
       requireAuth: true,

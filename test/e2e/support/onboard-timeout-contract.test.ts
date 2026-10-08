@@ -20,6 +20,8 @@ import {
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_SERIAL_TEST_TIMEOUT_MS,
   INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
@@ -93,10 +95,24 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
-  it("reserves two final handoffs and cleanup headroom for sibling inference isolation (#12558)", () => {
-    expect(catalogueTarget("inference-routing").timeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
-      2 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS + jobHeadroomMs,
+  it("contains all serial inference cases and cleanup before finalization (#12558)", () => {
+    const caseCaps = [
+      INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
+      INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
+      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+      INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    ];
+    expect(INFERENCE_ROUTING_SERIAL_TEST_TIMEOUT_MS).toBe(
+      caseCaps.reduce((sum, cap) => sum + cap, 0),
     );
+    expect(catalogueTarget("inference-routing").timeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      INFERENCE_ROUTING_SERIAL_TEST_TIMEOUT_MS +
+        caseCaps.length * DEFAULT_CLEANUP_TIMEOUT_MS +
+        jobHeadroomMs,
+    );
+    expect(INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES).toBeLessThanOrEqual(360);
   });
 
   it("pins the reviewed command, test, and target timeout values", () => {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { consumeNativeGatewayCreation } from "./native-creation";
 import { initializeNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 import { captureSanitizedResolvedOpenshellAsync } from "../../adapters/openshell/sanitized-capture";
 import fs from "node:fs";
@@ -225,6 +226,8 @@ export function createDockerDriverGatewayStart(
       home: os.homedir(),
       port: deps.gatewayPort(),
     });
+    const creationGatewayName = deps.gatewayName();
+    const creationGatewayPort = deps.gatewayPort();
     const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
     const stateLifecycleLock = configuredStateDir
       ? gatewayStateLifecycleLock.acquireManagedGatewayStateLifecycleLock(stateDir)
@@ -243,19 +246,6 @@ export function createDockerDriverGatewayStart(
           },
         );
       }
-      // A restart or partially initialized gateway is existing state. Never
-      // activate attached profiles there as a side effect of onboarding.
-      const freshState = ["openshell.db", "openshell-gateway.toml", "runtime.json", "jwt"].every(
-        (name) => {
-          try {
-            fs.lstatSync(path.join(stateDir, name));
-            return false;
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-            throw error;
-          }
-        },
-      );
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
       const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
       const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
@@ -280,11 +270,21 @@ export function createDockerDriverGatewayStart(
       );
       const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
       const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+      const creation = consumeNativeGatewayCreation(
+        stateDir,
+        gatewayEnv.OPENSHELL_GRPC_ENDPOINT ?? "",
+      );
       const initialPortCheck = await deps.checkGatewayPortAvailable();
       const initializeFreshGateway = async () => {
-        if (!freshState || !initialPortCheck.ok || initialPortCheck.warning) return;
+        if (!creation || !initialPortCheck.ok || initialPortCheck.warning) return;
+        if (
+          deps.gatewayName() !== creationGatewayName ||
+          deps.gatewayPort() !== creationGatewayPort ||
+          !creation()
+        )
+          throw new Error("Fresh gateway configuration changed before policy initialization.");
         await (deps.initializeNativeProviderPolicy ?? initializeNativeProviderPolicy)(
-          deps.gatewayName(),
+          creationGatewayName,
           (args) =>
             captureSanitizedResolvedOpenshellAsync(args, {
               ...runtimeOptions,

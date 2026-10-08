@@ -9,6 +9,8 @@ import {
   createDockerDriverGatewayStart,
   type DockerDriverGatewayStartDeps,
 } from "./docker-driver-start";
+import { buildDockerDriverGatewayEnv } from "../docker-driver-gateway-env";
+import { flowDeps } from "../external-component/onboarding";
 import * as cutover from "../docker-driver-gateway-cutover";
 
 const roots: string[] = [];
@@ -28,14 +30,24 @@ function fixture() {
     .spyOn(cutover, "runDockerDriverGatewayManagedFallback")
     .mockResolvedValue("managed");
   // The cutover owner is mocked; unexpected use of a live dependency fails the test.
+  const buildEnv = () =>
+    buildDockerDriverGatewayEnv({
+      platform: "linux",
+      gatewayPort: 8080,
+      stateDir,
+      getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:test",
+      resolveSandboxBin: () => null,
+    });
+  const getEnv = vi.fn(buildEnv);
+  const gatewayName = vi.fn(() => "selected");
   const deps = {
     initializeNativeProviderPolicy: initialize,
-    gatewayName: () => "selected",
+    gatewayName,
     gatewayPort: () => 8080,
     gatewayBinding: { resolveGatewayStateDirForPort: () => stateDir },
     getDockerDriverGatewayStateDir: () => stateDir,
     resolveOpenShellGatewayBinary: () => null,
-    getDockerDriverGatewayEnv: () => ({}),
+    getDockerDriverGatewayEnv: getEnv,
     runCaptureOpenshell: () => "",
     checkGatewayPortAvailable: port,
     createGatewayServicePortOwnership: () => ({}),
@@ -43,6 +55,12 @@ function fixture() {
   } as unknown as DockerDriverGatewayStartDeps;
   return {
     stateDir,
+    getEnv,
+    gatewayName,
+    prepare: () =>
+      flowDeps({ collectGatewayReadiness: async () => undefined }, buildEnv, (() => {
+        throw new Error("unexpected sandbox inspection");
+      }) as never).configureExternalComponentGateway(null),
     initialize,
     port,
     managed,
@@ -59,11 +77,44 @@ describe("native policy initialization ownership", () => {
       f.initialize.mock.invocationCallOrder[0],
     );
   });
+  it("keeps creation authority through the real onboarding preparation (#12558)", async () => {
+    const f = fixture();
+    await f.prepare();
+    expect(fs.existsSync(path.join(f.stateDir, "openshell-gateway.toml"))).toBe(true);
+    await f.start();
+    expect(f.initialize).toHaveBeenCalledExactlyOnceWith("selected", expect.any(Function));
+  });
+  it("does not reuse creation authority for a second startup (#12558)", async () => {
+    const f = fixture();
+    await f.prepare();
+    await f.start();
+    await f.start();
+    expect(f.initialize).toHaveBeenCalledTimes(1);
+  });
+  it("fails startup if prepared configuration changes during launch (#12558)", async () => {
+    const f = fixture();
+    f.managed.mockImplementation(async () => {
+      fs.appendFileSync(path.join(f.stateDir, "openshell-gateway.toml"), "\n# changed");
+      return "managed";
+    });
+    await expect(f.start()).rejects.toThrow("configuration changed");
+    expect(f.initialize).not.toHaveBeenCalled();
+  });
+  it("does not activate another gateway selected during startup (#12558)", async () => {
+    const f = fixture();
+    f.managed.mockImplementation(async () => {
+      f.gatewayName.mockReturnValue("sibling");
+      return "managed";
+    });
+    await expect(f.start()).rejects.toThrow("configuration changed");
+    expect(f.initialize).not.toHaveBeenCalled();
+  });
   it.each(["openshell.db", "openshell-gateway.toml", "runtime.json", "jwt"])(
     "does not activate composition when existing state contains %s (#12558)",
     async (file) => {
       const f = fixture();
       fs.writeFileSync(path.join(f.stateDir, file), "existing");
+      f.getEnv.mockImplementation(() => ({ OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:8080" }));
       await f.start();
       expect(f.initialize).not.toHaveBeenCalled();
     },

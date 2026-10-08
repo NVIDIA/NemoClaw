@@ -1745,6 +1745,11 @@ a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
 
+The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens
+and a local inference fixture. It leaves the default pre-recreation backup enabled and checks
+that `/sandbox/work/credential-preserve.txt` retains its contents after changing the Telegram
+token. This proves the workspace-preservation boundary, not external messaging authentication.
+
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.
 Each push to `main` compares `github.event.before` with `github.sha`.
@@ -2084,7 +2089,7 @@ The explicit `dgx-station-express` target runs the local Station Express install
 
 ### Native host-local inference
 
-`inference-routing` TC-INF-09 owns the real OpenShell boundary for Slice 4 of #12558: a fresh OpenClaw process reaches its selected authenticated local endpoint, and attaching a provider to a sibling sandbox does not grant the first sandbox access to that endpoint. The test uses the existing compatible-server fixture and target. Existing local runtime qualification owns Ollama, vLLM, llama.cpp, GPU startup, and cleanup.
+`inference-routing` TC-INF-09 owns the real OpenShell boundary for Slice 4 of #12558: a fresh DCode process reaches its selected authenticated local endpoint, and attaching a provider to an OpenClaw sibling sandbox does not grant the first sandbox access to that endpoint. The test uses the existing compatible-server fixture and target. Existing local runtime qualification owns Ollama, vLLM, llama.cpp, GPU startup, and cleanup.
 
 Profile rules, ownership collisions, credential custody, mutation reconciliation, gateway prerequisites, and generated request behavior belong to the native-local, provider-policy, gateway bootstrap, and compatible-endpoint-smoke source tests. TC-INF-09 replaces its managed-route curl success evidence with a fresh native agent turn and the server's authenticated selected-model request. Sibling denial remains live because a source test cannot prove OpenShell composes provider policy per sandbox. No assertion about terminal formatting is added.
 
