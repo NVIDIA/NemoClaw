@@ -132,7 +132,7 @@ Generated graphs declare only the types marked as used; NemoClaw does not qualif
 
 ## OpenShell Resource Lifecycles
 
-The shared [resource lifecycle contract](../crates/nemoclaw-sdk/src/backend.rs) distinguishes reconstructible configuration from protected identity and sandbox data.
+The shared [resource lifecycle contract](../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes reconstructible configuration from protected identity and sandbox data.
 The provider owns observation and update/replacement behavior; OpenTofu owns action ordering and resource state.
 The SDK checks deployment scope and recovery constraints without imposing a second blanket ban on OpenShell changes.
 For reconstructible resources, OpenTofu and the provider own confirmed absence, physical identity, and replacement cleanup; the SDK does not require a second drift history to report those actions during apply or teardown.

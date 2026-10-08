@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Shared structural contract for authored input and normalized SDK values.
-use crate::config::network as n;
 use crate::config::{API_VERSION, DEFAULT_AGENT_IMAGE, DEFAULT_GATEWAY_IMAGE, constraints as c};
 use serde_json::{Value, json};
 
@@ -191,41 +190,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     );
     defs["Network"]["if"] = json!({"required": ["policy"]});
     defs["Network"]["then"] = json!({"properties": {"tier": {"const": ""}}});
-    property(&mut defs["ExplicitPolicy"], "version", json!({"const": 1}));
-    property(
-        &mut defs["PolicyLandlock"],
-        "compatibility",
-        json!({"enum": ["best_effort", "hard_requirement"]}),
-    );
-    for (field, choices) in [
-        ("protocol", json!(n::POLICY_PROTOCOLS)),
-        ("tls", json!(n::POLICY_TLS)),
-        ("enforcement", json!(n::POLICY_ENFORCEMENT)),
-        ("access", json!(n::POLICY_ACCESS)),
-    ] {
-        property(&mut defs["PolicyEndpoint"], field, json!({"enum": choices}));
-    }
-    property(&mut defs["PolicyEndpoint"], "port", json!({"minimum": 1}));
-    property(
-        &mut defs["PolicyEndpoint"],
-        "ports",
-        json!({"minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 65535}}),
-    );
-    defs["PolicyEndpoint"]["allOf"] = json!([
-        {"oneOf": [{"required": ["port"], "not": {"required": ["ports"]}}, {"required": ["ports"], "not": {"required": ["port"]}}]},
-        {"anyOf": [{"required": ["host"], "properties":{"host":{"minLength":1}}}, {"required": ["allowed_ips"], "properties":{"allowed_ips":{"minItems":1}}}]},
-        {"not": {"required": ["access", "rules"]}}
-    ]);
-    for field in ["rules", "deny_rules"] {
-        property(&mut defs["PolicyEndpoint"], field, json!({"minItems": 1}));
-    }
-    for name in ["PolicyJsonRpc", "PolicyMcp"] {
-        property(
-            &mut defs[name],
-            "max_body_bytes",
-            json!({"minimum": 1, "maximum": n::POLICY_BODY_MAX}),
-        );
-    }
+    nemoclaw_openshell::policy::constrain(defs);
     property(
         &mut defs["Sandbox"],
         "harnessRef",

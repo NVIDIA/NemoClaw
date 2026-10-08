@@ -1,18 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Error, ObservationError, discovery::ObservationStatus};
-use openshell_core::proto;
+use crate::{ObservationError, discovery::ObservationStatus};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
-/// Gateway metadata used by deployment checks and the provider data source.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GatewayCapabilities {
-    pub gateway_version: String,
-    /// Each entry contains the routing name and any driver-reported alias.
-    pub compute_drivers: Vec<BTreeSet<String>>,
-}
+pub use nemoclaw_openshell::GatewayCapabilities;
 
 /// Typed metadata shared by onboarding and planning. A read failure remains
 /// unknown; provider lifecycle reads still fail rather than publishing it as absence.
@@ -75,101 +67,17 @@ impl GatewayObservation {
     }
 }
 
-impl GatewayCapabilities {
-    pub fn supports(&self, driver: &str) -> bool {
-        self.incompatibility([driver]).is_none()
-    }
-
-    /// Describe each failed compatibility check, or `None` when the gateway can serve every driver.
-    pub fn incompatibility<'a>(
-        &self,
-        drivers: impl IntoIterator<Item = &'a str>,
-    ) -> Option<String> {
-        let required = crate::artifact_pins::OPENSHELL_VERSION;
-        let mut reasons = Vec::new();
-        // Gateway-reported values are escaped so they cannot add diagnostic lines.
-        if self.gateway_version != required {
-            reasons.push(format!(
-                "gateway runs OpenShell {}, but this build requires {required}",
-                self.gateway_version.escape_debug()
-            ));
-        }
-        match self.compute_drivers.as_slice() {
-            [names] => reasons.extend(
-                drivers
-                    .into_iter()
-                    .filter(|driver| !names.contains(*driver))
-                    .map(|driver| {
-                        let observed = names
-                            .iter()
-                            .map(|name| name.escape_debug().to_string())
-                            .collect::<Vec<_>>()
-                            .join(" / ");
-                        format!(
-                            "gateway compute driver is {observed}, but spec.gateway.runtime.provider is {driver}"
-                        )
-                    }),
-            ),
-            entries => reasons.push(format!(
-                "gateway reports {} compute drivers, but exactly one is required",
-                entries.len()
-            )),
-        }
-        (!reasons.is_empty()).then(|| reasons.join("; "))
-    }
-
-    pub fn require(&self, driver: crate::config::ComputeDriver) -> Result<(), Error> {
-        match self.incompatibility([driver.openshell_driver().as_str()]) {
-            Some(reason) => Err(Error::GatewayIncompatible(reason)),
-            None => Ok(()),
-        }
-    }
-}
-
-impl TryFrom<proto::GetGatewayInfoResponse> for GatewayCapabilities {
-    type Error = ObservationError;
-
-    fn try_from(info: proto::GetGatewayInfoResponse) -> Result<Self, Self::Error> {
-        if info.gateway_version.is_empty() || info.compute_drivers.is_empty() {
-            return Err(ObservationError::Incomplete);
-        }
-        let compute_drivers = info
-            .compute_drivers
-            .into_iter()
-            .map(|driver| {
-                let names: BTreeSet<_> = [
-                    driver.name,
-                    driver
-                        .capabilities
-                        .map(|capability| capability.driver_name)
-                        .unwrap_or_default(),
-                ]
-                .into_iter()
-                .filter(|name| !name.is_empty())
-                .collect();
-                if names.is_empty() {
-                    Err(ObservationError::Incomplete)
-                } else {
-                    Ok(names)
-                }
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(Self {
-            gateway_version: info.gateway_version,
-            compute_drivers,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openshell_core::proto;
+    use std::collections::BTreeSet;
 
     #[test]
     fn openshift_uses_kubernetes_capabilities_without_weakening_driver_or_version_checks() {
         let driver = crate::config::ComputeDriver::OpenShift;
         let mut capabilities = GatewayCapabilities {
-            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            gateway_version: nemoclaw_openshell::OPENSHELL_VERSION.into(),
             compute_drivers: vec![BTreeSet::from(["kubernetes".into()])],
         };
         capabilities.require(driver).unwrap();
@@ -190,7 +98,7 @@ mod tests {
     fn kubernetes_gateway_requires_the_pinned_version_and_matching_driver() {
         let driver = "kubernetes".parse().unwrap();
         let mut capabilities = GatewayCapabilities {
-            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            gateway_version: nemoclaw_openshell::OPENSHELL_VERSION.into(),
             compute_drivers: vec![BTreeSet::from(["kubernetes".into()])],
         };
         capabilities.require(driver).unwrap();
@@ -201,7 +109,7 @@ mod tests {
         );
         capabilities.gateway_version = "other".into();
         assert!(capabilities.require(driver).is_err());
-        capabilities.gateway_version = crate::artifact_pins::OPENSHELL_VERSION.into();
+        capabilities.gateway_version = nemoclaw_openshell::OPENSHELL_VERSION.into();
         capabilities.compute_drivers = vec![BTreeSet::from(["docker".into()])];
         assert!(capabilities.require(driver).is_err());
     }
@@ -217,7 +125,7 @@ mod tests {
             }),
         };
         let info = proto::GetGatewayInfoResponse {
-            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            gateway_version: nemoclaw_openshell::OPENSHELL_VERSION.into(),
             compute_drivers: vec![driver.clone()],
             ..Default::default()
         };
@@ -254,7 +162,7 @@ mod tests {
 
     #[test]
     fn gateway_incompatibility_names_each_failed_check() {
-        let required = crate::artifact_pins::OPENSHELL_VERSION;
+        let required = nemoclaw_openshell::OPENSHELL_VERSION;
         let observed = |version: &str, drivers: &[&[&str]]| GatewayCapabilities {
             gateway_version: version.into(),
             compute_drivers: drivers
@@ -319,11 +227,12 @@ mod tests {
 #[cfg(test)]
 mod discovery_tests {
     use super::*;
+    use std::collections::BTreeSet;
     #[test]
     fn typed_gateway_observation_roundtrips_without_turning_failure_into_absence() {
         let required = [crate::config::ComputeDriver::Docker];
         let capabilities = GatewayCapabilities {
-            gateway_version: crate::artifact_pins::OPENSHELL_VERSION.into(),
+            gateway_version: nemoclaw_openshell::OPENSHELL_VERSION.into(),
             compute_drivers: vec![BTreeSet::from(["docker".into()])],
         };
         let observation = GatewayObservation::from_result(Ok(capabilities.clone()), &required);
@@ -360,7 +269,7 @@ mod discovery_tests {
             Some(format!(
                 "gateway runs OpenShell 0.0.1, but this build requires {}; gateway compute \
                  driver is docker, but spec.gateway.runtime.provider is podman",
-                crate::artifact_pins::OPENSHELL_VERSION
+                nemoclaw_openshell::OPENSHELL_VERSION
             ))
         );
         let unknown = GatewayObservation::from_result(Err(ObservationError::Transport), &required);

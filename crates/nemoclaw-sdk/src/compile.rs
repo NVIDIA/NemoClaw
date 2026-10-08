@@ -116,10 +116,8 @@ fn targets_with_plans(
         .into();
         values.insert(
             "policy_json".into(),
-            serde_json::to_string(&crate::image_runtime::PolicyInput::for_sandbox(
-                document, sandbox,
-            )?)
-            .expect("policy input"),
+            serde_json::to_string(&crate::image_runtime::policy_input(document, sandbox)?)
+                .expect("policy input"),
         );
         {
             result.push(Target {
@@ -182,9 +180,7 @@ fn targets_with_plans(
                 let target = Target {
                     kind: kind.into(),
                     address: if kind == "provider" {
-                        let logical = search
-                            .provider
-                            .profile_address()
+                        let logical = crate::config::profile_address(search.provider)
                             .strip_prefix("nemoclaw_provider_profile.")
                             .unwrap();
                         let prefix = format!("{}-search-", search.provider.name());
@@ -193,7 +189,7 @@ fn targets_with_plans(
                             provider_name.strip_prefix(&prefix).unwrap()
                         )
                     } else {
-                        search.provider.image_profile_address(&image_scope)
+                        crate::config::image_profile_address(search.provider, &image_scope)
                     },
                     values,
                 };

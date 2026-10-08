@@ -406,7 +406,9 @@ mod tests {
     async fn search_creation_resolves_only_the_reference_and_observation_drops_the_value() {
         let mut gateway = Gateway::default();
         *gateway.endpoint_mut() = "http://127.0.0.1:1".into();
-        let client = ConnectedOpenShellGateway::connect(&gateway, Arc::new(SearchSecrets)).unwrap();
+        let client =
+            ConnectedOpenShellGateway::connect(&gateway.connection(), Arc::new(SearchSecrets))
+                .unwrap();
         for provider in [SearchProvider::Brave, SearchProvider::Tavily] {
             let name = nemoclaw_sdk::config::search_provider_name(
                 provider,

@@ -3,7 +3,7 @@
 
 use super::*;
 use async_trait::async_trait;
-use nemoclaw_sdk::{Error, config::Gateway, discovery::GatewayCapabilities};
+use nemoclaw_sdk::{Error, discovery::GatewayCapabilities};
 use openshell_sdk::OpenShellClient;
 use std::{sync::Arc, time::Duration};
 use tonic::Request;
@@ -62,9 +62,12 @@ pub(super) trait OpenShellGateway: Send + Sync {
 impl OpenShell {
     /// Configure a lazy channel without network mutation or automatic RPC retry.
     /// Secret references are resolved locally; raw credentials never enter rows.
-    pub fn connect(gateway: &Gateway, secrets: Arc<dyn Secrets>) -> Result<Self, ObservationError> {
+    pub fn connect(
+        connection: &nemoclaw_openshell::Connection,
+        secrets: Arc<dyn Secrets>,
+    ) -> Result<Self, ObservationError> {
         Ok(Self {
-            gateway: Arc::new(ConnectedOpenShellGateway::connect(gateway, secrets)?),
+            gateway: Arc::new(ConnectedOpenShellGateway::connect(connection, secrets)?),
         })
     }
 
@@ -122,19 +125,16 @@ impl OpenShell {
 
 impl ConnectedOpenShellGateway {
     pub(in crate::openshell) fn connect(
-        gateway: &Gateway,
+        connection: &nemoclaw_openshell::Connection,
         secrets: Arc<dyn Secrets>,
     ) -> Result<Self, ObservationError> {
         Ok(Self {
-            client: Arc::new(nemoclaw_discovery::gateway::client(
-                gateway,
-                secrets.as_ref(),
-            )?),
+            client: Arc::new(nemoclaw_openshell::client(connection, secrets.as_ref())?),
             secrets,
         })
     }
     pub(super) fn request<T>(&self, value: T) -> Request<T> {
-        nemoclaw_discovery::gateway::request(value)
+        nemoclaw_openshell::request(value)
     }
     async fn workspace(&self, name: &str, removing: bool) -> Result<Option<Row>, ObservationError> {
         let response = authoritative(
@@ -613,7 +613,7 @@ mod tests {
             let direct = failure.to_string();
             let observation = failure.into_observation();
             assert_eq!(direct, observation.to_string());
-            let message = crate::resource::observation_message(observation, Some("coder"));
+            let message = crate::observation_message(observation, Some("coder"));
             for expected in ["sandbox/coder", reason, guidance, "resources retained"] {
                 assert!(message.contains(expected), "{message}");
             }

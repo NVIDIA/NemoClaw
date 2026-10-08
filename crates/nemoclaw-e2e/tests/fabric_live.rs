@@ -156,7 +156,11 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     assert_eq!(applied.outcome, Outcome::Succeeded);
     let (before, binding) = bindings(&directory);
     let managed_before = managed_bindings(&directory);
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     if document.spec.sandboxes[0].network.policy == nemoclaw_sdk::config::NetworkPolicy::Isolated {
         let denial = exec(
             &client,
@@ -264,7 +268,11 @@ async fn dependency_upgrade_survives_apply_process_exit() {
     assert_eq!(applied.outcome, Outcome::Succeeded);
     let deployment = Deployment::new(&directory, &bundle);
     let cancel = CancellationToken::new();
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     client
         .verify_gateway(document.spec.gateway.runtime().provider)
         .await

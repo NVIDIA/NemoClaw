@@ -482,6 +482,42 @@ async fn retained_replacement_refusal_names_the_resource_and_changed_fields() {
 }
 
 #[tokio::test]
+async fn profile_refresh_preserves_the_bound_cluster_source() {
+    let prior: Row = [
+        ("id", "profile/1"),
+        ("name", "model"),
+        ("workspace", "owned"),
+        ("cluster_source", "bound-service"),
+    ]
+    .map(|(key, value)| (key.into(), value.into()))
+    .into();
+    for source in ["bound-service", "substituted-service", ""] {
+        let mut observed = prior.clone();
+        observed.insert("cluster_source".into(), source.into());
+        let resource = ResourceAdapter::new(
+            support::definition(
+                "provider_profile",
+                &["name", "workspace", "cluster_source"],
+                &[],
+            ),
+            Arc::new(Fixture(Ok(Some(observed)))),
+        );
+        let mut diagnostics = Diagnostics::default();
+        let result = resource
+            .read(
+                &mut diagnostics,
+                state(prior.clone()),
+                Value::Null,
+                Value::Null,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.0, state(prior.clone()));
+        assert_eq!(diagnostics.errors.is_empty(), source == "bound-service");
+    }
+}
+
+#[tokio::test]
 async fn changing_from_cluster_to_external_inference_replaces_the_owned_profile() {
     let resource = ResourceAdapter::new(
         support::definition("provider_profile", &["endpoint", "cluster_source"], &[]),

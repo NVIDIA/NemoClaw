@@ -5,7 +5,7 @@ use crate::openshell::{EnvironmentSecrets, OpenShell};
 use crate::{Backend, Definition, Mutation, ResourceAdapter, Row};
 use crate::{docker::Connections, services::BackendRegistry};
 use async_trait::async_trait;
-use nemoclaw_sdk::{ObservationError, config::Credential, config::Gateway, config::TLS};
+use nemoclaw_sdk::ObservationError;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -93,15 +93,22 @@ impl Backend for ConfiguredBackend {
         self.client()?.read(kind, prior, removing).await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
-        match BackendRegistry::new(&self.1).resolve(kind, desired) {
-            Ok(Some(backend)) => return backend.ensure(kind, desired).await,
-            Err(error) => return Mutation::failed(error),
-            Ok(None) => {}
-        }
-        match self.client() {
-            Ok(client) => client.ensure(kind, desired).await,
-            Err(error) => Mutation::failed(error),
-        }
+        // Image and model downloads during a mutation report progress to the SDK.
+        crate::download::with_provider_download_progress(
+            crate::download::resource_label(kind, desired),
+            async {
+                match BackendRegistry::new(&self.1).resolve(kind, desired) {
+                    Ok(Some(backend)) => return backend.ensure(kind, desired).await,
+                    Err(error) => return Mutation::failed(error),
+                    Ok(None) => {}
+                }
+                match self.client() {
+                    Ok(client) => client.ensure(kind, desired).await,
+                    Err(error) => Mutation::failed(error),
+                }
+            },
+        )
+        .await
     }
     async fn remove(
         &self,
@@ -307,13 +314,13 @@ impl Provider for NemoClawProvider {
             }
             return Some(());
         }
-        let mut gateway = nemoclaw_sdk::config::ExternalGateway {
+        let mut gateway = nemoclaw_openshell::Connection {
             endpoint: text(config.endpoint),
             ..Default::default()
         };
         let credential = text(config.credential_env);
         if !credential.is_empty() {
-            gateway.credential = Some(Credential { env: credential });
+            gateway.credential_env = Some(credential);
         }
         let ca = text(config.tls_ca_env);
         let certificate = text(config.tls_certificate_env);
@@ -323,13 +330,13 @@ impl Provider for NemoClawProvider {
                 diags.root_error_short("Incomplete TLS credential references");
                 return None;
             }
-            gateway.tls = Some(TLS {
-                ca: Credential { env: ca },
-                certificate: Credential { env: certificate },
-                key: Credential { env: key },
+            gateway.tls = Some(nemoclaw_openshell::TlsFiles {
+                ca_env: ca,
+                certificate_env: certificate,
+                key_env: key,
             });
         }
-        match OpenShell::connect(&Gateway::External(gateway), Arc::new(EnvironmentSecrets)) {
+        match OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)) {
             Ok(client) => {
                 match self.backend.0.write() {
                     Ok(mut slot) => *slot = Connection::Ready(client),

@@ -1,0 +1,264 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//! OpenShell provider profiles for native inference endpoints.
+
+use nemoclaw_backend::{ConfigError, ObservationError};
+use openshell_sdk::raw::proto;
+use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
+
+/// Inference provider implementation, independent of the request API and provider name.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[schemars(inline)]
+pub enum InferenceProviderKind {
+    #[serde(rename = "openai")]
+    Openai,
+    #[serde(rename = "anthropic")]
+    Anthropic,
+}
+impl InferenceProviderKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Openai => "openai",
+            Self::Anthropic => "anthropic",
+        }
+    }
+}
+impl fmt::Display for InferenceProviderKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+impl FromStr for InferenceProviderKind {
+    type Err = ConfigError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "openai" => Ok(Self::Openai),
+            "anthropic" => Ok(Self::Anthropic),
+            _ => Err(ConfigError::new("unsupported inference provider kind")),
+        }
+    }
+}
+
+/// Build the endpoint and credential projection for a native inference provider.
+/// The caller must supply image-resolved binaries before importing the profile.
+pub fn definition(
+    name: &str,
+    endpoint: &str,
+    kind: InferenceProviderKind,
+    authenticated: bool,
+) -> Result<proto::ProviderProfile, ObservationError> {
+    nemoclaw_backend::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
+    let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
+    let allowed_ips = url
+        .host_str()
+        .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+        .into_iter()
+        .collect::<Vec<_>>();
+    profile(name, endpoint, kind, authenticated, &allowed_ips)
+}
+
+/// Build a profile for a caller-verified cluster service endpoint.
+/// Empty addresses defer destination grants until the provider observes the Service.
+pub fn cluster_definition(
+    name: &str,
+    endpoint: &str,
+    kind: InferenceProviderKind,
+    authenticated: bool,
+    addresses: &[std::net::IpAddr],
+) -> Result<proto::ProviderProfile, ObservationError> {
+    let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
+    if url.scheme() != "http"
+        || !url
+            .host_str()
+            .is_some_and(|host| host.ends_with(".svc.cluster.local"))
+        || url.port().is_none_or(|port| port == 0)
+        || url.path() != "/v1"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || addresses
+            .iter()
+            .any(|address| !service_address_allowed(address))
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
+    profile(name, endpoint, kind, authenticated, addresses)
+}
+
+/// Accept a unicast Service address, excluding local and mapped destinations.
+pub fn service_address_allowed(address: &std::net::IpAddr) -> bool {
+    !address.is_unspecified()
+        && !address.is_loopback()
+        && !address.is_multicast()
+        && match address {
+            std::net::IpAddr::V4(ip) => !ip.is_link_local() && !ip.is_broadcast(),
+            std::net::IpAddr::V6(ip) => {
+                !ip.is_unicast_link_local() && ip.to_ipv4_mapped().is_none()
+            }
+        }
+}
+
+fn profile(
+    name: &str,
+    endpoint: &str,
+    kind: InferenceProviderKind,
+    authenticated: bool,
+    addresses: &[std::net::IpAddr],
+) -> Result<proto::ProviderProfile, ObservationError> {
+    if name.is_empty()
+        || name.len() > 40
+        || !name.as_bytes()[0].is_ascii_lowercase()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(ObservationError::Query);
+    }
+    let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
+    if url.query().is_some()
+        || url.fragment().is_some()
+        || url.path().contains(['*', '?', '[', ']', '{', '}'])
+    {
+        return Err(ObservationError::Query);
+    }
+    let host = url.host_str().ok_or(ObservationError::Query)?;
+    let port = url.port_or_known_default().ok_or(ObservationError::Query)?;
+    let id = format!("nemoclaw-inference-{name}");
+    let key = format!(
+        "NEMOCLAW_INFERENCE_{}_KEY",
+        name.replace('-', "_").to_ascii_uppercase()
+    );
+    let path = format!("{}/**", url.path().trim_end_matches('/'));
+    // Private addresses require an explicit destination-validation grant. Grant
+    // only the selected literal address, never a whole private network.
+    let allowed_ips: Vec<String> = addresses
+        .iter()
+        .map(|ip| format!("{ip}/{}", if ip.is_ipv4() { 32 } else { 128 }))
+        .collect();
+    let policy = openshell_policy::parse_sandbox_policy(
+        &serde_json::json!({
+            "version": 1,
+            "network_policies": { &id: {
+                "name": id,
+                "endpoints": [{"host": host, "port": port, "path": path,
+                    "protocol": "rest", "access": "full", "allowed_ips": allowed_ips}],
+                "binaries": []
+            }}
+        })
+        .to_string(),
+    )
+    .map_err(|_| ObservationError::Query)?;
+    let rule = &policy.network_policies[&id];
+    Ok(proto::ProviderProfile {
+        id,
+        display_name: format!("NemoClaw inference {name}"),
+        category: proto::ProviderProfileCategory::Inference as i32,
+        inference_capable: true,
+        credentials: if authenticated {
+            vec![proto::ProviderProfileCredential {
+                name: key.clone(),
+                env_vars: vec![key],
+                required: true,
+                auth_style: if kind == InferenceProviderKind::Anthropic {
+                    "header"
+                } else {
+                    "bearer"
+                }
+                .into(),
+                header_name: if kind == InferenceProviderKind::Anthropic {
+                    "x-api-key"
+                } else {
+                    "Authorization"
+                }
+                .into(),
+                ..Default::default()
+            }]
+        } else {
+            vec![]
+        },
+        endpoints: rule.endpoints.clone(),
+        binaries: rule.binaries.clone(),
+        ..Default::default()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inference_credentials_and_policy_are_bound_to_the_selected_endpoint() {
+        let profile = definition(
+            "local",
+            "http://172.20.0.1:11436/v1",
+            InferenceProviderKind::Openai,
+            true,
+        )
+        .unwrap();
+        assert_eq!(profile.id, "nemoclaw-inference-local");
+        assert_eq!(
+            profile.credentials[0].env_vars,
+            ["NEMOCLAW_INFERENCE_LOCAL_KEY"]
+        );
+        assert_eq!(profile.endpoints.len(), 1);
+        let endpoint = &profile.endpoints[0];
+        assert_eq!(endpoint.host, "172.20.0.1");
+        assert_eq!(endpoint.port, 11436);
+        assert_eq!(endpoint.path, "/v1/**");
+        assert_eq!(endpoint.protocol, "rest");
+        assert!(endpoint.allowed_ips.contains(&"172.20.0.1/32".to_string()));
+        let other = definition(
+            "hosted",
+            "https://api.example.com/v1",
+            InferenceProviderKind::Anthropic,
+            true,
+        )
+        .unwrap();
+        assert_ne!(
+            other.credentials[0].env_vars,
+            profile.credentials[0].env_vars
+        );
+        assert_eq!(other.credentials[0].header_name, "x-api-key");
+    }
+
+    #[test]
+    fn endpoint_projection_grants_no_implicit_interpreters() {
+        let profile = definition(
+            "local",
+            "http://172.20.0.1:11436/v1",
+            InferenceProviderKind::Openai,
+            false,
+        )
+        .unwrap();
+        assert!(profile.binaries.is_empty());
+        assert_eq!(profile.endpoints.len(), 1);
+        assert_eq!(profile.endpoints[0].allowed_ips, ["172.20.0.1/32"]);
+    }
+
+    #[test]
+    fn credentialless_models_need_no_placeholder_and_invalid_urls_fail_closed() {
+        assert!(
+            definition(
+                "local",
+                "http://172.20.0.1:11434/v1",
+                InferenceProviderKind::Openai,
+                false
+            )
+            .unwrap()
+            .credentials
+            .is_empty()
+        );
+        for endpoint in [
+            "https://user:secret@example.com/v1",
+            "https://example.com/v1?key=secret",
+            "https://example.com/v1#fragment",
+            "file:///tmp/model",
+        ] {
+            assert!(definition("local", endpoint, InferenceProviderKind::Openai, true).is_err());
+        }
+    }
+}

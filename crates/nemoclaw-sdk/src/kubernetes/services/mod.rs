@@ -21,18 +21,7 @@ pub fn service_host(name: &str, namespace: &str) -> String {
     format!("{name}.{namespace}.svc.cluster.local")
 }
 
-/// Accept a unicast Service address, excluding local and mapped destinations.
-pub fn service_address_allowed(address: &std::net::IpAddr) -> bool {
-    !address.is_unspecified()
-        && !address.is_loopback()
-        && !address.is_multicast()
-        && match address {
-            std::net::IpAddr::V4(ip) => !ip.is_link_local() && !ip.is_broadcast(),
-            std::net::IpAddr::V6(ip) => {
-                !ip.is_unicast_link_local() && ip.to_ipv4_mapped().is_none()
-            }
-        }
-}
+pub use nemoclaw_openshell::profile::service_address_allowed;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

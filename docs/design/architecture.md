@@ -29,7 +29,7 @@ The provider implements resource operations against SDK desired-state and observ
 Pure policy compilation stays in SDK configuration; OpenShell transport and mutation code belong to the provider.
 
 The [provider reference](../provider.md) owns resource-specific contracts and protocol details.
-Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-sdk/src/backend.rs).
+Implementation starts at [Deployment](../../crates/nemoclaw-sdk/src/deployment/mod.rs), [graph compilation](../../crates/nemoclaw-sdk/src/compile.rs), and [backend contracts](../../crates/nemoclaw-backend/src/contract.rs).
 
 ## Managed Kubernetes Ownership
 
@@ -238,7 +238,7 @@ OpenTofu selects Podman gateway replacement through the provider contract, witho
 The SDK requires the gateway's independent storage binding, the compiler orders the dependency and protects retained storage, and the provider rechecks identity before replacing the process.
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
-The shared [OpenShell lifecycle contract](../../crates/nemoclaw-sdk/src/backend.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
+The shared [OpenShell lifecycle contract](../../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
 Sandbox files and conversation history have no separately retained storage, so ordinary apply refuses sandbox deletion or replacement.
 It also refuses to recreate a missing sandbox binding.
 Explicit destroy deletes those files even though the OpenShell workspace remains.

@@ -3,7 +3,7 @@
 
 use crate::{Backend, Definition, Mutation, Protection, Row, State, plan_update};
 use async_trait::async_trait;
-use nemoclaw_sdk::{Binding, Bound, Observation, ObservationError, refresh};
+use nemoclaw_backend::{Binding, Bound, Observation, ObservationError, refresh};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -12,7 +12,8 @@ use tf_provider::schema::{Attribute, AttributeConstraint, AttributeType, Block, 
 use tf_provider::value::{Value, ValueEmpty};
 use tf_provider::{AttributePath, Diagnostics, Resource};
 
-pub(crate) fn observation_message(error: ObservationError, sandbox: Option<&str>) -> String {
+/// A diagnostic for an observation failure, with sandbox guidance when one is named.
+pub fn observation_message(error: ObservationError, sandbox: Option<&str>) -> String {
     if matches!(
         error,
         ObservationError::SandboxConfigurationRejected { .. }
@@ -472,11 +473,7 @@ impl Resource for ResourceAdapter {
                 return None;
             }
         };
-        let mutation = crate::download::with_provider_download_progress(
-            download_resource(self.definition.kind, &row),
-            self.backend.ensure(self.definition.kind, &row),
-        )
-        .await;
+        let mutation = self.backend.ensure(self.definition.kind, &row).await;
         self.finish(diags, mutation, &row, None)
             .map(|state| (state, private))
     }
@@ -500,11 +497,7 @@ impl Resource for ResourceAdapter {
                 return Some((prior, private));
             }
         };
-        let mutation = crate::download::with_provider_download_progress(
-            download_resource(self.definition.kind, &row),
-            self.backend.ensure(self.definition.kind, &row),
-        )
-        .await;
+        let mutation = self.backend.ensure(self.definition.kind, &row).await;
         self.finish(diags, mutation, &row, Some(prior))
             .map(|state| (state, private))
     }
@@ -539,62 +532,41 @@ impl Resource for ResourceAdapter {
         }
     }
 }
-
-fn download_resource(kind: &str, row: &Row) -> String {
-    #[derive(serde::Deserialize)]
-    struct NamedSpec {
-        name: String,
-    }
-    let name = row
-        .get("name")
-        .or_else(|| row.get("model"))
-        .cloned()
-        .or_else(|| {
-            serde_json::from_str::<NamedSpec>(row.get("spec")?)
-                .ok()
-                .map(|spec| spec.name)
-        })
-        .unwrap_or_else(|| "resource".into());
-    format!("{kind}.{name}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct UnusedBackend;
+    #[async_trait]
+    impl Backend for UnusedBackend {
+        async fn read(&self, _: &str, _: &Row, _: bool) -> Result<Option<Row>, ObservationError> {
+            unreachable!("binding checks do not contact the backend")
+        }
+        async fn ensure(&self, _: &str, _: &Row) -> Mutation {
+            unreachable!("binding checks do not mutate resources")
+        }
+        async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+            unreachable!("binding checks do not mutate resources")
+        }
+    }
+
     #[test]
-    fn profile_refresh_preserves_the_bound_cluster_source() {
-        let mut definition = crate::resource_definition("provider_profile").unwrap();
-        definition.fields = vec!["name", "workspace", "cluster_source"];
-        let adapter = ResourceAdapter::new(
-            definition,
-            Arc::new(crate::cluster_services::ClusterServicesBackend::new()),
-        );
+    fn refresh_preserves_declared_bound_fields() {
+        let definition = Definition::new("profile", &["name", "workspace", "source"], &[])
+            .optional(&["source"])
+            .bound_fields(&["source"]);
+        let adapter = ResourceAdapter::new(definition, Arc::new(UnusedBackend));
         let prior: Row = [
             ("id", "profile/1"),
             ("name", "model"),
             ("workspace", "owned"),
-            ("cluster_source", "bound-service"),
+            ("source", "bound-service"),
         ]
         .map(|(key, value)| (key.into(), value.into()))
         .into();
         assert!(adapter.checked(&prior, prior.clone()).is_ok());
         let mut changed = prior.clone();
-        changed.insert("cluster_source".into(), "substituted-service".into());
+        changed.insert("source".into(), "substituted-service".into());
         assert!(adapter.checked(&prior, changed).is_err());
-    }
-    #[test]
-    fn download_labels_distinguish_named_specs_and_models() {
-        for name in ["first", "second"] {
-            let row = Row::from([("spec".into(), serde_json::json!({"name":name}).to_string())]);
-            assert_eq!(
-                download_resource("inference_service", &row),
-                format!("inference_service.{name}")
-            );
-        }
-        let row = Row::from([("model".into(), "llama3:latest".into())]);
-        assert_eq!(
-            download_resource("model_snapshot", &row),
-            "model_snapshot.llama3:latest"
-        );
     }
 }

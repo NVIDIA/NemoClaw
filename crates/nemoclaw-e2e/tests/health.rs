@@ -20,7 +20,7 @@ async fn sandbox_with_runtime(
     .unwrap();
     *doc.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
     let client = OpenShell::connect(
-        &doc.spec.gateway,
+        &doc.spec.gateway.connection(),
         Arc::new(nemoclaw_sdk::EnvironmentSecrets),
     )
     .unwrap();

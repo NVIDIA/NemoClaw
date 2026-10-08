@@ -422,7 +422,11 @@ async fn bare_brev_hosted_openclaw_lifecycle() {
     assert_eq!(applied.health.len(), 1);
     assert!(applied.health[0].health.allows_apply_completion());
 
-    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let client = OpenShell::connect(
+        &document.spec.gateway.connection(),
+        Arc::new(EnvironmentSecrets),
+    )
+    .unwrap();
     client
         .verify_gateway(document.spec.gateway.runtime().provider)
         .await
