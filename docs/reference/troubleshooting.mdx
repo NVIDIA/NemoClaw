@@ -2277,6 +2277,8 @@ These are build failures; the post-rebuild startup warnings apply only after the
 If the diagnostic says `Original Undici bundle restored after interruption; retry the operation`, rerun the original onboarding or rebuild command.
 The build remains failed until the dependency patch and verification complete successfully.
 
+If the diagnostic says an OpenClaw dependency could not be replaced and the previous package was preserved, rerun the original onboarding or rebuild command. Its managed plugin-install phase restores the previous package before retrying the replacement. If the diagnostic says the dependency was replaced but recovery-directory cleanup failed, the replacement is already active; rerun the original onboarding or rebuild command so its managed plugin-install phase can reconcile the leftover recovery state. These retries use the managed, pinned package flow and do not require deleting files by hand.
+
 For other failures, report the diagnostic, plugin name and NemoClaw version to a maintainer.
 NemoClaw manages the package pins and build cache; do not edit them or bypass plugin verification to continue.
 After a maintainer resolves the reported build failure, rerun the original onboarding or rebuild command.
