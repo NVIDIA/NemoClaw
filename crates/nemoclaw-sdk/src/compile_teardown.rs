@@ -189,6 +189,7 @@ mod tests {
                 "teardown must not retain discovery references"
             );
             assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
+            assert_eq!(graph["provider"]["openshell"]["destroy"], true);
             assert_eq!(graph["provider"]["docker"], full["provider"]["docker"]);
             for address in &established {
                 let (kind, name) = address.split_once('.').unwrap();

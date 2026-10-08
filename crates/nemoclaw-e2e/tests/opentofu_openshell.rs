@@ -208,6 +208,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     }
 
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
+    graph["provider"]["openshell"]["destroy"] = json!(true);
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
     graph["resource"]["openshell_workspace"]["deployment"]
