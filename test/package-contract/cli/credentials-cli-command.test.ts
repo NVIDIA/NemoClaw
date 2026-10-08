@@ -366,6 +366,45 @@ describe("credentials oclif commands", () => {
     expect(output.stdout).toContain("Rerun 'nemoclaw onboard'");
   });
 
+  it.each(["present", "absent"])(
+    "checks the legacy identity before logical reset when %s",
+    async (state) => {
+      const responses = [
+        state === "absent"
+          ? { status: 1, stderr: "Error: provider 'nvidia-prod' not found" }
+          : {
+              status: 0,
+              stdout:
+                "Name: nvidia-prod\nId: 11111111-2222-4333-8444-555555555555\nType: nvidia\nResource version: 7\nCredential keys: NVIDIA_API_KEY\nConfig keys: <none>",
+            },
+        { status: 0 },
+      ];
+      const calls = installRuntimeBridge({
+        runOpenshell: (args, opts) => {
+          calls.push({ args, opts });
+          return responses.shift()!;
+        },
+      });
+      const { CredentialsResetCommand } = loadCommands();
+      const output = await captureOutput(() =>
+        state === "present"
+          ? expectExitCode(() => CredentialsResetCommand.run(["nvidia-prod", "--yes"]), 1)
+          : CredentialsResetCommand.run(["nvidia-prod", "--yes"]),
+      );
+      expect(calls.map((call) => call.args)).toEqual(
+        state === "present"
+          ? [["provider", "get", "-g", "nemoclaw", "nvidia-prod"]]
+          : [
+              ["provider", "get", "-g", "nemoclaw", "nvidia-prod"],
+              ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+            ],
+      );
+      expect(state === "present" ? output.stderr : output.stdout).toContain(
+        state === "present" ? "ownership conflict" : "Removed provider 'nvidia-prod'",
+      );
+    },
+  );
+
   it("rejects per-sandbox messaging bridge names for credential reset", async () => {
     installRuntimeBridge();
     const { CredentialsResetCommand } = loadCommands();
