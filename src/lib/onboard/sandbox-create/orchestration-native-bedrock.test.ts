@@ -136,16 +136,34 @@ describe("native Bedrock post-create provider verification", () => {
     expect(adapter.listProviderAttachments).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects a replaced provider without changing its sandbox attachments", async () => {
-    const adapter = providerAdapter("99999999-2222-4333-8444-555555555555");
-    const boundary = nativeProviderBoundary(adapter);
+  it.each([
+    {
+      state: "attached",
+      names: [identity.providerName],
+      error: /changed identity.*Recreate the sandbox/u,
+    },
+    {
+      state: "unattached",
+      names: [],
+      error: /changed identity before attachment.*No provider was attached/u,
+    },
+  ])(
+    "rejects a replaced $state provider without changing attachments",
+    async ({ names, error }) => {
+      const adapter = providerAdapter("99999999-2222-4333-8444-555555555555");
+      vi.mocked(adapter.listProviderAttachments).mockResolvedValueOnce({
+        ok: true,
+        value: { names },
+      });
+      const boundary = nativeProviderBoundary(adapter);
 
-    await expect(boundary.runAfterVerifiedCreate?.(verifiedCreateContext())).rejects.toThrow(
-      /changed identity.*Recreate the sandbox/u,
-    );
-    expect(adapter.attachProvider).not.toHaveBeenCalled();
-    expect(adapter.detachProvider).not.toHaveBeenCalled();
-  });
+      await expect(boundary.runAfterVerifiedCreate?.(verifiedCreateContext())).rejects.toThrow(
+        error,
+      );
+      expect(adapter.attachProvider).not.toHaveBeenCalled();
+      expect(adapter.detachProvider).not.toHaveBeenCalled();
+    },
+  );
 });
 
 const compatibleIdentity = nativeCompatibleEndpointIdentity({

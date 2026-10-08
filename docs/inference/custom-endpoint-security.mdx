@@ -13,8 +13,9 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 
 ## Protect Provider Credentials
 
-The agent inside the sandbox sends requests to `inference.local` instead of connecting to the upstream endpoint directly.
-OpenShell forwards the traffic and injects the provider credential at egress.
+Authenticated hosted OpenAI-compatible and Anthropic-compatible endpoints use the configured HTTPS endpoint through an endpoint-restricted OpenShell provider attached to the selected sandbox.
+OpenShell validates the pinned destination and rewrites the provider credential at egress.
+Unmigrated shared-route endpoints, including supported host-local endpoints, continue to use `inference.local`.
 The sandbox does not receive the raw API key.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.
@@ -80,7 +81,8 @@ For those paths, use an HTTPS IP-literal endpoint with a certificate valid for t
 
 ## Use a DNS-Backed HTTPS Endpoint with `inference set`
 
-`$$nemoclaw inference set --endpoint-url <url>` on an already-onboarded sandbox supports a DNS-backed HTTPS custom endpoint through the HTTPS Pin Runtime adapter.
+Authenticated hosted compatible endpoints selected with `$$nemoclaw inference set --endpoint-url <url>` use the native attachment described above, preserving the configured HTTPS endpoint and its validated address set.
+The following adapter behavior applies only to retained shared-route paths that use the HTTPS Pin Runtime adapter.
 After SSRF validation passes, NemoClaw starts a local reverse-proxy adapter on the host that terminates a pinned, SNI-correct outbound TLS connection to the real upstream hostname, re-validating that the resolved peer IP is still public.
 The sandbox, its OpenShell provider configuration and network policy, and the persisted sandbox registry only ever see the opaque local base `http://host.openshell.internal:<port>/route/<id>`.
 The real upstream hostname and path never reach the sandbox or the persisted registry.

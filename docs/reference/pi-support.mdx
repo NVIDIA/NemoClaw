@@ -33,7 +33,7 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Host platform       | Linux AMD64 or Linux ARM64               |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
-| Sandbox route       | Shared: `https://inference.local/v1`; NVIDIA: `https://integrate.api.nvidia.com/v1` |
+| Sandbox route       | Shared: `https://inference.local/v1`; native NVIDIA: `https://integrate.api.nvidia.com/v1`; native hosted compatible: configured HTTPS endpoint; native Bedrock: verified host-adapter endpoint |
 | Qualification model | `nvidia/nemotron-3-super-120b-a12b`      |
 | Interactive command | `pi`                                     |
 | Headless command    | `pi --no-approve --print`                |
@@ -58,9 +58,11 @@ Each receipt must match the protected inputs and an image digest in the candidat
 
 ## Managed Inference and Credentials
 
-Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route placeholder. It does not contain the upstream provider credential.
+Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains the model, managed route, API family, and a non-secret route credential reference. It does not contain the upstream provider credential.
 
-The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Most providers give Pi the managed `inference.local` route. NVIDIA Endpoints instead uses the least-privilege OpenShell provider attached to the sandbox for `integrate.api.nvidia.com`. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
+API-key credentials remain in OpenShell provider state, outside Pi configuration. They survive rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Unmigrated providers retain the shared `inference.local` route. NVIDIA Endpoints and authenticated hosted compatible endpoints use endpoint-restricted OpenShell providers attached to the selected sandbox; Pi calls the NVIDIA URL or the recorded HTTPS endpoint with a supervisor-issued credential reference. Pi still requires the OpenAI Chat Completions API.
+
+AWS Bedrock uses a sandbox-attached provider for the verified host adapter's OpenAI-compatible endpoint. AWS credentials remain on the host; OpenShell supplies the adapter credential at egress. Pi does not receive AWS credentials or the raw adapter token. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 
 When Pi uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
 NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
@@ -78,7 +80,7 @@ A rebuild replays the recorded values. Pi does not support `NEMOCLAW_REASONING_E
 
 The baseline network policy permits only the managed inference endpoint and the required Chat Completions routes. Network capability is limited to the root-owned Pi and Node runtime binaries.
 
-Direct access to provider endpoints, GitHub, npm, host control, and container-runtime sockets is denied. Operators must select an explicit maintained policy before additional services become reachable.
+Unmanaged access to provider endpoints, GitHub, npm, host control, and container-runtime sockets is denied. Operators must select an explicit maintained policy before additional services become reachable.
 
 Pi runs as the unprivileged `sandbox` user. Landlock strict mode and the OpenShell filesystem policy protect the image and host boundary. Writable paths are limited to `/sandbox`, `/sandbox/.pi`, `/tmp`, and `/dev/null`.
 
