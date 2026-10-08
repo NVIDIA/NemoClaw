@@ -113,13 +113,13 @@ function runPinnedAptFixture(
   writeFileSync(
     fakeUbuntuSources,
     `Types: deb
-URIs: ${mode === "unexpected-source" ? "mirror+file:/etc/apt/unexpected.txt" : "mirror+file:/etc/apt/apt-mirrors.txt"}
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
 Suites: noble noble-updates noble-backports
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 
 Types: deb
-URIs: http://security.ubuntu.com/ubuntu
+URIs: ${mode === "unexpected-source" ? "mirror+file:/etc/apt/unexpected.txt" : "mirror+file:/etc/apt/apt-mirrors.txt"}
 Suites: noble-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
@@ -704,14 +704,16 @@ printf '%s  %s\\n' '6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc
   it("resolves the runner mirrorlist before pinned install with isolated APT lists (#11320)", () => {
     const result = runPinnedAptFixture("mirror-file-failure");
     expect(result.status, result.stderr).toBe(0);
-    expect(result.sourceText).toContain("URIs: https://archive.ubuntu.com/ubuntu");
+    expect(result.sourceText.match(/URIs: https:\/\/archive\.ubuntu\.com\/ubuntu/gu)).toHaveLength(
+      2,
+    );
     expect(result.sourceText).not.toContain("mirror+file:");
     expect(result.sourceText).toContain("Suites: noble noble-updates noble-backports");
     expect(result.sourceText).toContain("Components: main restricted universe multiverse");
-    expect(result.sourceText).toContain(
-      "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
-    );
-    expect(result.sourceText).toContain("URIs: http://security.ubuntu.com/ubuntu");
+    expect(
+      result.sourceText.match(/Signed-By: \/usr\/share\/keyrings\/ubuntu-archive-keyring\.gpg/gu),
+    ).toHaveLength(2);
+    expect(result.sourceText).toContain("Suites: noble-security");
     expect(result.calls.filter((call) => call.startsWith("apt-get "))).toHaveLength(2);
   });
 

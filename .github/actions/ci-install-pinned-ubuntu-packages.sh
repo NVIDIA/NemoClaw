@@ -52,8 +52,8 @@ cleanup() {
 trap cleanup EXIT
 
 # APT cannot reliably fetch a mirror+file auxiliary list from a custom lists
-# directory during install. Resolve only the runner's Ubuntu archive stanza;
-# keep its suites, components, and Signed-By key while excluding other sources.
+# directory during install. Resolve only the runner's Ubuntu mirrorlist URI;
+# keep each stanza's suites, components, and Signed-By key.
 if ! sudo awk '
   $0 == "URIs: mirror+file:/etc/apt/apt-mirrors.txt" {
     print "URIs: https://archive.ubuntu.com/ubuntu"
@@ -62,9 +62,9 @@ if ! sudo awk '
   }
   /mirror\+file:/ { unexpected = 1 }
   { print }
-  END { if (replaced != 1 || unexpected) exit 1 }
+  END { if (replaced < 1 || unexpected) exit 1 }
 ' "$ubuntu_sources" | tee "$isolated_sources" >/dev/null; then
-  echo "::error title=Unsupported Ubuntu APT source::Expected one Ubuntu archive mirrorlist stanza in $ubuntu_sources." >&2
+  echo "::error title=Unsupported Ubuntu APT source::Expected the Ubuntu archive mirrorlist URI in $ubuntu_sources." >&2
   exit 1
 fi
 chmod 0755 "$isolated_sources_dir"
