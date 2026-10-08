@@ -143,6 +143,16 @@ To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid
 `nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
 Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
 
+`nemoclaw_gateway_storage` and `nemoclaw_managed_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated the same way, and optional `image_pull_policy`:
+
+- `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
+- `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `network_cidr` is a private IPv4 `/24`.
+
+`nemoclaw_managed_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
+`nemoclaw_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
+The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
+
 ### NemoClaw Data Sources
 
 | Data source | Observes |
@@ -549,6 +559,6 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
-Gateway and Kubernetes resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
+Kubernetes resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

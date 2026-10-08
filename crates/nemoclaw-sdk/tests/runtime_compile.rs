@@ -117,10 +117,14 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         ])
     );
     let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
-    let gateway_spec: nemoclaw_sdk::managed::Spec = serde_json::from_str(
-        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-            .as_str()
-            .unwrap(),
+    let gateway_spec = nemoclaw_sdk::managed::Spec::from_gateway_row(
+        nemoclaw_sdk::managed::GATEWAY_STORAGE_KIND,
+        &graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+            .collect(),
     )
     .unwrap();
     let command = gateway["command"].as_array().unwrap();
@@ -160,19 +164,21 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     {
         let attrs = &graph["resource"][format!("nemoclaw_{}", target.kind)]
             [target.address.split_once('.').unwrap().1];
-        assert_eq!(attrs["spec"], target.values["spec"]);
+        for (name, value) in &target.values {
+            assert_eq!(attrs[name], json!(value), "{}.{name}", target.address);
+        }
         assert!(
             attrs.get("running").is_none(),
             "running is observed, not declared readiness"
         );
     }
-    let storage: serde_json::Value = serde_json::from_str(
-        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(storage["layout"], 1);
+    assert_eq!(gateway_spec.layout, 1);
+    assert!(
+        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+            .get("endpoint")
+            .is_none(),
+        "Docker gateway storage does not depend on the listen port"
+    );
 }
 
 #[test]

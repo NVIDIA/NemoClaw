@@ -53,13 +53,7 @@ fn digest(engine: &str, name: &str) -> String {
         .collect()
 }
 fn spec(target: &Target) -> Result<Spec, Error> {
-    serde_json::from_str(
-        target
-            .values
-            .get("spec")
-            .ok_or(Error::State("missing runtime spec"))?,
-    )
-    .map_err(|_| Error::State("invalid runtime spec"))
+    Spec::from_values(&target.kind, &target.values)
 }
 fn image(target: &Target) -> Result<Target, Error> {
     let (engine, name, platform) = if target.kind == "ollama_proxy" {
@@ -561,10 +555,14 @@ mod tests {
             .generations;
         let graph = crate::compile::compile_runtime(&document, &generations, "0.1.0").unwrap();
         let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
-        let storage: Spec = serde_json::from_str(
-            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-                .as_str()
-                .unwrap(),
+        let storage = Spec::from_values(
+            crate::managed::GATEWAY_STORAGE_KIND,
+            &graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+                .collect(),
         )
         .unwrap();
         let command = gateway["command"].as_array().unwrap();
@@ -653,10 +651,14 @@ mod tests {
             graph["resource"]["nemoclaw_managed_gateway"]["runtime"]["image_pull_policy"],
             "Always"
         );
-        let storage: Spec = serde_json::from_str(
-            graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-                .as_str()
-                .unwrap(),
+        let storage = Spec::from_values(
+            crate::managed::GATEWAY_STORAGE_KIND,
+            &graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+                .collect(),
         )
         .unwrap();
         assert_eq!(storage.layout, 0);

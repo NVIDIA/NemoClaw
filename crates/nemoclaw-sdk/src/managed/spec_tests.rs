@@ -411,3 +411,45 @@ fn podman_gateway_namespace_survives_info_id_changes_but_not_network_replacement
     );
     assert!(spec.binding_namespace(Some("random-first"), None).is_err());
 }
+
+#[test]
+fn gateway_attributes_reproduce_the_gateway_and_its_storage() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../nemoclaw-provider/src/managed/reference.json"
+    ))
+    .unwrap();
+    let gateway: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
+    for driver in [ComputeDriver::Docker, ComputeDriver::Podman] {
+        let mut gateway = gateway.clone();
+        gateway.compute_driver = driver;
+        gateway.gateway.runtime.provider = driver;
+        let storage = gateway.storage();
+        for (kind, spec) in [(GATEWAY_KIND, &gateway), (GATEWAY_STORAGE_KIND, &storage)] {
+            let row = spec.gateway_row(kind).unwrap();
+            assert!(!row.contains_key("spec"));
+            assert_eq!(&Spec::from_gateway_row(kind, &row).unwrap(), spec, "{kind}");
+        }
+        let storage_row = storage.gateway_row(GATEWAY_STORAGE_KIND).unwrap();
+        assert_eq!(
+            storage_row.contains_key("endpoint"),
+            driver == ComputeDriver::Podman,
+            "Docker storage does not depend on the listen port"
+        );
+    }
+    let mut docker_storage = gateway.storage().gateway_row(GATEWAY_STORAGE_KIND).unwrap();
+    docker_storage.insert("endpoint".into(), "http://127.0.0.1:19002".into());
+    assert!(Spec::from_gateway_row(GATEWAY_STORAGE_KIND, &docker_storage).is_err());
+    for (attribute, invalid) in [
+        ("compute_driver", "kubernetes"),
+        ("owner", "foreign"),
+        ("name", "unrelated"),
+        ("network_cidr", "10.0.0.0/8"),
+    ] {
+        let mut row = gateway.gateway_row(GATEWAY_KIND).unwrap();
+        row.insert(attribute.into(), invalid.into());
+        assert!(
+            Spec::from_gateway_row(GATEWAY_KIND, &row).is_err(),
+            "{attribute}"
+        );
+    }
+}

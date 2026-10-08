@@ -294,10 +294,8 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     // The provider repeats the storage and process identity checks at mutation
     // time. OpenTofu may select replacement without an SDK eligibility list.
     let backend = crate::managed::ManagedBackend::new(engine.clone());
-    let prior = crate::backend::Row::from([
-        ("spec".into(), spec.json().unwrap()),
-        ("id".into(), first.id.clone()),
-    ]);
+    let mut prior = spec.gateway_row(GATEWAY_KIND).unwrap();
+    prior.insert("id".into(), first.id.clone());
     let retained = state.lock().unwrap().volume.clone().unwrap();
     let mut substituted = retained.clone();
     substituted["CreatedAt"] = json!("2026-09-15T00:00:00Z");

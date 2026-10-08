@@ -66,6 +66,11 @@ fn identity(change: &ResourceChange, expected: &Row, binding: &StateBinding) -> 
         "owner",
         "generation",
         "spec",
+        "compute_driver",
+        "engine",
+        "endpoint",
+        "image",
+        "network_cidr",
     ] {
         if let Some(value) = expected.get(key)
             && change.change.before[key] != *value

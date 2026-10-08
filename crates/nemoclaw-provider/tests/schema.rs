@@ -207,3 +207,36 @@ fn ollama_proxy_identity_is_optional_and_computed() {
     }
     assert!(diagnostics.errors.is_empty());
 }
+
+#[test]
+fn managed_gateway_resources_take_typed_settings() {
+    use tf_provider::schema::AttributeConstraint::{OptionalComputed, Required};
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let resources = provider.get_resources(&mut diagnostics).unwrap();
+    for (kind, endpoint) in [("managed_gateway", true), ("gateway_storage", false)] {
+        let schema = resources[kind].schema(&mut diagnostics).unwrap();
+        let attributes = &schema.block.attributes;
+        assert!(!attributes.contains_key("spec"), "{kind}");
+        for attribute in ["name", "compute_driver", "engine", "image", "network_cidr"] {
+            assert!(
+                matches!(attributes[attribute].constraint, Required),
+                "{kind}.{attribute}"
+            );
+        }
+        for attribute in ["owner", "generation"] {
+            assert!(
+                matches!(attributes[attribute].constraint, OptionalComputed),
+                "{kind}.{attribute}"
+            );
+        }
+        assert!(
+            matches!(
+                (&attributes["endpoint"].constraint, endpoint),
+                (Required, true) | (OptionalComputed, false)
+            ),
+            "{kind}.endpoint"
+        );
+    }
+    assert!(diagnostics.errors.is_empty());
+}

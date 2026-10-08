@@ -12,6 +12,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 pub const GATEWAY_KIND: &str = "managed_gateway";
+use super::GATEWAY_STORAGE_KIND;
 pub use nemoclaw_docker::{GENERATION_LABEL, OWNER_LABEL};
 pub use nemoclaw_runtime::{
     SPEC_VERSION as RUNTIME_SPEC_VERSION, SPEC_VERSION_LABEL as RUNTIME_SPEC_VERSION_LABEL,
@@ -61,6 +62,169 @@ pub struct Process {
     pub host_ipc: bool,
     pub memory_bytes: u64,
     pub gpu: bool,
+}
+/// Resource attributes of a managed gateway and its storage.
+pub const GATEWAY_ATTRIBUTES: [&str; 8] = [
+    "name",
+    "owner",
+    "generation",
+    "compute_driver",
+    "engine",
+    "endpoint",
+    "image",
+    "network_cidr",
+];
+/// Docker gateway data does not depend on the listen port, so its storage
+/// records this endpoint instead of the gateway's.
+const DOCKER_STORAGE_ENDPOINT: &str = "http://127.0.0.1:8080";
+
+/// Check one gateway attribute, explaining a rejected value without echoing it.
+pub fn check_gateway_attribute(attribute: &str, value: &str) -> Result<(), &'static str> {
+    let (pattern, requirement) = match attribute {
+        "name" => (
+            r"^nc-[a-f0-9]{16}-[a-z][a-z0-9-]{0,72}$",
+            "must be nc-, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name",
+        ),
+        "owner" => (r"^[a-f0-9-]{36}$", "must be a lowercase UUID"),
+        "generation" => (
+            r"^[a-f0-9]{32}$",
+            "must be 32 lowercase hexadecimal characters",
+        ),
+        "compute_driver" => (r"^(docker|podman)$", "must be docker or podman"),
+        "engine" => {
+            return crate::config::validate_engine_endpoint(value)
+                .map_err(|_| "must be a local Unix engine socket");
+        }
+        _ => return Ok(()),
+    };
+    if regex::Regex::new(pattern).unwrap().is_match(value) {
+        Ok(())
+    } else {
+        Err(requirement)
+    }
+}
+impl Spec {
+    /// Runtime specification compiled into resource values: typed attributes
+    /// for gateways and their storage, encoded JSON for service processes.
+    pub(crate) fn from_values(kind: &str, values: &crate::backend::Row) -> Result<Self, Error> {
+        if matches!(kind, GATEWAY_KIND | GATEWAY_STORAGE_KIND) {
+            return Self::from_gateway_row(kind, values);
+        }
+        let spec: Self = serde_json::from_str(
+            values
+                .get("spec")
+                .ok_or(Error::State("missing runtime spec"))?,
+        )
+        .map_err(|_| Error::State("invalid runtime specification"))?;
+        spec.validate()?;
+        Ok(spec)
+    }
+    /// Replace the specification compiled into resource values.
+    pub(crate) fn write_values(
+        &self,
+        kind: &str,
+        values: &mut crate::backend::Row,
+    ) -> Result<(), Error> {
+        if matches!(kind, GATEWAY_KIND | GATEWAY_STORAGE_KIND) {
+            values.remove("endpoint");
+            values.extend(self.gateway_row(kind)?);
+        } else {
+            values.insert("spec".into(), self.json()?);
+        }
+        Ok(())
+    }
+    /// The storage specification of this gateway.
+    pub fn storage(&self) -> Self {
+        let mut storage = self.clone();
+        if self.compute_driver == ComputeDriver::Docker {
+            storage.layout = 1;
+            storage.gateway.endpoint = DOCKER_STORAGE_ENDPOINT.into();
+        } else {
+            storage.layout = 0;
+        }
+        storage
+    }
+    /// Resource attributes of this gateway or its storage.
+    ///
+    /// # Errors
+    /// Returns an error if the specification is invalid.
+    pub fn gateway_row(&self, kind: &str) -> Result<crate::backend::Row, Error> {
+        self.validate()?;
+        let docker_storage = kind == GATEWAY_STORAGE_KIND && self.layout == 1;
+        Ok(GATEWAY_ATTRIBUTES
+            .into_iter()
+            .zip([
+                self.name.as_str(),
+                &self.owner,
+                &self.generation,
+                self.compute_driver.as_str(),
+                &self.gateway.engine,
+                &self.gateway.endpoint,
+                &self.gateway.image,
+                &self.gateway.network_cidr,
+            ])
+            .filter(|(attribute, _)| !(docker_storage && *attribute == "endpoint"))
+            .map(|(attribute, value)| (attribute.to_owned(), value.to_owned()))
+            .collect())
+    }
+    /// Gateway or storage specification named by resource attributes.
+    ///
+    /// # Errors
+    /// Returns an incomplete observation for missing attributes and a conflict
+    /// for invalid ones, including an endpoint on Docker gateway storage.
+    pub fn from_gateway_row(kind: &str, row: &crate::backend::Row) -> Result<Self, Error> {
+        let get = |attribute: &str| {
+            row.get(attribute)
+                .filter(|value| !value.is_empty())
+                .cloned()
+                .ok_or(crate::ObservationError::Incomplete)
+        };
+        for attribute in GATEWAY_ATTRIBUTES {
+            if let Some(value) = row.get(attribute) {
+                check_gateway_attribute(attribute, value)
+                    .map_err(|_| Error::Conflict("invalid managed gateway attribute"))?;
+            }
+        }
+        let compute_driver = match get("compute_driver")?.as_str() {
+            "podman" => ComputeDriver::Podman,
+            _ => ComputeDriver::Docker,
+        };
+        let (layout, endpoint) = match (kind, compute_driver) {
+            (GATEWAY_KIND, _) => (2, get("endpoint")?),
+            (GATEWAY_STORAGE_KIND, ComputeDriver::Docker) => {
+                if row.get("endpoint").is_some_and(|value| !value.is_empty()) {
+                    return Err(Error::Conflict(
+                        "Docker gateway storage does not take an endpoint",
+                    ));
+                }
+                (1, DOCKER_STORAGE_ENDPOINT.into())
+            }
+            (GATEWAY_STORAGE_KIND, _) => (0, get("endpoint")?),
+            _ => return Err(crate::ObservationError::BindingMismatch.into()),
+        };
+        let spec = Self {
+            layout,
+            compute_driver,
+            kind: GATEWAY_KIND.into(),
+            name: get("name")?,
+            owner: get("owner")?,
+            generation: get("generation")?,
+            gateway: ManagedGateway {
+                runtime: crate::config::Runtime {
+                    provider: compute_driver,
+                },
+                endpoint,
+                engine: get("engine")?,
+                image: get("image")?,
+                image_pull_policy: None,
+                network_cidr: get("network_cidr")?,
+                kubernetes: None,
+            },
+            process: None,
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
 }
 fn is_docker_driver(value: &ComputeDriver) -> bool {
     *value == ComputeDriver::Docker

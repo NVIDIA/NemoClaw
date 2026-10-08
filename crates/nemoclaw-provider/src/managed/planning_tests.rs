@@ -3,9 +3,7 @@
 
 use super::Spec;
 use crate::{
-    Error,
-    backend::Row,
-    compile,
+    Error, compile,
     config::Document,
     docker::{Connections, fixture::Fixture},
     services::BackendRegistry,
@@ -24,7 +22,7 @@ fn runtime_specs() -> Vec<Spec> {
         .unwrap()
         .into_iter()
         .filter(|target| target.kind == super::GATEWAY_KIND)
-        .map(|target| serde_json::from_str(&target.values["spec"]).unwrap())
+        .map(|target| Spec::from_gateway_row(&target.kind, &target.values).unwrap())
         .collect()
 }
 
@@ -71,10 +69,8 @@ async fn plan_runtime(
     update: bool,
 ) -> Result<(), Error> {
     let connections = Connections::fixed([fixture.engine_for(spec.engine())]).unwrap();
-    let desired = Row::from([
-        ("spec".into(), serde_json::to_string(spec).unwrap()),
-        ("image_pull_policy".into(), policy.into()),
-    ]);
+    let mut desired = spec.gateway_row(&spec.kind).unwrap();
+    desired.insert("image_pull_policy".into(), policy.into());
     let mut prior = desired.clone();
     prior.insert(
         "id".into(),
