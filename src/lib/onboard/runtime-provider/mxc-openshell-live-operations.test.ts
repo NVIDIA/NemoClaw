@@ -418,18 +418,13 @@ describe("inactive OpenShell MXC live operations", () => {
   });
 
   it("makes leading-symbol digest labels valid for create and recovery (#10585)", async () => {
-    let liveRequest: Awaited<ReturnType<typeof request>> | undefined;
-    let rawRequestLabel = "";
-    for (let index = 0; index < 256; index += 1) {
-      const candidate = await request(`leading-symbol-${String(index)}`);
-      const candidateLabel = Buffer.from(candidate.requestSha256, "hex").toString("base64url");
-      if (/^[-_]/u.test(candidateLabel)) {
-        liveRequest = candidate;
-        rawRequestLabel = candidateLabel;
-        break;
-      }
-    }
-    if (!liveRequest) throw new Error("could not produce a leading-symbol request digest fixture");
+    const candidates = await Promise.all(
+      Array.from({ length: 256 }, (_, index) => request(`leading-symbol-${String(index)}`)),
+    );
+    const liveRequest = candidates.find((candidate) =>
+      /^[-_]/u.test(Buffer.from(candidate.requestSha256, "hex").toString("base64url")),
+    )!;
+    const rawRequestLabel = Buffer.from(liveRequest.requestSha256, "hex").toString("base64url");
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
       async () => ({ status: "create-rejected" }),
     );
