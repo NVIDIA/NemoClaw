@@ -78,4 +78,6 @@ fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
   flag: "wx",
   mode: 0o600,
 });
-process.stdout.write(`${JSON.stringify({ archive, manifestPath, ...manifest }, null, 2)}\n`);
+process.stdout.write(
+  `${JSON.stringify({ archivePath: archive, manifestPath, ...manifest }, null, 2)}\n`,
+);
