@@ -4,12 +4,11 @@ pub mod authentication;
 mod registry;
 pub use registry::BackendRegistry;
 pub(crate) mod capacity;
-pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_specs};
+pub use capacity::{ServiceCapacity, observe_service_capacity, validate_capacity_contracts};
 mod readiness;
 mod status;
-pub use readiness::{validate_readiness_spec, wait_service_ready};
+pub use readiness::{Readiness, wait_service_ready};
 pub mod installers;
-use nemoclaw_sdk::services::validate_resource_spec;
 
 /// Provider definition for an installer-owned SDK resource schema.
 pub(crate) fn schema_definition(kind: &str) -> crate::Definition {

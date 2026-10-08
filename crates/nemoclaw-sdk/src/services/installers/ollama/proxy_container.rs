@@ -64,6 +64,21 @@ impl ProxySettings {
         settings.validate(bind_address)?;
         Ok(settings)
     }
+    /// Decode and validate the settings `NEMOCLAW_OLLAMA_PROXY` carries.
+    ///
+    /// # Errors
+    /// Returns a conflict for malformed or invalid settings.
+    pub fn decode(encoded: &str) -> Result<Self, Error> {
+        let settings: Self = serde_json::from_str(encoded)
+            .map_err(|_| Error::Conflict("invalid external Ollama proxy specification"))?;
+        let bind_address = settings
+            .endpoint
+            .strip_prefix("http://")
+            .and_then(|endpoint| endpoint.strip_suffix("/v1"))
+            .ok_or(Error::Conflict("invalid Ollama proxy binding"))?;
+        settings.validate(bind_address)?;
+        Ok(settings)
+    }
     /// Whether `bind_address` is a loopback or private address with a port.
     pub fn serves_privately(bind_address: &str) -> bool {
         bind_address.parse::<SocketAddr>().is_ok_and(|bind| {

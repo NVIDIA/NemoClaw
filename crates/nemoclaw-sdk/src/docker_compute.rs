@@ -457,8 +457,18 @@ fn runtime_image_checks(graph: &mut Value, raw: &[Target]) -> Result<(), Error> 
             .1;
         let present = format!("runtime_image_present_{name}");
         let acquired = format!("runtime_image_acquired_{name}");
-        let mut config =
-            json!({"spec":target.values["spec"],"allow_missing":image.kind == "docker_image"});
+        let service = spec(target)?;
+        let process = service
+            .process
+            .as_ref()
+            .ok_or(Error::State("missing runtime process"))?;
+        let mut config = json!({
+            "engine": service.engine(),
+            "image": service.image(),
+            "architecture": process.architecture,
+            "labels": process.image_labels,
+            "allow_missing": image.kind == "docker_image",
+        });
         literal(&mut config);
         graph["data"]["nemoclaw_runtime_image"][&present] = config.clone();
         let present_address = format!("data.nemoclaw_runtime_image.{present}");

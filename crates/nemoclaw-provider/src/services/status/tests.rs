@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::{ObservationError, docker::fixture::Fixture};
+use crate::{ObservationError, docker::fixture::Fixture, managed::RuntimeObservation};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};

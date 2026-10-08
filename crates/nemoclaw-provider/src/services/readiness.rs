@@ -2,67 +2,63 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::installers::{ollama, vllm};
-use crate::{CancellationToken, Error, docker::Connections, managed::Spec};
-use serde::Deserialize;
+use crate::{CancellationToken, Error, docker::Connections};
+use nemoclaw_runtime::RuntimeSpec;
 use std::time::Duration;
 
-#[derive(Deserialize)]
-#[serde(tag = "kind", deny_unknown_fields)]
-enum ProxyReadiness {
-    #[serde(rename = "ollama_proxy")]
-    Proxy {
-        engine: String,
-        proxy: Box<ollama::ProxySpec>,
-    },
-}
-enum ReadinessSpec {
-    Managed(Box<Spec>),
-    Proxy(ProxyReadiness),
-}
-impl ReadinessSpec {
-    fn engine(&self) -> &str {
-        match self {
-            Self::Managed(spec) => spec.engine(),
-            Self::Proxy(ProxyReadiness::Proxy { engine, .. }) => engine,
-        }
-    }
+/// The contract a ready container serves, as a runtime contract data source computes it.
+enum Contract {
+    Runtime(Box<RuntimeSpec>),
+    Proxy(ollama::ProxySettings),
 }
 
-fn parse(encoded: &str) -> Result<ReadinessSpec, Error> {
-    if let Ok(proxy) = serde_json::from_str::<ProxyReadiness>(encoded) {
-        let ProxyReadiness::Proxy {
-            engine,
-            proxy: spec,
-        } = &proxy;
+/// A service container whose readiness a check waits for.
+pub struct Readiness {
+    engine: String,
+    name: String,
+    contract: Contract,
+}
+
+impl Readiness {
+    /// Validate readiness inputs without contacting hosts.
+    ///
+    /// # Errors
+    /// Returns an error naming the invalid input.
+    pub fn new(engine: &str, name: &str, contract: &str) -> Result<Self, Error> {
         crate::config::validate_engine_endpoint(engine)?;
-        spec.validate()?;
-        return Ok(ReadinessSpec::Proxy(proxy));
+        if !regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
+            .unwrap()
+            .is_match(name)
+        {
+            return Err(Error::Conflict(
+                "name must be a container name of letters, digits, underscores, periods, or hyphens",
+            ));
+        }
+        // Runtime contracts name their kind; the Ollama proxy contract does not.
+        let tagged = serde_json::from_str::<serde_json::Value>(contract)
+            .map_err(|_| Error::Conflict("contract must be a runtime contract data source's spec"))?
+            .get("kind")
+            .is_some();
+        let contract = if tagged {
+            Contract::Runtime(Box::new(RuntimeSpec::decode(contract)?))
+        } else {
+            Contract::Proxy(ollama::ProxySettings::decode(contract)?)
+        };
+        Ok(Self {
+            engine: engine.into(),
+            name: name.into(),
+            contract,
+        })
     }
-    let spec: Spec = serde_json::from_str(encoded)
-        .map_err(|_| Error::State("invalid service readiness specification"))?;
-    if !matches!(spec.kind.as_str(), "inference_service" | "ollama_service") {
-        return Err(Error::State("runtime has no service readiness contract"));
-    }
-    super::validate_resource_spec(&spec.kind, encoded)?;
-    Ok(ReadinessSpec::Managed(Box::new(spec)))
 }
 
-/// Validate readiness inputs without contacting an engine or loading credentials.
-pub fn validate_readiness_spec(encoded: &str) -> Result<(), Error> {
-    parse(encoded).map(|_| ())
-}
-
-/// Observe application readiness for one explicit provider container identity.
-/// Only startup phases are polled; failed observations and protection stops fail immediately.
-/// This performs no mutations, hardware preflights, or model requests.
 pub async fn wait_service_ready(
     connections: &Connections,
-    encoded: &str,
+    readiness: &Readiness,
     container_id: &str,
     timeout: Duration,
     cancel: &CancellationToken,
 ) -> Result<(), Error> {
-    let spec = parse(encoded)?;
     if container_id.is_empty() {
         return Err(Error::State(
             "service readiness requires a container identity",
@@ -71,29 +67,39 @@ pub async fn wait_service_ready(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    let engine = crate::managed::service_engine(connections, spec.engine())?;
+    let engine = crate::managed::service_engine(connections, &readiness.engine)?;
+    // The container must be the declared one; its start time orders status reports.
+    let observe = || async {
+        let observed =
+            tokio::time::timeout(Duration::from_secs(20), engine.container(container_id))
+                .await
+                .map_err(|_| crate::ObservationError::Transport)??;
+        let Some(observed) = observed else {
+            return Ok(None);
+        };
+        if observed.id.as_deref() != Some(container_id)
+            || observed
+                .name
+                .as_deref()
+                .map(|name| name.trim_start_matches('/'))
+                != Some(readiness.name.as_str())
+        {
+            return Err(crate::ObservationError::BindingMismatch.into());
+        }
+        let state = observed.state.ok_or(crate::ObservationError::Incomplete)?;
+        Ok::<_, Error>(Some((
+            state.running.ok_or(crate::ObservationError::Incomplete)?,
+            state.started_at.filter(|value| !value.is_empty()),
+        )))
+    };
     let check = async {
-        let spec = match &spec {
-            ReadinessSpec::Managed(spec) => spec,
-            ReadinessSpec::Proxy(ProxyReadiness::Proxy { proxy, .. }) => {
-                let observed = engine
-                    .container(container_id)
+        let spec = match &readiness.contract {
+            Contract::Runtime(spec) => spec,
+            Contract::Proxy(settings) => {
+                let (running, _) = observe()
                     .await?
                     .ok_or(Error::State("proxy runtime is absent"))?;
-                if observed.id.as_deref() != Some(container_id)
-                    || observed
-                        .name
-                        .as_deref()
-                        .map(|name| name.trim_start_matches('/'))
-                        != Some(proxy.name.as_str())
-                {
-                    return Err(crate::ObservationError::BindingMismatch.into());
-                }
-                if !observed
-                    .state
-                    .and_then(|state| state.running)
-                    .unwrap_or(false)
-                {
+                if !running {
                     return Err(Error::State(
                         "proxy runtime is not running; explicitly reapply",
                     ));
@@ -103,26 +109,28 @@ pub async fn wait_service_ready(
                 } else {
                     super::authentication::read_proxy_key(&engine, container_id).await?;
                 }
-                ollama::proxy::verify_model(&proxy.settings).await?;
+                ollama::proxy::verify_model(settings).await?;
                 return Ok(());
             }
         };
+        let (kind, authenticated) = match spec.as_ref() {
+            RuntimeSpec::Vllm(service) => (vllm::SERVICE_KIND, service.authentication.is_some()),
+            RuntimeSpec::Ollama(_) => (ollama::SERVICE_KIND, false),
+        };
         loop {
-            let observed = engine
-                .observe_service(spec, container_id)
+            let (running, started_at) = observe()
                 .await?
                 .ok_or(Error::State("service runtime is unobservable"))?;
-            if !observed.running {
+            if !running {
                 return Err(Error::State(
                     "service stopped during readiness; inspect logs and explicitly reapply",
                 ));
             }
-            let phase = super::status::runtime_phase(&engine, &observed).await?;
+            let started_at = started_at.ok_or(crate::ObservationError::Incomplete)?;
+            let phase = super::status::phase(&engine, kind, container_id, &started_at).await?;
             match phase.as_str() {
                 "ready" => {
-                    if spec.kind == vllm::SERVICE_KIND
-                        && vllm::configured_service(spec)?.authentication.is_some()
-                    {
+                    if authenticated {
                         super::authentication::read_service_key(&engine, container_id).await?;
                     }
                     return Ok(());
