@@ -269,7 +269,7 @@ RUN set -eu; \
 # upstream provider credential pattern.
 # hadolint ignore=DL4006
 RUN set -eu; \
-    if env | grep -Eq '^(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|OPENROUTER_API_KEY)='; then \
+    if env | grep -Eq '^(NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY)='; then \
         echo "ERROR: an upstream provider credential is present in the Pi image environment" >&2; \
         exit 1; \
     fi; \

@@ -10,6 +10,7 @@ import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   SHIPPED_MANAGED_IMAGE_AGENTS,
 } from "../../../../src/lib/onboard/managed-image/contract.ts";
+import { NATIVE_HOSTED_PROFILES } from "../../../../src/lib/inference/native-hosted/profiles.ts";
 import { validateCandidateContract } from "../../../../tools/managed-images/validate-candidate-contract.mts";
 import {
   readWorkflow,
@@ -94,6 +95,28 @@ describe("Pi candidate contract validation", () => {
     expect(() => validateCandidateContract(candidateContract(), "linux/arm64")).toThrow(
       /contract.platform must be/u,
     );
+  });
+});
+
+describe("Pi final-image credential boundary", () => {
+  const dockerfile = fs.readFileSync(path.join(root, "agents/pi/Dockerfile"), "utf8");
+  const environmentGate = required(
+    dockerfile.match(/if env \| grep -Eq '[^']+'; then [\s\S]*?fi;/u)?.[0],
+    "Pi Dockerfile is missing its final-image credential environment gate",
+  );
+  it.each([
+    ...new Set([
+      "NVIDIA_API_KEY",
+      ...NATIVE_HOSTED_PROFILES.map((profile) => profile.credentialEnv),
+    ]),
+  ])("rejects inherited %s before admitting the final image", (credential) => {
+    const result = spawnSync("bash", ["-c", environmentGate], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, [credential]: "fake-inherited-secret" },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("upstream provider credential is present");
+    expect(result.stdout + result.stderr).not.toContain("fake-inherited-secret");
   });
 });
 
