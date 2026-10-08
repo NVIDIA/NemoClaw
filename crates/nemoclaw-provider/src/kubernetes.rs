@@ -52,6 +52,10 @@ fn row(spec: &Spec, response: Response) -> Result<Option<Row>, ObservationError>
     };
     let running = response.running.ok_or(ObservationError::Incomplete)?;
     let mut result = spec.row().map_err(|_| ObservationError::Query)?;
+    // Observations report every field; an omitted environment is empty.
+    result
+        .entry(nemoclaw_sdk::kubernetes::ENVIRONMENT_FIELD.into())
+        .or_default();
     result.insert("id".into(), id);
     result.insert("running".into(), running.to_string());
     if spec.kind == AUTH_KIND {
@@ -298,6 +302,27 @@ mod tests {
         assert_eq!(row(&source, missing), Err(ObservationError::Incomplete));
         let absent = Response::default();
         assert_eq!(row(&source, absent), Ok(None));
+    }
+
+    #[test]
+    fn observations_report_every_attribute_including_an_omitted_environment() {
+        for kind in [STORAGE_KIND, AUTH_KIND, GATEWAY_KIND] {
+            let observed = row(
+                &fixture(kind),
+                Response {
+                    id: Some("uid-1".into()),
+                    running: Some(true),
+                    release_present: Some(true),
+                    gateway_values: Some("{}".into()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+            let definition = crate::resource_definition(kind).unwrap();
+            for attribute in definition.attributes() {
+                assert!(observed.contains_key(attribute), "{kind}.{attribute}");
+            }
+        }
     }
 
     #[test]
