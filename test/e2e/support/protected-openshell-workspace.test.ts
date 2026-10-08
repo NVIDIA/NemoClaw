@@ -12,7 +12,12 @@ import { manageProtectedOpenShellWorkspace } from "../../../tools/e2e/protected-
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
-  return { ...original, renameSync: vi.fn(original.renameSync) };
+  return {
+    ...original,
+    renameSync: vi.fn(original.renameSync),
+    openSync: vi.fn(original.openSync),
+    closeSync: vi.fn(original.closeSync),
+  };
 });
 
 const sources = [
@@ -29,6 +34,7 @@ const sources = [
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(fs.openSync).mockReset();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -207,6 +213,40 @@ describe("protected OpenShell workspace", () => {
     expect(() => manageProtectedOpenShellWorkspace("verify", input)).toThrow(/Unexpected verify/);
     expect(() => manageProtectedOpenShellWorkspace("restore", input)).toThrow(/Unexpected restore/);
     expect(git(input.trustedRoot, "diff", "--no-ext-diff")).toBe(before);
+  });
+
+  it("rejects a destination replaced with a symlink immediately before opening", async () => {
+    const input = fixture();
+    const path = join(input.trustedRoot, "scripts/install-openshell.sh");
+    const retained = `${path}.retained`;
+    const before = fs.statSync(path);
+    const { openSync: original } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(fs.openSync).mockImplementationOnce((file, flags, mode) => {
+      expect(file).toBe(path);
+      fs.renameSync(path, retained);
+      fs.symlinkSync(retained, path);
+      return original(file, flags, mode);
+    });
+    expect(() => manageProtectedOpenShellWorkspace("prepare", input)).toThrow(/Unsafe/);
+    expect(fs.readlinkSync(path)).toBe(retained);
+    expect(fs.statSync(retained)).toMatchObject({
+      ino: before.ino,
+      size: before.size,
+      mtimeMs: before.mtimeMs,
+    });
+  });
+
+  it("rejects a hard-linked destination and closes its opened descriptor", () => {
+    const input = fixture();
+    const path = join(input.trustedRoot, "scripts/install-openshell.sh");
+    fs.linkSync(path, `${path}.retained`);
+    vi.mocked(fs.openSync).mockClear();
+    vi.mocked(fs.closeSync).mockClear();
+    expect(() => manageProtectedOpenShellWorkspace("prepare", input)).toThrow(/Unsafe/);
+    const opened = vi.mocked(fs.openSync).mock.results.map((result) => result.value);
+    expect(opened.length).toBeGreaterThan(0);
+    expect(vi.mocked(fs.closeSync).mock.calls.map(([fd]) => fd)).toEqual(opened);
+    expect(fs.statSync(path).nlink).toBe(2);
   });
 
   it("rolls back an incomplete prepare when a later replacement fails", async () => {

@@ -3,7 +3,17 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -77,15 +87,26 @@ function safeFile(root: string, path: string): { path: string; mode: number; sou
       throw new Error("Source escaped the trusted workspace");
     }
   }
-  const stat = lstatSync(absolutePath);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_SOURCE_BYTES) {
-    throw new Error(`Unsafe protected OpenShell file: ${path}`);
+  let fd: number;
+  try {
+    fd = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (cause) {
+    throw new Error(`Unsafe protected OpenShell file: ${path}`, { cause });
   }
-  return {
-    path: absolutePath,
-    mode: stat.mode & 0o777,
-    source: readFileSync(absolutePath, "utf8"),
-  };
+  try {
+    // Validate and read the same opened file; never reopen a checked pathname.
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_SOURCE_BYTES) {
+      throw new Error(`Unsafe protected OpenShell file: ${path}`);
+    }
+    return {
+      path: absolutePath,
+      mode: stat.mode & 0o777,
+      source: readFileSync(fd, "utf8"),
+    };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function replaceSource(path: string, source: string, mode: number): void {
