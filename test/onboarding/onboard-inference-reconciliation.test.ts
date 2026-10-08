@@ -244,6 +244,7 @@ describe("onboard helpers", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(inferenceCommandLogPath, "");
       writeOkOpenshell(fakeBin, {
         inferenceRoute: {
           gatewayName: "nemoclaw",
@@ -385,6 +386,7 @@ registry.removeSandbox = () => true;
 credentials.prompt = async (question) => {
   prompts.push(String(question));
   if (String(question).includes("Sandbox name")) return "hermes-resume";
+  if (String(question).includes("Choose [1]")) return "1";
   return "yes";
 };
 
@@ -511,11 +513,12 @@ const { onboard } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const inferenceCommands = fs.readFileSync(inferenceCommandLogPath, "utf8").trim().split("\n");
-      assert.ok(
-        inferenceCommands.includes("inference get -g nemoclaw"),
-        `expected a scoped inference read, received ${JSON.stringify(inferenceCommands)}`,
-      );
+      const inferenceCommands = fs
+        .readFileSync(inferenceCommandLogPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      assert.deepEqual(inferenceCommands, [], "native resume must not consult the shared route");
       assert.ok(
         !inferenceCommands.some((command) => command.startsWith("inference set")),
         `native Hermes must not mutate the shared route: ${JSON.stringify(inferenceCommands)}`,
