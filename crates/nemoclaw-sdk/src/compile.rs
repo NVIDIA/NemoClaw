@@ -408,7 +408,7 @@ fn compile_with_plans(
     let mut ordered: Vec<_> = document.spec.sandboxes.iter().collect();
     ordered.sort_by_key(|sandbox| &sandbox.name);
     for (index, sandbox) in ordered.iter().enumerate() {
-        let source = format!("data.nemoclaw_fabric_capabilities.sandbox_{index}");
+        let source = format!("data.fabric_capabilities.sandbox_{index}");
         runtime_sources.insert(sandbox.name.clone(), source.clone());
         for provider in document.sandbox_inference_providers(sandbox)? {
             profile_sources

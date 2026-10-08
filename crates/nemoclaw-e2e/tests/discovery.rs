@@ -43,14 +43,14 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     let config = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},
-        "provider":{"nemoclaw":{}},
+        "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"},"fabric":{"source":"nvidia/fabric"}}},
+        "provider":{"nemoclaw":{},"fabric":{}},
         "data":{
             "nemoclaw_engine_capabilities":{
                 "present":{"engine":fixture.endpoint,"compute_driver":"docker"},
                 "unknown":{"engine":format!("unix://{}",root.join("missing.sock").display()),"compute_driver":"docker"}
             },
-            "nemoclaw_fabric_capabilities":{
+            "fabric_capabilities":{
                 "present":{"engine":fixture.endpoint,"image":"labeled:image"},
                 "absent":{"engine":fixture.endpoint,"image":"absent:image"}
             }
@@ -58,8 +58,8 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         "output":{
             "engine":{"value":"${data.nemoclaw_engine_capabilities.present.observation_json}"},
             "unknown":{"value":"${data.nemoclaw_engine_capabilities.unknown.observation_json}"},
-            "fabric":{"value":"${data.nemoclaw_fabric_capabilities.present.observation_json}"},
-            "absent":{"value":"${data.nemoclaw_fabric_capabilities.absent.observation_json}"}
+            "fabric":{"value":"${data.fabric_capabilities.present.observation_json}"},
+            "absent":{"value":"${data.fabric_capabilities.absent.observation_json}"}
         }
     });
     fs::write(root.join("main.tf.json"), config.to_string()).unwrap();
@@ -160,11 +160,11 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
         .unwrap()
         .retain(|name, _| name != "gateway" && !name.starts_with("endpoint_"));
     let graph = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},
-        "provider":{"nemoclaw":{}},
+        "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"},"fabric":{"source":"nvidia/fabric"}}},
+        "provider":{"nemoclaw":{},"fabric":{}},
         "data":{
             "nemoclaw_engine_capabilities":compiled["data"]["nemoclaw_engine_capabilities"],
-            "nemoclaw_fabric_capabilities":compiled["data"]["nemoclaw_fabric_capabilities"],
+            "fabric_capabilities":compiled["data"]["fabric_capabilities"],
             "nemoclaw_target_hardware":compiled["data"]["nemoclaw_target_hardware"]
         },
         "output":output

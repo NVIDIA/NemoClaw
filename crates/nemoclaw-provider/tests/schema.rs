@@ -150,17 +150,17 @@ fn engine_discovery_is_available_without_a_gateway() {
     let provider = NemoClawProvider::default();
     let mut diagnostics = Diagnostics::default();
     let sources = provider.get_data_sources(&mut diagnostics).unwrap();
-    for kind in ["engine_capabilities", "fabric_capabilities"] {
-        let schema = sources
-            .get(kind)
-            .expect("read-only discovery data source")
-            .schema(&mut diagnostics)
-            .unwrap();
-        assert!(matches!(
-            schema.block.attributes["observation_json"].constraint,
-            AttributeConstraint::Computed
-        ));
-    }
+    let schema = sources
+        .get("engine_capabilities")
+        .expect("read-only discovery data source")
+        .schema(&mut diagnostics)
+        .unwrap();
+    assert!(matches!(
+        schema.block.attributes["observation_json"].constraint,
+        AttributeConstraint::Computed
+    ));
+    // Fabric image reads belong to the fabric provider.
+    assert!(!sources.contains_key("fabric_capabilities"));
     assert!(matches!(
         provider.schema(&mut diagnostics).unwrap().block.attributes["destroy"].constraint,
         AttributeConstraint::Optional

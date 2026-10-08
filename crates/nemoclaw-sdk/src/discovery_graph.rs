@@ -77,7 +77,12 @@ fn read(
 ) -> Result<(), ConfigError> {
     let (kind, mut inputs) = inputs(query)?;
     extend(&mut inputs);
-    let source = format!("nemoclaw_{kind}");
+    // Fabric image reads belong to the fabric provider; the others to nemoclaw.
+    let source = if kind == "fabric_capabilities" {
+        kind.to_owned()
+    } else {
+        format!("nemoclaw_{kind}")
+    };
     graph["data"][&source][name] = inputs;
     observations.insert(
         key.into(),

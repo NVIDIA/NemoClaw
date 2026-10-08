@@ -462,7 +462,7 @@ pub(crate) fn schema_environment(directory: &Path) -> BTreeMap<String, String> {
 }
 /// Resource types that served OpenShell objects and Fabric agents before the
 /// `openshell` and `fabric` providers.
-const EARLIER_TYPES: [&str; 7] = [
+const EARLIER_TYPES: [&str; 8] = [
     "nemoclaw_workspace",
     "nemoclaw_provider",
     "nemoclaw_provider_profile",
@@ -470,6 +470,7 @@ const EARLIER_TYPES: [&str; 7] = [
     "nemoclaw_gateway_capabilities",
     "nemoclaw_agent_configuration",
     "nemoclaw_sandbox_readiness",
+    "nemoclaw_fabric_capabilities",
 ];
 
 /// Refuse state that an earlier release wrote with OpenShell or Fabric types of the

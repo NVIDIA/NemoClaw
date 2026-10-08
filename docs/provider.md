@@ -34,11 +34,11 @@ The generated graphs manage these objects and observations:
 | OpenShell provider | Workspace, provider registration, provider profile, and sandbox |
 | OpenShell provider data source | Gateway version and compute drivers |
 | Fabric provider | Fabric runtime configuration |
-| Fabric provider data source | Sandbox completion |
+| Fabric provider data source | Fabric image capabilities and sandbox completion |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
 | NemoClaw provider | Kubernetes namespace and encryption key (`nemoclaw_kubernetes_storage`), development issuer (`nemoclaw_kubernetes_auth`), and gateway readiness (`nemoclaw_kubernetes_gateway`) |
-| NemoClaw provider data source | Engine and Fabric image capabilities, managed runtime-image compatibility, managed gateway readiness, and vLLM/Ollama service or proxy readiness |
+| NemoClaw provider data source | Engine capabilities, managed runtime-image compatibility, managed gateway readiness, and vLLM/Ollama service or proxy readiness |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
@@ -80,7 +80,7 @@ Inputs are typed:
   The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_provider_profile` takes a `binaries` list.
-- `runtime_json` stays the JSON string that `nemoclaw_fabric_capabilities` returns.
+- `runtime_json` stays the JSON string that `fabric_capabilities` returns.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [service storage](#nemoclaw-resources).
 
 ```hcl
@@ -89,7 +89,7 @@ resource "openshell_sandbox" "assistant" {
   name           = "assistant"
   image          = var.image
   agent_name     = "assistant"
-  runtime_json   = data.nemoclaw_fabric_capabilities.assistant.runtime_json
+  runtime_json   = data.fabric_capabilities.assistant.runtime_json
   provider_names = [openshell_provider_registration.local.name]
   policy {
     explicit {
@@ -115,9 +115,10 @@ resource "openshell_sandbox" "assistant" {
 |---|---|
 | `fabric_agent_configuration` | Fabric runtime configuration in a sandbox |
 | `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
+| `fabric_capabilities` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 
 The `fabric` provider takes the same gateway settings as the `openshell` provider, and `destroy`, which permits removing agent configurations during explicit teardown.
-It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway.
+It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_capabilities` instead reads the container engine named on it.
 
 ### NemoClaw Resources
 
@@ -173,7 +174,6 @@ The storage volume, bridge network, and initialization labels derive from `name`
 | Data source | Observes |
 |---|---|
 | `nemoclaw_engine_capabilities` | [Engine prerequisites](#engine-and-fabric-discovery) |
-| `nemoclaw_fabric_capabilities` | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 | `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
 | `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
 | `nemoclaw_gateway_readiness` | [Managed Docker gateway process and health](#gateway-capabilities) |
@@ -252,7 +252,7 @@ An observation describes the selected target at the time of its read; it is not 
 | Engine prerequisites | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
 | Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
-| Packaged adapters, APIs, settings, and runtime requirements | `nemoclaw_fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
+| Packaged adapters, APIs, settings, and runtime requirements | `fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
 | Managed runtime specification, required labels, and platform | `nemoclaw_runtime_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
 | Advertised models and catalog authentication | `nemoclaw_inference_capabilities`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
 | Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
@@ -261,7 +261,7 @@ An observation describes the selected target at the time of its read; it is not 
 
 ## Engine and Fabric Discovery
 
-`nemoclaw_engine_capabilities` and `nemoclaw_fabric_capabilities` require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
+`nemoclaw_engine_capabilities` (NemoClaw provider) and `fabric_capabilities` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
 The engine source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
 For a cluster image that no local engine can inspect, the Fabric source instead reads the metadata bundle whose path is in the environment variable named by `metadata_env`; `engine` must then be empty.
 Both return `status`, `available`, and structured JSON in `observation_json`.

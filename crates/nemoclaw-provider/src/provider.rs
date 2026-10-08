@@ -140,17 +140,9 @@ impl Provider for NemoClawProvider {
             ),
             (
                 "engine_capabilities".into(),
-                Box::new(crate::discovery::DiscoveryDataSource {
-                    backend: self.backend.clone(),
-                    fabric: false,
-                }) as Box<dyn DynamicDataSource>,
-            ),
-            (
-                "fabric_capabilities".into(),
-                Box::new(crate::discovery::DiscoveryDataSource {
-                    backend: self.backend.clone(),
-                    fabric: true,
-                }) as Box<dyn DynamicDataSource>,
+                Box::new(crate::discovery::EngineCapabilitiesDataSource(
+                    self.backend.clone(),
+                )) as Box<dyn DynamicDataSource>,
             ),
             (
                 "runtime_image".into(),

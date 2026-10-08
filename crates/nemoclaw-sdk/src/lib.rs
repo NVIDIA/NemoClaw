@@ -23,10 +23,11 @@
 //! ```
 
 pub mod fabric_capabilities;
-pub mod fabric_catalog;
+pub use nemoclaw_fabric::catalog as fabric_catalog;
 pub mod fabric_config;
-pub mod image_metadata;
+pub use nemoclaw_fabric::image_metadata;
 pub mod image_runtime;
+pub mod json_schema;
 
 mod artifact_pins {
     include!(concat!(env!("OUT_DIR"), "/artifact_pins.rs"));

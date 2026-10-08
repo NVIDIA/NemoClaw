@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `fabric` provider's configuration, resources, and data sources.
 
-use crate::{AgentConfigurationBackend, SandboxReadinessDataSource};
+use crate::{AgentConfigurationBackend, FabricCapabilitiesDataSource, SandboxReadinessDataSource};
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use nemoclaw_tofu::ResourceAdapter;
@@ -63,7 +63,8 @@ impl Backend for FabricBackend {
     }
 }
 
-/// Serves agent configuration and sandbox readiness through one configured gateway.
+/// Serves agent configuration and sandbox readiness through one configured
+/// gateway, and Fabric image capabilities through the engine each read names.
 #[derive(Default)]
 pub struct FabricProvider {
     client: Arc<GatewayClient>,
@@ -115,10 +116,17 @@ impl Provider for FabricProvider {
         &self,
         _: &mut Diagnostics,
     ) -> Option<HashMap<String, Box<dyn DynamicDataSource>>> {
-        Some(HashMap::from([(
-            "sandbox_readiness".into(),
-            Box::new(SandboxReadinessDataSource(self.client.clone())) as Box<dyn DynamicDataSource>,
-        )]))
+        Some(HashMap::from([
+            (
+                "sandbox_readiness".into(),
+                Box::new(SandboxReadinessDataSource(self.client.clone()))
+                    as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "capabilities".into(),
+                Box::new(FabricCapabilitiesDataSource::default()) as Box<dyn DynamicDataSource>,
+            ),
+        ]))
     }
 }
 
