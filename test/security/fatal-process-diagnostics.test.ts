@@ -11,7 +11,10 @@ import {
   fatalMessagingBuildDiagnostic,
   OfficialPluginRemediationError,
 } from "../../src/lib/messaging/applier/build/messaging-build-applier.mts";
-import { OpenClawNpmRemediationCommandError } from "../../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  fatalOpenClawNpmRemediationDiagnostic,
+  OpenClawNpmRemediationCommandError,
+} from "../../scripts/lib/openclaw-npm-remediation.mts";
 
 import { createSlackRemediationFixture } from "../support/slack-remediation-fixture";
 
@@ -79,6 +82,25 @@ function encodedMessagingPlan(renderTarget: string | null): string {
 }
 
 describe("fatal process diagnostics", () => {
+  it.each([
+    "OpenClaw npm remediation command failed",
+    "OpenClaw npm remediation command could not start",
+  ])("classifies the fixed command diagnostic %s", (message) => {
+    expect(fatalOpenClawNpmRemediationDiagnostic(new Error(message))).toBe(
+      "OpenClaw npm remediation command failed.",
+    );
+  });
+
+  it.each([
+    `OpenClaw npm remediation command failed ${CREDENTIAL_CANARY}`,
+    `OpenClaw npm remediation command could not start ${CREDENTIAL_CANARY}`,
+    CREDENTIAL_CANARY,
+  ])("keeps unrecognized error text behind the generic diagnostic", (message) => {
+    const diagnostic = fatalOpenClawNpmRemediationDiagnostic(new Error(message));
+    expect(diagnostic).toBe("OpenClaw npm remediation failed.");
+    expect(diagnostic).not.toContain(CREDENTIAL_CANARY);
+  });
+
   it("reports remediation timeouts without exposing child details", () => {
     const timeout = Object.assign(new Error(CREDENTIAL_CANARY), { code: "ETIMEDOUT" });
     const remediationError = new OpenClawNpmRemediationCommandError(
