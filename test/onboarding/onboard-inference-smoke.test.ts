@@ -122,6 +122,7 @@ process.env.BROKEN_API_KEY = "test-key";
 const { createSetupInference } = require(${onboardPath});
 let nativeProvider = null;
 const providerAdapter = {
+  ensureProviderPolicyComposition: async () => ({ok: true}),
   importProviderProfile: async () => ({ok: true}),
   getProvider: async () => nativeProvider
     ? {ok: true, value: nativeProvider}

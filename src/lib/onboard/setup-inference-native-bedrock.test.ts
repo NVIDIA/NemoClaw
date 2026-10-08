@@ -36,6 +36,7 @@ function nativeBedrockOnboardingFixture(endpointSuffix = "") {
     ok: true,
   }));
   const providerAdapter = {
+    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
     importProviderProfile,
     getProvider,
     createProvider,

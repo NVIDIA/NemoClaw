@@ -23,6 +23,7 @@ export async function nativeCompatibleFixture(
     revision: { id: "owned-compatible", resourceVersion: 1 },
   };
   const adapter = {
+    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
     importProviderProfile: vi.fn(async () => ({ ok: true as const })),
     getProvider: vi.fn(async () =>
       present

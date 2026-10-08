@@ -32,6 +32,7 @@ export function nativeBedrockSwitchFixture(gatewayName = "nemoclaw") {
     importProviderProfile: vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(() => ({
       ok: true,
     })),
+    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
     createProvider: vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({ ok: true })),
     getProvider: vi.fn(async () =>
       present

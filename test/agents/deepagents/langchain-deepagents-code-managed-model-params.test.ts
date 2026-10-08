@@ -107,7 +107,6 @@ from deepagents_code import config
 
 name = "NVIDIA_INFERENCE_API_KEY"
 for value in (
-    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
     "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY",
     "openshell:resolve:env:s" + "a" * 64 + "_NVIDIA_INFERENCE_API_KEY",
 ):
@@ -120,6 +119,7 @@ for value in (
         assert resolved["base_url"] == "https://integrate.api.nvidia.com/v1"
 
 for value in (
+    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
     "",
     "nvapi-" + "x" * 32,
     "nemoclaw-managed-inference",

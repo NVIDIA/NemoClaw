@@ -56,6 +56,7 @@ function nativeBedrockDependencies(ensureAdapter: EnsureBedrockRuntimeAdapter) {
         error: { kind: "command" as const, reason: "not_found" as const, message: "missing" },
       })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       createProvider: vi.fn(async () => ({
         ok: false as const,
         error: {

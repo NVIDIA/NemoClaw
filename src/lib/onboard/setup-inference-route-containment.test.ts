@@ -120,6 +120,7 @@ describe("onboard shared gateway route containment", () => {
             revision: { id: "owned", resourceVersion: 1 },
           },
         }),
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       createProvider: vi.fn(async () => ({ ok: true })),
     };
     const verifyOnboardInferenceSmoke = vi.fn();

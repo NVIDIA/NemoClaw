@@ -119,6 +119,7 @@ describe("onboard helpers", () => {
       const identity = nativeBedrockIdentity(binding);
       const createProvider = vi.fn(async () => ({ ok: true as const }));
       const providerAdapter = {
+        ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
         importProviderProfile: vi.fn(async () => ({ ok: true as const })),
         createProvider,
         getProvider: vi
