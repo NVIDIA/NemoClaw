@@ -550,6 +550,7 @@ function nativeCompatibleOnboardingFixture(
     importProviderProfile,
     getProvider,
     createProvider,
+    ensureProviderPolicyComposition: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as OpenShellProviderAdapter;
   const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
   const updateSandbox = vi.fn(() => true);
@@ -697,11 +698,12 @@ describe("native compatible onboarding", () => {
     },
   );
   it("refuses an incompatible OpenAI frontend before importing or activating a provider", async () => {
-    const { run, createProvider, importProviderProfile } = nativeCompatibleOnboardingFixture(
-      "compatible-anthropic-endpoint",
-      false,
+    const { run, createProvider, importProviderProfile, surfaceProbe } =
+      nativeCompatibleOnboardingFixture("compatible-anthropic-endpoint", false);
+    await expect(run).rejects.toThrow(
+      "The selected agent requires an OpenAI-compatible /v1/chat/completions surface, but the endpoint did not answer it. Choose a compatible endpoint or an agent that supports Anthropic Messages.",
     );
-    await expect(run).rejects.toThrow();
+    expect(surfaceProbe).toHaveBeenCalledOnce();
     expect(createProvider).not.toHaveBeenCalled();
     expect(importProviderProfile).not.toHaveBeenCalled();
   });

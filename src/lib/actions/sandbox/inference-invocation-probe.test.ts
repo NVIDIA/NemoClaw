@@ -137,20 +137,28 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain("-o /dev/null");
   });
 
-  it("probes native NVIDIA through the attached provider without exposing the host credential", () => {
-    const command = buildSandboxInferenceInvocationCommand({
-      ...input,
-      provider: "nvidia-prod",
-      nativeProvider: true,
-    });
+  it.each([
+    ["nvidia/nemotron", 16],
+    ["nvidia/nemotron-3-ultra-550b-a55b", 256],
+  ] as const)(
+    "probes native NVIDIA %s through the attached provider without exposing the host credential",
+    (model, replyTokens) => {
+      const command = buildSandboxInferenceInvocationCommand({
+        ...input,
+        provider: "nvidia-prod",
+        model,
+        nativeProvider: true,
+      });
 
-    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
-    expect(command).not.toContain("https://inference.local");
-    expect(command).not.toContain("NVIDIA_API_KEY");
-    expect(command).toContain("openshell:resolve:env:");
-    expect(command).not.toContain("nemoclaw-openshell-provider");
-  });
+      expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+      expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
+      expect(command).not.toContain("https://inference.local");
+      expect(command).not.toContain("NVIDIA_API_KEY");
+      expect(command).toContain("openshell:resolve:env:");
+      expect(command).not.toContain("nemoclaw-openshell-provider");
+      expect(command).toContain(`"max_tokens":${replyTokens}`);
+    },
+  );
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
     const execute = vi.fn(async () => ({
