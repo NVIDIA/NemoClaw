@@ -2514,6 +2514,118 @@ maybe_install_openshell_during_install() {
   install_nemoclaw_openshell_gateway_user_service
 }
 
+is_nemoclaw_owned_acp_cli_target() {
+  local candidate="${1:-}" node_path
+  [[ -n "$candidate" && -f "$candidate" && -x "$candidate" ]] || return 1
+  node_path="$(command -v node 2>/dev/null || true)"
+  [[ -n "$node_path" && -x "$node_path" ]] || return 1
+  # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
+  "$node_path" -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const candidate = process.argv[1];
+const expectedStateRoot = process.argv[2];
+const uid = typeof process.getuid === "function" ? process.getuid() : null;
+if (uid === null) process.exit(1);
+function ownedRegularFile(file) {
+  const stat = fs.lstatSync(file);
+  return stat.isFile() && !stat.isSymbolicLink() && stat.uid === uid;
+}
+try {
+  const candidateBefore = fs.lstatSync(candidate);
+  const resolved = fs.realpathSync(candidate);
+  const cliRelativePath = path.join("dist", "lib", "acp", "main.js");
+  let packageRoot;
+  let managedSource = false;
+  const npmPackageSuffix = path.join("node_modules", "nemoclaw", cliRelativePath);
+  if (resolved.endsWith(`${path.sep}${npmPackageSuffix}`)) {
+    packageRoot = resolved.slice(0, -cliRelativePath.length - 1);
+  } else {
+    const expectedSourceRoot = path.join(expectedStateRoot, "source");
+    if (!path.isAbsolute(expectedStateRoot)) process.exit(1);
+    const stateStat = fs.lstatSync(expectedStateRoot);
+    const sourceStat = fs.lstatSync(expectedSourceRoot);
+    if (!stateStat.isDirectory() || stateStat.isSymbolicLink() ||
+        !sourceStat.isDirectory() || sourceStat.isSymbolicLink() ||
+        (stateStat.uid !== uid || sourceStat.uid !== uid)) process.exit(1);
+    packageRoot = fs.realpathSync(expectedSourceRoot);
+    if (packageRoot !== path.dirname(path.dirname(path.dirname(path.dirname(resolved))))) process.exit(1);
+    if (resolved !== path.join(packageRoot, cliRelativePath)) process.exit(1);
+    managedSource = true;
+  }
+  const packageStat = fs.lstatSync(packageRoot);
+  if (!packageStat.isDirectory() || packageStat.isSymbolicLink() || packageStat.uid !== uid) process.exit(1);
+  const packageFile = path.join(packageRoot, "package.json");
+  const identityFile = path.join(packageRoot, "dist", "build-identity.json");
+  if (!ownedRegularFile(packageFile) || !ownedRegularFile(identityFile) || !ownedRegularFile(resolved)) process.exit(1);
+  const pkgBefore = fs.lstatSync(packageFile);
+  const identityBefore = fs.lstatSync(identityFile);
+  const executableBefore = fs.statSync(resolved);
+  const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+  const identity = JSON.parse(fs.readFileSync(identityFile, "utf8"));
+  if (pkg.name !== "nemoclaw" || pkg.bin?.["nemoclaw-acp"] !== "./dist/lib/acp/main.js") process.exit(1);
+  // Keep these checks aligned with SOURCE_REVISION_PATTERN/PUBLIC_VERSION_PATTERN in src/lib/core/version.ts.
+  const publicVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+  if (!publicVersionPattern.test(pkg.version ?? "")) process.exit(1);
+  if (!publicVersionPattern.test(identity.nemoclawVersion ?? "")) process.exit(1);
+  if (!/^[0-9a-f]{40,64}$/.test(identity.sourceRevision ?? "")) process.exit(1);
+  if (managedSource) {
+    const gitDir = path.join(packageRoot, ".git");
+    const gitStat = fs.lstatSync(gitDir);
+    if (!gitStat.isDirectory() || gitStat.isSymbolicLink() || gitStat.uid !== uid) process.exit(1);
+    const gitEnv = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (!key.startsWith("GIT_") && value !== undefined) gitEnv[key] = value;
+    }
+    const gitOptions = {
+      encoding: "utf8",
+      env: gitEnv,
+      maxBuffer: 64 * 1024,
+      timeout: 3000,
+    };
+    const revision = execFileSync(
+      "git",
+      ["-C", packageRoot, "rev-parse", "--verify", "HEAD^{commit}"],
+      gitOptions,
+    ).trim();
+    if (revision !== identity.sourceRevision) process.exit(1);
+    execFileSync(
+      "git",
+      ["-C", packageRoot, "diff", "--quiet", "--ignore-submodules", "--"],
+      gitOptions,
+    );
+    execFileSync(
+      "git",
+      ["-C", packageRoot, "diff", "--cached", "--quiet", "--ignore-submodules", "--"],
+      gitOptions,
+    );
+  }
+  const versionOutput = execFileSync(process.execPath, [resolved, "--version"], {
+    encoding: "utf8",
+    env: {
+      HOME: process.env.HOME ?? "",
+      NO_COLOR: "1",
+      PATH: path.dirname(process.execPath),
+    },
+    maxBuffer: 64 * 1024,
+    timeout: 3000,
+  }).trim();
+  if (versionOutput !== identity.nemoclawVersion) process.exit(1);
+  const candidateAfter = fs.lstatSync(candidate);
+  const resolvedAfter = fs.realpathSync(candidate);
+  const executableAfter = fs.statSync(resolved);
+  const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+  if (resolvedAfter !== resolved || !sameFile(candidateBefore, candidateAfter) ||
+      !sameFile(executableBefore, executableAfter) ||
+      !sameFile(pkgBefore, fs.lstatSync(packageFile)) ||
+      !sameFile(identityBefore, fs.lstatSync(identityFile))) process.exit(1);
+} catch {
+  process.exit(1);
+}
+' "$candidate" "$(nemoclaw_state_root)"
+}
+
 is_installer_managed_cli_shim() {
   local shim_path="${1:-}" cli_bin="${2:-}" canonical_cli_path="${3:-}"
   local line path_line node_dir path_dir exec_line shim_cli_path
@@ -2555,7 +2667,8 @@ is_installer_managed_cli_shim() {
   shim_cli_path="${exec_line#"$exec_prefix"}"
   shim_cli_path="${shim_cli_path%"$exec_suffix"}"
   [[ "$shim_cli_path" == */"$cli_bin" && -e "$shim_cli_path" ]] || return 1
-  [[ "$shim_cli_path" -ef "$canonical_cli_path" ]]
+  [[ "$shim_cli_path" -ef "$canonical_cli_path" ]] && return 0
+  [[ "$cli_bin" == "nemoclaw-acp" ]] && is_nemoclaw_owned_acp_cli_target "$shim_cli_path"
 }
 
 is_npm_managed_nemoclaw_acp_link() {
