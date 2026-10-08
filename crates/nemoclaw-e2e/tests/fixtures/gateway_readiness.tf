@@ -4,6 +4,7 @@ terraform {
   required_version = "= 1.12.6"
   required_providers {
     nemoclaw = { source = "registry.opentofu.org/nvidia/nemoclaw", version = "@PROVIDER_VERSION@" }
+    openshell = { source = "registry.opentofu.org/nvidia/openshell", version = "@PROVIDER_VERSION@" }
     docker = { source = "registry.opentofu.org/kreuzwerker/docker", version = "4.6.0" }
   }
 }
@@ -17,6 +18,9 @@ provider "nemoclaw" {
   endpoint = "http://127.0.0.1:1"
 }
 provider "nemoclaw" {
+  endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
+}
+provider "openshell" {
   endpoint = docker_container.gateway.id != "" ? "http://127.0.0.1:${var.port}" : ""
 }
 data "docker_image" "gateway" { name = "@GATEWAY_IMAGE@" }

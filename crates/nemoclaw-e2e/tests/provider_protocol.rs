@@ -58,7 +58,7 @@ impl Experiment {
         fs::write(self.dir.path().join("main.tf.json"), json!({
             "terraform": {"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
             "provider":{"nemoclaw":{}},
-            "resource":{"openshell_provider_registration":{"inference":{"name":"inference", "owner":"deployment", "generation":"generation", "endpoint":endpoint}}}
+            "resource":{"nemoclaw_provider":{"inference":{"name":"inference", "owner":"deployment", "generation":"generation", "endpoint":endpoint}}}
         }).to_string()).unwrap();
     }
     fn mode(&self, mode: &str) {

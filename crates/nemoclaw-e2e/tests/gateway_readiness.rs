@@ -38,8 +38,11 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     let mut graph = json!({
-        "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
-        "provider":{"nemoclaw":{"endpoint":gateway.endpoint}},
+        "terraform":{"required_version":"= 1.12.6","required_providers":{
+            "nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"},
+            "openshell":{"source":"registry.opentofu.org/nvidia/openshell"}
+        }},
+        "provider":{"nemoclaw":{"endpoint":gateway.endpoint},"openshell":{"endpoint":gateway.endpoint}},
         "resource":{"terraform_data":{"bootstrap":{"input":"bound"}}},
         "data":{
             "nemoclaw_gateway_readiness":{"current":{

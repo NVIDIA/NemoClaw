@@ -3,7 +3,8 @@
 terraform {
   required_version = "= 1.12.6"
   required_providers {
-    nemoclaw = { source = "registry.opentofu.org/nvidia/nemoclaw" }
+    nemoclaw  = { source = "registry.opentofu.org/nvidia/nemoclaw" }
+    openshell = { source = "registry.opentofu.org/nvidia/openshell" }
   }
 }
 variable "endpoint" { type = string }
@@ -14,6 +15,10 @@ variable "enabled" { default = true }
 variable "destroying" { default = false }
 variable "image" { default = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
 provider "nemoclaw" {
+  endpoint = var.endpoint
+  destroy  = var.destroying
+}
+provider "openshell" {
   endpoint = var.endpoint
   destroy  = var.destroying
 }

@@ -289,8 +289,8 @@ async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     assert!(tofu.is_absolute() && provider.is_absolute());
     let directory = TofuWorkspace::new(tofu, provider);
     fs::write(directory.path().join("main.tf.json"), json!({
-        "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
-        "provider":{"nemoclaw":{"endpoint":fixture.endpoint}},
+        "terraform":{"required_version":"= 1.12.6", "required_providers":{"openshell":{"source":"registry.opentofu.org/nvidia/openshell"}}},
+        "provider":{"openshell":{"endpoint":fixture.endpoint}},
         "resource":{"terraform_data":{"bootstrap":{"input":"docker"}}},
         "data":{"openshell_gateway":{"current":{
             "required_compute_drivers":["${terraform_data.bootstrap.output}"],

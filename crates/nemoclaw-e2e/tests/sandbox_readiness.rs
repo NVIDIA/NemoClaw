@@ -172,6 +172,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
     graph["provider"]["nemoclaw"]["destroy"] = json!(true);
+    graph["provider"]["openshell"]["destroy"] = json!(true);
     let mut workspace = graph["resource"]["openshell_workspace"].clone();
     workspace["deployment"]
         .as_object_mut()
