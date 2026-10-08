@@ -336,7 +336,7 @@ describe("credentials oclif commands", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("deletes a provider credential with --yes", async () => {
+  it("deletes native and legacy NVIDIA provider credentials with --yes", async () => {
     const calls = installRuntimeBridge({
       runOpenshell: (args, opts) => {
         calls.push({ args, opts });
@@ -347,9 +347,9 @@ describe("credentials oclif commands", () => {
 
     const output = await captureOutput(() => CredentialsResetCommand.run(["nvidia-prod", "--yes"]));
 
-    expect(calls).toEqual([
-      {
-        args: ["provider", "delete", "-g", "nemoclaw", "nemoclaw-nvidia-prod-v1"],
+    expect(calls).toEqual(
+      ["nemoclaw-nvidia-prod-v1", "nvidia-prod"].map((providerName) => ({
+        args: ["provider", "delete", "-g", "nemoclaw", providerName],
         opts: {
           env: expect.any(Object),
           ignoreError: true,
@@ -358,8 +358,8 @@ describe("credentials oclif commands", () => {
           suppressOutput: true,
           timeout: 30_000,
         },
-      },
-    ]);
+      })),
+    );
     expect(output.stdout).toContain("Removed provider 'nvidia-prod'");
     expect(output.stdout).toContain("Rerun 'nemoclaw onboard'");
   });

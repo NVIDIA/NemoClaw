@@ -1043,26 +1043,48 @@ function nativeNvidiaDepartureRegistryFields(
 async function restorePreviousNativeNvidiaAfterFailedPublish(input: {
   detached: boolean;
   committed: boolean;
+  routeApplied: boolean;
+  routeAmbiguous: boolean;
+  restoreRoute: () => Promise<string | null>;
   previousAttachment?: NativeNvidiaProviderAttachment;
   gatewayName: string;
   sandboxName: string;
   error: unknown;
   deps: InferenceSetDeps;
 }): Promise<void> {
-  if (!input.detached || input.committed || !input.previousAttachment) return;
-  try {
-    await ensureNativeNvidiaProviderAttached({
-      adapter: input.deps.providerAdapter,
-      target: { kind: "named", gatewayName: input.gatewayName },
-      sandboxName: input.sandboxName,
-      expected: input.previousAttachment,
-    });
-  } catch (reattachError) {
+  if (input.committed || !input.previousAttachment) return;
+  const recoveryErrors: string[] = [];
+  if (input.routeApplied && !input.routeAmbiguous) {
+    try {
+      const failure = await input.restoreRoute();
+      if (failure)
+        recoveryErrors.push(
+          `Failed to restore the previous OpenShell inference selection: ${failure}`,
+        );
+    } catch (error) {
+      recoveryErrors.push(
+        `Failed to restore the previous OpenShell inference selection: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (input.detached) {
+    try {
+      await ensureNativeNvidiaProviderAttached({
+        adapter: input.deps.providerAdapter,
+        target: { kind: "named", gatewayName: input.gatewayName },
+        sandboxName: input.sandboxName,
+        expected: input.previousAttachment,
+      });
+    } catch (error) {
+      recoveryErrors.push(
+        `Native NVIDIA access was detached before the failed switch, but restoring the attachment failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (recoveryErrors.length > 0) {
     const detail = input.error instanceof Error ? input.error.message : String(input.error);
-    const recoveryDetail =
-      reattachError instanceof Error ? reattachError.message : String(reattachError);
     throw new InferenceSetError(
-      `${detail}\n  Native NVIDIA access was detached before the failed switch, but restoring the attachment failed: ${recoveryDetail}`,
+      `${detail}\n  ${recoveryErrors.join("\n  ")}`,
       input.error instanceof InferenceSetError ? input.error.exitCode : 1,
     );
   }
@@ -2004,6 +2026,9 @@ async function runInferenceSetWithoutHostLock(
     await restorePreviousNativeNvidiaAfterFailedPublish({
       detached: previousNativeNvidiaDetached,
       committed: previousNativeNvidiaDetachCommitted,
+      routeApplied: appliedInferenceSelection,
+      routeAmbiguous: ambiguousInferenceSelection,
+      restoreRoute: restorePreviousInferenceSelection,
       previousAttachment: previousNativeNvidiaAttachment,
       gatewayName: preparedRoute.gatewayName,
       sandboxName,
