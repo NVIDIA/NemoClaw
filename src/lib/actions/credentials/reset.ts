@@ -283,8 +283,7 @@ export async function runCredentialsResetAction(
 
     if (key === NVIDIA_HOSTED_LOGICAL_PROVIDER) {
       const lines: string[] = [];
-      let complete = true;
-      for (const name of [NVIDIA_HOSTED_NATIVE_PROVIDER, NVIDIA_HOSTED_LOGICAL_PROVIDER]) {
+      for (const name of [NVIDIA_HOSTED_LOGICAL_PROVIDER, NVIDIA_HOSTED_NATIVE_PROVIDER]) {
         const result = await deleteProviderWithRecovery(name, target, providerAdapter, {
           detachAttached: false,
         });
@@ -299,12 +298,9 @@ export async function runCredentialsResetAction(
             target.gatewayName,
           );
           lines.push(...outcome.lines);
-          complete = outcome.ok && complete;
-          if (!result.ok && result.error?.kind === "command" && result.error.reason === "attached")
-            return fail(lines);
+          if (!outcome.ok) return fail(lines);
         }
       }
-      if (!complete) return fail(lines);
       forgetExtraProvider(publicKey);
       (deps.clearNativeNvidiaProviderAuthority ?? clearNativeNvidiaProviderAuthority)(
         target.gatewayName,

@@ -1484,17 +1484,20 @@ export function createProviderEffectBoundary(input: {
       deps: input.preparationDeps,
     });
   };
+  const validateNativeNvidiaReceipt = async () => {
+    if (
+      usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
+      !input.expectedNativeNvidiaProviderAttachment
+    ) {
+      throw new Error(
+        `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
+      );
+    }
+  };
   if (!input.deferred) {
     return {
       validateBeforeCreate: async () => {
-        if (
-          usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
-          !input.expectedNativeNvidiaProviderAttachment
-        ) {
-          throw new Error(
-            `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
-          );
-        }
+        await validateNativeNvidiaReceipt();
         await validate();
       },
       publishBeforeCreate: async () => {
@@ -1510,7 +1513,7 @@ export function createProviderEffectBoundary(input: {
     };
   }
   return {
-    validateBeforeCreate: async () => undefined,
+    validateBeforeCreate: validateNativeNvidiaReceipt,
     publishBeforeCreate: async () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(

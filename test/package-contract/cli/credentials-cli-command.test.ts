@@ -348,7 +348,7 @@ describe("credentials oclif commands", () => {
     const output = await captureOutput(() => CredentialsResetCommand.run(["nvidia-prod", "--yes"]));
 
     expect(calls).toEqual(
-      ["nemoclaw-nvidia-prod-v1", "nvidia-prod"].map((providerName) => ({
+      ["nvidia-prod", "nemoclaw-nvidia-prod-v1"].map((providerName) => ({
         args: ["provider", "delete", "-g", "nemoclaw", providerName],
         opts: {
           env: expect.any(Object),
