@@ -30,6 +30,15 @@ function runValidator(envPath: string) {
   });
 }
 
+function runEnvTextValidation(input: string | Buffer) {
+  return spawnSync("python3", [VALIDATOR, "env-text"], {
+    encoding: "utf-8",
+    timeout: 5000,
+    input,
+    env: { HOME: os.tmpdir(), PATH: process.env.PATH ?? "" },
+  });
+}
+
 function extractShellFunction(source: string, name: string): string {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = source.match(new RegExp(`${escaped}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
@@ -182,6 +191,33 @@ function runManagedGatewayEnvValidation(
     { encoding: "utf-8", timeout: 5000 },
   );
 }
+
+describe("Hermes env-text secret boundary", () => {
+  it("accepts a resolver placeholder from stdin", () => {
+    const result = runEnvTextValidation(
+      `TEAMS_CLIENT_SECRET=openshell:resolve:env:s${"b".repeat(64)}_MSTEAMS_APP_PASSWORD\n`,
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects a raw secret from stdin without printing its value", () => {
+    const rawSecret = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runEnvTextValidation(`TEAMS_CLIENT_SECRET=${rawSecret}\n`);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("TEAMS_CLIENT_SECRET");
+    expect(`${result.stdout}${result.stderr}`).not.toContain(rawSecret);
+  });
+
+  it("rejects stdin above the env byte limit", () => {
+    const result = runEnvTextValidation(Buffer.alloc(MAX_ENV_BYTES + 1, 0x20));
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(`${MAX_ENV_BYTES}-byte limit`);
+  });
+});
 
 describe("Hermes env secret-boundary resource limits", () => {
   it("accepts the normal 0640 mutable env-file mode", () => {
