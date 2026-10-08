@@ -18,6 +18,7 @@ import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/w
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
+import { withCurrentPortableHostFenceTry } from "../state/portable-uninstall-retirement";
 import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
@@ -46,6 +47,11 @@ import {
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
 import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
+
+/** Fence sandbox image creation through publication against host-wide GC. */
+export function withSandboxImageRegistrationFence<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withCurrentPortableHostFenceTry(operation);
+}
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
