@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeBedrockProviderAttachment } from "../../inference/native-bedrock/contract";
+import { normalizeNativeCompatibleProviderAttachment } from "../../inference/native-compatible/contract";
 import { ensureNativeBedrockProviderAttached } from "../../inference/native-bedrock/profile";
 
 import { ensureNativeCompatibleProviderAttached } from "../../inference/native-compatible/profile";
@@ -71,6 +73,51 @@ export function usesNativeNvidiaProvider(inferenceProvider: string | null): bool
   return inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER;
 }
 
+export function validateNativeProviderReceiptsBeforeCreate(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly inferenceProvider: string | null;
+  readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly expectedNativeCompatibleProviderAttachment?: SandboxEntry["nativeCompatibleProviderAttachment"];
+  readonly expectedNativeBedrockProviderAttachment?: SandboxEntry["nativeBedrockProviderAttachment"];
+}): void {
+  if (usesNativeNvidiaProvider(input.inferenceProvider))
+    requireNativeNvidiaProviderReceipt({
+      sandboxName: input.sandboxName,
+      expected: input.expectedNativeNvidiaProviderAttachment,
+    });
+  if (usesNativeCompatibleProvider(input.inferenceProvider)) {
+    const expected = normalizeNativeCompatibleProviderAttachment(
+      input.expectedNativeCompatibleProviderAttachment,
+    );
+    if (!expected || expected.providerName !== input.inferenceProvider)
+      throw new Error("Sandbox is missing its matching native compatible provider receipt.");
+  }
+  if (usesNativeBedrockProvider(input.inferenceProvider)) {
+    const expected = normalizeNativeBedrockProviderAttachment(
+      input.expectedNativeBedrockProviderAttachment,
+    );
+    if (
+      !expected ||
+      expected.providerName !== input.inferenceProvider ||
+      expected.gatewayName !== input.gatewayName
+    )
+      throw new Error("Sandbox is missing its matching native Bedrock provider receipt.");
+  }
+}
+
+export function requireNativeNvidiaProviderReceipt(input: {
+  readonly sandboxName: string;
+  readonly expected: SandboxEntry["nativeNvidiaProviderAttachment"];
+}): NonNullable<SandboxEntry["nativeNvidiaProviderAttachment"]> {
+  if (!input.expected) {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
+    );
+  }
+  return input.expected;
+}
+
 export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
@@ -79,16 +126,12 @@ export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
   readonly deps: ProviderPreparationDeps;
 }): Promise<void> {
   if (!usesNativeNvidiaProvider(input.inferenceProvider)) return;
-  if (!input.expected) {
-    throw new Error(
-      `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
-    );
-  }
+  const expected = requireNativeNvidiaProviderReceipt(input);
   await ensureNativeNvidiaProviderAttached({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
     sandboxName: input.sandboxName,
-    expected: input.expected,
+    expected,
   });
 }
 

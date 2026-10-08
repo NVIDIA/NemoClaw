@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
 import { nativeBedrockIdentity } from "../../inference/native-bedrock/contract";
 import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../../inference/bedrock-runtime";
 vi.mock("../../inference/bedrock-runtime-adapter", async (original) => ({
@@ -44,7 +45,10 @@ function providerAdapter(providerId: string): OpenShellProviderAdapter {
   } as unknown as OpenShellProviderAdapter;
 }
 
-function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
+function nativeProviderBoundary(
+  adapter: OpenShellProviderAdapter,
+  overrides: Partial<Parameters<typeof createProviderEffectBoundary>[0]> = {},
+) {
   return createProviderEffectBoundary({
     deferred: false,
     sandboxName: "alpha",
@@ -72,6 +76,7 @@ function nativeProviderBoundary(adapter: OpenShellProviderAdapter) {
     runVerifiedSandboxCreateEffects: null,
     activateDeferredProviderEffects: async () => [],
     revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    ...overrides,
   });
 }
 
@@ -141,4 +146,132 @@ describe("native Bedrock post-create provider verification", () => {
     expect(adapter.attachProvider).not.toHaveBeenCalled();
     expect(adapter.detachProvider).not.toHaveBeenCalled();
   });
+});
+
+const compatibleIdentity = nativeCompatibleEndpointIdentity({
+  addresses: ["93.184.216.34"],
+  endpointUrl: "https://93.184.216.34/v1",
+  api: "openai-completions",
+});
+const compatibleReceipt = {
+  schemaVersion: 1 as const,
+  profileId: compatibleIdentity.profileId,
+  providerName: compatibleIdentity.providerName,
+  providerId: recordedProviderId,
+  addresses: ["93.184.216.34"],
+  endpointUrl: compatibleIdentity.endpoint,
+  api: compatibleIdentity.api,
+};
+const bedrockReceipt = {
+  ...binding,
+  schemaVersion: 1 as const,
+  ...identity,
+  providerId: recordedProviderId,
+};
+const otherCompatibleIdentity = nativeCompatibleEndpointIdentity({
+  addresses: ["93.184.216.34"],
+  endpointUrl: "https://93.184.216.34/other",
+  api: "openai-completions",
+});
+const invalidReceipts = [
+  { name: "compatible missing", provider: compatibleIdentity.providerName },
+  {
+    name: "compatible malformed",
+    provider: compatibleIdentity.providerName,
+    expectedNativeCompatibleProviderAttachment: {
+      ...compatibleReceipt,
+      providerId: "",
+    },
+  },
+  {
+    name: "compatible mismatched",
+    provider: compatibleIdentity.providerName,
+    expectedNativeCompatibleProviderAttachment: {
+      ...compatibleReceipt,
+      profileId: otherCompatibleIdentity.profileId,
+      providerName: otherCompatibleIdentity.providerName,
+      endpointUrl: otherCompatibleIdentity.endpoint,
+    },
+  },
+  {
+    name: "Bedrock missing",
+    provider: identity.providerName,
+    expectedNativeBedrockProviderAttachment: undefined,
+  },
+  {
+    name: "Bedrock malformed",
+    provider: identity.providerName,
+    expectedNativeBedrockProviderAttachment: {
+      ...bedrockReceipt,
+      providerId: "",
+    },
+  },
+  {
+    name: "Bedrock mismatched",
+    provider: nativeBedrockIdentity({ ...binding, gatewayName: "other" }).providerName,
+    expectedNativeBedrockProviderAttachment: {
+      ...bedrockReceipt,
+      ...nativeBedrockIdentity({ ...binding, gatewayName: "other" }),
+      gatewayName: "other",
+    },
+  },
+];
+describe.each([false, true])("native receipt pre-create validation deferred=%s", (deferred) => {
+  it.each([
+    {
+      name: "compatible",
+      provider: compatibleIdentity.providerName,
+      expectedNativeCompatibleProviderAttachment: compatibleReceipt,
+    },
+    {
+      name: "Bedrock",
+      provider: identity.providerName,
+      expectedNativeBedrockProviderAttachment: bedrockReceipt,
+    },
+  ])(
+    "accepts a valid $name receipt before create",
+    async ({ name: _name, provider, ...receipts }) => {
+      const boundary = nativeProviderBoundary(providerAdapter(recordedProviderId), {
+        ...receipts,
+        deferred,
+        preparationInput: {
+          openshellDriver: "docker",
+          inferenceProvider: provider,
+          messagingProviders: [],
+          messagingProviderRequests: [],
+          extraProviders: [],
+          gatewayName: "nemoclaw",
+        },
+      });
+      await expect(boundary.validateBeforeCreate()).resolves.toBeUndefined();
+    },
+  );
+  it.each(invalidReceipts)(
+    "rejects $name before create effects",
+    async ({ name: _name, provider, ...receipts }) => {
+      const adapter = providerAdapter(recordedProviderId);
+      const createSandbox = vi.fn();
+      const boundary = nativeProviderBoundary(adapter, {
+        ...receipts,
+        deferred,
+        preparationInput: {
+          openshellDriver: "docker",
+          inferenceProvider: provider,
+          messagingProviders: [],
+          messagingProviderRequests: [],
+          extraProviders: [],
+          gatewayName: "nemoclaw",
+        },
+      });
+      const attemptCreate = async () => {
+        await boundary.validateBeforeCreate();
+        await boundary.publishBeforeCreate();
+        await createSandbox();
+      };
+      await expect(attemptCreate()).rejects.toThrow(/receipt/u);
+      expect(createSandbox).not.toHaveBeenCalled();
+      expect(adapter.getProvider).not.toHaveBeenCalled();
+      expect(adapter.attachProvider).not.toHaveBeenCalled();
+    },
+  );
 });

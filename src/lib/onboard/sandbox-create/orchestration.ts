@@ -91,6 +91,7 @@ import {
 } from "./identity-boundary";
 import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
+  validateNativeProviderReceiptsBeforeCreate,
   usesNativeNvidiaProvider,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
   verifyNativeNvidiaAttachmentAfterCreate,
@@ -1484,20 +1485,16 @@ export function createProviderEffectBoundary(input: {
       deps: input.preparationDeps,
     });
   };
-  const validateNativeNvidiaReceipt = async () => {
-    if (
-      usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
-      !input.expectedNativeNvidiaProviderAttachment
-    ) {
-      throw new Error(
-        `Sandbox '${input.sandboxName}' is missing its native NVIDIA provider identity receipt.`,
-      );
-    }
+  const validateNativeReceipts = async () => {
+    validateNativeProviderReceiptsBeforeCreate({
+      ...input,
+      inferenceProvider: input.preparationInput.inferenceProvider,
+    });
   };
   if (!input.deferred) {
     return {
       validateBeforeCreate: async () => {
-        await validateNativeNvidiaReceipt();
+        await validateNativeReceipts();
         await validate();
       },
       publishBeforeCreate: async () => {
@@ -1513,7 +1510,7 @@ export function createProviderEffectBoundary(input: {
     };
   }
   return {
-    validateBeforeCreate: validateNativeNvidiaReceipt,
+    validateBeforeCreate: validateNativeReceipts,
     publishBeforeCreate: async () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(
