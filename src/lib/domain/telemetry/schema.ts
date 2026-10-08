@@ -242,6 +242,8 @@ export function proposedSmsSchema(): Record<string, unknown> {
       events: {
         nemoclaw_operation_finished: {
           ...operationParametersSchema,
+          description:
+            "One complete terminal NemoClaw operation record containing all approved anonymous versions, platform, agent/model/provider associations, settings, messaging, coarse-location status and QA label.",
           eventMeta: {
             service: "telemetry",
             gdpr: {

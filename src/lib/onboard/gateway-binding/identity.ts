@@ -57,6 +57,39 @@ export interface SandboxGatewayBinding {
   gatewayPort?: number | null;
 }
 
+/** Resolve the gateway identity recorded by a registry row, rejecting ambiguity. */
+export function registryEntryGatewayPort(entry: SandboxGatewayBinding & { name: string }): number {
+  const stateError = (message: string): Error =>
+    new Error(`Cannot safely inspect NemoClaw gateway state: ${message}`);
+  const hasPort = entry.gatewayPort !== undefined && entry.gatewayPort !== null;
+  const hasName = entry.gatewayName !== undefined && entry.gatewayName !== null;
+  const port = entry.gatewayPort;
+  const name = entry.gatewayName;
+
+  if (
+    hasPort &&
+    (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
+  ) {
+    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayPort`);
+  }
+  if (hasName && typeof name !== "string") {
+    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an invalid gatewayName`);
+  }
+
+  const portFromName = typeof name === "string" ? resolveGatewayPortFromName(name) : null;
+  if (hasName && portFromName === null) {
+    throw stateError(`sandbox ${JSON.stringify(entry.name)} has an unrecognized gatewayName`);
+  }
+  if (typeof port === "number") {
+    if (typeof name === "string" && resolveGatewayName(port) !== name) {
+      throw stateError(`sandbox ${JSON.stringify(entry.name)} has conflicting gateway identity`);
+    }
+    return port;
+  }
+  if (portFromName !== null) return portFromName;
+  return DEFAULT_GATEWAY_PORT;
+}
+
 /**
  * Recognises a NemoClaw-namespaced gateway name. The persisted form is either
  * the bare `nemoclaw` or the per-port `nemoclaw-<port>` derivation — anything
