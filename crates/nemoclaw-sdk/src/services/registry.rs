@@ -92,12 +92,12 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
         },
         ResourceSchema {
             kind: installers::ollama::STORAGE_KIND,
-            fields: &["spec"],
+            fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],
         },
         ResourceSchema {
             kind: installers::vllm::STORAGE_KIND,
-            fields: &["spec"],
+            fields: &crate::managed::Storage::ATTRIBUTES,
             mutable: &[],
         },
     ]

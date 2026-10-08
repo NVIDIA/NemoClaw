@@ -27,7 +27,7 @@ pub(crate) fn definitions() -> [crate::Definition; 4] {
         schema_definition(ollama::proxy::STORAGE),
         schema_definition(ollama::proxy::MODEL)
             .describe(installers::ollama::proxy::describe_model_error),
-        schema_definition(ollama::STORAGE_KIND).validate_spec(validate_resource_spec),
-        schema_definition(vllm::STORAGE_KIND).validate_spec(validate_resource_spec),
+        schema_definition(ollama::STORAGE_KIND).validate_attribute(crate::managed::Storage::check),
+        schema_definition(vllm::STORAGE_KIND).validate_attribute(crate::managed::Storage::check),
     ]
 }

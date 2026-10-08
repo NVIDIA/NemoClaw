@@ -255,7 +255,7 @@ fn teardown_expected(
         if runtime
             && address != crate::kubernetes::gateway::ADDRESS
             && !plan::disposable(address)
-            && want["spec"] != binding.spec
+            && binding.differs(want)
         {
             return Err(Error::Conflict(
                 "destroy storage configuration disagrees with retained intent",
@@ -529,6 +529,26 @@ mod tests {
         );
     }
 
+    /// A state binding that records a compiled target's configuration.
+    fn bound(target: &crate::compile::Target) -> StateBinding {
+        let value = |attribute: &str| target.values.get(attribute).cloned().unwrap_or_default();
+        if plan::disposable(&target.address) {
+            return StateBinding {
+                id: format!("id-{}", target.address),
+                ..Default::default()
+            };
+        }
+        StateBinding {
+            id: format!("id-{}", target.address),
+            spec: value("spec"),
+            name: value("name"),
+            owner: value("owner"),
+            generation: value("generation"),
+            engine: value("engine"),
+            ..Default::default()
+        }
+    }
+
     fn runtime_state() -> (Record, BTreeMap<String, StateBinding>) {
         let document =
             Document::parse(include_str!("../../../tests/fixtures/config/spark.yaml").as_bytes())
@@ -541,20 +561,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .filter(|target| !target.address.starts_with("data."))
-            .map(|target| {
-                (
-                    target.address.clone(),
-                    StateBinding {
-                        id: format!("id-{}", target.address),
-                        spec: if plan::disposable(&target.address) {
-                            String::new()
-                        } else {
-                            target.values.get("spec").cloned().unwrap_or_default()
-                        },
-                        ..Default::default()
-                    },
-                )
-            })
+            .map(|target| (target.address.clone(), bound(&target)))
             .collect();
         (record, bindings)
     }
@@ -667,20 +674,7 @@ mod tests {
                 .unwrap()
                 .into_iter()
                 .filter(|target| !target.address.starts_with("data."))
-                .map(|target| {
-                    (
-                        target.address.clone(),
-                        StateBinding {
-                            id: format!("id-{}", target.address),
-                            spec: if plan::disposable(&target.address) {
-                                String::new()
-                            } else {
-                                target.values.get("spec").cloned().unwrap_or_default()
-                            },
-                            ..Default::default()
-                        },
-                    )
-                })
+                .map(|target| (target.address.clone(), bound(&target)))
                 .collect();
         teardown_expected(&record, &bindings, true).unwrap();
         let storage_kind = service_storage(&record)
@@ -764,10 +758,13 @@ mod tests {
         assert_eq!(graph["resource"].as_object().unwrap().len(), 3);
         for address in [GATEWAY_STORAGE, retained_storage.as_str()] {
             let (kind, name) = address.split_once('.').unwrap();
-            assert_eq!(
-                graph["resource"][kind][name]["spec"],
-                bindings[address].spec
-            );
+            let attributes = graph["resource"][kind][name]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                .collect();
+            assert!(!bindings[address].differs(&attributes), "{address}");
             assert_eq!(
                 graph["resource"][kind][name]["lifecycle"]["prevent_destroy"],
                 true
@@ -783,7 +780,10 @@ mod tests {
         assert!(teardown_expected(&record, &undeclared, true).is_err());
         let mut changed_storage = bindings.clone();
         let retained_storage = service_storage(&record);
-        changed_storage.get_mut(&retained_storage).unwrap().spec = "{}".into();
+        changed_storage
+            .get_mut(&retained_storage)
+            .unwrap()
+            .generation = "c".repeat(32);
         assert!(teardown_expected(&record, &changed_storage, true).is_err());
         let mut changed_compute = bindings;
         changed_compute

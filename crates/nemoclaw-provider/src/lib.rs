@@ -18,6 +18,9 @@ pub type Replaces = fn(field: &str, prior: &State, proposed: &State) -> bool;
 /// Validates an encoded `spec` input for a resource kind.
 pub type ValidateSpec = fn(kind: &str, encoded: &str) -> Result<(), nemoclaw_sdk::Error>;
 
+/// Checks one known input attribute, explaining a rejection without echoing the value.
+pub type ValidateAttribute = fn(attribute: &str, value: &str) -> Result<(), &'static str>;
+
 /// Adds resource context to a diagnostic from the resource's known attributes.
 pub type Describe = fn(error: String, attributes: &Row) -> String;
 
@@ -54,6 +57,7 @@ pub struct Definition {
     pub keep_running_during_destroy: bool,
     pub replaces: Option<Replaces>,
     pub validate_spec: Option<ValidateSpec>,
+    pub validate_attribute: Option<ValidateAttribute>,
     pub describe: Option<Describe>,
 }
 
@@ -71,6 +75,7 @@ impl Definition {
             keep_running_during_destroy: false,
             replaces: None,
             validate_spec: None,
+            validate_attribute: None,
             describe: None,
         }
     }
@@ -104,6 +109,10 @@ impl Definition {
     }
     pub fn validate_spec(mut self, validate: ValidateSpec) -> Self {
         self.validate_spec = Some(validate);
+        self
+    }
+    pub fn validate_attribute(mut self, validate: ValidateAttribute) -> Self {
+        self.validate_attribute = Some(validate);
         self
     }
     pub fn describe(mut self, describe: Describe) -> Self {

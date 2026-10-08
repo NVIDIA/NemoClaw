@@ -32,8 +32,14 @@ fn provider_refreshes_retained_storage_without_changes() {
         assert_eq!(resource["instances"].as_array().unwrap().len(), 1);
         let attrs = &resource["instances"][0]["attributes"];
         assert!(!attrs["id"].as_str().unwrap().is_empty());
+        let mut configuration = json!({"lifecycle":{"prevent_destroy":true}});
+        for attribute in ["spec", "name", "owner", "generation", "engine"] {
+            if attrs[attribute].is_string() {
+                configuration[attribute] = attrs[attribute].clone();
+            }
+        }
         graph["resource"][resource["type"].as_str().unwrap()][resource["name"].as_str().unwrap()] =
-            json!({"spec":attrs["spec"],"lifecycle":{"prevent_destroy":true}});
+            configuration;
     }
     fs::write(
         directory.path().join("terraform.tfstate"),

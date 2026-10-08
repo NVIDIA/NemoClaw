@@ -740,3 +740,26 @@ fn bound_sandbox_guard_allows_configuration_updates_additions_and_explicit_recre
             .unwrap();
     }
 }
+
+#[test]
+fn typed_storage_bindings_compare_their_complete_identity() {
+    let values = serde_json::json!({
+        "id":"engine/nc-0123456789abcdef-inference-qwen-auth/created",
+        "name":"nc-0123456789abcdef-inference-qwen-auth",
+        "owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13",
+        "generation":"b".repeat(32),
+        "engine":"unix:///var/run/docker.sock",
+    });
+    let address = "nemoclaw_inference_storage.inference_qwen_auth";
+    let bindings = read(&state(serde_json::json!([
+        {"address":address, "mode":"managed", "values":values}
+    ])))
+    .unwrap();
+    let compiled: crate::backend::Row = serde_json::from_value(values.clone()).unwrap();
+    assert!(!bindings[address].differs(&compiled));
+    for attribute in ["name", "owner", "generation", "engine"] {
+        let mut changed = compiled.clone();
+        changed.insert(attribute.into(), "changed".into());
+        assert!(bindings[address].differs(&changed), "{attribute}");
+    }
+}

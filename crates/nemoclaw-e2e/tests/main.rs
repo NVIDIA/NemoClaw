@@ -49,6 +49,8 @@ mod sandbox_readiness;
 mod service_capacity;
 #[path = "service_readiness.rs"]
 mod service_readiness;
+#[path = "service_storage.rs"]
+mod service_storage;
 #[path = "spark.rs"]
 mod spark;
 #[path = "tls.rs"]

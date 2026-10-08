@@ -113,7 +113,7 @@ fn runtime_bindings(
                 .insert("spec".into(), old.json()?);
         } else if bindings
             .get(&target.address)
-            .is_some_and(|binding| binding.spec != target.values["spec"])
+            .is_some_and(|binding| binding.differs(&target.values))
         {
             return Err(Error::Conflict(
                 "bound storage specification differs from retained intent",

@@ -23,7 +23,10 @@ resource "docker_volume" "cache" {
   lifecycle { prevent_destroy = true }
 }
 resource "nemoclaw_inference_storage" "credentials" {
-  spec = jsonencode({ Name = "${var.name}-auth", Owner = var.owner, Generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Engine = "@ENGINE@" })
+  name       = "${var.name}-auth"
+  owner      = var.owner
+  generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  engine     = "@ENGINE@"
   lifecycle { prevent_destroy = true }
 }
 data "docker_image" "fixture" { name = "@FIXTURE_IMAGE@" }

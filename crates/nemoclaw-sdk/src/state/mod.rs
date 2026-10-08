@@ -332,8 +332,28 @@ pub(crate) struct StateBinding {
     pub generation: String,
     #[serde(default)]
     pub spec: String,
+    #[serde(default)]
+    pub engine: String,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
+}
+
+impl StateBinding {
+    /// Whether bound configuration differs from compiled values. An encoded
+    /// specification compares whole; typed storage compares its identity.
+    pub(crate) fn differs(&self, values: &crate::backend::Row) -> bool {
+        match values.get("spec") {
+            Some(spec) => *spec != self.spec,
+            None => [
+                ("name", &self.name),
+                ("owner", &self.owner),
+                ("generation", &self.generation),
+                ("engine", &self.engine),
+            ]
+            .into_iter()
+            .any(|(attribute, bound)| values.get(attribute).is_some_and(|want| want != bound)),
+        }
+    }
 }
 
 pub(crate) struct Store {
@@ -511,6 +531,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.workspace = attributes.workspace;
                 binding.owner = attributes.owner;
                 binding.generation = attributes.generation;
+                binding.engine = attributes.engine;
             }
         }
     }
