@@ -33,7 +33,9 @@ describe("native hosted credential registration", () => {
       const recordExtraProvider = vi
         .spyOn(await import("./global"), "recordExtraProvider")
         .mockReturnValue(true);
-      vi.stubEnv(profile.credentialEnv, "host-only-test-value");
+      const hostCredential = profile.hostCredentialEnv ?? profile.credentialEnv;
+      vi.stubEnv("OPENAI_API_KEY", "unrelated-openai-key");
+      vi.stubEnv(hostCredential, "host-only-test-value");
       let present = false;
       const adapter = providerAdapter({
         getProvider: vi.fn(async () =>
@@ -67,7 +69,7 @@ describe("native hosted credential registration", () => {
         {
           provider: profile.logicalProvider,
           type: profile.profileId,
-          credentials: [profile.credentialEnv],
+          credentials: [hostCredential],
           configPairs: [],
           fromExisting: false,
         },
@@ -78,6 +80,11 @@ describe("native hosted credential registration", () => {
         },
       );
       expect(result.exitCode).toBe(0);
+      expect(adapter.createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          credentials: [{ name: profile.credentialEnv, value: "host-only-test-value" }],
+        }),
+      );
       expect(save).toHaveBeenCalledWith("nemoclaw", {
         schemaVersion: 1,
         profileId: profile.profileId,

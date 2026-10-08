@@ -112,7 +112,9 @@ const { createSandbox } = require(${onboardPath});
 
       // Existing gateway providers do not select messaging for this onboarding request.
       const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
-        entry.command.includes("provider update"),
+        /provider (?:create|update|delete)\b.*my-assistant-(?:discord-bridge|slack-bridge|slack-app)\b/u.test(
+          entry.command,
+        ),
       );
       assert.equal(
         providerUpserts.length,

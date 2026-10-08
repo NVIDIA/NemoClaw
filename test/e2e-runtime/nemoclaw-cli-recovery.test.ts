@@ -47,6 +47,7 @@ describe("nemoclaw CLI runtime recovery", () => {
         stateFile,
         JSON.stringify({
           statusCalls: 0,
+          connected: false,
           sandboxGetCalls: 0,
           gatewaySelectCalls: 0,
           gatewayStartCalls: 0,
@@ -64,7 +65,7 @@ const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
 if (args[0] === "status") {
   state.statusCalls += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
-  if (state.statusCalls === 1) {
+  if (!state.connected) {
     process.stdout.write("Gateway: nemoclaw\\nStatus: Disconnected\\n");
   } else {
     process.stdout.write("Gateway: nemoclaw\\nStatus: Connected\\n");
@@ -80,6 +81,7 @@ if (args[0] === "gateway" && args[1] === "start") {
 
 if (args[0] === "gateway" && args[1] === "select") {
   state.gatewaySelectCalls += 1;
+  state.connected = true;
   fs.writeFileSync(statePath, JSON.stringify(state));
   process.exit(0);
 }
@@ -93,6 +95,8 @@ if (args[0] === "sandbox" && args[1] === "get" && (args[2] === "my-assistant" ||
   state.sandboxGetCalls += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
   if (state.sandboxGetCalls === 1) {
+    state.connected = false;
+    fs.writeFileSync(statePath, JSON.stringify(state));
     process.stdout.write("Error:   × transport error\\n  ╰─▶ Connection reset by peer (os error 104)\\n");
     process.exit(1);
   }

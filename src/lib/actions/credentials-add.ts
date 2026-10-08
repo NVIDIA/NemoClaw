@@ -401,13 +401,14 @@ export async function runCredentialsAddAction(
     return fail(recoveryFailureLines);
   }
 
+  const hostedHostCredentialEnv = hostedProfile?.hostCredentialEnv ?? hostedProfile?.credentialEnv;
   if (
     nativeHostedCredentialAlias &&
     !fromExisting &&
-    (credentials.length !== 1 || credentials[0] !== hostedProfile!.credentialEnv)
+    (credentials.length !== 1 || credentials[0] !== hostedHostCredentialEnv)
   ) {
     return fail([
-      `  Native ${hostedProfile!.label} inference requires exactly --credential ${hostedProfile!.credentialEnv}.`,
+      `  Native ${hostedProfile!.label} inference requires exactly --credential ${hostedHostCredentialEnv}.`,
     ]);
   }
 
@@ -421,9 +422,7 @@ export async function runCredentialsAddAction(
           profile: hostedProfile!,
           adapter: providerAdapter,
           target,
-          credentialValue: fromExisting
-            ? null
-            : (process.env[hostedProfile!.credentialEnv] ?? null),
+          credentialValue: fromExisting ? null : (process.env[hostedHostCredentialEnv!] ?? null),
           reuseExistingCredential: fromExisting,
           ...(expected ? { expected } : {}),
         });
