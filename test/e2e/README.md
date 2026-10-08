@@ -590,7 +590,8 @@ Changes to shared catalogue execution paths select every catalogue target.
 
 The `openclaw-inference-switch` target owns fresh custom-image route initialization.
 Its fixture contains only a different baked model and stale limits.
-The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
+The target requires onboarding to select the authenticated compatible baseline without those limits and preserve it through restart and rebuild.
+It then uses `nemoclaw inference set` to select the target provider and model before proving sandbox and OpenClaw gateway inference through the switched route.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.

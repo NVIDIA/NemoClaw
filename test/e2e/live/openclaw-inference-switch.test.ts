@@ -1098,7 +1098,7 @@ test(
       contracts: [
         "the selected runtime is available and an authenticated compatible baseline endpoint is staged",
         "nemoclaw onboard --non-interactive --from onboards an OpenClaw sandbox from a custom Dockerfile",
-        "fresh custom-image onboarding replaces the baked primary route with the selected model",
+        "fresh custom-image onboarding replaces the baked primary route with the authenticated compatible baseline",
         "stale baked context-window and output-token limits are absent after gateway restart and rebuild",
         "the selected route completes real OpenClaw gateway inference before and after both lifecycle operations",
         "the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
