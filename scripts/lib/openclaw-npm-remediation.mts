@@ -16,11 +16,12 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
@@ -1161,9 +1162,63 @@ function patchFsSafePackageGraph(packageDirectory: string): void {
 }
 
 function copyReplacementPackage(source: string, destination: string): void {
-  rmSync(destination, { recursive: true, force: true });
-  mkdirSync(resolve(destination, ".."), { recursive: true, mode: 0o755 });
-  cpSync(source, destination, { recursive: true, force: true });
+  const targetDirectory = dirname(resolve(destination));
+  mkdirSync(targetDirectory, { recursive: true, mode: 0o755 });
+  const replacementRoot = mkdtempSync(
+    join(targetDirectory, `.${basename(destination)}-replacement-`),
+  );
+  const stagedReplacement = join(replacementRoot, "replacement");
+  const previousPackage = join(replacementRoot, "previous");
+  let previousPackageMoved = false;
+  let preserveRecoveryDirectory = false;
+
+  try {
+    cpSync(source, stagedReplacement, { recursive: true, force: true });
+    const sourceMetadata = readJson(join(source, "package.json"));
+    const stagedMetadata = readJson(join(stagedReplacement, "package.json"));
+    if (
+      sourceMetadata.name !== stagedMetadata.name ||
+      sourceMetadata.version !== stagedMetadata.version
+    ) {
+      throw new Error("Staged replacement package identity does not match its source");
+    }
+
+    try {
+      renameSync(destination, previousPackage);
+      previousPackageMoved = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    try {
+      renameSync(stagedReplacement, destination);
+    } catch (replacementError) {
+      if (previousPackageMoved) {
+        try {
+          renameSync(previousPackage, destination);
+          previousPackageMoved = false;
+        } catch (restoreError) {
+          preserveRecoveryDirectory = true;
+          throw new AggregateError(
+            [replacementError, restoreError],
+            `Replacement failed and the original package remains recoverable at ${previousPackage}`,
+          );
+        }
+      }
+      throw replacementError;
+    }
+
+    if (previousPackageMoved) {
+      rmSync(previousPackage, { recursive: true, force: true });
+      previousPackageMoved = false;
+    }
+  } finally {
+    if (!preserveRecoveryDirectory) {
+      rmSync(replacementRoot, { recursive: true, force: true });
+    }
+  }
 }
 
 function packReplacement(
@@ -1737,14 +1792,6 @@ export function buildRemediatedOpenClawPluginArchive(
     );
   }
   return { archivePath, integrity, metadataIntegrity, remediated: true, treeIntegrity };
-}
-
-// Compatibility export for the 2026.6.10 remediation tests and callers merged
-// from main. Both names use the same version-dispatched implementation.
-export function buildRemediatedOpenClawArchive(
-  request: BuildRequest,
-): Extract<RemediatedArchive, { remediated: true }> {
-  return buildRemediatedOpenClawPluginArchive(request);
 }
 
 export function remediateReviewedOpenClawPluginArchive(

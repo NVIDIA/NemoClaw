@@ -127,6 +127,98 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
   );
 
   it(
+    "preserves the installed Slack dependency when copying its replacement fails",
+    async () => {
+      const fixture = await createSlackRemediationFixture();
+      const copyFailureHook = path.join(fixture.root, "copy-failure-hook.mjs");
+      fs.writeFileSync(
+        copyFailureHook,
+        [
+          'import { createRequire, syncBuiltinESMExports } from "node:module";',
+          'import path from "node:path";',
+          'const fs = createRequire(import.meta.url)("node:fs");',
+          "const originalCpSync = fs.cpSync;",
+          "let failedReplacementCopy = false;",
+          "fs.cpSync = (source, destination, options) => {",
+          "  try {",
+          '    const metadata = JSON.parse(fs.readFileSync(path.join(source, "package.json"), "utf8"));',
+          '    if (!failedReplacementCopy && metadata.name === "proxy-addr" && metadata.version === "2.0.8") {',
+          "      failedReplacementCopy = true;",
+          "      fs.mkdirSync(destination, { recursive: true });",
+          '      fs.writeFileSync(path.join(destination, "partial-copy"), "incomplete replacement");',
+          '      throw Object.assign(new Error("simulated replacement copy failure"), { code: "EIO" });',
+          "    }",
+          "  } catch (error) {",
+          '    if (error?.code !== "ENOENT") throw error;',
+          "  }",
+          "  return originalCpSync(source, destination, options);",
+          "};",
+          "syncBuiltinESMExports();",
+          "",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+      const relativeProxyAddrDirectory = path.relative(
+        path.join(
+          fixture.env.HOME!,
+          ".openclaw/npm/projects/openclaw-slack-b25c10c1bd/node_modules/@openclaw/slack",
+        ),
+        fixture.proxyAddrDirectory,
+      );
+
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--import",
+            copyFailureHook,
+            SCRIPT_PATH,
+            "--agent",
+            "openclaw",
+            "--phase",
+            "agent-install",
+          ],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...fixture.env,
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined,
+            },
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(2);
+        expect(result.stderr).toContain("Messaging build applier failed.");
+        const verifyInstalledBytes = spawnSync(
+          process.execPath,
+          [
+            "--eval",
+            `const fs = require("node:fs"); const path = require("node:path"); const crypto = require("node:crypto"); const relative = ${JSON.stringify(relativeProxyAddrDirectory)}; const digest = (root, file) => crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative, file))).digest("hex"); console.log(JSON.stringify({ packageJson: digest(process.env.TEST_SLACK_SOURCE, "package.json") === digest(process.env.TEST_SLACK_INSTALL, "package.json"), index: digest(process.env.TEST_SLACK_SOURCE, "index.js") === digest(process.env.TEST_SLACK_INSTALL, "index.js") }));`,
+          ],
+          { env: fixture.env, encoding: "utf8", timeout: 5_000 },
+        );
+        expect(verifyInstalledBytes.error).toBeUndefined();
+        expect(verifyInstalledBytes.status, verifyInstalledBytes.stderr).toBe(0);
+        expect(JSON.parse(verifyInstalledBytes.stdout)).toEqual({
+          packageJson: true,
+          index: true,
+        });
+        expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
+        expect(fs.readdirSync(path.dirname(fixture.proxyAddrDirectory)).sort()).toEqual([
+          "express",
+          "proxy-addr",
+        ]);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(30_000),
+  );
+
+  it(
     "preserves remediation timeouts through official plugin installation and the CLI exit path",
     async () => {
       const fixture = await createSlackRemediationFixture();

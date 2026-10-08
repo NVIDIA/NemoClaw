@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildRemediatedOpenClawArchive,
+  buildRemediatedOpenClawPluginArchive,
   fatalOpenClawNpmRemediationDiagnostic,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
@@ -891,9 +891,9 @@ describe("OpenClaw npm remediation", () => {
       packageSpec: "openclaw@2026.3.11",
       workingDirectory: fixture.workingDirectory,
     };
-    const remediated = buildRemediatedOpenClawArchive(request);
+    const remediated = buildRemediatedOpenClawPluginArchive(request);
     expect(() =>
-      buildRemediatedOpenClawArchive({
+      buildRemediatedOpenClawPluginArchive({
         ...request,
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
       }),
