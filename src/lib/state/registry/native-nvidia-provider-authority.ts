@@ -94,19 +94,6 @@ function removeHostedAuthority(
     else delete data.gatewayNativeHostedProviderAuthorities;
     changed = true;
   }
-  for (const sandbox of Object.values(data.sandboxes)) {
-    if (
-      sandbox.gatewayName !== gatewayName ||
-      !sandbox.nativeHostedProviderAuthorities?.some((receipt) => receipt.profileId === profileId)
-    )
-      continue;
-    const retained = sandbox.nativeHostedProviderAuthorities.filter(
-      (receipt) => receipt.profileId !== profileId,
-    );
-    if (retained.length) sandbox.nativeHostedProviderAuthorities = retained;
-    else delete sandbox.nativeHostedProviderAuthorities;
-    changed = true;
-  }
   return changed;
 }
 
@@ -120,7 +107,7 @@ export function listNativeHostedProviderAttachmentSandboxNames(
       (sandbox) =>
         sandbox.nativeHostedProviderAttachment?.profileId === profileId ||
         sandbox.nativeNvidiaProviderAttachment?.profileId === profileId ||
-        sandbox.nativeHostedProviderAuthorities?.some((receipt) => receipt.profileId === profileId),
+        sandbox.pendingNativeHostedProviderDetach?.profileId === profileId,
     )
     .map((sandbox) => sandbox.name)
     .sort();

@@ -3,7 +3,7 @@ import { normalizeNativeHostedProviderAttachment } from "../../inference/native-
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { retainNativeHostedProviderAuthority } from "../../inference/native-hosted/authority";
+import { normalizeNativeHostedProviderAuthorities } from "../../inference/native-hosted/authority";
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -186,10 +186,8 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(rawAttachment);
   if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
     throw new Error("Invalid native inference provider receipt");
-  const nativeHostedProviderAuthorities = retainNativeHostedProviderAuthority(
-    entry.nativeHostedProviderAuthorities,
-    nativeHostedProviderAttachment,
-  );
+  // Validate legacy history before discarding it; gateway receipts own durable authority.
+  normalizeNativeHostedProviderAuthorities(Reflect.get(entry, "nativeHostedProviderAuthorities"));
   const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
     entry.pendingNativeHostedProviderDetach,
   );
@@ -228,6 +226,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     mcp: _legacyMcp,
     ...rest
   } = policyEntry as SandboxEntry & {
+    nativeHostedProviderAuthorities?: unknown;
     cuaRuntimeReadiness?: unknown;
     nativeNvidiaProviderAuthority?: unknown;
     mcp?: unknown;
@@ -235,7 +234,6 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
-    ...(nativeHostedProviderAuthorities.length ? { nativeHostedProviderAuthorities } : {}),
     ...(pendingNativeHostedProviderDetach ? { pendingNativeHostedProviderDetach } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
@@ -271,10 +269,8 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const nativeHostedProviderAttachment = normalizeNativeHostedProviderAttachment(rawAttachment);
   if (rawAttachment !== undefined && !nativeHostedProviderAttachment)
     throw new Error("Invalid native inference provider receipt");
-  const nativeHostedProviderAuthorities = retainNativeHostedProviderAuthority(
-    durable.nativeHostedProviderAuthorities,
-    nativeHostedProviderAttachment,
-  );
+  // Validate legacy history before discarding it; gateway receipts own durable authority.
+  normalizeNativeHostedProviderAuthorities(Reflect.get(durable, "nativeHostedProviderAuthorities"));
   const pendingNativeHostedProviderDetach = normalizeNativeHostedProviderAttachment(
     durable.pendingNativeHostedProviderDetach,
   );
@@ -313,6 +309,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     mcp: _legacyMcp,
     ...rest
   } = policyEntry as SandboxEntry & {
+    nativeHostedProviderAuthorities?: unknown;
     cuaRuntimeReadiness?: unknown;
     nativeNvidiaProviderAuthority?: unknown;
     mcp?: unknown;
@@ -320,7 +317,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   return {
     ...rest,
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
-    ...(nativeHostedProviderAuthorities.length ? { nativeHostedProviderAuthorities } : {}),
     ...(pendingNativeHostedProviderDetach ? { pendingNativeHostedProviderDetach } : {}),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),

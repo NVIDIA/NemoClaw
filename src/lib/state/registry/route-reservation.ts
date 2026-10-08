@@ -23,7 +23,6 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "model",
   "name",
   "nativeHostedProviderAttachment",
-  "nativeHostedProviderAuthorities",
   "nativeNvidiaProviderAttachment",
   "openshellDriver",
   "pendingRouteReservation",

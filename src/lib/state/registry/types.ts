@@ -136,8 +136,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostLocalInferenceReceipt?: string | null;
   /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
   nativeHostedProviderAttachment?: NativeHostedProviderAttachment;
-  /** Gateway-scoped ownership retained across provider switches. */
-  nativeHostedProviderAuthorities?: NativeHostedProviderAttachment[];
   /** Previous native access retained until provider-switch cleanup is confirmed. */
   pendingNativeHostedProviderDetach?: NativeHostedProviderAttachment;
   /** Legacy Slice 1 receipt; normalized when loaded. */

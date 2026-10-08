@@ -79,7 +79,7 @@ it("clears a stale native NVIDIA attachment when reserving a shared route", asyn
   }
 });
 
-it("retains hosted ownership across reload and clears it when moving gateways", async () => {
+it("keeps gateway ownership without treating detached history as an active attachment", async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-hosted-authority-"));
   vi.stubEnv("HOME", home);
   vi.resetModules();
@@ -104,8 +104,13 @@ it("retains hosted ownership across reload and clears it when moving gateways", 
       provider: "openai-api",
       model: "selected-model",
       nativeHostedProviderAttachment: openai,
-      nativeHostedProviderAuthorities: [nvidia, openai],
     });
+    registry.setNativeHostedProviderAuthority("nemoclaw", nvidia);
+    registry.setNativeHostedProviderAuthority("nemoclaw", openai);
+    const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
+    const legacy = JSON.parse(await fs.readFile(registryPath, "utf8"));
+    legacy.sandboxes.alpha.nativeHostedProviderAuthorities = [nvidia, openai];
+    await fs.writeFile(registryPath, JSON.stringify(legacy));
     vi.resetModules();
     const reloaded = await import("./registry");
     const authority = await import("./registry/native-nvidia-provider-authority");
@@ -114,13 +119,12 @@ it("retains hosted ownership across reload and clears it when moving gateways", 
     ).toEqual(["alpha"]);
     expect(
       authority.listNativeHostedProviderAttachmentSandboxNames(nvidia.profileId, "nemoclaw"),
-    ).toEqual(["alpha"]);
+    ).toEqual([]);
     expect(
       authority.listNativeHostedProviderAttachmentSandboxNames(openai.profileId, "other-gateway"),
     ).toEqual([]);
     expect(reloaded.getSandbox("alpha")).toMatchObject({
       nativeHostedProviderAttachment: openai,
-      nativeHostedProviderAuthorities: [nvidia, openai],
     });
     reloaded.registerSandbox({
       ...reloaded.getSandbox("alpha")!,
@@ -135,7 +139,22 @@ it("retains hosted ownership across reload and clears it when moving gateways", 
       gatewayName: "nemoclaw",
     });
     expect(reloaded.getSandbox("alpha")?.nativeHostedProviderAttachment).toBeUndefined();
-    expect(reloaded.getSandbox("alpha")?.nativeHostedProviderAuthorities).toEqual([nvidia, openai]);
+    expect(reloaded.getSandbox("alpha")).not.toHaveProperty("nativeHostedProviderAuthorities");
+    expect(reloaded.getNativeHostedProviderAuthority("nemoclaw", nvidia.profileId)).toEqual(nvidia);
+    reloaded.updateSandbox("alpha", { pendingNativeHostedProviderDetach: nvidia });
+    expect(
+      authority.listNativeHostedProviderAttachmentSandboxNames(nvidia.profileId, "nemoclaw"),
+    ).toEqual(["alpha"]);
+    expect(
+      authority.listNativeHostedProviderAttachmentSandboxNames(nvidia.profileId, "other-gateway"),
+    ).toEqual([]);
+    expect(
+      authority.listNativeHostedProviderAttachmentSandboxNames(openai.profileId, "nemoclaw"),
+    ).toEqual(["beta"]);
+    reloaded.updateSandbox("alpha", { pendingNativeHostedProviderDetach: undefined });
+    expect(
+      authority.listNativeHostedProviderAttachmentSandboxNames(nvidia.profileId, "nemoclaw"),
+    ).toEqual([]);
     reloaded.reserveSandboxInferenceRoute("beta", {
       provider: "ollama-local",
       model: "local-model",
@@ -144,7 +163,10 @@ it("retains hosted ownership across reload and clears it when moving gateways", 
       preferredInferenceApi: "openai-completions",
       gatewayName: "nemoclaw-9090",
     });
-    expect(reloaded.getSandbox("beta")?.nativeHostedProviderAuthorities).toBeUndefined();
+    expect(reloaded.getSandbox("beta")).not.toHaveProperty("nativeHostedProviderAuthorities");
+    const saved = JSON.parse(await fs.readFile(registryPath, "utf8"));
+    expect(saved.sandboxes.alpha).not.toHaveProperty("nativeHostedProviderAuthorities");
+    expect(reloaded.getNativeHostedProviderAuthority("nemoclaw", nvidia.profileId)).toEqual(nvidia);
   } finally {
     await fs.rm(home, { recursive: true, force: true });
     vi.unstubAllEnvs();

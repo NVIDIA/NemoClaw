@@ -11,7 +11,6 @@ import {
 import {
   normalizeNativeNvidiaProviderAttachment,
   normalizeNativeHostedProviderAttachment,
-  retainNativeHostedProviderAuthority,
 } from "../inference/native-hosted";
 
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
@@ -549,10 +548,6 @@ export function registerSandbox(
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
-      nativeHostedProviderAuthorities: retainNativeHostedProviderAuthority(
-        entry.nativeHostedProviderAuthorities,
-        nativeHostedProviderAttachment,
-      ),
       ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
@@ -605,7 +600,6 @@ type SandboxInferenceRouteReservation = Pick<
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
-  nativeHostedProviderAuthorities?: SandboxEntry["nativeHostedProviderAuthorities"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
 };
 
@@ -767,13 +761,6 @@ export function reserveSandboxInferenceRoute(
         (existing?.gatewayName === route.gatewayName && existing?.provider === normalized.provider
           ? existing.nativeHostedProviderAttachment
           : undefined),
-      nativeHostedProviderAuthorities: retainNativeHostedProviderAuthority(
-        route.nativeHostedProviderAuthorities ??
-          (existing?.gatewayName === route.gatewayName
-            ? existing.nativeHostedProviderAuthorities
-            : undefined),
-        nativeHostedProviderAttachment,
-      ),
 
       gatewayName: route.gatewayName,
       gatewayPort:

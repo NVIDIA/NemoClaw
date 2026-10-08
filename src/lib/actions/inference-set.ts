@@ -24,7 +24,6 @@ import {
   normalizeNativeHostedProviderAttachment,
   normalizeNativeNvidiaProviderAttachment,
   resolveGatewayNativeHostedProviderAuthority,
-  retainNativeHostedProviderAuthority,
   resolveAgentInferenceApi,
   type NativeHostedProviderAttachment,
   type SandboxInferenceConfig,
@@ -1904,13 +1903,6 @@ async function runInferenceSetWithoutHostLock(
       ...(openClawConfigSyncPending ? { openClawConfigSyncPending: true as const } : {}),
       nativeHostedProviderAttachment,
       nativeNvidiaProviderAttachment: undefined,
-      nativeHostedProviderAuthorities: retainNativeHostedProviderAuthority(
-        retainNativeHostedProviderAuthority(
-          entry.nativeHostedProviderAuthorities,
-          previousNativeHostedAttachment,
-        ),
-        nativeHostedProviderAttachment,
-      ),
     });
     if (
       !deps.updateSandbox(

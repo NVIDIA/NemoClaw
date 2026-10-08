@@ -56,7 +56,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       "alpha",
       expect.objectContaining({
         provider: "gemini-api",
-        nativeHostedProviderAuthorities: expect.arrayContaining([old]),
       }),
     );
   });
@@ -200,7 +199,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       "alpha",
       expect.objectContaining({
         nativeHostedProviderAttachment: gatewayAuthority,
-        nativeHostedProviderAuthorities: expect.arrayContaining([gatewayAuthority]),
       }),
     );
   });
@@ -311,7 +309,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       "alpha",
       expect.objectContaining({
         nativeHostedProviderAttachment: receipt,
-        nativeHostedProviderAuthorities: expect.arrayContaining([receipt]),
       }),
     );
   });
@@ -938,7 +935,6 @@ describe("runInferenceSet OpenClaw routing", () => {
       model: "nvidia/old-model",
       nativeNvidiaProviderAttachment: attachment,
       nativeHostedProviderAttachment: attachment,
-      nativeHostedProviderAuthorities: [attachment],
     };
     const updateSandbox = vi.fn((name: string, updates: Record<string, unknown>) => {
       expect(name).toBe(entry.name);
@@ -960,7 +956,6 @@ describe("runInferenceSet OpenClaw routing", () => {
 
     expect(entry).toMatchObject({
       provider: "openai-api",
-      nativeHostedProviderAuthorities: expect.arrayContaining([attachment]),
     });
     expect(entry.nativeNvidiaProviderAttachment).toBeUndefined();
     expect(entry.nativeHostedProviderAttachment).toMatchObject({
@@ -975,7 +970,6 @@ describe("runInferenceSet OpenClaw routing", () => {
     expect(entry).toMatchObject({
       provider: "nvidia-prod",
       nativeHostedProviderAttachment: attachment,
-      nativeHostedProviderAuthorities: expect.arrayContaining([attachment]),
     });
   });
 
