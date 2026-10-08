@@ -39,16 +39,19 @@ fi
 
 # RUNNER_TEMP can have private ancestors that APT's _apt user cannot traverse.
 apt_lists="$(mktemp -d /tmp/nemoclaw-apt-lists.XXXXXXXX)"
-isolated_sources_dir="$(mktemp -d "$RUNNER_TEMP/nemoclaw-ubuntu-sources.XXXXXXXX")"
-isolated_sources="$isolated_sources_dir/ubuntu.sources"
+isolated_sources_dir=
 cleanup() {
   local status=$?
   trap - EXIT
   sudo rm -rf -- "$apt_lists" || status=1
-  rm -rf -- "$isolated_sources_dir" || status=1
+  if [ -n "$isolated_sources_dir" ]; then
+    rm -rf -- "$isolated_sources_dir" || status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT
+isolated_sources_dir="$(mktemp -d "$RUNNER_TEMP/nemoclaw-ubuntu-sources.XXXXXXXX")"
+isolated_sources="$isolated_sources_dir/ubuntu.sources"
 
 # APT cannot reliably fetch a mirror+file auxiliary list from a custom lists
 # directory during install. Resolve only the runner's Ubuntu mirrorlist URI;
