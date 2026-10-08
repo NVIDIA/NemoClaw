@@ -454,7 +454,15 @@ The flag selects managed vLLM and managed llama.cpp profiles. A managed llama.cp
 $$nemoclaw onboard --profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
 ```
 
-If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature. The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation. When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root. Otherwise, onboarding stops before it records a route that the profile does not declare. After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
+If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
+The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+
+When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
+Otherwise, onboarding stops before it records a route that the profile does not declare.
+Reusing a running vLLM server does not record the requested profile's provenance.
+
+For a sandbox created with a managed vLLM or llama.cpp installation, human status shows the profile, recipe, and catalog digest.
+JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
 #### `--host-mount`
 

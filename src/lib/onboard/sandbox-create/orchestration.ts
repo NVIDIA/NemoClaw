@@ -57,6 +57,7 @@ import type {
 import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
+  shouldReconcileRestoredOpenClawSelection,
   type OwnedSandboxRecreateRuntime,
 } from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
@@ -2230,8 +2231,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       getSandbox: registry.getSandbox,
       note,
     });
+    let reconcileOpenClawInference = false;
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
       recreateJournal.openOnboardRecreateJournal({
+        ...(reconcileOpenClawInference ? { reconcileOpenClawInference: true as const } : {}),
         target: {
           sandboxName,
           gatewayName: GATEWAY_NAME,
@@ -2531,6 +2534,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // mutating a live sandbox.
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
+      reconcileOpenClawInference = shouldReconcileRestoredOpenClawSelection(
+        getRequestedSandboxAgentName(agent),
+        customOpenClawImage,
+        createIntent?.recreate === true,
+        selectionDrift,
+      );
       if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
       if (recreateRuntime.acceptedTarget) {
         if ("complete" in recreateRuntime) recreateRuntime.complete();
@@ -3478,7 +3487,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         preferredInferenceApi,
         endpointUrl: createIntent?.endpointUrl ?? null,
       },
-      { createIntent, resolvedCreateIntent },
+      {
+        createIntent,
+        resolvedCreateIntent,
+        reconcileOpenClawInference:
+          onboardSession.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ===
+          true,
+      },
       sandboxRuntimeFields,
       agentCreateInput.portableLifecycle,
       {

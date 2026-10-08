@@ -680,6 +680,7 @@ function assertSameTransaction(
 }
 
 export interface BeginSandboxRecreateTransactionInput {
+  readonly reconcileOpenClawInference?: true;
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
@@ -718,6 +719,7 @@ function newSandboxRecreateTransaction(
       : fingerprintSandboxRecreateValue(null),
     sourceLiveIdentityFingerprint: input.observation.liveIdentityFingerprint,
     sourceWorkload: input.sourceEntry ? checkpointSourceWorkload(input.sourceEntry) : null,
+    ...(input.reconcileOpenClawInference ? { reconcileOpenClawInference: true as const } : {}),
     targetIntentFingerprint: input.targetIntentFingerprint,
     targetGeneration: input.targetGeneration ?? randomUUID(),
     targetLiveIdentityFingerprint: null,
@@ -1175,6 +1177,7 @@ interface SandboxRecreateTransactionOwnerStore extends SandboxRecreateSessionSto
 }
 
 export interface OwnSandboxRecreateTransactionInput {
+  readonly reconcileOpenClawInference?: true;
   readonly sessionStore: SandboxRecreateTransactionOwnerStore;
   readonly sandboxName: string;
   readonly gatewayName: string;
@@ -1273,6 +1276,7 @@ export function ownSandboxRecreateTransaction(
           sandboxName: input.sandboxName,
           gatewayName: input.gatewayName,
           gatewayPort: input.gatewayPort,
+          reconcileOpenClawInference: input.reconcileOpenClawInference,
           sourceEntry: freshRegistryEntry,
           observation: freshObservation,
           targetIntentFingerprint: input.targetIntentFingerprint,
