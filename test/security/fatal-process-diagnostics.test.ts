@@ -84,6 +84,13 @@ describe("fatal process diagnostics", () => {
   it.each([
     "OpenClaw npm remediation command failed",
     "OpenClaw npm remediation command could not start",
+  ])("classifies the fixed command diagnostic %s", (message) => {
+    expect(fatalOpenClawNpmRemediationDiagnostic(new Error(message))).toBe(
+      "OpenClaw npm remediation command failed.",
+    );
+  });
+
+  it.each([
     `OpenClaw npm remediation command failed ${CREDENTIAL_CANARY}`,
     `OpenClaw npm remediation command could not start ${CREDENTIAL_CANARY}`,
     CREDENTIAL_CANARY,

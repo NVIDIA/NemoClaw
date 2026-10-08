@@ -1483,34 +1483,6 @@ function packReplacement(
   );
 }
 
-export function patchOpenClawSlackProxyPackageGraph(
-  packageDirectory: string,
-  replacementDirectory: string,
-): void {
-  requirePackageIdentity(
-    readJson(join(packageDirectory, "package.json")),
-    "@openclaw/slack",
-    "2026.9.2",
-    "OpenClaw Slack plugin",
-  );
-  const target = join(
-    packageDirectory,
-    "node_modules",
-    "@slack",
-    "bolt",
-    "node_modules",
-    "proxy-addr",
-  );
-  const original = readJson(join(target, "package.json"));
-  const replacement = readJson(join(replacementDirectory, "package.json"));
-  requirePackageIdentity(original, "proxy-addr", "2.0.7", "Bundled Slack proxy-addr");
-  requirePackageIdentity(replacement, "proxy-addr", PROXY_ADDR_VERSION, "proxy-addr replacement");
-  const dependencies = { forwarded: "0.2.0", "ipaddr.js": "1.9.1" };
-  requireDependencyShape(original, dependencies, "Bundled Slack proxy-addr");
-  requireDependencyShape(replacement, dependencies, "proxy-addr replacement");
-  copyReplacementPackage(replacementDirectory, target);
-}
-
 export function buildRemediatedOpenClawPluginArchive(
   request: BuildRequest,
 ): Extract<RemediatedArchive, { remediated: true }> {
@@ -2130,7 +2102,11 @@ export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
   if (message.startsWith("Missing --")) {
     return "OpenClaw npm remediation is missing required arguments.";
   }
-  if (message.includes(" failed:")) {
+  if (
+    message === "OpenClaw npm remediation command failed" ||
+    message === "OpenClaw npm remediation command could not start" ||
+    message.includes(" failed:")
+  ) {
     return "OpenClaw npm remediation command failed.";
   }
   if (
