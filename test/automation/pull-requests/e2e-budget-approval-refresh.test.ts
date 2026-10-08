@@ -28,10 +28,13 @@ function fixture() {
   const status = vi.fn(async (_value: unknown) => ({}));
   const get = vi.fn(async () => ({ data: pr }));
   const context = {
+    eventName: "issue_comment",
     repo: { owner: "NVIDIA", repo: "NemoClaw" },
     serverUrl: "https://github.com",
     runId: 456,
     payload: {
+      action: "created",
+      pull_request: { number: 123 },
       comment: { body: command },
       issue: { number: 123, pull_request: {} as unknown },
       repository: { default_branch: "main" },
@@ -60,6 +63,27 @@ function fixture() {
 }
 
 describe("budget approval status refresh", () => {
+  it.each(["opened", "synchronize"])(
+    "binds %s evaluation to the repository's required merge gate",
+    async (action) => {
+      const f = fixture();
+      f.context.eventName = "pull_request_target";
+      f.context.payload.action = action;
+      f.context.payload.comment.body = "";
+      await f.start();
+      expect(f.status).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ sha: HEAD, context: "checks", state: "pending" }),
+      );
+      expect(f.outputs).toEqual({ pr_number: "123", base_sha: BASE, head_sha: HEAD });
+    },
+  );
+
+  it("rejects an untrusted workflow event before publishing status", async () => {
+    const f = fixture();
+    f.context.eventName = "pull_request";
+    await expect(f.start()).rejects.toThrow("Unexpected approval event");
+    expect(f.status).not.toHaveBeenCalled();
+  });
   it.each(["approve", "revoke"])(
     "invalidates a previous green result after %s without granting approval",
     async (action) => {
@@ -70,7 +94,7 @@ describe("budget approval status refresh", () => {
       expect(f.status).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           sha: HEAD,
-          context: "codebase-growth-guardrails",
+          context: "checks",
           state: "pending",
         }),
       );
@@ -172,9 +196,9 @@ describe("budget approval status refresh", () => {
       const f = fixture();
       await f.start();
       await f.finish(outcome);
-      expect(f.status.mock.calls.map(([value]) => (value as { state: string }).state)).toEqual([
-        "pending",
-        "failure",
+      expect(f.status.mock.calls.map(([value]) => value)).toEqual([
+        expect.objectContaining({ sha: HEAD, context: "checks", state: "pending" }),
+        expect.objectContaining({ sha: HEAD, context: "checks", state: "failure" }),
       ]);
     },
   );
@@ -184,7 +208,7 @@ describe("budget approval status refresh", () => {
     await f.start();
     await f.finish("success");
     expect(f.status).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sha: HEAD, state: "success" }),
+      expect.objectContaining({ sha: HEAD, context: "checks", state: "success" }),
     );
   });
 
@@ -238,10 +262,10 @@ describe("budget approval status refresh", () => {
       const violations = await e2eAssertionBudgetGrowthViolations(diff);
       expect(violations.length).toBeGreaterThan(0);
       await f.finish("failure");
-      expect(f.status.mock.calls.map(([value]) => (value as { state: string }).state)).toEqual([
-        "success",
-        "pending",
-        "failure",
+      expect(f.status.mock.calls.map(([value]) => value)).toEqual([
+        expect.objectContaining({ sha: HEAD, context: "checks", state: "success" }),
+        expect.objectContaining({ sha: HEAD, context: "checks", state: "pending" }),
+        expect.objectContaining({ sha: HEAD, context: "checks", state: "failure" }),
       ]);
     },
   );

@@ -96,9 +96,10 @@ The independent check reads paginated comments from GitHub and verifies each aut
 or admin role. Bot comments and candidate-defined approvals cannot authorize that check.
 The last matching maintainer record wins. Deleting a record removes it from subsequent evaluations.
 Creating, editing, or deleting an approval record automatically refreshes the growth check for the current PR commit.
-The refresh first marks the matching `codebase-growth-guardrails` commit status pending, then runs trusted-base checks.
-A failure or incomplete refresh cannot reuse the earlier green status. GitHub requires both the workflow check and
-its matching commit status to pass. Refreshes run serially per PR and read current comments instead of replaying old decisions.
+Both PR events and approval changes mark the current commit's required `checks` status pending before running trusted-base checks.
+The independent status uses the repository's existing required context. GitHub requires both the native CI check and
+this commit status to pass. After invalidation, a failed or incomplete check cannot restore the earlier green result.
+PR and comment evaluations run serially per PR and read current comments instead of replaying old decisions.
 No policy PR or manual rerun is required for an approval change.
 Normal code review and the assertion census still apply. This record authorizes only the stated budget delta.
 
