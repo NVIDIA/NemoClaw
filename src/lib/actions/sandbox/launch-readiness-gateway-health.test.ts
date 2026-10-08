@@ -22,6 +22,32 @@ import {
 
 describe("launch-readiness gateway health scope", () => {
   it.each([
+    ["becomes ready during cold startup", 32_000, true, 32_000],
+    ["never becomes ready", Infinity, false, 330_000],
+  ] as const)(
+    "honors the onboarding startup window when OpenClaw %s",
+    async (_label, readyAt, expected, elapsed) => {
+      let clock = 0;
+      const probe = vi.fn(async () => clock >= readyAt);
+      await expect(
+        waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
+          environment: {},
+          defaultTimeoutSeconds: 330,
+          now: () => clock,
+          delay: async (milliseconds) => {
+            clock += milliseconds;
+          },
+          probe,
+        }),
+      ).resolves.toBe(expected);
+      expect(clock).toBe(elapsed);
+      expect(probe).toHaveBeenCalledWith("alpha", "nemoclaw-19080", {
+        startup: { timeoutMs: expect.any(Number) },
+      });
+    },
+  );
+
+  it.each([
     ["becomes ready", [null, true], true, 2_000],
     ["stays unavailable", [null, null], false, 3_000],
   ] as const)(
@@ -49,6 +75,7 @@ describe("launch-readiness gateway health scope", () => {
       await expect(
         waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
           environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3" },
+          defaultTimeoutSeconds: 330,
           now: () => clock,
           delay: async (ms) => {
             clock += ms;

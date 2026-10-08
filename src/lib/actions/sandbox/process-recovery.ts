@@ -1616,6 +1616,7 @@ export async function waitForStartedNativeGatewayProcess(
   gatewayName: string,
   options: {
     environment?: NodeJS.ProcessEnv;
+    defaultTimeoutSeconds?: number;
     probe?: typeof isSandboxGatewayRunningForStatus;
     delay?: (delayMs: number) => Promise<void>;
     now?: () => number;
@@ -1636,7 +1637,11 @@ export async function waitForStartedNativeGatewayProcess(
   const now = options.now ?? (() => performance.now());
   const deadline =
     now() +
-    resolveGatewayRecoveryWaitSeconds(undefined, options.environment ?? process.env) * 1_000;
+    resolveGatewayRecoveryWaitSeconds(
+      options.defaultTimeoutSeconds,
+      options.environment ?? process.env,
+    ) *
+      1_000;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;

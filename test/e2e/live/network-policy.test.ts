@@ -173,7 +173,7 @@ network_policies:
   return target;
 }
 
-function buildWebFetchProbeScript(): string {
+export function buildWebFetchProbeScript(): string {
   return String.raw`
 import fs from "node:fs";
 import path from "node:path";

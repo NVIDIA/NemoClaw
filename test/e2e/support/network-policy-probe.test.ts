@@ -5,10 +5,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import vm from "node:vm";
-import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { buildWebFetchProbeScript } from "../live/network-policy.test.ts";
 import {
   buildNetworkPolicyCurlProbe,
   parseNetworkPolicyCurlOutput,
@@ -50,23 +49,12 @@ describe("network-policy curl probe", () => {
   });
 });
 
+// Import the live probe without registering or executing live scenarios.
+vi.mock("../fixtures/e2e-test.ts", () => ({ test: vi.fn() }));
+
 // Execute the shipped probe with only its installation path redirected to a disposable fixture.
 function installedWebFetchProbe(dist: string): string {
-  const file = path.join(import.meta.dirname, "../live/network-policy.test.ts");
-  const source = ts.createSourceFile(
-    file,
-    fs.readFileSync(file, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const builder = source.statements.find(
-    (statement): statement is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(statement) && statement.name?.text === "buildWebFetchProbeScript",
-  );
-  const executable = ts.transpileModule(builder!.getText(source), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  }).outputText;
-  const probe = vm.runInNewContext(`${executable}\nbuildWebFetchProbeScript()`) as string;
+  const probe = buildWebFetchProbeScript();
   return probe.replace('"/usr/local/lib/node_modules/openclaw/dist"', JSON.stringify(dist));
 }
 

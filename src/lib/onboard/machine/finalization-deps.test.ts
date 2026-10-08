@@ -910,6 +910,7 @@ describe("finalization process-recovery refusal propagation", () => {
       "alpha",
       "openclaw",
       "nemoclaw",
+      { defaultTimeoutSeconds: 330 },
     );
   });
 

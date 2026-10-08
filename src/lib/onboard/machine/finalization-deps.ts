@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
@@ -437,7 +438,9 @@ export const finalizationHandlerDeps = {
   ): Promise<boolean | null> {
     return await finalizationHandlerRuntime
       .loadProcessRecovery()
-      .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName);
+      .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName, {
+        defaultTimeoutSeconds: OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS / 1_000,
+      });
   },
   async settleStartedOpenclawGatewayForConfiguration(name: string): Promise<boolean> {
     const pairing = await settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
@@ -459,6 +462,7 @@ export const finalizationHandlerDeps = {
         name,
         "openclaw",
         target.gatewayName,
+        { defaultTimeoutSeconds: OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS / 1_000 },
       );
       if (startup === false) {
         console.error(
