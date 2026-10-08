@@ -54,7 +54,7 @@ export async function postOperationRecord(
     signal,
     redirect: "error",
     credentials: "omit",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Event-Protocol": "1.6" },
   });
   await response.body?.cancel();
   return response.ok;
