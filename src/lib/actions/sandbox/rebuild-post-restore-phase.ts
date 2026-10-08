@@ -39,7 +39,7 @@ import {
 } from "./rebuild-mcp-phase";
 import {
   finalizePendingMessagingRemovalsAfterRestore,
-  reapplyMessagingManifestBeforeOpenClawStart,
+  reapplyMessagingManifestBeforeAgentStart,
 } from "./rebuild-messaging-phase";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
@@ -299,10 +299,13 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
       if (!openClawDoctorWindow) return;
+    }
 
+    if (targetAgentName === "openclaw" || targetAgentName === "hermes") {
       try {
-        await reapplyMessagingManifestBeforeOpenClawStart(
+        await reapplyMessagingManifestBeforeAgentStart(
           sandboxName,
+          targetAgentName,
           messagingPlan,
           log,
           mcpRuntimeSelection,
@@ -314,7 +317,16 @@ export async function runRebuildPostRestorePhase(
         console.error(
           `  ${YW}\u26a0${R} Messaging manifest config reapply failed before gateway start.`,
         );
-        bail("OpenClaw messaging manifest config reapply failed during rebuild.");
+        if (hermesCronRestoreIdentity) {
+          return bailAfterHermesCronRestoreFailure(
+            sandboxName,
+            backupManifest,
+            "Hermes cron dispatch remains drained because messaging config could not be restored.",
+            "Messaging manifest config reapply failed during rebuild.",
+            bail,
+          );
+        }
+        bail("Messaging manifest config reapply failed during rebuild.");
         return;
       }
     }

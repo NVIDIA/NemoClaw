@@ -22,7 +22,10 @@ vi.mock("./agent-config", () => ({ resolveAgentConfig }));
 vi.mock("../state/mcp-lifecycle-lock-acquisition", () => ({ withMcpLifecycleLockSync }));
 
 import type { AgentConfigTarget } from "./agent-config";
-import { verifyMutableHermesConfigForTarget } from "./mutable-config-perms";
+import {
+  mutableHermesConfigProbeCommand,
+  verifyMutableHermesConfigForTarget,
+} from "./mutable-config-perms";
 
 const hermesTarget: AgentConfigTarget = {
   agentName: "hermes",
@@ -108,7 +111,7 @@ describe("mutable Hermes config permissions", () => {
       fs.chmodSync(configPath, 0o440);
       const readOnly = runProbe();
       expect(readOnly.verified).toBe(false);
-      expect(readOnly.errors.join("\n")).toContain("PermissionError");
+      expect(readOnly.errors.join("\n")).toContain("mode 0640");
       expect(
         fs.readdirSync(configDir).some((entry) => entry.startsWith(".nemoclaw-mutable-posture-")),
       ).toBe(false);
@@ -122,10 +125,87 @@ describe("mutable Hermes config permissions", () => {
       expect(
         fs.readdirSync(configDir).some((entry) => entry.startsWith(".nemoclaw-mutable-posture-")),
       ).toBe(false);
+
+      fs.rmSync(envPath);
+      fs.linkSync(configPath, envPath);
+      expect(runProbe().errors.join("\n")).toContain("singly linked regular file");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    [0o3770, "unavailable", true],
+    [0o700, "verified", true],
+    [0o700, "unavailable", false],
+    [0o700, "changed", false],
+    [0o700, "directory-race", false],
+    [0o3770, "access-denied", false],
+    [0o750, "verified", false],
+  ] as const)(
+    "checks mode %s with %s topology without changing state",
+    (mode, topology, expected) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-hermes-probe-"));
+      const configDir = path.join(root, ".hermes");
+      fs.mkdirSync(configDir, { mode });
+      fs.chmodSync(configDir, mode);
+      const names = ["config.yaml", ".env", ".config-hash"];
+      fs.writeFileSync(path.join(configDir, "config.yaml"), "fixture\n", { mode: 0o640 });
+      fs.writeFileSync(path.join(configDir, ".env"), "fixture\n", { mode: 0o640 });
+      fs.writeFileSync(path.join(configDir, ".config-hash"), "fixture\n", { mode: 0o640 });
+      fs.chmodSync(path.join(configDir, "config.yaml"), 0o640);
+      fs.chmodSync(path.join(configDir, ".env"), 0o640);
+      fs.chmodSync(path.join(configDir, ".config-hash"), 0o640);
+      const command = mutableHermesConfigProbeCommand({
+        ...hermesTarget,
+        configDir,
+        configPath: path.join(configDir, names[0]!),
+        sensitiveFiles: names.slice(1).map((name) => path.join(configDir, name)),
+      });
+      const codeIndex = command.indexOf("-c") + 1;
+      // The image-owned topology response is external input to the host probe.
+      // Guard tests exercise its real procfs proof separately.
+      const prelude = `
+import os, subprocess, types
+topology = ${JSON.stringify(topology)}
+calls = 0
+def topology_response(args, **kwargs):
+    global calls
+    calls += 1
+    assert args[3] == "inspect-private-mutable-topology"
+    if topology == "directory-race" and calls == 2:
+        os.chmod(config_dir, 0o750)
+    success = topology != "unavailable" and not (topology == "changed" and calls == 2)
+    return types.SimpleNamespace(returncode=0 if success else 1, stdout=b"same-uid-nonroot\\n")
+subprocess.run = topology_response
+if topology == "access-denied":
+    os.access = lambda *args, **kwargs: False
+os.mkdir = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("probe must not create state"))
+`;
+      const before = fs.statSync(configDir).mtimeMs;
+      try {
+        const result = spawnSync(
+          "python3",
+          ["-I", "-c", prelude + command[codeIndex], ...command.slice(codeIndex + 1)],
+          {
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status === 0, result.stderr).toBe(expected);
+        expect(fs.readdirSync(configDir).sort()).toEqual([...names].sort());
+        expect(fs.statSync(configDir).mtimeMs).toBe(before);
+        expect(names.map((name) => fs.readFileSync(path.join(configDir, name), "utf8"))).toEqual([
+          "fixture\n",
+          "fixture\n",
+          "fixture\n",
+        ]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not apply the Hermes proof to another agent", () => {
     const execute = vi.fn();

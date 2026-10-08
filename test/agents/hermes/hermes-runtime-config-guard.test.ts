@@ -689,6 +689,35 @@ with tempfile.TemporaryDirectory() as tmp:
     );
   });
 
+  it("validates the candidate .env without handing the installed validator a temp path (#12510)", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import os
+import tempfile
+
+# Stand-in for the installed validator: like the real one in installed mode it
+# refuses \`env-file\` for any path other than /sandbox/.hermes/.env.
+validator = "\\n".join([
+    "import sys",
+    "if sys.argv[1] == 'env-file' and sys.argv[2] != '/sandbox/.hermes/.env':",
+    "    print('[SECURITY] the installed validator only accepts the canonical Hermes env path', file=sys.stderr)",
+    "    raise SystemExit(1)",
+    "raise SystemExit(0)",
+])
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, "validator.py")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(validator)
+    guard._validate_env_text_with_boundary(
+        "TEAMS_CLIENT_SECRET=openshell:resolve:env:v2_MSTEAMS_APP_PASSWORD\\n", path
+    )
+print("validated")
+`);
+
+    expect(result.stderr).not.toContain("canonical Hermes env path");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("validated");
+  });
+
   it.each([
     ["wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
     ["teams", "MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
@@ -766,6 +795,71 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes startup readiness lease", () => {
+  it.each([
+    ["openshell", true],
+    ["direct-nonroot", true],
+    ["direct-root", false],
+    ["foreign-supervisor", false],
+    ["nonroot-supervisor", false],
+    ["root-workload", false],
+    ["duplicate-workload", false],
+    ["root-marker", false],
+    ["symlink-marker", false],
+    ["ready-marker", false],
+    ["marker-race", false],
+  ] as const)("attests private mutable topology from procfs: %s", (scenario, expected) => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json, os, pathlib, tempfile, types
+scenario = ${JSON.stringify(scenario)}
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    proc = root / "proc"
+    proc.mkdir()
+    guard.PROC_ROOT = str(proc)
+    guard.HERMES_ROOT_LIFECYCLE_MARKER = str(root / "root-marker")
+    guard.HERMES_STARTUP_READY_FILE = str(root / "ready-marker")
+    guard.pwd.getpwnam = lambda _name: types.SimpleNamespace(pw_uid=1000)
+
+    def process(pid, parent, uid, argv):
+        directory = proc / str(pid)
+        directory.mkdir()
+        fields = ["S", str(parent)] + ["0"] * 17 + [str(100 + pid)]
+        (directory / "stat").write_text(f"{pid} (fixture) " + " ".join(fields))
+        (directory / "status").write_text(f"Uid:\\t{uid}\\t{uid}\\t{uid}\\t{uid}\\nNSpid:\\t{pid}\\n")
+        (directory / "cmdline").write_bytes(argv)
+
+    if scenario.startswith("direct-"):
+        process(1, 0, 1000 if scenario == "direct-nonroot" else 0, b"/usr/bin/bash\\0/usr/local/bin/nemoclaw-start\\0")
+    else:
+        supervisor = b"/usr/bin/foreign\\0" if scenario == "foreign-supervisor" else b"/opt/openshell/bin/openshell-sandbox\\0"
+        process(1, 0, 1000 if scenario == "nonroot-supervisor" else 0, supervisor)
+        process(20, 1, 0 if scenario == "root-workload" else 1000, b"/usr/bin/bash\\0/usr/local/bin/nemoclaw-start\\0")
+        if scenario == "duplicate-workload":
+            process(21, 1, 1000, b"/usr/bin/bash\\0/usr/local/bin/nemoclaw-start\\0")
+    if scenario == "root-marker":
+        (root / "root-marker").write_text("root-separated\\n")
+    if scenario == "symlink-marker":
+        (root / "root-marker").symlink_to(root / "absent")
+    if scenario == "ready-marker":
+        (root / "ready-marker").write_text("stale")
+    if scenario == "marker-race":
+        original = guard._openshell_supervised_nonroot_start_is_live
+        def race(*args):
+            result = original(*args)
+            (root / "root-marker").write_text("root-separated\\n")
+            return result
+        guard._openshell_supervised_nonroot_start_is_live = race
+    try:
+        guard.inspect_private_mutable_topology()
+        allowed = True
+    except (guard.UnsafePathError, OSError):
+        allowed = False
+    print(json.dumps({"allowed": allowed}))
+`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ allowed: expected });
+  });
+
   it("rejects a supervisor argv polluted with the appended startup command (#6110)", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
