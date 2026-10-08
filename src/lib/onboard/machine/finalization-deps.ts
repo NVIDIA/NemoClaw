@@ -388,7 +388,7 @@ export function ordinaryOpenClawPairingIncompleteMessage(
 ): string {
   const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
   if (reason === "startup-timeout" || reason === "startup-gateway-exited") {
-    return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Inspect /sandbox/.openclaw/logs/gateway-persistent.log, recover the native gateway, then resume onboarding.`;
+    return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Inspect /sandbox/.openclaw/logs/gateway-persistent.log. Run \`nemoclaw ${name} gateway restart\`. After the restart succeeds, resume onboarding.`;
   }
   return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
 }

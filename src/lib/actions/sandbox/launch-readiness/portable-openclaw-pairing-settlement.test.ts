@@ -431,6 +431,9 @@ describe("Portable OpenClaw pairing settlement", () => {
       expect(portableOpenClawPairingIncompleteMessage("alpha", state)).toContain(
         "gateway-persistent.log",
       );
+      expect(portableOpenClawPairingIncompleteMessage("alpha", state)).toContain(
+        "nemoclaw alpha gateway restart",
+      );
     },
   );
 
