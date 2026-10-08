@@ -84,6 +84,15 @@ function inspectOpenClawDashboard(
 type HermesDashboard = Extract<ManagedStartupProfile["dashboard"], { agent: "hermes" }>;
 type EnabledHermesDashboard = Extract<HermesDashboard, { mode: "loopback-forwarded" }>;
 
+const ALLOCATED_LOOPBACK_DASHBOARD_URL = /^http:\/\/127\.0\.0\.1:([1-9]\d{3,4})$/u;
+
+function isAllocatedLoopbackDashboard(dashboard: HermesDashboard): boolean {
+  const port = Number(ALLOCATED_LOOPBACK_DASHBOARD_URL.exec(dashboard.url)?.[1]);
+  return (
+    port >= 1024 && port <= 65_535 && [undefined, dashboard.url].includes(dashboard.browserUrl)
+  );
+}
+
 function hermesApiFindings(
   entry: ObservedExportRegistry,
   dashboardEnabled: boolean,
@@ -180,6 +189,7 @@ function inspectHermesDashboard(
     return {
       findings: [...findings, ...disabledHermesDashboardFindings(entry)],
       ...(Object.keys(interfaces).length ? { interfaces } : {}),
+      ...(isAllocatedLoopbackDashboard(dashboard) ? { dashboard } : {}),
     };
   }
   const url = `http://127.0.0.1:${dashboard.publicPort}`;
