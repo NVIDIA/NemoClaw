@@ -15,8 +15,8 @@
 #
 # Deep Agents has no HTTP dashboard. Run after agentscaling_deepagents_*.
 #   E2E_USERS=5 ./scripts/client_deepagents.sh
-# Workload: inflight stays 1. Default MAX_TOKENS=2048 (GPU util).
-# Latency HPA ramps 2048 tokens until 6 GPUs, then 32, then stops at 8.
+# Workload: inflight stays 1. GPU util does not take MAX_TOKENS (built-in 2048).
+# Latency: MAX_TOKENS=64 ./scripts/client_deepagents.sh
 
 set -euo pipefail
 
@@ -35,7 +35,8 @@ fail() {
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-3}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-deepagent-nim-e2e-}"
-export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime deepagents)}"
+INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime deepagents)}"
+export INFERENCE_RUNTIME
 agent_common_validate_inference_runtime "${INFERENCE_RUNTIME}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
@@ -46,9 +47,9 @@ export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-300}"
 export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
 export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
 # One agent per sandbox. Longer completions keep NIM busy (Hermes-style 7→8 climb).
-export MAX_TOKENS="$(agent_common_resolve_max_tokens deepagents)"
-# Both metrics stop new chats at 8 GPUs. GPU util keeps 2048 until then.
-export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
+agent_common_export_client_tokens deepagents
+# Stop new chats after ~60s at 8 GPUs.
+export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-60}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/deepagents}"
 
@@ -66,7 +67,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client_deepagents.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 dcode -n)."
-echo "Sends chats for ${DURATION_SEC}s. Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0."
+agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}"
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"

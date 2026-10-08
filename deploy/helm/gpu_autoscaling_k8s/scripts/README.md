@@ -42,6 +42,6 @@ what each script in this directory does — it has no instructions of its own.
 | `agent-common.sh` | Per-agent config table sourced by the scripts above |
 | `test-inference-auth-contract.ts` | Local contract: metrics-proxy requires the inference API key and rejects non-object chat bodies |
 | `test-metrics-proxy-metrics-contract.ts` | Local contract: rolling `latency_avg` uses a 30s sample window and idle-expires so HPA can scale down |
-| `test-e2e-load-stop.py` | Local contract: HPA helper reports 8 GPUs; OpenClaw client requires `--host` and does not start in-sandbox helpers |
-| `test-e2e-latency-load-ramp.py` | Local contract: latency load is 2048 tokens through 5 GPUs, 32 at 6/7, stop at 8 |
+| `test-e2e-load-stop.py` | Local contract: HPA helper reports 8 GPUs; OpenClaw client requires `--host`, does not copy helpers into sandboxes, and on stop drops in-flight OpenClaw completions |
+| `test-e2e-latency-load-ramp.py` | Local contract: GPU util ignores MAX_TOKENS (16384, inflight 2 until stop at 8); latency MAX_TOKENS default 64 |
 | `test-hpa-idle-replicas-contract.sh` | Local contract: idle latency HPA `1/0` is a ready baseline; leftover `5/6` is not |

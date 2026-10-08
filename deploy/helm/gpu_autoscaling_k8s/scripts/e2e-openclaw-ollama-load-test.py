@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import csv
 import json
 import os
@@ -73,7 +72,6 @@ PROMPTS = [
 
 
 HELPER_PATH = Path(__file__).resolve().parent.parent / "files" / "openclaw-e2e-ws-prompt.py"
-_HELPER_B64 = ""
 SANDBOX_NS = os.environ.get("OPENSHELL_NAMESPACE", "nemoclaw-sandboxes")
 
 
@@ -99,6 +97,7 @@ def users_from_http_host(host: str, users: int, discovery_port: int) -> list[dic
         if isinstance(rows, list) and rows:
             return rows
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
+        # Discovery is optional. Fall back to host:18789+i without a token file.
         pass
     return [
         {
@@ -122,13 +121,6 @@ def endpoint_for_user(users: list[dict[str, object]], user_id: int) -> dict[str,
     raise KeyError(f"no endpoint for user {user_id}")
 
 
-def helper_b64() -> str:
-    global _HELPER_B64
-    if not _HELPER_B64:
-        _HELPER_B64 = base64.b64encode(HELPER_PATH.read_bytes()).decode("ascii")
-    return _HELPER_B64
-
-
 def load_prompt() -> str:
     if os.environ.get("E2E_LATENCY_RAMP") == "1":
         return latency_ramp.prompt_for_tokens(latency_ramp.token_bands()[0], "openclaw")[0]
@@ -145,37 +137,6 @@ def load_prompt() -> str:
 
 
 SANDBOX_RAMP_FILE = "/tmp/e2e-latency-ramp.json"
-
-
-def publish_ramp_to_sandboxes(prefix: str, users: int, payload: dict[str, object]) -> None:
-    kubectl = shutil.which("kubectl")
-    if not kubectl or users < 1:
-        return
-    blob = base64.b64encode(json.dumps(payload).encode()).decode("ascii")
-    for user_id in range(users):
-        name = sandbox_name(prefix, user_id)
-        try:
-            subprocess.run(
-                [
-                    kubectl,
-                    "exec",
-                    "-n",
-                    SANDBOX_NS,
-                    name,
-                    "-c",
-                    "agent",
-                    "--",
-                    "bash",
-                    "-c",
-                    f"echo {blob} | base64 -d > {SANDBOX_RAMP_FILE}",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=20,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            continue
 
 
 def clear_ramp_from_sandboxes(prefix: str, users: int) -> None:
@@ -360,6 +321,15 @@ done
     + KILL_LEFTOVER_OPENCLAW_EXEC
 )
 
+# Hermes stops leftover chats with `pkill hermes -z`. OpenClaw chat.send is
+# inside the gateway (stream=false), so closing the client WS does not abort
+# Ollama. SIGTERM `openclaw gateway run` drops that HTTP. client.sh then
+# relaunches an idle gateway so :18789 comes back. Do not pkill nemoclaw-start
+# here; setup start owns the relaunch.
+INTERRUPT_OPENCLAW_INFLIGHT = r"""
+pkill -TERM -f '[o]penclaw gateway run' || true
+""" + KILL_LEFTOVER_OPENCLAW_EXEC
+
 
 def _exec_sandbox_helper_signal(prefix: str, users: int, script: str, note: str) -> None:
     kubectl = shutil.which("kubectl")
@@ -391,21 +361,34 @@ def _exec_sandbox_helper_signal(prefix: str, users: int, script: str, note: str)
             continue
 
 
+def kill_sandbox_load_helpers(prefix: str, users: int) -> None:
+    """SIGTERM then SIGKILL leftover e2e-openclaw-load inside sandboxes. Gateway stays up."""
+    _exec_sandbox_helper_signal(
+        prefix, users, KILL_SANDBOX_HELPERS, "stopping leftover in-sandbox chat helpers"
+    )
+
+
+def interrupt_openclaw_inflight(prefix: str, users: int) -> None:
+    """Drop in-flight OpenClaw→Ollama calls so GPUs go idle after the client stops."""
+    _exec_sandbox_helper_signal(
+        prefix, users, INTERRUPT_OPENCLAW_INFLIGHT, "dropping in-flight OpenClaw completions"
+    )
+
+
 def stop_new_sandbox_chats(prefix: str, users: int) -> None:
-    """SIGTERM in-sandbox helpers so they start no new chats. In-flight chat.send still finishes."""
+    """SIGTERM in-sandbox helpers so they start no new chats."""
     _exec_sandbox_helper_signal(
         prefix,
         users,
         TERM_SANDBOX_HELPERS,
-        "8 GPUs: SIGTERM in-sandbox helpers (no new chats; in-flight replies finish)",
+        "8 GPUs: SIGTERM in-sandbox helpers (no new chats)",
     )
 
 
 def stop_sandbox_chats(prefix: str, users: int) -> None:
-    """SIGTERM then SIGKILL leftover OpenClaw load helpers inside sandboxes."""
-    _exec_sandbox_helper_signal(
-        prefix, users, KILL_SANDBOX_HELPERS, "Client finished: stopping in-sandbox chat helpers"
-    )
+    """Kill leftover in-sandbox helpers and abort in-flight OpenClaw completions."""
+    kill_sandbox_load_helpers(prefix, users)
+    interrupt_openclaw_inflight(prefix, users)
 
 
 def parse_load_counts(log_path: Path) -> tuple[int, int, int]:
@@ -534,7 +517,7 @@ async def terminate_proc(proc: asyncio.subprocess.Process) -> None:
         return
     proc.terminate()
     try:
-        await asyncio.wait_for(proc.wait(), timeout=15)
+        await asyncio.wait_for(proc.wait(), timeout=2)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
@@ -598,7 +581,7 @@ async def simulate_user_http(
     env["E2E_SESSION_KEY"] = f"agent:main:{sandbox}"
     env["E2E_ESCALATE_INTERVAL_SEC"] = "15"
     env["E2E_ESCALATE_FACTOR"] = "0.35"
-    env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "8")
+    env["E2E_DRAIN_SEC"] = str(os.environ.get("E2E_DRAIN_SEC") or "0")
     env["MAX_TOKENS"] = str(os.environ.get("MAX_TOKENS") or "2048")
     env["E2E_LATENCY_RAMP"] = os.environ.get("E2E_LATENCY_RAMP") or "0"
     if env["E2E_LATENCY_RAMP"] == "1" and os.environ.get("E2E_LATENCY_RAMP_FILE"):
@@ -661,124 +644,11 @@ async def simulate_user_http(
     }
 
 
-async def simulate_user(
-    user_id: int,
-    prefix: str,
-    inflight: int,
-    inflight_start: int,
-    duration_sec: int,
-    timeout_sec: int,
-    stop_event: asyncio.Event,
-    log_path: Path,
-) -> dict[str, object]:
-    """One kubectl exec per sandbox. In-process threads keep inflight chats.
-
-    Many parallel openshell/kubectl execs OOM-kill an undersized CPU sandbox (exit 137).
-    """
-    sandbox = sandbox_name(prefix, user_id)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    kubectl = shutil.which("kubectl")
-    if not kubectl:
-        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": "kubectl missing"}
-    if not HELPER_PATH.is_file():
-        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": f"missing {HELPER_PATH}"}
-    await stagger_user_start(user_id, stop_event)
-    if stop_event.is_set():
-        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 0, "chats_ok": 0, "chats_err": 0}
-    script = (
-        "set -euo pipefail; "
-        "ns=''; "
-        "for n in /run/netns/*; do [ -e \"$n\" ] || continue; ns=$n; break; done; "
-        "[ -n \"$ns\" ] || { echo no-sandbox-netns >&2; exit 1; }; "
-        "unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_TOKEN || true; "
-        "if [ -f /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi; "
-        "unset OPENCLAW_GATEWAY_TOKEN || true; "
-        "export NEMOCLAW_E2E_LOAD=1 E2E_DURATION_SEC=\"$3\" E2E_INFLIGHT=\"$4\" E2E_INFLIGHT_MAX=\"$5\" "
-        "E2E_PROMPT_TIMEOUT_SEC=\"$6\" E2E_SESSION_KEY=\"$7\" "
-        "MAX_TOKENS=\"$8\" E2E_DRAIN_SEC=\"${9:-8}\" "
-        "E2E_LATENCY_RAMP=\"${10:-0}\" "
-        "E2E_LATENCY_RAMP_FILE=/tmp/e2e-latency-ramp.json "
-        "E2E_ESCALATE_INTERVAL_SEC=15 E2E_ESCALATE_FACTOR=0.35; "
-        "echo \"$1\" | base64 -d | nsenter --net=\"$ns\" "
-        "bash -c 'exec -a e2e-openclaw-load python3 -'"
+async def simulate_user(*_args: object, **_kwargs: object) -> dict[str, object]:
+    """Removed: copying e2e-openclaw-load into the sandbox scaled GPUs after the client stopped."""
+    raise RuntimeError(
+        "OpenClaw client does not copy load helpers into sandboxes. Use --host."
     )
-    proc = await asyncio.create_subprocess_exec(
-        kubectl,
-        "exec",
-        "-n",
-        SANDBOX_NS,
-        sandbox,
-        "-c",
-        "agent",
-        "--",
-        "bash",
-        "-c",
-        script,
-        "bash",
-        helper_b64(),
-        load_prompt(),
-        str(duration_sec),
-        str(inflight_start),
-        str(inflight),
-        str(timeout_sec),
-        f"agent:main:{sandbox}",
-        str(os.environ.get("MAX_TOKENS") or "2048"),
-        str(os.environ.get("E2E_DRAIN_SEC") or "8"),
-        str(os.environ.get("E2E_LATENCY_RAMP") or "0"),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    log_handle = log_path.open("w")
-    ok = 0
-    err = 0
-    started = time.monotonic()
-
-    async def pump() -> None:
-        assert proc.stdout is not None
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            text = line.decode("utf-8", errors="replace")
-            log_handle.write(text)
-            log_handle.flush()
-            print(f"[user {user_id} sandbox {user_id}] {text.rstrip()}", flush=True)
-
-    pump_task = asyncio.create_task(pump())
-    try:
-        while proc.returncode is None and not stop_event.is_set():
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
-        if stop_event.is_set() and proc.returncode is None:
-            await terminate_proc(proc)
-        else:
-            await proc.wait()
-    finally:
-        await pump_task
-        log_handle.close()
-    rc = proc.returncode if proc.returncode is not None else 1
-    chats_ok, chats_err, tokens = parse_load_counts(log_path)
-    # run_test may SIGTERM the exec when DURATION_SEC elapses.
-    # Count the user from chat.send results, not from the killed process exit code.
-    if chats_ok > 0 and (rc == 0 or stop_event.is_set()):
-        ok = 1
-    else:
-        err = 1
-    return {
-        "user_id": user_id,
-        "sandbox": sandbox,
-        "ok": ok,
-        "err": err,
-        "chats_ok": chats_ok,
-        "chats_err": chats_err,
-        "tokens": tokens,
-        "turns": inflight,
-        "duration": time.monotonic() - started,
-        "log": str(log_path),
-        "exit": rc,
-    }
 
 
 async def run_test(args: argparse.Namespace) -> int:
@@ -808,20 +678,20 @@ async def run_test(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    stop_sandbox_chats(args.prefix, args.users)
+    # Kill leftover in-sandbox helpers only. Do not restart the gateway here;
+    # client.sh already reloaded it after the max_tokens pin.
+    kill_sandbox_load_helpers(args.prefix, args.users)
+    clear_ramp_from_sandboxes(args.prefix, args.users)
 
     print("=" * 70)
     print(f"  {args.users} end users → {args.users} OpenClaw agents (1:1)")
-    if endpoints:
-        print("  Path: client HTTP / WebSocket to published host ports.")
-        for i in range(args.users):
-            ep = endpoint_for_user(endpoints, i)
-            print(
-                f"  user {i} → {ep.get('sandbox')} "
-                f"http://{ep.get('ws_host') or ep.get('host')}:{ep.get('ws_port')}"
-            )
-    else:
-        print("  Each user sends chats to that user's sandbox.")
+    print("  Path: client HTTP / WebSocket to published host ports.")
+    for i in range(args.users):
+        ep = endpoint_for_user(endpoints, i)
+        print(
+            f"  user {i} → {ep.get('sandbox')} "
+            f"http://{ep.get('ws_host') or ep.get('host')}:{ep.get('ws_port')}"
+        )
     print(f"  Concurrent chats per user: {args.inflight_start}→{args.inflight_per_user}")
     print("=" * 70)
 
@@ -860,26 +730,16 @@ async def run_test(args: argparse.Namespace) -> int:
         os.environ["E2E_CHAT_PAUSE_SEC"] = os.environ.get("E2E_CHAT_PAUSE_SEC") or "0"
         os.environ["E2E_USER_STAGGER_SEC"] = os.environ.get("E2E_USER_STAGGER_SEC") or "0"
         latency_ramp.write_scale_load(start_load, ramp_path)
-        if not endpoints:
-            publish_ramp_to_sandboxes(args.prefix, args.users, latency_ramp.ramp_payload(start_tokens))
         last_ramp_tokens = start_tokens
-        if latency_ramp.is_latency_metric(metric):
-            print(
-                f"[load] max_tokens={start_tokens} until 6 GPUs, "
-                f"then {latency_ramp.token_bands()[1]}, then 0 at {args.target_pods}",
-                flush=True,
-            )
-        else:
-            print(
-                f"[load] max_tokens={start_tokens} until {args.target_pods} GPUs, then 0 new chats",
-                flush=True,
-            )
-    elif not endpoints:
-        os.environ["E2E_LATENCY_RAMP"] = "0"
-        clear_ramp_from_sandboxes(args.prefix, args.users)
+        print(
+            f"[load] max_tokens={start_tokens}; stop after hold at {args.target_pods} GPUs",
+            flush=True,
+        )
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, last_ramp_tokens
+        at_max_since: float | None = None
+        hold_announced = False
         while not stop_load.is_set():
             if args.host:
                 current, desired = await asyncio.to_thread(
@@ -904,17 +764,23 @@ async def run_test(args: argparse.Namespace) -> int:
                     target=args.target_pods,
                 )
                 tokens = latency_ramp.load_tokens(load)
-                if tokens != last_ramp_tokens:
+                stop_now, at_max_since = latency_ramp.should_stop_after_hold(
+                    bool(load.get("stop")), args.hold_sec, at_max_since, time.monotonic()
+                )
+                if stop_now:
                     last_ramp_tokens = tokens
                     latency_ramp.write_scale_load(load, ramp_path)
-                    if not endpoints:
-                        publish_ramp_to_sandboxes(
-                            args.prefix, args.users, latency_ramp.ramp_payload(tokens)
-                        )
-                    if tokens is None:
-                        stop_load.set()
-                    else:
-                        print(f"[load] max_tokens={tokens}", flush=True)
+                    stop_load.set()
+                elif tokens is not None and tokens != last_ramp_tokens:
+                    last_ramp_tokens = tokens
+                    latency_ramp.write_scale_load(load, ramp_path)
+                    print(f"[load] max_tokens={tokens}", flush=True)
+                elif bool(load.get("stop")) and not hold_announced:
+                    hold_announced = True
+                    print(
+                        f"[load] {args.target_pods} GPUs — hold {args.hold_sec:.0f}s then stop",
+                        flush=True,
+                    )
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
             except asyncio.TimeoutError:
@@ -952,7 +818,8 @@ async def run_test(args: argparse.Namespace) -> int:
         results = list(await asyncio.gather(*user_tasks, return_exceptions=True))
     finally:
         stop_load.set()
-        stop_sandbox_chats(args.prefix, args.users)
+        kill_sandbox_load_helpers(args.prefix, args.users)
+        interrupt_openclaw_inflight(args.prefix, args.users)
     normalized: list[dict[str, object]] = []
     for item in results:
         if isinstance(item, dict):
@@ -1054,7 +921,7 @@ def main() -> int:
         help="Bootstrap concurrent chats per sandbox before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
-    parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "0")))
+    parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "60")))
     parser.add_argument("--hpa-namespace", default=os.environ.get("NAMESPACE", "nemoclaw-gpu"))
     parser.add_argument("--hpa-name", default=os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy"))
     parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "2")))

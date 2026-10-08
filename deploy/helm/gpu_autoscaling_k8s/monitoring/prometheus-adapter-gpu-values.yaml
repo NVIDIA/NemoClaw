@@ -24,9 +24,10 @@ rules:
       name:
         matches: "^(.*)$"
         as: "gpu_utilization_percent"
-      # 45s window: one DCGM 0 scrape while a new GPU pod starts must not
-      # publish HPA average 0% when other GPUs are still busy.
-      metricsQuery: 'avg(avg_over_time(<<.Series>>{<<.LabelMatchers>>}[45s])) by (<<.GroupBy>>)'
+      # Peak in 90s: a DCGM 0 scrape between OpenClaw chats must not publish
+      # HPA average 0% while nvidia-smi still shows busy GPUs. avg_over_time
+      # 45s still dropped to 0% and stalled 1→8.
+      metricsQuery: 'avg(max_over_time(<<.Series>>{<<.LabelMatchers>>}[90s])) by (<<.GroupBy>>)'
 
     # metrics-proxy /metrics rolling avg latency (idle-expires when traffic stops).
     - seriesQuery: 'nemoclaw_llm_latency_avg_milliseconds{namespace!="",pod!=""}'

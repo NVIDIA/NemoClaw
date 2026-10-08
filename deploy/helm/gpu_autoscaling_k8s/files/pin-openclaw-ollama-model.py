@@ -198,6 +198,18 @@ def main() -> int:
     # Same payload shape as files/load-generator.ts (stream=false, max_tokens).
     params["stream"] = False
     params["max_tokens"] = MAX_TOKENS
+    params["num_predict"] = MAX_TOKENS
+    options = params.get("options")
+    if not isinstance(options, dict):
+        options = {}
+        params["options"] = options
+    options["num_predict"] = MAX_TOKENS
+    if MAX_TOKENS > 128:
+        params["ignore_eos"] = True
+        options["ignore_eos"] = True
+    else:
+        params.pop("ignore_eos", None)
+        options.pop("ignore_eos", None)
     models[0]["maxTokens"] = MAX_TOKENS
 
     plugins = cfg.setdefault("plugins", {})
@@ -269,11 +281,13 @@ def main() -> int:
         except OSError:
             pass  # Concurrent start may already have removed a clobbered snapshot.
     try:
-        digest = subprocess.check_output(["sha256sum", PATH.name], cwd=PATH.parent, text=True)
+        digest = subprocess.check_output(
+            ["sha256sum", PATH.name], cwd=PATH.parent, text=True, timeout=10
+        )
         hash_path = PATH.parent / ".config-hash"
         _replace_text(hash_path, digest)
         targets.append(hash_path)
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass  # Hash file is optional; OpenClaw still reads the rewritten JSON.
     for path in dict.fromkeys(targets):
         _own(path)

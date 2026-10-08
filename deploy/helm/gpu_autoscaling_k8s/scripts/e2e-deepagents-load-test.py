@@ -326,7 +326,7 @@ async def simulate_user(
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=pause)
             except asyncio.TimeoutError:
-                pass
+                pass  # Pause elapsed; stop_event was not set.
 
     pending: set[asyncio.Task[None]] = set()
     try:
@@ -391,8 +391,8 @@ async def run_test(args: argparse.Namespace) -> int:
             ).strip()
             or metric
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        metric = metric or os.environ.get("HPA_METRIC", "")
     last_ramp_tokens: object = "unset"
     if os.environ.get("E2E_LATENCY_RAMP") != "0":
         RAMP_STATE["enabled"] = True
@@ -400,20 +400,15 @@ async def run_test(args: argparse.Namespace) -> int:
         start_tokens = latency_ramp.load_tokens(start_load) or latency_ramp.token_bands()[0]
         RAMP_STATE["tokens"] = start_tokens
         last_ramp_tokens = start_tokens
-        if latency_ramp.is_latency_metric(metric):
-            print(
-                f"[load] max_tokens={start_tokens} until 6 GPUs, "
-                f"then {latency_ramp.token_bands()[1]}, then 0 at {args.target_pods}",
-                flush=True,
-            )
-        else:
-            print(
-                f"[load] max_tokens={start_tokens} until {args.target_pods} GPUs, then 0 new chats",
-                flush=True,
-            )
+        print(
+            f"[load] max_tokens={start_tokens}; stop after hold at {args.target_pods} GPUs",
+            flush=True,
+        )
 
     async def poll_hpa() -> None:
         nonlocal max_replicas, reached_target, last_ramp_tokens
+        at_max_since: float | None = None
+        hold_announced = False
         while not stop_load.is_set():
             current, desired = await asyncio.to_thread(read_hpa, args.hpa_namespace, args.hpa_name)
             max_replicas = max(max_replicas, current, desired)
@@ -433,14 +428,23 @@ async def run_test(args: argparse.Namespace) -> int:
                     target=args.target_pods,
                 )
                 tokens = latency_ramp.load_tokens(load)
-                if tokens != last_ramp_tokens:
+                stop_now, at_max_since = latency_ramp.should_stop_after_hold(
+                    bool(load.get("stop")), args.hold_sec, at_max_since, time.monotonic()
+                )
+                if stop_now:
                     last_ramp_tokens = tokens
-                    if tokens is None:
-                        RAMP_STATE["stop"] = True
-                        stop_load.set()
-                    else:
-                        RAMP_STATE["tokens"] = tokens
-                        print(f"[load] max_tokens={tokens}", flush=True)
+                    RAMP_STATE["stop"] = True
+                    stop_load.set()
+                elif tokens is not None and tokens != last_ramp_tokens:
+                    last_ramp_tokens = tokens
+                    RAMP_STATE["tokens"] = tokens
+                    print(f"[load] max_tokens={tokens}", flush=True)
+                elif bool(load.get("stop")) and not hold_announced:
+                    hold_announced = True
+                    print(
+                        f"[load] {args.target_pods} GPUs — hold {args.hold_sec:.0f}s then stop",
+                        flush=True,
+                    )
             try:
                 await asyncio.wait_for(stop_load.wait(), timeout=args.hpa_poll_sec)
             except asyncio.TimeoutError:
@@ -564,7 +568,7 @@ def main() -> int:
         help="Bootstrap concurrent dcode -n prompts per sandbox before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
-    parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "0")))
+    parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "60")))
     parser.add_argument("--hpa-namespace", default=os.environ.get("NAMESPACE", "nemoclaw-gpu"))
     parser.add_argument("--hpa-name", default=os.environ.get("HPA_NAME", "nemoclaw-gpu-metrics-proxy"))
     parser.add_argument("--hpa-poll-sec", type=float, default=float(os.environ.get("SCALE_UP_POLL_SEC", "2")))

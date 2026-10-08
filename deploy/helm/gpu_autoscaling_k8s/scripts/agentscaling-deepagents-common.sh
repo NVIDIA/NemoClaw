@@ -18,11 +18,13 @@ agentscaling_deepagents_common_pin() {
     agentscaling_deepagents_common_fail "Deep Agents e2e (got AGENT_NAME=${AGENT_NAME})"
   fi
   export AGENT_NAME="deepagents"
-  export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime deepagents)}"
+  INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime deepagents)}"
+  export INFERENCE_RUNTIME
   agent_common_validate_runtime_pairing "${AGENT_NAME}" "${INFERENCE_RUNTIME}"
   INFERENCE_MODEL="$(agent_common_resolve_inference_model "${INFERENCE_RUNTIME}")"
   export INFERENCE_MODEL
-  export MAX_TOKENS="$(agent_common_resolve_max_tokens deepagents)"
+  MAX_TOKENS="$(agent_common_resolve_max_tokens deepagents)"
+  export MAX_TOKENS
   export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
   export RELEASE="${RELEASE:-nemoclaw-gpu}"
   if [[ "${NAMESPACE}" != "nemoclaw-gpu" || "${RELEASE}" != "nemoclaw-gpu" ]]; then

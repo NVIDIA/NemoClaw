@@ -124,7 +124,14 @@ def _read_latency_ramp() -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
-def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool) -> tuple[int, int]:
+def send_one(
+    prompt: str,
+    session: str,
+    timeout: float,
+    token: str,
+    quiet: bool,
+    stop_event: object | None = None,
+) -> tuple[int, int]:
     port = int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789"))
     host = os.environ.get("OPENCLAW_GATEWAY_HOST", "127.0.0.1")
     origin = f"http://{host}:{port}"
@@ -199,7 +206,13 @@ def send_one(prompt: str, session: str, timeout: float, token: str, quiet: bool)
         )
         send_id = None
 
+        def _stop_requested() -> bool:
+            checker = getattr(stop_event, "is_set", None)
+            return bool(callable(checker) and checker())
+
         while time.monotonic() < deadline:
+            if _stop_requested():
+                return 1, 0
             try:
                 chunk = sock.recv(65536)
             except TimeoutError:
@@ -337,7 +350,7 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
             if stop.is_set() and attempt > 0:
                 return 1, 0
             try:
-                rc, ntok = send_one(text, session, timeout, token, quiet=True)
+                rc, ntok = send_one(text, session, timeout, token, quiet=True, stop_event=stop)
             except (TimeoutError, OSError, ConnectionError):
                 rc, ntok = 1, 0
             if rc == 0:
@@ -406,10 +419,10 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
             last_log = now
         time.sleep(0.5)
     stop.set()
-    # Finish the current chat.send instead of dying on SIGTERM. That last
-    # in-flight used to increment err.
-    drain = float(os.environ.get("E2E_DRAIN_SEC", "8"))
-    join_deadline = time.monotonic() + max(1.0, drain)
+    # Do not finish in-flight chat.send after SIGTERM. That leftover OpenClaw
+    # → Ollama generation scaled GPUs after the client stopped.
+    drain = float(os.environ.get("E2E_DRAIN_SEC", "0"))
+    join_deadline = time.monotonic() + max(0.0, drain)
     for worker_thread in workers:
         remaining = join_deadline - time.monotonic()
         if remaining <= 0:

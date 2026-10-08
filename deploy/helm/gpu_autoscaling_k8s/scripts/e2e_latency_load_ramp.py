@@ -3,11 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Same client.sh load for both HPA metrics.
 
-Latency: 2048-token answers through 5 GPUs, 32 at 6 and 7, then 0 new chats at 8.
-GPU util: 2048-token answers until 8 GPUs, then 0 new chats. Do not drop to 32
-at 6 GPUs — that load cannot hold 40% util, so HPA never reaches 8.
-A leftover MAX_TOKENS=32/64 flag must not starve GPU-util.
-A failed HPA poll (0/0) is treated as 1 GPU, never as 8.
+GPU util does not take MAX_TOKENS (OpenClaw built-in 16384). Latency uses
+MAX_TOKENS (default 64). OpenClaw GPU util uses two in-flight chats so 1→8
+can clear 7 H100s. Tokens stay at that pin until 8 GPUs; the client then
+holds and stops. A failed HPA poll (0/0) is treated as 1 GPU, never as 8.
 """
 
 from __future__ import annotations
@@ -16,12 +15,12 @@ import json
 import os
 from pathlib import Path
 
-DEFAULT_START = 2048
-DEFAULT_LOW = 32
-DEFAULT_GPUUTIL_TOKENS = 2048
+DEFAULT_START = 64
+SHORT_PROMPT_AT = 128
+DEFAULT_GPUUTIL_TOKENS = 16384
 DEFAULT_TARGET = 8
-REDUCE_AT = 6
-GPUUTIL_INFLIGHT_2_AT = 2
+DEFAULT_HOLD_SEC = 60.0
+GPUUTIL_INFLIGHT_2_AT = 1
 RAMP_FILE = Path(os.environ.get("E2E_LATENCY_RAMP_FILE") or "/tmp/e2e-latency-ramp.json")
 
 
@@ -31,7 +30,7 @@ def is_latency_metric(metric: str) -> bool:
 
 def is_gpuutil_metric(metric: str) -> bool:
     name = (metric or "").lower()
-    return "gpu_utilization" in name
+    return "gpu_utilization" in name or name == "gpu"
 
 
 def env_int(name: str, default: int) -> int:
@@ -45,24 +44,23 @@ def env_int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def latency_token_start() -> int:
+    """MAX_TOKENS is the latency flag. GPU util ignores it."""
+    if os.environ.get("MAX_TOKENS"):
+        return max(8, env_int("MAX_TOKENS", DEFAULT_START))
+    return max(8, env_int("E2E_LATENCY_TOKEN_START", DEFAULT_START))
+
+
 def token_bands(start: int | None = None) -> tuple[int, int]:
+    """Constant pin for this run. Both tuple slots are that pin (no token drop)."""
     if start is None:
-        start = env_int("E2E_LATENCY_TOKEN_START", DEFAULT_START)
+        start = latency_token_start()
     start = max(8, start)
-    low = min(env_int("E2E_LATENCY_TOKEN_LOW", DEFAULT_LOW), start)
-    return start, max(8, low)
+    return start, start
 
 
 def gpuutil_token_cap() -> int:
-    """GPU-util MAX_TOKENS. Ignore leftover 32/64/1024 flags; start at 2048."""
-    raw = os.environ.get("MAX_TOKENS")
-    if raw not in (None, ""):
-        try:
-            value = int(raw)
-        except ValueError:
-            value = 0
-        if value > 1024:
-            return max(8, value)
+    """GPU util built-in start. Does not read MAX_TOKENS."""
     return max(8, env_int("E2E_GPUUTIL_TOKEN_START", DEFAULT_GPUUTIL_TOKENS))
 
 
@@ -77,20 +75,17 @@ def latency_tokens_for_replicas(
     *,
     target: int = DEFAULT_TARGET,
     start: int | None = None,
-    reduce_at: int = REDUCE_AT,
 ) -> int | None:
-    """max_tokens for this replica count, or None to stop new chats at the target."""
-    high, low = token_bands(start)
+    """Pinned max_tokens, or None to stop new chats at the target."""
+    high, _same = token_bands(start)
     if replicas >= target:
         return None
-    if replicas >= reduce_at:
-        return low
     return high
 
 
 def gpuutil_inflight_for_replicas(replicas: int) -> int:
-    """Concurrent chats per user. 1 GPU stays inflight 1; 2+ GPUs raise to 2."""
-    inflight_max = env_int("E2E_GPUUTIL_INFLIGHT_MAX", 1)
+    """Concurrent chats per user on the one agent in that sandbox."""
+    inflight_max = env_int("E2E_GPUUTIL_INFLIGHT_MAX", 2)
     if inflight_max < 1:
         inflight_max = 1
     two_at = env_int("E2E_GPUUTIL_INFLIGHT_2_AT", GPUUTIL_INFLIGHT_2_AT)
@@ -99,44 +94,66 @@ def gpuutil_inflight_for_replicas(replicas: int) -> int:
     return 1
 
 
-def gpuutil_load_for_replicas(replicas: int) -> tuple[int, int]:
-    return gpuutil_token_cap(), gpuutil_inflight_for_replicas(replicas)
+def gpuutil_tokens_for_replicas(
+    replicas: int,
+    *,
+    target: int = DEFAULT_TARGET,
+) -> int | None:
+    """Pinned GPU-util built-in, or None to stop new chats at the target."""
+    return latency_tokens_for_replicas(
+        replicas, target=target, start=gpuutil_token_cap()
+    )
+
+
+def gpuutil_load_for_replicas(
+    replicas: int, target: int = DEFAULT_TARGET
+) -> tuple[int | None, int]:
+    tokens = gpuutil_tokens_for_replicas(replicas, target=target)
+    if tokens is None:
+        return None, 1
+    return tokens, gpuutil_inflight_for_replicas(replicas)
 
 
 def scale_load(metric: str, replicas: int, target: int = DEFAULT_TARGET) -> dict[str, object]:
     """Client load for the live HPA metric and replica count."""
-    if is_latency_metric(metric):
-        tokens = latency_tokens_for_replicas(replicas, target=target)
-        stop = tokens is None
-        return {
-            "mode": "latency",
-            "max_tokens": 0 if stop else int(tokens),
-            "inflight": 1,
-            "stop": stop,
-            "short": False if stop else use_short_prompts(int(tokens)),
-        }
     if is_gpuutil_metric(metric):
-        tokens, inflight = gpuutil_load_for_replicas(replicas)
-        stop = replicas >= target
+        tokens, inflight = gpuutil_load_for_replicas(replicas, target=target)
+        stop = tokens is None
         return {
             "mode": "gpuutil",
             "max_tokens": 0 if stop else int(tokens),
             "inflight": 1 if stop else inflight,
             "stop": stop,
-            "short": False,
+            "short": False if stop else use_short_prompts(int(tokens), start=gpuutil_token_cap()),
         }
+    tokens = latency_tokens_for_replicas(replicas, target=target)
+    stop = tokens is None
     return {
-        "mode": "",
-        "max_tokens": gpuutil_token_cap(),
+        "mode": "latency" if is_latency_metric(metric) else "",
+        "max_tokens": 0 if stop else int(tokens),
         "inflight": 1,
-        "stop": False,
-        "short": False,
+        "stop": stop,
+        "short": False if stop else use_short_prompts(int(tokens)),
     }
 
 
+def should_stop_after_hold(
+    stop_requested: bool,
+    hold_sec: float,
+    at_max_since: float | None,
+    now: float,
+) -> tuple[bool, float | None]:
+    """After HPA hits 8, wait hold_sec before ending chats so sit-at-8 stays ~1 min."""
+    if not stop_requested:
+        return False, None
+    since = now if at_max_since is None else at_max_since
+    wait = hold_sec if hold_sec > 0 else 0.0
+    return (now - since) >= wait, since
+
+
 def use_short_prompts(max_tokens: int, start: int | None = None) -> bool:
-    high, _low = token_bands(start)
-    return max_tokens < high
+    del start
+    return max_tokens <= SHORT_PROMPT_AT
 
 
 def prompt_for_tokens(max_tokens: int, agent: str = "openclaw", start: int | None = None) -> list[str]:

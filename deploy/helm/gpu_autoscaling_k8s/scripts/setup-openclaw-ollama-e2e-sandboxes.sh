@@ -103,7 +103,8 @@ export AGENT_SANDBOX_CPU="${AGENT_SANDBOX_CPU:-1}"
 # workers remain (openclaw-devices ~150–220Mi each). 8Gi is the floor
 # that lets one OpenClaw listen for the client.
 export AGENT_SANDBOX_MEMORY="${AGENT_SANDBOX_MEMORY:-8Gi}"
-export MAX_TOKENS="$(agent_common_resolve_max_tokens openclaw)"
+MAX_TOKENS="$(agent_common_resolve_max_tokens openclaw)"
+export MAX_TOKENS
 export NEMOCLAW_MINIMAL_BOOTSTRAP="${NEMOCLAW_MINIMAL_BOOTSTRAP:-1}"
 export SKIP_CREATE_SMOKE="${SKIP_CREATE_SMOKE:-1}"
 export SKIP_WAIT_INFERENCE_LOCAL="${SKIP_WAIT_INFERENCE_LOCAL:-1}"
@@ -275,12 +276,10 @@ inference_local_ok() {
 
 pin_openclaw_ollama_model() {
   local name="${1:?sandbox}"
-  local out
   [[ -f "${PIN_OPENCLAW_MODEL_PY}" ]] || fail "missing ${PIN_OPENCLAW_MODEL_PY}"
-  out="$(
-    kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
-      python3 - "${INFERENCE_MODEL}" "${MAX_TOKENS:-128}" <"${PIN_OPENCLAW_MODEL_PY}"
-  )" || fail "$(sandbox_label "${name}"): OpenClaw pin failed"
+  kubectl exec -i -n "${E2E_SANDBOX_NS}" "${name}" -c agent -- \
+    python3 - "${INFERENCE_MODEL}" "${MAX_TOKENS:-128}" <"${PIN_OPENCLAW_MODEL_PY}" \
+    >/dev/null || fail "$(sandbox_label "${name}"): OpenClaw pin failed"
 }
 
 prune_unused_openclaw_npm() {

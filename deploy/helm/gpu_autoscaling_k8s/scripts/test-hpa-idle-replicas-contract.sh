@@ -14,11 +14,23 @@ source "${SCRIPT_DIR}/hpa-common.sh"
 hpa_common_replicas_at_want 1 1 1
 hpa_common_replicas_at_want 1 0 1
 hpa_common_replicas_at_want 1 "" 1
-! hpa_common_replicas_at_want 1 2 1
-! hpa_common_replicas_at_want 5 6 1
-! hpa_common_replicas_at_want 5 1 1
+if hpa_common_replicas_at_want 1 2 1; then
+  echo "ERROR: leftover 1/2 must not look like idle 1" >&2
+  exit 1
+fi
+if hpa_common_replicas_at_want 5 6 1; then
+  echo "ERROR: leftover 5/6 must not look like idle 1" >&2
+  exit 1
+fi
+if hpa_common_replicas_at_want 5 1 1; then
+  echo "ERROR: leftover 5/1 must not look like idle 1" >&2
+  exit 1
+fi
 hpa_common_replicas_at_want 8 8 8
-! hpa_common_replicas_at_want 8 0 8
+if hpa_common_replicas_at_want 8 0 8; then
+  echo "ERROR: 8/0 must not look like 8 GPUs" >&2
+  exit 1
+fi
 
 ready="$(hpa_common_replicas_ready_message ns hpa 1 0)"
 [[ "${ready}" == *"desired 0 until the latency metric exists"* ]]

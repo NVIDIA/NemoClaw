@@ -19,9 +19,9 @@
 #   E2E_USERS=5 ./scripts/client.sh
 # Both paths send chat.send from this client to published :18789+i.
 # They do not copy a load helper into the sandbox.
-# Workload: inflight stays 1.
-# Latency: 2048 tokens until 6 GPUs, then 32, then 0 at 8.
-# GPU util: 2048 tokens until 8 GPUs, then 0 new chats.
+# Same client for both HPA metrics. GPU util does not take MAX_TOKENS
+# (built-in 16384) and uses two in-flight chats on the one OpenClaw per
+# sandbox. Latency: MAX_TOKENS=64 ./scripts/client.sh (inflight 1).
 
 set -euo pipefail
 
@@ -40,21 +40,22 @@ fail() {
 export PATH="${HOME}/.local/bin:${PATH}"
 export E2E_USERS="${E2E_USERS:-5}"
 export SANDBOX_PREFIX="${SANDBOX_PREFIX:-openclaw-ollama-e2e-}"
-export INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime openclaw)}"
+INFERENCE_RUNTIME="${INFERENCE_RUNTIME:-$(agent_common_default_inference_runtime openclaw)}"
+export INFERENCE_RUNTIME
 agent_common_validate_inference_runtime "${INFERENCE_RUNTIME}"
 export OPENSHELL_NAMESPACE="${OPENSHELL_NAMESPACE:-nemoclaw-sandboxes}"
 export NAMESPACE="${NAMESPACE:-nemoclaw-gpu}"
 export HPA_NAME="${HPA_NAME:-nemoclaw-gpu-metrics-proxy}"
 export TARGET_PODS="${TARGET_PODS:-8}"
 export DURATION_SEC="${DURATION_SEC:-900}"
-MAX_TOKENS_FROM_USER="${MAX_TOKENS-}"
-export MAX_TOKENS_FROM_USER
-export MAX_TOKENS="$(agent_common_resolve_max_tokens openclaw)"
+agent_common_export_client_tokens openclaw
+agent_common_export_client_inflight openclaw
 export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-600}"
-export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
-export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
-# Both metrics stop new chats at 8 GPUs. GPU util keeps 2048 until then.
-export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-0}"
+# Stop new chats after ~60s at 8 GPUs.
+export MAX_REPLICAS_HOLD_SEC="${MAX_REPLICAS_HOLD_SEC:-60}"
+# Do not drain in-flight chat.send after SIGTERM. That leftover generation
+# kept GPUs busy after the client stopped.
+export E2E_DRAIN_SEC="${E2E_DRAIN_SEC:-0}"
 export SCALE_DOWN_WAIT_LOOPS="${SCALE_DOWN_WAIT_LOOPS:-40}"
 E2E_OUTPUT_DIR="${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}"
 E2E_CLIENT_HOST="${E2E_CLIENT_HOST:-}"
@@ -65,7 +66,7 @@ command -v python3 >/dev/null 2>&1 || fail "missing command: python3"
 if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   agent_common_print_laptop_client_usage "client.sh"
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:18789 … $((18789 + E2E_USERS - 1))"
-  echo "Sends chats for ${DURATION_SEC}s. Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0."
+  agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}"
   python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" <<'PY'
 import sys, urllib.error, urllib.request
 host, users = sys.argv[1], int(sys.argv[2])
@@ -119,7 +120,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
 export E2E_CLIENT_QUIET_HPA=1
 agent_common_print_laptop_client_usage "client.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1)."
-echo "Sends chats for ${DURATION_SEC}s. Latency: 2048 until 6 GPUs, 32, then 0 at 8. GPU util: 2048 until 8, then 0."
+agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}"
 missing=0
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
@@ -149,19 +150,31 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
 done
 ((unhealthy == 0)) || fail "client will not send chat until every http://127.0.0.1:18789+i/health answers"
 
-echo "Pinning OpenClaw max_tokens=${MAX_TOKENS} (keep provisioned model; one chat.send per sandbox)"
+echo "Pinning OpenClaw max_tokens=${MAX_TOKENS} on the live gateway (file watch is off)"
 for ((i = 0; i < E2E_USERS; i += 1)); do
   name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${i}")"
   agent_common_pin_openclaw_max_tokens "${name}" \
     || fail "could not pin max_tokens on sandbox ${i}"
 done
+echo "Waiting for :18789 after gateway reload"
+agent_common_wait_published_openclaw_health "${E2E_USERS}" \
+  || fail "OpenClaw did not come back on :18789 after max_tokens pin"
 
 mkdir -p "${E2E_OUTPUT_DIR}"
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
 hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${TARGET_PODS:-8}" \
   || fail "HPA is not 1 current replica; leftover load would scale before chats start"
 hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
-exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
+# GPU util: keep scale-up only until 8 so a new 0% GPU cannot bounce 3→2 during the climb.
+# Resume scale-down when the client exits so 8→1 can start after the 60s hold.
+_hpa_metric="$(agent_common_hpa_metric)"
+case "${_hpa_metric}" in
+  *gpu_utilization* | gpu)
+    hpa_common_pause_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}"
+    trap 'hpa_common_resume_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}"' EXIT
+    ;;
+esac
+python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \
   --output "${E2E_OUTPUT_DIR}" \
@@ -175,3 +188,29 @@ exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --scale-down-wait-loops 0 \
   --host 127.0.0.1 \
   --chat-only
+# Drop leftover OpenClaw→Ollama work, then bring :18789 back idle.
+# Closing the client WS does not abort stream=false completions.
+# Pin HPA at 1 before start: OpenClaw inference probes would otherwise
+# scale GPUs with no client.
+echo "Restarting idle OpenClaw so leftover chats cannot keep GPUs busy"
+hpa_common_resume_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}"
+"${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" stop \
+  || true
+kubectl patch hpa "${HPA_NAME}" -n "${NAMESPACE}" --type merge --field-manager=helm \
+  -p '{"spec":{"minReplicas":1,"maxReplicas":1}}' >/dev/null || true
+kubectl scale "deploy/${HPA_NAME}" -n "${NAMESPACE}" --replicas=1 >/dev/null 2>&1 || true
+"${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" start \
+  || echo "WARNING: could not restart OpenClaw after load; leftover chats may keep GPUs busy" >&2
+# Wait until DCGM peak window is idle before maxReplicas=8. OpenClaw start
+# probes inference.local; a sticky 90s peak would scale with no client.
+idle_wait=0
+while ((idle_wait < 100)); do
+  tgt="$(kubectl get hpa "${HPA_NAME}" -n "${NAMESPACE}" -o jsonpath='{.status.currentMetrics[0].pods.current.averageValue}' 2>/dev/null || true)"
+  case "${tgt}" in
+    "" | 0 | 0% | 0m) break ;;
+  esac
+  sleep 5
+  idle_wait=$((idle_wait + 5))
+done
+kubectl patch hpa "${HPA_NAME}" -n "${NAMESPACE}" --type merge --field-manager=helm \
+  -p "{\"spec\":{\"minReplicas\":1,\"maxReplicas\":${TARGET_PODS:-8}}}" >/dev/null || true

@@ -24,28 +24,36 @@ agent_common_print_laptop_client_usage() {
   echo "simpler option — from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
 }
 
-# Inflight stays 1. Both HPA metrics start at 2048 tokens. Latency then
-# drops at 6 GPUs and stops at 8. GPU util stays 2048 until 8, then stops.
-# Ignore leftover MAX_TOKENS=32/64/1024 on GPU util. A higher MAX_TOKENS
-# still raises GPU-util. E2E_LATENCY_TOKEN_START overrides the latency pin.
-agent_common_resolve_max_tokens() {
-  local agent="${1:-openclaw}"
-  local raw metric
-  raw="${MAX_TOKENS:-}"
-  metric="${HPA_METRIC:-}"
+# Same client for both HPA metrics. GPU util does not take MAX_TOKENS
+# (OpenClaw 16384, Hermes 1024, Deep Agents 2048). Latency uses MAX_TOKENS
+# (default 64). OpenClaw GPU util uses two in-flight chats on the one
+# agent per sandbox so 1→8 can clear 7 H100s; latency stays inflight 1.
+# The client holds ~60s at 8 GPUs, then stops.
+agent_common_hpa_metric() {
+  local metric="${HPA_METRIC:-}"
   if [[ -z "${metric}" ]] && command -v kubectl >/dev/null 2>&1; then
     metric="$(kubectl get hpa "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
       -n "${NAMESPACE:-nemoclaw-gpu}" \
       -o jsonpath='{.spec.metrics[0].pods.metric.name}' 2>/dev/null || true)"
   fi
+  printf '%s\n' "${metric}"
+}
+
+agent_common_resolve_max_tokens() {
+  local agent="${1:-openclaw}"
+  local raw=""
+  local metric
+  metric="$(agent_common_hpa_metric)"
   case "${metric}" in
     *latency*)
-      raw="${E2E_LATENCY_TOKEN_START:-2048}"
+      raw="${MAX_TOKENS:-${E2E_LATENCY_TOKEN_START:-64}}"
       ;;
     *)
-      if [[ -z "${raw}" ]] || ! [[ "${raw}" =~ ^[1-9][0-9]*$ ]] || ((raw <= 1024)); then
-        raw="${E2E_GPUUTIL_TOKEN_START:-2048}"
-      fi
+      case "${agent}" in
+        openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-16384}" ;;
+        deepagents) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
+        *) raw="${E2E_GPUUTIL_TOKEN_START:-1024}" ;;
+      esac
       ;;
   esac
   [[ "${raw}" =~ ^[1-9][0-9]*$ ]] || {
@@ -56,6 +64,58 @@ agent_common_resolve_max_tokens() {
     raw=8
   fi
   printf '%s\n' "${raw}"
+}
+
+# One-time client pin. GPU util ignores a leftover MAX_TOKENS in the shell.
+agent_common_export_client_tokens() {
+  local agent="${1:-openclaw}"
+  local metric
+  metric="$(agent_common_hpa_metric)"
+  MAX_TOKENS="$(agent_common_resolve_max_tokens "${agent}")"
+  export MAX_TOKENS
+  case "${metric}" in
+    *latency*) ;;
+    *) export E2E_GPUUTIL_TOKEN_START="${MAX_TOKENS}" ;;
+  esac
+}
+
+# One agent per sandbox. OpenClaw GPU util needs two in-flight chats:
+# five inflight-1 chats stall at 7 GPUs (~40%/40). Do not copy extra
+# helpers into the sandbox to finish 7→8.
+agent_common_export_client_inflight() {
+  local agent="${1:-openclaw}"
+  local metric
+  metric="$(agent_common_hpa_metric)"
+  case "${metric}" in
+    *latency*)
+      export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
+      export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
+      ;;
+    *)
+      if [[ "${agent}" == "openclaw" ]]; then
+        export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-2}"
+        export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-2}"
+      else
+        export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
+        export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
+      fi
+      ;;
+  esac
+}
+
+agent_common_print_load_banner() {
+  local duration="${1:?}"
+  local hold="${2:?}"
+  local metric
+  metric="$(agent_common_hpa_metric)"
+  case "${metric}" in
+    *latency*)
+      echo "Sends chats for ${duration}s. Latency MAX_TOKENS=${MAX_TOKENS}. Holds ${hold}s at 8 GPUs, then stops."
+      ;;
+    *)
+      echo "Sends chats for ${duration}s. GPU util does not take MAX_TOKENS (built-in ${MAX_TOKENS}), inflight=${E2E_INFLIGHT_PER_USER:-1}. Holds ${hold}s at 8 GPUs, then stops."
+      ;;
+  esac
 }
 
 agent_common_fail_openshell_for_client() {
@@ -436,15 +496,13 @@ print("NEMOCLAW_DEEPAGENTS_MODEL_OK")
 ' >/dev/null
 }
 
-# Client path: keep the provisioned OpenClaw model; only raise max_tokens.
-# Same idea as agent_common_pin_deepagents_max_tokens. Default 2048, same
-# start as latency. GPU util keeps 2048 until 8 GPUs; latency drops at 6.
+# Client path: keep the provisioned OpenClaw model; pin max_tokens once.
 agent_common_pin_openclaw_max_tokens() {
   local sandbox_name="${1:?sandbox}"
   local max_tokens="${2:-${MAX_TOKENS:-2048}}"
   openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
-    env PIN_MAX_TOKENS="${max_tokens}" python3 -c '
-import json, os, pathlib
+    env HOME=/sandbox PIN_MAX_TOKENS="${max_tokens}" python3 -c '
+import json, os, pathlib, subprocess
 max_tokens = int(os.environ["PIN_MAX_TOKENS"])
 if max_tokens < 8:
     raise SystemExit("PIN_MAX_TOKENS must be >= 8")
@@ -459,6 +517,18 @@ if not isinstance(params, dict):
     params = {}
     models[0]["params"] = params
 params["max_tokens"] = max_tokens
+params["num_predict"] = max_tokens
+options = params.get("options")
+if not isinstance(options, dict):
+    options = {}
+    params["options"] = options
+options["num_predict"] = max_tokens
+if max_tokens > 128:
+    params["ignore_eos"] = True
+    options["ignore_eos"] = True
+else:
+    params.pop("ignore_eos", None)
+    options.pop("ignore_eos", None)
 models[0]["maxTokens"] = max_tokens
 tools = cfg.setdefault("tools", {})
 deny = tools.get("deny")
@@ -479,9 +549,60 @@ for name in (
     try:
         snap.write_text(text)
     except OSError:
-        pass
+        pass  # Snapshot is optional; the live openclaw.json is already written.
 print("NEMOCLAW_OPENCLAW_MAX_TOKENS_OK")
+batch = pathlib.Path("/tmp/nemoclaw-openclaw-max-tokens-set.json")
+batch.write_text(json.dumps([{"path": "models.providers.inference", "value": provider}]) + "\n")
+try:
+    subprocess.run(
+        ["openclaw", "config", "set", "--batch-file", str(batch)],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+    )
+except subprocess.TimeoutExpired:
+    pass  # File pin already landed; SIGHUP reload still applies it.
 ' >/dev/null
+  # File watch is off (gateway.reload=off). Hermes applies max_tokens live via
+  # `hermes config set`. Ask OpenClaw to reload with SIGHUP. Do not SIGTERM
+  # `openclaw gateway run`: nemoclaw-start waits on that PID and would exit,
+  # leaving :18789 down.
+  agent_common_reload_openclaw_gateway "${sandbox_name}"
+}
+
+agent_common_reload_openclaw_gateway() {
+  local sandbox_name="${1:?sandbox}"
+  openshell sandbox exec -n "${sandbox_name}" --no-tty -- \
+    bash -c 'pkill -HUP -f "[o]penclaw gateway run" || true' >/dev/null || true
+}
+
+# After pin+reload, wait until every published :18789+i answers again.
+agent_common_wait_published_openclaw_health() {
+  local users="${1:?}"
+  local timeout_sec="${2:-90}"
+  local start port code i unhealthy now
+  start="$(date +%s)"
+  while true; do
+    unhealthy=0
+    for ((i = 0; i < users; i += 1)); do
+      port=$((18789 + i))
+      code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${port}/health" 2>/dev/null || true)"
+      case "${code}" in
+        200 | 401) ;;
+        *) unhealthy=1 ;;
+      esac
+    done
+    if ((unhealthy == 0)); then
+      return 0
+    fi
+    now="$(date +%s)"
+    if ((now - start >= timeout_sec)); then
+      echo "ERROR: OpenClaw :18789+i did not recover after max_tokens pin" >&2
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 # Client path: keep the provisioned model.default; only raise max_tokens.

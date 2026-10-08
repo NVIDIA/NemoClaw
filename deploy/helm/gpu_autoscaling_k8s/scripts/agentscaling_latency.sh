@@ -36,5 +36,5 @@ hpa_common_load_local_env "${CHART_DIR}"
 
 export HPA_METRIC="latency_avg"
 export HPA_TARGET_LATENCY_MS="${HPA_TARGET_LATENCY_MS:-3000}"
-export MAX_TOKENS="${E2E_LATENCY_TOKEN_START:-2048}"
+export MAX_TOKENS="${MAX_TOKENS:-${E2E_LATENCY_TOKEN_START:-64}}"
 agentscaling_common_main "${1:-bringup}"
