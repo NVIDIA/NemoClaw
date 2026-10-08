@@ -79,7 +79,6 @@ describe("Docker startup-command sandbox creation", () => {
       ...resolveDockerStartupCommandPatch(
         { name: "langchain-deepagents-code" } as AgentDefinition,
         true,
-        {},
       ),
       route: "native",
       sandboxName: "alpha",

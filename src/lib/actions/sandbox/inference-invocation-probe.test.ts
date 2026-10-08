@@ -3,6 +3,7 @@
 
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import {
   existsSync,
   mkdtempSync,
@@ -141,10 +142,10 @@ describe("sandbox inference invocation probe", () => {
     });
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
-    expect(command).not.toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).toContain("openshell:resolve:env:");
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
@@ -644,4 +645,28 @@ describe("native inference transport failures", () => {
       probeSandboxInferenceInvocation(input, { execute: vi.fn().mockRejectedValue(error) }),
     ).rejects.toBe(error);
   });
+});
+
+it.each(["", "opaque-real-token"])(
+  "rejects non-placeholder native probe credentials before use (%s)",
+  (value) => {
+    const result = spawnSync("sh", ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf used`], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  },
+);
+
+it("uses the current supervisor credential generation for native probes", () => {
+  const value = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+  const result = spawnSync(
+    "sh",
+    ["-c", `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; printf '%s' "$AUTH_HEADER"`],
+    { encoding: "utf8", env: { PATH: process.env.PATH, NVIDIA_INFERENCE_API_KEY: value } },
+  );
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe(`Authorization: Bearer ${value}`);
 });

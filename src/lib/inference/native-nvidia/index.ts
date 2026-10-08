@@ -245,6 +245,15 @@ export async function ensureNativeNvidiaProvider(input: {
     input.profilePath ?? nativeNvidiaProviderProfilePath(),
   );
 
+  const activatePolicy = async () => {
+    const policy = await adapter.ensureProviderPolicyComposition({ target });
+    if (!policy.ok) {
+      throw new NativeNvidiaProviderError(
+        `Could not activate native NVIDIA provider policy: ${providerErrorDetail(policy.error)}`,
+      );
+    }
+  };
+
   const before = await inspectNativeProvider(adapter, target);
   if (before) {
     const receipt = attachmentFromMetadata(before);
@@ -258,6 +267,7 @@ export async function ensureNativeNvidiaProvider(input: {
         `OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}' changed identity. Recreate the sandbox before using native NVIDIA inference. No provider was changed.`,
       );
     }
+    await activatePolicy();
     if (!input.credentialValue) return receipt;
     const updated = await adapter.updateProvider({
       target,
@@ -301,6 +311,7 @@ export async function ensureNativeNvidiaProvider(input: {
       `A host credential is required to create OpenShell provider '${NVIDIA_HOSTED_NATIVE_PROVIDER}'.`,
     );
   }
+  await activatePolicy();
   const created = await adapter.createProvider({
     target,
     name: NVIDIA_HOSTED_NATIVE_PROVIDER,

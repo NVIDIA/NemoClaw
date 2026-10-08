@@ -17,7 +17,6 @@ export const DCODE_DOCKER_ULIMITS: readonly DockerUlimit[] = [
 export function resolveDockerStartupCommandPatch(
   agent: AgentDefinition | null | undefined,
   dockerDriverGateway: boolean | null | undefined,
-  _env: NodeJS.ProcessEnv = process.env,
 ): {
   persistStartupCommand: boolean;
   requiredUlimits: readonly DockerUlimit[] | null;

@@ -35,3 +35,9 @@ export function normalizeNativeNvidiaProviderAttachment(
     providerId: receipt.providerId,
   };
 }
+
+/** Use only the supervisor-issued placeholder inside the sandbox shell. */
+export const NATIVE_NVIDIA_AUTH_HEADER_SCRIPT = [
+  'case "${NVIDIA_INFERENCE_API_KEY:-}" in openshell:resolve:env:*) ;; *) exit 2 ;; esac',
+  'AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"',
+].join("; ");
