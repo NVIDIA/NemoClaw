@@ -94,32 +94,24 @@ fn runtime_targets_with_plans(
         gateway: settings.runtime_settings(),
         process: None,
     };
-    let mut storage = gateway.clone();
-    storage.layout = if gateway.compute_driver == ComputeDriver::Docker {
-        1
-    } else {
-        0
-    };
-    if storage.layout == 1 {
-        // The listen port changes compute, not initialized data or credentials.
-        storage.gateway.endpoint = "http://127.0.0.1:8080".into();
-    }
-    let target = |kind: &str, spec: String| {
-        let mut values = Row::from([("spec".into(), spec)]);
+    // The listen port changes Docker compute, not initialized data or credentials.
+    let storage = gateway.storage();
+    let target = |kind: &str, spec: &Spec| -> Result<Target, Error> {
+        let mut values = spec.gateway_row(kind)?;
         if (kind != GATEWAY_STORAGE_KIND || storage.layout == 0)
             && let Some(policy) = settings.image_pull_policy
         {
             values.insert("image_pull_policy".into(), policy.as_str().into());
         }
-        Target {
+        Ok(Target {
             kind: kind.into(),
             address: format!("nemoclaw_{kind}.runtime"),
             values,
-        }
+        })
     };
     let mut result = vec![
-        target(GATEWAY_STORAGE_KIND, storage.json()?),
-        target(GATEWAY_KIND, gateway.json()?),
+        target(GATEWAY_STORAGE_KIND, &storage)?,
+        target(GATEWAY_KIND, &gateway)?,
     ];
     result.extend(service_plans.targets().cloned());
     Ok(result)
@@ -239,8 +231,7 @@ pub(crate) fn compiled_runtime(
     {
         // The process must serve its API before the authenticated capability
         // read; its readiness fails quickly when the container stops.
-        let spec: crate::managed::Spec = serde_json::from_str(&gateway.values["spec"])
-            .map_err(|_| Error::State("invalid managed gateway specification"))?;
+        let spec = Spec::from_values(GATEWAY_KIND, &gateway.values)?;
         let literal = |value: &str| json!(value.replace("${", "$${").replace("%{", "%%{"));
         graph["data"]["nemoclaw_gateway_readiness"]["current"] = json!({
             "engine": literal(spec.engine()),
@@ -264,8 +255,18 @@ pub(crate) fn compiled_runtime(
     {
         let container = crate::docker_compute::address(&target.address);
         let logical = container.split_once('.').unwrap().1;
+        let spec = Spec::from_values(&target.kind, &target.values)?;
+        let literal = |value: &str| value.replace("${", "$${").replace("%{", "%%{");
+        let source = if target.kind == "inference_service" {
+            crate::services::installers::vllm::RUNTIME_DATA_SOURCE
+        } else {
+            crate::services::installers::ollama::RUNTIME_DATA_SOURCE
+        };
+        // Readiness checks the contract the container runs with.
         graph["data"]["nemoclaw_service_readiness"][logical] = json!({
-            "spec":target.values["spec"].replace("${", "$${").replace("%{", "%%{"),
+            "engine":literal(spec.engine()),
+            "name":literal(&spec.name),
+            "contract":format!("${{data.nemoclaw_{source}.{logical}.spec}}"),
             "container_id":format!("${{{container}.id}}"),
             "read_trigger":"${timestamp() != \"\"}",
             "wait_timeout_seconds":9 * 3600

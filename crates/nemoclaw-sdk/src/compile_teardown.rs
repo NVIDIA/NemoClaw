@@ -209,11 +209,11 @@ mod tests {
                 assert_eq!(attrs["provider"], full["resource"][kind][name]["provider"]);
             }
             if established.contains("nemoclaw_gateway_storage.runtime") {
-                let spec = graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
+                let engine = graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["engine"]
                     .as_str()
                     .unwrap();
                 assert!(
-                    spec.contains("$${engine}%%{literal}"),
+                    engine.contains("$${engine}%%{literal}"),
                     "literal templates must survive OpenTofu evaluation"
                 );
             }

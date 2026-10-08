@@ -26,7 +26,7 @@ fn managed_podman_selects_one_driver_and_mounts_the_declared_socket() {
         .iter()
         .find(|t| t.kind == "managed_gateway")
         .unwrap();
-    let spec: Spec = serde_json::from_str(&target.values["spec"]).unwrap();
+    let spec = Spec::from_gateway_row(&target.kind, &target.values).unwrap();
     let config: toml::Value = toml::from_str(&spec.gateway_config("/owned")).unwrap();
     let openshell = &config["openshell"];
     assert_eq!(

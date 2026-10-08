@@ -159,6 +159,16 @@ To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid
 `nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
 Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
 
+`nemoclaw_gateway_storage` and `nemoclaw_managed_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated the same way, and optional `image_pull_policy`:
+
+- `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
+- `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `network_cidr` is a private IPv4 `/24`.
+
+`nemoclaw_managed_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
+`nemoclaw_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
+The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
+
 ### NemoClaw Data Sources
 
 | Data source | Observes |
@@ -173,6 +183,7 @@ Both take optional `owner` and `generation`, generated the same way; generated g
 | `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
 | `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
 | `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
+| `nemoclaw_gateway_runtime` | Nothing; [computes a Docker gateway's launch](#docker-gateway-launch) |
 
 ### Docker and Helm Types
 
@@ -429,10 +440,39 @@ Its blocks follow the Ollama runtime contract with snake_case names: `hardware`,
 `bind_address` is a loopback or private address with a port, and `upstream` a loopback HTTP endpoint ending in `/v1`; the output `spec` names the endpoint the proxy serves on `bind_address`.
 Generated graphs pass each `spec` to its container's environment variable.
 
+## Docker Gateway Launch
+
+`nemoclaw_gateway_runtime` computes a Docker gateway container's `entrypoint`, `command`, and `env` without contacting any host.
+It takes the gateway's `name` and `endpoint`, validated as for `nemoclaw_managed_gateway`, and the `data_path` returned by its `nemoclaw_gateway_storage`, an absolute path:
+
+```hcl
+data "nemoclaw_gateway_runtime" "gateway" {
+  name      = nemoclaw_gateway_storage.gateway.name
+  endpoint  = "http://127.0.0.1:17670"
+  data_path = nemoclaw_gateway_storage.gateway.data_path
+}
+
+resource "docker_container" "gateway" {
+  # name, image, network, ports, and mounts as described below
+  entrypoint = data.nemoclaw_gateway_runtime.gateway.entrypoint
+  command    = data.nemoclaw_gateway_runtime.gateway.command
+  env        = data.nemoclaw_gateway_runtime.gateway.env
+}
+```
+
+The gateway reads its configuration and database under `data_path` and listens on all container addresses at the endpoint's port.
+Generated graphs also run the container as `0:0` and give it:
+
+- the storage's volume mounted at `data_path`;
+- the engine socket mounted at `/var/run/docker.sock`;
+- the endpoint's port published on the endpoint's address;
+- the storage's bridge network, at the second host address of `network_cidr`.
+
 ## Runtime Image Compatibility
 
-`nemoclaw_runtime_image` requires the compiled managed-service `spec` and returns `observation_json` with `status`, `source`, and `required_version`.
-The source checks the vLLM or Ollama image's `org.nemoclaw.runtime.spec` label against the shared runtime contract, plus the compiled platform and required backend, recipe, and authentication labels.
+`nemoclaw_runtime_image` requires the service's `engine`, its `image` pinned by SHA-256 digest, and its `architecture` (`amd64` or `arm64`), and returns `observation_json` with `status`, `source`, and `required_version`.
+Optional `labels` maps each label the image must carry to its value; generated graphs require the service's backend, recipe, and authentication labels.
+The source checks the vLLM or Ollama image's `org.nemoclaw.runtime.spec` label against the shared runtime contract, plus the Linux platform, the architecture, and `labels`.
 It performs one engine image inspection with a 20-second bound and never pulls an image or starts a process.
 Missing or mismatched runtime-spec labels fail with [rebuild guidance](build.md#retained-sources-and-compatibility); authentication, transport, and incomplete inspection failures also stop the operation.
 Diagnostics do not echo image label values.
@@ -453,11 +493,11 @@ A successful plan therefore does not establish that a model will fit or load.
 The hosted runtime checks its hardware, startup headroom, model artifacts, and available memory before serving.
 Its resident supervisor continues protecting host memory after the CLI exits and does not automatically restart a stopped workload.
 The runtime graph uses `nemoclaw_service_readiness` to wait for current application status from the Docker provider's container ID.
-The data source validates the runtime specification and container identity, reads the service's status contract, and checks generated vLLM credential permissions when authentication is enabled.
+The data source validates the runtime contract and container identity, reads the service's status contract, and checks generated vLLM credential permissions when the contract enables authentication.
 It does not repeat model-file verification, collect hardware inventory, or request model responses.
 Startup phases may be polled; stopped services, failed observations, and malformed status fail the read.
 
-The data source requires `spec` and `container_id`.
+The data source requires the container's `engine`, `name`, and `container_id`, and its `contract`: the `spec` of the `nemoclaw_vllm_runtime`, `nemoclaw_ollama_runtime`, or `nemoclaw_ollama_proxy_runtime` data source the container runs with.
 Its optional `wait_timeout_seconds` accepts zero to 32400 seconds; omission means 32400 seconds, and zero requests one bounded observation.
 Successful reads return `ready: true`; unsuccessful reads report an error.
 The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
@@ -465,8 +505,7 @@ The compiler references the container's `id` and uses `timestamp() != ""` to def
 This apply-time read appears as `unverified` in SDK plan results; it does not make an otherwise resolved resource plan incomplete or relax the apply gate.
 The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
 The OpenShell graph uses the same data source for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
-A proxy specification contains `kind: "ollama_proxy"`, an engine endpoint, and the compiled `proxy` specification.
-Its observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
+For a proxy contract, the observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
 The SDK runs no readiness loop of its own.
 
@@ -504,6 +543,7 @@ The shared backend compares public Fabric configuration and runtime handle state
 ## Combined Service Capacity
 
 The optional `nemoclaw_service_capacity` data source remains available for explicit capacity observation.
+It takes an `engine` and `contracts`, the `spec` of each `nemoclaw_vllm_runtime` or `nemoclaw_ollama_runtime` data source on that engine, and rejects a contract listed twice.
 It reports required and observed bytes and compatibility using the selected execution host's measurements.
 The SDK's default service graph does not use it as an admission gate.
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.
@@ -563,6 +603,6 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
-Gateway and Kubernetes resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
+Kubernetes resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

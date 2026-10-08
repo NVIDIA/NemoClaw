@@ -16,18 +16,35 @@ use tf_provider::{
 pub(crate) struct ReadinessDataSource(pub Arc<ConfiguredBackend>);
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct ReadinessState {
-    spec: Value<String>,
+    engine: Value<String>,
+    name: Value<String>,
+    contract: Value<String>,
     container_id: Value<String>,
     wait_timeout_seconds: Value<u64>,
     read_trigger: Value<bool>,
     ready: Value<bool>,
 }
-fn validate(config: &ReadinessState) -> Result<(), Error> {
-    match &config.spec {
-        Value::Value(spec) => services::validate_readiness_spec(spec)?,
-        Value::Unknown => {}
-        Value::Null => return Err(Error::State("service readiness specification is required")),
+/// The readiness inputs, or `None` while any is unknown.
+fn readiness(config: &ReadinessState) -> Result<Option<services::Readiness>, Error> {
+    let mut known = Vec::new();
+    for (value, required) in [
+        (&config.engine, "service readiness engine is required"),
+        (&config.name, "service readiness container name is required"),
+        (&config.contract, "service readiness contract is required"),
+    ] {
+        match value {
+            Value::Value(value) => known.push(value.as_str()),
+            Value::Unknown => {}
+            Value::Null => return Err(Error::State(required)),
+        }
     }
+    match known[..] {
+        [engine, name, contract] => services::Readiness::new(engine, name, contract).map(Some),
+        _ => Ok(None),
+    }
+}
+fn validate(config: &ReadinessState) -> Result<(), Error> {
+    readiness(config)?;
     if matches!(&config.container_id, Value::Null)
         || matches!(&config.container_id, Value::Value(id) if id.is_empty())
     {
@@ -53,7 +70,9 @@ impl DataSource for ReadinessDataSource {
             version: 0,
             block: Block {
                 attributes: [
-                    ("spec", String, Required),
+                    ("engine", String, Required),
+                    ("name", String, Required),
+                    ("contract", String, Required),
                     ("container_id", String, Required),
                     ("wait_timeout_seconds", Number, Optional),
                     ("read_trigger", Bool, Optional),
@@ -92,7 +111,7 @@ impl DataSource for ReadinessDataSource {
     ) -> Option<ReadinessState> {
         let work = async {
             validate(&config)?;
-            let (Value::Value(spec), Value::Value(id)) = (&config.spec, &config.container_id)
+            let (Some(readiness), Value::Value(id)) = (readiness(&config)?, &config.container_id)
             else {
                 return Err(Error::State("service readiness identity is not yet known"));
             };
@@ -110,7 +129,7 @@ impl DataSource for ReadinessDataSource {
             };
             services::wait_service_ready(
                 self.0.connections(),
-                spec,
+                &readiness,
                 id,
                 Duration::from_secs(timeout),
                 &CancellationToken::new(),
@@ -137,7 +156,7 @@ mod tests {
     #[tokio::test]
     async fn readiness_validates_offline_and_defers_unknowns_without_echoing_inputs() {
         let source = ReadinessDataSource(Arc::new(ConfiguredBackend::default()));
-        for (spec, id, timeout, valid) in [
+        for (contract, id, timeout, valid) in [
             (Value::Unknown, Value::Unknown, Value::Unknown, true),
             (
                 Value::Unknown,
@@ -161,7 +180,9 @@ mod tests {
                     .validate(
                         &mut diags,
                         ReadinessState {
-                            spec,
+                            engine: Value::Value("unix:///var/run/docker.sock".into()),
+                            name: Value::Value("qwen".into()),
+                            contract,
                             container_id: id,
                             wait_timeout_seconds: timeout,
                             ..Default::default()

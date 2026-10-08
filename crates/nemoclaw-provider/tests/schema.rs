@@ -16,7 +16,7 @@ fn service_capacity_is_exposed_as_read_only_data() {
         .expect("combined capacity data source")
         .schema(&mut diagnostics)
         .unwrap();
-    for field in ["engine", "specs"] {
+    for field in ["engine", "contracts"] {
         assert!(matches!(
             schema.block.attributes[field].constraint,
             AttributeConstraint::Required
@@ -204,6 +204,78 @@ fn ollama_proxy_identity_is_optional_and_computed() {
                     tf_provider::schema::AttributeConstraint::OptionalComputed
                 ),
                 "{kind}.{attribute}"
+            );
+        }
+    }
+    assert!(diagnostics.errors.is_empty());
+}
+
+#[test]
+fn managed_gateway_resources_take_typed_settings() {
+    use tf_provider::schema::AttributeConstraint::{OptionalComputed, Required};
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let resources = provider.get_resources(&mut diagnostics).unwrap();
+    for (kind, endpoint) in [("managed_gateway", true), ("gateway_storage", false)] {
+        let schema = resources[kind].schema(&mut diagnostics).unwrap();
+        let attributes = &schema.block.attributes;
+        assert!(!attributes.contains_key("spec"), "{kind}");
+        for attribute in ["name", "compute_driver", "engine", "image", "network_cidr"] {
+            assert!(
+                matches!(attributes[attribute].constraint, Required),
+                "{kind}.{attribute}"
+            );
+        }
+        for attribute in ["owner", "generation"] {
+            assert!(
+                matches!(attributes[attribute].constraint, OptionalComputed),
+                "{kind}.{attribute}"
+            );
+        }
+        assert!(
+            matches!(
+                (&attributes["endpoint"].constraint, endpoint),
+                (Required, true) | (OptionalComputed, false)
+            ),
+            "{kind}.endpoint"
+        );
+    }
+    assert!(diagnostics.errors.is_empty());
+}
+
+#[test]
+fn service_observations_take_typed_inputs_instead_of_compiled_specs() {
+    use tf_provider::schema::AttributeConstraint::{Optional, Required};
+    let mut diagnostics = Diagnostics::default();
+    let sources = NemoClawProvider::default()
+        .get_data_sources(&mut diagnostics)
+        .unwrap();
+    for (source, required, optional) in [
+        (
+            "runtime_image",
+            &["engine", "image", "architecture"][..],
+            &["labels", "image_id", "allow_missing"][..],
+        ),
+        (
+            "service_readiness",
+            &["engine", "name", "contract", "container_id"][..],
+            &["wait_timeout_seconds", "read_trigger"][..],
+        ),
+        ("service_capacity", &["engine", "contracts"][..], &[][..]),
+    ] {
+        let schema = sources[source].schema(&mut diagnostics).unwrap();
+        let attributes = &schema.block.attributes;
+        assert!(!attributes.contains_key("spec"), "{source}");
+        for attribute in required {
+            assert!(
+                matches!(attributes[*attribute].constraint, Required),
+                "{source}.{attribute}"
+            );
+        }
+        for attribute in optional {
+            assert!(
+                matches!(attributes[*attribute].constraint, Optional),
+                "{source}.{attribute}"
             );
         }
     }

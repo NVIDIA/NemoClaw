@@ -315,6 +315,10 @@ impl Record {
         Ok(())
     }
 }
+/// State records omitted optional attributes as null.
+fn nullable<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct StateBinding {
     pub id: String,
@@ -334,24 +338,52 @@ pub(crate) struct StateBinding {
     pub spec: String,
     #[serde(default)]
     pub engine: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub compute_driver: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub endpoint: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub image: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub network_cidr: String,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
 }
 
 impl StateBinding {
+    /// Bound gateway or storage attributes; empty values were not set.
+    pub(crate) fn gateway_values(&self) -> crate::backend::Row {
+        crate::managed::GATEWAY_ATTRIBUTES
+            .into_iter()
+            .zip([
+                &self.name,
+                &self.owner,
+                &self.generation,
+                &self.compute_driver,
+                &self.engine,
+                &self.endpoint,
+                &self.image,
+                &self.network_cidr,
+            ])
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(attribute, value)| (attribute.to_owned(), value.clone()))
+            .collect()
+    }
     /// Whether bound configuration differs from compiled values. An encoded
-    /// specification compares whole; typed storage compares its identity.
+    /// specification compares whole; typed resources compare their attributes.
     pub(crate) fn differs(&self, values: &crate::backend::Row) -> bool {
         match values.get("spec") {
             Some(spec) => *spec != self.spec,
-            None => [
-                ("name", &self.name),
-                ("owner", &self.owner),
-                ("generation", &self.generation),
-                ("engine", &self.engine),
-            ]
-            .into_iter()
-            .any(|(attribute, bound)| values.get(attribute).is_some_and(|want| want != bound)),
+            None => {
+                let bound = self.gateway_values();
+                crate::managed::GATEWAY_ATTRIBUTES
+                    .into_iter()
+                    .any(|attribute| {
+                        values
+                            .get(attribute)
+                            .is_some_and(|want| bound.get(attribute) != Some(want))
+                    })
+            }
         }
     }
 }
@@ -576,6 +608,10 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.owner = attributes.owner;
                 binding.generation = attributes.generation;
                 binding.engine = attributes.engine;
+                binding.compute_driver = attributes.compute_driver;
+                binding.endpoint = attributes.endpoint;
+                binding.image = attributes.image;
+                binding.network_cidr = attributes.network_cidr;
             }
         }
     }
