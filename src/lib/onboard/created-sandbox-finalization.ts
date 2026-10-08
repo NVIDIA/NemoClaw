@@ -124,6 +124,7 @@ export interface CreatedSandboxCompletionOptions {
     >;
   };
   readonly gpu: {
+    readonly commandExecutor: OpenShellSandboxBufferedCommandExecutor;
     readonly config: Parameters<
       typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
     >[0];
@@ -379,6 +380,7 @@ export function createCreatedSandboxCompletionActions(
         verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
         openShellGpuDiagnostics: options.gpu.resolveOpenShellGpuDiagnostics(),
         runCaptureOpenshell: options.gpu.runCaptureOpenshell,
+        deps: { commandExecutor: options.gpu.commandExecutor },
         log: console.log,
       },
       created.runtimePatch,
@@ -786,6 +788,7 @@ export function createOnboardCreatedSandboxCompletion(
           preparedPolicy.getVerifiedCreateRegistrationAuthority,
       },
       gpu: {
+        commandExecutor,
         config: gpuConfig,
         provider,
         dockerDriverGateway,
