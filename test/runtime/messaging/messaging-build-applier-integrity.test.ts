@@ -86,6 +86,66 @@ function thrownMessage(run: () => void): string {
   throw new Error("Expected operation to throw");
 }
 
+function renameFailureHook(root: string, destination: string, failRestore: boolean): string {
+  const hookPath = path.join(root, "rename-failure-hook.mjs");
+  const canonicalDestination = path.join(fs.realpathSync(root), path.relative(root, destination));
+  fs.writeFileSync(
+    hookPath,
+    [
+      'import { createRequire, syncBuiltinESMExports } from "node:module";',
+      'import path from "node:path";',
+      'const fs = createRequire(import.meta.url)("node:fs");',
+      "const originalRenameSync = fs.renameSync;",
+      `const target = ${JSON.stringify(canonicalDestination)};`,
+      `const trace = ${JSON.stringify(path.join(root, "rename.trace"))};`,
+      "let failedPromotion = false;",
+      "let failedRestore = false;",
+      "fs.renameSync = (source, destination) => {",
+      "  fs.appendFileSync(trace, `${source}\\t${destination}\\n`);",
+      "  const targetMatches = path.resolve(destination) === target;",
+      '  if (!failedPromotion && path.basename(source) === "replacement" && targetMatches) {',
+      "    failedPromotion = true;",
+      '    throw Object.assign(new Error("simulated replacement promotion failure"), { code: "EIO" });',
+      "  }",
+      `  if (${failRestore} && !failedRestore && path.basename(source) === "previous" && targetMatches) {`,
+      "    failedRestore = true;",
+      '    throw Object.assign(new Error("simulated original package restoration failure"), { code: "EIO" });',
+      "  }",
+      "  return originalRenameSync(source, destination);",
+      "};",
+      "syncBuiltinESMExports();",
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+  return hookPath;
+}
+
+function verifyOriginalSlackDependencyBytes(
+  fixture: Awaited<ReturnType<typeof createSlackRemediationFixture>>,
+  installedDirectory = fixture.proxyAddrDirectory,
+): void {
+  const sourceRelativeProxyAddrDirectory = path.relative(
+    fixture.env.TEST_SLACK_INSTALL!,
+    fixture.proxyAddrDirectory,
+  );
+  const installedRelativeProxyAddrDirectory = path.relative(
+    fixture.env.TEST_SLACK_INSTALL!,
+    installedDirectory,
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `const fs = require("node:fs"); const path = require("node:path"); const crypto = require("node:crypto"); const sourceRelative = ${JSON.stringify(sourceRelativeProxyAddrDirectory)}; const installedRelative = ${JSON.stringify(installedRelativeProxyAddrDirectory)}; const digest = (root, relative, file) => crypto.createHash("sha256").update(fs.readFileSync(path.join(root, relative, file))).digest("hex"); console.log(JSON.stringify({ packageJson: digest(process.env.TEST_SLACK_SOURCE, sourceRelative, "package.json") === digest(process.env.TEST_SLACK_INSTALL, installedRelative, "package.json"), index: digest(process.env.TEST_SLACK_SOURCE, sourceRelative, "index.js") === digest(process.env.TEST_SLACK_INSTALL, installedRelative, "index.js") }));`,
+    ],
+    { env: fixture.env, encoding: "utf8", timeout: 5_000 },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ packageJson: true, index: true });
+}
+
 describe("messaging-build-applier.mts: plugin archive integrity", () => {
   it.each(["reviewed archive", "npm"])(
     "replaces Slack's bundled proxy-addr using %s after inspection",
@@ -211,6 +271,73 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           "express",
           "proxy-addr",
         ]);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+    testTimeout(30_000),
+  );
+
+  it.each([false, true])(
+    "restores or preserves the original Slack dependency when replacement promotion fails (restore failure: %s)",
+    async (failRestore) => {
+      const fixture = await createSlackRemediationFixture();
+      const canonicalProxyAddrDirectory = path.join(
+        fs.realpathSync(fixture.root),
+        path.relative(fixture.root, fixture.proxyAddrDirectory),
+      );
+      const renameHook = renameFailureHook(fixture.root, fixture.proxyAddrDirectory, failRestore);
+
+      try {
+        const result = spawnSync(
+          process.execPath,
+          ["--import", renameHook, SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...fixture.env,
+              NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR: undefined,
+              NEMOCLAW_FATAL_DIAGNOSTIC_CANARY: "OPENAI_API_KEY=rename-failure-canary",
+            },
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+
+        expect(result.error).toBeUndefined();
+        const renameTrace = fs.existsSync(path.join(fixture.root, "rename.trace"))
+          ? fs.readFileSync(path.join(fixture.root, "rename.trace"), "utf8")
+          : "no rename calls observed";
+        expect(result.status, `${result.stderr}\n${renameTrace}`).toBe(2);
+        expect(renameTrace).toContain(`${path.sep}replacement\t${canonicalProxyAddrDirectory}`);
+        failRestore &&
+          expect(renameTrace).toContain(`${path.sep}previous\t${canonicalProxyAddrDirectory}`);
+        expect(fs.readdirSync(fixture.env.TMPDIR)).toEqual([]);
+
+        const packageParent = path.dirname(fixture.proxyAddrDirectory);
+        const recoveryDirectories = fs
+          .readdirSync(packageParent)
+          .filter((entry) => entry.startsWith(".proxy-addr-replacement-"));
+        expect(recoveryDirectories).toHaveLength(failRestore ? 1 : 0);
+        const preservedPackage = path.join(packageParent, recoveryDirectories[0] ?? "", "previous");
+        verifyOriginalSlackDependencyBytes(
+          fixture,
+          failRestore ? preservedPackage : fixture.proxyAddrDirectory,
+        );
+        expect(result.stderr).toContain(
+          failRestore
+            ? "OpenClaw dependency 'proxy-addr' could not be replaced."
+            : "Messaging build applier failed.",
+        );
+        failRestore &&
+          expect(result.stderr).toContain("preserved in a recovery directory beside it");
+        failRestore &&
+          expect(result.stderr).toContain("Rerun the plugin installation before retrying.");
+        expect(result.stderr).not.toContain(fixture.root);
+        expect(result.stderr).not.toContain("rename-failure-canary");
+        expect(fs.readdirSync(packageParent).sort()).toEqual(
+          failRestore ? ["express", recoveryDirectories[0]!].sort() : ["express", "proxy-addr"],
+        );
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }

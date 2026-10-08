@@ -69,6 +69,19 @@ export type RemediatedArchive = Readonly<
     }
 >;
 
+export class OpenClawNpmPackageRecoveryError extends Error {
+  readonly packageName: string;
+
+  constructor(packageName: string, cause: unknown) {
+    super(
+      `Replacement of ${packageName} failed; the original package remains in a recovery directory beside it.`,
+      { cause },
+    );
+    this.name = "OpenClawNpmPackageRecoveryError";
+    this.packageName = packageName;
+  }
+}
+
 const AXIOS_VERSION = "1.18.0";
 const AXIOS_INTEGRITY =
   "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==";
@@ -1201,9 +1214,9 @@ function copyReplacementPackage(source: string, destination: string): void {
           previousPackageMoved = false;
         } catch (restoreError) {
           preserveRecoveryDirectory = true;
-          throw new AggregateError(
-            [replacementError, restoreError],
-            `Replacement failed and the original package remains recoverable at ${previousPackage}`,
+          throw new OpenClawNpmPackageRecoveryError(
+            basename(destination),
+            new AggregateError([replacementError, restoreError]),
           );
         }
       }

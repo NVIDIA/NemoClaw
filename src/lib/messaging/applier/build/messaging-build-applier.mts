@@ -22,6 +22,7 @@ import { pathToFileURL } from "node:url";
 import {
   describeOpenClawNpmRemediationTimeout,
   OpenClawNpmRemediationCommandError,
+  OpenClawNpmPackageRecoveryError,
   remediateInstalledOfficialOpenClawPlugin,
   remediateReviewedOpenClawPluginArchive,
 } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
@@ -2252,6 +2253,9 @@ function isMainModule(): boolean {
 }
 
 export function fatalMessagingBuildDiagnostic(error: unknown): string {
+  if (error instanceof OpenClawNpmPackageRecoveryError) {
+    return `OpenClaw dependency '${error.packageName}' could not be replaced. Its previous package is preserved in a recovery directory beside it. Rerun the plugin installation before retrying.`;
+  }
   if (error instanceof OfficialPluginRemediationError) {
     if (error.couldNotStart) {
       return `Official OpenClaw plugin '${error.pluginId}' remediation operation '${error.operation}' could not start a required command.`;
