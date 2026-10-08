@@ -22,7 +22,7 @@ $$nemoclaw inference get
 
 For a selected sandbox with a valid native attachment, the command returns that sandbox's recorded provider, model, and endpoint.
 NVIDIA Endpoints reports `https://integrate.api.nvidia.com/v1` instead of `inference.local`.
-Hosted compatible selections report their configured endpoint and attachment; Bedrock reports its verified adapter path.
+Hosted compatible selections report their configured endpoint and attachment; Bedrock reports the original AWS endpoint after verifying the adapter generation and gateway attachment.
 For selections that still use the shared route, the command reads the live shared gateway route.
 Confirm that the provider, model, and endpoint match the path you intended to configure.
 

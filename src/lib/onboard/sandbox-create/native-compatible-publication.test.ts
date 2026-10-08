@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
+import { nativeProviderCreateIntentFields } from "../sandbox-registration";
 import { verifyNativeCompatibleAttachmentAfterCreate } from "./provider-publication";
 
 const identity = nativeCompatibleEndpointIdentity({
@@ -50,7 +51,19 @@ function fixture() {
     input: {
       sandboxName: "alpha",
       gatewayName: "gateway",
-      inferenceProvider: identity.providerName,
+      ...nativeProviderCreateIntentFields(
+        {
+          provider: "compatible-endpoint",
+          endpointUrl: identity.endpoint,
+          preferredInferenceApi: identity.api,
+        },
+        {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          endpointUrl: identity.endpoint,
+          nativeCompatibleProviderAttachment: expected,
+        },
+      ),
       expected,
       deps: {
         providerAdapter: adapter as unknown as OpenShellProviderAdapter,
