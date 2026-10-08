@@ -7,29 +7,27 @@ import {
   resolveWorkflowSandboxIdentities,
   validateWorkflowSandboxNames,
 } from "../../../tools/e2e/sandbox-name-workflow-boundary.mts";
-import {
-  catalogueTarget,
-  validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
+import { E2E_TARGET_CATALOGUE } from "../../../tools/e2e/target-catalogue.mts";
+import * as importedSandboxNameContract from "../../../nemoclaw/src/shared/sandbox-name.cts";
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATHS = [".github/workflows/e2e.yaml"] as const;
+const sandboxNameContract = (
+  "default" in importedSandboxNameContract && importedSandboxNameContract.default
+    ? importedSandboxNameContract.default
+    : importedSandboxNameContract
+) as typeof import("../../../nemoclaw/src/shared/sandbox-name.cts");
+const { isValidName } = sandboxNameContract;
 
 describe("E2E sandbox name boundary", () => {
-  it("rejects a catalogue target with an invalid sandbox name", () => {
-    const target = catalogueTarget("network-policy");
+  it("keeps every catalogue fixture sandbox name within the canonical boundary", () => {
+    const invalidTargets = E2E_TARGET_CATALOGUE.flatMap((target) => {
+      const sandboxName = target.environment.NEMOCLAW_SANDBOX_NAME;
+      return sandboxName === undefined || isValidName(sandboxName) ? [] : [target.id];
+    });
 
-    expect(() =>
-      validateE2eTargetCatalogue([
-        {
-          ...target,
-          environment: {
-            ...target.environment,
-            NEMOCLAW_SANDBOX_NAME: "e2e-overlong-catalogue-name",
-          },
-        },
-      ]),
-    ).toThrow("invalid sandbox name");
+    expect(isValidName("e2e-overlong-catalogue-name")).toBe(false);
+    expect(invalidTargets).toEqual([]);
   });
 
   it.each(WORKFLOW_PATHS)(
