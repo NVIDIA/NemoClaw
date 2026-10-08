@@ -131,8 +131,11 @@ export async function assertAgentMcpTeardownRuntimeCapability(
 export async function reloadOpenClawGatewayAfterMcpMutation(
   sandboxName: string,
   adapters: readonly AgentMcpAdapter[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
-  if (adapters.includes("openclaw-config")) await reloadOpenClawGateway(sandboxName);
+  if (adapters.includes("openclaw-config")) {
+    await reloadOpenClawGateway(sandboxName, runtimeSelection);
+  }
 }
 
 export { reloadHermesGatewayAfterMcpRestart };

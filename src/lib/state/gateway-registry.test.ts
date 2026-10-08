@@ -7,9 +7,55 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { listHostGatewayRegistryEntries } from "./gateway-registry";
+import {
+  listHostGatewayRegistryEntries,
+  registryOpenShellGatewayStateDir,
+} from "./gateway-registry";
 
 describe("host gateway registry index", () => {
+  it("recovers one custom OpenShell state directory across current and legacy rows (#10665)", () => {
+    expect(
+      registryOpenShellGatewayStateDir(
+        {
+          defaultSandbox: "current",
+          sandboxes: {
+            current: {
+              name: "current",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              openshellGatewayStateDir: "/home/tester/custom-gateway-9123",
+            },
+            legacy: { name: "legacy", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+          },
+        },
+        9123,
+      ),
+    ).toBe("/home/tester/custom-gateway-9123");
+  });
+
+  it("rejects conflicting custom OpenShell state directories for one port (#10665)", () => {
+    expect(() =>
+      registryOpenShellGatewayStateDir(
+        {
+          defaultSandbox: "first",
+          sandboxes: {
+            first: {
+              name: "first",
+              gatewayPort: 9123,
+              openshellGatewayStateDir: "/home/tester/custom-a",
+            },
+            second: {
+              name: "second",
+              gatewayPort: 9123,
+              openshellGatewayStateDir: "/home/tester/custom-b",
+            },
+          },
+        },
+        9123,
+      ),
+    ).toThrow(/conflicting OpenShell state directories/);
+  });
+
   it.runIf(process.platform !== "win32")(
     "rejects a symlinked numeric gateway root instead of omitting its allocations",
     () => {
@@ -43,6 +89,34 @@ describe("host gateway registry index", () => {
     }
   });
 
+  it("rejects a relative persisted OpenShell gateway state directory (#10665)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-state-dir-"));
+    try {
+      const root = path.join(home, ".nemoclaw", "gateways", "9123");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(
+        path.join(root, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-a",
+          sandboxes: {
+            "instance-a": {
+              name: "instance-a",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              openshellGatewayStateDir: "relative/gateway-state",
+            },
+          },
+        }),
+      );
+
+      expect(() => listHostGatewayRegistryEntries(home)).toThrow(
+        /invalid openshellGatewayStateDir/,
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed persisted dashboard ports instead of treating them as free", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-port-"));
     try {
@@ -64,6 +138,63 @@ describe("host gateway registry index", () => {
       );
 
       expect(() => listHostGatewayRegistryEntries(home)).toThrow(/invalid dashboardPort/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a malformed persisted dashboardExternalUrl (#11439)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-exturl-"));
+    try {
+      const root = path.join(home, ".nemoclaw", "gateways", "9123");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(
+        path.join(root, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-a",
+          sandboxes: {
+            "instance-a": {
+              name: "instance-a",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              dashboardPort: 18789,
+              dashboardExternalUrl: "not a url",
+            },
+          },
+        }),
+      );
+
+      expect(() => listHostGatewayRegistryEntries(home)).toThrow(/invalid dashboardExternalUrl/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a valid persisted dashboardExternalUrl (#11439)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-exturl-ok-"));
+    try {
+      const root = path.join(home, ".nemoclaw", "gateways", "9123");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(
+        path.join(root, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-a",
+          sandboxes: {
+            "instance-a": {
+              name: "instance-a",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              dashboardPort: 18789,
+              dashboardExternalUrl: "https://dash.example.com:18789",
+            },
+          },
+        }),
+      );
+
+      const entries = listHostGatewayRegistryEntries(home);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].entry.dashboardExternalUrl).toBe("https://dash.example.com:18789");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

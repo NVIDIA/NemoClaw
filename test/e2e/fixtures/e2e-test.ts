@@ -290,8 +290,13 @@ export const test = base.extend<E2ETargetFixtures>({
   environment: async ({ artifacts, host, runtimeProvider }, use) => {
     await use(new EnvironmentPhaseFixture(host, artifacts, runtimeProvider));
   },
-  onboard: async ({ artifacts, cleanup, host, secrets }, use) => {
-    await use(new OnboardingPhaseFixture(host, secrets, cleanup, artifacts));
+  onboard: async ({ artifacts, cleanup, host, runtimeProvider, sandbox, secrets }, use) => {
+    await use(
+      new OnboardingPhaseFixture(host, secrets, cleanup, artifacts, {
+        sandbox,
+        runtime: runtimeProvider,
+      }),
+    );
   },
   lifecycle: async ({ cleanup, gateway, host, runtimeProvider, sandbox }, use) => {
     await use(new LifecyclePhaseFixture(host, sandbox, cleanup, gateway, runtimeProvider));

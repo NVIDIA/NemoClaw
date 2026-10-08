@@ -46,6 +46,32 @@ function unmarkedDefaultTlsBundle(): { homeDir: string; stateDir: string } {
   return { homeDir, stateDir };
 }
 
+function externalTlsBundle(port = 9443): { declaration: string; stateDir: string } {
+  const stateDir = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-sdk-external-test-"));
+  roots.push(stateDir);
+  fs.mkdirSync(path.join(stateDir, "tls", "client"), { mode: 0o700, recursive: true });
+  fs.writeFileSync(path.join(stateDir, "tls", "ca.crt"), "ca");
+  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.crt"), "cert");
+  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.key"), "key");
+  const declaration = path.join(stateDir, "gateway-management.json");
+  fs.writeFileSync(
+    declaration,
+    JSON.stringify({
+      version: 1,
+      mode: "externally-supervised",
+      endpoint: `https://127.0.0.1:${String(port)}`,
+      stateDir,
+      supervisor: {
+        kind: "systemd-system",
+        serviceName: "openshell-gateway.service",
+        execPath: "/usr/local/bin/openshell-gateway",
+      },
+      requiredCapabilities: ["gateway.health", "sandbox.exec"],
+    }),
+  );
+  return { declaration, stateDir };
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
@@ -106,6 +132,88 @@ describe("OpenShell SDK sandbox command executor", () => {
         },
       ),
     ).rejects.toThrow(/managed gateway state root marker/u);
+  });
+
+  it.each([false, true])(
+    "connects to an unmarked externally supervised gateway with explicit state override=%s (#12389)",
+    async (explicitOverride) => {
+      const { declaration, stateDir } = externalTlsBundle();
+      const connect = vi.fn().mockResolvedValue({ sandbox: {} });
+
+      await connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw-9443" },
+        {
+          env: {
+            NEMOCLAW_GATEWAY_MANAGEMENT: declaration,
+            ...(explicitOverride ? { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir } : {}),
+          },
+          homeDir: "/unused",
+          loadSdk: async () => ({ OpenShellClient: { connect } }),
+        },
+      );
+
+      expect(connect).toHaveBeenCalledWith({
+        gateway: "https://127.0.0.1:9443",
+        caCert: Buffer.from("ca"),
+        clientCert: Buffer.from("cert"),
+        clientKey: Buffer.from("key"),
+      });
+    },
+  );
+
+  it("rejects a public externally supervised gateway state root (#12389)", async () => {
+    const { declaration, stateDir } = externalTlsBundle();
+    fs.chmodSync(stateDir, 0o755);
+    const connect = vi.fn();
+
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw-9443" },
+        {
+          env: { NEMOCLAW_GATEWAY_MANAGEMENT: declaration },
+          loadSdk: async () => ({ OpenShellClient: { connect } }),
+        },
+      ),
+    ).rejects.toThrow(/mode 0700/u);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("rejects an external declaration for a different gateway port (#12389)", async () => {
+    const { declaration, stateDir } = externalTlsBundle(9444);
+    const connect = vi.fn();
+
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw-9443" },
+        {
+          env: {
+            NEMOCLAW_GATEWAY_MANAGEMENT: declaration,
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+          },
+          loadSdk: async () => ({ OpenShellClient: { connect } }),
+        },
+      ),
+    ).rejects.toThrow(/gateway declaration.*selected gateway/u);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("rejects a state override that differs from the external declaration (#12389)", async () => {
+    const { declaration } = externalTlsBundle();
+    const connect = vi.fn();
+
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw-9443" },
+        {
+          env: {
+            NEMOCLAW_GATEWAY_MANAGEMENT: declaration,
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/home/ubuntu/other-gateway",
+          },
+          loadSdk: async () => ({ OpenShellClient: { connect } }),
+        },
+      ),
+    ).rejects.toThrow(/gateway declaration.*state directory override/u);
+    expect(connect).not.toHaveBeenCalled();
   });
 
   it("streams native output and preserves the exit status", async () => {

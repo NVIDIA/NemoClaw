@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import JSON5 from "json5";
 import {
   formatOpenShellForwardStartFailure,
   type OpenShellForwardAdapter,
@@ -724,7 +725,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       if (completion.wasInterrupted()) return null;
       const jsonPath = findOpenclawJsonPath(tmpDir);
       if (!jsonPath) return null;
-      const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+      const cfg = JSON5.parse(fs.readFileSync(jsonPath, "utf-8"));
       const parsedToken = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
       token = typeof parsedToken === "string" && parsedToken.length > 0 ? parsedToken : null;
     } catch {
@@ -894,4 +895,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     printDashboard,
     stopAllDashboardForwards,
   };
+}
+
+const HOST_PROBE_MAX_SECONDS = "3";
+
+/**
+ * Probe a dashboard-chain port on the host through its forward, for the
+ * onboarding deployment verification. Returns the HTTP status, or 0 when the
+ * forward is down.
+ */
+export function probeVerificationHostPort(port: number, probePath: string): number {
+  const result = defaultRunCapture(
+    [
+      "curl",
+      "-so",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--max-time",
+      HOST_PROBE_MAX_SECONDS,
+      `http://127.0.0.1:${port}${probePath}`,
+    ],
+    { ignoreError: true },
+  );
+  return parseInt(result.trim(), 10) || 0;
 }

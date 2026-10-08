@@ -2411,6 +2411,10 @@ async function runVllmInstall(
 
   console.log("");
   console.log(`  vLLM (${runtimeProfile.name}):`);
+  if (hostLocalSelection?.displayName) {
+    console.log(`    Selected for your hardware: ${hostLocalSelection.displayName}`);
+    console.log(`    Context limit: ${String(model.maxModelLen)} tokens`);
+  }
   // A catalog selection always knows its preset and recipe, but only a recipe
   // that pins a catalog receipt copies them onto the runtime profile, so the
   // selection is the more complete source for this declaration.
