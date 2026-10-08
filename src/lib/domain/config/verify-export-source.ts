@@ -1222,6 +1222,14 @@ function validateHostedInferenceRepresentation(snapshot: QualifiedExportSnapshot
 
 function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
   const { inference } = snapshot;
+  if (inference.provider === "gemini-api")
+    return [
+      finding(
+        "spec.inferenceProviders[].provider",
+        "unsupported",
+        "Gemini config export is unavailable because V1 cannot consume this provider. Continue using the existing sandbox.",
+      ),
+    ];
   if (inference.provider === "ollama-local" || inference.ollamaServing)
     return validateOllamaRepresentation(snapshot);
   if (inference.topology === "managed") return validateManagedVllmRepresentation(snapshot);

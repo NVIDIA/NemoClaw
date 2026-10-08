@@ -260,6 +260,14 @@ The command reads the registry and current OpenShell state without changing the 
 It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent.
 If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
+<AgentOnly variant="openclaw">
+
+Gemini config export stops with an unsupported-provider error because V1 cannot consume the Gemini document.
+The command writes no YAML and does not create or replace an output file, including with `--force`.
+Continue using the existing Gemini sandbox until V1 support is available.
+
+</AgentOnly>
+
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies that the recorded NemoClaw-owned provider attachment matches the live provider, least-privilege profile, and fixed native endpoint.
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
