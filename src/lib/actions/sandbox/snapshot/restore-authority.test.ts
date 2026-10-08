@@ -71,8 +71,6 @@ function manifest(agent: ShippedManagedImageAgent): RebuildManifest {
     agentType: agent,
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    dir: "/sandbox",
     backupPath: "/tmp/alpha",
     blueprintDigest: null,
     workload: workload(agent),
@@ -92,12 +90,12 @@ function sandbox(agent: ShippedManagedImageAgent): SandboxEntry {
   };
 }
 
-function restoreWorkspace(
+async function restoreWorkspace(
   _name: string,
   _path: string,
   options: RecreatedSandboxRestoreOptions,
-): RestoreResult {
-  options.validateBeforeMutation?.();
+): Promise<RestoreResult> {
+  await options.validateBeforeMutation?.();
   return {
     success: true,
     restoredDirs: ["workspace"],
@@ -240,7 +238,11 @@ function provider(agent: ShippedManagedImageAgent) {
       providerId: "mxc",
       supported: true,
       contractVersion: 1,
-      capabilities: { backup: true, restore: true, managedProfileRestore: true },
+      capabilities: {
+        backup: true,
+        restore: true,
+        managedProfileRestore: true,
+      },
       preflight,
       capture: () => runtimeSnapshot().runtime,
       validateRestore,
@@ -253,12 +255,12 @@ function provider(agent: ShippedManagedImageAgent) {
 describe("managed rebuild restore authority", () => {
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "revalidates %s content and provider authority at the mutation edge",
-    (agent) => {
+    async (agent) => {
       const target = sandbox(agent);
       const runtimeProvider = provider(agent);
       const restore = vi.fn(restoreWorkspace);
 
-      const result = restoreRecreatedSandboxStateWithManagedAuthority(
+      const result = await restoreRecreatedSandboxStateWithManagedAuthority(
         "alpha",
         manifest(agent),
         { targetAgentType: agent },
@@ -289,9 +291,13 @@ describe("managed rebuild restore authority", () => {
     },
   );
 
-  it("keeps legacy rebuild manifests on the state-only restore path", () => {
-    const legacy = { ...manifest("openclaw"), workload: undefined, runtimeSnapshot: undefined };
-    const restore = vi.fn(() => ({
+  it("keeps legacy rebuild manifests on the state-only restore path", async () => {
+    const legacy = {
+      ...manifest("openclaw"),
+      workload: undefined,
+      runtimeSnapshot: undefined,
+    };
+    const restore = vi.fn(async () => ({
       success: true,
       restoredDirs: [],
       failedDirs: [],
@@ -300,16 +306,18 @@ describe("managed rebuild restore authority", () => {
     }));
 
     expect(
-      restoreRecreatedSandboxStateWithManagedAuthority(
-        "alpha",
-        legacy,
-        { targetAgentType: "openclaw" },
-        {
-          getSandbox: vi.fn(),
-          requireProvider: vi.fn() as never,
-          captureContentAuthority: vi.fn(),
-          restore,
-        },
+      (
+        await restoreRecreatedSandboxStateWithManagedAuthority(
+          "alpha",
+          legacy,
+          { targetAgentType: "openclaw" },
+          {
+            getSandbox: vi.fn(),
+            requireProvider: vi.fn() as never,
+            captureContentAuthority: vi.fn(),
+            restore,
+          },
+        )
       ).success,
     ).toBe(true);
     expect(restore).toHaveBeenCalledWith("alpha", "/tmp/alpha", {
@@ -317,9 +325,9 @@ describe("managed rebuild restore authority", () => {
     });
   });
 
-  it("rejects a managed manifest without provider runtime authority", () => {
+  it("rejects a managed manifest without provider runtime authority", async () => {
     const restore = vi.fn();
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
+    const result = await restoreRecreatedSandboxStateWithManagedAuthority(
       "alpha",
       { ...manifest("hermes"), runtimeSnapshot: undefined },
       { targetAgentType: "hermes" },
@@ -342,10 +350,13 @@ describe("managed rebuild restore authority", () => {
     "docker-device-id:nvidia.com/gpu=all",
     "docker-device-request:nvidia:count=-1",
     "docker-nvidia-visible-devices:all",
-  ])("restores retained NVIDIA authority %s through managed rebuild (#10758)", (selector) => {
+  ])("restores retained NVIDIA authority %s through managed rebuild (#10758)", async (selector) => {
     const fixture = managedDockerRestoreFixture([selector], "all");
 
-    expect(fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+    expect(await fixture.run()).toMatchObject({
+      success: true,
+      restoredDirs: ["workspace"],
+    });
     expect(fixture.restore).toHaveBeenCalledOnce();
     expect(
       fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),
@@ -359,10 +370,10 @@ describe("managed rebuild restore authority", () => {
     ["docker-device-id:0", "0"],
   ] as const)(
     "rejects retained selector %s before managed restore (#10758)",
-    (selector, target) => {
+    async (selector, target) => {
       const fixture = managedDockerRestoreFixture([selector], target);
 
-      expect(fixture.run()).toMatchObject({
+      expect(await fixture.run()).toMatchObject({
         success: false,
         error: expect.stringContaining("cannot represent the snapshot acceleration state"),
       });
@@ -373,10 +384,10 @@ describe("managed rebuild restore authority", () => {
     },
   );
 
-  it("retains exact-device authority before mutation and succeeds on retry (#10758)", () => {
+  it("retains exact-device authority before mutation and succeeds on retry (#10758)", async () => {
     const fixture = managedDockerRestoreFixture(["docker-device-id:nvidia.com/gpu=0"], "all");
 
-    expect(fixture.run()).toMatchObject({
+    expect(await fixture.run()).toMatchObject({
       success: false,
       error: expect.stringContaining("cannot represent the snapshot acceleration state"),
     });
@@ -386,7 +397,10 @@ describe("managed rebuild restore authority", () => {
     );
 
     fixture.selectTarget("0");
-    expect(fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
+    expect(await fixture.run()).toMatchObject({
+      success: true,
+      restoredDirs: ["workspace"],
+    });
     expect(fixture.restore).toHaveBeenCalledOnce();
     expect(
       fixture.captureHostCommand.mock.calls.filter(([, args]) => args[0] === "exec"),

@@ -237,7 +237,7 @@ async function resolveChannelInputs(
 }> {
   const initialInputValues: Record<string, MessagingSerializableValue> = {};
   let inputs = manifest.inputs.map((input) => {
-    const resolved = resolveChannelInput(manifest, input, context, initialInputValues, {
+    const resolved = resolveChannelInput(manifest, input, initialInputValues, {
       applyDefaults: !(options.runEnrollment && options.isInteractive),
     });
     if (resolved.value !== undefined) {
@@ -314,7 +314,6 @@ async function runCompilerHook(
 function resolveChannelInput(
   manifest: ChannelManifest,
   input: ChannelInputSpec,
-  context: ManifestCompilerContext,
   availableInputs: Record<string, MessagingSerializableValue>,
   options: { readonly applyDefaults: boolean },
 ): SandboxMessagingInputReference {
@@ -383,7 +382,7 @@ function normalizeInputValue(
   input: ChannelInputSpec,
   raw: string | null | undefined,
 ): string | undefined {
-  if (raw && /[\r\n]/.test(raw)) {
+  if (raw && !input.allowLineBreaks && /[\r\n]/.test(raw)) {
     throw new Error("Messaging input values must not contain line breaks.");
   }
   const normalized = raw?.trim();

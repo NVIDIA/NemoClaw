@@ -116,6 +116,24 @@ function waitForFile(filename: string, timeoutMs = 2_000): void {
 }
 
 describe("source require loader", () => {
+  it("loads relative ESM source boundaries through their .mjs specifier", () => {
+    const script = `
+require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
+const sdk = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/adapters/openshell/sdk.ts"))});
+process.exitCode = sdk.gatewayPort({ kind: "named", gatewayName: "nemoclaw" }) === 8080 ? 0 : 7;
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
+      },
+      timeout: 10_000,
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+
   it.each([
     { built: false, prepareBuild: (_root: string) => {} },
     {
@@ -152,6 +170,14 @@ describe("source require loader", () => {
       fs.copyFileSync(
         path.join(REPO_ROOT, "test/helpers/source-require-cache.ts"),
         path.join(root, "test/helpers/source-require-cache.ts"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/source-require-compiler.ts"),
+        path.join(root, "test/helpers/source-require-compiler.ts"),
+      );
+      fs.copyFileSync(
+        path.join(REPO_ROOT, "test/helpers/source-coverage.cts"),
+        path.join(root, "test/helpers/source-coverage.cts"),
       );
       fs.symlinkSync(
         path.join(REPO_ROOT, "node_modules/typescript"),
@@ -540,6 +566,8 @@ const nativeTypeScriptLoader = Module._extensions[".ts"];
 const expected = new Set([
   path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "register-source-require.ts"))}),
   path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-cache.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-compiler.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-coverage.cts"))}),
 ]);
 const compiled = [];
 const originalCompile = Module.prototype._compile;
@@ -585,7 +613,7 @@ if (require.cache[typescriptPath] !== undefined) {
     require.cache[typescriptPath] === undefined ||
     registeredTypeScriptLoader === nativeTypeScriptLoader ||
     !rejectedUnexpected ||
-    compiled.length !== 2 ||
+    compiled.length !== expected.size ||
     compiled.some((entry) => !entry.sourceMapped)
   ) {
     console.error(JSON.stringify({ fixture, compiled, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));

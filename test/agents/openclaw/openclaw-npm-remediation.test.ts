@@ -17,13 +17,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildRemediatedOpenClawArchive,
+  buildRemediatedOpenClawPluginArchive,
+  fatalOpenClawNpmRemediationDiagnostic,
   hashPackageTree,
   patchCurrentOpenClawCorePackageGraph,
   patchLegacyOpenClawCorePackageGraph,
   patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
+  patchOpenClawSlackProxyPackageGraph,
+  OpenClawNpmRemediationCommandError,
+  runOpenClawNpmRemediationCommand,
 } from "../../../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
@@ -133,7 +137,11 @@ function writeLegacyCoreFixture(tarVersion = "7.5.11"): string {
       {
         name: "openclaw",
         version: "2026.3.11",
-        dependencies: { commander: "14.0.3", tar: tarVersion },
+        dependencies: {
+          "@whiskeysockets/baileys": "7.0.0-rc.9",
+          commander: "14.0.3",
+          tar: tarVersion,
+        },
       },
       null,
       2,
@@ -330,12 +338,11 @@ function packFixture(packageDirectory: string, archivePath: string): void {
 }
 
 function readPackageField<T>(directory: string, field: string): T {
-  const result = spawnSync("npm", ["pkg", "get", field, "--json"], {
-    cwd: directory,
-    encoding: "utf-8",
-  });
-  expect(result.status, result.stderr).toBe(0);
-  return JSON.parse(result.stdout) as T;
+  let value: unknown = readJson<Record<string, unknown>>(path.join(directory, "package.json"));
+  for (const part of field.split(".")) {
+    value = (value as Record<string, unknown>)[part];
+  }
+  return value as T;
 }
 
 function writeLegacyCoreArchiveFixtures(): {
@@ -357,6 +364,62 @@ function writeLegacyCoreArchiveFixtures(): {
   const tarArchive = path.join(root, "tar-7.5.21-source.tgz");
   packFixture(tarDirectory, tarArchive);
 
+  const baileysDirectory = path.join(root, "baileys-package");
+  mkdirSync(baileysDirectory, { recursive: true });
+  writeFileSync(
+    path.join(baileysDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@whiskeysockets/baileys",
+        version: "7.0.0-rc.9",
+        license: "MIT",
+        engines: { node: ">=20.0.0" },
+        gitHead: "cb8b3717aaede47460ba700651ee936f268c0ce4",
+        dependencies: {
+          "@cacheable/node-cache": "^1.4.0",
+          "@hapi/boom": "^9.1.3",
+          "async-mutex": "^0.5.0",
+          libsignal: "git+https://github.com/whiskeysockets/libsignal-node",
+          "lru-cache": "^11.1.0",
+          "music-metadata": "^11.7.0",
+          "p-queue": "^9.0.0",
+          pino: "^9.6",
+          protobufjs: "^7.2.4",
+          ws: "^8.13.0",
+        },
+        peerDependencies: {
+          "audio-decode": "^2.1.3",
+          jimp: "^1.6.0",
+          "link-preview-js": "^3.0.0",
+          sharp: "*",
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const baileysArchive = path.join(root, "whiskeysockets-baileys-7.0.0-rc.9-source.tgz");
+  packFixture(baileysDirectory, baileysArchive);
+
+  const libsignalDirectory = path.join(root, "libsignal-package");
+  mkdirSync(libsignalDirectory, { recursive: true });
+  writeFileSync(
+    path.join(libsignalDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "libsignal",
+        version: "6.0.0",
+        license: "GPL-3.0",
+        gitHead: "bcea72df9ec34d9d9140ab30619cf479c7c144c7",
+        dependencies: { "curve25519-js": "^0.0.4", protobufjs: "^7.5.5" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const libsignalArchive = path.join(root, "libsignal-6.0.0-source.tgz");
+  packFixture(libsignalDirectory, libsignalArchive);
+
   const npmExecutable = path.join(root, "npm-fixture.sh");
   writeFileSync(
     npmExecutable,
@@ -364,20 +427,34 @@ function writeLegacyCoreArchiveFixtures(): {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `tar_archive=${JSON.stringify(tarArchive)}`,
+      `baileys_archive=${JSON.stringify(baileysArchive)}`,
+      `libsignal_archive=${JSON.stringify(libsignalArchive)}`,
       'case "$1:$2:${3:-}" in',
       '  "view:tar@7.5.21:dist.integrity") value="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
       '  "view:tar@7.5.21:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.21.tgz" ;;',
-      '  "pack:https://registry.npmjs.org/tar/-/tar-7.5.21.tgz:--pack-destination") ;;',
+      '  "pack:tar@7.5.21:--pack-destination") ;;',
+      '  "view:@whiskeysockets/baileys@7.0.0-rc.9:dist.integrity") value="sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==" ;;',
+      '  "view:@whiskeysockets/baileys@7.0.0-rc.9:dist.tarball") value="https://registry.npmjs.org/@whiskeysockets/baileys/-/baileys-7.0.0-rc.9.tgz" ;;',
+      '  "pack:@whiskeysockets/baileys@7.0.0-rc.9:--pack-destination") ;;',
+      '  "view:libsignal@6.0.0:dist.integrity") value="sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==" ;;',
+      '  "view:libsignal@6.0.0:dist.tarball") value="https://registry.npmjs.org/libsignal/-/libsignal-6.0.0.tgz" ;;',
+      '  "pack:libsignal@6.0.0:--pack-destination") ;;',
       '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
       "esac",
       'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
+      'package_spec="$2"',
       'destination=""',
       'while [ "$#" -gt 0 ]; do',
       '  if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
       "  shift",
       "done",
-      'cp "$tar_archive" "$destination/tar-7.5.21.tgz"',
-      'printf \'[{"filename":"tar-7.5.21.tgz","integrity":"sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA=="}]\\n\'',
+      'case "$package_spec" in',
+      '  "tar@7.5.21") archive="$tar_archive"; filename="tar-7.5.21.tgz"; integrity="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
+      '  "@whiskeysockets/baileys@7.0.0-rc.9") archive="$baileys_archive"; filename="whiskeysockets-baileys-7.0.0-rc.9.tgz"; integrity="sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==" ;;',
+      '  "libsignal@6.0.0") archive="$libsignal_archive"; filename="libsignal-6.0.0.tgz"; integrity="sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA==" ;;',
+      "esac",
+      'cp "$archive" "$destination/$filename"',
+      'printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$filename" "$integrity"',
       "",
     ].join("\n"),
     { mode: 0o700 },
@@ -393,6 +470,64 @@ afterEach(() => {
 });
 
 describe("OpenClaw npm remediation", () => {
+  it("bounds a non-returning remediation command and keeps its diagnostic generic", () => {
+    const startedAt = Date.now();
+    let failure: unknown;
+    try {
+      runOpenClawNpmRemediationCommand(
+        process.execPath,
+        ["-e", 'process.stdout.write("private command output"); setInterval(() => {}, 1000);'],
+        undefined,
+        process.env,
+        "fetch replacement",
+        64 * 1024 * 1024,
+        750,
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(OpenClawNpmRemediationCommandError);
+    expect(failure).toMatchObject({
+      couldNotStart: false,
+      operation: "fetch replacement",
+      timedOut: true,
+      timeoutMs: 750,
+      message: "Remediation command timed out after 750 ms.",
+    });
+    expect(fatalOpenClawNpmRemediationDiagnostic(failure)).toBe(
+      "OpenClaw npm remediation operation 'fetch replacement' timed out after 750 ms.",
+    );
+    expect(String(failure)).not.toContain("private command output");
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it("replaces bundled Slack proxy-addr bytes and rejects an unexpected source version", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-slack-proxy-"));
+    temporaryDirectories.push(directory);
+    const target = path.join(directory, "node_modules/@slack/bolt/node_modules/proxy-addr");
+    const replacement = path.join(directory, "replacement");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(replacement);
+    writeJson(path.join(directory, "package.json"), {
+      name: "@openclaw/slack",
+      version: "2026.9.2",
+    });
+    const metadata = {
+      name: "proxy-addr",
+      dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    };
+    writeJson(path.join(target, "package.json"), { ...metadata, version: "2.0.7" });
+    writeJson(path.join(replacement, "package.json"), { ...metadata, version: "2.0.8" });
+    writeFileSync(path.join(target, "index.js"), "vulnerable");
+    writeFileSync(path.join(replacement, "index.js"), "patched");
+    patchOpenClawSlackProxyPackageGraph(directory, replacement);
+    expect(readFileSync(path.join(target, "index.js"), "utf8")).toBe("patched");
+    expect(readJson(path.join(target, "package.json"))).toMatchObject({ version: "2.0.8" });
+    expect(() => patchOpenClawSlackProxyPackageGraph(directory, replacement)).toThrow(
+      "must be proxy-addr@2.0.7",
+    );
+  });
   it("hashes package entries through opened file descriptors", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-integrity-"));
     temporaryDirectories.push(directory);
@@ -433,6 +568,7 @@ describe("OpenClaw npm remediation", () => {
     },
   );
 
+  // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Axios remediation installs only the reviewed replacement graph
   it("replaces the reviewed bundled Axios graph with the patched graph", () => {
     const directory = writeFixture();
 
@@ -482,6 +618,7 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
+  // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Jaeger remediation installs only the reviewed aligned graph
   it("replaces the reviewed Jaeger propagator with its aligned patched core", () => {
     const directory = writeDiagnosticsFixture();
 
@@ -550,10 +687,10 @@ describe("OpenClaw npm remediation", () => {
         "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
     });
     expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
-      version: "3.1.6",
-      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz",
+      version: "3.1.7",
+      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz",
       integrity:
-        "sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==",
+        "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==",
     });
     expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
       version: "8.10.0",
@@ -666,6 +803,7 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
+  // source-shape-contract: security -- Exact package and shrinkwrap identities prove the guarded Discord remediation installs only the reviewed undici graph
   it("replaces the reviewed OpenClaw Discord undici dependency", () => {
     const directory = writeDiscordFixture();
 
@@ -746,13 +884,16 @@ describe("OpenClaw npm remediation", () => {
     const fixture = writeLegacyCoreArchiveFixtures();
     const request = {
       archivePath: fixture.archivePath,
-      env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable },
+      env: {
+        NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable,
+        NPM_CONFIG_CACHE: path.join(path.dirname(fixture.archivePath), "npm-cache"),
+      },
       packageSpec: "openclaw@2026.3.11",
       workingDirectory: fixture.workingDirectory,
     };
-    const remediated = buildRemediatedOpenClawArchive(request);
+    const remediated = buildRemediatedOpenClawPluginArchive(request);
     expect(() =>
-      buildRemediatedOpenClawArchive({
+      buildRemediatedOpenClawPluginArchive({
         ...request,
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
       }),
@@ -770,11 +911,39 @@ describe("OpenClaw npm remediation", () => {
         bundledDependencies?: string[];
         dependencies?: Record<string, string>;
       }>(path.join(extracted, "package", "package.json")),
-    ).toMatchObject({ bundledDependencies: ["tar"], dependencies: { tar: "7.5.21" } });
+    ).toMatchObject({
+      bundledDependencies: ["tar", "@whiskeysockets/baileys", "libsignal"],
+      dependencies: {
+        "@whiskeysockets/baileys": "7.0.0-rc.9",
+        libsignal: "6.0.0",
+        tar: "7.5.21",
+      },
+    });
     expect(
       readJson<{ name?: string; version?: string }>(
         path.join(extracted, "package", "node_modules", "tar", "package.json"),
       ),
     ).toMatchObject({ name: "tar", version: "7.5.21" });
+    expect(
+      readJson<{ dependencies?: Record<string, string>; name?: string; version?: string }>(
+        path.join(
+          extracted,
+          "package",
+          "node_modules",
+          "@whiskeysockets",
+          "baileys",
+          "package.json",
+        ),
+      ),
+    ).toMatchObject({
+      name: "@whiskeysockets/baileys",
+      version: "7.0.0-rc.9",
+      dependencies: { libsignal: "6.0.0" },
+    });
+    expect(
+      readJson<{ name?: string; version?: string }>(
+        path.join(extracted, "package", "node_modules", "libsignal", "package.json"),
+      ),
+    ).toMatchObject({ name: "libsignal", version: "6.0.0" });
   }, 60_000);
 });

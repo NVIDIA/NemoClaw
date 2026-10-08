@@ -55,7 +55,6 @@ const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
 };
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
-const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION =
@@ -125,6 +124,23 @@ function isExactReviewQueueResultUpload(jobName: string, step: WorkflowStep): bo
   );
 }
 
+function isExactPortablePodmanToolchainUpload(jobName: string, step: WorkflowStep): boolean {
+  return (
+    jobName === "portable-podman-toolchain" &&
+    isDeepStrictEqual(step, {
+      name: "Upload the pinned Portable Podman toolchain",
+      uses: UPLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "portable-podman-e2e-toolchain-amd64",
+        path: "${{ runner.temp }}/portable-podman-e2e-toolchain/",
+        "if-no-files-found": "error",
+        "retention-days": 3,
+        "compression-level": 0,
+      },
+    })
+  );
+}
+
 function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep): boolean {
   const inputs = record(step.with);
   return (
@@ -139,6 +155,13 @@ function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep
 }
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
+  [
+    "dgx-station-express",
+    {
+      name: "e2e-dgx-station-express",
+      path: "${{ runner.temp }}/e2e-artifacts/live/dgx-station-express/",
+    },
+  ],
   [
     "external-gateway-health",
     {
@@ -158,13 +181,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-jetson-nvmap-gpu",
       path: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/",
-    },
-  ],
-  [
-    "retired-selector-compatibility",
-    {
-      name: "e2e-retired-selector-compatibility",
-      path: "e2e-artifacts/live/retired-selector-compatibility/",
     },
   ],
   [
@@ -204,6 +220,8 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/config-export-evidence.v1.json",
+        "e2e-artifacts/live/${{ matrix.id }}/config-export.yaml",
         "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json",
         "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json",
@@ -248,6 +266,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}",
       path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/",
+    },
+  ],
+  [
+    "portable-hermes-finalization",
+    {
+      name: "e2e-portable-hermes-finalization",
+      path: "e2e-artifacts/live/portable-hermes-finalization/",
     },
   ],
   [
@@ -381,6 +406,12 @@ function validateUploadPlacement(
     ["Restore Docker CLI after native Podman E2E", "Clean up Docker auth"],
     ["Restore Docker CLI after native Podman public install"],
     ["Restore Docker CLI after native Podman public install", "Clean up Docker auth"],
+    ["Restore Docker and retire Portable Podman runtime", "Clean up Docker auth"],
+    [
+      "Restore Docker and retire Portable Podman runtime",
+      "Remove immutable native Podman cleanup fixture",
+      "Clean up Docker auth",
+    ],
   ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
   if (!validTail) {
     errors.push(
@@ -462,7 +493,6 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "live" ||
           jobName === "native-runtime-qualification-podman-toolchain" ||
           jobName === "openshell-dev-artifact" ||
-          jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
           SHARED_E2E_JOBS.has(jobName) ||
@@ -528,6 +558,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
         !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
         !isExactNativeRuntimeAggregateUpload(jobName, step) &&
+        !isExactPortablePodmanToolchainUpload(jobName, step) &&
         !isExactReviewQueueResultUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);

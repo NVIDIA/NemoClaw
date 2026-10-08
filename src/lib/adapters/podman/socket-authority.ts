@@ -241,12 +241,16 @@ export function capturePodmanSocketAuthority(
   }
   const mode = integerValue(stat.mode, "mode");
   const directoryChain = captureDirectoryChain(normalized, uid, lstat);
-  const socketParent = directoryChain[0];
-  const parentMode = socketParent ? BigInt(socketParent.mode) : 0o777n;
+  const hasPrivateCurrentUserTraversalBoundary = directoryChain.some(
+    (component) => component.ownerUid === String(uid) && (BigInt(component.mode) & 0o011n) === 0n,
+  );
   // The rootless Podman systemd socket defaults to 0660. Group write stays
-  // inside the current-UID trust boundary when its owner-only parent prevents
-  // every other non-root user from reaching the socket.
-  if ((mode & 0o002n) !== 0n || ((mode & 0o020n) !== 0n && (parentMode & 0o077n) !== 0n)) {
+  // inside the current-UID trust boundary when an owner-controlled directory
+  // in its path prevents every other non-root user from reaching the socket.
+  if (
+    (mode & 0o002n) !== 0n ||
+    ((mode & 0o020n) !== 0n && !hasPrivateCurrentUserTraversalBoundary)
+  ) {
     throw new Error("Podman socket authority is writable by another user or group.");
   }
   return Object.freeze({

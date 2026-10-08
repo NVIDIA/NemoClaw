@@ -147,6 +147,9 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
       timedOut: false,
       exitCode: 0,
       diagnostic: "",
+      verifiedDevices: [
+        { name: "JMJWOA-Generic-GPU", totalMemoryMB: 65471, availableMemoryMB: 65000 },
+      ],
     }));
     try {
       withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
@@ -172,6 +175,9 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
       timedOut: false,
       exitCode: 0,
       diagnostic: "",
+      verifiedDevices: [
+        { name: "JMJWOA-Generic-GPU", totalMemoryMB: 65471, availableMemoryMB: 65000 },
+      ],
     }));
     try {
       withFirmwareModel("Microsoft Corporation Virtual Machine", () => {

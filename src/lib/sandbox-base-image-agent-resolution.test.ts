@@ -122,7 +122,7 @@ describe("agent-specific sandbox base-image resolution", () => {
       ignoreError: true,
       suppressOutput: true,
     });
-    expect(validateImage).toHaveBeenCalledWith(staleRef);
+    expect(validateImage).toHaveBeenCalledWith(staleRef, { source: "override" });
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("lacks a required runtime capability"),
     );

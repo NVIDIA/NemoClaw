@@ -23,7 +23,6 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
 
-import { CLI_NAME } from "../../cli/branding";
 import * as store from "../../credentials/store";
 import { loadMessagingChannelPolicyPreset } from "../../messaging/channels";
 import * as policies from "../../policy";

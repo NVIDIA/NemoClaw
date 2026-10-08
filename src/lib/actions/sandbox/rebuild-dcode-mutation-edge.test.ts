@@ -68,8 +68,6 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     const imageOrder = harness.prepareManagedDcodeRebuildImageSpy.mock.invocationCallOrder[0];
     const backupOrder = harness.backupSandboxStateSpy.mock.invocationCallOrder[0];
     const mcpPreparationOrder = harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0];
-    const warningProbeOrder =
-      harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0];
     const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
       ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete -g nemoclaw alpha",
     );
@@ -81,14 +79,16 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(preBackupRouteOrder).toBeLessThan(backupOrder);
     expect(backupOrder).toBeLessThan(preMcpRouteOrder);
     expect(preMcpRouteOrder).toBeLessThan(mcpPreparationOrder);
-    expect(mcpPreparationOrder).toBeLessThan(warningProbeOrder);
-    expect(warningProbeOrder).toBeLessThan(deleteEdgeRouteOrder);
+    expect(mcpPreparationOrder).toBeLessThan(deleteEdgeRouteOrder);
     expect(deleteEdgeRouteOrder).toBeLessThan(deleteOrder);
     expect(deleteOrder).toBeLessThan(onboardOrder);
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
   });
 
   it("retires removed Shields state after a complete DCode terminal-agent rebuild", async () => {
@@ -159,12 +159,16 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      { gatewayName: "nemoclaw", workspace: "default" },
+      [detached],
+    );
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",
       [detached],
       [scrubbed],
-      undefined,
+      { gatewayName: "nemoclaw", workspace: "default" },
     );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();

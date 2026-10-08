@@ -420,7 +420,7 @@ function buildAndInstallPluginWheel(version: string): string {
       wheelDir,
       projectRoot,
     ],
-    { env: pipEnv, stdio: "pipe" },
+    { env: pipEnv, stdio: "pipe", timeout: 30_000 },
   );
   const wheelPath = path.join(wheelDir, `nemoclaw_deepagents_profile-${version}-py3-none-any.whl`);
   execFileSync(
@@ -436,7 +436,7 @@ function buildAndInstallPluginWheel(version: string): string {
       installRoot,
       wheelPath,
     ],
-    { env: pipEnv, stdio: "pipe" },
+    { env: pipEnv, stdio: "pipe", timeout: 30_000 },
   );
   return installRoot;
 }
@@ -859,6 +859,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     );
   });
 
+  // Building and installing an offline wheel can exceed the unit-test budget under coverage.
   it("rejects an installed real plugin wheel with an unreviewed version", () => {
     const dependencyRoot = makeValidatorDependencyStubRoot();
     // A real wheel exercises entry-point metadata and locate_file binding that
@@ -870,7 +871,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(result.stderr).toContain(
       "profile entry point comes from an unexpected distribution version",
     );
-  });
+  }, 90_000);
 
   it("layers managed aliases onto the built-in OpenRouter profile idempotently (#6653)", () => {
     const fixture = makePluginFixture();

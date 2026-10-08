@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -23,7 +22,8 @@ import {
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "../e2e/live/mcp-bridge-servers";
-import { shouldRetryMcpDiscoveryAfterRestart } from "../e2e/live/mcp-bridge-tool-discovery";
+
+import { createMcpFixtureTls } from "../e2e/fixtures/mcp-fixture-tls.ts";
 
 const servers: StartedHttpServer[] = [];
 function progressProbe() {
@@ -45,33 +45,22 @@ type CompatibleToolCallResponse = {
     };
   }>;
 };
-const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-fixture-tls-"));
-execFileSync(
-  "openssl",
-  [
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-sha256",
-    "-nodes",
-    "-days",
-    "1",
-    "-subj",
-    "/CN=127.0.0.1",
-    "-addext",
-    "subjectAltName=IP:127.0.0.1",
-    "-keyout",
-    path.join(tlsDir, "server.key"),
-    "-out",
-    path.join(tlsDir, "server.crt"),
-  ],
-  { stdio: "ignore" },
-);
-const fixtureTls = {
-  cert: fs.readFileSync(path.join(tlsDir, "server.crt")),
-  key: fs.readFileSync(path.join(tlsDir, "server.key")),
-};
+async function postCompatibleChat(
+  port: number,
+  body: unknown,
+): Promise<CompatibleToolCallResponse> {
+  const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer compatible-key",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return response.json() as Promise<CompatibleToolCallResponse>;
+}
+
+const { tls: fixtureTls, close: closeFixtureTls } = createMcpFixtureTls();
 
 async function* readSseData(response: IncomingMessage): AsyncGenerator<string> {
   response.setEncoding("utf8");
@@ -94,7 +83,7 @@ async function* readSseData(response: IncomingMessage): AsyncGenerator<string> {
 }
 
 afterAll(() => {
-  fs.rmSync(tlsDir, { recursive: true, force: true });
+  closeFixtureTls();
 });
 
 afterEach(async () => {
@@ -102,67 +91,6 @@ afterEach(async () => {
 });
 
 describe("authenticated MCP live fixtures", () => {
-  it("records a slow POST arrival before its body completes", async () => {
-    const secret = "slow-request-secret";
-    const server = await startFakeMcpHttpsServer({ secret, tls: fixtureTls });
-    servers.push(server);
-    const body = JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { protocolVersion: "2025-06-18" },
-    });
-    const observationOffset = server.observations.length;
-    let resolveResponse!: (status: number) => void;
-    let rejectResponse!: (error: Error) => void;
-    const responseStatus = new Promise<number>((resolve, reject) => {
-      resolveResponse = resolve;
-      rejectResponse = reject;
-    });
-    const observedStatus = responseStatus.then(
-      (status) => ({ ok: true, status }) as const,
-      (error: unknown) => ({ error, ok: false }) as const,
-    );
-    const slowRequest = https.request(
-      `https://127.0.0.1:${server.port}/mcp`,
-      {
-        method: "POST",
-        ca: fixtureTls.cert,
-        headers: {
-          authorization: `Bearer ${secret}`,
-          "content-type": "application/json",
-          "content-length": Buffer.byteLength(body),
-        },
-      },
-      (response) => {
-        response.resume();
-        response.on("end", () => resolveResponse(response.statusCode ?? 0));
-      },
-    );
-    slowRequest.on("error", rejectResponse);
-    slowRequest.write(body.slice(0, 1));
-
-    await expect.poll(() => server.observations.length).toBe(observationOffset + 1);
-    const arrival = server.observations[observationOffset];
-    expect(server.requests).toHaveLength(0);
-    expect(arrival).toMatchObject({
-      method: "POST",
-      path: "/mcp",
-      auth: `Bearer ${secret}`,
-      body: "",
-    });
-    expect(shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset))).toBe(
-      false,
-    );
-
-    slowRequest.end(body.slice(1));
-    expect(await observedStatus).toEqual({ ok: true, status: 200 });
-    expect(server.requests).toHaveLength(1);
-    expect(server.observations[observationOffset]).toBe(arrival);
-    expect(server.requests[0]).toBe(arrival);
-    expect(arrival).toMatchObject({ body, rpcMethod: "initialize" });
-  });
-
   it("builds a bounded public HTTPS quick-tunnel origin without embedding credentials", () => {
     expect(buildCloudflaredQuickTunnelArgs(43123)).toEqual([
       "tunnel",
@@ -968,27 +896,17 @@ describe("authenticated MCP live fixtures", () => {
       authorization: "Bearer compatible-key",
       "content-type": "application/json",
     };
+    const tools = [{ type: "function", function: { name: "mcp_fake_fake_echo", parameters: {} } }];
     const first = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify({
         model: "mock/model",
         messages: [{ role: "user", content: "use the tool" }],
-        tools: [
-          {
-            type: "function",
-            function: { name: "mcp_fake_fake_echo", parameters: {} },
-          },
-        ],
+        tools,
       }),
     });
-    const firstBody = (await first.json()) as {
-      choices: Array<{
-        message: {
-          tool_calls: Array<{ function: { name: string; arguments: string } }>;
-        };
-      }>;
-    };
+    const firstBody = (await first.json()) as CompatibleToolCallResponse;
     expect(firstBody.choices[0].message.tool_calls[0]).toMatchObject({
       function: {
         name: "mcp_fake_fake_echo",
@@ -1003,12 +921,7 @@ describe("authenticated MCP live fixtures", () => {
       body: JSON.stringify({
         model: "mock/model",
         messages: [{ role: "tool", content: resultToken }],
-        tools: [
-          {
-            type: "function",
-            function: { name: "mcp_fake_fake_echo", parameters: {} },
-          },
-        ],
+        tools,
       }),
     });
     expect(await final.json()).toMatchObject({
@@ -1022,12 +935,7 @@ describe("authenticated MCP live fixtures", () => {
         model: "mock/model",
         stream: true,
         messages: [{ role: "user", content: "use the tool" }],
-        tools: [
-          {
-            type: "function",
-            function: { name: "mcp_fake_fake_echo", parameters: {} },
-          },
-        ],
+        tools,
       }),
     });
     const firstDataLine = (await streamed.text())
@@ -1054,25 +962,15 @@ describe("authenticated MCP live fixtures", () => {
 
   it("drives bridge and progressive denied-tool probes to a verified policy denial", async () => {
     const prompt = "run denied probe";
-    const headers = {
-      authorization: "Bearer compatible-key",
-      "content-type": "application/json",
-    };
     const post = async (
       server: StartedHttpServer,
       messages: Array<{ role: string; content: string; tool_call_id?: string }>,
       tools: string[],
     ) =>
-      (await (
-        await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            messages,
-            tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
-          }),
-        })
-      ).json()) as CompatibleToolCallResponse;
+      await postCompatibleChat(server.port, {
+        messages,
+        tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
+      });
     const bridge = await startCompatibleMock({
       apiKey: "compatible-key",
       model: "mock/model",
@@ -1143,7 +1041,7 @@ describe("authenticated MCP live fixtures", () => {
   });
 
   it("uses Hermes progressive disclosure when the MCP tool is deferred", async () => {
-    const deferredToolName = "mcp__fake__fake_echo";
+    const deferredToolName = "fake__fake_echo";
     const resultToken = "MCP_AUTH_REWRITE_OK::deferred-fixture";
     const server = await startCompatibleMock({
       apiKey: "compatible-key",
@@ -1153,11 +1051,6 @@ describe("authenticated MCP live fixtures", () => {
       deferredToolName,
     });
     servers.push(server);
-    const url = `http://127.0.0.1:${server.port}/v1/chat/completions`;
-    const headers = {
-      authorization: "Bearer compatible-key",
-      "content-type": "application/json",
-    };
     const bridgeTools = ["tool_search", "tool_describe", "tool_call"].map((name) => ({
       type: "function",
       function: { name, parameters: {} },
@@ -1166,13 +1059,7 @@ describe("authenticated MCP live fixtures", () => {
     const call = async (
       messages: Array<{ role: string; content: string; tool_call_id?: string }>,
     ) =>
-      (await (
-        await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ model: "mock/model", messages, tools: bridgeTools }),
-        })
-      ).json()) as CompatibleToolCallResponse;
+      await postCompatibleChat(server.port, { model: "mock/model", messages, tools: bridgeTools });
     const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
     expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
       id: "call_hermes_tool_search",
@@ -1291,6 +1178,88 @@ describe("authenticated MCP live fixtures", () => {
     });
   });
 
+  it("uses the OpenClaw tool catalog before calling a deferred MCP tool", async () => {
+    const deferredToolName = "mcp__fake__fake_echo";
+    const resultToken = "MCP_AUTH_REWRITE_OK::openclaw-fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "openclaw-fixture",
+      toolResultToken: resultToken,
+      openClawToolSearch: { query: "fake echo", toolNames: ["mcp__fake__fake_echo"] },
+    });
+    servers.push(server);
+    const call = async (
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+    ) =>
+      await postCompatibleChat(server.port, {
+        model: "mock/model",
+        messages,
+        tools: ["tool_search", "tool_describe", "tool_call"].map((name) => ({
+          type: "function",
+          function: { name, parameters: {} },
+        })),
+      });
+    const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
+    expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_openclaw_tool_search",
+      function: {
+        name: "tool_search",
+        arguments: JSON.stringify({ query: "fake echo", limit: 8 }),
+      },
+    });
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "openclaw-rewritten-search-id",
+      content: JSON.stringify([
+        {
+          type: "text",
+          text: JSON.stringify({
+            query: "fake echo",
+            count: 1,
+            matches: [{ name: deferredToolName, description: "Deferred echo" }],
+          }),
+        },
+      ]),
+    };
+    expect((await call([searchResult])).choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_openclaw_tool_describe",
+      function: { name: "tool_describe", arguments: JSON.stringify({ id: deferredToolName }) },
+    });
+    const descriptionResult = {
+      role: "tool",
+      tool_call_id: "openclaw-rewritten-describe-id",
+      content: JSON.stringify([
+        {
+          type: "text",
+          text: JSON.stringify({
+            name: deferredToolName,
+            parameters: { properties: { challenge: { type: "string" } } },
+          }),
+        },
+      ]),
+    };
+    expect(
+      (await call([searchResult, descriptionResult])).choices[0].message.tool_calls[0],
+    ).toMatchObject({
+      id: "call_openclaw_tool_call",
+      function: {
+        name: "tool_call",
+        arguments: JSON.stringify({
+          id: deferredToolName,
+          args: { challenge: "openclaw-fixture" },
+        }),
+      },
+    });
+    expect(
+      await call([
+        searchResult,
+        descriptionResult,
+        { role: "tool", tool_call_id: "call_openclaw_tool_call", content: resultToken },
+      ]),
+    ).toMatchObject({ choices: [{ message: { content: resultToken } }] });
+  });
+
   it("fails closed when a Hermes deferred tool leaks into the model registry", async () => {
     const deferredToolName = "mcp__fake__fake_echo";
     const server = await startCompatibleMock({
@@ -1338,25 +1307,14 @@ describe("authenticated MCP live fixtures", () => {
       },
     });
     servers.push(server);
-    const url = `http://127.0.0.1:${server.port}/v1/chat/completions`;
-    const headers = {
-      authorization: "Bearer compatible-key",
-      "content-type": "application/json",
-    };
     const post = async (
       messages: Array<{ role: string; content: string; tool_call_id?: string }>,
       tools: string[],
     ) =>
-      (await (
-        await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            messages,
-            tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
-          }),
-        })
-      ).json()) as CompatibleToolCallResponse;
+      await postCompatibleChat(server.port, {
+        messages,
+        tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
+      });
 
     const searchBody = await post([{ role: "user", content: "use MCP" }], ["search_tools", "ls"]);
     expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({

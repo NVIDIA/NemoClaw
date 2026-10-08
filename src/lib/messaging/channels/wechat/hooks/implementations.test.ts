@@ -310,9 +310,9 @@ describe("WeChat hook implementations", () => {
           value: {
             merge: {
               plugins: {
-                installs: {
+                entries: {
                   "openclaw-weixin": {
-                    spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+                    enabled: true,
                   },
                 },
               },

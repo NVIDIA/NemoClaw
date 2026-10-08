@@ -71,6 +71,8 @@ describe("isSupportedGatewayDockerHost (#7731)", () => {
     ["a unix socket with a trailing newline", "unix:///var/run/docker.sock\n"],
     ["a unix socket with a trailing carriage return", "unix:///var/run/docker.sock\r"],
     ["a value with a null byte", "unix:///var/run/docker.sock\0"],
+    ["a unix socket path with a terminal escape", "unix:///var/run/\u001b[31mdocker.sock"],
+    ["a unix socket path with a bidi override", "unix:///var/run/\u202edocker.sock"],
   ])("rejects %s", (_case, value) => {
     expect(isSupportedGatewayDockerHost(value)).toBe(false);
   });

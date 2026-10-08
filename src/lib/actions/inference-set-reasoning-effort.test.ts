@@ -239,11 +239,10 @@ describe("inference set reasoning effort (#7659)", () => {
       expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
       expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
       expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-      expect(deps.calls.updateSession).not.toHaveBeenCalled();
     },
   );
 
-  it("clears the matching session effort when switching to an unsupported provider", async () => {
+  it("clears the registry effort when switching to an unsupported provider", async () => {
     const deps = createDeps({
       config: compatibleEndpointConfig(),
       entry: {
@@ -268,11 +267,11 @@ describe("inference set reasoning effort (#7659)", () => {
       deps,
     );
 
-    expect(deps.getSession()?.compatibleEndpointReasoningEffort).toBeNull();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ compatibleEndpointReasoningEffort: null }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ compatibleEndpointReasoningEffort: null })]);
   });
 
   it.each(["high", "default"] as const)(
@@ -310,11 +309,10 @@ describe("inference set reasoning effort (#7659)", () => {
       expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
       expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
       expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-      expect(deps.calls.updateSession).not.toHaveBeenCalled();
     },
   );
 
-  it("clears the matching session effort when switching to an unsupported API", async () => {
+  it("clears the registry effort when switching to an unsupported API", async () => {
     let providerVersion = 1;
     const captureOpenshell = vi.fn((args: string[]) => {
       switch (`${args[0]}:${args[1]}`) {
@@ -377,10 +375,10 @@ describe("inference set reasoning effort (#7659)", () => {
       deps,
     );
 
-    expect(deps.getSession()?.compatibleEndpointReasoningEffort).toBeNull();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ compatibleEndpointReasoningEffort: null }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ compatibleEndpointReasoningEffort: null })]);
   });
 });

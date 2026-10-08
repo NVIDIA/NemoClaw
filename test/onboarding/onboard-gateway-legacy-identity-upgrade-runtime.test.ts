@@ -41,12 +41,16 @@ function killQuietly(pid: number): void {
 }
 
 function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+  const state = result.stdout.trim().charAt(0);
+  const absent = result.status === 1 && !result.stdout.trim() && !result.stderr.trim();
+  const knownState = result.status === 0 && /^[DIKPRSTUWtZXx]$/.test(state);
+  assert.ok(absent || knownState, "gateway fixture process state could not be inspected");
+  // A zombie has exited and released its listener, even before init reaps its PID.
+  return /^[DIKPRSTUWt]$/.test(state);
 }
 
 afterEach(() => {
@@ -98,7 +102,7 @@ function launchOrphanGateway(options: {
     `const net=require("node:net");const fs=require("node:fs");` +
       `const server=net.createServer();` +
       `server.listen(${String(options.port)},"127.0.0.1",()=>fs.writeFileSync(${JSON.stringify(options.pidFile)},String(process.pid)));` +
-      `process.on("SIGTERM",()=>process.exit(0));`,
+      `process.on("SIGTERM",()=>server.close(()=>process.exit(0)));`,
   );
   const launcherScript =
     `const {spawn}=require("node:child_process");` +
@@ -214,21 +218,23 @@ describe("legacy Docker-driver gateway identity upgrade", () => {
         portListenerScan: listenerScan,
         pidFileGatewayPid: legacyPid,
         initialHealth: {
-          status: "Gateway: active",
-          namedInfo: `Gateway: ${gatewayName}`,
-          activeInfo: `Gateway: ${gatewayName}`,
+          healthy: true,
+          namedMetadata: true,
+          gatewayReuseState: "healthy",
+          shouldSelect: false,
+          endpoints: [],
+          endpointBinding: "unknown",
         },
       };
       const deps: DockerDriverGatewayCutoverDeps = {
         isDockerDriverGatewayProcessAlive: () => isAlive(legacyPid),
-        isGatewayHealthy: () => true,
         getDockerDriverGatewayRuntimeDrift: (pid, env, binary) =>
           runtime.getDockerDriverGatewayRuntimeDrift(pid, env, binary, process.platform),
         logDockerDriverGatewayRestart: (reason) => restartReasons.push(reason),
-        registerDockerDriverGatewayEndpoint: () => true,
+        registerDockerDriverGatewayEndpoint: async () => true,
         isDockerDriverGatewayHttpReady: async () => true,
         verifySandboxBridgeGatewayReachableOrExit: verifyBridge,
-        readGatewayHealth: () => input.initialHealth,
+        readGatewayHealth: async () => input.initialHealth,
         rememberDockerDriverGatewayPid: runtime.rememberDockerDriverGatewayPid,
         reapDuplicateHostGatewaysExceptOrFail: () => undefined,
         reapHostGatewayBeforeLaunchOrFail: (options) => reapHostGatewayBeforeLaunchOrFail(options),

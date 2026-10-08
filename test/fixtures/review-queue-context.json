@@ -4,9 +4,9 @@
   "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "expectedSpecialists": ["first", "second"],
   "deterministic": {
-    "version": 23,
+    "version": 26,
     "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "planHash": "59382646287943f44ab820a5ebb0e8be6b177140c960ff97847d542488bb8048",
+    "planHash": "96e1c7a2cfee8245014ebcd81c0a1402951ebfe438104f928c84e5370f2cbf1e",
     "changedFiles": ["docs/example.mdx"],
     "tier": 0,
     "families": [],
@@ -17,7 +17,7 @@
     "workflow": "e2e.yaml",
     "fanoutId": "e2e-all",
     "selectorTypes": ["all", "job", "target"],
-    "allowedJobIds": ["device-auth-health"],
+    "allowedJobIds": ["openclaw-inference-switch"],
     "manualOnlyJobIds": ["hardware-check"],
     "liveSupportedTargetIds": ["sample-target"]
   },

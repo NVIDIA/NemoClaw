@@ -25,6 +25,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
         withOllamaModelOwnershipLock: (operation) => operation(),
         loadPersistedOllamaHost: () => "127.0.0.1",
         loadPendingOllamaModelCleanup: () => [],
+        migrateLegacyCloudflaredState: vi.fn(() => false),
         rmSync: vi.fn(),
         runOpenshell,
         stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
@@ -62,6 +63,7 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
         {
           stopAll,
           getSandbox,
+          migrateLegacyCloudflaredState: vi.fn(() => false),
           rmSync,
           runOpenshell,
           stopGooglechatWebhookTunnel,
@@ -84,14 +86,17 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
 
   it("removes the Google Chat PID directory after a successful tunnel stop", async () => {
     const rmSync = vi.fn();
+    const stopAll = vi.fn();
+    const migrateLegacyCloudflaredState = vi.fn(() => false);
     const stopGooglechatWebhookTunnel = vi.fn(() => googlechatPidDir);
     const googlechatWebhookTunnelPidDir = vi.fn(() => googlechatPidDir);
 
     await cleanupSandboxServices(
       SANDBOX,
-      { stopHostServices: true },
+      { stopHostServices: true, channelStopTransport: "openshell", gatewayPort: 18_080 },
       {
-        stopAll: vi.fn(),
+        stopAll,
+        migrateLegacyCloudflaredState,
         getSandbox: vi.fn(() => null),
         rmSync,
         runOpenshell: vi.fn(() => ({ status: 0 })),
@@ -101,6 +106,18 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     );
 
     expect(rmSync).toHaveBeenCalledWith(googlechatPidDir, { recursive: true, force: true });
+    expect(migrateLegacyCloudflaredState).toHaveBeenCalledTimes(1);
+    expect(migrateLegacyCloudflaredState).toHaveBeenCalledWith(
+      { sandboxName: SANDBOX, gatewayPort: 18_080 },
+      { recoverySandboxName: SANDBOX },
+    );
+    expect(stopAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelStopTransport: "openshell",
+        sandboxName: SANDBOX,
+        stopCloudflared: false,
+      }),
+    );
   });
 });
 
@@ -126,6 +143,7 @@ describe("cleanupSandboxServices Ollama ownership", () => {
         getSandbox: () => own,
         listSandboxes: () => ({ sandboxes: [own, peer], defaultSandbox: null }),
         loadPersistedOllamaHost: () => "127.0.0.1",
+        migrateLegacyCloudflaredState: vi.fn(() => false),
         unloadOllamaModels,
         withOllamaModelOwnershipLock: (operation) => operation(),
         rmSync: vi.fn(),
@@ -210,6 +228,33 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
         classify: classify as never,
       }),
     ).toEqual({ identity: undefined, providerIdentity });
+    expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it("uses provider-owned name lookup for a partial registry row", () => {
+    const classify = vi.fn();
+    const providerIdentity = {
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: "a".repeat(64),
+      ownershipSha256: "b".repeat(64),
+    };
+    const captureProviderIdentity = vi.fn();
+    const captureProviderIdentityByName = vi.fn(() => providerIdentity);
+    const sandbox = { name: "destroytest", agent: "openclaw" as const, openshellDriver: null };
+
+    expect(
+      assertUnambiguousDestroyContainerIdentity("destroytest", {
+        providerId: "podman",
+        redact: String,
+        sandbox,
+        captureProviderIdentity,
+        captureProviderIdentityByName,
+        classify: classify as never,
+      }),
+    ).toEqual({ identities: undefined, providerIdentity });
+    expect(captureProviderIdentity).not.toHaveBeenCalled();
     expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
     expect(classify).not.toHaveBeenCalled();
   });

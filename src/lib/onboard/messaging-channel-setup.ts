@@ -122,8 +122,10 @@ export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = n
  * when the current selection omits it and the environment no longer configures
  * it under the same manifest input rules as
  * {@link detectMessagingChannelsFromEnv}, so a channel that still has some but
- * not all of its required inputs also qualifies. `handlePoliciesState` then
- * drops that channel's network-egress preset instead of carrying it forward.
+ * not all of its required inputs also qualifies. Reuse callers include channels
+ * backed by matching durable gateway providers in `selectedChannels`; process
+ * input absence alone does not opt out those channels. `handlePoliciesState`
+ * then drops only confirmed removals from the network-egress presets.
  * A channel enrolled inside the sandbox (`in-sandbox-qr`) never qualifies: the
  * host environment holds no value that reports whether the channel is still
  * paired. {@link resolveMessagingManifestSeed} exempts the same channels when

@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../adapters/openshell/inference-route-cli";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
@@ -20,7 +21,6 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import { buildGatewayInferenceGetArgs, parseGatewayInference } from "../../inference/config";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
@@ -32,18 +32,15 @@ import {
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import {
-  inspectMutableConfigPerms,
-  repairMutableConfigPerms,
-} from "../../sandbox/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
-import { buildConfigPermsCheck } from "./doctor-config-perms";
 import {
   collectInferenceChecks,
   collectManagedLlamaCppDoctorChecks,
   type DoctorInferenceRoute,
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
 import {
@@ -129,10 +126,7 @@ function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | 
   const unknown = args.filter((arg) => !["--json", "--fix", "--help", "-h"].includes(arg));
   if (helpRequested) {
     console.log(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
-    console.log(
-      `  --fix   Restore the mutable OpenClaw config permission contract if it was tightened,`,
-    );
-    console.log(`          and approve pending allowlisted dashboard/CLI tool-scope upgrades`);
+    console.log(`  --fix   Approve pending allowlisted dashboard/CLI tool-scope upgrades`);
     return null;
   }
   if (unknown.length > 0) {
@@ -142,11 +136,9 @@ function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | 
     console.error(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
     process.exit(1);
   }
-  // `--fix` mutates sandbox permissions; `--json` is the machine-readable
-  // readiness-gate path. Refuse the combination so automation consuming JSON
-  // can never trigger a silent repair (the JSON report has no dedicated
-  // repair-intent field). Run `doctor --json` to detect, then `doctor --fix`
-  // to repair.
+  // `--fix` approves pending tool-scope changes; `--json` is the
+  // machine-readable readiness-gate path. Refuse the combination so automation
+  // consuming JSON can never trigger a silent mutation.
   if (wantsFix && asJson) {
     console.error(`  ${CLI_NAME} doctor: --fix cannot be combined with --json`);
     console.error(
@@ -390,25 +382,36 @@ async function collectSandboxReadinessChecks(
   };
 }
 
-function resolveInferenceRoute(
+async function resolveInferenceRoute(
   sb: SandboxEntry | null | undefined,
   openshellBin: string | null,
   openshellConnected: boolean,
   gatewayName: string | null,
-): DoctorInferenceRoute {
-  const live =
-    openshellBin && openshellConnected && gatewayName
-      ? parseGatewayInference(
-          captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
-            ignoreError: true,
-            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-          }).output,
-        )
-      : null;
+): Promise<DoctorInferenceRoute> {
+  const recordedNativeNvidia = isNativeNvidiaProvider(sb?.provider);
+  let live: { provider: string; model: string } | null = null;
+  if (!recordedNativeNvidia && openshellBin && openshellConnected && gatewayName) {
+    const result = await createSynchronousCliOpenShellInferenceRouteObserver(
+      captureOpenshell,
+    ).observeInferenceRoute({
+      target: namedOpenShellGateway(gatewayName),
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    live = result.ok && result.value.state === "configured" ? result.value.route : null;
+  }
   return {
     model: live?.model || sb?.model || "unknown",
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
+    recordedEndpointUrl: sb?.endpointUrl,
+    agentName: sb?.agent,
+    ...(recordedNativeNvidia
+      ? {
+          nativeNvidiaProviderAttachment: normalizeNativeNvidiaProviderAttachment(
+            sb?.nativeNvidiaProviderAttachment,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -466,12 +469,6 @@ async function collectRegisteredSandboxChecks(
   checks.push(
     buildLifecycleRegistrationCheck(sandboxName, sb, CLI_NAME, { dashboardPortRequired }),
   );
-  const permsCheck = buildConfigPermsCheck(sandboxName, wantsFix, {
-    inspect: inspectMutableConfigPerms,
-    repair: repairMutableConfigPerms,
-    cliName: CLI_NAME,
-  });
-  if (permsCheck) checks.push(permsCheck);
   checks.push(...(await collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable)));
   return checks;
 }
@@ -534,7 +531,7 @@ async function collectDoctorChecks(
     host.openshellBin,
     gateway.connected,
   );
-  const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected, gatewayName);
+  const route = await resolveInferenceRoute(sb, host.openshellBin, gateway.connected, gatewayName);
   return [
     ...host.checks,
     ...gateway.checks,
@@ -547,7 +544,7 @@ async function collectDoctorChecks(
     ...(await collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix)),
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
-    cloudflaredDoctorCheck(sandboxName),
+    cloudflaredDoctorCheck(sandboxName, sb?.gatewayPort ?? GATEWAY_PORT),
   ];
 }
 

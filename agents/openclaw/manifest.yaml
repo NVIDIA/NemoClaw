@@ -19,7 +19,7 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.7.1"
+expected_version: "2026.9.2"
 version_scheme: calendar
 gateway_command: "openclaw gateway run"
 # Interactive entry point a user types inside the sandbox. OpenClaw stays a
@@ -51,52 +51,6 @@ skills:
   list_command: [skills, list, --agent, main]
   add_command: [skills, install, "{source}", --agent, main, --force]
 
-# ── State directories ──────────────────────────────────────────
-state_dirs:
-  - agents
-  - extensions
-  # Legacy layouts can still contain this pre-extensions directory. Keep it
-  # outside portable state.
-  - path: plugins
-    backup: false
-  # OpenClaw may create profile-scoped runtime state. Keep it outside portable
-  # state until profile-specific backup semantics are defined.
-  - path: profiles
-    backup: false
-  - workspace
-  # Multi-agent OpenClaw deployments create workspace-<agent> siblings.
-  - prefix: workspace-
-  - skills
-  - hooks
-  # Machine-local gateway auth state is wiped on destroy but never captured.
-  # Sanitization removes the identity key and paired-device tokens, so a
-  # restored copy cannot authenticate (#6852).
-  - path: identity
-    backup: false
-  - path: devices
-    backup: false
-  - canvas
-  - cron
-  - memory
-  - telegram
-  - wechat
-  - whatsapp
-  - credentials
-
-# ── Top-level durable state files ───────────────────────────────
-# openclaw.json holds the core OpenClaw settings the state dirs above do not
-# cover: model/provider config, MCP servers, custom agents, and channel
-# account blocks. Without this entry `nemoclaw backup-all` snapshotted the
-# data directories but dropped these settings, so they were lost on rebuild
-# (issue #5027). Backed up with the default copy strategy; the local backup is
-# credential-sanitized (gateway section dropped, secret-bearing fields scrubbed)
-# while OpenShell `resolve:env` placeholders and the `unused` provider sentinel
-# are preserved so the restored config keeps routing through proxy-injected
-# credentials.
-state_files:
-  - path: openclaw.json
-    restore:
-      merge: openclaw-config
 user_managed_files:
   - .env
   - .mcp.json
@@ -113,7 +67,7 @@ inference:
 # ── MCP server support ───────────────────────────────────────────
 mcp:
   support: bridge
-  adapter: mcporter
+  adapter: openclaw-config
 
 # ── Phone-home hosts ───────────────────────────────────────────
 phone_home_hosts:

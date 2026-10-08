@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureOpenshell } from "../adapters/openshell/runtime";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../adapters/openshell/inference-route-cli";
+import type {
+  OpenShellInferenceRouteError,
+  OpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import {
@@ -15,12 +20,17 @@ import {
   type GatewayInferenceRoute,
 } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
-import { getLiveGatewayInference } from "../inference/live";
+import {
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  normalizeNativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
 import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
 import { valueLooksLikeSecret } from "../security/credential-filter";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
+  getDefaultSandboxTargetName,
   getKnownSandboxTarget,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -55,8 +65,9 @@ export type InferenceEndpointStatus =
   | "adapter-managed";
 
 export interface InferenceGetDeps {
-  captureOpenshell: typeof captureOpenshell;
+  inferenceRouteObserver: OpenShellInferenceRouteObserver;
   getSandbox?: typeof getKnownSandboxTarget;
+  getDefaultSandbox?: typeof getDefaultSandboxTargetName;
   getSandboxTargetGatewayName: typeof getSandboxTargetGatewayName;
   listSandboxes: typeof listPersistedSandboxTargets;
   log: (message?: string) => void;
@@ -75,7 +86,8 @@ export class InferenceGetError extends Error {
 
 function defaultDeps(): InferenceGetDeps {
   return {
-    captureOpenshell,
+    inferenceRouteObserver: createSynchronousCliOpenShellInferenceRouteObserver(captureOpenshell),
+    getDefaultSandbox: getDefaultSandboxTargetName,
     getSandboxTargetGatewayName,
     listSandboxes: listPersistedSandboxTargets,
     log: console.log,
@@ -297,55 +309,80 @@ export async function runInferenceGet(
   options: InferenceGetOptions = {},
   deps: InferenceGetDeps = defaultDeps(),
 ): Promise<InferenceGetResult> {
+  const selectedSandboxName = options.sandboxName ?? deps.getDefaultSandbox?.() ?? null;
+  const selectedSandbox = selectedSandboxName
+    ? (deps.getSandbox ?? getKnownSandboxTarget)(selectedSandboxName)
+    : null;
+  if (
+    selectedSandbox &&
+    isNativeNvidiaProvider(selectedSandbox.provider) &&
+    normalizeNativeNvidiaProviderAttachment(selectedSandbox.nativeNvidiaProviderAttachment)
+  ) {
+    const payload: InferenceGetResult = {
+      provider: selectedSandbox.provider ?? null,
+      model: selectedSandbox.model ?? null,
+      endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+    };
+    if (!options.quiet) {
+      if (options.json) {
+        deps.log(JSON.stringify(payload, null, 2));
+      } else {
+        deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
+        deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
+        deps.log(`Endpoint: ${formatRouteValueForDisplay(NVIDIA_HOSTED_NATIVE_ENDPOINT)}`);
+      }
+    }
+    return payload;
+  }
   let gatewayName: string;
   try {
     gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
   } catch (error) {
     throw new InferenceGetError(formatGatewayResolutionFailure(error, options.sandboxName));
   }
-  const result = getLiveGatewayInference(deps.captureOpenshell, {
-    gatewayName,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  const result = await deps.inferenceRouteObserver.observeInferenceRoute({
+    target: { kind: "named", gatewayName },
+    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  if (result.failure) {
+  if (!result.ok) {
     throw new InferenceGetError(
       formatLookupFailure(
         gatewayName,
-        result.failure,
-        result.status,
+        result.error,
         options.cliName ?? "nemoclaw",
         options.sandboxName,
       ),
-      result.status || 1,
+      result.error.kind === "command" && result.error.reason === "invalid_request" ? 2 : 1,
     );
   }
-  if (!result.inference) {
+  if (result.value.state === "unconfigured") {
     throw new InferenceGetError(
       `OpenShell inference route is not configured for gateway '${gatewayName}'.`,
     );
   }
+  const inference = result.value.route;
 
   const endpoint = getPersistedEndpoint(
-    result.inference.provider,
-    result.inference.model,
+    inference.provider,
+    inference.model,
     gatewayName,
     options.sandboxName,
     deps,
   );
   const sandbox =
-    options.sandboxName && result.inference.provider === "llama-cpp-local"
+    options.sandboxName && inference.provider === "llama-cpp-local"
       ? (deps.getSandbox ?? getKnownSandboxTarget)(options.sandboxName)
       : null;
   const llamaCpp =
-    sandbox?.provider === result.inference.provider && sandbox.model === result.inference.model
+    sandbox?.provider === inference.provider && sandbox.model === inference.model
       ? getLlamaCppRouteDetails(
           sandbox,
           deps.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
         )
       : null;
   const payload: InferenceGetResult = {
-    provider: result.inference.provider,
-    model: result.inference.model,
+    provider: inference.provider,
+    model: inference.model,
     ...endpoint,
     ...(llamaCpp ? { llamaCpp } : {}),
   };
@@ -384,20 +421,32 @@ export async function runInferenceGet(
 
 function formatLookupFailure(
   gatewayName: string,
-  failure: NonNullable<ReturnType<typeof getLiveGatewayInference>["failure"]>,
-  status: number | null,
+  error: OpenShellInferenceRouteError,
   cliName: string,
   sandboxName: string | undefined,
 ): string {
   const recovery = formatStatusRecovery(cliName, sandboxName);
-  if (failure === "timeout") {
+  if (error.kind === "timeout") {
     return `OpenShell inference route lookup for gateway '${gatewayName}' timed out. ${recovery}`;
   }
-  if (failure === "exit") {
-    return `OpenShell inference route lookup for gateway '${gatewayName}' failed with exit status ${String(status ?? "unknown")}. ${recovery}`;
-  }
-  if (failure === "output") {
+  if (error.kind === "schema") {
     return `OpenShell inference route lookup for gateway '${gatewayName}' returned output NemoClaw could not interpret. ${recovery}`;
+  }
+  if (error.kind === "authentication") {
+    return `OpenShell could not authenticate the inference route lookup for gateway '${gatewayName}'. ${recovery}`;
+  }
+  if (error.kind === "transport") {
+    return `OpenShell could not reach gateway '${gatewayName}' for the inference route lookup. ${recovery}`;
+  }
+  if (error.kind === "validation") {
+    return `NemoClaw rejected the inference route lookup for gateway '${gatewayName}' before observation. ${recovery}`;
+  }
+  if (error.kind === "command" && error.reason !== "indeterminate") {
+    const detail = error.message.replace(
+      "OpenShell inference route observation",
+      `OpenShell inference route lookup for gateway '${gatewayName}'`,
+    );
+    return `${detail} ${recovery}`;
   }
   return `OpenShell inference route lookup for gateway '${gatewayName}' failed before an exit status was available. ${recovery}`;
 }

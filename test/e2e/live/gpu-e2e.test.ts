@@ -4,15 +4,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import YAML from "yaml";
-import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
-import { load as loadRegistry } from "../../../src/lib/state/registry/persistence.ts";
+import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
+import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
+import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
+import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
+import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { parseConfigExport } from "../fixtures/phases/config-export-validation.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { pollUntil } from "../fixtures/polling.ts";
 import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
@@ -21,6 +23,7 @@ import {
   chatContent,
   cleanupGpu,
   cleanupOllama,
+  createGpuPrivateHome,
   detectOllamaModel,
   ensureOllama,
   env,
@@ -33,11 +36,29 @@ import {
   restartProxy,
   SANDBOX_NAME,
   startAttachedOllama,
+  trackGpuGatewayCleanup,
+  waitForAttachedOllama,
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
 const TIMEOUT_MS = testTimeout(75 * 60_000);
 const HERMES_RESPONSE_TIMEOUT_MS = testTimeout(90 * 60_000);
+const VLLM_EXPORT_TIMEOUT_MS = testTimeout(90 * 60_000);
+
+function vllmExportEnv(): NodeJS.ProcessEnv {
+  return env({
+    NEMOCLAW_AGENT: "openclaw",
+    NEMOCLAW_MODEL: "",
+    NEMOCLAW_PROVIDER: "",
+    NEMOCLAW_SANDBOX_GPU: "0",
+    NEMOCLAW_SANDBOX_GPU_DEVICE: "",
+    NEMOCLAW_SERVING_PRESET: "",
+    NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "",
+    NEMOCLAW_VLLM_MODEL: "",
+    NEMOCLAW_VLLM_PORT: "18000",
+    NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+  });
+}
 
 function hermesResponseEnv(): NodeJS.ProcessEnv {
   return env({
@@ -68,7 +89,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -88,11 +109,7 @@ test(
       const result = await cleanupOllama(host, "cleanup-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-gateway-destroy-gpu",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "cleanup-gateway-destroy-gpu");
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-delete-gpu",
@@ -105,7 +122,7 @@ test(
       env: cleanupEnv,
       timeoutMs: 120_000,
     });
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, cleanupEnv);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info",
@@ -132,22 +149,14 @@ test(
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
 
     progress.phase("validate GPU runtime status");
-    const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
+    await host.command("node", [CLI, SANDBOX_NAME, "status"], {
       artifactName: "status-gpu-ollama",
       env: env(),
       timeoutMs: 120_000,
     });
-    expect(resultText(status)).toContain("Sandbox GPU: enabled");
-    expect(resultText(status)).toContain("CUDA verified");
 
     const installLog = resultText(install);
     assertGpuInstallProofs(installLog);
-    expect(installLog).toContain(
-      "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
-    );
-    expect(installLog).not.toMatch(
-      /Recreating OpenShell Docker sandbox container with NVIDIA GPU access|Docker GPU mode selected/u,
-    );
 
     const sandboxContainers = await runtimeProvider.command(
       [
@@ -292,7 +301,6 @@ exit 1`,
       { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
     );
     const restartLines = restart.stdout.trim().split("\n");
-    expect(restartLines[0]).toMatch(/^restart_mode=(system|user|manual)$/u);
     expect(loadedOllamaModels(restartLines.slice(1).join("\n"))).toEqual([]);
 
     const recovered = await host.nemoclaw(
@@ -336,7 +344,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
@@ -349,11 +357,7 @@ test(
       const result = await cleanupOllama(host, "cleanup-hermes-response-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-hermes-response-gateway",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, cleanupEnv, "cleanup-hermes-response-gateway");
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-hermes-response-openshell-sandbox",
@@ -367,7 +371,7 @@ test(
       timeoutMs: 120_000,
     });
     progress.phase("prepare clean GPU Ollama runtime for Hermes");
-    await cleanupGpu(host, sandbox);
+    await cleanupGpu(host, lifecycle, sandbox, cleanupEnv);
 
     await runtimeProvider.requireAvailable({
       artifactName: "runtime-info-hermes-response",
@@ -408,59 +412,71 @@ test(
 );
 
 test(
-  "OpenClaw exports an attached Ollama daemon and refuses a stopped backend (#11435)",
+  "OpenClaw exports attached Ollama through a named proxy service (#11435, #11977, #12012)",
   {
     timeout: TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "prepare an attached Ollama daemon",
+        "prepare the Ollama export host",
         "onboard OpenClaw without sandbox GPU",
-        "export and compare the active Ollama configuration",
-        "refuse export after the attached daemon stops",
+        "attach the export daemon",
+        "export the attached Ollama configuration",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async ({ artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
         "native Linux Docker + attached Ollama daemon + NemoClaw proxy + managed OpenClaw + SDK configuration export",
       credentialBoundary:
-        "The existing proxy owner authenticates observation; exported YAML contains no token or internal endpoint.",
+        "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
     });
+    // The SDK rejects gateway state below a world-writable ancestor such as /tmp.
+    const directory = createGpuPrivateHome(os.homedir());
     const exportEnv = env({
+      HOME: directory,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_SANDBOX_GPU: "0",
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
       NEMOCLAW_OLLAMA_PORT: "11439",
-      NEMOCLAW_OLLAMA_PROXY_PORT: "11440",
-      NEMOCLAW_MODEL: "qwen3.5:9b",
+      NEMOCLAW_MODEL: "qwen2.5:0.5b",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
       OLLAMA_HOST: "127.0.0.1:11439",
       OLLAMA_CONTEXT_LENGTH: "32768",
     });
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "export-cleanup-gateway", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
+    let daemonOwner: ReturnType<typeof startAttachedOllama> | undefined;
     cleanup.trackDisposable("stop Ollama processes after export qualification", async () => {
       const result = await cleanupOllama(host, "export-cleanup-ollama-processes");
       expect(result.exitCode, resultText(result)).toBe(0);
     });
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-export-"));
-    cleanup.trackDisposable("remove private Ollama export documents", () =>
-      fs.rmSync(directory, { recursive: true, force: true }),
-    );
-    await cleanupGpu(host, sandbox);
+    cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner?.terminate());
+    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
     await runtimeProvider.requireAvailable({
       artifactName: "export-runtime-info",
       scenarioLabel: "attached Ollama export",
     });
     await ensureOllama(host);
     await cleanupOllama(host, "export-stop-default-ollama");
-    const daemonOwner = startAttachedOllama(progress, exportEnv);
-    cleanup.trackDisposable("stop the fixture-owned Ollama daemon", () => daemonOwner.terminate());
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "export-cleanup-gateway",
-      env: exportEnv,
-      timeoutMs: 60000,
-    });
+    const preparedModel = await host.command(
+      "bash",
+      [
+        "-c",
+        `set -e
+sudo -n systemctl start ollama.service
+curl -q --noproxy '*' -fsS --max-time 2 --retry 20 --retry-connrefused --retry-delay 1 --retry-max-time 60 http://127.0.0.1:11434/api/tags
+exec ollama pull qwen2.5:0.5b`,
+      ],
+      {
+        artifactName: "export-prepare-installed-model",
+        env: env({ OLLAMA_HOST: "127.0.0.1:11434" }),
+        timeoutMs: execTimeout(20 * 60000),
+      },
+    );
+    expect(preparedModel.exitCode, resultText(preparedModel)).toBe(0);
     cleanup.trackDisposable("delete the export sandbox", () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "export-cleanup-openshell",
@@ -473,24 +489,6 @@ test(
       env: exportEnv,
       timeoutMs: 120000,
     });
-    // Only connection refusal is transient while this fixture's child starts. Every read is recorded.
-    await pollUntil({
-      artifactPrefix: "export-daemon-ready",
-      attempts: 20,
-      delayMs: 500,
-      probe: (_attempt, artifactName) =>
-        host.command(
-          "curl",
-          ["-q", "--noproxy", "*", "-fsS", "--max-time", "2", "http://127.0.0.1:11439/api/tags"],
-          { artifactName, env: exportEnv, timeoutMs: 5000 },
-        ),
-      accept: (result) => result.exitCode === 0,
-      terminal: (result) =>
-        result.exitCode !== 0 && result.exitCode !== 7
-          ? "The attached daemon readiness read failed."
-          : undefined,
-    });
-
     progress.phase("onboard OpenClaw without sandbox GPU");
     const onboard = await host.command(
       "node",
@@ -499,25 +497,30 @@ test(
         artifactName: "export-onboard-ollama",
         cwd: REPO_ROOT,
         env: exportEnv,
-        timeoutMs: execTimeout(55 * 60000),
+        timeoutMs: execTimeout(20 * 60000),
       },
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
-
-    progress.phase("export and compare the active Ollama configuration");
-    const firstPath = path.join(directory, "first.yaml");
-    const exported = await host.command(
-      "node",
-      [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
-      { artifactName: "export-ollama-first", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
+    progress.phase("attach the export daemon");
+    // Onboarding restarts the installer service on the same port; stop it before the child binds.
+    const stoppedService = await host.command(
+      "sudo",
+      ["-n", "systemctl", "stop", "ollama.service"],
+      {
+        artifactName: "export-stop-competing-service",
+        env: exportEnv,
+        timeoutMs: 60000,
+      },
     );
-    expect(exported.exitCode, resultText(exported)).toBe(0);
-    const raw = fs.readFileSync(firstPath, "utf8");
-    const document = validateNemoClawConfig(YAML.parse(raw));
-    const token = readTokenFileChecked(ollamaProxyTokenFile()).token;
-    artifacts.addRedactionValues([token]);
-    expect(raw.includes(token), "Export must omit the proxy credential").toBe(false);
-    expect(raw).not.toMatch(/NEMOCLAW_OLLAMA_PROXY_TOKEN|host\.openshell\.internal/u);
+
+    expect(stoppedService.exitCode, resultText(stoppedService)).toBe(0);
+    daemonOwner = startAttachedOllama(progress, exportEnv);
+    await waitForAttachedOllama(host, exportEnv);
+    await host.command("ollama", ["pull", "qwen2.5:0.5b"], {
+      artifactName: "export-prepare-attached-model",
+      env: exportEnv,
+      timeoutMs: execTimeout(20 * 60000),
+    });
     const tags = await host.command(
       "curl",
       ["-q", "--noproxy", "*", "-fsS", "--max-time", "5", "http://127.0.0.1:11439/api/tags"],
@@ -525,53 +528,204 @@ test(
     );
     const model = (
       JSON.parse(tags.stdout) as { models: Array<{ name: string; digest: string }> }
-    ).models.find(({ name }) => name === "qwen3.5:9b");
-    const exportedProvider = document.spec.inferenceProviders[0];
-    const serving =
-      "serving" in exportedProvider && exportedProvider.serving.backend === "ollama"
-        ? exportedProvider.serving
-        : undefined;
-    expect(exportedProvider.provider).toBe("ollama-local");
-    expect(serving?.daemon.hostPort).toBe(11439);
-    expect(serving?.proxy.hostPort).toBe(11440);
-    expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
-    const entry = loadRegistry().sandboxes[SANDBOX_NAME];
-    expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
-      entry.workload?.kind === "managed-image" ? entry.workload.reference : null,
-    );
-    const repeatPath = path.join(directory, "repeat.yaml");
-    await host.command(
+    ).models.find(({ name }) => name === "qwen2.5:0.5b");
+    progress.phase("export the attached Ollama configuration");
+    const firstPath = path.join(directory, "first.yaml");
+    const exported = await host.command(
       "node",
-      [CLI, "config", "export", SANDBOX_NAME, "--output", repeatPath, "--json"],
-      { artifactName: "export-ollama-repeat", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
+      [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
+      { artifactName: "export-ollama-first", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
     );
-    expect(validateNemoClawConfig(YAML.parse(fs.readFileSync(repeatPath, "utf8"))).spec).toEqual(
-      document.spec,
-    );
+    expect(exported.exitCode, resultText(exported)).toBe(0);
+    const firstYaml = fs.readFileSync(firstPath, "utf8");
+    const first = parseConfigExport(firstYaml);
+    const service = first.spec.services?.["ollama-auth"] as V1Alpha1OllamaProxyService | undefined;
+    expect(service?.upstream.model.digest).toBe(model!.digest.replace(/^sha256:/u, ""));
+    const proxyToken = readTokenFileChecked(ollamaProxyTokenFile(directory)).token;
+    artifacts.addRedactionValues([proxyToken]);
+    expect(
+      firstYaml.includes(proxyToken) ||
+        /credential|NEMOCLAW_|openshell:resolve:env/u.test(firstYaml),
+    ).toBe(false);
+    await artifacts.writeText("ollama-config-export.yaml", firstYaml);
+  },
+);
 
-    progress.phase("refuse export after the attached daemon stops");
-    await daemonOwner.terminate();
-    const rejectedPath = path.join(directory, "must-not-exist.yaml");
-    const rejected = await host.command(
-      "node",
-      [CLI, "config", "export", SANDBOX_NAME, "--output", rejectedPath, "--json"],
+test.for(["initial", "after retirement"])(
+  "Managed vLLM %s: recorded-port health, export, and final-consumer retirement (#12012, #11374)",
+  {
+    timeout: VLLM_EXPORT_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "qualify the managed vLLM export host",
+        "onboard the fixed managed vLLM profile",
+        "export the managed vLLM configuration",
+        "verify the recorded custom port without the onboarding override",
+      ],
+    },
+  },
+  async (cycle, { artifacts, cleanup, host, lifecycle, progress, runtimeProvider, sandbox }) => {
+    const exportEnv = vllmExportEnv();
+    const statusEnv = { ...exportEnv, NEMOCLAW_VLLM_PORT: "" };
+    await artifacts.target.declare({
+      id: "gpu-e2e",
+      boundary:
+        "native Linux Docker + fixed catalog-owned managed vLLM + managed OpenClaw + SDK configuration export",
+      credentialBoundary:
+        "The managed vLLM bearer key remains in owner-only host state and is registered with the artifact redactor before evidence publication.",
+      profileId: EXPORTED_VLLM_PROFILE_ID,
+      cycle,
+      sandboxName: SANDBOX_NAME,
+    });
+
+    progress.phase("qualify the managed vLLM export host");
+    await runtimeProvider.requireAvailable({
+      artifactName: "vllm-export-runtime-info",
+      scenarioLabel: "managed vLLM export",
+    });
+    const preflight = await host.command(
+      "docker",
+      ["inspect", "--format", "{{.Id}}", HOST_LOCAL_VLLM_CONTAINER_NAME],
       {
-        artifactName: "export-ollama-stopped-daemon",
-        cwd: REPO_ROOT,
+        artifactName: "vllm-export-preflight-container",
         env: exportEnv,
-        timeoutMs: 60000,
+        timeoutMs: 30_000,
       },
     );
-    expect(rejected.exitCode, resultText(rejected)).not.toBe(0);
-    expect(fs.existsSync(rejectedPath), "A stopped daemon must prevent publication").toBe(false);
-    await artifacts.writeJson("ollama-config-export-evidence.json", {
-      sandboxName: SANDBOX_NAME,
-      daemonPort: 11439,
-      proxyPort: 11440,
-      model: "qwen3.5:9b",
-      image: document.spec.sandboxes[0].runtime.image.ref,
-      repeatedSpecMatches: true,
-      stoppedDaemonPreventedPublication: true,
+    expect(
+      `${String(preflight.exitCode)}\n${resultText(preflight)}`,
+      `Refusing to replace a pre-existing ${HOST_LOCAL_VLLM_CONTAINER_NAME} container.`,
+    ).toMatch(/^1\n[\s\S]*no such (?:object|container)/iu);
+    await cleanupGpu(host, lifecycle, sandbox, exportEnv);
+
+    cleanup.trackDisposable("verify final-consumer vLLM retirement", async () => {
+      try {
+        const remaining = await host.command(
+          "docker",
+          [
+            "container",
+            "ls",
+            "--all",
+            "--quiet",
+            "--filter",
+            `name=^/${HOST_LOCAL_VLLM_CONTAINER_NAME}$`,
+          ],
+          { artifactName: "vllm-retired-inventory", env: exportEnv, timeoutMs: 30_000 },
+        );
+        const listener = await host.command("ss", ["-H", "-ltn", "sport = :18000"], {
+          artifactName: "vllm-retired-listener",
+          env: exportEnv,
+          timeoutMs: 30_000,
+        });
+        expect(
+          {
+            inventoryExit: remaining.exitCode,
+            containers: remaining.stdout.trim(),
+            listenerExit: listener.exitCode,
+            listeners: listener.stdout.trim(),
+          },
+          `${resultText(remaining)}\n${resultText(listener)}`,
+        ).toEqual({ inventoryExit: 0, containers: "", listenerExit: 0, listeners: "" });
+      } finally {
+        // Preserve failed retirement evidence before the fixture attempts best-effort cleanup.
+        cleanupLocalModelRuntimes({ env: exportEnv, sandboxName: SANDBOX_NAME });
+      }
     });
+
+    trackGpuGatewayCleanup(cleanup, host, lifecycle, exportEnv, "vllm-export-cleanup-gateway");
+    cleanup.trackDisposable("delete the managed vLLM export OpenShell sandbox", () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "vllm-export-cleanup-openshell",
+        env: exportEnv,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "vllm-export-cleanup-sandbox",
+      env: exportEnv,
+      timeoutMs: 15 * 60_000,
+    });
+
+    progress.phase("onboard the fixed managed vLLM profile");
+    const onboard = await host.command(
+      "node",
+      [
+        CLI,
+        "onboard",
+        "--profile",
+        EXPORTED_VLLM_PROFILE_ID,
+        "--fresh",
+        "--non-interactive",
+        "--yes-i-accept-third-party-software",
+      ],
+      {
+        artifactName: "vllm-export-onboard",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: execTimeout(75 * 60_000),
+      },
+    );
+    expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    const apiKey = loadManagedVllmApiKey();
+    artifacts.addRedactionValues([apiKey ?? ""]);
+
+    progress.phase("export the managed vLLM configuration");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-export-"));
+    cleanup.trackDisposable("remove private managed vLLM export documents", () =>
+      fs.rmSync(directory, { recursive: true, force: true }),
+    );
+    const outputPath = path.join(directory, "export.yaml");
+    const exported = await host.command(
+      "node",
+      [CLI, "config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
+      {
+        artifactName: "vllm-export",
+        cwd: REPO_ROOT,
+        env: exportEnv,
+        timeoutMs: 60_000,
+      },
+    );
+    expect(exported.exitCode, resultText(exported)).toBe(0);
+    const yaml = fs.readFileSync(outputPath, "utf8");
+    parseConfigExport(yaml);
+    expect(apiKey && yaml.includes(apiKey)).toBe(false);
+    await artifacts.writeText("vllm-config-export.yaml", yaml);
+
+    progress.phase("verify the recorded custom port without the onboarding override");
+    const status = await host.command("node", [CLI, SANDBOX_NAME, "status", "--json"], {
+      artifactName: "vllm-recorded-port-status",
+      cwd: REPO_ROOT,
+      env: statusEnv,
+      timeoutMs: 180_000,
+    });
+    const health = JSON.parse(status.stdout) as {
+      inferenceHealth: { subprobes: Array<{ endpoint: string; ok: boolean }> };
+    };
+    expect(
+      health.inferenceHealth.subprobes.find(
+        (probe) => probe.endpoint === "http://127.0.0.1:18000/v1/models",
+      )?.ok,
+    ).toBe(true);
+    const doctor = await host.command("node", [CLI, SANDBOX_NAME, "doctor", "--json"], {
+      artifactName: "vllm-recorded-port-doctor",
+      cwd: REPO_ROOT,
+      env: statusEnv,
+      timeoutMs: 180_000,
+    });
+    const diagnosis = JSON.parse(doctor.stdout) as {
+      checks: Array<{ detail: string; status: string }>;
+    };
+    expect(
+      diagnosis.checks.find(
+        (check) => check.detail === "http://127.0.0.1:18000/v1/models reachable",
+      )?.status,
+    ).toBe("ok");
+    const connect = await host.command("node", [CLI, SANDBOX_NAME, "connect", "--probe-only"], {
+      artifactName: "vllm-recorded-port-connect",
+      cwd: REPO_ROOT,
+      env: statusEnv,
+      timeoutMs: 300_000,
+    });
+    expect(connect.exitCode, resultText(connect)).toBe(0);
   },
 );

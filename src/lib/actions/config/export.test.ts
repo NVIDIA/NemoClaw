@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   buildExportConfig: vi.fn(),
   renderCanonicalNemoClawConfig: vi.fn(),
-  validateNemoClawConfig: vi.fn(),
 }));
 
 vi.mock("../../config/canonical", () => ({
@@ -15,10 +14,6 @@ vi.mock("../../config/canonical", () => ({
 vi.mock("../../domain/config/export-document", () => ({
   buildExportConfig: mocks.buildExportConfig,
 }));
-vi.mock("../../config/schema", () => ({
-  validateNemoClawConfig: mocks.validateNemoClawConfig,
-}));
-
 import { Check } from "typebox/value";
 import { runConfigExport, ConfigExportResultSchema, type ConfigExportDependencies } from "./export";
 
@@ -35,7 +30,6 @@ function dependencies(): ConfigExportDependencies {
   const observation = { sandboxName: "alpha" } as never;
   const config = { kind: "NemoClawConfig" } as never;
   mocks.buildExportConfig.mockReset().mockReturnValue(config);
-  mocks.validateNemoClawConfig.mockReset().mockReturnValue(config);
   mocks.renderCanonicalNemoClawConfig.mockReset().mockReturnValue({
     yaml: "kind: NemoClawConfig\n",
     documentDigest: "sha256:" + "a".repeat(64),
@@ -91,7 +85,6 @@ describe("runConfigExport", () => {
       documentName: "team",
       documentUid: "123e4567-e89b-42d3-a456-426614174000",
     });
-    expect(mocks.validateNemoClawConfig).toHaveBeenCalledWith({ kind: "NemoClawConfig" });
     expect(deps.publish).toHaveBeenCalledWith("/tmp/alpha.yaml", "kind: NemoClawConfig\n", true);
   });
 
@@ -143,31 +136,37 @@ describe("runConfigExport", () => {
     expect(JSON.stringify(outcome)).not.toContain(canary);
   });
 
-  it("returns an observation failure without building or publishing", async () => {
-    const deps = dependencies();
-    const finding = {
-      field: "source.registry",
-      category: "not-found",
-      diagnostic: "The sandbox was not found.",
-    } as const;
-    vi.mocked(deps.observe).mockResolvedValue({
-      ok: false,
-      findings: [finding],
-      attempts: 1,
-    });
+  it.each([
+    { kind: "stdout" },
+    { kind: "file", outputPath: "/tmp/alpha.yaml", force: false },
+    { kind: "file", outputPath: "/tmp/alpha.yaml", force: true },
+  ] as const)(
+    "returns an observation failure without rendering or writing $kind",
+    async (target) => {
+      const deps = dependencies();
+      const finding = {
+        field: "source.registry",
+        category: "not-found",
+        diagnostic: "The sandbox was not found.",
+      } as const;
+      vi.mocked(deps.observe).mockResolvedValue({
+        ok: false,
+        findings: [finding],
+        attempts: 1,
+      });
 
-    await expect(
-      runConfigExport(
-        { sandboxName: "alpha", documentName: alphaDocumentName, target: { kind: "stdout" } },
-        deps,
-      ),
-    ).resolves.toEqual({
-      ok: false,
-      failure: { kind: "observation", findings: [finding], attempts: 1 },
-    });
-    expect(mocks.buildExportConfig).not.toHaveBeenCalled();
-    expect(deps.publish).not.toHaveBeenCalled();
-  });
+      await expect(
+        runConfigExport({ sandboxName: "alpha", documentName: alphaDocumentName, target }, deps),
+      ).resolves.toEqual({
+        ok: false,
+        failure: { kind: "observation", findings: [finding], attempts: 1 },
+      });
+      expect(mocks.buildExportConfig).not.toHaveBeenCalled();
+      expect(mocks.renderCanonicalNemoClawConfig).not.toHaveBeenCalled();
+      expect(deps.writeStdout).not.toHaveBeenCalled();
+      expect(deps.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { publication: "not-published", stagingCleanup: "complete" },

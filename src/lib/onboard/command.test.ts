@@ -557,6 +557,48 @@ describe("onboard command options", () => {
     expect(resolve({ from: relativeDockerfilePath }).fromDockerfile).toBe(relativeDockerfilePath);
   });
 
+  it("accepts only exact-digest external image references", () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    expect(resolve({ "from-image": reference }).fromImage).toBe(reference);
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { "from-image": "ghcr.io/example/openclaw:latest" },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("repository@sha256");
+  });
+
+  it("rejects external images for the Portable profile", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from-image cannot be used with the Portable profile");
+  });
+
+  it("rejects simultaneous Dockerfile and external image sources", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          from: "Dockerfile",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from and --from-image cannot both be set");
+  });
+
   it("rejects missing and non-file Dockerfile paths before onboarding", () => {
     const errors: string[] = [];
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-errors-"));
@@ -978,7 +1020,7 @@ describe("onboard command options", () => {
       ),
     ).toThrow("exit:1");
     expect(errors).toEqual([
-      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible.`,
+      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible; host.docker.unavailable: Docker is unavailable..`,
     ]);
   });
 
@@ -1437,52 +1479,6 @@ describe("onboard command options", () => {
     expect(errors[0]).not.toMatch(
       /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
     );
-  });
-
-  it("re-throws a non-cancellation, non-gateway error so genuine bugs still surface (#7627)", async () => {
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw new Error("unexpected boom");
-        },
-        error: () => {},
-        exit: exitWithCode,
-      }),
-    ).rejects.toThrow("unexpected boom");
-  });
-
-  it("returns without rethrowing when a prompt rejects with SIGINT (#7439)", async () => {
-    const exit = vi.fn<(code: number) => never>();
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw Object.assign(new Error("Prompt interrupted"), {
-            code: "SIGINT",
-          });
-        },
-        error: () => {},
-        exit,
-      }),
-    ).resolves.toBeUndefined();
-    expect(exit).not.toHaveBeenCalled();
-  });
-
-  it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw new Error("docker is not reachable");
-        },
-        error: () => {},
-        exit: exitWithCode,
-      }),
-    ).rejects.toThrow("docker is not reachable");
   });
 
   it("sets the Ollama autostart override before onboarding", async () => {

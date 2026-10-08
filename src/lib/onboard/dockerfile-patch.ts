@@ -19,10 +19,6 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import {
-  mergeHermesPreservedEnvIntoMessagingPlan,
-  type PreservedEnvFile,
-} from "../state/preserved-env/index";
-import {
   DEFAULT_TOOL_DISCLOSURE,
   normalizeToolDisclosure,
   type ToolDisclosure,
@@ -57,8 +53,6 @@ const NODE_RUNTIME_REFRESH_INSTRUCTION =
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
-type LooseObject = Record<string, unknown>;
-
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
 }
@@ -68,6 +62,7 @@ function sanitizeDockerArg(value: unknown): string {
 }
 
 export interface HermesPortableDockerfileBuildSettings {
+  readonly baseImageRef?: string;
   readonly model: string;
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
@@ -79,11 +74,18 @@ function replaceExactHermesPortableDockerArg(source: string, name: string, value
   if (sanitized !== value || /[\p{Cc}\p{Cf}]/u.test(value)) {
     throw new Error(`Hermes portable ${name} build setting is invalid.`);
   }
-  const pattern = new RegExp(`^ARG ${name}=.*$`, "gmu");
-  if ((source.match(pattern) ?? []).length !== 1) {
+  const declarationPrefix = `ARG ${name}=`;
+  const lines = source.split("\n");
+  const matches = lines.flatMap((line, index) =>
+    line.startsWith(declarationPrefix) ? [index] : [],
+  );
+  if (matches.length !== 1) {
     throw new Error(`Hermes Dockerfile must declare exactly one ${name} build argument.`);
   }
-  return source.replace(pattern, `ARG ${name}=${sanitized}`);
+  const matchIndex = matches[0] as number;
+  const suffix = lines[matchIndex]?.endsWith("\r") ? "\r" : "";
+  lines[matchIndex] = `${declarationPrefix}${sanitized}${suffix}`;
+  return lines.join("\n");
 }
 
 function pinHermesPortableTargetArchitecture(source: string): string {
@@ -136,10 +138,19 @@ export function renderHermesPortableDockerfileBuildSettings(
     ["NEMOCLAW_TOOL_DISCLOSURE", toolDisclosure],
     ["CHAT_UI_URL", ""],
   ] as const;
-  return replacements.reduce(
+  const rendered = replacements.reduce(
     (rendered, [name, value]) => replaceExactHermesPortableDockerArg(rendered, name, value),
     pinHermesPortableTargetArchitecture(source),
   );
+  if (input.baseImageRef === undefined) return rendered;
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127}|@sha256:[a-f0-9]{64})$/u.test(
+      input.baseImageRef,
+    )
+  ) {
+    throw new Error("Hermes portable base image reference is invalid.");
+  }
+  return replaceExactHermesPortableDockerArg(rendered, "BASE_IMAGE", input.baseImageRef);
 }
 
 function encodeSanitizedDockerJsonArg(value: unknown): string {
@@ -183,7 +194,6 @@ export interface PatchStagedDockerfileOptions {
   upstreamEndpointUrl?: string | null;
   compatibleEndpointReasoning?: "true" | "false";
   wslDashboardExposure?: boolean;
-  rebuildPreservedEnv?: readonly PreservedEnvFile[];
 }
 
 function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {
@@ -262,17 +272,9 @@ export type PatchedDockerfileMetadata = { dashboardRemoteBindPrepared: boolean }
 
 export { hasPreparedRemoteDashboardBind } from "./dockerfile-remote-dashboard-bind-contract";
 
-function patchMessagingPlanDockerArg(
-  dockerfile: string,
-  plan: SandboxMessagingPlan,
-  preservedEnv: readonly PreservedEnvFile[] | undefined,
-): string {
-  const baseMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
+function patchMessagingPlanDockerArg(dockerfile: string, plan: SandboxMessagingPlan): string {
+  const imageMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
     parseSandboxMessagingPlan(plan) ?? plan,
-  );
-  const imageMessagingPlan = mergeHermesPreservedEnvIntoMessagingPlan(
-    baseMessagingPlan,
-    preservedEnv,
   );
   const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
   if (!messagingPlanArgPattern.test(dockerfile)) {
@@ -284,16 +286,6 @@ function patchMessagingPlanDockerArg(
     messagingPlanArgPattern,
     `ARG NEMOCLAW_MESSAGING_PLAN_B64=${sanitizeDockerArg(MessagingSetupApplier.encodePlanForImageBuild(imageMessagingPlan))}`,
   );
-}
-
-export function patchStagedDockerfileMessagingPlan(
-  dockerfilePath: string,
-  plan: SandboxMessagingPlan,
-  preservedEnv: readonly PreservedEnvFile[],
-): void {
-  const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
-  const dockerfile = patchMessagingPlanDockerArg(patchSnapshot.content, plan, preservedEnv);
-  replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
 }
 
 export function patchStagedDockerfile(
@@ -311,14 +303,19 @@ export function patchStagedDockerfile(
   options: PatchStagedDockerfileOptions = {},
 ): PatchedDockerfileMetadata {
   const sanitizedModel = sanitizeDockerArg(model);
+  const providerless =
+    model === "" && !provider && !preferredInferenceApi && !inferenceBaseUrlOverride;
   const sandboxInference = getSandboxInferenceConfig(
     sanitizedModel,
     provider,
     preferredInferenceApi,
   );
-  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = sandboxInference;
-  const inferenceBaseUrl =
-    inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
+  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = providerless
+    ? { providerKey: "", primaryModelRef: "", inferenceApi: "", inferenceCompat: null }
+    : sandboxInference;
+  const inferenceBaseUrl = providerless
+    ? ""
+    : inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
   const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
@@ -410,6 +407,11 @@ export function patchStagedDockerfile(
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_UPSTREAM_PROVIDER=.*$/m,
     `ARG NEMOCLAW_UPSTREAM_PROVIDER=${sanitizeDockerArg(upstreamProvider)}`,
+  );
+  // Legacy image builds need the same selected preset as managed startup.
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_SERVING_PRESET=.*$/m,
+    () => `ARG NEMOCLAW_SERVING_PRESET=${sanitizeDockerArg(process.env.NEMOCLAW_SERVING_PRESET)}`,
   );
   const upstreamEndpointUrl = normalizeOptionalEndpointUrlArg(
     options.upstreamEndpointUrl,
@@ -596,11 +598,7 @@ export function patchStagedDockerfile(
   dockerfile = remoteDashboardBindContract.patchManagedDeviceAuthOptOutContract(dockerfile);
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {
-    dockerfile = patchMessagingPlanDockerArg(
-      dockerfile,
-      messagingPlan,
-      options.rebuildPreservedEnv,
-    );
+    dockerfile = patchMessagingPlanDockerArg(dockerfile, messagingPlan);
   }
   if (hermesToolGateways.length > 0) {
     dockerfile = dockerfile.replace(

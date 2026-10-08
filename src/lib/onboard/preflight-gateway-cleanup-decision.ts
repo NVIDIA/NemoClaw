@@ -33,17 +33,18 @@ export interface PreflightGatewayCleanupDeps {
   dashboardPort?: number;
   log: (line: string) => void;
   warn: (line: string) => void;
-  runOpenshell?: (args: string[], options: { ignoreError: true }) => unknown;
   stopAllDashboardForwards?: () => void;
-  destroyGateway: () => boolean;
+  destroyGateway: () => boolean | Promise<boolean>;
   destroyGatewayForReuse: (
-    destroy: () => boolean,
+    destroy: () => boolean | Promise<boolean>,
     successMessage: string,
     failureMessage: string,
-  ) => GatewayReuseState;
+  ) => GatewayReuseState | Promise<GatewayReuseState>;
 }
 
-export function applyPreflightGatewayCleanup(deps: PreflightGatewayCleanupDeps): GatewayReuseState {
+export async function applyPreflightGatewayCleanup(
+  deps: PreflightGatewayCleanupDeps,
+): Promise<GatewayReuseState> {
   const action = preflightGatewayCleanupDecision({
     gatewayReuseState: deps.gatewayReuseState,
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,

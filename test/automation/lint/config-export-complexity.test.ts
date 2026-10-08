@@ -8,7 +8,7 @@ import path from "node:path";
 import { expect, it } from "vitest";
 
 const branches = `export function read(flags: boolean[]) { return ${Array.from({ length: 12 }, (_, index) => `flags[${index}]`).join(" || ")}; }`;
-const nesting = `function verify(value: boolean) { ${"if (value) { ".repeat(6)}return true;${" }".repeat(6)} return false; }`;
+const nesting = `export function verify(value: boolean) { ${"if (value) { ".repeat(6)}return true;${" }".repeat(6)} return false; }`;
 
 it.each([
   {
@@ -26,7 +26,7 @@ it.each([
   {
     name: "length limit for new actions",
     file: "src/lib/actions/config/new-action.ts",
-    source: `function write(value: number) {\n${"value += 1;\n".repeat(61)}return value;\n}`,
+    source: `export function write(value: number) {\n${"value += 1;\n".repeat(61)}return value;\n}`,
     rules: ["eslint(max-lines-per-function)"],
   },
   {

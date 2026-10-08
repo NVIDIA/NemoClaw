@@ -5,14 +5,11 @@ import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
-import type {
-  finalizePreparedRebuildImageMessagingPlan,
-  RebuildImagePreflightResult,
-} from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
+import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
-import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxEntry, SandboxRemovalReceipt } from "../../src/lib/state/registry";
+import type { SandboxRuntimeSnapshot } from "../../src/lib/state/registry/runtime-snapshot";
 
 export type RebuildSandbox =
   (typeof import("../../src/lib/actions/sandbox/rebuild"))["rebuildSandbox"];
@@ -35,6 +32,7 @@ export type RebuildFlowSession = Record<string, unknown> & {
   steps: Record<string, RebuildFlowStep>;
 };
 export type RebuildFlowOverrides = {
+  useRealPortableRetirementBoundary?: boolean;
   agentName?: string;
   sessionAgentName?: string | null;
   entryUpdatesAfterVersionCheck?: Record<string, unknown>;
@@ -45,7 +43,6 @@ export type RebuildFlowOverrides = {
     overrideEnvVar: string | null;
     disposeImageRef?: () => boolean;
   };
-  executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
@@ -61,9 +58,6 @@ export type RebuildFlowOverrides = {
     options: RebuildRecreateOnboardOpts,
   ) => Promise<void> | void;
   beforeBackup?: () => void;
-  repairMutableConfigPerms?: () =>
-    | { applied: false; skipReason: "agent"; reason: string }
-    | { applied: true; verified: boolean; errors: string[] };
   restoreSandboxState?: () => {
     success: boolean;
     restoredDirs: string[];
@@ -110,10 +104,16 @@ export type RebuildFlowOverrides = {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries?: Array<Record<string, unknown>>;
+    runtimeSelection?: {
+      gatewayName: string;
+      workspace: "default";
+      localTlsDir?: string;
+    };
     policyHandoff?: string;
     revalidateBeforeDelete?: () => Promise<void>;
     assertDeleteEdgeUnchanged?: () => void;
   };
+  mcpLegacySources?: Array<Record<string, unknown>>;
   runOpenshell?: (args: string[]) =>
     | {
         status: number;
@@ -142,7 +142,7 @@ export type RebuildFlowOverrides = {
     stderr?: string;
     error?: Error;
   };
-  backupPreservedEnv?: PreservedEnvFile[];
+  backupRuntimeSnapshot?: SandboxRuntimeSnapshot;
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
@@ -150,7 +150,6 @@ export type RebuildFlowOverrides = {
   versionCheck?: VersionCheckResult;
   hydrateCredentialEnv?: (credentialEnv: string) => string | null;
   customImagePreflight?: RebuildImagePreflightResult;
-  finalizePreparedImage?: typeof finalizePreparedRebuildImageMessagingPlan;
   defaultSelectionRevision?: number;
   preDeleteDefaultSelectionRevision?: number;
   removalReceipt?: SandboxRemovalReceipt | null;
@@ -165,8 +164,8 @@ export type RebuildFlowHarness = {
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   restartSandboxGatewaySpy: MockInstance;
   errorSpy: MockInstance;
-  executeSandboxCommandSpy: MockInstance;
   executeSandboxExecCommandSpy: MockInstance;
+  finishOpenClawMaintenanceWindowSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;
@@ -214,8 +213,6 @@ export type RebuildFlowHarness = {
   restoreSandboxEntrySpy: MockInstance;
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;
-  warnUnpreservedUserManagedFilesSpy: MockInstance;
-  finalizePreparedImageSpy: MockInstance;
   session: RebuildFlowSession;
 };
 export const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;

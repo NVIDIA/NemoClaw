@@ -8,7 +8,6 @@ import {
   isLocalProviderHostHealthy,
   loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
-  OLLAMA_PORT,
   shouldFrontOllamaWithProxy,
   validateOllamaModel,
 } from "../inference/local";

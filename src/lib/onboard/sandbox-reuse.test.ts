@@ -32,9 +32,67 @@ describe("applyReusedSandboxDashboardState", () => {
     vi.restoreAllMocks();
   });
 
-  it.each([false, true])("restores Hermes dashboard metadata when enabled is %s", (enabled) => {
+  it.each([false, true])(
+    "restores Hermes dashboard metadata when enabled is %s",
+    async (enabled) => {
+      const updateSandbox = vi.fn();
+      const ensureDashboardForward = vi.fn(() => 18789);
+      const sandboxGpuConfig: SandboxGpuConfig = {
+        hostGpuDetected: false,
+        hostGpuPlatform: null,
+        sandboxGpuEnabled: false,
+        mode: "auto",
+        sandboxGpuDevice: null,
+        errors: [],
+      };
+      const hermesDashboardState = {
+        enabled,
+        config: enabled
+          ? { enabled: true, port: 18789, internalPort: 19119, tuiEnabled: false }
+          : null,
+      };
+      const ensureForState = vi.fn();
+      const result = await applyReusedSandboxDashboardState({
+        sandboxName: "reuse-me",
+        chatUiUrl: "http://127.0.0.1:18789",
+        env: {},
+        agent: loadAgent("hermes"),
+        model: "test-model",
+        provider: "openai-compatible",
+        selectionVerified: true,
+        sandboxGpuConfig,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        ensureDashboardForward,
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(() => hermesDashboardState),
+          ensureForState,
+        },
+        updateSandbox,
+        updateReusedSandboxMetadata: vi.fn(),
+      });
+
+      expect(updateSandbox).toHaveBeenCalledWith("reuse-me", {
+        hermesDashboardEnabled: enabled ? true : undefined,
+        hermesDashboardPort: enabled ? 18789 : undefined,
+        hermesDashboardInternalPort: enabled ? 19119 : undefined,
+        hermesDashboardTui: undefined,
+        // No external CHAT_UI_URL configured -> loopback stays the reported form.
+        dashboardExternalUrl: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      });
+      expect(ensureForState).toHaveBeenCalledTimes(enabled ? 0 : 1);
+      expect(result.hermesDashboardState).toBe(hermesDashboardState);
+      expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+        reuseExistingForward: true,
+      });
+    },
+  );
+
+  it("persists the external dashboard URL rebound to the effective port on reuse (#11439)", async () => {
     const updateSandbox = vi.fn();
-    const ensureDashboardForward = vi.fn(() => 18789);
+    const ensureDashboardForward = vi.fn(() => 18790);
     const sandboxGpuConfig: SandboxGpuConfig = {
       hostGpuDetected: false,
       hostGpuPlatform: null,
@@ -43,17 +101,11 @@ describe("applyReusedSandboxDashboardState", () => {
       sandboxGpuDevice: null,
       errors: [],
     };
-    const hermesDashboardState = {
-      enabled,
-      config: enabled
-        ? { enabled: true, port: 18789, internalPort: 19119, tuiEnabled: false }
-        : null,
-    };
-    const ensureForState = vi.fn();
-    const result = applyReusedSandboxDashboardState({
+
+    await applyReusedSandboxDashboardState({
       sandboxName: "reuse-me",
-      chatUiUrl: "http://127.0.0.1:18789",
-      env: {},
+      chatUiUrl: "http://127.0.0.1:18790",
+      env: { CHAT_UI_URL: "https://dash.example.com:18789" },
       agent: loadAgent("hermes"),
       model: "test-model",
       provider: "openai-compatible",
@@ -63,29 +115,22 @@ describe("applyReusedSandboxDashboardState", () => {
       gatewayPort: 8080,
       ensureDashboardForward,
       hermesDashboardForwarding: {
-        resolveStateForPort: vi.fn(() => hermesDashboardState),
-        ensureForState,
+        resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+        ensureForState: vi.fn(),
       },
       updateSandbox,
       updateReusedSandboxMetadata: vi.fn(),
     });
 
-    expect(updateSandbox).toHaveBeenCalledWith("reuse-me", {
-      hermesDashboardEnabled: enabled ? true : undefined,
-      hermesDashboardPort: enabled ? 18789 : undefined,
-      hermesDashboardInternalPort: enabled ? 19119 : undefined,
-      hermesDashboardTui: undefined,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-    });
-    expect(ensureForState).toHaveBeenCalledTimes(enabled ? 0 : 1);
-    expect(result.hermesDashboardState).toBe(hermesDashboardState);
-    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
-      reuseExistingForward: true,
-    });
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "reuse-me",
+      expect.objectContaining({
+        dashboardExternalUrl: "https://dash.example.com:18790",
+      }),
+    );
   });
 
-  it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
+  it("skips dashboard forwarding while preserving reuse metadata for terminal agents", async () => {
     const updateSandbox = vi.fn();
     const env: NodeJS.ProcessEnv = { CHAT_UI_URL: "https://chat.example.test:19000" };
     const sandboxGpuConfig: SandboxGpuConfig = {
@@ -105,7 +150,7 @@ describe("applyReusedSandboxDashboardState", () => {
     };
     const updateReusedSandboxMetadata = vi.fn();
 
-    const result = applyReusedSandboxDashboardState({
+    const result = await applyReusedSandboxDashboardState({
       sandboxName: "terminal-box",
       chatUiUrl: "",
       env,
@@ -253,7 +298,7 @@ describe("applyReusedSandboxDashboardState", () => {
     expect(result.dashboardPort).toBe(18_789);
   });
 
-  it("rechecks after Hermes forwarding before reuse metadata (#9833)", () => {
+  it("rechecks after Hermes forwarding before reuse metadata (#9833)", async () => {
     const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
@@ -267,7 +312,7 @@ describe("applyReusedSandboxDashboardState", () => {
     const updateReusedSandboxMetadata = vi.fn();
     const updateSandbox = vi.fn();
 
-    expect(() =>
+    await expect(
       applyReusedSandboxDashboardState({
         sandboxName: "reuse-me",
         chatUiUrl: "http://127.0.0.1:18789",
@@ -295,7 +340,7 @@ describe("applyReusedSandboxDashboardState", () => {
         updateReusedSandboxMetadata,
         revalidateSandboxIdentity,
       }),
-    ).toThrow(/Sandbox identity changed before/u);
+    ).rejects.toThrow(/Sandbox identity changed before/u);
 
     expect(ensureForState).toHaveBeenCalledOnce();
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
@@ -336,6 +381,51 @@ describe("createSandboxReuseHelpers", () => {
       "alpha",
       expect.stringContaining("Id: openshell-source-id"),
       "alpha Ready\n",
+    );
+  });
+
+  it.each([
+    ["Ready", `Error:   × code: 'Internal error', message: "sandbox has no spec"`],
+    ["Stopped", `Error:   × code: 'Internal error', message: "sandbox has no spec"`],
+    [
+      "Provisioning",
+      `Error:   × code: 'The system is not in a state required for the operation's\n  │ execution', message: "provider 'compatible-endpoint' not found"`,
+    ],
+  ])("observes retained legacy identity in phase %s through onboarding", (phase, diagnostic) => {
+    const captureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(failedCapture(diagnostic))
+      .mockReturnValueOnce(
+        successfulCapture(
+          JSON.stringify([
+            {
+              id: "legacy-source-id",
+              name: "alpha",
+              labels: {},
+              resource_version: 1,
+              created_at: "2026-09-14T00:00:00Z",
+              phase,
+              current_policy_version: 1,
+            },
+          ]),
+        ),
+      );
+    const helpers = createSandboxReuseHelpers({
+      runCaptureOpenshell: vi.fn(),
+      captureOpenshell,
+      getSandboxStateFromOutputs: vi.fn(() => "missing"),
+      getGatewayName: () => "wrong-gateway",
+    });
+    expect(helpers.getSandboxRecreateObservation("alpha", "nemoclaw-9090")).toEqual({
+      state: phase === "Ready" ? "ready" : "not_ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("legacy-source-id"),
+    });
+    expect(captureOpenshell).toHaveBeenLastCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
+      expect.objectContaining({
+        includeStreams: true,
+        timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+      }),
     );
   });
 

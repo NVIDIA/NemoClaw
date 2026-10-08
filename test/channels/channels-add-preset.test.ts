@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as commandTransport from "../../src/lib/adapters/sandbox/command-transport";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { addSandboxChannel } from "../../src/lib/actions/sandbox/policy-channel";
 import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
-import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
 import * as httpProbe from "../../src/lib/adapters/http/probe";
 import * as runtime from "../../src/lib/adapters/openshell/runtime";
 import * as store from "../../src/lib/credentials/store";
@@ -126,7 +126,6 @@ let saveCredentialSpy: MockInstance;
 let deleteCredentialSpy: MockInstance;
 let updateSandboxSpy: MockInstance;
 let applyPresetSpy: MockInstance;
-let removePresetSpy: MockInstance;
 let loadPresetForSandboxSpy: MockInstance;
 let providerSpy: MockInstance;
 let rebuildSpy: MockInstance;
@@ -237,12 +236,10 @@ beforeEach(() => {
       callOrder.push(`applyPreset:${presetName}`);
       return applyPresetResult;
     });
-  removePresetSpy = vi
-    .spyOn(policies, "removePreset")
-    .mockImplementation(async (_name, presetName) => {
-      callOrder.push(`removePreset:${presetName}`);
-      return true;
-    });
+  vi.spyOn(policies, "removePreset").mockImplementation(async (_name, presetName) => {
+    callOrder.push(`removePreset:${presetName}`);
+    return true;
+  });
   vi.spyOn(policies, "getAppliedPresets").mockImplementation(async () => appliedPresets);
 
   getCredentialSpy = vi
@@ -297,7 +294,7 @@ beforeEach(() => {
   });
 
   execSpy = vi
-    .spyOn(processRecovery, "executeSandboxExecCommand")
+    .spyOn(commandTransport, "executeSandboxExecCommand")
     .mockImplementation(async (_name, command) => {
       return command.includes("/sandbox/.openclaw/openclaw.json")
         ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
@@ -305,7 +302,6 @@ beforeEach(() => {
           ? { status: 0, stdout: testLog, stderr: "" }
           : { status: 0, stdout: "", stderr: "" };
     });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   buildPlanSpy = vi
     .spyOn(MessagingWorkflowPlanner.prototype, "buildPlan")
@@ -798,12 +794,12 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
     expect(printedText()).toContain("'telegram' bridge startup detected");
   });
 
-  it("warns when the baked config does not mark the channel enabled", async () => {
+  it("warns when the current config does not mark the channel enabled", async () => {
     testConfig = { channels: { telegram: { accounts: { default: {} } } } };
 
     await addSandboxChannel("test-sb", { channel: "telegram" });
 
-    expect(printedText()).toContain("was not marked enabled in baked");
+    expect(printedText()).toContain("was not marked enabled in the current");
   });
 
   it("warns when the gateway log shows no bridge breadcrumb yet", async () => {
@@ -849,7 +845,7 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
     await addSandboxChannel("test-sb", { channel: "whatsapp" });
 
     expect(execSpy).not.toHaveBeenCalled();
-    expect(printedText()).not.toContain("was not marked enabled in baked openclaw.json");
+    expect(printedText()).not.toContain("was not marked enabled in the current openclaw.json");
   });
 });
 

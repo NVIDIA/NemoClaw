@@ -21,7 +21,7 @@ describe("Deferred N1x managed-vLLM acceptance route", () => {
   const accepted = {
     provider: "vllm-local",
     model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
-    endpointUrl: null,
+    endpointUrl: "http://host.openshell.internal:8000/v1",
     endpointSource: null,
     nimContainer: null,
     openshellDriver: "docker",
@@ -29,6 +29,8 @@ describe("Deferred N1x managed-vLLM acceptance route", () => {
 
   it.each([
     ["the exact route", accepted, true],
+    ["a derived legacy endpoint", { ...accepted, endpointUrl: null }, true],
+    ["another provider", { ...accepted, provider: "compatible-endpoint" }, false],
     ["another model", { ...accepted, model: "other" }, false],
     ["a recorded endpoint", { ...accepted, endpointUrl: "http://localhost:8000/v1" }, false],
     ["another endpoint source", { ...accepted, endpointSource: "inference-set" }, false],
@@ -36,6 +38,35 @@ describe("Deferred N1x managed-vLLM acceptance route", () => {
     ["another driver", { ...accepted, openshellDriver: "kubernetes" }, false],
   ])("classifies %s", (_case, route, expected) => {
     expect(isDeferredN1xManagedVllmAcceptanceRoute(route)).toBe(expected);
+  });
+
+  it.each([1024, 8000, 18000, 65535])(
+    "accepts the canonical endpoint on port %s (#11510)",
+    (port) => {
+      expect(
+        isDeferredN1xManagedVllmAcceptanceRoute({
+          ...accepted,
+          endpointUrl: `http://host.openshell.internal:${port}/v1`,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    undefined,
+    "",
+    "http://host.openshell.internal:1023/v1",
+    "http://host.openshell.internal:65536/v1",
+    "http://host.openshell.internal:08000/v1",
+    "http://host.openshell.internal.example:8000/v1",
+    "http://user:password@host.openshell.internal:8000/v1",
+    "https://host.openshell.internal:8000/v1",
+    "http://host.openshell.internal:8000/v1/",
+    "http://host.openshell.internal:8000/v1?target=other",
+    "http://host.openshell.internal:8000/v1#other",
+    "http://host.openshell.internal:8000/v1\n",
+  ])("rejects noncanonical endpoint %s (#11510)", (endpointUrl) => {
+    expect(isDeferredN1xManagedVllmAcceptanceRoute({ ...accepted, endpointUrl })).toBe(false);
   });
 });
 
@@ -84,15 +115,19 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
     expect(eligible(sandboxEntry)).toBe(true);
   });
 
-  it("accepts normalized N1x Express intent with a derived endpoint (#10959)", () => {
-    expect(
-      eligible({
-        ...n1xExpressEntry,
-        endpointSource: null,
-        deferredN1xManagedVllmAccepted: true,
-      }),
-    ).toBe(true);
-  });
+  it.each([null, "http://host.openshell.internal:8000/v1"])(
+    "accepts recorded N1x preview intent with endpoint %s (#11510)",
+    (endpointUrl) => {
+      expect(
+        eligible({
+          ...n1xExpressEntry,
+          endpointUrl,
+          endpointSource: null,
+          deferredN1xManagedVllmAccepted: true,
+        }),
+      ).toBe(true);
+    },
+  );
 
   it("accepts an explicit preview retry for a normalized legacy record (#10959)", () => {
     expect(
@@ -175,12 +210,11 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
       rebuildSelection: n1xExpressSelection,
     },
     {
-      caseName: "normalized source with a recorded endpoint",
+      caseName: "recorded endpoint without preview provenance",
       sandboxEntry: {
         ...n1xExpressEntry,
         endpointUrl: "http://host.openshell.internal:8000/v1",
         endpointSource: null,
-        deferredN1xManagedVllmAccepted: true,
       },
       rebuildSelection: n1xExpressSelection,
     },

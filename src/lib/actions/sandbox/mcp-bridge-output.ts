@@ -3,7 +3,7 @@
 
 import { stripAnsi } from "../../adapters/openshell/client";
 import { redactFullWithUrls, redactStandaloneSecretsFull } from "../../security/redact";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 export type OpenShellCommandResult = {
   status: number | null;
@@ -137,7 +137,7 @@ function redactSensitiveValuesOnLine(line: string): string {
 }
 
 function explicitCredentialValues(
-  entry: Pick<McpBridgeEntry, "env"> | undefined,
+  entry: Pick<McpSourceEntry, "env"> | undefined,
   envValues: Record<string, string>,
 ): string[] {
   const values = [
@@ -149,7 +149,7 @@ function explicitCredentialValues(
 
 function redactMcpOutput(
   text: string,
-  entry: Pick<McpBridgeEntry, "env"> | undefined,
+  entry: Pick<McpSourceEntry, "env"> | undefined,
   envValues: Record<string, string>,
 ): string {
   // Preserve the semantic text before removing standalone control bytes.
@@ -169,7 +169,7 @@ function redactMcpOutput(
 
 export function redactBridgeSecretsForDisplay(
   text: string,
-  entry?: Pick<McpBridgeEntry, "env">,
+  entry?: Pick<McpSourceEntry, "env">,
   envValues: Record<string, string> = {},
 ): string {
   return redactMcpOutput(text, entry, envValues);
@@ -177,7 +177,7 @@ export function redactBridgeSecretsForDisplay(
 
 export function redactBridgeFailureForDisplay(
   text: string,
-  entry?: Pick<McpBridgeEntry, "env">,
+  entry?: Pick<McpSourceEntry, "env">,
   envValues: Record<string, string> = {},
 ): string {
   return redactFullWithUrls(redactMcpOutput(text, entry, envValues));

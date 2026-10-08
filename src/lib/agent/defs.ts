@@ -29,33 +29,26 @@ import type {
   AgentHealthProbe,
   AgentLegacyPaths,
   AgentMcpCapability,
-  AgentStateDirectory,
-  AgentStateFile,
   AgentVersionScheme,
 } from "./definition-types";
 import {
   loadManifestRecord,
   readBoolean,
   readDashboard,
+  readDeferredOnboarding,
   readHealthProbe,
   readInference,
   readMcpCapability,
   readObject,
   readPortArray,
-  readStateFiles,
   readString,
   readStringArray,
   readStringMap,
   readUserManagedFiles,
   readVersionScheme,
 } from "./manifest-readers";
-import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
+import { readAgentRuntime } from "./runtime-manifest";
 import { type AgentSkillIntegration, readAgentSkillIntegration } from "./skill-integration";
-import {
-  readStateDirectories,
-  stateDirectoryPaths,
-  stateDirectoryPrefixes,
-} from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -70,19 +63,7 @@ export type {
   AgentMcpAdapter,
   AgentMcpCapability,
   AgentMcpSupport,
-  AgentStateDirectory,
-  AgentStateDirectoryPath,
-  AgentStateDirectoryPrefix,
-  AgentStateFile,
-  AgentStateFileStrategy,
   AgentVersionScheme,
-  StateFileFreshHeader,
-  StateFileKeyAllowlistRestoreOwnership,
-  StateFileOpenClawRestoreOwnership,
-  StateFileRestoreMerge,
-  StateFileRestoreOwnership,
-  StateFileUserKey,
-  StateFileUserKeyType,
 } from "./definition-types";
 export type { AgentSkillIntegration } from "./skill-integration";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
@@ -181,23 +162,19 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
   const skillIntegration = readAgentSkillIntegration(raw);
-  if (raw.runtime_auth_state_dirs !== undefined) {
+  const retiredStateInventoryField = ["state_dirs", "state_files", "runtime_auth_state_dirs"].find(
+    (field) => raw[field] !== undefined,
+  );
+  if (retiredStateInventoryField) {
     throw new Error(
-      "Agent manifest field 'runtime_auth_state_dirs' was replaced by state_dirs entries with backup: false",
+      `Agent manifest field '${retiredStateInventoryField}' is retired; native rebuilds persist the complete agent home`,
     );
   }
-  const stateDirectories = readStateDirectories(raw);
-  const stateDirs = stateDirectoryPaths(stateDirectories);
-  const stateDirPrefixes = stateDirectoryPrefixes(stateDirectories);
-  const backupStateDirs = stateDirectoryPaths(stateDirectories, { backup: true });
-  const backupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: true });
-  const nonBackupStateDirs = stateDirectoryPaths(stateDirectories, { backup: false });
-  const nonBackupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: false });
-  const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
+  const deferredOnboarding = readDeferredOnboarding(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -215,9 +192,9 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     forward_ports: forwardPorts,
     health_probe: healthProbe,
     config,
+    deferred_onboarding: deferredOnboarding,
     inference,
     mcp,
-    state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
     agentDir,
@@ -278,38 +255,6 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
 
     get skillIntegration(): AgentSkillIntegration | null {
       return skillIntegration;
-    },
-
-    get stateDirectories(): AgentStateDirectory[] {
-      return stateDirectories;
-    },
-
-    get stateDirs(): string[] {
-      return stateDirs;
-    },
-
-    get stateDirPrefixes(): string[] {
-      return stateDirPrefixes;
-    },
-
-    get backupStateDirs(): string[] {
-      return backupStateDirs;
-    },
-
-    get backupStateDirPrefixes(): string[] {
-      return backupStateDirPrefixes;
-    },
-
-    get nonBackupStateDirs(): string[] {
-      return nonBackupStateDirs;
-    },
-
-    get nonBackupStateDirPrefixes(): string[] {
-      return nonBackupStateDirPrefixes;
-    },
-
-    get stateFiles(): AgentStateFile[] {
-      return stateFiles ?? [];
     },
 
     get userManagedFiles(): string[] {

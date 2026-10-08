@@ -60,34 +60,12 @@ vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
   describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
 }));
 
-import registerPlugin, { type OpenClawPluginApi } from "../../../../../nemoclaw/src/index";
 import {
   type AgentNonJsonPassthroughDeps,
   type AgentPassthroughDeps,
   runAgentNonJsonPassthrough,
   runAgentPassthrough,
 } from "./passthrough";
-
-function createPluginApi(): OpenClawPluginApi {
-  return {
-    id: "nemoclaw",
-    name: "NemoClaw",
-    version: "0.1.0",
-    config: {},
-    pluginConfig: {},
-    logger: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    },
-    registerCommand: vi.fn(),
-    registerProvider: vi.fn(),
-    registerService: vi.fn(),
-    resolvePath: vi.fn((value: string) => value),
-    on: vi.fn(),
-  };
-}
 
 describe("runAgentPassthrough", () => {
   beforeEach(() => {

@@ -84,6 +84,7 @@ export type HermesAcpCommandDeps = Readonly<{
   listRegistry?: typeof listHostGatewayRegistryEntries;
   observer?: OpenShellSandboxObserver;
   recoverGateway?: (options: {
+    authorizeExactTargetTransportRecovery: boolean;
     gatewayName: string;
     output: GatewayRecoveryOutput;
     runtimeSelection: { gatewayName: string; workspace: string };
@@ -375,6 +376,7 @@ export async function runHermesAcpCommand(
         let recovery: RecoveryResult;
         try {
           recovery = await (deps.recoverGateway ?? recoverNamedGatewayRuntime)({
+            authorizeExactTargetTransportRecovery: true,
             gatewayName: target.gatewayName,
             output: recoveryDiagnostics.output,
             runtimeSelection,
@@ -441,5 +443,8 @@ export async function runHermesAcpCommand(
   if (outcome.kind === "failed" && outcome.error.kind !== "client_disconnect") {
     await writeLine(io.diagnostics, outcome.error.message);
   }
-  return outcome.exitCode;
+  if (outcome.cleanupError) {
+    await writeLine(io.diagnostics, outcome.cleanupError.message);
+  }
+  return outcome.exitCode === 0 && outcome.cleanupError ? 1 : outcome.exitCode;
 }

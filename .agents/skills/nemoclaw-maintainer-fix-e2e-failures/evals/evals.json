@@ -199,5 +199,21 @@
       "Makes no rollback write without explicit authorization to create a rollback PR.",
       "Resumes only after an authorized revert or corrective PR merges and a later automatic `main` E2E run passes."
     ]
+  },
+  {
+    "id": "repair-brittle-live-assertion-at-owner",
+    "question": "A main E2E fails only because a CLI dependency changed its progress sentence. Make the test green without losing the sandbox outcome that the target owns.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The maintainer classifies the wording assertion as incidental, removes or replaces it with stable lower-layer evidence, and retains the distinct live sandbox outcome.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Classifies the failure before changing coverage.",
+      "Does not update the expected third-party progress sentence.",
+      "Records the incidental assertion as removed because it protects no product contract, or moves its deterministic contract to a lower layer.",
+      "Defines the repaired replacement's real boundary, semantic outcome and distinct regression, lower-layer evidence owner or explicit statement that no deterministic behavior applies, canonical live test, and smallest live assertion.",
+      "Reserves stayed, moved, or removed dispositions for pruned or relocated evidence instead of applying them to the repaired replacement.",
+      "Retains the distinct live sandbox outcome through the smallest stable assertion.",
+      "Explains why the recorded dispositions leave semantic coverage complete."
+    ]
   }
 ]

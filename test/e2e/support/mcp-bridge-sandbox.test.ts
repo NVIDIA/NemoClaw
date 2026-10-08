@@ -149,7 +149,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
 
   it("runs the rebinding request beneath each adapter runtime identity", () => {
     const runtimes = {
-      mcporter: "nemoclaw-start node -e",
+      "openclaw-config": "nemoclaw-start node -e",
       "hermes-config": "/opt/hermes/.venv/bin/python -c",
       "deepagents-config": "/opt/venv/bin/python3 -c",
     } as const;

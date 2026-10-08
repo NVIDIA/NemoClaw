@@ -30,7 +30,6 @@ import {
   runWrapper,
 } from "../../helpers/langchain-deepagents-code-image.ts";
 import { dcodeStateDir, makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
-import { expectManagedBootstrapNativeImageContract } from "../../support/managed-bootstrap-image-contract";
 
 function containsTokenShapedSecret(value: string): boolean {
   return TOKEN_PREFIX_PATTERNS.some((pattern) => {
@@ -216,15 +215,17 @@ describe("LangChain Deep Agents Code image contracts", () => {
   ])("hardens copied NemoClaw blueprints against sandbox-user mutation [%s]", (probe) => {
     const dockerfile = readAgentFile("Dockerfile");
     const finalRuntimeRoot = [
-      "FROM ${BASE_IMAGE}",
+      "FROM ${BASE_IMAGE} AS langchain-deepagents-code-system",
       "",
       "# The supplied base may end as a non-root runtime user. Reset the build user",
       "# explicitly before installing the root-owned managed-startup handoff.",
+      "# The dependency stage needs root; the final stage selects the runtime user.",
+      "# hadolint ignore=DL3066,DL3002",
       "USER root",
     ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
     const runtimeModeReplay =
-      "&& chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts";
+      "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts";
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
@@ -233,6 +234,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(dockerfile).toContain(
       "COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts",
+    );
+    expect(dockerfile).toContain(
+      "COPY src/lib/inference/native-nvidia/contract.ts /opt/nemoclaw-deepagents-code/src/lib/inference/native-nvidia/contract.ts",
     );
     expect(dockerfile).toContain("node /opt/nemoclaw-deepagents-code/generate-config.ts");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
@@ -256,7 +260,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(managedRuntimeDirectory),
     );
     expect(dockerfile).toContain(finalRuntimeRoot);
-    expectManagedBootstrapNativeImageContract(dockerfile);
     expect(dockerfile.indexOf(finalRuntimeRoot)).toBeLessThan(
       dockerfile.indexOf(managedRuntimeDirectory),
     );
@@ -264,20 +267,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(runtimeModeReplay),
     );
     expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
     );
-    expect(dockerfile).not.toContain(
-      "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
-    );
-    expect(dockerfile).toContain(
-      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
-    );
-    expect(dockerfile).toContain(
-      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
-    );
-    expect(dockerfile).toContain(
-      "chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap",
-    );
+    expect(dockerfile).not.toContain("nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");
     expect(dockerfile).toContain("root|sandbox) ;; \\");
     expect(dockerfile).toContain("&& command -v setpriv >/dev/null 2>&1");
@@ -396,6 +388,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=1`);
       expect(envFileLines).toContain(`export ${name}=1`);
     }
+    expect(envFileLines).toContain(
+      "export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider",
+    );
     expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
@@ -454,7 +449,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'reject_managed_override "managed tool set posture"',
         'reject_managed_override "sandbox isolation"',
         'reject_managed_override "MCP posture"',
-        'reject_managed_override "shell allow-list posture"',
+        'reject_managed_override "headless shell posture"',
       ].every((s) => wrapper.includes(s)),
     ).toBe(true);
     expect(
@@ -464,6 +459,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "nemoclaw_observability.py",
         "nemoclaw_read_only_mcp.py",
         "patch-managed-deepagents-code.py",
+        "patch-managed-quickjs.py",
+        "validate-quickjs-runtime.py",
         "validate-read-only-mcp-call.py",
         "validate-nemotron-ultra-profile.py",
         "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
@@ -483,10 +480,24 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
         "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
         "/opt/venv/bin/pip3 check",
+        "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
+        "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py",
+        "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
       ].every((s) => dockerfile.includes(s)),
     ).toBe(true);
+    const quickjsPatchIndex = dockerfile.indexOf(
+      "python3 /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
+    );
+    const quickjsProbeIndex = dockerfile.indexOf(
+      "timeout --signal=TERM --kill-after=5s 60s /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/validate-quickjs-runtime.py",
+    );
+    const quickjsCleanupIndex = dockerfile.indexOf(
+      "rm -f /opt/nemoclaw-deepagents-code/patch-managed-quickjs.py",
+    );
+    expect(quickjsPatchIndex).toBeLessThan(quickjsProbeIndex);
+    expect(quickjsProbeIndex).toBeLessThan(quickjsCleanupIndex);
     expect(
       dockerfile
         .split("\n")
@@ -550,23 +561,22 @@ describe("LangChain Deep Agents Code image contracts", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n");
+      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n");
       expect(fs.existsSync(ranMarker)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("keeps NemoClaw MCP state separate from user discovery", () => {
+  it("loads the agent-native MCP source through the hardened runtime boundary", () => {
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const managedRuntime = readAgentFile("managed-dcode-runtime.py");
     const patcher = readAgentFile("patch-managed-deepagents-code.py");
     const agent = loadAgent("langchain-deepagents-code");
-    const managedPath = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+    const managedPath = "/sandbox/.deepagents/.mcp.json";
 
-    // The pinned release's user/project .mcp.json files remain user-authored.
-    // Managed images suppress discovery and pass only an integrity-bound
-    // snapshot of NemoClaw's dedicated projection.
+    // Managed images suppress ambient project discovery and pass an
+    // integrity-bound snapshot of the agent-native configuration.
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
@@ -576,7 +586,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(patcher).toContain("def discover_mcp_configs(");
     expect(patcher).toContain("return []");
     expect(agent.userManagedFiles).toContain(".deepagents/.mcp.json");
-    expect(agent.userManagedFiles).not.toContain(".deepagents/.nemoclaw-mcp.json");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
     expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(patcher).not.toContain('managed_mcp_config = "/sandbox/.mcp.json"');
@@ -639,6 +648,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(defaultPolicy.filesystem_policy?.read_only).toEqual(
         expect.arrayContaining(["/usr", "/opt/venv", "/etc"]),
       );
+      // The build runs without Landlock; the live probe must also be readable
+      // under the effective sandbox policy, without widening that policy.
+      const quickjsImagePath = readAgentFile("Dockerfile").match(
+        /^COPY agents\/langchain-deepagents-code\/validate-quickjs-runtime\.py (\S+)$/m,
+      )?.[1];
+      const quickjsLivePath = fs
+        .readFileSync(tuiStartupCheckPath, "utf8")
+        .match(/\/opt\/venv\/bin\/python3 -I (\S+) --require-memfd-denied/)?.[1];
+      expect(quickjsLivePath).toBe(quickjsImagePath);
+      expect(
+        defaultPolicy.filesystem_policy?.read_only?.some((root) =>
+          quickjsImagePath?.startsWith(`${root}/`),
+        ),
+      ).toBe(true);
       expect(defaultPolicy.landlock).toMatchObject({ compatibility: "strict" });
 
       const githubBinaries = policyBinaryPaths(defaultPolicy, "github");
@@ -797,7 +820,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(secretBoundaryCheck).toContain(expected);
     }
-    expect(tuiStartupCheck).toContain("Case: Deep Agents Code interactive TUI startup");
+    expect(tuiStartupCheck).toContain(
+      "Case: Deep Agents Code interactive TUI model turn (#5620, #11847)",
+    );
     expect(tuiStartupCheck).not.toContain("-nocase -re {(deep agents|");
     expect(tuiStartupCheck.indexOf("local expect_rc")).toBeLessThan(
       tuiStartupCheck.indexOf('run_tui_expect "$raw_capture_file"'),
@@ -805,21 +830,34 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const expected of [
       "test -d /sandbox/.deepagents && command -v dcode",
       "expect <<'EXPECT'",
-      "set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc",
       "spawn {*}$cmd",
       "NEMOCLAW_DCODE_PROBE:deepagents",
       "NEMOCLAW_DCODE_PROBE:other",
       "unable to probe sandbox",
       "unexpected sandbox probe output",
+      "validate-quickjs-runtime.py --require-memfd-denied",
+      "NEMOCLAW_QUICKJS_TOOL_RUNTIME_OK",
+      "SANDBOX_EXEC_TIMEOUT_SECONDS=45",
+      "SANDBOX_EXEC_KILL_AFTER_SECONDS=5",
+      "--signal=TERM",
+      '--kill-after="${SANDBOX_EXEC_KILL_AFTER_SECONDS}s"',
       "cd /sandbox; dcode",
       'NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN"',
       "-nocase -re $first_run_pattern",
       'append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"',
       "choose a recommended model",
-      "exit 24",
-      'send -- "\\003"\nafter 250\ncatch {send -- "\\003"}',
+      "terminate_failed_tui $markers $sandbox 24",
+      'send -- "\\004"\n\nset timeout 20',
+      'append_marker $markers "NEMOCLAW_TUI_EXIT_RETRY"',
+      'catch {send -- "\\004"}',
       'append_marker $markers "$expect_out(0,string)"',
       'append_marker $markers "NEMOCLAW_TUI_READY"',
+      'append_marker $markers "NEMOCLAW_TUI_MODEL_TURN_COMPLETE"',
+      'append_marker $markers "NEMOCLAW_TUI_RUNTIME_FAILURE"',
+      'append_marker $markers "NEMOCLAW_TUI_FAILURE_EXIT_CAPTURED:$expect_out(1,string)"',
+      'append_marker $markers "NEMOCLAW_TUI_FAILURE_CLEANUP_TIMEOUT:$sandbox"',
+      'grep -Eq "NEMOCLAW_TUI_FAILURE_CLEANUP_(TIMEOUT|EOF):${SANDBOX_NAME}"',
+      "failed TUI cleanup did not confirm exit for sandbox",
       'append_marker $markers "NEMOCLAW_TUI_TIMEOUT"',
       'append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"',
       'append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"',
@@ -880,9 +918,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
     ]);
   }
 
@@ -940,7 +978,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "dcode_connect_fail_closed_contract",
     "connect rejects untrusted image-backed route evidence before session attach",
     "fresh direct-exec dcode session retained only the original skill",
-    "connect --probe-only accepted the managed inference route",
+    "connect --probe-only accepted the ${route_contract:-unknown} inference route",
     'sandbox_login_exec "cd /sandbox',
     "https://inference.local/v1/models",
     "HTTP_CODE:%{http_code}",
@@ -948,6 +986,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "https://inference\\.local(/v1)?",
     "references_managed_placeholder_key",
     'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    "references_native_nvidia_route",
+    "https://integrate\\.api\\.nvidia\\.com/v1",
+    "references_attached_provider_placeholder_key",
+    'api_key_env[[:space:]]*=[[:space:]]*"NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+    "configured_inference_route_contract",
     "classify_headless_output",
     '"schema_version", "command", "data"',
     '"status"',
@@ -1069,6 +1112,47 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ).toBe("key");
   });
 
+  it.each([
+    [
+      "managed",
+      [
+        'base_url = "https://inference.local/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "native-nvidia",
+      [
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+      ].join("\n"),
+    ],
+  ])("selects the %s Deep Agents Code inference route contract", (expected, config) => {
+    expect(runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toBe(
+      `${expected}\n`,
+    );
+  });
+
+  it.each([
+    [
+      "native endpoint with managed placeholder",
+      [
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      ].join("\n"),
+    ],
+    [
+      "mixed routes",
+      [
+        'base_url = "https://inference.local/v1"',
+        'base_url = "https://integrate.api.nvidia.com/v1"',
+        'api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"',
+      ].join("\n"),
+    ],
+  ])("rejects an inconsistent Deep Agents Code route contract: %s", (_case, config) => {
+    expect(() => runHeadlessCheckHelper("inference-route-contract", { CONFIG: config })).toThrow();
+  });
+
   it("rejects unsafe headless timeout values before sandbox execution", () => {
     const validate = (timeout: string) =>
       runHeadlessCheckHelper("positive-integer", { DEEPAGENTS_HEADLESS_TIMEOUT: timeout });
@@ -1104,6 +1188,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
     assertEveryRequirementIsHashLocked(requirementsLock);
     expect(baseDockerfile).not.toContain("--break-system-packages");
     expect(baseDockerfile).not.toContain("--ignore-installed");
+    expect(baseDockerfile).toContain(
+      "COPY agents/langchain-deepagents-code/validate-runtime-contract.py /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py",
+    );
+    expect(baseDockerfile).toContain(
+      '"$VIRTUAL_ENV/bin/python3" -I /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py',
+    );
+    expect(baseDockerfile.indexOf('pip3" install --no-cache-dir --require-hashes')).toBeLessThan(
+      baseDockerfile.indexOf("validate-dcode-runtime-contract.py \\\n        --requirements-lock"),
+    );
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pip-hash-contract-"));
     try {
@@ -1159,6 +1252,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expectVersionsMatchLock(
       requirementsLock,
       pythonStringMap(progressiveValidator, "PINNED_VERSIONS"),
+    );
+    expectVersionsMatchLock(
+      requirementsLock,
+      pythonStringMap(readAgentFile("validate-runtime-contract.py"), "EXPECTED_VERSIONS"),
     );
 
     const observabilityValidator = readAgentFile("validate-observability.py");
@@ -1278,7 +1375,13 @@ print(json.dumps(values, sort_keys=True))`,
       expect(requirementsLock).toContain("pyasn1==0.6.4");
       expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.1");
       const dockerfileBase = readAgentFile("Dockerfile.base");
-      expect(dockerfileBase).toContain(`'${name}': '${expectedVersion}'`);
+      const versionSource =
+        name === "deepagents-code" ? readAgentFile("validate-runtime-contract.py") : dockerfileBase;
+      const versionLiteral =
+        name === "deepagents-code"
+          ? `"${name}": "${expectedVersion}"`
+          : `'${name}': '${expectedVersion}'`;
+      expect(versionSource).toContain(versionLiteral);
       expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
       expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
       expect(dockerfile).toContain(

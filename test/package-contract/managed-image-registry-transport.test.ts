@@ -35,11 +35,17 @@ describe("managed image registry transport package contract", () => {
     const productionDependencies = JSON.parse(productionTree.stdout) as {
       dependencies?: { undici?: { version?: string } };
     };
-    expect(productionDependencies.dependencies?.undici?.version).toBe("8.10.0");
+    expect(productionDependencies.dependencies?.undici?.version).toBe("8.10.2");
 
     const fixtureRoot = createPackageFixture({
       prefix: "nemoclaw-managed-registry-pack-",
-      entries: ["dist"],
+      entries: [
+        "dist",
+        "node_modules/@nvidia/openshell-sdk",
+        "node_modules/@bufbuild/protobuf",
+        "node_modules/@connectrpc/connect",
+        "node_modules/@connectrpc/connect-node",
+      ],
     });
     const archiveRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-managed-registry-archive-"),
@@ -95,7 +101,7 @@ describe("managed image registry transport package contract", () => {
       const installedProductionDependencies = JSON.parse(installedProductionTree.stdout) as {
         dependencies?: { undici?: { version?: string } };
       };
-      expect(installedProductionDependencies.dependencies?.undici?.version).toBe("8.10.0");
+      expect(installedProductionDependencies.dependencies?.undici?.version).toBe("8.10.2");
 
       const probe = spawnSync(
         process.execPath,

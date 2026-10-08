@@ -13,11 +13,12 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
+import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
-import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
-import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
+import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
+import { withCurrentPortableHostFenceTry } from "../state/portable-uninstall-retirement";
 import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
@@ -47,6 +48,11 @@ import {
 } from "./runtime-provider/access";
 import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
 
+/** Fence sandbox image creation through publication against host-wide GC. */
+export function withSandboxImageRegistrationFence<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withCurrentPortableHostFenceTry(operation);
+}
+
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
   | "gpuEnabled"
@@ -69,8 +75,8 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   deferredN1xManagedVllmPreviewIntent?: true;
-  openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
@@ -79,11 +85,6 @@ export interface CreatedSandboxRegistryEntryInput {
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   plannedMessagingState: SandboxMessagingState | undefined;
-  /**
-   * Durable MCP rebuild manifest carried across an already-absent sandbox.
-   * The caller must only supply state captured from the same sandbox name.
-   */
-  preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   /** Host port this sandbox exposes its OpenAI-compatible API on. */
@@ -91,11 +92,18 @@ export interface CreatedSandboxRegistryEntryInput {
   /** True only when schema-5 receipt authority owns this Hermes registration. */
   hermesPortableLifecycle?: boolean;
   dashboardPort: number;
+  /**
+   * Browser-facing external dashboard URL resolved from `CHAT_UI_URL`, or null
+   * when the dashboard is a plain loopback address. Persisted so post-onboard
+   * commands can report the external origin (#11439).
+   */
+  dashboardExternalUrl?: string | null;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  openshellGatewayStateDir?: string | null;
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
@@ -206,6 +214,14 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+    input.nativeNvidiaProviderAttachment,
+  );
+  if (input.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox native NVIDIA provider attachment failed closed validation.",
+    );
+  }
   if (
     input.hostLocalInferenceProvenance !== undefined &&
     (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string")
@@ -255,15 +271,8 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
-    ...(input.openclawImagePluginInstalls !== undefined
-      ? {
-          openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          })),
-        }
-      : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
     ...(input.dcodeAutoApprovalMode !== undefined
@@ -275,7 +284,6 @@ export function buildCreatedSandboxRegistryEntry(
     fromDockerfile: input.fromDockerfile ?? null,
     hermesAuthMethod: input.hermesAuthMethod ?? null,
     messaging: messagingState,
-    mcp: input.preservedMcpState,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
@@ -290,11 +298,18 @@ export function buildCreatedSandboxRegistryEntry(
             }))
         : undefined,
     dashboardPort: input.dashboardPort,
+    ...(input.dashboardExternalUrl != null
+      ? { dashboardExternalUrl: input.dashboardExternalUrl }
+      : {}),
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+    ...(input.hermesPortableLifecycle === true
+      ? { portableLifecycleProfile: "hermes" as const }
+      : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    openshellGatewayStateDir: input.openshellGatewayStateDir ?? undefined,
     ...(input.hostMounts && input.hostMounts.length > 0
       ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
       : {}),
@@ -332,6 +347,10 @@ export function prepareCreatedSandboxRegistration(
     input.hostLocalInferenceProvenance !== undefined
       ? input.hostLocalInferenceProvenance
       : pending?.hostLocalInferenceProvenance;
+  const pendingNativeNvidiaProviderAttachment =
+    input.nativeNvidiaProviderAttachment !== undefined
+      ? input.nativeNvidiaProviderAttachment
+      : pending?.nativeNvidiaProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
     inferenceSelection: pendingRoute
@@ -343,6 +362,9 @@ export function prepareCreatedSandboxRegistration(
     ...(pendingHostLocalInferenceProvenance === undefined
       ? {}
       : { hostLocalInferenceProvenance: pendingHostLocalInferenceProvenance }),
+    ...(pendingNativeNvidiaProviderAttachment === undefined
+      ? {}
+      : { nativeNvidiaProviderAttachment: pendingNativeNvidiaProviderAttachment }),
   });
   if (input.portableLifecycle === true) {
     if (getRequestedSandboxAgentName(input.agent) !== "openclaw") {
@@ -360,6 +382,7 @@ export function prepareCreatedSandboxRegistration(
       );
     }
     entry.agent = "openclaw";
+    entry.portableLifecycleProfile = "openclaw";
   }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,

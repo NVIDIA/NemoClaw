@@ -30,6 +30,7 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   [".github/actions/ci-reviewed-npm-audit/**", /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u],
+  [".github/actions/setup-reviewed-npm/**", /^[.]github\/actions\/setup-reviewed-npm\/.+$/u],
   [
     ".github/actions/publish-managed-image-digest/**",
     /^[.]github\/actions\/publish-managed-image-digest\/.+$/u,
@@ -53,6 +54,10 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
   ],
   ["test/e2e/live/mcp-bridge*.ts", /^test\/e2e\/live\/mcp-bridge[^/]*[.]ts$/u],
   [
+    "test/e2e/support/mcp-bridge-portable-lock-barrier.ts",
+    /^test\/e2e\/support\/mcp-bridge-portable-lock-barrier[.]ts$/u,
+  ],
+  [
     "src/lib/actions/sandbox/mcp-bridge-*.ts",
     /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,
   ],
@@ -60,6 +65,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
   ],
+  ["src/lib/adapters/podman/**", /^src\/lib\/adapters\/podman\/.+$/u],
   ["src/lib/messaging/**", /^src\/lib\/messaging\/.+$/u],
   ["src/lib/onboard/**", /^src\/lib\/onboard\/.+$/u],
   [
@@ -103,6 +109,7 @@ const PUBLISHER_JOB_ALIASES = new Map<string, RequiredPublisherJob>([
 ]);
 
 class IneligibleManualManagedImagePromotionError extends Error {}
+class PaginationCapExceededError extends Error {}
 
 function requiredPublisherIneligibilityError(
   requiredName: RequiredPublisherJob,
@@ -376,13 +383,14 @@ export function resolveFirstParentHistory(
   expectedSha: string,
   paths: readonly string[],
   runGit: (args: string[]) => string = defaultGit,
-  options: { readonly requireCheckedOutCommit?: boolean } = {},
+  options: { readonly allowCheckedOutDescendant?: boolean } = {},
 ): FirstParentHistory {
   sha(expectedSha, "expected SHA");
   if (paths.length === 0) throw new Error("at least one base-image path is required");
 
   const checkedOutSha = runGit(["rev-parse", "--verify", "HEAD^{commit}"]);
-  if (options.requireCheckedOutCommit !== false && checkedOutSha !== expectedSha) {
+  sha(checkedOutSha, "checked-out commit");
+  if (options.allowCheckedOutDescendant !== true && checkedOutSha !== expectedSha) {
     throw new Error(
       `checked-out commit ${checkedOutSha || "missing"} does not match ${expectedSha}`,
     );
@@ -407,17 +415,31 @@ export function resolveFirstParentHistory(
   ]);
   sha(relevantSha, "latest applicable base-image commit");
 
-  const firstParentShas = runGit(["rev-list", "--first-parent", expectedSha])
+  let historyHeadSha = options.allowCheckedOutDescendant === true ? checkedOutSha : expectedSha;
+  let firstParentShas = runGit(["rev-list", "--first-parent", historyHeadSha])
     .split(/\r?\n/u)
     .filter(Boolean);
-  if (firstParentShas.length === 0 || firstParentShas[0] !== expectedSha) {
-    throw new Error("first-parent history must begin at the expected SHA");
+  if (options.allowCheckedOutDescendant === true && !firstParentShas.includes(expectedSha)) {
+    if (runGit(["merge-base", expectedSha, checkedOutSha]) !== expectedSha) {
+      throw new Error("expected SHA is not an ancestor of the checked-out commit");
+    }
+    historyHeadSha = expectedSha;
+    firstParentShas = runGit(["rev-list", "--first-parent", historyHeadSha])
+      .split(/\r?\n/u)
+      .filter(Boolean);
+  }
+  if (firstParentShas.length === 0 || firstParentShas[0] !== historyHeadSha) {
+    throw new Error("first-parent history must begin at the selected history commit");
   }
   if (new Set(firstParentShas).size !== firstParentShas.length) {
     throw new Error("first-parent history must not contain duplicate commits");
   }
   for (const [index, value] of firstParentShas.entries())
     sha(value, `first-parent commit ${index}`);
+
+  if (!firstParentShas.includes(expectedSha)) {
+    throw new Error("expected SHA is not on the checked-out first-parent history");
+  }
 
   const relevantDistance = firstParentShas.indexOf(relevantSha);
   if (relevantDistance < 0) {
@@ -704,7 +726,9 @@ async function collectPaginationAttempt(
     }
   }
 
-  throw new Error(`${label} pagination exceeded the ${maxPages}-page safety cap`);
+  throw new PaginationCapExceededError(
+    `${label} pagination exceeded the ${maxPages}-page safety cap`,
+  );
 }
 
 export async function collectPaginated(
@@ -728,6 +752,34 @@ export async function collectPaginated(
     if (result) return result;
   }
   throw new Error(`${label} total_count changed during ${PAGINATION_ATTEMPTS} pagination attempts`);
+}
+
+export async function collectPublicationRuns(
+  request: (path: string) => Promise<unknown>,
+  basePath: string,
+  history: FirstParentHistory,
+): Promise<JsonRecord> {
+  try {
+    return await collectPaginated(request, basePath, "workflow_runs");
+  } catch (error) {
+    if (!(error instanceof PaginationCapExceededError)) throw error;
+  }
+
+  const workflowRuns: unknown[] = [];
+  for (const headSha of history.distanceBySha.keys()) {
+    const response = await collectPaginated(
+      request,
+      `${basePath}&head_sha=${headSha}`,
+      "workflow_runs",
+    );
+    const runs = response.workflow_runs;
+    if (!Array.isArray(runs)) throw new Error("workflow run listing is incomplete");
+    for (const [index, value] of runs.entries()) {
+      exactString(asRecord(value).head_sha, headSha, `workflow run ${index} queried head SHA`);
+    }
+    workflowRuns.push(...runs);
+  }
+  return { total_count: workflowRuns.length, workflow_runs: workflowRuns };
 }
 
 function annotationValue(value: string): string {
@@ -809,7 +861,7 @@ export async function waitForBaseImagePublication(
   );
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&per_page=100`;
   while (true) {
-    const runs = await collectPaginated(request, runsPath, "workflow_runs");
+    const runs = await collectPublicationRuns(request, runsPath, options.history);
     const excludedRunIds = new Set<number>();
     const select = () =>
       selectPublicationRun(runs, options.history, workflowId, {
@@ -1091,7 +1143,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       : readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
   const paths = parseBaseImagePushPaths(workflowSource);
   const history = resolveFirstParentHistory(expectedSha, paths, defaultGit, {
-    requireCheckedOutCommit: allowNonHeadHistory !== "1",
+    allowCheckedOutDescendant: allowNonHeadHistory === "1",
   });
   const run = await waitForBaseImagePublication({
     history,

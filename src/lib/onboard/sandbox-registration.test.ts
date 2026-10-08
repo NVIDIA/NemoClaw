@@ -93,6 +93,51 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("records only an exact native NVIDIA provider identity", () => {
+    const attachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({
+        inferenceSelection: {
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+        nativeNvidiaProviderAttachment: attachment,
+      }),
+    );
+
+    expect(entry.nativeNvidiaProviderAttachment).toEqual(attachment);
+    expect(() =>
+      buildCreatedSandboxRegistryEntry(
+        createdRegistryEntryInput({
+          nativeNvidiaProviderAttachment: { ...attachment, providerId: "" },
+        }),
+      ),
+    ).toThrow(/native NVIDIA provider attachment failed closed validation/u);
+  });
+
+  it("records the resolved custom OpenShell gateway state directory (#10665)", () => {
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+        openshellGatewayStateDir: "/home/tester/gateways/custom-19080",
+      }),
+    );
+
+    expect(entry.openshellGatewayStateDir).toBe("/home/tester/gateways/custom-19080");
+  });
+
   it("records explicit OpenClaw identity for a managed workload receipt (#9356)", () => {
     const workload = managedWorkloadReceipt("openclaw");
     const entry = buildCreatedSandboxRegistryEntry(
@@ -198,14 +243,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         channels: [{ channelId: "telegram", configured: false, pendingRemoval: true }],
       },
     };
-    const openclawImagePluginInstalls = [
-      {
-        id: "weather",
-        installPath: "/sandbox/.openclaw/extensions/weather",
-        loadPaths: ["/opt/weather-plugin"],
-      },
-    ];
-
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
       inferenceSelection: {
@@ -222,7 +259,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
-      openclawImagePluginInstalls,
       observabilityEnabled: true,
       dcodeAutoApprovalMode: "thread-opt-in",
       webSearchEnabled: true,
@@ -250,7 +286,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
-      openclawImagePluginInstalls,
       toolDisclosure: "progressive",
       observabilityEnabled: true,
       dcodeAutoApprovalMode: "thread-opt-in",
@@ -275,11 +310,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.agent).toBeNull();
     expect(entry.agentVersion).toBeTruthy();
     expect(entry.nemoclawVersion).toBeTruthy();
-    expect(entry.openclawImagePluginInstalls).not.toBe(openclawImagePluginInstalls);
-    expect(entry.openclawImagePluginInstalls?.[0]).not.toBe(openclawImagePluginInstalls[0]);
-    expect(entry.openclawImagePluginInstalls?.[0]?.loadPaths).not.toBe(
-      openclawImagePluginInstalls[0]?.loadPaths,
-    );
     expect(entry.messaging).toBe(plannedMessagingState);
     expect(entry.messaging?.plan.channels[0]).toMatchObject({
       channelId: "telegram",
@@ -343,53 +373,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.toolDisclosure).toBe("progressive");
     expect(entry.observabilityEnabled).toBe(false);
     expect(entry.dcodeAutoApprovalMode).toBeUndefined();
-  });
-
-  it("carries a durable MCP rebuild manifest into the replacement registry entry", () => {
-    const preservedMcpState = {
-      bridges: {
-        github: {
-          server: "github",
-          agent: "openclaw",
-          adapter: "mcporter",
-          url: "https://mcp.example.test/mcp",
-          env: ["GITHUB_TOKEN"],
-          providerName: "demo-mcp-github",
-          policyName: "mcp-bridge-github",
-          addedAt: "2026-06-27T00:00:00.000Z",
-        },
-      },
-    };
-    const entry = buildCreatedSandboxRegistryEntry({
-      sandboxName: "demo",
-      inferenceSelection: {
-        model: "llama",
-        provider: "compatible-endpoint",
-        endpointUrl: null,
-        credentialEnv: null,
-        preferredInferenceApi: null,
-        compatibleEndpointReasoning: "true",
-        compatibleEndpointReasoningEffort: null,
-        nimContainer: null,
-      },
-      runtimeFields,
-      agent: null,
-      agentVersionKnown: true,
-      imageTag: "nemoclaw-demo:replacement",
-      toolDisclosure: "direct",
-      plannedMessagingState: undefined,
-      preservedMcpState,
-      hermesToolGateways: [],
-      hermesDashboardState: { enabled: false, config: null },
-      dashboardPort: 18789,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-    });
-
-    expect(entry.mcp).toBe(preservedMcpState);
-    expect(entry.mcp?.bridges.github?.providerName).toBe("demo-mcp-github");
-    expect(entry.compatibleEndpointReasoning).toBe("true");
-    expect(entry.toolDisclosure).toBe("direct");
   });
 
   it("normalizes invalid preferred inference API values", () => {
@@ -742,7 +725,6 @@ describe("registerCreatedSandbox", () => {
         reference: null,
         shared: false,
       },
-      openclawImagePluginInstalls: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
@@ -755,7 +737,6 @@ describe("registerCreatedSandbox", () => {
 
     expect(registerSandbox).toHaveBeenCalledWith(entry);
     expect(entry.name).toBe("demo");
-    expect(entry.openclawImagePluginInstalls).toEqual([]);
     expect(entry.workload).toEqual(input.workload);
     expect(entry.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
     const clearedEntry = registerCreatedSandbox({

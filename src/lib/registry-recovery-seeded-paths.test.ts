@@ -277,7 +277,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     });
     await expect(
       runInferenceSet(
-        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "gamma" },
+        { provider: "openrouter", model: "nvidia/model-b", sandboxName: "gamma" },
         deps,
       ),
     ).rejects.toMatchObject({
@@ -289,9 +289,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });

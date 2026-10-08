@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -9,7 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, type TestContext, vi } from "vitest";
 
-import { superviseChild } from "../../helpers/process-supervisor.ts";
+import {
+  runSupervisedProcess,
+  type SupervisedProcessOwner,
+} from "../../helpers/supervised-process.ts";
 
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
@@ -19,7 +22,7 @@ const PROCESS_OUTPUT_LIMIT = 1024 * 1024;
 const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
 const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 
-type ProcessOwner = Pick<TestContext, "onTestFinished" | "signal">;
+type ProcessOwner = SupervisedProcessOwner;
 
 type RunProcessOptions = {
   cwd?: string;
@@ -40,56 +43,18 @@ async function runProcess(
   args: readonly string[],
   options: RunProcessOptions = {},
 ): Promise<RunProcessResult> {
-  options.owner?.signal.throwIfAborted();
-  let stdout = "";
-  let stderr = "";
-  let outputError: Error | undefined;
-  const child = spawn(file, [...args], {
+  const result = await runSupervisedProcess(file, args, {
     cwd: options.cwd,
-    detached: true,
     env: options.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const finishController = new AbortController();
-  const append = (current: string, chunk: string, stream: string): string => {
-    const next = current + chunk;
-    const limitError =
-      !outputError && Buffer.byteLength(next, "utf8") > PROCESS_OUTPUT_LIMIT
-        ? new Error(`${stream} exceeded the process output limit`)
-        : undefined;
-    outputError ??= limitError;
-    void (limitError ? finishController.abort() : undefined);
-    return outputError ? current : next;
-  };
-  const signal = options.owner
-    ? AbortSignal.any([options.owner.signal, finishController.signal])
-    : finishController.signal;
-  const resultPromise = superviseChild(child, {
-    killGraceMs: 0,
-    onStderr: (chunk) => {
-      stderr = append(stderr, chunk, "stderr");
-    },
-    onStdout: (chunk) => {
-      stdout = append(stdout, chunk, "stdout");
-    },
-    signal,
+    maxOutputBytesPerStream: PROCESS_OUTPUT_LIMIT,
+    owner: options.owner,
     timeoutMs: options.timeoutMs ?? 20_000,
   });
-  options.owner?.onTestFinished(async () => {
-    finishController.abort();
-    await resultPromise;
-  });
-  const result = await resultPromise;
-  const processError = outputError ?? result.spawnError ?? result.cleanupError;
   return {
-    status: processError
-      ? -1
-      : result.signal
-        ? null
-        : (result.exitCode ?? (result.spawnError ? -1 : null)),
+    status: result.error ? -1 : result.status,
     signal: result.signal,
-    stdout,
-    stderr: processError ? `${stderr}${processError.message}\n` : stderr,
+    stdout: result.stdout,
+    stderr: result.error ? `${result.stderr}${result.error.message}\n` : result.stderr,
   };
 }
 
@@ -159,7 +124,10 @@ type RestoreFixtureOptions = {
   buildIdentitySha?: string;
   consumerRunAttempt?: string;
   expectedPayloadSha256?: string;
+  consumerNodeVersion?: string;
   manifestCandidateSha?: string;
+  manifestNodeVersion?: string;
+  manifestNpmVersion?: string;
   manifestRunAttempt?: string;
   preexistingDist?:
     | "dangling-symlink"
@@ -209,7 +177,6 @@ async function writeCliArchive(
     "openshell-observation-boundary.cjs",
     "openshell-policy-boundary.cjs",
     "sandbox-name.cjs",
-    "snapshot-sanitizer-boundary.cjs",
   ]) {
     fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
   }
@@ -293,7 +260,7 @@ async function writeTraversalArchive(context: ArchiveFixtureContext): Promise<vo
       ? ["-s", "|^outside.txt$|dist/../outside.txt|"]
       : ["--transform=s|^outside.txt$|dist/../outside.txt|"];
   await runSuccessfulProcess(
-    "tar",
+    process.platform === "darwin" ? "/usr/bin/tar" : "tar",
     ["-cf", context.payload, ...transform, "-C", context.payloadRoot, "outside.txt"],
     { owner: context.owner },
   );
@@ -429,8 +396,8 @@ async function runRestoreValidation(owner: ProcessOwner, options: RestoreFixture
         runAttempt: options.manifestRunAttempt ?? options.producerRunAttempt ?? "1",
       },
       toolchain: {
-        node: "v22.23.1",
-        npm: "10.9.2",
+        node: options.manifestNodeVersion ?? "v24.18.1",
+        npm: options.manifestNpmVersion ?? "12.0.2",
         runnerOs: "Linux",
         runnerArch: "X64",
       },
@@ -442,7 +409,7 @@ async function runRestoreValidation(owner: ProcessOwner, options: RestoreFixture
   const nodeWrapper = path.join(toolDirectory, "node");
   fs.writeFileSync(
     nodeWrapper,
-    `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo v22.23.1\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+    `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo ${options.consumerNodeVersion ?? "v24.18.1"}\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
   const lockfileSha256 = sha256File(path.join(workspace, "package-lock.json"));
@@ -770,6 +737,25 @@ describe.concurrent("exact-commit CLI artifact restore", () => {
       context,
       { manifestCandidateSha: "e".repeat(40) },
       "exact-commit CLI artifact provenance mismatch",
+    );
+  });
+
+  it.for([
+    ["Node", { manifestNodeVersion: "v24.18.0" }],
+    ["npm", { manifestNpmVersion: "12.0.1" }],
+  ] as const)(
+    ([tool, _options]: readonly [string, RestoreFixtureOptions]) =>
+      `rejects a CLI artifact built with a different ${tool} version`,
+    async ([, options], context) => {
+      await expectRestoreFailure(context, options, "exact-commit CLI artifact provenance mismatch");
+    },
+  );
+
+  it("rejects restoration under a different Node version", async (context) => {
+    await expectRestoreFailure(
+      context,
+      { consumerNodeVersion: "v24.18.0" },
+      "consumer must restore the CLI under the pinned Node 24.18.1 toolchain",
     );
   });
 

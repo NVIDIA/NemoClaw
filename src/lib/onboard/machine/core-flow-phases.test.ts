@@ -30,7 +30,6 @@ import {
 import type { OnboardFlowContext } from "./flow-context";
 import type { OnboardPrerequisiteRepairEventRecorder } from "./prerequisite-repair";
 import { advanceTo, branchTo } from "./result";
-import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
 type Gpu = { platform: string };
@@ -206,6 +205,7 @@ function createPhases(
         endpointUrl: "https://example.test/v1",
       }),
       reserveSandboxInferenceRoute: vi.fn(() => true),
+      hasSandboxLifecycleAuthority: vi.fn(() => false),
       registryUpdateSandbox: vi.fn(),
       checkpointSandboxIdentity: vi.fn(async () => undefined),
       prepareLocalProviderForInference: vi.fn(async () => null),
@@ -304,6 +304,7 @@ function createPhases(
       ),
       createSandbox: vi.fn(async () => "created-sandbox"),
       finalizeSandboxRouteReservation: vi.fn(() => true),
+      reserveSandboxInferenceRoute: vi.fn(() => true),
       updateSandboxRegistry: vi.fn(),
       getSandboxAgentRegistryFields: () => ({ agent: "openclaw" }),
       recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
@@ -611,17 +612,11 @@ describe("core onboard flow phases", () => {
     expect(createIntent).not.toHaveProperty("deferSandboxEffectsUntilIdentityVerification");
   });
 
-  it("carries authoritative rebuild state into sandbox creation (#7803)", async () => {
+  it("carries authoritative rebuild policy into sandbox creation", async () => {
     const createSandbox = vi.fn(async () => "created-sandbox");
-    const rebuildPreservedEnv = [
-      {
-        path: ".env",
-        assignments: ["SLACK_HOME_CHANNEL=C0123"],
-      },
-    ];
     const rebuildPolicySourcePath = "/tmp/current-policy.yaml";
     const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
-      sandboxOptions: { rebuildPreservedEnv, rebuildPolicySourcePath },
+      sandboxOptions: { rebuildPolicySourcePath },
       sandboxDeps: { createSandbox },
     });
 
@@ -629,7 +624,6 @@ describe("core onboard flow phases", () => {
     await sandboxPhase.run(providerResult.context);
 
     expect((createSandbox.mock.calls[0] as unknown[] | undefined)?.[15]).toMatchObject({
-      rebuildPreservedEnv,
       rebuildPolicySourcePath,
     });
   });

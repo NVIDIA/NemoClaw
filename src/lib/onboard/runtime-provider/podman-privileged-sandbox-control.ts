@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SANITIZED_PRIVILEGED_ENV } from "./privileged-sandbox-environment";
 import type { PodmanContainerEngine } from "../../adapters/podman";
 import type {
   RuntimeProviderPrivilegedSandboxCommandInput,
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxControl,
   RuntimeProviderPrivilegedSandboxTarget,
+  RuntimeProviderStoppedNativeHomeCleanupInput,
+  RuntimeProviderStoppedSandboxStateCleanupInput,
 } from "./contract";
 import { observePodmanManagedContainer } from "./podman-lifecycle";
 import {
@@ -15,42 +18,25 @@ import {
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
 import {
+  clearStoppedNativeHomeWithEngine,
   clearStoppedSandboxStateWithEngine,
+  sandboxNativeHomeResourceFromMounts,
   sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
+  type StoppedSandboxStateTarget,
 } from "./stopped-sandbox-state-cleanup";
-
-const SANITIZED_PRIVILEGED_ENV = [
-  "BASH_ENV=",
-  "ENV=",
-  "GCONV_PATH=",
-  "GLIBC_TUNABLES=",
-  "LD_AUDIT=",
-  "LD_LIBRARY_PATH=",
-  "LD_PRELOAD=",
-  "LOCPATH=",
-  "NODE_OPTIONS=",
-  "PERL5OPT=",
-  "PYTHONHOME=",
-  "PYTHONINSPECT=",
-  "PYTHONNOUSERSITE=1",
-  "PYTHONPATH=",
-  "PYTHONSTARTUP=",
-  "PYTHONUSERBASE=",
-  "RUBYOPT=",
-] as const;
 
 function resolveTarget(
   engine: PodmanContainerEngine,
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
     "registeredSandboxNames" | "sandbox" | "sandboxName"
-  >,
+  > & { readonly timeoutMs?: number },
 ): RuntimeProviderPrivilegedSandboxTarget {
   if (input.sandbox.name !== input.sandboxName) {
     throw new Error("Podman privileged control requires the registered sandbox identity.");
   }
-  const container = observePodmanManagedContainer(engine, input.sandboxName);
+  const container = observePodmanManagedContainer(engine, input.sandboxName, input.timeoutMs);
   if (!container) {
     throw new DirectSandboxContainerNotFoundError(
       `No Podman runtime resource found for sandbox '${input.sandboxName}'.`,
@@ -103,9 +89,13 @@ function execute(
 
 function observeStoppedTarget(
   engine: PodmanContainerEngine,
-  input: Parameters<
-    NonNullable<RuntimeProviderPrivilegedSandboxControl["clearStoppedStateRoots"]>
-  >[0],
+  input:
+    | RuntimeProviderStoppedSandboxStateCleanupInput
+    | RuntimeProviderStoppedNativeHomeCleanupInput,
+  stateResourceFromMounts: (
+    mounts: unknown,
+    resourceHandle: string,
+  ) => StoppedSandboxStateTarget["stateResource"] | null,
 ): StoppedSandboxStateObservation {
   let container: ReturnType<typeof observePodmanManagedContainer>;
   try {
@@ -114,7 +104,14 @@ function observeStoppedTarget(
     return { failure: "runtime-discovery-failed" };
   }
   if (!container) return { failure: "no-eligible-stopped-runtime" };
-  const stateResource = sandboxStateResourceFromMounts(container.inspect.Mounts, input.paths);
+  if (
+    "expectedResourceHandle" in input &&
+    input.expectedResourceHandle !== undefined &&
+    input.expectedResourceHandle !== container.containerId
+  ) {
+    return { failure: "runtime-ownership-invalid" };
+  }
+  const stateResource = stateResourceFromMounts(container.inspect.Mounts, container.containerId);
   return stateResource
     ? {
         target: {
@@ -144,7 +141,7 @@ export function createPodmanPrivilegedSandboxControl(
       input: Pick<
         RuntimeProviderPrivilegedSandboxCommandInput,
         "registeredSandboxNames" | "sandbox" | "sandboxName"
-      >,
+      > & { readonly timeoutMs?: number },
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
     ...(cleanupEngine
@@ -156,7 +153,18 @@ export function createPodmanPrivilegedSandboxControl(
           ) =>
             clearStoppedSandboxStateWithEngine(input.sandboxName, input.paths, {
               capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
-              observe: () => observeStoppedTarget(engine, input),
+              observe: () =>
+                observeStoppedTarget(engine, input, (mounts) =>
+                  sandboxStateResourceFromMounts(mounts, input.paths),
+                ),
+            }),
+          clearStoppedNativeHome: (input: RuntimeProviderStoppedNativeHomeCleanupInput) =>
+            clearStoppedNativeHomeWithEngine(input.sandboxName, input.root, input.protectedPaths, {
+              capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
+              observe: () =>
+                observeStoppedTarget(engine, input, (mounts, resourceHandle) =>
+                  sandboxNativeHomeResourceFromMounts(mounts, input.root, resourceHandle),
+                ),
             }),
         }
       : {}),

@@ -22,7 +22,7 @@ from urllib.parse import urljoin, urlparse, urlsplit
 _MANAGED_STATE_DIR = Path("/sandbox/.deepagents/.state")
 _AUTH_FILE = _MANAGED_STATE_DIR / "auth.json"
 _CODEX_AUTH_FILE = _MANAGED_STATE_DIR / "chatgpt-auth.json"
-_MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
+_MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )
@@ -244,6 +244,8 @@ def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
 def _is_managed_value(name: str, value: str) -> bool:
     if name == "DEEPAGENTS_CODE_OPENAI_API_KEY":
         return value == "nemoclaw-managed-inference"
+    if name == "NEMOCLAW_ATTACHED_PROVIDER_API_KEY":
+        return value == "nemoclaw-openshell-provider"
     if name == "SLACK_BOT_TOKEN":
         return bool(re.fullmatch(r"xoxb-[A-Za-z0-9_-]{10,}", value)) and not _contains_other_platform_secret(value, "slack")
     if name == "SLACK_APP_TOKEN":

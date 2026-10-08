@@ -570,7 +570,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       const command = dockerRunCommandBetween(
         dockerfile,
         "# System-wide shell hooks",
-        "# Pin config hash at build time",
+        "# DAC-protect .nemoclaw directory",
       )
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
@@ -605,10 +605,9 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     );
     const managedPolicyReader = path.join(localLib, "managed_policy.py");
     const langfuseCredentialPatcher = path.join(localLib, "patch-hermes-langfuse-credentials.mts");
-    const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
+    const dashboardStateMigrator = path.join(localLib, "migrate-hermes-dashboard-state.py");
     const tirithMarkerFinalizer = path.join(localLib, "finalize-tirith-marker.py");
-    const buildMcpDigest = path.join(localLib, "build-hermes-mcp-digest.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
@@ -638,10 +637,9 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(discordRecoveryPatcher, "# Discord recovery patcher fixture\n");
       fs.writeFileSync(managedPolicyReader, "# managed policy reader fixture\n");
       fs.writeFileSync(langfuseCredentialPatcher, "# Langfuse credential patcher fixture\n");
-      fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
+      fs.writeFileSync(dashboardStateMigrator, "# dashboard state migrator fixture\n");
       fs.writeFileSync(tirithMarkerFinalizer, "# Tirith marker finalizer fixture\n");
-      fs.writeFileSync(buildMcpDigest, "# build MCP digest fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
       fs.writeFileSync(mcpCredentialBoundary, "{}\n");
       fs.mkdirSync(preloadDir, { mode: 0o777 });
@@ -686,10 +684,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
           langfuseCredentialPatcher,
         )
-        .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py",
+          dashboardStateMigrator,
+        )
         .replaceAll("/usr/local/lib/nemoclaw/finalize-tirith-marker.py", tirithMarkerFinalizer)
-        .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
           "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.116.json",
@@ -723,9 +723,9 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(hardenedDir.mode & 0o777).toBe(0o755);
       expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
       expect(fs.statSync(discordRecoveryPatcher).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(dashboardStateMigrator).mode & 0o777).toBe(0o755);
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
-      expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
       expect(fs.statSync(hermesCronRestoreControl).mode & 0o777).toBe(0o700);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);

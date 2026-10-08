@@ -1,0 +1,269 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { getPath, isObjectRecord, stringOrUndefined } from "../advisors/json.mts";
+import {
+  type AdvisorBlockerGateResult,
+  evaluateAdvisorBlockers,
+} from "../pr-review-advisor/blocker-gate.mts";
+import {
+  type AdvisorFindingLedger,
+  parseAdvisorFindingLedger,
+} from "../pr-review-advisor/finding-ledger.mts";
+import {
+  type CoordinatorReviewHistory,
+  type GitHubReviewContext,
+  readPreparedGitHubContext,
+} from "../pr-review-advisor/github-context.mts";
+import { ADVISOR_INTERESTS } from "../pr-review-advisor/specialist-catalog.mts";
+import { type CoordinatorSnapshot, decideReviewAction } from "./decision.mts";
+
+const MAX_SHADOW_INPUT_BYTES = 1024 * 1024;
+const OUTPUT_DIRECTORY = "artifacts/pr-review-coordinator-shadow";
+
+type ShadowInput = Readonly<{
+  context: GitHubReviewContext;
+  gate: AdvisorBlockerGateResult;
+  ledgers: readonly AdvisorFindingLedger[];
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+  requiredChecks: "pass" | "pending" | "fail";
+}>;
+
+export function buildCoordinatorShadowSnapshot(input: ShadowInput): CoordinatorSnapshot {
+  const pullRequest = record(input.context.pullRequest, "pull request context");
+  const contextHead = stringOrUndefined(getPath<unknown>(pullRequest, ["head", "sha"]));
+  const contextBase = stringOrUndefined(getPath<unknown>(pullRequest, ["base", "sha"]));
+  if (
+    input.context.prNumber !== input.prNumber ||
+    contextHead !== input.headSha ||
+    contextBase !== input.baseSha
+  ) {
+    throw new Error("Coordinator shadow context does not match the exact Advisor revision");
+  }
+  const author = stringOrUndefined(getPath<unknown>(pullRequest, ["user", "login"]));
+  if (!author) throw new Error("Coordinator shadow context is missing the pull request author");
+  const productScopeMissing = input.ledgers.some((ledger) =>
+    ledger.findings.some((finding) => finding.kind === "product-scope"),
+  );
+  const history = coordinatorHistory(input.context.coordinatorHistory);
+  const frozen = new Set(history.frozenContractKeys);
+
+  const findings = input.ledgers.flatMap((ledger) =>
+    ledger.findings.map((finding) => ({
+      id: finding.id,
+      contractKey: finding.id,
+      severity: finding.severity,
+      summary: finding.summary,
+      path: finding.path,
+      validation:
+        history.contractEvidence === "incomplete" ? ("ambiguous" as const) : ("validated" as const),
+      relationship:
+        history.contractEvidence === "complete" && !frozen.has(finding.id)
+          ? ("newly-proven-on-delta" as const)
+          : ("existing-contract" as const),
+    })),
+  );
+  const advisor =
+    input.gate.status === "clear"
+      ? {
+          identity: "exact-head" as const,
+          headSha: input.headSha,
+          baseSha: input.baseSha,
+          status: "clear" as const,
+          findings: [],
+        }
+      : findings.length > 0
+        ? {
+            identity: "exact-head" as const,
+            headSha: input.headSha,
+            baseSha: input.baseSha,
+            status: "blocked" as const,
+            findings,
+          }
+        : null;
+  const state = stringOrUndefined(pullRequest.state)?.toUpperCase();
+  const mergeable = pullRequest.mergeable;
+  return {
+    version: 1,
+    pullRequest: {
+      number: input.prNumber,
+      state: state === "OPEN" || state === "CLOSED" || state === "MERGED" ? state : "CLOSED",
+      draft: pullRequest.draft === true,
+      author,
+      reviewer: "nemoclaw-review-coordinator[bot]",
+      headSha: input.headSha,
+      baseSha: input.baseSha,
+    },
+    advisor,
+    readiness: {
+      requiredChecks: input.requiredChecks,
+      mergeability:
+        mergeable === true ? "mergeable" : mergeable === false ? "conflicting" : "unknown",
+      commitsVerified: input.context.commitsVerified === true,
+      productScope: productScopeMissing ? "missing" : "accepted",
+    },
+    history,
+  };
+}
+
+export function evaluateCoordinatorShadow(input: ShadowInput) {
+  const snapshot = buildCoordinatorShadowSnapshot(input);
+  return Object.freeze({
+    mode: "read-only-shadow" as const,
+    snapshot,
+    decision: decideReviewAction(snapshot),
+  });
+}
+
+function readBoundedJson(filePath: string): unknown {
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_SHADOW_INPUT_BYTES) {
+      throw new Error("Coordinator shadow input must be a bounded nonempty regular file");
+    }
+    return JSON.parse(fs.readFileSync(descriptor, "utf8"));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Coordinator shadow requires ${name}`);
+  return value;
+}
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (!isObjectRecord(value)) throw new Error(`Coordinator shadow ${label} must be an object`);
+  return value;
+}
+
+function coordinatorHistory(value: unknown): CoordinatorReviewHistory {
+  const history = record(value, "review history");
+  const contractEvidence = history.contractEvidence;
+  if (
+    contractEvidence !== "none" &&
+    contractEvidence !== "complete" &&
+    contractEvidence !== "incomplete"
+  ) {
+    throw new Error("Coordinator shadow review history has invalid contract evidence");
+  }
+  if (
+    !Array.isArray(history.frozenContractKeys) ||
+    history.frozenContractKeys.some((key) => typeof key !== "string" || key.length === 0)
+  ) {
+    throw new Error("Coordinator shadow review history has invalid frozen contract keys");
+  }
+  if (
+    (contractEvidence === "none" && history.frozenContractKeys.length !== 0) ||
+    (contractEvidence === "complete" && history.frozenContractKeys.length === 0)
+  ) {
+    throw new Error("Coordinator shadow review history has inconsistent contract evidence");
+  }
+  if (!Array.isArray(history.writes)) {
+    throw new Error("Coordinator shadow review history has invalid writes");
+  }
+  const writes = history.writes.map((value): CoordinatorReviewHistory["writes"][number] => {
+    const write = record(value, "review history write");
+    const kind = write.kind;
+    if (
+      typeof write.headSha !== "string" ||
+      !/^[0-9a-f]{40}$/u.test(write.headSha) ||
+      (kind !== "request-changes" && kind !== "approve")
+    ) {
+      throw new Error("Coordinator shadow review history has an invalid write");
+    }
+    return { headSha: write.headSha, kind };
+  });
+  return {
+    contractEvidence,
+    frozenContractKeys: history.frozenContractKeys,
+    writes,
+  };
+}
+
+async function main(): Promise<void> {
+  const artifactsRoot = path.resolve(requiredEnv("PR_REVIEW_ADVISOR_ARTIFACTS"));
+  const contextPath = path.resolve(requiredEnv("PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH"));
+  const attempt = requiredEnv("GITHUB_RUN_ATTEMPT");
+  const headSha = requiredEnv("EXPECTED_HEAD_SHA");
+  const baseSha = requiredEnv("EXPECTED_BASE_SHA");
+  const repo = requiredEnv("TARGET_REPO");
+  const requiredChecks = requiredChecksFromEnvironment();
+  const prNumber = Number.parseInt(requiredEnv("PR_NUMBER"), 10);
+  if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+    throw new Error("Coordinator shadow requires a positive PR_NUMBER");
+  }
+  const gate = evaluateAdvisorBlockers({
+    artifactsRoot,
+    attempt,
+    expectedHeadSha: headSha,
+    expectedBaseSha: baseSha,
+  });
+  const context = readPreparedGitHubContext(contextPath, { repo, prNumber });
+  if (!context || context.fetchError) {
+    throw new Error("Coordinator shadow requires complete GitHub review context");
+  }
+  const ledgers = ADVISOR_INTERESTS.map((interest) =>
+    parseAdvisorFindingLedger(
+      readBoundedJson(
+        path.join(
+          artifactsRoot,
+          `pr-review-specialist-${interest}-${attempt}`,
+          `pr-review-${interest}-findings.json`,
+        ),
+      ),
+      { headSha, interest },
+    ),
+  );
+  const result = evaluateCoordinatorShadow({
+    context,
+    gate,
+    ledgers,
+    prNumber,
+    headSha,
+    baseSha,
+    requiredChecks,
+  });
+  fs.mkdirSync(OUTPUT_DIRECTORY, { recursive: true });
+  const outputPath = path.join(OUTPUT_DIRECTORY, "decision.json");
+  fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  const summary = [
+    "## Review coordinator shadow",
+    "",
+    `Action: \`${result.decision.action}\``,
+    "",
+    `Reason: \`${result.decision.reason}\``,
+    "",
+    result.decision.details,
+    "",
+    "Shadow mode is read-only and never posts a review, approves, merges, or modifies a branch.",
+    "",
+  ].join("\n");
+  console.log(summary);
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+}
+
+function requiredChecksFromEnvironment(): "pass" | "pending" | "fail" {
+  const value = requiredEnv("COORDINATOR_REQUIRED_CHECKS");
+  if (value !== "pass" && value !== "pending" && value !== "fail") {
+    throw new Error("Coordinator shadow required-check state is invalid");
+  }
+  return value;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    console.error(
+      `::error title=Review coordinator shadow failed::${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  });
+}

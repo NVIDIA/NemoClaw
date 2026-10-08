@@ -24,8 +24,8 @@ const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
 const expectedHonoVersion = "4.12.34";
 const expectedHonoTarball = "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz";
-const expectedFastUriVersion = "3.1.6";
-const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz";
+const expectedFastUriVersion = "3.1.7";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
@@ -104,6 +104,9 @@ describe("mcporter image supply-chain controls", () => {
     const graph = JSON.parse(result.stdout) as DependencyNode & { problems?: string[] };
     expect(graph.problems).toBeUndefined();
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
+    expect(findDependency(graph, "@modelcontextprotocol/sdk")).toEqual(
+      expect.objectContaining({ overridden: true, version: "1.31.0" }),
+    );
     expect(findDependency(graph, "@hono/node-server")).toEqual(
       expect.objectContaining({
         overridden: true,
@@ -188,6 +191,9 @@ describe("mcporter image supply-chain controls", () => {
       flattenedContents.includes(
         "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
       ) ||
+        flattenedContents.includes(
+          "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/",
+        ) ||
         contents.includes(
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
         ),
@@ -206,6 +212,8 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-policy-result,required=false",
     );
+    expect(auditContents).not.toContain("--legacy-audit");
+    expect(auditContents).not.toContain("--legacy-npmjs");
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(auditContents).not.toContain("/scripts/lib/npm-audit-receipt.mts");
     expect(auditContents).toContain("sha256sum --check --status");

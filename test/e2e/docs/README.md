@@ -48,7 +48,24 @@ Live execution happens through shared fixtures:
 - `environment` checks CLI/install/runtime readiness.
 - `onboard` performs supported onboarding profiles.
 - `lifecycle` performs supported post-onboard mutations.
-- `stateValidation` probes host-observable expected state.
+- `stateValidation` normally probes host-observable expected state before
+  configuration export. Targets with ordered cloud checks run it after export
+  so those checks can first restore any export-relevant settings they change.
+- `configExportValidation` runs against the retained state. Each typed target
+  declares one config export expectation:
+  - `required` must match the target manifest, live sandbox registry, and
+    effective network policy.
+  - `expected-refusal` must complete with its declared category without
+    creating a file.
+  - `no-usable-sandbox` must record an expected preflight or onboarding
+    failure. State validation must also prove that the sandbox is absent. This
+    expectation does not invoke config export.
+
+  The missing-custom-presets target fails after creating its sandbox. It must
+  validate that retained sandbox and export its configuration with `required`.
+  The onboarding fixture still requires the missing-presets failure. Export
+  validation checks the retained runtime configuration, not onboarding completion.
+
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
 - The automatic `progress` fixture reports the ordered semantic phase plan for
@@ -65,6 +82,97 @@ Live execution happens through shared fixtures:
 
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
+
+Before it validates deployment semantics, the config export fixture scans raw
+export text for literal known fixture secrets, wrapped or YAML-escaped base64
+and base64url forms, and literal, escaped, wrapped, or encoded internal
+credential transport markers. It separately checks decoded YAML scalar keys
+and values, including binary scalars, for literal or encoded secrets and
+internal transport markers.
+The fixture caps each exporter stdout and stderr stream at 64 KiB. Effective
+policy stdout is limited to 1 MiB; truncated observations fail before export.
+Before reading or retaining an export, it opens the file without following symbolic
+links.
+The open descriptor must identify a regular file with exactly one hard link,
+no larger than 1 MiB. After the descriptor read, the published path must still
+identify the same device and inode with exactly one hard link. The fixture
+rejects a replacement or an added hard link. It
+creates the export in a private temporary directory, registers cleanup before
+it invokes the CLI, and removes the directory before it writes retained evidence.
+
+For `required` coverage, the fixture checks the producer-owned v1alpha1 envelope
+and all fields used in its semantic comparison. Cross-branch import
+compatibility remains a separate contract. Semantic expectations remain
+independent of the exporter. The fixture reads the target manifest and host
+registry directly, then queries the effective policy through the OpenShell CLI.
+It captures these expectations before it invokes config export, so exporter-side
+mutations cannot redefine the expected deployment state. It also compares the
+registry before and after the command. It rejects an unsafe registry inference
+endpoint before invoking export or publishing endpoint data in evidence.
+Policy reads and config export use the same filtered host environment as
+onboarding and state validation, preserving configuration paths and runtime
+selection without passing undeclared credentials. When the hosted inference
+adapter is active, its `compatible-endpoint` binding maps the manifest's
+`NVIDIA_INFERENCE_API_KEY` reference to `COMPATIBLE_API_KEY`; other credential
+references must still be declared by the manifest.
+
+The typed live-target timeout contract budgets a two-minute config export
+ceiling for `required` and `expected-refusal`. A `required` target also budgets
+a one-minute effective-policy read and 10 minutes for the pinned v1 consumer.
+A `no-usable-sandbox` target adds none of those ceilings because it does not
+invoke config export. The
+`dcode-rebuild-invalid-credential` target has a 130-minute base budget for its
+lifecycle and ordered cloud checks. With required export, its default test
+timeout is 143 minutes and its job ceiling is 163 minutes.
+`NEMOCLAW_TEST_TIMEOUT`, in milliseconds, can raise but cannot
+lower the derived test timeout. The derived job ceiling keeps at least 20
+minutes of headroom and rounds up to a whole minute.
+
+The `config-export-evidence.v1.json` artifact binds each result to the source
+revision, CLI version, and compiled CLI entry-point hash. Each record includes
+elapsed time and a structured command outcome when the fixture invokes the
+CLI. A timed-out, signaled, or otherwise incomplete command fails as a
+transport error before refusal classification. Successful `required` evidence
+includes the exact validated export bytes, byte count, and SHA-256 hash after
+the security checks and cleanup pass. It also publishes those exact bytes as
+`config-export.yaml` so reviewers can inspect and parse the exported document
+directly. Refusal and failure evidence do not publish the YAML file or export
+metadata.
+Its failure stage distinguishes transport errors from export failures, while
+cleanup has its own diagnostic so it cannot hide the primary failure. Evidence
+diagnostics are bounded and remove literal, encoded, wrapped, or escaped known
+secrets and internal credential transport markers before publication.
+
+The secret scan covers registered fixture values, not arbitrary unregistered
+secrets. Review selected exports before retaining them as migration fixtures.
+
+OpenClaw failure probes read only regular, single-link log files without following symlinks.
+They omit log content above 16 KiB or changed during the read, so truncation cannot split a credential before host redaction.
+Oversized files retain size and permission metadata for diagnosis.
+
+When the missing-custom-presets target fails before its expected policy rejection, it captures these bounded, redacted failure probes before cleanup.
+The probes also capture unexpected JavaScript failures; they do not change the onboarding result or the required policy rejection.
+Container probes use a resolved full container ID and never delete resources or retry onboarding.
+
+The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model through `inference.local`.
+After NemoClaw stop/start, a gateway-only turn must report that provider and model before the probe restores the original selection.
+The probe removes its temporary native entries before the launch checks.
+The fixture contains no provider credentials. It sends a JSON patch to native OpenClaw through stdin.
+
+The restart probe no longer rereads native configuration to clone and validate a provider.
+The preceding inference turn already verifies the selected model and route.
+Native `config validate` and the post-restart gateway turn retain the live configuration and inference checks.
+UUID-scoped names replace the fixed-name collision checks; the fixture does not copy existing aliases or credentials.
+Patch construction and unique names are tested in `full-e2e-native-model.test.ts` in `e2e-support`.
+The removed config-reader and child-error-redaction checks belonged to the deleted cloning command.
+Native CLI output still uses the fixture's redaction path.
+The live credential scan, launch-readiness checks, restoration, and temporary-entry cleanup remain unchanged.
+
+After a live target succeeds, the E2E workflow requires
+`config-export-evidence.v1.json`. It also requires `config-export.yaml` when
+the evidence classification is `success`; `expected-refusal` and
+`no-usable-sandbox` do not publish YAML. A missing required file fails the
+target job.
 
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
@@ -93,11 +201,13 @@ protects the registry-target catalogue when collection includes
 `npm run test:e2e-phases:check` include that file, but a collection command that
 omits it does not run this guard.
 
-A declared target that is not wired for live fixtures still collects. The
-typed-registry matrix reports it as skipped with its `[not wired]` reason and
-exits 0. That exit-0 skip is specific to the typed-registry matrix; the
-catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
-when its selection runs no tests.
+Every typed-registry declaration must have executable platform, install,
+runtime, and onboarding routes plus resolved coverage metadata and a config
+export expectation. A declared lifecycle route must also be executable.
+Registry construction rejects invalid declarations. Proposed combinations
+belong in planning issues until their live fixtures exist; they must not be
+added as empty skipped tests. Selecting a removed or unknown target ID fails
+and lists the available IDs.
 
 ## Run Live E2E Locally
 
@@ -323,7 +433,12 @@ The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
 When you add or make a non-comment source change to a live E2E test or a
 `test/e2e/live/` helper, update `test/e2e/mock-parity.json`. List each changed
-helper under `liveSources` for its owning live test. If the entry has mapped
+helper under `liveSources` for its owning live test. Also list each explicitly
+owned `test/e2e/fixtures/` source under `liveSources` for every owning live test.
+The same mapped fast-test rule applies to changes in those shared fixtures.
+Removing an owner in the same PR does not remove its base-manifest fast-test
+requirement for a changed or deleted fixture.
+Unrelated fixtures do not need an owner. If the entry has mapped
 fast tests, make a non-comment source change to at least one mapped fast test
 in the same PR. Use
 `liveOnlyReason` only when no fast test can reproduce the contract. The PR and
@@ -411,11 +526,12 @@ test/e2e/
   to upload its evidence artifact.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility`.
   It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
-  Each macOS shard installs the pinned OpenShell formula.
-  Shard 1 has a 150-minute job timeout. Its live E2E has a 70-minute timeout, and every other step shares the remaining job time.
-  The other shards have 30 minutes.
+  Runs for the same ref are serialized and retained instead of being canceled by a newer push, preserving distinct-commit evidence on `main`.
+  Each macOS Vitest shard has a 30-minute budget.
+  The independent `macos-live-e2e` job installs pinned OpenShell and has a 150-minute budget, including its 70-minute live test and cleanup.
   WSL shard 1 has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
-  On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+  WSL stops Docker before non-live Vitest and starts it afterward only for the main-only live path.
+  The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
   Otherwise, those live tests skip and the platform contracts remain as evidence.
   This conditional result is platform evidence, not `Release qualification`.
   The live steps give candidate test code the job-scoped `GITHUB_TOKEN` and repository `NVIDIA_INFERENCE_API_KEY`.
@@ -425,6 +541,9 @@ test/e2e/
   GitHub invalidates `GITHUB_TOKEN` after the job.
   `NVIDIA_INFERENCE_API_KEY` remains valid until it expires or is revoked; the workflow does not revoke it.
 - `.github/workflows/portable-profile-e2e.yaml` provides experimental portable-profile evidence on matching `main` changes or manual dispatches.
+- The explicit-only `portable-hermes-finalization` job in `.github/workflows/e2e.yaml`
+  runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
+  rootless Podman 5.7. The selector stages and uses that runtime directly.
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
 - `.github/workflows/sandbox-images.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.

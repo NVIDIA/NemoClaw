@@ -43,6 +43,7 @@ export const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 export const mcpBridge = requireDist("./mcp-bridge.js");
 export const mcpBridgeProvider = requireDist("./mcp-bridge-provider.js");
 export const mcpBridgeProviderInspection = requireDist("./mcp-bridge-provider-inspection.js");
+export const mcpBridgeSource = requireDist("./mcp-bridge-source.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
@@ -57,18 +58,38 @@ export const providerCommand = requireDist("../../adapters/openshell/provider-co
 export const policies = requireDist("../../policy/index.js");
 export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
+export const portableRetirementAuthority = requireDist(
+  "../../onboard/portable-retirement-authority.js",
+);
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );
+export const commandTransport = requireDist("../../adapters/sandbox/command-transport.js");
 export const processRecovery = requireDist("./process-recovery.js");
+export const portableReceiptReadiness = requireDist(
+  "../../onboard/experimental/portable-runtime-receipt-readiness.js",
+) as typeof import("../../src/lib/onboard/experimental/portable-runtime-receipt-readiness");
+export const pairingSettlement = requireDist(
+  "../../onboard/machine/finalization-deps.js",
+) as typeof import("../../src/lib/onboard/machine/finalization-deps");
+export const launchReadiness = requireDist(
+  "./launch-readiness.js",
+) as typeof import("../../src/lib/actions/sandbox/launch-readiness");
+export const openClawLifecycle = requireDist(
+  "./runtime/openclaw-lifecycle.js",
+) as typeof import("../../src/lib/actions/sandbox/runtime/openclaw-lifecycle");
 export const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
 export const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
+export const snapshotBackup = requireDist("./snapshot/backup-authority.js");
 export const rebuildInference = requireDist("./inference-invocation-probe.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
+export const rebuildPreflightPhase = requireDist(
+  "./rebuild-preflight-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-preflight-phase");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 export const registry = requireDist("../../state/registry.js");
 export const crossPortRegistry = requireDist("../../state/registry/cross-port.js");

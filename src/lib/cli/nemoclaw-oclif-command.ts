@@ -37,9 +37,6 @@ const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
   "sandbox:destroy",
   "sandbox:logs",
   "sandbox:rebuild",
-  "sandbox:snapshot",
-  "sandbox:snapshot:create",
-  "sandbox:snapshot:list",
   "sandbox:status",
   "sandbox:stop",
 ]);
@@ -105,6 +102,7 @@ export abstract class NemoClawCommand extends Command {
   }
 
   protected override async _run<T>(): Promise<T> {
+    if (await this.runBeforeLifecycleBoundary()) return undefined as T;
     const commandId = this.id;
     const portablePolicy =
       typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
@@ -129,7 +127,7 @@ export abstract class NemoClawCommand extends Command {
     enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
       allowStateRecord: allowRemovedImmutabilityStateRecord,
     });
-    if (this.isInteractiveConnect(commandId)) {
+    if (this.isInteractiveSession(commandId)) {
       return await super._run<T>();
     }
     const runLocked = () => {
@@ -144,9 +142,28 @@ export abstract class NemoClawCommand extends Command {
     return await withSandboxLifecycleLock(sandboxName, runLocked);
   }
 
-  private isInteractiveConnect(commandId: string | undefined): boolean {
+  /** Allow a command to transfer complete ownership before host-wide fences are acquired. */
+  protected async runBeforeLifecycleBoundary(): Promise<boolean> {
+    return false;
+  }
+
+  /** Reuse an early command parse when the ordinary lifecycle wrapper continues. */
+  protected retainLifecycleParserOutput<
+    F extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    B extends Interfaces.OutputFlags<Interfaces.FlagInput>,
+    A extends Interfaces.OutputArgs<Interfaces.ArgInput>,
+  >(parsed: Interfaces.ParserOutput<F, B, A>): void {
+    this.lifecycleParserOutput = parsed as Interfaces.ParserOutput<
+      Interfaces.OutputFlags<Interfaces.FlagInput>,
+      Interfaces.OutputFlags<Interfaces.FlagInput>,
+      Interfaces.OutputArgs<Interfaces.ArgInput>
+    >;
+  }
+
+  private isInteractiveSession(commandId: string | undefined): boolean {
     return (
-      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true
+      commandId === "launch" ||
+      (commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true)
     );
   }
 
@@ -157,8 +174,7 @@ export abstract class NemoClawCommand extends Command {
     if (
       typeof commandId !== "string" ||
       (commandId !== "launch" && !commandId.startsWith("sandbox:")) ||
-      !portablePolicy ||
-      portablePolicy.multiSandboxLifecycle
+      !portablePolicy
     ) {
       return null;
     }

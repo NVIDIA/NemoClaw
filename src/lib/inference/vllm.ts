@@ -1975,7 +1975,9 @@ function adoptableServingPortHolder(
   const ownership = inspectVllmContainerOwnershipInDockerEnv(containerName, dockerEnv);
   if (ownership.kind !== "managed" || !ownership.running) return undefined;
   // The managed container always publishes the fixed container port 8000.
-  const published = dockerCapture(["port", containerName, "8000"], {
+  // Keep the binding lookup pinned to the identity that passed ownership
+  // inspection. The fixed name can change hands between Docker commands.
+  const published = dockerCapture(["port", ownership.containerId, "8000"], {
     env: dockerEnv,
     ignoreError: true,
     timeout: 10_000,
@@ -2394,6 +2396,10 @@ async function runVllmInstall(
 
   console.log("");
   console.log(`  vLLM (${runtimeProfile.name}):`);
+  if (hostLocalSelection?.displayName) {
+    console.log(`    Selected for your hardware: ${hostLocalSelection.displayName}`);
+    console.log(`    Context limit: ${String(model.maxModelLen)} tokens`);
+  }
   console.log(`    Image: ${runtimeProfile.image}`);
   console.log(
     `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hashCredential } from "../../../security/credential-hash";
 import {
@@ -45,7 +49,16 @@ function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
 
 describe("handleSandboxState", () => {
   beforeEach(() => {
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-handler-")),
+    );
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
+    vi.unstubAllEnvs();
   });
 
   it("creates a sandbox and records messaging/web search state", async () => {
@@ -1051,50 +1064,6 @@ describe("handleSandboxState", () => {
       }),
     ).rejects.toThrow("Tavily credential rejected");
 
-    expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-  });
-
-  it("fails before credential or registry mutation when Tavily collides with managed MCP", async () => {
-    const session = createSession({
-      sandboxName: "saved",
-      webSearchConfig: { fetchEnabled: true, provider: "brave" },
-    });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      agentSupportsWebSearchProvider: () => true,
-      getSandboxRegistryEntry: (name: string) => ({
-        name,
-        mcp: {
-          bridges: {
-            search: {
-              server: "search",
-              agent: "openclaw",
-              url: "https://mcp.example.com/mcp",
-              env: ["TAVILY_API_KEY"],
-              policyName: "saved-mcp-search",
-              addedAt: "2026-07-03T00:00:00.000Z",
-            },
-          },
-        },
-      }),
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "saved",
-        webSearchConfig: { fetchEnabled: true, provider: "brave" },
-        env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily" },
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(calls.error).toHaveBeenCalledWith(
-      expect.stringContaining("already owns TAVILY_API_KEY"),
-    );
-    expect(calls.validateBrave).not.toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });

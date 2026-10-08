@@ -72,6 +72,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
 import {
   detectVllmProfile,
   installVllm as installVllmProduction,
+  resolveVllmModelRuntime,
   type InstallVllmOptions,
   type VllmProfile,
 } from "./vllm";
@@ -144,8 +145,13 @@ describe("managed vLLM serving-port guard (#8685)", () => {
 
   it("uses the fixed vLLM local model profile command without managed-cluster selection", async () => {
     const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const sparkModel = resolveVllmModelRuntime(
+      baseProfile,
+      baseProfile.defaultModel,
+      "arm64",
+    ).model;
     const model = {
-      ...baseProfile.defaultModel,
+      ...sparkModel,
       id: "nvidia/fixed-local-profile",
       fixedServeCommand: true as const,
       managedBearerAuth: true as const,
@@ -437,7 +443,15 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     // managed bearer auth carries no auth label, so lifecycle recovery cannot
     // admit the container this very install left behind.
     mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue(null);
-    publishContainerBindings("0.0.0.0:8000", "[::]:8000");
+    const baseCapture = mocks.dockerCapture.getMockImplementation();
+    mocks.dockerCapture.mockImplementation(
+      (args: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
+        args[0] === "port"
+          ? args[1] === MANAGED_CONTAINER_ID
+            ? "0.0.0.0:8000\n[::]:8000\n"
+            : ""
+          : (baseCapture?.(args, options) ?? ""),
+    );
     const checkServingPort = vi.fn(async () => ({
       ok: false,
       reason: "port 8000 is held by docker-proxy (PID 4242)",
@@ -454,6 +468,12 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(mocks.dockerForceRm).toHaveBeenCalledWith(
       MANAGED_CONTAINER_ID,
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(mocks.dockerCapture).toHaveBeenCalledWith(
+      ["port", MANAGED_CONTAINER_ID, "8000"],
+      expect.objectContaining({
+        env: expect.objectContaining({ DOCKER_CONTEXT: "default" }),
+      }),
     );
     expect(mocks.dockerRunDetached).toHaveBeenCalled();
     expect(errSpy.mock.calls.flat().join("\n")).not.toContain("another process");

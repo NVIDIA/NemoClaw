@@ -94,7 +94,7 @@ describe("OpenShell policy mutation read failures", () => {
       apply: async () => await policies.applyPresetContent("alpha", "custom", CUSTOM_PRESET),
     },
     { mutation: "applyPresets", apply: async () => await policies.applyPresets("alpha", ["npm"]) },
-  ] as const)("$mutation policy mutation", ({ mutation, apply }) => {
+  ] as const)("$mutation policy mutation", ({ mutation: _mutation, apply }) => {
     it("refuses to set policy when the base-policy read fails", async () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-read-failure-"));
       tempDirs.push(tempDir);

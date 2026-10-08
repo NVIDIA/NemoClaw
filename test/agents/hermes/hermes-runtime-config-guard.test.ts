@@ -453,7 +453,7 @@ with tempfile.TemporaryDirectory() as tmp:
     expect(proof.write_paths[1]).toMatch(/\/hermes\.config-hash$/);
   });
 
-  it("rejects stale compatibility state before an applied-state commit without leaking secrets", () => {
+  it("rejects a stale compatibility anchor before a legacy apply call", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import contextlib
 import io
@@ -513,7 +513,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      error: "Hermes strict and compatibility MCP state differ before applied-state commit",
+      error: "Hermes strict and compatibility config hashes differ before refresh",
       strict_unchanged: true,
       compat_unchanged: true,
       secret_in_error: false,

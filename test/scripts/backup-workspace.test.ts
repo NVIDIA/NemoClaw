@@ -269,7 +269,7 @@ exit 99
     expect(fs.existsSync(openshellCalls)).toBe(false);
 
     const invocations = fs.readFileSync(calls, "utf8").trim().split("\n");
-    expect(invocations).toHaveLength(6);
+    expect(invocations).toHaveLength(8);
     expect(invocations.at(-1)).toMatch(
       /^test-sandbox\tdownload\t\/sandbox\/\.openclaw\/workspace\/memory\/\t/,
     );
@@ -335,17 +335,19 @@ exit 99
     expect(result.stdout).toContain("Skipped MEMORY.md (not found)");
     expect(result.stdout).toContain("Skipped memory/ (not found)");
     expect(result.stdout).toContain("Backup saved to ");
-    expect(result.stdout).toContain("(4 items)");
+    expect(result.stdout).toContain("(6 items)");
     expect(result.stderr).toContain("NEMOCLAW_TEST_OPTIONAL_SOURCE_ABSENT");
-    expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(6);
+    expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(8);
 
     const backupRoot = path.join(home, ".nemoclaw", "backups");
     const backups = fs.readdirSync(backupRoot);
     expect(backups).toHaveLength(1);
     expect(fs.readdirSync(path.join(backupRoot, backups[0])).sort()).toEqual([
       "AGENTS.md",
+      "HEARTBEAT.md",
       "IDENTITY.md",
       "SOUL.md",
+      "TOOLS.md",
       "USER.md",
     ]);
   });
@@ -398,5 +400,78 @@ exit 99
     expect(fs.readFileSync(marker, "utf8")).toBe("existing backup\n");
     expect(fs.readdirSync(existingBackup)).toEqual(["preserved.txt"]);
     expect(fs.existsSync(calls)).toBe(false);
+  });
+
+  it("backs up and restores TOOLS.md and HEARTBEAT.md", () => {
+    const calls = path.join(root, "nemoclaw-calls.txt");
+    const openshellCalls = path.join(root, "openshell-calls.txt");
+    writeExecutable(
+      sourceCli,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
+printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
+mkdir -p "$4"
+printf 'saved\n' > "\${4%/}/$(basename -- "$3")"
+`,
+    );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$NEMOCLAW_TEST_OPENSHELL_CALLS"
+exit 0
+`,
+    );
+
+    const env = {
+      ...process.env,
+      HOME: home,
+      NEMOCLAW_TEST_CALLS: calls,
+      NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+    };
+    const backupResult = spawnSync("bash", [sourceScript, "backup", "test-sandbox"], {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      env,
+    });
+
+    expect(backupResult.status, backupResult.stderr).toBe(0);
+    expect(backupResult.stdout).toContain("(8 items)");
+    const downloaded = fs.readFileSync(calls, "utf8");
+    expect(downloaded).toContain("/sandbox/.openclaw/workspace/TOOLS.md");
+    expect(downloaded).toContain("/sandbox/.openclaw/workspace/HEARTBEAT.md");
+    expect(downloaded).not.toContain("POLICY.md");
+
+    const backupRoot = path.join(home, ".nemoclaw", "backups");
+    const backups = fs.readdirSync(backupRoot);
+    expect(backups).toHaveLength(1);
+    const backupDir = path.join(backupRoot, backups[0]);
+    expect(fs.readdirSync(backupDir).sort()).toEqual([
+      "AGENTS.md",
+      "HEARTBEAT.md",
+      "IDENTITY.md",
+      "MEMORY.md",
+      "SOUL.md",
+      "TOOLS.md",
+      "USER.md",
+      "memory",
+    ]);
+
+    const restoreResult = spawnSync("bash", [sourceScript, "restore", "test-sandbox"], {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      env,
+    });
+
+    expect(restoreResult.status, restoreResult.stderr).toBe(0);
+    const uploaded = fs.readFileSync(openshellCalls, "utf8");
+    expect(uploaded).toContain(`${path.join(backupDir, "TOOLS.md")} /sandbox/.openclaw/workspace/`);
+    expect(uploaded).toContain(
+      `${path.join(backupDir, "HEARTBEAT.md")} /sandbox/.openclaw/workspace/`,
+    );
+    expect(uploaded).not.toContain("POLICY.md");
   });
 });

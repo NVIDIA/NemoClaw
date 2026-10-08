@@ -7,7 +7,7 @@
 
 NemoClaw v0.0.114 adds deterministic read-only MCP tool calls for LangChain Deep Agents Code and per-stage launch-readiness probe timing.
 It strengthens destructive-operation warnings, session export cleanup, sealed configuration recovery, and installation verification.
-It also improves managed local inference, Portable and Hermes onboarding, image provenance, and release documentation automation.
+It also improves managed local inference, Hermes onboarding, image provenance, and release documentation automation.
 
 - Managed LangChain Deep Agents Code automation can invoke one uniquely registered, coherently read-only MCP tool with `dcode tools call-read-only TOOL --json` without model participation.
   The command accepts one bounded JSON object on standard input, rejects ambiguous or mutating tools, bounds execution and cleanup, redacts recognized credential-shaped output, and returns one versioned JSON envelope.
@@ -31,7 +31,6 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
   Related changes: [PR #9776](https://github.com/NVIDIA/NemoClaw/pull/9776) and [PR #9822](https://github.com/NVIDIA/NemoClaw/pull/9822).
 - Managed vLLM onboarding restores DGX Station large-model selection and strengthens fixed-profile selection, running-server reuse, and resumed-session validation.
-  Portable Podman inference validation gives the first real completion request a 120-second deadline within a 150-second outer wait while retaining the existing readiness, GPU, identity, and cleanup bounds.
   Recovery now distinguishes bind refusals for Ollama, unauthenticated compatible endpoints, and backends whose type is unavailable.
   Protected loopback-route diagnostics also name the endpoint that the route fronts.
   For more information, refer to [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Configure Inference Timeouts](/user-guide/openclaw/inference/manage-inference/configure-inference-timeouts), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
@@ -39,8 +38,7 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
 - Managed llama.cpp images include the required patched dependencies, bind lifecycle receipts to published software bill of materials files, and isolate platform-specific receipt pulls.
   For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
   Related changes: [PR #9821](https://github.com/NVIDIA/NemoClaw/pull/9821), [PR #9849](https://github.com/NVIDIA/NemoClaw/pull/9849), and [PR #9857](https://github.com/NVIDIA/NemoClaw/pull/9857).
-- Portable keeps its Podman proxy setting attached across process boundaries so later lifecycle work retains the selected proxy behavior.
-  The inference model-limit documentation now shows each agent only the settings it supports and states that Deep Agents Code has no equivalent model-limit operation.
+- The inference model-limit documentation now shows each agent only the settings it supports and states that Deep Agents Code has no equivalent model-limit operation.
   For more information, refer to [Configure Model Limits](/user-guide/deepagents/inference/manage-inference/configure-model-limits).
   Related changes: [PR #9785](https://github.com/NVIDIA/NemoClaw/pull/9785) and [PR #9867](https://github.com/NVIDIA/NemoClaw/pull/9867).
 - Pi remains unavailable to ordinary installations while its release candidate gains AMD64 and ARM64 image receipts, a protected Docker lifecycle qualification target, and candidate-scoped user documentation.
@@ -48,7 +46,7 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   For more information, refer to [Quickstart with Pi](/user-guide/pi/get-started/quickstart), [Run and Manage Pi](/user-guide/pi/manage-sandboxes/run-pi), and [Pi Support and Security](/user-guide/pi/reference/pi-support).
 - Ordinary Docker-driver onboarding for stock OpenClaw, Hermes, and LangChain Deep Agents Code requires the release's exact immutable managed-image digest for the host architecture.
   If registry or catalog availability prevents selection, onboarding stops before sandbox creation; invalid or inconsistent managed-image evidence also stops before creation.
-  Explicit `--from` Dockerfiles and Portable onboarding retain their separate paths.
+  Explicit custom Dockerfiles retain their separate path.
   For more information, refer to the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart) and [Architecture Details](/user-guide/openclaw/reference/architecture).
   Related changes: [PR #9323](https://github.com/NVIDIA/NemoClaw/pull/9323) and [PR #10113](https://github.com/NVIDIA/NemoClaw/pull/10113).
 - Managed single-host vLLM onboarding can select the host GPU by index or full NVIDIA GPU UUID with `--vllm-gpu-device`.
@@ -64,11 +62,6 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   Tools discovered after startup become searchable only after the runtime loads them.
   For more information, refer to [Configure Progressive Tool Disclosure](/user-guide/deepagents/configure-agents/progressive-tool-disclosure).
   Related change: [PR #10031](https://github.com/NVIDIA/NemoClaw/pull/10031).
-- Portable lifecycle recovery now reports one credential-free timing line with fixed stage durations, selected actions, attempt counts, result, and failed stage.
-  OpenClaw onboarding produces a missing canonical local CLI write-scope request before final observation, while Portable settlement recognizes the same request when it is already pending and avoids creating a duplicate.
-  Both paths approve at most once and require strict same-device settled state before completion.
-  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
-  Related changes: [PR #9964](https://github.com/NVIDIA/NemoClaw/pull/9964), [PR #10018](https://github.com/NVIDIA/NemoClaw/pull/10018), and [PR #10022](https://github.com/NVIDIA/NemoClaw/pull/10022).
 - The maintained `nemoclaw update` installer request and every redirect now require HTTPS.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related change: [PR #9862](https://github.com/NVIDIA/NemoClaw/pull/9862).

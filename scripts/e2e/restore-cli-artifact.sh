@@ -11,9 +11,9 @@ if [[ ! -s "$manifest" || ! -s "$payload" ]]; then
   echo "::error::exact-commit CLI artifact is incomplete"
   exit 1
 fi
-[[ "$(node --version)" =~ ^v22\.[0-9]+\.[0-9]+$ ]] \
+[[ "$(node --version)" == "v24.18.1" ]] \
   || {
-    echo "::error::consumer must restore the CLI under the pinned Node 22 toolchain"
+    echo "::error::consumer must restore the CLI under the pinned Node 24.18.1 toolchain"
     exit 1
   }
 
@@ -49,8 +49,8 @@ jq -e \
     .workflow.sha == $workflowSha and
     .workflow.runId == $runId and
     .workflow.runAttempt == $runAttempt and
-    (.toolchain.node | strings | test("^v22\\.[0-9]+\\.[0-9]+$")) and
-    (.toolchain.npm | strings | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+    .toolchain.node == "v24.18.1" and
+    .toolchain.npm == "12.0.2" and
     .toolchain.runnerOs == "Linux" and
     .toolchain.runnerArch == "X64" and
     .build.command == "npm run build:cli" and
@@ -117,8 +117,7 @@ for boundary in \
   openshell-gateway-health-sdk.js \
   openshell-observation-boundary.cjs \
   openshell-policy-boundary.cjs \
-  sandbox-name.cjs \
-  snapshot-sanitizer-boundary.cjs; do
+  sandbox-name.cjs; do
   boundary_path="$restore_dir/nemoclaw/dist/shared/$boundary"
   [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] \
     || {

@@ -32,6 +32,38 @@ The image build runs `pip3 check` and asserts all eight installed package versio
 The complete point-in-time audit now reports only two duplicate database records for `setuptools==82.0.1`; that record is outside the Critical/High remediation scope.
 This review does not claim the complete lock is vulnerability-free.
 
+## Managed QuickJS Wasmtime Configuration
+
+Deep Agents Code `0.1.55` selects `langchain-quickjs==0.3.5`, `quickjs-rs==0.2.5`,
+and `wasmtime==46.0.1`. The released `quickjs-rs` package creates a default
+Wasmtime engine. On Linux, Wasmtime's default copy-on-write linear-memory
+initialization creates `wasm-memory-image` with `memfd_create` flags
+`MFD_CLOEXEC | MFD_ALLOW_SEALING`. OpenShell blocks that syscall in the managed
+sandbox, so the first interactive model turn fails when Deep Agents initializes
+its JavaScript interpreter.
+
+The managed image patches the exact `quickjs-rs==0.2.5` engine constructor to
+set `Config.memory_init_cow = False`. This Wasmtime option uses ordinary memory
+initialization and does not require NemoClaw to weaken the OpenShell sandbox
+restriction. The image build rejects another `quickjs-rs` version or source
+shape. After patching, the image build runs `validate-quickjs-runtime.py` through
+the pinned LangChain REPL. It exercises the worker thread, OXC transform, async
+shell-tool bridge, snapshot restoration, and a second synchronous tool call.
+The live Deep Agents TUI check runs the same validator with
+`--require-memfd-denied` before its interactive sessions. That mode requires
+`EPERM` before importing Wasmtime, so cached artifacts cannot hide initialization
+failures. It adds no syscall permissions. The build and sandbox probes have
+bounded process deadlines, and failure messages omit third-party exception text.
+
+PR #11972 first appears in release source at `v0.0.128`. The reopened #11847 report used
+`v0.0.127`, whose source does not contain the patch. That report does not
+establish a regression of the patch. Existing sandboxes require a rebuilt
+managed image; updating the host CLI alone does not patch installed packages.
+
+Remove this patch when a reviewed `quickjs-rs` or Deep Agents Code release
+provides an equivalent non-memfd Wasmtime configuration and the live check
+passes through that upstream path.
+
 ## Progressive MCP Tool Catalog Compatibility
 
 Deep Agents Code `0.1.55` with LangChain `1.3.14` can supply `search_tools` with a `ToolRuntime.tools` view that omits loaded MCP tools.

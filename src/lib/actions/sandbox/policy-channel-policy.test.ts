@@ -42,7 +42,6 @@ const POLICY_PRESETS: PresetInfo[] = [
 
 let logSpy: MockInstance;
 let errSpy: MockInstance;
-let exitSpy: MockInstance;
 let promptMock: MockInstance;
 let getSandboxMock: MockInstance;
 let getAppliedPresetsMock: MockInstance;
@@ -89,7 +88,7 @@ beforeEach(() => {
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
 

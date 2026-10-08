@@ -17,7 +17,7 @@ import { shellQuote } from "../core/shell-quote";
 // stay in sync with. Imported here (test only — not into the inference-set hot
 // path) to drive the parity check below. providers.ts is a CJS module.
 import * as onboardProvidersNs from "../onboard/providers";
-import type { ConfigValue } from "../security/credential-filter";
+import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import {
   INFERENCE_SET_INSTALLER_PROVIDER_ALIASES,
   INFERENCE_SET_SUPPORTED_PROVIDER_NAMES,
@@ -41,8 +41,8 @@ function expectNoInferenceMutation(calls: ReturnType<typeof createDeps>["calls"]
   expect(calls.captureOpenshell).not.toHaveBeenCalled();
   expect(calls.updateSandbox).not.toHaveBeenCalled();
   expect(calls.writeSandboxConfig).not.toHaveBeenCalled();
-  expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   expect(calls.updateSession).not.toHaveBeenCalled();
+  expect(calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
   expect(calls.restartSandboxGateway).not.toHaveBeenCalled();
 }
 
@@ -73,9 +73,48 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
     },
   );
 
-  it("passes an unrecognized provider through unchanged (validation still rejects it later)", () => {
+  it("passes an unrecognized provider through unchanged for gateway validation", () => {
     expect(normalizeInferenceSetProvider("totally-made-up")).toBe("totally-made-up");
   });
+
+  // #11369: underscore-spelled provider inputs (installer-style) must normalize
+  // to the canonical hyphenated OpenShell provider name, instead of being
+  // rejected as unsupported.
+  it("normalizes the underscore spelling of a canonical local provider name", () => {
+    expect(normalizeInferenceSetProvider("ollama_local")).toBe("ollama-local");
+    expect(normalizeInferenceSetProvider("vllm_local")).toBe("vllm-local");
+  });
+
+  it("normalizes underscore spellings of other canonical provider names", () => {
+    expect(normalizeInferenceSetProvider("nvidia_prod")).toBe("nvidia-prod");
+    expect(normalizeInferenceSetProvider("llama_cpp_local")).toBe("llama-cpp-local");
+  });
+
+  it("normalizes underscore spellings of installer alias keys", () => {
+    expect(normalizeInferenceSetProvider("open_router")).toBe("openrouter-api");
+    expect(normalizeInferenceSetProvider("nim_local")).toBe("nvidia-nim");
+    expect(normalizeInferenceSetProvider("llama_cpp")).toBe("llama-cpp-local");
+    expect(normalizeInferenceSetProvider("nous_portal")).toBe("hermes-provider");
+  });
+
+  it("is case-insensitive and trims whitespace on underscore spellings", () => {
+    expect(normalizeInferenceSetProvider("  Ollama_Local  ")).toBe("ollama-local");
+    expect(normalizeInferenceSetProvider("VLLM_LOCAL")).toBe("vllm-local");
+  });
+
+  it("passes an unsupported underscore spelling through unchanged (validation still rejects it)", () => {
+    // A made-up name is not rescued by underscore folding; it passes through so
+    // downstream validation still rejects it.
+    expect(normalizeInferenceSetProvider("totally_made_up")).toBe("totally_made_up");
+  });
+
+  it.each([...INFERENCE_SET_SUPPORTED_PROVIDER_NAMES])(
+    "normalizes the underscore spelling of canonical name %s back to the hyphenated form",
+    (name) => {
+      const underscored = name.replaceAll("-", "_");
+      expect(normalizeInferenceSetProvider(underscored)).toBe(name);
+    },
+  );
 
   it.each(Object.entries(INFERENCE_SET_INSTALLER_PROVIDER_ALIASES))(
     "resolves the %s installer alias to the supported %s provider",
@@ -127,20 +166,125 @@ describe("runInferenceSet accepts the installer provider name — facet 1 (#6321
 
     // The persisted provider must be the normalized OpenShell name, not the
     // installer alias, so the sandbox registry stays canonical.
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ provider: "compatible-anthropic-endpoint" }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ provider: "compatible-anthropic-endpoint" })]);
   });
 
   it("still rejects a genuinely unsupported provider name", async () => {
+    const output =
+      "nvidia-prod\nqa-non-inference\ncompatible-endpoint\nllama-cpp-local\nollama-local\n";
+    const captureOpenshell = vi.fn(() => ({ status: 0, output, stdout: output, stderr: "" }));
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
-      entry: { name: "alpha", agent: "openclaw" },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw-18080",
+      },
+      captureOpenshell,
     });
     await expect(
       runInferenceSet({ provider: "totally-made-up", model: "nvidia/model-a" }, deps),
-    ).rejects.toThrow(/Unsupported provider 'totally-made-up'/);
+    ).rejects.toThrow(
+      "Unsupported provider 'totally-made-up'. Selectable providers registered on gateway " +
+        "'nemoclaw-18080': compatible-endpoint, llama-cpp-local, nvidia-prod, ollama-local, qa-non-inference.",
+    );
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "-g", "nemoclaw-18080", "--names"],
+      expect.objectContaining({ timeout: 5_000 }),
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it("accepts an additional registered provider without replacing its native config", async () => {
+    const provider = "native-extra";
+    const nativeProviderConfig = {
+      api: "openai-completions",
+      apiKey: "native-owned-reference",
+      baseUrl: "https://native.example/v1",
+      models: [{ id: "vendor/model-a", name: "vendor/model-a" }],
+    };
+    const output = `nvidia-prod\n${provider}\n`;
+    const captureOpenshell = vi.fn(() => ({ status: 0, output, stdout: output, stderr: "" }));
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: {
+        providers: {
+          inference: { api: "openai-completions", models: [] },
+          [provider]: nativeProviderConfig,
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw-18080",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      captureOpenshell,
+    });
+
+    await expect(
+      runInferenceSet({ provider, model: "vendor/model-b", noVerify: true }, deps),
+    ).resolves.toMatchObject({ provider, model: "vendor/model-b" });
+
+    expect(captureOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "list", "-g", "nemoclaw-18080", "--names"],
+      expect.objectContaining({ ignoreError: true, timeout: 5_000 }),
+    );
+    expect(captureOpenshell).toHaveBeenNthCalledWith(
+      2,
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw-18080",
+        "--no-verify",
+        "--provider",
+        provider,
+        "--model",
+        "vendor/model-b",
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(captureOpenshell).toHaveBeenCalledTimes(2);
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledOnce();
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalledWith(
+      "alpha",
+      expect.arrayContaining([
+        expect.objectContaining({
+          dotpath: "models.providers.inference",
+          value: expect.objectContaining({
+            models: expect.arrayContaining([expect.objectContaining({ id: "vendor/model-b" })]),
+          }),
+        }),
+      ]),
+      "nemoclaw-18080",
+    );
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider,
+        endpointUrl: null,
+        credentialEnv: null,
+      }),
+    ]);
   });
 
   it("hands OpenShell the exact `compatible-anthropic-endpoint` name, never the `anthropicCompatible` alias (#6321)", async () => {
@@ -388,10 +532,11 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     ).resolves.toBeTruthy();
     expect(guard).not.toHaveBeenCalled();
     expect(adapterGuard).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ endpointSource: "onboard" }),
-    ]);
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual(["alpha", expect.objectContaining({ endpointSource: "onboard" })]);
   });
 
   it("accepts the same onboard-provenanced internal endpoint after canonicalization (#6321)", async () => {

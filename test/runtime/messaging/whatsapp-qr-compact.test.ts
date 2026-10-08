@@ -293,11 +293,8 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       gatewayUrl?: string;
       gatewayToken?: string;
       insecurePublicWs?: string;
-      privateGatewayUrl?: string;
-      insecurePrivateWs?: string;
       preloadPresent?: boolean;
       fakeExit?: number;
-      runPrivateGatewayControl?: boolean;
       shell?: "bash" | "/bin/sh";
       poisonShellFunctions?: readonly ("[" | "command" | "echo" | "exit" | "return")[];
     },
@@ -361,24 +358,11 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
         opts.insecurePublicWs !== undefined
           ? `export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePublicWs)}`
           : "unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
-        opts.privateGatewayUrl !== undefined
-          ? `export NEMOCLAW_OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.privateGatewayUrl)}`
-          : "unset NEMOCLAW_OPENCLAW_GATEWAY_URL",
-        opts.insecurePrivateWs !== undefined
-          ? `export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePrivateWs)}`
-          : "unset NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
       );
       wrapperLines.push(
         guardBody,
         `openclaw ${args.map((a) => JSON.stringify(a)).join(" ")}`,
         'echo "GUARD_EXIT=$?"',
-        ...(opts.runPrivateGatewayControl
-          ? [
-              'echo "PRIVATE_CONTROL_BEGIN"',
-              'OPENCLAW_GATEWAY_URL="$NEMOCLAW_OPENCLAW_GATEWAY_URL" /usr/bin/env openclaw channels login --channel whatsapp',
-              'echo "PRIVATE_CONTROL_EXIT=$?"',
-            ]
-          : []),
       );
       const wrapperPath = path.join(tempDir, "run.sh");
       fs.writeFileSync(wrapperPath, wrapperLines.join("\n"), { mode: 0o700 });
@@ -427,9 +411,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
 
   it("keeps the native post-pair channel running via loopback config resolution (#6413)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
-      privateGatewayUrl: "ws://10.200.0.2:18790",
       preloadPresent: true,
-      runPrivateGatewayControl: true,
     });
     expect(r.stderr).toContain("Pairing via the in-sandbox gateway (loopback)");
     expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
@@ -441,14 +423,6 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("POSTPAIR_RPC=channels.start");
     expect(r.stdout).toContain("CHANNEL_STATE=running");
     expect(r.stdout).toContain("GUARD_EXIT=0");
-    // Control: the same fake upstream boundary models OpenClaw's known
-    // private-veth locality behavior. Re-injecting NemoClaw's stashed URL
-    // strips operator.admin from the native post-pair channels.start call and
-    // leaves the channel stopped.
-    expect(r.stdout).toMatch(
-      /PRIVATE_CONTROL_BEGIN[\s\S]*FAKE_OPENCLAW_GATEWAY_URL=ws:\/\/10\.200\.0\.2:18790[\s\S]*POSTPAIR_RPC=channels\.start[\s\S]*CHANNEL_STATE=stopped[\s\S]*PRIVATE_CONTROL_EXIT=13/,
-    );
-    expect(r.stderr).toContain("POSTPAIR_ERROR=missing scope: operator.admin");
   });
 
   it("preserves handled WhatsApp statuses when sourced by POSIX sh (#6413)", () => {
@@ -610,27 +584,9 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     },
   );
 
-  it("does not re-inject the stashed private gateway URL for WhatsApp (#6413)", () => {
-    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
-      privateGatewayUrl: "ws://10.200.0.2:18790",
-      insecurePrivateWs: "1",
-      preloadPresent: true,
-    });
-    expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
-    // The stashed private veth URL must stay out of the login environment: a
-    // private-IP origin makes the gateway's locality check strip operator
-    // scopes and the post-pair restart fails with "missing scope:
-    // operator.admin".
-    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=unset");
-    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=unset");
-    expect(r.stdout).toContain("GUARD_EXIT=0");
-  });
-
-  it("preserves an explicit loopback override without borrowing the private opt-in (#4504)", () => {
+  it("preserves an explicit loopback override (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       gatewayUrl: "wss://127.0.0.1:443",
-      privateGatewayUrl: "ws://10.200.0.2:18790",
-      insecurePrivateWs: "1",
       preloadPresent: true,
     });
     expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=wss://127.0.0.1:443");
@@ -641,8 +597,6 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       gatewayUrl: "ws://localhost:18790",
       insecurePublicWs: "explicit-marker",
-      privateGatewayUrl: "ws://10.200.0.2:18790",
-      insecurePrivateWs: "1",
       preloadPresent: true,
     });
     expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://localhost:18790");

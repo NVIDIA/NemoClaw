@@ -4,10 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  SUBPROCESS_ENV_ALLOWED_NAMES,
-  SUBPROCESS_ENV_ALLOWED_PREFIXES,
-} from "../../subprocess-env";
-import {
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
   parseMcpAddArgs,
@@ -132,6 +128,19 @@ describe("MCP CLI input validation", () => {
         "--clear-deny-tools",
       ]),
     ).toThrow(/not both/);
+  });
+
+  it("accepts an explicit public-pin refresh without changing denied tools (#10464)", () => {
+    expect(parseMcpUpdateArgs(["github", "--refresh-public-pins"])).toEqual({
+      server: "github",
+      refreshPublicPins: true,
+    });
+    expect(() =>
+      parseMcpUpdateArgs(["github", "--refresh-public-pins", "--clear-deny-tools"]),
+    ).toThrow(/one update mode/);
+    expect(() =>
+      parseMcpUpdateArgs(["github", "--refresh-public-pins", "--deny-tool", "delete_*"]),
+    ).toThrow(/one update mode/);
   });
 
   it("normalizes one exact trusted-private host from a repeated add option (#8267)", () => {

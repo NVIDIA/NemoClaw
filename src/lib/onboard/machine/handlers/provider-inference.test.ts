@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import type { CheckpointSandboxIdentity } from "../../../state/onboard-checkpoint-types";
-import { createSession, type SessionUpdates } from "../../../state/onboard-session";
+import { createSession } from "../../../state/onboard-session";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,

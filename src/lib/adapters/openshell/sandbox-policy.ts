@@ -63,10 +63,3 @@ export interface OpenShellSandboxPolicyWriter {
     request: SetOpenShellSandboxPolicyRequest,
   ): Promise<OpenShellSandboxPolicySetSubmission>;
 }
-
-/** Transitional reader for portable lifecycle consumers tracked in #11479. */
-export interface SyncOpenShellSandboxPolicyReader {
-  readSandboxPolicy(
-    request: ReadOpenShellSandboxPolicyRequest,
-  ): OpenShellSandboxResult<OpenShellSandboxPolicyRead>;
-}

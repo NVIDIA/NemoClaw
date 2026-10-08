@@ -603,7 +603,9 @@ describe("Hermes Portable published engine recovery", () => {
     });
     const dependency = {
       release: vi.fn(() => fixture.harness.events.push("test:dependency-released")),
-      rollback: vi.fn(() => fixture.harness.events.push("test:dependency-rolled-back")),
+      rollback: vi.fn(() => {
+        fixture.harness.events.push("test:dependency-rolled-back");
+      }),
     };
     composed.input.prepareProbeDependency = vi.fn(() => {
       fixture.harness.events.push("test:dependency-prepared");

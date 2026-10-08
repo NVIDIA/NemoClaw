@@ -15,6 +15,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   HERMES_ACP_LIFECYCLE_BUDGET_MS,
   type HermesAcpLiveScenario,
+  hermesAcpGatewayStoppedPreconditionPassed,
   runHermesAcpLiveScenario,
 } from "../fixtures/hermes-acp-live.ts";
 import {
@@ -824,12 +825,14 @@ test(
       timeoutMs: 30_000,
     });
     expect(
-      stoppedGatewayStatus.exitCode === 0 &&
-        /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(stoppedGatewayStatus.stdout),
+      hermesAcpGatewayStoppedPreconditionPassed(stoppedGatewayStatus),
       resultText(stoppedGatewayStatus),
     ).toBe(true);
     const gatewayRecoveryPassed = await runAcpScenario("gateway-recovery");
     await lifecycle.waitForGatewayConnected();
+    await lifecycle.waitForSandboxReadyAfterGatewayRestart(SANDBOX_NAME, {
+      artifactNamePrefix: "hermes-acp-post-gateway-recovery-ready",
+    });
     const exchangePassed = await runAcpScenario("exchange");
     const remoteExitPassed = await runAcpScenario("remote-exit");
     const cancellationPassed = await runAcpScenario("cancel");
@@ -842,6 +845,9 @@ test(
       restartGateway: async () => {
         await lifecycle.restartGatewayRuntime({ sandboxName: SANDBOX_NAME });
         await lifecycle.waitForGatewayConnected();
+        await lifecycle.waitForSandboxReadyAfterGatewayRestart(SANDBOX_NAME, {
+          artifactNamePrefix: "hermes-acp-post-gateway-restart-ready",
+        });
       },
       sandbox,
       sandboxName: SANDBOX_NAME,

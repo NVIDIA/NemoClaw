@@ -26,6 +26,7 @@ import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 export interface InteractiveCommandRule {
   readonly trigger: string;
   readonly response: string;
+  readonly settleMs?: number;
 }
 
 export interface InteractiveCommandResult {
@@ -93,6 +94,7 @@ output = bytearray()
 os.set_blocking(fd, False)
 deadline = time.monotonic() + timeout_s
 fired = [False] * len(rules)
+last_output_at = time.monotonic()
 
 def strip_terminal_sequences(text):
     visible = []
@@ -142,6 +144,7 @@ while time.monotonic() < deadline:
             exit_code = os.waitstatus_to_exitcode(status)
             break
         output.extend(chunk)
+        last_output_at = time.monotonic()
         sys.stdout.buffer.write(chunk)
         sys.stdout.flush()
     text = output.decode("utf-8", errors="ignore")
@@ -149,7 +152,8 @@ while time.monotonic() < deadline:
     for i, rule in enumerate(rules):
         if fired[i]:
             continue
-        if rule["trigger"] in text or rule["trigger"] in visible_text:
+        settle_s = rule.get("settleMs", 0) / 1000
+        if (rule["trigger"] in text or rule["trigger"] in visible_text) and time.monotonic() - last_output_at >= settle_s:
             os.write(fd, rule["response"].encode())
             sys.stderr.write("FIRED\\t" + rule["trigger"] + "\\n")
             fired[i] = True
@@ -218,7 +222,11 @@ export function driveInteractiveCommand(
 ): Promise<InteractiveCommandResult> {
   const payload = JSON.stringify({
     cmd: options.cmd,
-    rules: options.rules.map((rule) => ({ trigger: rule.trigger, response: rule.response })),
+    rules: options.rules.map((rule) => ({
+      trigger: rule.trigger,
+      response: rule.response,
+      settleMs: rule.settleMs,
+    })),
     // Comfortably longer than the Node-side hard timeout below so the
     // driver's own bookkeeping never races the enforced bound.
     timeoutSeconds: Math.ceil(options.timeoutMs / 1000) + 30,

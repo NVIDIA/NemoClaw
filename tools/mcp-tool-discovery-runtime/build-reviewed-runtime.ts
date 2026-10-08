@@ -10,6 +10,9 @@ import { build } from "esbuild";
 const packageRoot = import.meta.dirname;
 const repoRoot = path.resolve(packageRoot, "../..");
 const reviewedRoot = path.join(packageRoot, "reviewed-runtime-bundle");
+const frozenManagedBootstrapRuntime = fs.readFileSync(
+  path.join(reviewedRoot, "managed-startup-image-runtime.bundle"),
+);
 const checkOnly = process.argv.slice(2).includes("--check");
 const unexpectedArguments = process.argv.slice(2).filter((argument) => argument !== "--check");
 if (unexpectedArguments.length > 0) {
@@ -22,6 +25,11 @@ const outputRoot = checkOnly
 const mcpOutput = path.join(outputRoot, "mcp-tool-discovery");
 
 if (!checkOnly) fs.rmSync(reviewedRoot, { force: true, recursive: true });
+fs.mkdirSync(outputRoot, { recursive: true });
+fs.writeFileSync(
+  path.join(outputRoot, "managed-startup-image-runtime.bundle"),
+  frozenManagedBootstrapRuntime,
+);
 process.env.NEMOCLAW_MCP_BUNDLE_OUTPUT_DIR = mcpOutput;
 process.env.NEMOCLAW_MCP_BUNDLE_FILENAME = "mcp-tool-discovery.bundle";
 process.env.NEMOCLAW_MCP_REVIEWED_ARTIFACT = "1";
@@ -30,17 +38,18 @@ try {
   await import("./build-runtime.ts");
   await build({
     absWorkingDir: repoRoot,
-    entryPoints: ["src/lib/onboard/managed-bootstrap/image-runtime.ts"],
+    entryPoints: ["tools/mcp-tool-discovery-runtime/managed-startup-direct-entry.ts"],
     bundle: true,
     platform: "node",
     target: "node22",
     format: "cjs",
     legalComments: "eof",
     minifyWhitespace: true,
-    outfile: path.join(outputRoot, "managed-startup-image-runtime.bundle"),
+    outfile: path.join(outputRoot, "managed-startup-direct-image-runtime.bundle"),
   });
   for (const relativePath of [
     "mcp-tool-discovery/mcp-tool-discovery.bundle",
+    "managed-startup-direct-image-runtime.bundle",
     "managed-startup-image-runtime.bundle",
   ]) {
     const bundlePath = path.join(outputRoot, relativePath);

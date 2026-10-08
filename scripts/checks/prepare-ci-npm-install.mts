@@ -2,10 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -15,22 +12,10 @@ import {
   verifyReviewedNpmLockPackages,
 } from "../lib/reviewed-npm-archive.mts";
 
+import { stageReviewedArchiveWithNpm, type NpmCacheStager } from "../lib/reviewed-npm-cache.mts";
+
 const TRUSTED_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MAXIMUM_ARCHIVE_BYTES = 32 * 1024 * 1024;
-const MAXIMUM_NPM_DIAGNOSTIC_INPUT_CHARACTERS = 4096;
-const MAXIMUM_NPM_DIAGNOSTIC_CHARACTERS = 512;
-const NPM_DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;
-const NPM_DIAGNOSTIC_AUTH_HEADER_PATTERN =
-  /(\b(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=])[^\r\n]*/giu;
-const NPM_DIAGNOSTIC_CREDENTIAL_ASSIGNMENT_PATTERN =
-  /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9._-]*(?:auth|credential|key|pass|passwd|password|secret|token)[A-Za-z0-9._-]*)[ \t]*(?:=|:)[ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s]+)/giu;
-const NPM_DIAGNOSTIC_PRIVATE_KEY_PATTERN =
-  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/gu;
-const NPM_DIAGNOSTIC_TOKEN_PATTERN =
-  /\b(?:github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(?:ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}/giu;
-const NPM_DIAGNOSTIC_JWT_PATTERN =
-  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu;
-const NPM_DIAGNOSTIC_OPAQUE_VALUE_PATTERN = /\b[A-Za-z0-9_+/=-]{32,}\b/gu;
 
 type PreparationRequest = Readonly<{
   artifactDirectory?: string;
@@ -40,36 +25,6 @@ type PreparationRequest = Readonly<{
 }>;
 
 type AuditConfig = ReturnType<typeof parseAuditConfig>;
-
-type NpmCacheStageRequest = Readonly<{
-  archive: Buffer;
-  artifactName: string;
-  cacheDirectory: string;
-}>;
-
-type NpmCacheStager = (request: NpmCacheStageRequest) => void;
-
-function npmCacheFailureDiagnostic(
-  stderr: string,
-  request: NpmCacheStageRequest,
-  stagingRoot: string,
-): string {
-  return stderr
-    .slice(0, MAXIMUM_NPM_DIAGNOSTIC_INPUT_CHARACTERS)
-    .replace(NPM_DIAGNOSTIC_PRIVATE_KEY_PATTERN, "<REDACTED>")
-    .replace(NPM_DIAGNOSTIC_URL_PATTERN, "<REDACTED_URL>")
-    .replace(NPM_DIAGNOSTIC_AUTH_HEADER_PATTERN, "$1 <REDACTED>")
-    .replace(NPM_DIAGNOSTIC_CREDENTIAL_ASSIGNMENT_PATTERN, "$1<REDACTED>")
-    .replace(/\bBearer[ \t]+\S+/giu, "Bearer <REDACTED>")
-    .replace(NPM_DIAGNOSTIC_TOKEN_PATTERN, "<REDACTED>")
-    .replace(NPM_DIAGNOSTIC_JWT_PATTERN, "<REDACTED>")
-    .replace(NPM_DIAGNOSTIC_OPAQUE_VALUE_PATTERN, "<REDACTED>")
-    .replaceAll(stagingRoot, "<staging-root>")
-    .replaceAll(request.cacheDirectory, "<npm-cache>")
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .trim()
-    .slice(0, MAXIMUM_NPM_DIAGNOSTIC_CHARACTERS);
-}
 
 export type ReviewedSourceRegistryPackage = Readonly<{
   artifactName: string;
@@ -84,6 +39,7 @@ export type ReviewedSourceRegistryArtifactRequest = Readonly<{
   artifactDirectory: string;
   cacheDirectory: string;
   lockfilePath: string;
+  otherReviewedPackages?: readonly ReviewedSourceRegistryPackage[];
   reviewed: ReviewedSourceRegistryPackage;
   reviewedPackagesWithoutIntegrity: readonly Readonly<{
     label: string;
@@ -92,42 +48,6 @@ export type ReviewedSourceRegistryArtifactRequest = Readonly<{
   }>[];
   registryOrigin: string;
 }>;
-
-function stageReviewedArchiveWithNpm(request: NpmCacheStageRequest): void {
-  const stagingRoot = mkdtempSync(join(tmpdir(), "nemoclaw-reviewed-npm-cache-add-"));
-  try {
-    const archivePath = join(stagingRoot, request.artifactName);
-    writeFileSync(archivePath, request.archive, { mode: 0o600 });
-    const result = spawnSync(
-      "npm",
-      [
-        "cache",
-        "add",
-        archivePath,
-        "--cache",
-        request.cacheDirectory,
-        "--offline",
-        "--ignore-scripts",
-      ],
-      {
-        encoding: "utf8",
-        env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-        maxBuffer: 16 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      const diagnostic = npmCacheFailureDiagnostic(result.stderr, request, stagingRoot);
-      const detail = diagnostic ? `: ${diagnostic}` : "";
-      throw new Error(
-        `npm could not stage the reviewed OpenShell SDK archive (exit ${String(result.status ?? "unavailable")})${detail}`,
-      );
-    }
-  } finally {
-    rmSync(stagingRoot, { force: true, recursive: true });
-  }
-}
 
 export async function seedReviewedSourceRegistryArtifact(
   request: ReviewedSourceRegistryArtifactRequest,
@@ -145,7 +65,15 @@ export async function seedReviewedSourceRegistryArtifact(
     throw new Error("reviewed OpenShell SDK artifact path must be a non-symlink directory");
   }
   const entries = readdirSync(artifactDirectory);
-  if (entries.length !== 1 || entries[0] !== request.reviewed.artifactName) {
+  const otherReviewedPackages = request.otherReviewedPackages ?? [];
+  const allowedNames = new Set([
+    request.reviewed.artifactName,
+    ...otherReviewedPackages.map(({ artifactName }) => artifactName),
+  ]);
+  if (
+    !entries.includes(request.reviewed.artifactName) ||
+    entries.some((entry) => !allowedNames.has(entry))
+  ) {
     throw new Error("reviewed OpenShell SDK artifact directory has unexpected contents");
   }
   const archivePath = resolve(join(artifactDirectory, request.reviewed.artifactName));
@@ -180,6 +108,16 @@ export async function seedReviewedSourceRegistryArtifact(
     label: request.reviewed.label,
     maximumBytes: MAXIMUM_ARCHIVE_BYTES,
   });
+  // Verify every supplied reviewed archive before staging only the lock-selected SDK.
+  for (const other of otherReviewedPackages) {
+    if (!entries.includes(other.artifactName)) continue;
+    readReviewedNpmArchiveFile({
+      archivePath: resolve(join(artifactDirectory, other.artifactName)),
+      expectedIntegrity: other.integrity,
+      label: other.label,
+      maximumBytes: MAXIMUM_ARCHIVE_BYTES,
+    });
+  }
   stage({ archive, artifactName: request.reviewed.artifactName, cacheDirectory });
 }
 
@@ -278,6 +216,9 @@ async function prepareCiNpmInstallWithConfig(
       artifactDirectory,
       cacheDirectory,
       lockfilePath: reviewedLockfilePath,
+      otherReviewedPackages: reviewedSourceRegistryPackages(config).filter(
+        ({ packageSpec }) => packageSpec !== reviewed.packageSpec,
+      ),
       registryOrigin: config.registryOrigin,
       reviewed,
       reviewedPackagesWithoutIntegrity: config.sourceRegistryPackagesWithoutIntegrity,

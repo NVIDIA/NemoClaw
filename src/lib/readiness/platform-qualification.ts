@@ -12,7 +12,7 @@ import {
 } from "../inference/dgx-station-identity.js";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
-import { collectN1xWslProduct } from "../inference/platform-identity/n1x-wsl.js";
+import { collectWslNvidiaProduct } from "../inference/platform-identity/n1x-wsl.js";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
@@ -50,6 +50,8 @@ export interface PlatformIdentity {
   n1xPciGpu?: boolean | null;
   n1xWslGpu?: boolean | null;
   n1xWslProduct?: boolean | null;
+  stationGb300WslGpu?: boolean | null;
+  stationGb300WslProduct?: boolean | null;
   stationProfile?: StationProfile | null;
   stationGb300PciGpu?: boolean | null;
   osId?: string | null;
@@ -95,9 +97,15 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   memInfoPath?: string;
   stationReleasePath?: string;
   osReleasePath?: string;
+  /** Alternate OS release path used only when the default descriptor-backed primary is absent. */
+  osReleaseFallbackPath?: string;
+  /** Test seam for an already bounded OS release read. */
+  readBoundedOsRelease?: (filePath: string, maxBytes: number) => string | undefined;
   isWsl?: boolean;
   /** Pre-collected boundary observation; null means the probe was inconclusive. */
   n1xWslProductObservation?: boolean | null;
+  /** Pre-collected boundary observation; null means the probe was inconclusive. */
+  stationGb300WslProductObservation?: boolean | null;
   runCaptureImpl?: (
     command: readonly string[],
     options?: { ignoreError?: boolean; timeout?: number },
@@ -106,7 +114,74 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
 
 const STATION_HOST_INFO_MAX_BYTES = 64 * 1024;
 const MAX_REPORTED_CPU_COUNT = 4096;
+const OS_RELEASE_MAX_BYTES = 4096;
 
+/** Read a regular file through a descriptor without ever buffering past the limit. */
+function readBoundedRegularFile(filePath: string, maxBytes: number): string | undefined {
+  let fileDescriptor: number | undefined;
+  try {
+    const flags =
+      fs.constants.O_RDONLY |
+      (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0);
+    fileDescriptor = fs.openSync(filePath, flags);
+    const metadata = fs.fstatSync(fileDescriptor);
+    if (!metadata.isFile() || metadata.size > maxBytes) return undefined;
+    const contents = Buffer.alloc(maxBytes + 1);
+    const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
+    if (bytesRead > maxBytes) return undefined;
+    const decoded = contents.toString("utf8", 0, bytesRead);
+    return decoded.trim() ? decoded : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fileDescriptor !== undefined) fs.closeSync(fileDescriptor);
+  }
+}
+
+/** Read OS release identity from the standard primary or fallback without following other links. */
+export function readBoundedLocalOsRelease(
+  primaryPath: string,
+  fallbackPath: string,
+  maxBytes: number,
+): string | undefined {
+  let candidatePath = primaryPath;
+  try {
+    const metadata = fs.lstatSync(primaryPath);
+    if (metadata.isSymbolicLink()) {
+      const target = fs.readlinkSync(primaryPath);
+      if (
+        path.isAbsolute(target) ||
+        path.resolve(path.dirname(primaryPath), target) !== path.resolve(fallbackPath)
+      ) {
+        return undefined;
+      }
+      candidatePath = fallbackPath;
+    } else if (!metadata.isFile()) {
+      return undefined;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+    candidatePath = fallbackPath;
+  }
+  return readBoundedRegularFile(candidatePath, maxBytes);
+}
+
+/** Keep dependency-injected fixture reads subject to the same accepted-size contract. */
+function readInjectedOsRelease(
+  readFile: (filePath: string) => string,
+  filePath: string,
+  maxBytes: number,
+): string | undefined {
+  try {
+    const contents = readFile(filePath);
+    if (Buffer.byteLength(contents) > maxBytes) return undefined;
+    return contents.trim() ? contents : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read optional injected fixture text while applying the shared diagnostic sanitization bound. */
 function readOptional(
   readFile: (filePath: string) => string,
   filePath: string,
@@ -121,17 +196,20 @@ function readOptional(
   }
 }
 
+/** Parse selected os-release fields as inert text and reject ambiguous control bytes. */
 function parseOsRelease(contents: string): {
   osId?: string;
   osVersionId?: string;
   osPrettyName?: string;
 } {
+  if (contents.includes("\0") || contents.includes("\r")) return {};
   const values = new Map<string, string>();
   for (const line of contents.split("\n")) {
     const match = /^(ID|VERSION_ID|PRETTY_NAME)=(?:"([^"\0]*)"|([A-Za-z0-9._-]+))$/.exec(line);
+    if (/^(?:ID|VERSION_ID|PRETTY_NAME)=/.test(line) && !match) return {};
     if (!match) continue;
     const [, key, quotedValue, plainValue] = match;
-    if (!key || values.has(key)) continue;
+    if (!key || values.has(key)) return {};
     values.set(key, quotedValue ?? plainValue ?? "");
   }
   return {
@@ -272,6 +350,7 @@ function parseStationRelease(contents: string): StationProfile {
   return "unsupported-dgx-os";
 }
 
+/** Read bounded text from an already validated file descriptor. */
 function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
   const contents = Buffer.alloc(maxBytes + 1);
   const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);
@@ -279,6 +358,7 @@ function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
   return contents.toString("utf8", 0, bytesRead);
 }
 
+/** Collect bounded public host identity without changing the observed system. */
 export function collectPlatformIdentity(
   options: CollectPlatformIdentityOptions = {},
 ): PlatformIdentity {
@@ -314,10 +394,40 @@ export function collectPlatformIdentity(
   const firmwareProducts = [productName, productFamily, boardName, deviceTreeModel];
   const firmwareIdentity = classifyNvidiaFirmwareProducts(firmwareProducts);
   const stationFirmwareProduct = firmwareIdentity.stationFirmwareProduct;
-  const n1xWslProduct = Object.prototype.hasOwnProperty.call(options, "n1xWslProductObservation")
+  const hasN1xWslProductObservation = Object.prototype.hasOwnProperty.call(
+    options,
+    "n1xWslProductObservation",
+  );
+  const hasStationGb300WslProductObservation = Object.prototype.hasOwnProperty.call(
+    options,
+    "stationGb300WslProductObservation",
+  );
+  const collectedWslProduct =
+    options.isWsl && !hasN1xWslProductObservation && !hasStationGb300WslProductObservation
+      ? collectWslNvidiaProduct(options)
+      : undefined;
+  const n1xWslProduct = hasN1xWslProductObservation
     ? options.n1xWslProductObservation
-    : collectN1xWslProduct(options);
-  const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
+    : collectedWslProduct?.n1x;
+  const stationGb300WslProduct = hasStationGb300WslProductObservation
+    ? options.stationGb300WslProductObservation
+    : collectedWslProduct?.stationGb300;
+  const wslIdentity = options.isWsl ? { n1xWslProduct, stationGb300WslProduct } : {};
+  const osReleasePath = options.osReleasePath ?? "/etc/os-release";
+  const osReleaseFallbackPath =
+    options.osReleaseFallbackPath ??
+    (options.osReleasePath === undefined ? "/usr/lib/os-release" : osReleasePath);
+  const osRelease = options.readBoundedOsRelease
+    ? options.readBoundedOsRelease(osReleasePath, OS_RELEASE_MAX_BYTES)
+    : options.readFile
+      ? readInjectedOsRelease(options.readFile, osReleasePath, OS_RELEASE_MAX_BYTES)
+      : readBoundedLocalOsRelease(osReleasePath, osReleaseFallbackPath, OS_RELEASE_MAX_BYTES);
+  const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
+  const osIdentity = {
+    ...(osId === undefined ? {} : { osId }),
+    ...(osVersionId === undefined ? {} : { osVersionId }),
+    ...(osPrettyName === undefined ? {} : { osPrettyName }),
+  };
   if (firmwareIdentity.platformIdentityConflict) {
     return {
       productName,
@@ -326,6 +436,7 @@ export function collectPlatformIdentity(
       ...(deviceTreeModel === undefined ? {} : { deviceTreeModel }),
       platformIdentityConflict: true,
       ...wslIdentity,
+      ...osIdentity,
     };
   }
   let nvidiaPlatform: NvidiaPlatform | undefined = firmwareIdentity.nvidiaPlatform;
@@ -347,15 +458,15 @@ export function collectPlatformIdentity(
         nvidiaPlatform,
         productName,
         ...wslIdentity,
+        ...osIdentity,
         n1xCandidate: true,
         n1xFastOsMarker: n1xIdentity.fastOsMarker,
         n1xPciGpu: n1xIdentity.pciGpu,
       };
     }
   }
-  if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName, ...wslIdentity };
-  const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
-  const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
+  if (nvidiaPlatform !== "station")
+    return { nvidiaPlatform, productName, ...wslIdentity, ...osIdentity };
   const stationCpuCoreCount = parseCpuPossibleCount(
     readOptional(
       readFile,
@@ -414,9 +525,7 @@ export function collectPlatformIdentity(
       readdir,
       options.pciDevicesPath ?? "/sys/bus/pci/devices",
     ),
-    osId,
-    osVersionId,
-    ...(osPrettyName === undefined ? {} : { osPrettyName }),
+    ...osIdentity,
   };
 }
 
@@ -463,6 +572,31 @@ function deriveN1xWslQualification(
   if (input.n1xWslGpu === undefined || input.n1xWslGpu === null) return "unknown";
   if (!activeRuntimeProviderId || input.containerGpuProof === undefined) return "unknown";
   return input.n1xWslGpu === true &&
+    input.platform === "linux" &&
+    input.architecture === "arm64" &&
+    input.containerGpuProof.providerId === activeRuntimeProviderId &&
+    input.containerGpuProof.passed &&
+    input.hasNvidiaGpu
+    ? "qualified"
+    : "unqualified";
+}
+
+function deriveStationGb300WslQualification(
+  input: Readonly<PlatformQualificationInput>,
+  activeRuntimeProviderId: string | null,
+): QualificationStatus {
+  if (!input.isWsl) return "unqualified";
+  if (
+    input.stationGb300WslGpu === undefined ||
+    input.stationGb300WslGpu === null ||
+    input.stationGb300WslProduct === undefined ||
+    input.stationGb300WslProduct === null
+  ) {
+    return "unknown";
+  }
+  if (!activeRuntimeProviderId || input.containerGpuProof === undefined) return "unknown";
+  return input.stationGb300WslGpu === true &&
+    input.stationGb300WslProduct === true &&
     input.platform === "linux" &&
     input.architecture === "arm64" &&
     input.containerGpuProof.providerId === activeRuntimeProviderId &&
@@ -573,6 +707,7 @@ export function projectPlatformQualification(
   const sparkQualified = sparkIdentity && input.architecture === "arm64" && input.hasNvidiaGpu;
   const n1x = deriveN1xQualification(input);
   const n1xWslStatus = deriveN1xWslQualification(input, activeRuntimeProviderId);
+  const stationGb300WslStatus = deriveStationGb300WslQualification(input, activeRuntimeProviderId);
   const platformSupported =
     (linuxSupported || macosSupported) &&
     input.platformIdentityConflict !== true &&
@@ -590,6 +725,8 @@ export function projectPlatformQualification(
     input.n1xPciGpu !== undefined ||
     input.n1xWslGpu !== undefined ||
     input.n1xWslProduct !== undefined ||
+    input.stationGb300WslGpu !== undefined ||
+    input.stationGb300WslProduct !== undefined ||
     input.stationProfile ||
     input.stationFirmwareProduct
   ) {
@@ -614,6 +751,8 @@ export function projectPlatformQualification(
         n1xPciGpu: input.n1xPciGpu ?? null,
         n1xWslGpu: input.n1xWslGpu ?? null,
         n1xWslProduct: input.n1xWslProduct ?? null,
+        stationGb300WslGpu: input.stationGb300WslGpu ?? null,
+        stationGb300WslProduct: input.stationGb300WslProduct ?? null,
         stationProfile: input.stationProfile ?? null,
         stationGb300PciGpu: input.stationGb300PciGpu ?? null,
         osId: input.osId ?? null,
@@ -661,6 +800,10 @@ export function projectPlatformQualification(
     capability(
       "host.platform.n1x_wsl",
       !input.isWsl ? "absent" : n1xWslStatus === "qualified" ? "present" : "absent",
+    ),
+    capability(
+      "host.platform.station_gb300_wsl",
+      !input.isWsl ? "absent" : stationGb300WslStatus === "qualified" ? "present" : "absent",
     ),
     capability("host.platform.dgx_spark", sparkQualified ? "present" : "absent"),
     capability(
@@ -737,6 +880,13 @@ export function projectPlatformQualification(
     if (input.n1xWslGpu === true) {
       qualifications.push(
         qualification("host.platform.n1x_wsl", n1xWslStatus, ["host.platform.n1x_wsl"]),
+      );
+    }
+    if (input.stationGb300WslGpu === true || input.stationGb300WslProduct === true) {
+      qualifications.push(
+        qualification("host.platform.station_gb300_wsl", stationGb300WslStatus, [
+          "host.platform.station_gb300_wsl",
+        ]),
       );
     }
   }

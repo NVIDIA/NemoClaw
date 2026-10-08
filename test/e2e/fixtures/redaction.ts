@@ -30,7 +30,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
+import { pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 const REDACTED = "<REDACTED>";
 const EXPLICIT_REDACTED = "[REDACTED]";
@@ -199,9 +202,8 @@ export function redactString(text: string, explicitValues?: Iterable<string>): s
 }
 
 // Env keys the fixture layer guarantees children may always see. Anything
-// outside this set, outside FIXTURE_ENV_PREFIXES, and not declared
-// in PhaseAction.secretEnv / AssertionStep.secretEnv is dropped before
-// the child spawns.
+// outside this set, outside FIXTURE_ENV_PREFIXES, and not declared by the
+// calling fixture is dropped before the child spawns.
 const FIXTURE_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
   "PATH",
   "HOME",
@@ -319,9 +321,8 @@ export function buildChildEnv(
   // onboarding action's child runs without nemoclaw on PATH and
   // dies with 'nemoclaw: command not found'. Add ~/.local/bin to
   // every child's PATH at the fixture boundary so the install
-  // location is consistent across phases. Idempotent equivalent of
-  // the install-path-refresh.sh nemoclaw_ensure_local_bin_on_path
-  // helper, applied centrally instead of per-script.
+  // location is consistent across phases. Apply this at the fixture
+  // boundary for each child process.
   const home = out.HOME ?? base.HOME;
   if (typeof home === "string" && home.length > 0) {
     const localBin = `${home}/.local/bin`;
@@ -364,4 +365,17 @@ export function fixtureEnvAllowlistSnapshot(): {
     keys: [...FIXTURE_ENV_ALLOWLIST].sort(),
     prefixes: [...FIXTURE_ENV_PREFIXES],
   };
+}
+
+// Shell checks use the same redaction boundary for bounded diagnostic excerpts.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const output = Buffer.from(
+    redactString(stripVTControlCharacters(readFileSync(0, "utf8")), [
+      process.env.COMPATIBLE_API_KEY ?? "",
+    ]),
+  );
+  const limit = 16 * 1024;
+  if (output.length > limit) console.log("[truncated; last 16 KiB of redacted output]");
+  process.stdout.write(output.subarray(-limit));
+  if (output.length > 0) console.log();
 }

@@ -3,7 +3,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  runOpenshell,
+  buildSelectedOpenShellSubprocessEnv,
+} from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { isNonInteractiveEnv, isNonInteractiveSession } from "../../core/non-interactive";
@@ -35,6 +38,7 @@ import {
   MessagingWorkflowPlanner,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   runMessagingHook,
+  type MessagingHookRegistry,
   type MessagingOpenShellRunner,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
@@ -89,16 +93,10 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
-import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 const isNonInteractive = () => isNonInteractiveSession();
-const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
-  runOpenshell([...args], {
-    env: options.env as NodeJS.ProcessEnv | undefined,
-    ignoreError: options.ignoreError,
-    input: options.input,
-    stdio: options.stdio as never,
-  });
 
 function removeDisabledChannelAgentConfigOrExit(
   sandboxName: string,
@@ -106,6 +104,15 @@ function removeDisabledChannelAgentConfigOrExit(
   plan: SandboxMessagingPlan,
 ): void {
   try {
+    const runtime = policyChannelDependencies.resolveConfigRuntimeSelection(sandboxName);
+    const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
+      runOpenshell(["-g", runtime.gatewayName, ...args], {
+        env: buildSelectedOpenShellSubprocessEnv(runtime, options.env),
+        replaceEnv: true,
+        ignoreError: options.ignoreError,
+        input: options.input,
+        stdio: options.stdio as never,
+      });
     MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(plan, channelId, {
       runOpenshell: runMessagingOpenshell,
     });
@@ -193,6 +200,7 @@ function withSandboxMutationLockUnlessPreview<T>(
  */
 export interface AddSandboxChannelDependencies {
   readonly googlechatNonInteractiveAudienceCapability?: GooglechatNonInteractiveAudienceCapability;
+  readonly preEnableHookRegistry?: MessagingHookRegistry;
   readonly upsertMessagingProviders?: typeof policyChannelDependencies.upsertMessagingProviders;
 }
 
@@ -759,6 +767,7 @@ async function checkMessagingPreEnableHooks(
   channelName: string,
   plan: SandboxMessagingPlan,
   force: boolean,
+  injectedHookRegistry?: MessagingHookRegistry,
 ): Promise<boolean> {
   const requests = MessagingSetupApplier.listPreEnableChecks(plan);
   if (requests.length === 0) return true;
@@ -780,7 +789,9 @@ async function checkMessagingPreEnableHooks(
     return true;
   }
 
-  const hookRegistry = createBuiltInMessagingHookRegistry();
+  const hookRegistry =
+    injectedHookRegistry ??
+    policyChannelDependencies.createMessagingHostForwardPreEnableHookRegistry();
   const currentGatewayName = getSandboxTargetGatewayName(sandboxName);
   const additionalInputs = createMessagingPreEnableHookInputs({
     currentSandbox: sandboxName,
@@ -993,17 +1004,30 @@ export function revalidateMessagingProviderAttachmentTarget(
   sandboxName: string,
   gatewayName: string,
 ): void {
-  const expected = registry.getSandbox(sandboxName);
-  const lifecycleGeneration = expected?.lifecycleGeneration;
-  const expectedFingerprint = expected?.lifecycleLiveIdentityFingerprint;
+  let expected = registry.getSandbox(sandboxName);
   if (
-    !expected ||
-    typeof lifecycleGeneration !== "string" ||
-    typeof expectedFingerprint !== "string" ||
-    (expected.gatewayName && expected.gatewayName !== gatewayName)
+    expected &&
+    (expected.lifecycleGeneration === undefined ||
+      expected.lifecycleLiveIdentityFingerprint === undefined)
   ) {
+    expected =
+      policyChannelDependencies.recoverMessagingProviderAttachmentIdentity(
+        expected,
+        gatewayName,
+        onboardSession,
+      ) ?? expected;
+  }
+  if (!expected || (expected.gatewayName && expected.gatewayName !== gatewayName)) {
     throw new Error(
       `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment.`,
+    );
+  }
+  const lifecycleGeneration = expected.lifecycleGeneration;
+  const expectedFingerprint = expected.lifecycleLiveIdentityFingerprint;
+  if (typeof lifecycleGeneration !== "string" || typeof expectedFingerprint !== "string") {
+    throw new Error(
+      `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment. ` +
+        `Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to record its lifecycle identity, then rerun this command.`,
     );
   }
   const liveFingerprint = policyChannelDependencies.inspectMessagingProviderAttachmentTarget(
@@ -1121,9 +1145,7 @@ async function runMessagingHealthChecksAfterRebuild(
     openclawBridgeHealth: {
       sandboxName,
       executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
-          localDockerFallbackPolicy: "read-only",
-        }),
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {}),
     },
   });
   try {
@@ -1429,7 +1451,15 @@ async function addSandboxChannelUnlocked(
   }
   // Credential axis passed; now channel-owned pre-enable hooks can catch
   // channel-specific conflicts before provider/policy mutation.
-  if (!(await checkMessagingPreEnableHooks(sandboxName, canonical, plan, force))) {
+  if (
+    !(await checkMessagingPreEnableHooks(
+      sandboxName,
+      canonical,
+      plan,
+      force,
+      dependencies.preEnableHookRegistry,
+    ))
+  ) {
     return; // user aborted; nothing registered or widened
   }
   assertAddChannelPlanActive(sandboxName, manifest, plan);
@@ -1473,7 +1503,11 @@ async function addSandboxChannelUnlocked(
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
     if (rebuilt) {
-      ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+      if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+        throw new Error(
+          `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+        );
+      }
       await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
     }
     return;
@@ -1551,7 +1585,11 @@ async function addSandboxChannelUnlocked(
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
     await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
   }
 }
@@ -1703,28 +1741,7 @@ function getSandboxChannelStatePaths(
   }
   const messagingAgentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
   const manifestStateDirs = messagingAgentId ? manifest?.state?.[messagingAgentId] : undefined;
-  if (manifestStateDirs !== undefined) {
-    return manifestStateDirs.map((stateDir) => `${configDir}/${stateDir}`);
-  }
-  const stateDirs = new Set(agent.stateDirs);
-  const paths: string[] = [];
-  const isHermesWhatsapp = agent.name === "hermes" && channelName === "whatsapp";
-  if (stateDirs.has("platforms")) {
-    paths.push(`${configDir}/platforms/${channelName}`);
-  }
-  if (isHermesWhatsapp && stateDirs.has("profiles")) {
-    paths.push(`${configDir}/profiles/dashboard-home/platforms/whatsapp/session`);
-  }
-  // Retain cleanup for the pre-profile Dashboard home while Hermes startup
-  // still treats it as migration input. This prevents legacy credentials from
-  // being migrated back into the canonical profile during a later rebuild.
-  if (isHermesWhatsapp && stateDirs.has("dashboard-home")) {
-    paths.push(`${configDir}/dashboard-home/platforms/whatsapp/session`);
-  }
-  if (paths.length === 0 && stateDirs.has(channelName)) {
-    paths.push(`${configDir}/${channelName}`);
-  }
-  return paths;
+  return (manifestStateDirs ?? []).map((stateDir) => `${configDir}/${stateDir}`);
 }
 
 function isSafeChannelStatePath(p: string): boolean {
@@ -1779,14 +1796,13 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first. A permitted reconciled runtime-provider retry runs before SSH.
- * OpenClaw WeChat stopped-state cleanup runs last.
+ * OpenShell owns running-sandbox execution.
+ * OpenClaw WeChat selects its owned stopped-state cleanup before command execution.
  * Fixes #3998.
  */
 async function clearSandboxChannelDurableState(
   sandboxName: string,
   channelName: string,
-  options: { readonly allowAbsentStoppedState?: boolean } = {},
 ): Promise<boolean> {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
@@ -1798,16 +1814,13 @@ async function clearSandboxChannelDurableState(
 
   const quoted = paths.map((p) => shellQuote(p)).join(" ");
   const cmd = `rm -rf -- ${quoted} && printf '%s\\n' ${shellQuote(CHANNEL_CLEAR_SENTINEL)}`;
-  const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
-    !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
+  const sentinelSeen = (result: { status: number; stdout?: string | null } | null): boolean =>
+    !!result &&
+    result.status === 0 &&
+    typeof result.stdout === "string" &&
+    result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = await executeSandboxExecCommand(sandboxName, cmd, undefined, {
-    localDockerFallbackPolicy: "reconciled",
-  });
-  if (!sentinelSeen(result)) {
-    result = await executeSandboxCommand(sandboxName, cmd);
-  }
-  if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
+  if (agent.name === "openclaw" && channelName === "wechat") {
     const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
       sandboxName,
       paths,
@@ -1817,19 +1830,32 @@ async function clearSandboxChannelDurableState(
       return true;
     }
     if (
-      options.allowAbsentStoppedState &&
-      [
-        "sandbox-registry-unavailable",
+      ![
+        "runtime-not-stopped",
         "provider-cleanup-unavailable",
+        "sandbox-registry-unavailable",
         "no-eligible-stopped-runtime",
       ].includes(stoppedCleanup.failure)
     ) {
-      return true;
+      console.error(
+        `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
+          `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
+      );
+      return false;
     }
+  }
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, cmd);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
     console.error(
-      `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
-        `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
+      `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state: ${error.message}`,
     );
+    console.error(
+      `    Restore sandbox lifecycle access, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${channelName}`,
+    );
+    return false;
   }
   if (!sentinelSeen(result)) {
     console.error(
@@ -1941,21 +1967,18 @@ async function removeSandboxChannelUnlocked(
   }
 
   // Channels with durable account or session state store auth blobs inside
-  // the sandbox that survive a rebuild via the state_dirs backup. Tear those
-  // down FIRST so a cleanup failure leaves the registry/policy untouched.
+  // the sandbox that survive a rebuild via complete native-home persistence.
+  // Tear those down FIRST so a cleanup failure leaves registry/policy untouched.
   // OpenClaw WeChat can additionally recover through a provider-owned stopped-state
   // helper because the same missing account file may block its entrypoint.
   // Bailing here is the only way to keep #3998 from recurring on cleanup
   // error. OpenClaw WeChat also checks for physical residue after an earlier
   // interrupted removal erased its logical plan or policy record. A missing
-  // registry, unavailable provider cleanup, or absent stopped runtime remains a quiet
-  // no-op only when no logical residue exists (#4001 review).
+  // registry or unavailable stopped-state cleanup does not prove durable state is absent.
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !(await clearSandboxChannelDurableState(sandboxName, canonical, {
-      allowAbsentStoppedState: !hasChannelResidue,
-    }))
+    !(await clearSandboxChannelDurableState(sandboxName, canonical))
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
@@ -2113,7 +2136,11 @@ async function sandboxChannelsSetEnabled(
   console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
   const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${canonical}'`);
   if (rebuilt && !disabled) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
   }
 }
 

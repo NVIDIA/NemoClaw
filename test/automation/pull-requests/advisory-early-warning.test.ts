@@ -224,7 +224,7 @@ describe("advisory early warning correlation", () => {
 });
 
 describe("advisory early warning inventory parsing", () => {
-  it("parses package specs from the npm audit config", () => {
+  it("parses archive package specs without duplicating lock-derived graphs", () => {
     const config = {
       archivePackages: [
         { packageSpec: "openclaw@2026.6.10" },
@@ -235,7 +235,36 @@ describe("advisory early warning inventory parsing", () => {
     expect(parseInventoryFromAuditConfig(config, "ci/reviewed-npm-audit.json")).toEqual([
       { name: "openclaw", version: "2026.6.10", origin: "ci/reviewed-npm-audit.json" },
       { name: "@openclaw/slack", version: "2026.6.10", origin: "ci/reviewed-npm-audit.json" },
-      { name: "mcporter", version: "0.7.3", origin: "ci/reviewed-npm-audit.json" },
+    ]);
+  });
+
+  it("derives a replacement graph identity only from its selected lock", () => {
+    const config = {
+      archivePackages: [],
+      lockedGraphs: [
+        {
+          packageSpec: "openclaw@2026.7.1",
+          replacement: { packageSpec: "openclaw@2026.9.1" },
+        },
+      ],
+    };
+    const lock = {
+      lockfileVersion: 3,
+      packages: {
+        "": { dependencies: { openclaw: "2026.9.1" } },
+        "node_modules/openclaw": { version: "2026.9.1" },
+      },
+    };
+
+    expect([
+      ...parseInventoryFromAuditConfig(config, "ci/reviewed-npm-audit.json"),
+      ...parseInventoryFromPackageLock(lock, "agents/openclaw/openclaw-runtime/package-lock.json"),
+    ]).toEqual([
+      {
+        name: "openclaw",
+        version: "2026.9.1",
+        origin: "agents/openclaw/openclaw-runtime/package-lock.json",
+      },
     ]);
   });
 

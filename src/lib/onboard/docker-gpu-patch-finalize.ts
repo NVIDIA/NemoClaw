@@ -24,8 +24,7 @@
 // Removal condition: when OpenShell supports native Docker-driver GPU
 // creation/reconnect, drop the NemoClaw post-create container recreation
 // and delete this module along with its direct callers in
-// docker-gpu-patch-recreate.ts, docker-gpu-sandbox-create.ts, and
-// src/lib/actions/sandbox/supervisor-relaunch.ts.
+// docker-gpu-patch-recreate.ts and docker-gpu-sandbox-create.ts.
 
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";

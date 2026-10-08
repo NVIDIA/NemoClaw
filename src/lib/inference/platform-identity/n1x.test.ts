@@ -53,7 +53,8 @@ function unexpectedFixturePath(filePath: string): never {
 }
 
 describe("N1x identity", () => {
-  it("recognizes the bounded N1x GPU name reported through WSL (#10962)", () => {
+  it("recognizes each accepted bounded N1x GPU name reported through WSL (#10962, #12282)", () => {
+    expect(isN1xWslGpuName("NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)")).toBe(true);
     expect(isN1xWslGpuName("NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)")).toBe(true);
     expect(isN1xWslGpuName("NVIDIA RTX Spark N1X")).toBe(true);
   });
@@ -63,10 +64,12 @@ describe("N1x identity", () => {
     "NVIDIA RTX Spark N1X2",
     "Prototype NVIDIA RTX Spark N1X",
     "NVIDIA RTX Spark N1X prototype",
+    "NVIDIA RTX Spark N1X (4096-core Blackwell RTX GPU)",
+    "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU) prototype",
     "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU) prototype",
     `NVIDIA RTX Spark N1X\nforged`,
     `NVIDIA RTX Spark N1X ${"x".repeat(256)}`,
-  ])("rejects a noncanonical N1x WSL GPU identity %s (#10962)", (name) => {
+  ])("rejects a noncanonical N1x WSL GPU identity %s (#10962, #12282)", (name) => {
     expect(isN1xWslGpuName(name)).toBe(false);
   });
 
