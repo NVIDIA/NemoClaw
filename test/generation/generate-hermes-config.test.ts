@@ -328,22 +328,18 @@ afterEach(() => {
 });
 
 describe("agents/hermes/generate-config.ts", () => {
-  it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
-    "writes the selected native endpoint and opaque credential for %s (#12558)",
+  it.each(["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"])(
+    "refuses deferred Hermes native-local route %s (#12921)",
     (provider) => {
-      const { config, envFile } = runConfigScript({
-        NEMOCLAW_UPSTREAM_PROVIDER: provider,
-        NEMOCLAW_MODEL: "local-model",
-        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
-        NEMOCLAW_INFERENCE_API: "openai-completions",
-        OPENAI_API_KEY: "ambient-secret-must-not-escape",
-      });
-      expect(config.model).toMatchObject({
-        default: "local-model",
-        base_url: "http://host.openshell.internal:11434/v1",
-        api_key: "sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      });
-      expect(JSON.stringify(config) + envFile).not.toContain("ambient-secret-must-not-escape");
+      expectGenerationError(
+        {
+          NEMOCLAW_UPSTREAM_PROVIDER: provider,
+          NEMOCLAW_MODEL: "local-model",
+          NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+          NEMOCLAW_INFERENCE_API: "openai-completions",
+        },
+        "Hermes native-local inference is not supported yet",
+      );
     },
   );
 

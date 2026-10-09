@@ -3,10 +3,10 @@
 
 import {
   normalizeNativeLocalProviderAttachment,
-  nativeLocalCredentialReference,
   type NativeLocalProviderAttachment,
 } from "../../inference/native-local/contract";
 
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../inference/native-local/agent-config";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
@@ -137,11 +137,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   return {
     endpoint: `${apiBaseUrl}/chat/completions`,
-    headers: local
-      ? [
-          `Authorization: Bearer ${nativeLocalCredentialReference(local.provider, local.endpointUrl)}`,
-        ]
-      : [],
+    headers: [],
     payload: {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
@@ -163,15 +159,19 @@ export function buildSandboxInferenceInvocationCommand(
 ): string {
   const request = buildProbeRequest(input);
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const useNativeLocal = Boolean(
+    normalizeNativeLocalProviderAttachment(input.nativeLocalProviderAttachment),
+  );
   const headerArgs =
     ["Content-Type: application/json", ...request.headers]
       .map((header) => `-H ${shellQuote(header)}`)
-      .join(" ") + (useNativeNvidia ? ' -H "$AUTH_HEADER"' : "");
+      .join(" ") + (useNativeNvidia || useNativeLocal ? ' -H "$AUTH_HEADER"' : "");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
     ...(useNativeNvidia ? [NATIVE_NVIDIA_AUTH_HEADER_SCRIPT] : []),
+    ...(useNativeLocal ? [NATIVE_LOCAL_AUTH_HEADER_SCRIPT] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
     `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,

@@ -33,3 +33,22 @@ export function nativeLocalCredentialReference(
     return null;
   }
 }
+
+/** Endpoint-bound credentials require a supervisor-issued revision or stable identity. */
+export const NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN =
+  "^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN$";
+
+export const NATIVE_LOCAL_AUTH_HEADER_SCRIPT = [
+  'case "${NEMOCLAW_LOCAL_INFERENCE_TOKEN:-}" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac',
+  `printf '%s' "\${NEMOCLAW_LOCAL_INFERENCE_TOKEN:-}" | LC_ALL=C grep -Eq '${NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN}' || exit 2`,
+  'AUTH_HEADER="Authorization: Bearer ${NEMOCLAW_LOCAL_INFERENCE_TOKEN}"',
+].join("; ");
+
+/** Hermes native-local credential projection is deferred to #12921. */
+export function requireNativeLocalAgentSupport(agentName: string | null | undefined): void {
+  if (agentName === "hermes") {
+    throw new Error(
+      "Hermes native-local inference is not supported yet (issue #12921). Select a hosted provider.",
+    );
+  }
+}

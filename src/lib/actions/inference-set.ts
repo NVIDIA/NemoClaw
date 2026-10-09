@@ -3,7 +3,10 @@
 
 import { rejectInferenceSelectionProbe } from "./inference-set-provider-diagnostics";
 import type { NativeLocalProviderAttachment } from "../inference/native-local/contract";
-import { nativeLocalCredentialReference } from "../inference/config";
+import {
+  nativeLocalCredentialReference,
+  requireNativeLocalAgentSupport,
+} from "../inference/config";
 import {
   requireNativeProviderPolicy,
   usesNativeLocalInference,
@@ -1409,6 +1412,7 @@ async function runInferenceSetWithoutHostLock(
     provider,
     options.endpointUrl ?? (entry.provider === provider ? entry.endpointUrl : null),
   );
+  if (selectingNativeLocal) requireNativeLocalAgentSupport(agentName);
   const selectingNative = selectingNativeNvidia || selectingNativeLocal;
   const previousNativeLocalAttachment = await prepareNativeLocalSelectionBoundary({
     entry,

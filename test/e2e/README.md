@@ -2089,6 +2089,8 @@ The explicit `dgx-station-express` target runs the local Station Express install
 
 ### Native host-local inference
 
+Slice 4 supports the DCode/OpenClaw contract below. Hermes native-local selection is deferred to #12921 and must fail before provider mutation; hosted Hermes routes remain supported. Hermes credential projection through its guarded configuration lifecycle is not part of this slice.
+
 `inference-routing` TC-INF-09 owns the real OpenShell boundary for Slice 4 of #12558: a fresh DCode process reaches its selected authenticated local endpoint, and attaching a provider to an OpenClaw sibling sandbox does not grant the first sandbox access to that endpoint. The test uses the existing compatible-server fixture and target. Existing local runtime qualification owns Ollama, vLLM, llama.cpp, GPU startup, and cleanup.
 
 Profile rules, ownership collisions, credential custody, mutation reconciliation, gateway prerequisites, and generated request behavior belong to the native-local, provider-policy, gateway bootstrap, and compatible-endpoint-smoke source tests. TC-INF-09 replaces its managed-route curl success evidence with a fresh native agent turn and the server's authenticated selected-model request. Sibling denial remains live because a source test cannot prove OpenShell composes provider policy per sandbox. No assertion about terminal formatting is added.

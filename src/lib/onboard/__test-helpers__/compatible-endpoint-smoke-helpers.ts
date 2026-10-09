@@ -172,6 +172,7 @@ export function runProviderNeutralScript(options: {
   managedProxyResponses?: unknown[];
   inferenceUrl?: string;
   expectedAuthorization?: string;
+  runtimeEnvironment?: NodeJS.ProcessEnv;
 }) {
   const model = options.model ?? "qwen3.5-9b";
   const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
@@ -292,7 +293,7 @@ time.sleep = lambda seconds: sleep_delays.append(seconds)
     encoding: "utf8",
     env:
       options.managedProxyResponses === undefined
-        ? process.env
+        ? { ...process.env, ...options.runtimeEnvironment }
         : {
             ...process.env,
             HTTPS_PROXY: "http://openshell-runtime-proxy.invalid:8080",

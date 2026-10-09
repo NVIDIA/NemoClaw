@@ -3,7 +3,7 @@
 
 import {
   nativeLocalCredentialReference,
-  NATIVE_LOCAL_CREDENTIAL_ENV,
+  requireNativeLocalAgentSupport,
 } from "./inference/native-local/agent-config.ts";
 
 // Hermes requires an sk-prefixed value before it sends a request. OpenShell
@@ -81,9 +81,9 @@ export function applyHermesManagedRoute(
   config: Record<string, unknown>,
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
-  const credential = nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl)
-    ? `sk-OPENSHELL-RESOLVE-ENV-${NATIVE_LOCAL_CREDENTIAL_ENV}`
-    : HERMES_PROXY_REWRITE_SENTINEL;
+  if (nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl))
+    requireNativeLocalAgentSupport("hermes");
+  const credential = HERMES_PROXY_REWRITE_SENTINEL;
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);

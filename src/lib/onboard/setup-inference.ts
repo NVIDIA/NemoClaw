@@ -7,6 +7,7 @@ import type {
 } from "../inference/native-local/contract";
 import {
   requireNativeProviderPolicy,
+  requireNativeLocalAgentSupport,
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
   prepareNativeLocalSelection,
@@ -708,6 +709,10 @@ export function createSetupInference(
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const selectingNativeLocal = usesNativeLocalInference(provider, endpointUrl);
+    if (selectingNativeLocal)
+      requireNativeLocalAgentSupport(
+        options.agentName ?? (sandboxName ? deps.getSandbox?.(sandboxName)?.agent : undefined),
+      );
     if (selectingNativeLocal)
       await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;

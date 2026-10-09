@@ -36,3 +36,5 @@ export {
   retireUnreservedNativeLocalProvider,
 } from "../../inference/native-local/selection";
 export { gatewayReachableCompatibleEndpointUrl } from "./compatible-endpoint-gateway-route";
+
+export { requireNativeLocalAgentSupport } from "../../inference/native-local/agent-config";

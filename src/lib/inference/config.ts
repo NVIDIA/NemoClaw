@@ -22,7 +22,8 @@ import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
-export { isSafeModelId, nativeLocalCredentialReference };
+export { isSafeModelId, nativeLocalCredentialReference, usesNativeLocalInference };
+export { requireNativeLocalAgentSupport } from "./native-local/agent-config";
 export { normalizeNativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 export {

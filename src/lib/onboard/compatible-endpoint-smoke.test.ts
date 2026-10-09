@@ -615,39 +615,45 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).not.toContain("curl");
   });
 
-  it("executes native content and tool requests with an opaque credential and rejects an unauthorized path (#12558)", () => {
-    const binding: NativeLocalBinding = {
-      provider: "ollama-local",
-      endpointUrl: "http://host.openshell.internal:11434/v1",
-      credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
-      authMode: "sentinel",
-      gatewayName: "nemoclaw",
-      sandboxName: "native",
-    };
-    const receipt = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1 as const,
-      providerId: "owned",
-    };
-    const authority = allAgentProofAuthorities[0].authority;
-    const result = runProviderNeutralScript({
-      authority,
-      script: buildProviderNeutralInferenceSandboxSmokeScript("qwen3.5-9b", authority, receipt),
-      inferenceUrl: `${binding.endpointUrl}/chat/completions`,
-      expectedAuthorization: `Bearer openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`,
-      denial: {
-        error: "policy_denied",
-        detail: "POST host.openshell.internal:11434/v1/nemoclaw-denied not permitted by policy",
-      },
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
-    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
-    expect(result.stdout).toContain(
-      "DIRECT_REQUEST_URLS=http://host.openshell.internal:11434/v1/nemoclaw-denied",
-    );
-  });
+  it.each(["v42", `s${"a".repeat(64)}`])(
+    "preserves issued native credential identity %s in content and tool requests (#12558)",
+    (identity) => {
+      const binding: NativeLocalBinding = {
+        provider: "ollama-local",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+        authMode: "sentinel",
+        gatewayName: "nemoclaw",
+        sandboxName: "native",
+      };
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "owned",
+      };
+      const authority = allAgentProofAuthorities[0].authority;
+      const result = runProviderNeutralScript({
+        authority,
+        script: buildProviderNeutralInferenceSandboxSmokeScript("qwen3.5-9b", authority, receipt),
+        inferenceUrl: `${binding.endpointUrl}/chat/completions`,
+        expectedAuthorization: `Bearer openshell:resolve:env:${identity}_${NATIVE_LOCAL_CREDENTIAL_ENV}`,
+        runtimeEnvironment: {
+          [NATIVE_LOCAL_CREDENTIAL_ENV]: `openshell:resolve:env:${identity}_${NATIVE_LOCAL_CREDENTIAL_ENV}`,
+        },
+        denial: {
+          error: "policy_denied",
+          detail: "POST host.openshell.internal:11434/v1/nemoclaw-denied not permitted by policy",
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+      expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+      expect(result.stdout).toContain(
+        "DIRECT_REQUEST_URLS=http://host.openshell.internal:11434/v1/nemoclaw-denied",
+      );
+    },
+  );
 
   it.each(allAgentProofAuthorities)(
     "executes exact model, required tool, and policy-deny proof for $agentName",
@@ -1383,4 +1389,38 @@ it("reports the native provider identity when a verified lookup subsequently fai
     error.mockRestore();
     log.mockRestore();
   }
+});
+
+it.each([
+  "",
+  "short",
+  "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  "openshell:resolve:env:v42_OTHER_KEY",
+  "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN\n",
+])("refuses invalid native smoke reference %# without a request", (reference) => {
+  const binding: NativeLocalBinding = {
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+    credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+    authMode: "sentinel",
+    gatewayName: "nemoclaw",
+    sandboxName: "native",
+  };
+  const receipt = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned",
+  };
+  const authority = allAgentProofAuthorities[0].authority;
+  const result = runProviderNeutralScript({
+    authority,
+    script: buildProviderNeutralInferenceSandboxSmokeScript("qwen3.5-9b", authority, receipt),
+    runtimeEnvironment: { [NATIVE_LOCAL_CREDENTIAL_ENV]: reference },
+  });
+  expect(result.status).toBe(2);
+  expect(result.stderr.trim()).toBe(
+    "Native local inference requires an issued credential reference",
+  );
+  expect(result.stdout).not.toContain("INFERENCE_SMOKE_OK");
 });

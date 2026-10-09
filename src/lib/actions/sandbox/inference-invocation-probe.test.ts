@@ -62,7 +62,7 @@ function runProbeCommandWithBody(
   parentDirectory: string = tmpdir(),
   probeInput: SandboxInferenceInvocationInput = input,
   probeEnvironment: NodeJS.ProcessEnv = {},
-): { stdout: string; argv: string[] } {
+): { stdout: string; stderr: string; status: number | null; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
     const bin = path.join(dir, "bin");
@@ -86,7 +86,11 @@ function runProbeCommandWithBody(
     });
     return {
       stdout: run.stdout || "",
-      argv: readFileSync(path.join(dir, "argv.txt"), "utf8").trimEnd().split("\n"),
+      stderr: run.stderr || "",
+      status: run.status,
+      argv: existsSync(path.join(dir, "argv.txt"))
+        ? readFileSync(path.join(dir, "argv.txt"), "utf8").trimEnd().split("\n")
+        : [],
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -164,7 +168,7 @@ describe("sandbox inference invocation probe", () => {
     });
     expect(execute).toHaveBeenCalledOnce();
     const command = execute.mock.calls[0] as unknown as [string, string];
-    expect(command[1]).toContain("openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    expect(command[1]).toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
     expect(command[1]).not.toContain("inference.local");
   });
 
@@ -821,4 +825,73 @@ it("gives native Ultra readiness the same reasoning budget as host onboarding", 
   const payload = getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload: true });
   expect(payload.max_tokens).toBe(256);
   expect(command).toContain('"max_tokens":256');
+});
+
+it.each(["v42", `s${"a".repeat(64)}`])(
+  "preserves native local invocation credential identity %s",
+  (identity) => {
+    const binding = {
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandboxName,
+    } as const;
+    const reference = `openshell:resolve:env:${identity}_${binding.credentialEnv}`;
+    const result = runProbeCommandWithBody(
+      "200",
+      "{}",
+      tmpdir(),
+      {
+        ...input,
+        provider: binding.provider,
+        nativeLocalProviderAttachment: {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+          schemaVersion: 1,
+          providerId: "owned",
+        },
+      },
+      { [binding.credentialEnv]: reference },
+    );
+    expect(result.argv).toContain(`Authorization: Bearer ${reference}`);
+  },
+);
+
+it.each([
+  "",
+  "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  "openshell:resolve:env:v42_OTHER_KEY",
+  "short",
+  "opaque-host-secret-must-not-leak",
+  "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN\n",
+])("refuses invalid native credential candidate %# before curl", (reference) => {
+  const binding = {
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "sentinel",
+    gatewayName: "nemoclaw",
+    sandboxName: input.sandboxName,
+  } as const;
+  const result = runProbeCommandWithBody(
+    "200",
+    "{}",
+    tmpdir(),
+    {
+      ...input,
+      provider: binding.provider,
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1,
+        providerId: "owned",
+      },
+    },
+    { [binding.credentialEnv]: reference },
+  );
+  expect(result.status).toBe(2);
+  expect(result.argv).toEqual([]);
+  expect(result.stdout + result.stderr).toBe("");
 });

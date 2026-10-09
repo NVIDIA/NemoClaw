@@ -521,3 +521,30 @@ describe("native NVIDIA onboarding", () => {
     expect(updateSandbox).not.toHaveBeenCalled();
   });
 });
+
+it.each(["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"])(
+  "refuses Hermes native-local %s before provider policy or route mutation (#12921)",
+  async (provider) => {
+    const requireNativeProviderPolicy = vi.fn();
+    const withGatewayRouteMutationLock = vi.fn();
+    const setup = createSetupInference({
+      getGatewayName: () => "nemoclaw",
+      requireNativeProviderPolicy,
+      withGatewayRouteMutationLock,
+    } as unknown as SetupInferenceDeps);
+    await expect(
+      setup(
+        "hermes",
+        "local-model",
+        provider,
+        "http://host.openshell.internal:11434/v1",
+        null,
+        null,
+        [],
+        { agentName: "hermes" },
+      ),
+    ).rejects.toThrow("Hermes native-local inference is not supported yet");
+    expect(requireNativeProviderPolicy).not.toHaveBeenCalled();
+    expect(withGatewayRouteMutationLock).not.toHaveBeenCalled();
+  },
+);

@@ -3,9 +3,9 @@
 
 import {
   normalizeNativeLocalProviderAttachment,
-  nativeLocalCredentialReference,
   type NativeLocalProviderAttachment,
 } from "../inference/native-local/contract";
+import { NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN } from "../inference/native-local/agent-config";
 import { verifyNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import type { StdioOptions } from "node:child_process";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
@@ -591,19 +591,24 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
   const directDenialDetail = JSON.stringify(
     `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${deniedPath} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
   );
-  const authHeader = local
-    ? {
-        Authorization: `Bearer ${nativeLocalCredentialReference(local.provider, local.endpointUrl)}`,
-      }
-    : {};
+  const authSetup = local
+    ? `credential = os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
+if not re.fullmatch(${JSON.stringify(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN)}, credential):
+    print("Native local inference requires an issued credential reference", file=sys.stderr)
+    sys.exit(2)
+auth_headers = {"Authorization": "Bearer " + credential}`
+    : "auth_headers = {}";
   return `
 import errno
 import json
+import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
 
+${authSetup}
 inference_url = ${inferenceUrl}
 model = ${modelValue}
 max_tokens_field = ${maxTokensField}
@@ -616,7 +621,7 @@ def post_inference(payload, label):
     request = urllib.request.Request(
         inference_url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", **${JSON.stringify(authHeader)}},
+        headers={"Content-Type": "application/json", **auth_headers},
         method="POST",
     )
     response_data = None

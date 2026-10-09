@@ -36,7 +36,6 @@ export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY
-export NEMOCLAW_LOCAL_INFERENCE_TOKEN=openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 unset PYTHONHOME PYTHONPATH
 
@@ -463,7 +462,10 @@ is_openshell_env_placeholder_for_name() {
   esac
 
   canonical="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}${name}"
-  [ "$value" = "$canonical" ] && return 0
+  if [ "$value" = "$canonical" ]; then
+    [ "$name" != "NEMOCLAW_LOCAL_INFERENCE_TOKEN" ]
+    return $?
+  fi
 
   revision_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}v"
   stable_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}s"
@@ -690,6 +692,10 @@ assert_no_codex_auth_credentials() {
 # Remove this alias when supported restored configs no longer use the old key.
 if is_openshell_env_placeholder_for_name NVIDIA_INFERENCE_API_KEY "${NVIDIA_INFERENCE_API_KEY:-}"; then
   export NEMOCLAW_ATTACHED_PROVIDER_API_KEY="$NVIDIA_INFERENCE_API_KEY"
+fi
+
+if [ "${NEMOCLAW_LOCAL_INFERENCE_TOKEN+x}" = x ] && ! is_openshell_env_placeholder_for_name NEMOCLAW_LOCAL_INFERENCE_TOKEN "$NEMOCLAW_LOCAL_INFERENCE_TOKEN"; then
+  refuse_invalid_openshell_placeholder "runtime environment variable" NEMOCLAW_LOCAL_INFERENCE_TOKEN
 fi
 
 assert_no_secret_runtime_env
