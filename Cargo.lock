@@ -2887,16 +2887,15 @@ dependencies = [
 
 [[package]]
 name = "noyalib"
-version = "0.0.28"
+version = "0.0.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f075ef19fa3bcf8697c0ef96c37d5c435d339a40ab8081cae3aac3a4e7fee9a"
+checksum = "962838abbd8dd2cd3844d2208dc502458bba6985f8bf1dc21761b30260fcbd7f"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
  "libm",
  "memchr",
  "rustc-hash",
- "serde",
  "serde_core",
  "smallvec",
 ]
@@ -3060,7 +3059,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3094,7 +3093,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
 dependencies = [
  "hyper-util",
  "serde",
@@ -3107,7 +3106,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -3121,12 +3120,14 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/OpenShell?rev=6648bd0c290efbc41ba131ee9831ee45cd431f94#6648bd0c290efbc41ba131ee9831ee45cd431f94"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=e1f3c82caa3ed3b65de22889ae7ef32a774878ef#e1f3c82caa3ed3b65de22889ae7ef32a774878ef"
 dependencies = [
  "miette",
  "noyalib",
  "serde",
  "serde_json",
+ "serde_path_to_error",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3480,7 +3481,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -3501,7 +3502,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

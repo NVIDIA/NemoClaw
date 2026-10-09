@@ -28,6 +28,8 @@ A GraphQL deprecation declaration, for example, usually needs schema inspection 
 
 For mixed structural and behavioral work, establish a green baseline, move existing responsibilities through `safe-refactoring`, then begin RED for the new or corrected promise. Existing behavior needs preservation, not an artificial failure.
 
+When the user is exploring, inspect the code and clarify the behavior before editing. Treat a direct implementation or bug-fix request as agreement without redundant confirmation. Briefly explain routing when the absence of a behavioral test would be surprising.
+
 ### UI Contracts
 
 Separate capabilities from presentation. Test interactions, accessibility roles/names/states, navigation, and information access. Implement ordinary typography, color, spacing, and layout using design inputs and established components; visual parity belongs to visual verification, not the TDD cycle.
@@ -35,8 +37,6 @@ Separate capabilities from presentation. Test interactions, accessibility roles/
 Geometry, timing, and rendered output qualify when they are explicit behavioral promises: an effective accessible touch target, a response-time budget, or a shader lighting the requested region. Observe that outcome rather than freezing incidental classes, props, DOM nesting, or pixels.
 
 Ordinary copy is presentation. Update an interaction test's accessible-name selector when the control is renamed. Give exact wording dedicated coverage only when it is a contract, such as legal or safety text, a required API error, or a domain distinction affecting a decision.
-
-When the user is exploring, inspect the code and clarify the behavior before editing. Treat a direct implementation or bug-fix request as agreement without redundant confirmation. Briefly explain routing when the absence of a behavioral test would be surprising.
 
 **Complete when:** every outcome is assigned to TDD or another verification process, and the requested direction is understood.
 
@@ -55,6 +55,15 @@ Select one example by asking:
 Choose a stable test expressing this promise. Derive expected results independently from requirements or domain rules, rather than copying computed output. An excessive withdrawal should be rejected regardless of the internal balance representation. Testing that rejection protects our rule; repeating a framework's implementation does not.
 
 Add discovered examples to the list as work proceeds. Make only the selected item executable before implementing it; keep the rest as scenarios rather than a batch of speculative tests.
+
+<example>
+Request: reject withdrawals above the available balance.
+
+- A withdrawal of exactly the balance succeeds.
+- A withdrawal one cent above the balance is rejected. ← selected: it states the rule and fails today.
+- A rejected withdrawal leaves the balance and history unchanged.
+- Resubmitting a rejected withdrawal is rejected again.
+</example>
 
 **Complete when:** the list exists and one example identifies a promise, expected failure, and freedom to change the implementation.
 

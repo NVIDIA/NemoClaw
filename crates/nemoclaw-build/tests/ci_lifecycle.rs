@@ -25,6 +25,12 @@ if [ "$1 $2" = 'nextest --version' ]; then
     exit 0
 fi
 printf '%s\n' "$@" > arguments
+if [ "$1" = build ]; then
+    /bin/mkdir -p target/debug
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > bundled\n' > target/debug/nemoclaw-build
+    /bin/chmod +x target/debug/nemoclaw-build
+    exit 0
+fi
 if [ "$1 $2" = 'nextest list' ]; then
     printf '%s\n' "$CARGO_LIST"
     exit "${CARGO_RESULT:-0}"
@@ -158,7 +164,7 @@ fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
 }
 
 #[test]
-fn archive_packages_the_bundle_tools_and_provider_helpers_with_executable_modes() {
+fn archive_packages_tools_and_provider_helpers_but_leaves_the_bundle_to_its_own_job() {
     let fixture = Fixture::new();
     for path in [
         "dist/linux_arm64/bin/nemoclaw",
@@ -193,8 +199,9 @@ fn archive_packages_the_bundle_tools_and_provider_helpers_with_executable_modes(
     let packed = fs::File::open(fixture.0.path().join(".build/ci/lifecycle-inputs.tar")).unwrap();
     let unpacked = tempfile::tempdir().unwrap();
     tar::Archive::new(packed).unpack(unpacked.path()).unwrap();
+    // The bundle job uploads dist/PLATFORM separately, in parallel with this build.
+    assert!(!unpacked.path().join("dist").exists());
     for path in [
-        "dist/linux_arm64/bin/nemoclaw",
         ".tools/nextest-0.9.144/cargo-nextest",
         "target/debug/terraform-provider-nemoclaw",
         "target/debug/terraform-provider-openshell",
@@ -208,6 +215,32 @@ fn archive_packages_the_bundle_tools_and_provider_helpers_with_executable_modes(
         fs::read(unpacked.path().join(".build/ci/nemoclaw-build")).unwrap(),
         fs::read(env!("CARGO_BIN_EXE_nemoclaw-build")).unwrap()
     );
+}
+
+#[test]
+fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
+    let fixture = Fixture::new();
+    assert!(
+        !fixture
+            .0
+            .path()
+            .join("target/debug/nemoclaw-build")
+            .exists()
+    );
+    let output = fixture.run(&["bundle"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = fixture.arguments();
+    assert!(
+        args.starts_with("build\n--locked\n--package\nnemoclaw-build\n"),
+        "{args}"
+    );
+    assert!(!args.contains("--no-default-features"), "{args}");
+    let bundled = fs::read_to_string(fixture.0.path().join("bundled")).unwrap();
+    assert_eq!(bundled, "bundle\n--platform\nlinux_arm64\n");
 }
 
 #[test]
