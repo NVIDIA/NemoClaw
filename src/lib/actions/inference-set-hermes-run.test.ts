@@ -21,6 +21,59 @@ describe("runInferenceSet Hermes routing", () => {
     portableMocks.assertUnavailable.mockReset();
   });
 
+  it("reads the attached native handle before publishing a Hermes switch", async () => {
+    const config: ConfigObject = { model: { default: "local-model", provider: "custom" } };
+    const deps = createDeps({
+      config,
+      entry: { name: "hermes", agent: "hermes", provider: "vllm-local", model: "local-model" },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    await runInferenceSet(
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/test-model",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+    expect(deps.calls.readNativeNvidiaCredentialHandle).toHaveBeenCalledWith("hermes", "nemoclaw");
+    expect(config.model).toMatchObject({
+      api_key: "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY",
+    });
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the Hermes config unchanged when the attached handle is unavailable", async () => {
+    const config: ConfigObject = { model: { default: "local-model", provider: "custom" } };
+    const deps = createDeps({
+      config,
+      entry: { name: "hermes", agent: "hermes", provider: "vllm-local", model: "local-model" },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      readNativeNvidiaCredentialHandle: async () => {
+        throw new Error("provider-bound handle unavailable");
+      },
+    });
+    await expect(
+      runInferenceSet(
+        {
+          provider: "nvidia-prod",
+          model: "nvidia/test-model",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("provider-bound handle unavailable");
+    expect(config.model).toEqual({ default: "local-model", provider: "custom" });
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("rejects schema-5 before OpenShell or registry mutation (#9203)", async () => {
     portableMocks.assertUnavailable.mockImplementation(() => {
       throw new Error("schema-5 rejected");

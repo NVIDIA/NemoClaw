@@ -243,12 +243,16 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.hermes/config.yaml"], {
-      artifactName: "hermes-config-yaml",
-      env: env(),
-      redactionValues,
-      timeoutMs: 30_000,
-    });
+    const config = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sed", "/^[[:space:]]*api_key:/d", "/sandbox/.hermes/config.yaml"],
+      {
+        artifactName: "hermes-config-yaml",
+        env: env(),
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
     expect(config.exitCode, resultText(config)).toBe(0);
     const model = parseHermesModelBlock(config.stdout);
     expect(model.default).toBe(SWITCH_MODEL);

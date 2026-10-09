@@ -25,6 +25,33 @@ describe("patchHermesInferenceConfig", () => {
     });
   });
 
+  it("uses the attached provider handle on every Hermes native credential path", () => {
+    const config: ConfigObject = {};
+    const handle = "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY";
+    patchHermesInferenceConfig(config, "nvidia-prod", "nvidia/test-model", null, undefined, handle);
+    expect(config).toMatchObject({
+      model: { api_key: handle },
+      providers: { "nvidia-prod": { api_key: handle } },
+      custom_providers: [{ api_key: handle }],
+    });
+    expect(() =>
+      patchHermesInferenceConfig(
+        {},
+        "nvidia-prod",
+        "nvidia/test-model",
+        null,
+        undefined,
+        "nvapi-raw",
+      ),
+    ).toThrow(/provider-bound credential handle/u);
+    expect(() =>
+      patchHermesInferenceConfig({}, "nvidia-prod", "nvidia/test-model", null, undefined, ""),
+    ).toThrow(/provider-bound credential handle/u);
+    expect(() =>
+      patchHermesInferenceConfig({}, "vllm-local", "local-model", null, undefined, handle),
+    ).toThrow(/provider-bound credential handle/u);
+  });
+
   it("updates the complete Hermes route for the selected provider", () => {
     const config: ConfigObject = {
       model: {

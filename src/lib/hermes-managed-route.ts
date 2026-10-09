@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
+import { NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN } from "./inference/native-nvidia/contract.ts";
 
 // The inference.local route replaces this non-secret sentinel at egress.
 // Native NVIDIA routing instead expands the supervisor-issued environment handle.
@@ -9,7 +10,7 @@ export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
   name: string;
-  api_key: typeof HERMES_PROXY_REWRITE_SENTINEL | typeof NVIDIA_INFERENCE_PLACEHOLDER;
+  api_key: string;
   discover_models: true;
   api?: string;
   base_url?: string;
@@ -28,7 +29,7 @@ export type HermesManagedRouting = {
     default: string;
     provider: "custom";
     base_url: string;
-    api_key: typeof HERMES_PROXY_REWRITE_SENTINEL | typeof NVIDIA_INFERENCE_PLACEHOLDER;
+    api_key: string;
     api_mode?: string;
     context_length?: number;
   };
@@ -42,6 +43,7 @@ export type HermesManagedRoute = {
   upstreamProvider: string;
   inferenceApi: string;
   contextWindow?: number | null;
+  nativeCredentialHandle?: string;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -81,7 +83,15 @@ export function applyHermesManagedRoute(
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
-  const apiKey = managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  const managedKey = managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  if (
+    route.nativeCredentialHandle !== undefined &&
+    (managedKey !== NVIDIA_INFERENCE_PLACEHOLDER ||
+      !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(route.nativeCredentialHandle))
+  ) {
+    throw new Error("Hermes native NVIDIA route requires a provider-bound credential handle.");
+  }
+  const apiKey = route.nativeCredentialHandle ?? managedKey;
   const previousUpstream = isObjectRecord(config._nemoclaw_upstream)
     ? config._nemoclaw_upstream
     : {};

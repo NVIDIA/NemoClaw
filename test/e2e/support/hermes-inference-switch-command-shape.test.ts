@@ -189,8 +189,8 @@ describe("Hermes inference switch command shape", () => {
     ).toBe(false);
   });
 
-  it("accepts only the supervisor-issued reference for native NVIDIA", () => {
-    const reference = "${NVIDIA_INFERENCE_API_KEY}";
+  it("accepts only a provider-bound reference for a native NVIDIA switch", () => {
+    const reference = "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY";
     expect(
       [`  api_key: ${reference}`, `  api_key: "${reference}"`, `  api_key: '${reference}'`].every(
         (line) => matchesApiKeyShape(line, NVIDIA_API_KEY_SHAPE_PATTERN),
@@ -200,6 +200,8 @@ describe("Hermes inference switch command shape", () => {
       [
         "  api_key: sk-OPENSHELL-PROXY-REWRITE",
         "  api_key: nvapi-raw-key",
+        "  api_key: ${NVIDIA_INFERENCE_API_KEY}",
+        "  api_key: openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
         `  api_key: ${reference} trailing`,
         `  api_key: "${reference}`,
         `  api_key: ${reference}"`,

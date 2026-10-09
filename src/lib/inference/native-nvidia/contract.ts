@@ -6,6 +6,12 @@ export const NVIDIA_HOSTED_NATIVE_ENDPOINT = "https://integrate.api.nvidia.com/v
 export const NVIDIA_HOSTED_NATIVE_PROFILE_ID = "nemoclaw-nvidia-inference-v1";
 export const NVIDIA_HOSTED_NATIVE_PROVIDER = "nemoclaw-nvidia-prod-v1";
 export const NVIDIA_HOSTED_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
+export const NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN =
+  /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$/u;
+
+// Emit only a provider-bound handle. A raw credential can never reach stdout.
+export const NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT =
+  'printf "%s" "${NVIDIA_INFERENCE_API_KEY:-}" | LC_ALL=C grep -E "^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$"';
 
 export type NativeNvidiaProviderAttachment = Readonly<{
   schemaVersion: 1;

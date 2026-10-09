@@ -7,8 +7,14 @@ import type {
   OpenShellProviderMetadata,
 } from "../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
+import { captureSanitizedResolvedOpenshellAsync } from "../adapters/openshell/sanitized-capture";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../core/retry";
+import {
+  NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN,
+  NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+} from "../inference/native-nvidia/contract";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
@@ -33,6 +39,60 @@ export type InferenceSetProviderAdapter = OpenShellProviderAdapter;
 
 export function createDefaultInferenceSetProviderAdapter(): OpenShellProviderAdapter {
   return createCliOpenShellProviderAdapter();
+}
+
+export async function readNativeNvidiaCredentialHandle(
+  sandboxName: string,
+  gatewayName: string,
+): Promise<string> {
+  const failure = () =>
+    new InferenceSetError(
+      `OpenShell did not expose a provider-bound NVIDIA credential handle to sandbox '${sandboxName}'. The inference route was not changed.`,
+    );
+  try {
+    const result = await captureSanitizedResolvedOpenshellAsync(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "-g",
+        gatewayName,
+        "--",
+        "sh",
+        "-c",
+        NATIVE_NVIDIA_SCOPED_HANDLE_READ_SCRIPT,
+      ],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        outputLimitBytes: 512,
+        timeout: 30_000,
+      },
+    );
+    const handle = result.stdout?.trim() ?? "";
+    if (result.status !== 0 || !NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN.test(handle)) {
+      throw failure();
+    }
+    return handle;
+  } catch {
+    // Never include captured output or an OpenShell diagnostic in this error.
+    throw failure();
+  }
+}
+
+export async function readHermesNativeNvidiaCredentialHandleIfNeeded(options: {
+  agentName: string;
+  provider: string;
+  sandboxName: string;
+  gatewayName: string;
+  read: (sandboxName: string, gatewayName: string) => Promise<string>;
+}): Promise<string | undefined> {
+  if (options.agentName !== "hermes" || options.provider !== NVIDIA_HOSTED_LOGICAL_PROVIDER) {
+    return undefined;
+  }
+  return await options.read(options.sandboxName, options.gatewayName);
 }
 
 export type InferenceSetSandboxRouteProbe = (
