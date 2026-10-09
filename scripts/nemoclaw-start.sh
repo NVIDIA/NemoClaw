@@ -4392,6 +4392,12 @@ EOF
     read -r marker_owner marker_mode marker_links <<EOF
 $marker_metadata
 EOF
+    # Atomic replacement can unlink the inode while stat reads it. Discard
+    # that snapshot and validate the current path within the existing gate budget.
+    if [ "$marker_links" = "0" ]; then
+      sleep 1
+      continue
+    fi
     if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
       || [ "$marker_mode" != "600" ] \
       || [ "$marker_links" != "1" ]; then
@@ -5098,6 +5104,12 @@ EOF
     read -r marker_owner marker_mode marker_links <<EOF
 $marker_metadata
 EOF
+    # Atomic replacement can unlink the inode while stat reads it. Discard
+    # that snapshot and validate the current path within the existing gate budget.
+    if [ "$marker_links" = "0" ]; then
+      sleep 1
+      continue
+    fi
     if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
       || [ "$marker_mode" != "600" ] \
       || [ "$marker_links" != "1" ]; then
