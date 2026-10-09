@@ -631,7 +631,10 @@ The `double-onboard-hermes` and `onboard-resume-hermes` entries run the existing
 onboarding scenarios with Hermes and API port 8643. `double-onboard-hermes`
 retains one sandbox identity check and proves dashboard and API forward ownership
 after reuse. `onboard-resume-hermes` retains its before-and-after resume evidence.
-The original entries retain OpenClaw coverage.
+The original entries retain OpenClaw coverage. `double-onboard` also repeats
+onboarding with a changed model and verifies replacement identity, the OpenClaw
+primary model, and the recorded selection. Unit and integration tests own the
+drift decision and interactive confirmation cases.
 
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
