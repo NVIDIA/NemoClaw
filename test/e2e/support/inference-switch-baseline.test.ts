@@ -114,6 +114,7 @@ it.each([
       inferenceApi,
       baseUrl,
       artifactName: "switched-config",
+      nativeNvidia: provider === "nvidia-prod",
     });
   },
 );

@@ -265,6 +265,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("src", "lib", "providerless-inference.ts"));
     for (const relativePath of [
       "extra-agents-validation.ts",
+      "inference-credential.ts",
       path.join("core", "json-types.ts"),
       path.join("core", "ports.ts"),
       path.join("onboard", "managed-startup", "image-runtime.ts"),
@@ -513,6 +514,7 @@ describe("sandbox build context staging", () => {
   function expectStagedManagedStartupRuntimeSources(buildCtx: string, sourceRoot: string) {
     for (const relativePath of [
       path.join("src", "lib", "extra-agents-validation.ts"),
+      path.join("src", "lib", "inference-credential.ts"),
       path.join("src", "lib", "core", "json-types.ts"),
       path.join("src", "lib", "core", "ports.ts"),
       path.join("src", "lib", "onboard", "managed-startup", "image-runtime.ts"),

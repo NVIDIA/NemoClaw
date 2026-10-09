@@ -612,6 +612,7 @@ async function readAndAssertOpenClawConfig(
     inferenceApi: string;
     artifactName: string;
     baseUrl: string;
+    nativeNvidia?: boolean;
   },
 ): Promise<OpenClawModelConfig | undefined> {
   const configResult = await sandbox.exec(
@@ -633,7 +634,7 @@ async function readAndAssertOpenClawConfig(
 
   expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
   expect(provider?.baseUrl).toBe(expected.baseUrl);
-  expect(provider?.apiKey).toBe("unused");
+  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "${NVIDIA_INFERENCE_API_KEY}" : "unused");
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
@@ -647,6 +648,7 @@ export async function assertOpenClawConfig(
     inferenceApi: string;
     artifactName: string;
     baseUrl: string;
+    nativeNvidia?: boolean;
   },
 ): Promise<void> {
   const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
@@ -665,6 +667,7 @@ async function assertInitialOpenClawConfig(
     inferenceApi: string;
     artifactName: string;
     baseUrl: string;
+    nativeNvidia?: boolean;
   },
 ): Promise<void> {
   const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
@@ -1290,6 +1293,7 @@ test(
           : SWITCH_INFERENCE_API === "anthropic-messages"
             ? "https://inference.local"
             : "https://inference.local/v1",
+      nativeNvidia: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
     });
     await assertRegistryAndSession(home, { mockProvider, sandbox });
 

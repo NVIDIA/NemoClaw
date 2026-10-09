@@ -157,10 +157,22 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand();
+    const command = apiKeyShapeCommand("compatible-anthropic-endpoint");
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
+  });
+
+  it("accepts only the native NVIDIA credential reference on the native route", () => {
+    const [command, ...args] = apiKeyShapeCommand();
+    const matches = (input: string) =>
+      spawnSync(command, args.slice(0, -1), { input, encoding: "utf8" }).status === 0;
+    expect(matches("  api_key: ${NVIDIA_INFERENCE_API_KEY}\n")).toBe(true);
+    expect(matches('  api_key: "${NVIDIA_INFERENCE_API_KEY}"\n')).toBe(true);
+    expect(matches("  api_key: '${NVIDIA_INFERENCE_API_KEY}'\n")).toBe(true);
+    expect(matches("  api_key: sk-OPENSHELL-PROXY-REWRITE\n")).toBe(false);
+    expect(matches("  api_key: nvapi-raw-fixture-key\n")).toBe(false);
+    expect(matches("  api_key: ${NVIDIA_INFERENCE_API_KEY} trailing\n")).toBe(false);
   });
 
   it("accepts only complete sk-prefixed YAML scalars", () => {
