@@ -22,6 +22,7 @@ default-filter = '''
 test(native_state_json_preserves_module_and_instance_identity_without_refresh)
 | (package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
 | (package(nemoclaw-sdk) & test(runtime_export_declares_the_native_helm_provider_inputs))
+| (package(openshell-provider) & binary(=contract))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^provider_protocol::/) | test(/^service_capacity::/) | test(/^service_readiness::/)
     | test(/^sandbox_readiness::/) | test(/^opentofu_openshell::/) | test(/^deployment::/)

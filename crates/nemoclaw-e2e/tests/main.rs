@@ -39,6 +39,8 @@ mod model_live;
 mod multiple_providers;
 #[path = "openshell.rs"]
 mod openshell;
+#[path = "openshell_contract_fixtures.rs"]
+mod openshell_contract_fixtures;
 #[path = "opentofu_openshell.rs"]
 mod opentofu_openshell;
 #[path = "provider_protocol.rs"]

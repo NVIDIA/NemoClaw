@@ -22,13 +22,13 @@ impl TofuWorkspace {
         let provider = provider.as_ref();
         fs::copy(
             provider,
-            directory.path().join(nemoclaw_sdk::bundle::executable(
-                "terraform-provider-nemoclaw",
-            )),
+            directory
+                .path()
+                .join(crate::executable("terraform-provider-nemoclaw")),
         )
         .unwrap();
         for name in ["openshell", "fabric"] {
-            let binary = nemoclaw_sdk::bundle::executable(&format!("terraform-provider-{name}"));
+            let binary = crate::executable(&format!("terraform-provider-{name}"));
             let sibling = provider.with_file_name(&binary);
             if sibling.exists() {
                 fs::copy(sibling, directory.path().join(binary)).unwrap();
@@ -37,6 +37,36 @@ impl TofuWorkspace {
         let path = serde_json::to_string(directory.path()).unwrap();
         let overrides = ["nemoclaw", "openshell", "fabric"]
             .map(|name| format!("\"registry.opentofu.org/nvidia/{name}\" = {path}"))
+            .join(" ");
+        fs::write(
+            directory.path().join("tofu.rc"),
+            format!("provider_installation {{ dev_overrides {{ {overrides} }} direct {{}} }}"),
+        )
+        .unwrap();
+        Self {
+            directory,
+            tofu: tofu.as_ref().to_owned(),
+        }
+    }
+
+    /// A workspace whose OpenTofu uses only the given `(name, executable)`
+    /// providers from `registry.opentofu.org/nvidia`.
+    pub fn with_providers(tofu: impl AsRef<Path>, providers: &[(&str, &Path)]) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, executable) in providers {
+            fs::copy(
+                executable,
+                directory
+                    .path()
+                    .join(crate::executable(&format!("terraform-provider-{name}"))),
+            )
+            .unwrap();
+        }
+        let path = serde_json::to_string(directory.path()).unwrap();
+        let overrides = providers
+            .iter()
+            .map(|(name, _)| format!("\"registry.opentofu.org/nvidia/{name}\" = {path}"))
+            .collect::<Vec<_>>()
             .join(" ");
         fs::write(
             directory.path().join("tofu.rc"),
@@ -79,9 +109,9 @@ mod tests {
             fs::write(&provider, &script).unwrap();
             fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
             let workspace = TofuWorkspace::new("/bin/sh", &provider);
-            let staged = workspace.path().join(nemoclaw_sdk::bundle::executable(
-                "terraform-provider-nemoclaw",
-            ));
+            let staged = workspace
+                .path()
+                .join(crate::executable("terraform-provider-nemoclaw"));
             let output = Command::new(&staged).output().unwrap();
             assert!(output.status.success());
             assert_eq!(output.stdout, selected.as_bytes());

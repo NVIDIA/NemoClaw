@@ -82,6 +82,20 @@ The export fixture checks provider refresh failures through OpenTofu, unchanged 
 The web-search lifecycle case covers Brave and Tavily at deployment, sandbox, and agent scope, including profile and sandbox-grant drift.
 The mixed-search export case checks shared registrations, unused definitions, export without search keys, unchanged reapply, and rejected provider-type or credential-reference drift without changes to saved state.
 
+## OpenShell Provider Contract
+
+The `openshell-provider` crate's `contract` tests apply each fixture in `crates/openshell-provider/tests/contract/fixtures` through OpenTofu against a fake OpenShell gateway from `nemoclaw-test-fixtures`.
+Each fixture must plan no managed changes after it is applied, and teardown must remove every sandbox, provider registration, and profile while the gateway keeps the workspace:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p openshell-provider --test contract -- --ignored
+```
+
+The fixtures are the OpenShell resources the SDK compiles for each example with an external gateway, excluding examples whose credentials are read from a managed service's container.
+`nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
+
 ## Standalone Sandbox Completion
 
 On Unix, build the production provider and supply the explicit OpenTofu and provider paths as above.

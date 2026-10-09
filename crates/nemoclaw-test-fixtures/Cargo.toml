@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Test fixtures shared by the provider contract tests and the end-to-end
+# tests. Provider crates use them as development dependencies; nemoclaw-e2e
+# depends on the providers, so they cannot live there.
+[package]
+name = "nemoclaw-test-fixtures"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+openshell-core.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+tower.workspace = true
+http.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

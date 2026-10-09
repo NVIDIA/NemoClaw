@@ -4,8 +4,7 @@
 //! Protocol fixtures shared by SDK and bundle lifecycle tests.
 pub mod hcl;
 pub mod image_runtime;
-pub mod openshell;
-pub mod tofu;
+pub use nemoclaw_test_fixtures::{openshell, tofu};
 
 #[path = "../../test-support/http.rs"]
 pub mod http_fixture;
