@@ -28,6 +28,7 @@ export interface SandboxResumeSignals {
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
+  readonly openclawInferenceSelectionChanged?: boolean;
   readonly hermesPortableLifecyclePending?: boolean;
 }
 
@@ -128,6 +129,7 @@ export type SandboxResumeDecision =
       readonly kind: "recreate";
       readonly note: string;
       readonly removeRegistryEntry: boolean;
+      readonly confirmOpenclawInferenceSelectionDrift?: true;
       readonly validateMessagingCredentialsBeforeMutation?: boolean;
     }
   | {
@@ -314,6 +316,14 @@ function requiresUnownedNotReadyRepair(signals: SandboxResumeSignals): boolean {
   );
 }
 
+function hasReadyOpenclawInferenceSelectionDrift(signals: SandboxResumeSignals): boolean {
+  return (
+    signals.openclawInferenceSelectionChanged === true &&
+    signals.sandboxReuseState === "ready" &&
+    !signals.activeRecreateJournal
+  );
+}
+
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (continuesJournaledRecreate(signals)) {
     return {
@@ -324,6 +334,14 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
   }
   if (signals.hermesPortableLifecyclePending === true) {
     return { kind: "create", continueHermesPortableLifecycle: true };
+  }
+  if (hasReadyOpenclawInferenceSelectionDrift(signals)) {
+    return {
+      kind: "recreate",
+      note: "  Sandbox inference selection changed; recreating to apply the requested model.",
+      removeRegistryEntry: false,
+      confirmOpenclawInferenceSelectionDrift: true,
+    };
   }
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
   if (requiresUnownedNotReadyRepair(signals)) return { kind: "repair-and-recreate" };

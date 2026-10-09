@@ -323,7 +323,12 @@ it(
       ) => {
         child = spawnSync(executable, args, {
           cwd: directory,
-          env: { PATH: process.env.PATH, HOME: directory, NEMOCLAW_GATEWAY_RUNTIME: "docker" },
+          env: {
+            PATH: process.env.PATH,
+            HOME: directory,
+            NEMOCLAW_GATEWAY_RUNTIME: "docker",
+            NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
+          },
           encoding: "utf8",
           timeout: options.timeoutMs,
           killSignal: "SIGKILL",

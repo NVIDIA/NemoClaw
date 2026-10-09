@@ -38,6 +38,7 @@ function runScript(options: { fakeBin: string; homeDir: string; installing?: boo
       NEMOCLAW_CLI_JS: compiledCli,
       NEMOCLAW_INSTALLING: options.installing ? "1" : "",
       NEMOCLAW_NODE: process.execPath,
+      NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
       PATH: `${options.fakeBin}:/usr/bin:/bin`,
     },
   });

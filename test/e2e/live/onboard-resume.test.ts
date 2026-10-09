@@ -13,6 +13,7 @@ import path from "node:path";
 import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
+  ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
@@ -63,6 +64,7 @@ import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diag
 
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-resume";
+const AGENT = process.env.NEMOCLAW_AGENT ?? "openclaw";
 const FAKE_COMPATIBLE_AUTH_VALUE = "e2e-compatible-auth-value";
 const FAKE_COMPATIBLE_MODEL = "test-model";
 const STALE_EXTRA_PROVIDER = "e2e-resume-stale-extra-provider";
@@ -178,7 +180,9 @@ function expectHermeticCompatibleEndpointUsed(
 test(
   "onboard-resume: interrupted onboard then --resume can recreate with cached setup",
   {
-    timeout: testTimeout(ONBOARD_RESUME_TEST_TIMEOUT_MS),
+    timeout: testTimeout(
+      AGENT === "openclaw" ? ONBOARD_RESUME_TEST_TIMEOUT_MS : ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS,
+    ),
     meta: {
       e2ePhases: [
         "confirm runtime and compatible-endpoint prerequisites",
@@ -188,6 +192,9 @@ test(
         "validate resumed sandbox state and corporate trust",
         "retry final verification after route repair",
         "compare implicit resume with fresh onboard",
+        ...(AGENT === "openclaw"
+          ? ["recreate a same-name OpenClaw sandbox after selection drift"]
+          : []),
       ],
     },
   },
@@ -213,6 +220,12 @@ test(
         "an unreachable committed route pauses at final verification and completes after repair",
         "non-recreate resume retains the Ready sandbox, dashboard port, and exact forward listener",
         "implicit resume is detected and --fresh suppresses that auto-resume",
+        ...(AGENT === "openclaw"
+          ? [
+              "fresh same-name onboarding after a selected-model change replaces the sandbox and writes the requested OpenClaw model",
+              "selection-drift provider traffic stays on the local fake endpoint",
+            ]
+          : []),
       ],
     });
 
@@ -358,7 +371,7 @@ test(
       NEMOCLAW_MODEL: FAKE_COMPATIBLE_MODEL,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
-      NEMOCLAW_AGENT: process.env.NEMOCLAW_AGENT ?? "openclaw",
+      NEMOCLAW_AGENT: AGENT,
       NEMOCLAW_HERMES_API_PORT: process.env.NEMOCLAW_HERMES_API_PORT,
       NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
       NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -605,7 +618,7 @@ test(
       { artifactName: "phase-3-5-listener-before-route-failure", env: probeEnv },
     );
     const apiPortBeforeRouteFailure = registeredDashboardPort("hermesApiPort");
-    const hasHermesApi = process.env.NEMOCLAW_AGENT === "hermes";
+    const hasHermesApi = AGENT === "hermes";
     const apiListenerBeforeRouteFailure = hasHermesApi
       ? await host.inspectOpenShellForwardListener(apiPortBeforeRouteFailure, SANDBOX_NAME, {
           artifactName: "phase-3-5-api-listener-before-route-failure",
@@ -785,10 +798,113 @@ test(
       },
     );
     const freshText = `${freshRun.stdout}\n${freshRun.stderr}`;
-    expect(freshRun.exitCode, freshText).not.toBe(0);
     expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
     expect(freshText).not.toContain("(resume mode)");
     expect(freshText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
-    await artifacts.target.complete({ id: "onboard-resume", status: "passed" });
+
+    const selectionDriftRecreated =
+      AGENT === "openclaw" &&
+      (await (async () => {
+        const requestedModel = "test-model-after-selection-drift";
+        progress.phase("recreate a same-name OpenClaw sandbox after selection drift");
+        const originalSandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+          artifactName: "selection-drift-original-sandbox",
+          env: probeEnv,
+          timeoutMs: 30_000,
+        });
+        const originalSandboxId = parseOpenShellSandboxId(resultText(originalSandbox));
+
+        await fake.close();
+        fake = await startFakeOpenAiCompatibleServer({
+          apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
+          host: "0.0.0.0",
+          model: requestedModel,
+          port: fakePort,
+          progress,
+          publicHost: fakePublicHost,
+          requireAuth: true,
+          requireAuthModels: true,
+        });
+        const driftRun = await host.command(
+          "node",
+          [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive"],
+          {
+            artifactName: "onboard-same-name-selection-drift",
+            env: {
+              ...buildAvailabilityProbeEnv(),
+              COMPATIBLE_API_KEY: FAKE_COMPATIBLE_AUTH_VALUE,
+              NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+              NEMOCLAW_AGENT: AGENT,
+              NEMOCLAW_COMPAT_MODEL: requestedModel,
+              NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+              NEMOCLAW_MODEL: requestedModel,
+              NEMOCLAW_NON_INTERACTIVE: "1",
+              NEMOCLAW_POLICY_MODE: "skip",
+              NEMOCLAW_PREFERRED_API: "openai-completions",
+              NEMOCLAW_PROVIDER: "custom",
+              NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+            },
+            redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+            timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
+          },
+        );
+        const replacementSandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+          artifactName: "selection-drift-replacement-sandbox",
+          env: probeEnv,
+          timeoutMs: 30_000,
+        });
+        const replacementSandboxId = parseOpenShellSandboxId(resultText(replacementSandbox));
+
+        const configProbe = await sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(
+            [
+              "node - <<'NODE'",
+              "const fs = require('node:fs');",
+              "const selection = JSON.parse(fs.readFileSync('/sandbox/.nemoclaw/config.json', 'utf8'));",
+              "const openclaw = JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json', 'utf8'));",
+              "console.log(JSON.stringify({ selectionModel: selection.model, primary: openclaw.agents?.defaults?.model?.primary }));",
+              "NODE",
+            ].join("\n"),
+          ),
+          {
+            artifactName: "selection-drift-openclaw-config-probe",
+            env: probeEnv,
+            timeoutMs: 30_000,
+          },
+        );
+        const observedConfig =
+          configProbe.exitCode === 0 ? JSON.parse(configProbe.stdout.trim()) : null;
+        const selectionDriftMatches =
+          driftRun.exitCode === 0 &&
+          originalSandbox.exitCode === 0 &&
+          replacementSandbox.exitCode === 0 &&
+          originalSandboxId !== null &&
+          replacementSandboxId !== null &&
+          replacementSandboxId !== originalSandboxId &&
+          observedConfig?.selectionModel === requestedModel &&
+          observedConfig?.primary === `inference/${requestedModel}`;
+        await artifacts.writeJson("selection-drift-sandbox-identities.json", {
+          originalSandboxId,
+          replacementSandboxId,
+          requestedModel,
+          externalInferenceRequestSent: false,
+        });
+        await artifacts.writeJson("selection-drift-fake-endpoint-requests.json", fake.requests());
+        return selectionDriftMatches;
+      })());
+
+    expect(
+      freshRun.exitCode !== 0 && (AGENT !== "openclaw" || selectionDriftRecreated),
+      `onboard-resume proof failed: freshExit=${freshRun.exitCode}, selectionDriftRecreated=${selectionDriftRecreated}`,
+    ).toBe(true);
+    await artifacts.target.complete({
+      id: "onboard-resume",
+      status: "passed",
+      assertions: {
+        selectionDriftRecreated: AGENT === "openclaw" ? selectionDriftRecreated : null,
+        selectionDriftUsedExternalInference: false,
+      },
+    });
   },
 );

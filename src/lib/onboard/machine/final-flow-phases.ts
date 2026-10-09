@@ -58,9 +58,19 @@ export interface FinalOnboardFlowPhaseOptions<
 }
 
 export function shouldInitializeNativeOpenclawInferenceRoute(
-  context: Pick<OnboardFlowContext, "agent" | "fromDockerfile" | "session">,
+  context: Pick<
+    OnboardFlowContext,
+    "agent" | "fromDockerfile" | "session" | "openclawInferenceSelectionChanged"
+  >,
   preserveRebuildLivePolicy: boolean,
 ): boolean {
+  if (
+    context.agent === null &&
+    context.openclawInferenceSelectionChanged === true &&
+    !preserveRebuildLivePolicy
+  ) {
+    return true;
+  }
   return (
     context.agent === null &&
     (context.fromDockerfile !== null || Boolean(context.session?.metadata?.fromImage)) &&

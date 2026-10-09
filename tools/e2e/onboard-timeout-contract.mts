@@ -82,12 +82,15 @@ export function liveTargetTimeoutContract(
   };
 }
 
-// The onboard-resume scenario gives two create/recreate commands the
-// final-handoff deadline. Four later commands use the no-recreate deadline and
-// assert sandbox reuse or preflight failure.
-export const ONBOARD_RESUME_TEST_TIMEOUT_MS =
+// The Hermes resume variant retains its original budget; OpenClaw adds a fresh
+// same-name model-drift recreation after the resume evidence.
+export const ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS =
   2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
   4 * ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS +
   ONBOARD_TEST_HEADROOM_MS;
+export const ONBOARD_RESUME_HERMES_TARGET_TIMEOUT_MINUTES =
+  (ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
+export const ONBOARD_RESUME_TEST_TIMEOUT_MS =
+  ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS + ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS;
 export const ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES =
   (ONBOARD_RESUME_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;

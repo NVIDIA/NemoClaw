@@ -24,8 +24,8 @@
 // which the WhatsApp plugin never loads — so it never affected the QR. This
 // preload patches the package that actually renders the QR.
 //
-// WHAT THIS DOES: it hooks Module._load (CJS require AND the CJS-interop path
-// that `import("qrcode")` bottoms out at) and wraps the loaded module:
+// WHAT THIS DOES: it hooks Module._load for CommonJS require and the synchronous
+// module load hook for CommonJS packages reached through ESM dynamic import:
 //   * `qrcode` (has both `toString` and `create`): terminal renders are rebuilt
 //     from `qrcode.create(...).modules` with a four-module quiet zone instead of
 //     delegating to qrcode's built-in `small` terminal renderer. Non-terminal
@@ -162,7 +162,22 @@ function createOpenClawQrTerminalLoadHook(sha256Hex?) {
   }
   return function load(url, context, nextLoad) {
     var result = nextLoad(url, context);
-    if (!result || result.format !== "module") return result;
+    if (!result) return result;
+    if (
+      result.format === "commonjs" &&
+      typeof url === "string" &&
+      /\/node_modules\/qrcode(?:-terminal)?\//u.test(url)
+    ) {
+      var commonJsSource = decodeOpenClawQrTerminalSource(result.source);
+      if (commonJsSource === null) return result;
+      return {
+        ...result,
+        source:
+          commonJsSource +
+          `\n; if (typeof process.__nemoclawWhatsappQrCompactPatchModule === "function") { module.exports = process.__nemoclawWhatsappQrCompactPatchModule(${JSON.stringify(url)}, module.exports); }\n`,
+      };
+    }
+    if (result.format !== "module") return result;
     var source = decodeOpenClawQrTerminalSource(result.source);
     if (source === null || !isOpenClawQrTerminalRendererSource(source)) return result;
     var integrity = sha256Hex(source);
@@ -405,15 +420,21 @@ function installWhatsappQrCompactHook() {
   }
 
   var Module = require("module");
+  try {
+    Object.defineProperty(process, "__nemoclawWhatsappQrCompactPatchModule", {
+      value: resolvePatchedModule,
+    });
+  } catch (_e) {
+    process.__nemoclawWhatsappQrCompactPatchModule = resolvePatchedModule;
+  }
   installOpenClawQrTerminalSourceLoader(Module);
   var origLoad = Module._load;
 
   Module._load = function (request, _parent, _isMain) {
     var loaded = origLoad.apply(this, arguments);
-    // Cheap path filter + shape-detect routing. `import("qrcode")` arrives here
-    // as the resolved absolute path (…/qrcode/lib/index.js), so the filter in
-    // resolvePatchedModule matches on the path segment too, not just the bare
-    // specifier.
+    // Cheap path filter + shape-detect routing for CommonJS require. The ESM
+    // loader hook applies the same shape check to dynamic imports because newer
+    // Node releases do not route those through Module._load.
     return resolvePatchedModule(request, loaded);
   };
 }

@@ -106,9 +106,7 @@ const {
   buildDirectSandboxGpuProofCommands,
   discloseInitialSandboxPolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
-const {
-  getSelectionDrift,
-}: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const selectionDrift: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
   createDcodeSelectionDriftReader,
   requiresSelectionRecreate,
@@ -1474,10 +1472,10 @@ const sandboxCreateOrchestrationRuntime = {
   getSandboxRecreateObservation,
   getSandboxReuseState,
   getSandboxRuntimeRegistryFields,
-  getSelectionDrift,
   hasSandboxGpuDrift,
   inferenceConfig,
   inspectSandboxForCreate,
+  ...selectionDrift.createOpenclawReaderDeps(selectionDrift.getSelectionDrift, isOpenclawReady),
   isLinuxDockerDriverGatewayEnabled,
   isNonInteractive,
   isRecreateSandbox,
@@ -2960,7 +2958,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         providerInference: {
           gatewayName: GATEWAY_NAME,
-          inspectSandboxForCreate,
+          ...selectionDrift.createOpenclawSelectionGuardDeps(sandboxCreateOrchestrationRuntime),
           forceProviderSelection: forceProviderSelectionForAgentChange,
           ...rebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
           endpointProvenance,
@@ -3063,6 +3061,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
             getSandboxReuseState,
+            ...selectionDrift.createOpenclawSelectionDriftDeps(sandboxCreateOrchestrationRuntime),
             getSandboxRecreateObservation,
             getDcodeSelectionDrift: sandboxCreateOrchestrationRuntime.readDcodeSelectionDrift,
             hasSandboxGpuDrift,

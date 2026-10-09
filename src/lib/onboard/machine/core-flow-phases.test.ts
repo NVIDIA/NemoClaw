@@ -28,6 +28,7 @@ import {
   type SandboxOnboardFlowPhaseOptions,
 } from "./core-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
+import { noOpenclawSelectionDrift } from "./handlers/provider-inference.test-support";
 import type { OnboardPrerequisiteRepairEventRecorder } from "./prerequisite-repair";
 import { advanceTo, branchTo } from "./result";
 
@@ -98,6 +99,8 @@ function createPhases(
   overrides: {
     endpointProvenance?: Partial<EndpointProvenanceOptions>;
     inspectSandboxForCreate?: ProviderOptions["inspectSandboxForCreate"];
+    isOpenclawReady?: ProviderOptions["isOpenclawReady"];
+    getOpenclawSelectionDrift?: ProviderOptions["getOpenclawSelectionDrift"];
     providerEnv?: NodeJS.ProcessEnv;
     providerDeps?: Partial<ProviderOptions["deps"]>;
     sandboxOptions?: Partial<Omit<SandboxOptions, "deps">>;
@@ -124,6 +127,8 @@ function createPhases(
     inspectSandboxForCreate:
       overrides.inspectSandboxForCreate ??
       (() => ({ existingEntry: null, preservedMcpState: undefined, liveExists: false })),
+    isOpenclawReady: overrides.isOpenclawReady ?? (async () => false),
+    getOpenclawSelectionDrift: overrides.getOpenclawSelectionDrift ?? noOpenclawSelectionDrift,
     apfInterceptorRequested: overrides.sandboxOptions?.apfInterceptorRequested === true,
     endpointProvenance,
     env: overrides.providerEnv ?? {},

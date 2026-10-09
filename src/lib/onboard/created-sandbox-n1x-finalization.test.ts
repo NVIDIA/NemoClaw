@@ -16,7 +16,10 @@ import {
   createSandboxOnboardFlowPhase,
 } from "./machine/core-flow-phases";
 import { prepareCoreOnboardFlowContext } from "./machine/flow-handoff";
-import { createDeps as createProviderDeps } from "./machine/handlers/provider-inference.test-support";
+import {
+  createDeps as createProviderDeps,
+  noOpenclawSelectionDrift,
+} from "./machine/handlers/provider-inference.test-support";
 import { createDeps as createSandboxDeps } from "./machine/handlers/sandbox-test-fixtures";
 import {
   createInitialOnboardFlowPhases,
@@ -210,6 +213,8 @@ async function createIntentThroughOnboardFlow(input: {
       preservedMcpState: undefined,
       liveExists: false,
     }),
+    isOpenclawReady: async () => false,
+    getOpenclawSelectionDrift: noOpenclawSelectionDrift,
     endpointProvenance,
     env: environment,
     constants: {

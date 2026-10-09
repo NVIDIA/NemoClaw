@@ -25,6 +25,20 @@ import {
 
 vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
 
+const linuxPidfdAvailable =
+  process.platform === "linux" &&
+  (() => {
+    const probe = childProcess.spawnSync(
+      "python3",
+      [
+        "-c",
+        "import os, signal; fd = os.pidfd_open(os.getpid()) if hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal') else None; os.close(fd) if fd is not None else None; print('available' if fd is not None else 'unavailable')",
+      ],
+      { encoding: "utf8", timeout: 1000 },
+    );
+    return probe.status === 0 && probe.stdout.trim() === "available";
+  })();
+
 describe("cloudflared identity-bound signaling", () => {
   let pidDir: string;
 
@@ -110,7 +124,7 @@ describe("cloudflared identity-bound signaling", () => {
     },
   );
 
-  it.skipIf(process.platform !== "linux")(
+  it.skipIf(!linuxPidfdAvailable)(
     "signals only the verified cloudflared process through a Linux pidfd",
     async () => {
       const executable = join(pidDir, "cloudflared");

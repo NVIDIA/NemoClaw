@@ -55,7 +55,11 @@ import {
   hostLocalInferenceRequestToolCalling,
   hostLocalInferenceSandboxProofAuthority,
 } from "../../runtime-provider/host-local-inference-routing";
-import { reserveRecoveredSandboxInferenceRoute } from "../../sandbox-lifecycle";
+import {
+  type SandboxLifecycleHelpers,
+  reserveRecoveredSandboxInferenceRoute,
+} from "../../sandbox-lifecycle";
+import type { GetOpenclawSelectionDrift } from "../../selection-drift";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 import { createRecovery, type RecoveryAuthority } from "./provider-inference-recovery";
@@ -151,6 +155,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   sandboxName: string | null;
   /** Sandbox name the operator passed this run via --name or NEMOCLAW_SANDBOX_NAME (#8953). */
   requestedSandboxName?: string | null;
+  externalComponentRegistered?: boolean;
+  recreateSandboxRequested?: boolean;
+  isOpenclawReady?: SandboxLifecycleHelpers["isOpenclawReady"];
+  getOpenclawSelectionDrift?: GetOpenclawSelectionDrift;
+  inspectSandboxForCreate?: SandboxLifecycleHelpers["inspectSandboxForCreate"];
   agent: Agent;
   forceProviderSelection?: boolean;
   /** Force setup for a provider that authoritative rebuild preflight observed missing. */
@@ -1232,6 +1241,53 @@ async function resolveSelectionSandboxName<Agent>(
   return deps.promptValidatedSandboxName(agent);
 }
 
+async function guardUnreadableOpenclawSelection(input: {
+  agentName: string;
+  externalComponentRegistered: boolean;
+  sandboxName: string | null;
+  recreateSandboxRequested: boolean;
+  isOpenclawReady?: SandboxLifecycleHelpers["isOpenclawReady"];
+  getOpenclawSelectionDrift?: GetOpenclawSelectionDrift;
+  inspectSandboxForCreate?: SandboxLifecycleHelpers["inspectSandboxForCreate"];
+  provider: string;
+  model: string;
+  error(message: string): void;
+  exitProcess(code: number): never;
+}): Promise<void> {
+  const {
+    agentName,
+    externalComponentRegistered,
+    sandboxName,
+    recreateSandboxRequested,
+    isOpenclawReady,
+    getOpenclawSelectionDrift,
+    inspectSandboxForCreate,
+    provider,
+    model,
+    error,
+    exitProcess,
+  } = input;
+  if (
+    externalComponentRegistered ||
+    agentName !== "openclaw" ||
+    !sandboxName ||
+    recreateSandboxRequested ||
+    !isOpenclawReady ||
+    !getOpenclawSelectionDrift
+  ) {
+    return;
+  }
+  const inspected = inspectSandboxForCreate?.(sandboxName);
+  if (!inspected?.existingEntry || !inspected.liveExists || !(await isOpenclawReady(sandboxName))) {
+    return;
+  }
+  if (!getOpenclawSelectionDrift(sandboxName, provider, model).unknown) return;
+  error(
+    `  The existing OpenClaw sandbox '${sandboxName}' has a provider/model selection that NemoClaw could not read. No inference route was changed and the sandbox was left intact. Retry onboarding once the selection is readable, or explicitly recover with --recreate-sandbox (or NEMOCLAW_RECREATE_SANDBOX=1).`,
+  );
+  exitProcess(1);
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -1241,6 +1297,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gpuPassthrough,
   sandboxName,
   requestedSandboxName = null,
+  externalComponentRegistered = false,
+  recreateSandboxRequested = false,
+  isOpenclawReady,
+  getOpenclawSelectionDrift,
+  inspectSandboxForCreate,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
   forceInferenceSetup: initialForceInferenceSetup = false,
@@ -1757,6 +1818,19 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     });
     sandboxName = hostLocalResume.sandboxName;
     const resumeHostLocalInferenceSetupOptions = hostLocalResume.setupOptions;
+    await guardUnreadableOpenclawSelection({
+      agentName: agentName(agent),
+      externalComponentRegistered,
+      sandboxName,
+      recreateSandboxRequested,
+      isOpenclawReady,
+      getOpenclawSelectionDrift,
+      inspectSandboxForCreate,
+      provider: selectedProvider,
+      model: selectedModel,
+      error: deps.error,
+      exitProcess: deps.exitProcess,
+    });
     // Fresh selection and resume share this check; managed runtimes retain their own proof.
     await ensureAttachedLlamaCppReachable(
       selectedProvider,

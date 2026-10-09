@@ -100,6 +100,28 @@ describe("selection drift helpers", () => {
     expect(fs.existsSync(String(downloadedParent))).toBe(false);
   });
 
+  it.skipIf(process.platform === "win32")("does not read a symlinked downloaded config", () => {
+    const root = tmpRoot();
+    const hostConfig = path.join(root, "host-config.json");
+    fs.writeFileSync(
+      hostConfig,
+      JSON.stringify({ provider: "compatible-endpoint", model: "host-model" }),
+      "utf-8",
+    );
+    const runOpenshell = vi.fn((args: string[]) => {
+      fs.symlinkSync(hostConfig, path.join(String(args[4]), "config.json"));
+      return { status: 0 };
+    });
+    const readFile = vi.spyOn(fs, "readFileSync");
+
+    try {
+      expect(readSandboxSelectionConfig("alpha", { runOpenshell, tmpDir: root })).toBeNull();
+      expect(readFile).not.toHaveBeenCalled();
+    } finally {
+      readFile.mockRestore();
+    }
+  });
+
   it.each([
     { provider: "inference", model: "model-a\u001b]52;c;attack\u0007" },
     { provider: "inference\nforged-output", model: "model-a" },

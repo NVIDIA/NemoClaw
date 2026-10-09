@@ -62,6 +62,12 @@ const TOUCHED_ENV = [
   "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+  "SSL_CERT_FILE",
+  "NEMOCLAW_CORPORATE_CA_BUNDLE",
+  "NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS",
+  "NEMOCLAW_CORPORATE_CA_IMPORT",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE",
 ];
 
 function writeOpenAiCompatibleCurl(fakeBin: string): void {
@@ -136,6 +142,7 @@ describe("hosted inference default model namespace (#5667)", () => {
     for (const key of TOUCHED_ENV) {
       delete process.env[key];
     }
+    process.env.NEMOCLAW_CORPORATE_CA_IMPORT = "off";
   });
 
   afterEach(() => {
@@ -200,6 +207,7 @@ runner.runCapture = () => "";
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 process.env.NEMOCLAW_YES = "1";
 process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+process.env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS = "inference-api.nvidia.com";
 process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
 process.env.NEMOCLAW_PROVIDER_KEY = "sk-test-inference-hub-key";
 delete process.env.NEMOCLAW_MODEL;
@@ -247,6 +255,12 @@ const { setupNim } = require(${onboardPath});
           ...process.env,
           HOME: home,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          SSL_CERT_FILE: "",
+          NEMOCLAW_CORPORATE_CA_BUNDLE: "",
+          NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS: "",
+          NEMOCLAW_CORPORATE_CA_IMPORT: "off",
+          REQUESTS_CA_BUNDLE: "",
+          CURL_CA_BUNDLE: "",
           VITEST: "false",
         },
         timeout: 60_000,

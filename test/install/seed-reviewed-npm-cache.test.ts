@@ -24,12 +24,11 @@ const TARGET = { cpu: "x64", libc: "glibc", os: "linux" } as const;
 const roots: string[] = [];
 
 function cachePutFromInstalledNpm(): CachePut {
-  const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-  const require = createRequire(import.meta.url);
-  const cacachePath = require.resolve("cacache", {
-    paths: [path.join(npmRoot, "npm", "node_modules")],
-  });
-  return (require(cacachePath) as Readonly<{ put: CachePut }>).put;
+  const npmPackageRoot = process.env.npm_execpath
+    ? path.resolve(path.dirname(process.env.npm_execpath), "..")
+    : path.join(execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim(), "npm");
+  const npmRequire = createRequire(path.join(npmPackageRoot, "package.json"));
+  return (npmRequire("cacache") as Readonly<{ put: CachePut }>).put;
 }
 
 type PutCall = Readonly<{

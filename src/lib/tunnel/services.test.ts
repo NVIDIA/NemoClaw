@@ -967,48 +967,6 @@ describe("stopAll", () => {
   });
 
   it.skipIf(process.platform !== "linux")(
-    "signals a verified cloudflared process through a Linux pidfd",
-    () => {
-      const executable = join(pidDir, "cloudflared");
-      copyFileSync("/bin/sleep", executable);
-      chmodSync(executable, 0o700);
-      const subprocess = childProcess.spawn(executable, ["20"], { stdio: "ignore" });
-      const pid =
-        subprocess.pid ??
-        (() => {
-          throw new Error("cloudflared test process has no PID");
-        })();
-      writeFileSync(join(pidDir, "cloudflared.pid"), String(pid), { mode: 0o600 });
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const unmanagedCloudflaredPids = (): number[] => [];
-      try {
-        stopAll({ pidDir, unloadOllamaModels: () => undefined, unmanagedCloudflaredPids });
-        const deadline = Date.now() + 1000;
-        let processStopped = false;
-        while (!processStopped && Date.now() < deadline) {
-          try {
-            const status = readFileSync(`/proc/${String(pid)}/status`, "utf-8");
-            processStopped = /^State:\s+(?:Z|X)/m.test(status);
-          } catch {
-            // A missing /proc entry also proves that the process exited.
-            processStopped = true;
-          }
-        }
-        expect(processStopped).toBe(true);
-      } finally {
-        logSpy.mockRestore();
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          // The identity-bound stop path already reaped the process.
-        }
-      }
-
-      expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
-    },
-  );
-
-  it.skipIf(process.platform !== "linux")(
     "preserves a live cloudflared PID after its executable is removed by an upgrade",
     async () => {
       const executable = join(pidDir, "cloudflared");

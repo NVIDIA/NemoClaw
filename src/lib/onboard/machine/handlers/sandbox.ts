@@ -43,6 +43,7 @@ import type {
 import { type SandboxEntry, type SandboxRemovalReceipt } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import type { SelectionDrift } from "../../selection-drift";
 import {
   recordCheckpointEffectGroup,
   recordCheckpointMessaging,
@@ -292,6 +293,14 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
+    getSelectionDrift?(sandboxName: string, provider: string, model: string): SelectionDrift;
+    isNonInteractive?(): boolean;
+    confirmRecreateForSelectionDrift?(
+      sandboxName: string,
+      drift: SelectionDrift,
+      requestedProvider: string | null,
+      requestedModel: string | null,
+    ): Promise<boolean>;
     getSandboxRecreateObservation(
       sandboxName: string | null,
       gatewayName?: string,
@@ -434,6 +443,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   sandboxName: string;
   webSearchConfig: WebSearchConfig | null;
   webSearchConfigChanged: boolean;
+  openclawInferenceSelectionChanged: boolean;
   hermesToolGateways: string[];
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
@@ -665,6 +675,92 @@ function isCanonicalCheckpointProviderBinding(binding: CheckpointProviderBinding
   );
 }
 
+function readOpenclawInferenceSelectionDrift(
+  agentName: string,
+  externalComponentRegistered: boolean,
+  sandboxName: string | null,
+  sandboxReuseState: string,
+  provider: string,
+  model: string,
+  readSelectionDrift?: (sandboxName: string, provider: string, model: string) => SelectionDrift,
+): SelectionDrift | null {
+  if (
+    externalComponentRegistered ||
+    agentName !== "openclaw" ||
+    !sandboxName ||
+    sandboxReuseState !== "ready" ||
+    !readSelectionDrift
+  ) {
+    return null;
+  }
+  return readSelectionDrift(sandboxName, provider, model);
+}
+
+function hasKnownOpenclawInferenceSelectionDrift(drift: SelectionDrift | null): boolean {
+  return drift?.changed === true && drift.unknown === false;
+}
+
+type SelectionDriftRecreationDecision = {
+  kind: string;
+  confirmOpenclawInferenceSelectionDrift?: boolean;
+};
+
+function shouldConfirmSelectionDriftRecreation(
+  decision: SelectionDriftRecreationDecision,
+  recreateSandbox: (prompt: boolean) => boolean,
+  drift: SelectionDrift | null,
+): boolean {
+  return (
+    decision.kind === "recreate" &&
+    decision.confirmOpenclawInferenceSelectionDrift === true &&
+    hasKnownOpenclawInferenceSelectionDrift(drift) &&
+    !recreateSandbox(false)
+  );
+}
+
+async function confirmSelectionDriftRecreation<
+  Gpu,
+  Agent,
+  WebSearchConfig,
+  MessagingChannelConfig,
+  SandboxGpuConfig,
+  ResourceProfile,
+>(
+  options: SandboxStateOptions<
+    Gpu,
+    Agent,
+    WebSearchConfig,
+    MessagingChannelConfig,
+    SandboxGpuConfig,
+    ResourceProfile
+  >,
+  decision: SelectionDriftRecreationDecision,
+  sandboxName: string,
+  drift: SelectionDrift | null,
+): Promise<void> {
+  if (!shouldConfirmSelectionDriftRecreation(decision, options.recreateSandbox, drift)) return;
+  if (!drift) return;
+  const deps = options.deps;
+  if (!deps.isNonInteractive) {
+    throw new Error("Inference-drift recreation requires an explicit interaction-mode signal.");
+  }
+  if (deps.isNonInteractive()) return;
+  if (!deps.confirmRecreateForSelectionDrift) {
+    throw new Error(
+      "Interactive inference-drift recreation requires explicit confirmation support.",
+    );
+  }
+  const confirmed = await deps.confirmRecreateForSelectionDrift(
+    sandboxName,
+    drift,
+    drift.requestedProvider ?? options.provider,
+    drift.requestedModel ?? options.model,
+  );
+  if (confirmed) return;
+  deps.error("  Aborted. Existing sandbox left unchanged.");
+  return deps.exitProcess(1);
+}
+
 class SandboxStateFlow<
   Gpu,
   Agent,
@@ -674,6 +770,7 @@ class SandboxStateFlow<
   ResourceProfile,
 > {
   private dcodeAutoApprovalMode: DcodeAutoApprovalMode = DEFAULT_DCODE_AUTO_APPROVAL_MODE;
+  private openclawInferenceSelectionDrift: SelectionDrift | null = null;
 
   constructor(
     private readonly options: SandboxStateOptions<
@@ -823,6 +920,16 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    const selectedAgentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    this.openclawInferenceSelectionDrift = readOpenclawInferenceSelectionDrift(
+      selectedAgentName,
+      this.options.externalComponentRegistered === true,
+      state.sandboxName,
+      sandboxReuseState,
+      this.options.provider,
+      this.options.model,
+      this.deps.getSelectionDrift,
+    );
     const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
@@ -893,6 +1000,9 @@ class SandboxStateFlow<
       }),
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
+      openclawInferenceSelectionChanged: hasKnownOpenclawInferenceSelectionDrift(
+        this.openclawInferenceSelectionDrift,
+      ),
     });
     const credentialValidatedDecision =
       decision.kind !== "reuse" && messagingCredentialChanged
@@ -2637,6 +2747,9 @@ class SandboxStateFlow<
       sandboxName: state.sandboxName,
       webSearchConfig: state.webSearchConfig,
       webSearchConfigChanged: state.webSearchConfigChanged,
+      openclawInferenceSelectionChanged: hasKnownOpenclawInferenceSelectionDrift(
+        this.openclawInferenceSelectionDrift,
+      ),
       hermesToolGateways,
       selectedMessagingChannels: state.selectedMessagingChannels,
       webSearchSupported: state.webSearchSupported,
@@ -2663,6 +2776,13 @@ class SandboxStateFlow<
       this.applyObservabilityRequest(this.prepareWebSearchSupport()),
     );
     const decision = await this.resolveResumeDecision(initialState);
+    const selectionDrift = this.openclawInferenceSelectionDrift;
+    await confirmSelectionDriftRecreation(
+      this.options,
+      decision,
+      initialState.sandboxName ?? "",
+      selectionDrift,
+    );
     if (
       this.options.externalComponentRegistered === true &&
       (this.options.resume || this.options.recreateSandbox(false) || decision.kind !== "create")
