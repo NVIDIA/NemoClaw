@@ -81,9 +81,9 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6b8e9d3ccc8564636f615f4e0652eca68214520f/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6b8e9d3ccc8564636f615f4e0652eca68214520f/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6b8e9d3ccc8564636f615f4e0652eca68214520f/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/021ff2dc65f18ba62ffd09921cade777d3f100dd/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/021ff2dc65f18ba62ffd09921cade777d3f100dd/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/021ff2dc65f18ba62ffd09921cade777d3f100dd/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
@@ -194,7 +194,7 @@ Use this provider mapping for non-interactive setup:
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
 - Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; on native N1x, this value supplies explicit standard-onboarding intent, but the route remains unvalidated.
-- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; on native N1x, this value supplies explicit Deferred preview intent. Qualifying N1x WSL hosts instead follow the Windows WSL asset's managed llama.cpp path. Use an approved optional model override only when the selected platform supports it.
+- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; on native N1x, this value supplies explicit Deferred preview intent. Qualifying N1x WSL and Station GB300 WSL hosts instead follow the Windows WSL asset's managed llama.cpp path. Use an approved optional model override only when the selected platform supports it.
 
 Do not offer Hermes Provider for OpenClaw or Deep Agents.
 

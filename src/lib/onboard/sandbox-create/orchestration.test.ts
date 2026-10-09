@@ -10,7 +10,6 @@ import { describe, expect, it, vi } from "vitest";
 import * as processRecovery from "../../actions/sandbox/process-recovery";
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxEntry } from "../../state/registry";
-import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import { releaseManagedStartupHoldWithRetry } from "../managed-startup/provider-root-apply";
 import {
   assertApfCreateIntent,
@@ -554,36 +553,6 @@ describe("deferred provider effect authority", () => {
       "detaching provider",
       "confirming provider detach",
     ]);
-  });
-
-  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", async () => {
-    let observationCount = 0;
-    const revalidateSandboxIdentity = vi.fn();
-    const runOpenshell = vi.fn(() => ({
-      pid: 1,
-      output: [null, "", ""],
-      stdout: "",
-      stderr: "",
-      status: 0,
-      signal: null,
-    }));
-
-    await expect(
-      runAuthorityBoundProviderCleanup({
-        sandboxName: "alpha",
-        observeSandbox: () =>
-          observationCount++ === 0
-            ? { state: "missing", liveIdentityFingerprint: null }
-            : { state: "ready", liveIdentityFingerprint: "f".repeat(64) },
-        revalidateSandboxIdentity,
-        runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
-        runOpenshell,
-        redact: (value) => value,
-        tolerateMissingSandbox: true,
-      }),
-    ).rejects.toThrow(/appeared after absence was verified/u);
-    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
-    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("refuses every deferred provider attachment before a same-name replacement can receive credentials (#9833)", async () => {

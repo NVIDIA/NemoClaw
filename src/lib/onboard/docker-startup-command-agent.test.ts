@@ -11,62 +11,34 @@ import {
 import { resolveAgentCreateInput } from "./sandbox-gpu-create-flow";
 
 const PORTABLE_ENV: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
-const DEFAULT_ENV: NodeJS.ProcessEnv = {};
 
 const agent = (name: string) => ({ name }) as AgentDefinition;
 
 describe("resolveDockerStartupCommandPatch", () => {
-  it.each(["openclaw", "hermes"])(
-    "relies on the OpenShell canonical process for %s on a default-profile docker-driver gateway",
-    (name) => {
-      expect(resolveDockerStartupCommandPatch(agent(name), true, DEFAULT_ENV)).toMatchObject({
-        persistStartupCommand: false,
-      });
-    },
-  );
-
-  it("keeps the DCode recreation required for exact Docker ulimits", () => {
-    expect(
-      resolveDockerStartupCommandPatch(agent("langchain-deepagents-code"), true, DEFAULT_ENV),
-    ).toEqual({
-      persistStartupCommand: true,
-      requiredUlimits: DCODE_DOCKER_ULIMITS,
-    });
-  });
-
   it.each(["openclaw", "hermes", "langchain-deepagents-code"])(
-    "disables the Docker restart-safe recreation for %s under the portable profile (#9462)",
+    "uses OpenShell startup and retains only the required Docker limits for %s",
     (name) => {
-      expect(resolveDockerStartupCommandPatch(agent(name), true, PORTABLE_ENV)).toMatchObject({
+      expect(resolveDockerStartupCommandPatch(agent(name), true)).toEqual({
         persistStartupCommand: false,
+        requiredUlimits: name === "langchain-deepagents-code" ? DCODE_DOCKER_ULIMITS : null,
       });
     },
   );
 
-  it("keeps the DCode ulimit contract visible under the portable profile", () => {
-    expect(
-      resolveDockerStartupCommandPatch(agent("langchain-deepagents-code"), true, PORTABLE_ENV)
-        .requiredUlimits,
-    ).toEqual(DCODE_DOCKER_ULIMITS);
-  });
+  it.each([false, null, undefined])(
+    "disables Docker overrides when the Docker gateway flag is %s",
+    (flag) => {
+      expect(resolveDockerStartupCommandPatch(agent("langchain-deepagents-code"), flag)).toEqual({
+        persistStartupCommand: false,
+        requiredUlimits: null,
+      });
+    },
+  );
 
-  it("stays fully disabled off the docker-driver gateway regardless of profile", () => {
-    expect(resolveDockerStartupCommandPatch(agent("hermes"), false, PORTABLE_ENV)).toEqual({
+  it("treats a missing agent as OpenClaw", () => {
+    expect(resolveDockerStartupCommandPatch(null, true)).toEqual({
       persistStartupCommand: false,
       requiredUlimits: null,
-    });
-    expect(resolveDockerStartupCommandPatch(agent("hermes"), false, DEFAULT_ENV)).toEqual({
-      persistStartupCommand: false,
-      requiredUlimits: null,
-    });
-  });
-
-  it("treats a missing agent as OpenClaw for the portable gate", () => {
-    expect(resolveDockerStartupCommandPatch(null, true, PORTABLE_ENV)).toMatchObject({
-      persistStartupCommand: false,
-    });
-    expect(resolveDockerStartupCommandPatch(null, true, DEFAULT_ENV)).toMatchObject({
-      persistStartupCommand: false,
     });
   });
 });

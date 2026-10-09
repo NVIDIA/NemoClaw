@@ -605,10 +605,7 @@ ADD --chmod=0444 --checksum=sha256:96a03e2ac0906b035085ec4e2307dd8076fb02673b8f5
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
 
-# Keep the messaging graph inert unless release builds select its lock cache.
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS openclaw-managed-messaging-npm-cache-0
-RUN install -d -o root -g root -m 0755 /out/npm-cache
-
+# Selected and managed-union plugins share the reviewed offline dependency cache.
 FROM npm12 AS openclaw-managed-messaging-npm-cache-1
 ARG TARGETARCH
 ENV NPM_CONFIG_AUDIT=false \
@@ -647,7 +644,7 @@ RUN --network=none set -eu; \
     chmod -R a+rX,go-w /out/npm-cache
 
 # hadolint ignore=DL3006
-FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} AS openclaw-managed-messaging-npm-cache
+FROM openclaw-managed-messaging-npm-cache-1 AS openclaw-managed-messaging-npm-cache
 
 FROM scratch AS openclaw-dependency-payload
 
@@ -1861,11 +1858,7 @@ USER sandbox
 # The selected phase keeps exactly one messaging-applier invocation per build.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
-    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        trusted_cache=/opt/nemoclaw-managed-messaging-npm-cache; \
-    else \
-        trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
-    fi; \
+    trusted_cache=/opt/nemoclaw-managed-messaging-npm-cache; \
     unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
     if [ -n "$unsafe_cache_entry" ]; then \
         printf 'ERROR: trusted messaging cache is unsafe phase=before-install path=%s reason=not-root-owned-or-group-world-writable\n' \
@@ -1876,12 +1869,12 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
     trap 'rm -rf "$install_cache"' EXIT; \
     cp -R "$trusted_cache"/. "$install_cache"/; \
     chmod -R u+rwX,go-w "$install_cache"; \
+    export NPM_CONFIG_CACHE="$install_cache"; \
+    export NPM_CONFIG_OFFLINE=true; \
+    export NPM_CONFIG_AUDIT=false; \
+    export NPM_CONFIG_FUND=false; \
     messaging_phase=agent-install; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        export NPM_CONFIG_CACHE="$install_cache"; \
-        export NPM_CONFIG_OFFLINE=true; \
-        export NPM_CONFIG_AUDIT=false; \
-        export NPM_CONFIG_FUND=false; \
         messaging_phase=managed-image-capability-union; \
     fi; \
     NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \

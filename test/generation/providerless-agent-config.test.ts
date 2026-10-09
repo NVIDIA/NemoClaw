@@ -280,7 +280,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
     });
     await expect(
       runInferenceSet(
-        { sandboxName: "alpha", provider: "nvidia-prod", model: "fixture/model" },
+        { sandboxName: "alpha", provider: "openai-api", model: "fixture/model" },
         deps,
       ),
     ).rejects.toThrow();

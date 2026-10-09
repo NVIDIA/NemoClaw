@@ -157,6 +157,9 @@ export type OpenShellProviderRefreshStatus = Readonly<{
 
 /** Transport-neutral provider operations used by NemoClaw consumers. */
 export interface OpenShellProviderAdapter {
+  ensureProviderPolicyComposition(
+    request: OpenShellProviderRequest,
+  ): Promise<OpenShellProviderResult<void>>;
   listProviders(
     request: OpenShellProviderRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderInventory>>;

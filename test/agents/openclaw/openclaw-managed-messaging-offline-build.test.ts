@@ -122,6 +122,10 @@ describe("OpenClaw managed messaging offline image build", () => {
     expect(runtimeLock.packages["node_modules/@emnapi/wasi-threads"]).toMatchObject({
       version: "1.2.2",
     });
+    expect(runtimeLock.packages["node_modules/proxy-addr"]).toMatchObject({
+      version: "2.0.8",
+      dependencies: { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    });
   });
 
   it("pins the complete lock graphs below the cold-build layer limit", () => {
@@ -198,7 +202,7 @@ describe("OpenClaw managed messaging offline image build", () => {
   it("runs and verifies the real offline clean install in the managed-image build", () => {
     const cacheStage = dockerfileSection(
       "AS openclaw-managed-messaging-npm-cache-1",
-      "FROM openclaw-managed-messaging-npm-cache-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}",
+      "FROM openclaw-managed-messaging-npm-cache-1 AS openclaw-managed-messaging-npm-cache\n",
     );
 
     expect(dockerfile).toContain(
