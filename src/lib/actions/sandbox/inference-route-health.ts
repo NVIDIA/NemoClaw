@@ -413,6 +413,15 @@ export function buildSandboxInferenceRouteHealth(
             failureLabel: "unreachable" as const,
           }
         : invoked;
+    // Only the OpenRouter adapter's catalog-less route is accepted on a 404. Say why
+    // it is healthy, so the top line does not read as a contradiction of the
+    // "reachable (HTTP 404)" route line below it (#12802).
+    if (routeHealth.ok && gateway.httpStatus === 404) {
+      routeHealth = {
+        ...routeHealth,
+        okLabel: "healthy (no model catalog by design; inference request served)",
+      };
+    }
   } else if (gateway) {
     const ok = accepted;
     // The probe reads any HTTP 200-499 as reachable, so its own detail says the
