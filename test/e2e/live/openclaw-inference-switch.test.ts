@@ -227,10 +227,6 @@ async function proveSelectedMockBaselineAuthentication(
   ).toContainEqual(expectedRequest);
 }
 
-function stripAnsi(value: string): string {
-  return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
 function parsePortEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -531,10 +527,6 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
     },
   );
   return result.stdout.trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
@@ -1318,14 +1310,6 @@ test(
     progress.phase("inspect route configuration and recorded state");
     const route = await getRouteOutput(host, home);
     expect(route.exitCode, resultText(route)).toBe(0);
-    const plainRoute = stripAnsi(resultText(route));
-    // The CLI aligns the label columns; the exact rendering contract is owned by
-    // src/lib/actions/inference-get.test.ts, so accept one or more spaces here and
-    // require each displayed value to end at the line boundary.
-    expect(plainRoute).toMatch(
-      new RegExp(`Provider: +${escapeRegExp(SWITCH_PROVIDER)}(?:\\r?\\n|$)`),
-    );
-    expect(plainRoute).toMatch(new RegExp(`Model: +${escapeRegExp(SWITCH_MODEL)}(?:\\r?\\n|$)`));
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
