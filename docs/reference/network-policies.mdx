@@ -205,7 +205,7 @@ The `policy list` provenance tags are inferred from the current tier YAML and th
 A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
 Claude Code direct egress is not included in the Restricted, Balanced, or Open tiers.
 Personal's broad route permits its port `443` transport but does not install or configure Claude Code; on other tiers, apply the `claude-code` preset explicitly if you install and run the CLI inside the sandbox with its own credentials.
-Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
+NemoClaw-managed Anthropic inference remains mediated by OpenShell.
 
 Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 

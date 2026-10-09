@@ -200,7 +200,7 @@ Layering from top to bottom:
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider and placeholder system.
 Shared routes use the gateway L7 proxy to substitute the real value at egress.
-NVIDIA Endpoints uses the sandbox-attached provider profile to enforce the restricted request and replace its placeholder at egress.
+NVIDIA Endpoints and supported fixed hosted providers use sandbox-attached provider profiles to enforce restricted requests and replace placeholder credentials at egress.
 The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model.
 It is not a runtime component.
 

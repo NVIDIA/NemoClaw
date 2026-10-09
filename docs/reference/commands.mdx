@@ -4425,7 +4425,7 @@ Keep `NEMOCLAW_CUA_ENABLED=1` set whenever NemoClaw uses the experimental `nemoc
   application 'nemocua'`. Choose a non-host-local inference provider instead.
 </Warning>
 
-When NemoCUA uses the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
+When NemoCUA retains a legacy shared route for the recorded `openrouter-api` provider, `https://inference.local/v1/models` returns `HTTP 404` by design because NemoClaw's OpenRouter adapter serves Chat Completions without a model catalog.
 NemoClaw reports the route ready only after a bounded inference request successfully serves the selected model.
 If that request fails, the expected catalog response does not make the route ready.
 
