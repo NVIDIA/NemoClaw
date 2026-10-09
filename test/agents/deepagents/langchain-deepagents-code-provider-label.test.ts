@@ -68,7 +68,7 @@ describe("LangChain Deep Agents Code managed provider label", () => {
     expect(config).toContain(`default = "openai:${model}"`);
     expect(config).toContain("[models.providers.openai]");
     expect(config).toContain('base_url = "https://integrate.api.nvidia.com/v1"');
-    expect(config).toContain('api_key_env = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY"');
+    expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
     expect(config).toContain("upstream provider: nvidia-prod");
 
     const managedBaseUrlPath = path.join(tempDir, "managed-inference-base-url");
