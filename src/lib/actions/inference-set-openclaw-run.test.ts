@@ -72,6 +72,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     };
     let attached = false;
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () => ({
         ok: true as const,
@@ -157,6 +158,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       });
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider,
       updateProvider: vi.fn(async () => ({ ok: true as const })),
@@ -196,6 +198,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       return { ok: true };
     });
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () =>
         providerPresent
@@ -279,6 +282,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
     const attachProvider = vi.fn<OpenShellProviderAdapter["attachProvider"]>();
     const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const })),
       importProviderProfile: vi.fn(async () => ({ ok: true as const })),
       getProvider: vi.fn(async () =>
         providerPresent

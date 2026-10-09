@@ -107,7 +107,7 @@ export const CHECKS: readonly CheckCommand[] = [
   },
   {
     name: "pi-qualification-receipt-refresh",
-    args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
+    args: ["scripts/checks/pi-qualification-receipt-refresh.mts", "--publication"],
   },
   {
     name: "test-registration-boundary",
