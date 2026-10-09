@@ -144,9 +144,8 @@ export function parseOpenClawGatewayModelRun(raw: string): OpenClawGatewayModelR
   };
 }
 
-// Baseline (mock-Anthropic) inference config the live target builds when
-// NEMOCLAW_SWITCH_MOCK_ANTHROPIC=1 points OpenClaw at a local fake OpenAI-
-// compatible server. Extracted so the fast e2e-support project can assert the
+// Both switch variants start OpenClaw against an authenticated local fake
+// OpenAI-compatible server. Extracted so the fast e2e-support project can assert the
 // exact env wiring (credential, model, endpoint, preferred API, provider)
 // without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 export const MOCK_BASELINE_API_KEY = "openclaw-switch-baseline-credential";

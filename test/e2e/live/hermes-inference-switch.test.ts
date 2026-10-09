@@ -184,7 +184,7 @@ test(
     expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
     expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
-      model: hostedInstallModel(installEnv),
+      model: hostedInstallModel(env(apiKey, installEnv)),
     });
     const baselineSession = structuredClone(registryState().session);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);

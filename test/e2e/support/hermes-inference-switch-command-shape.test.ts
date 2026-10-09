@@ -20,6 +20,7 @@ import {
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
   hostedInstallModel,
+  env,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
@@ -188,6 +189,28 @@ describe("Hermes inference switch command shape", () => {
         NEMOCLAW_SWITCH_MODEL: "target-switch-model",
       }),
     ).toBe("initial-hosted-model");
+  });
+
+  it("derives the native baseline model from the install environment", () => {
+    const installEnv = env("nvapi-public-fixture-key");
+    expect(hostedInstallModel(installEnv)).toBe("nvidia/nemotron-3-super-120b-a12b");
+  });
+
+  it("keeps the public proxy-resolution credential on the public NVIDIA endpoint", async () => {
+    const command = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stderr: "",
+      stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
+    });
+    await prepareProxyResolutionRoute({
+      apiKey: "nvapi-public-fixture-key",
+      host: { command } as unknown as HostCliClient,
+      mockBaseline: undefined,
+      redactionValues: ["nvapi-public-fixture-key"],
+    });
+    expect(command.mock.calls[0]?.[1]).toContain(
+      "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
+    );
   });
 
   it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
