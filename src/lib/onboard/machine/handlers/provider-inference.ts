@@ -1237,9 +1237,7 @@ async function resolveSelectionSandboxName<Agent>(
 }
 
 function nativeLocalAgentOptions(agent: unknown, provider: string, endpointUrl: string | null) {
-  return agentName(agent) === "hermes" && usesNativeLocalInference(provider, endpointUrl)
-    ? { agentName: "hermes" }
-    : {};
+  return usesNativeLocalInference(provider, endpointUrl) ? { agentName: agentName(agent) } : {};
 }
 
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
