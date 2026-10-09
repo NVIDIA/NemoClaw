@@ -923,44 +923,42 @@ export async function prepareRuntimeIdentity(
   }
 
   const profileImport = await importValidatedProfile(profileSource, deps);
-  if (profileImport.exitCode !== 0) {
-    if (!/already exists/i.test(commandOutput(profileImport))) {
-      throw new Error(
-        `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
-      );
-    }
-    const profileExport = await deps.run([
-      "openshell",
-      "provider",
-      "profile",
-      "export",
-      config.provider_type,
-      "--output",
-      "yaml",
-    ]);
-    if (profileExport.exitCode !== 0) {
-      throw new Error(
-        `Failed to inspect existing runtime identity provider profile: ${deps.formatError(commandOutput(profileExport))}`,
-      );
-    }
-    let existingProfile: ParsedRuntimeIdentityProfile;
-    try {
-      existingProfile = parseRuntimeIdentityProfile(
-        profileExport.stdout,
-        config,
-        profilePolicy,
-        "Existing runtime identity provider profile",
-      );
-    } catch {
-      throw new Error(
-        `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
-      );
-    }
-    if (!isDeepStrictEqual(existingProfile.document, requestedProfile.document)) {
-      throw new Error(
-        `Runtime identity provider profile '${config.provider_type}' exists with an incompatible binding`,
-      );
-    }
+  if (profileImport.exitCode !== 0 && !/already exists/i.test(commandOutput(profileImport))) {
+    throw new Error(
+      `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
+    );
+  }
+  const profileExport = await deps.run([
+    "openshell",
+    "provider",
+    "profile",
+    "export",
+    config.provider_type,
+    "--output",
+    "yaml",
+  ]);
+  if (profileExport.exitCode !== 0) {
+    throw new Error(
+      `Failed to inspect runtime identity provider profile: ${deps.formatError(commandOutput(profileExport))}`,
+    );
+  }
+  let importedProfile: ParsedRuntimeIdentityProfile;
+  try {
+    importedProfile = parseRuntimeIdentityProfile(
+      profileExport.stdout,
+      config,
+      profilePolicy,
+      "Imported runtime identity provider profile",
+    );
+  } catch {
+    throw new Error(
+      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding`,
+    );
+  }
+  if (!isDeepStrictEqual(importedProfile.document, requestedProfile.document)) {
+    throw new Error(
+      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding`,
+    );
   }
 
   const receipt: RuntimeIdentityReceipt = {

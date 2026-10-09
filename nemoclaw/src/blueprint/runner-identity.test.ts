@@ -76,6 +76,7 @@ const { actionApply, actionPlan, actionRollback, actionStatus, loadBlueprint } =
 const matchingProvider = MATCHING_RUNTIME_PROVIDER_LISTING;
 const matchingInferenceProvider = MATCHING_INFERENCE_PROVIDER_LISTING;
 const matchingInferenceRoute = MATCHING_INFERENCE_ROUTE_LISTING;
+const runtimeIdentityProfilePath = "/blueprint/provider-profiles/okta-runtime-v1.yaml";
 
 const success = successResult();
 const providersV2Enabled = providersV2EnabledResult();
@@ -85,6 +86,12 @@ const identityPolicyAdditions = {
     endpoints: [{ host: "identity.example.com", port: 443, access: "full" as const }],
   },
 };
+
+function runtimeIdentityProfileExport(args: readonly string[]) {
+  return args.join(" ") === "provider profile export okta-runtime-v1 --output yaml"
+    ? { exitCode: 0, stdout: store.get(runtimeIdentityProfilePath)?.content ?? "", stderr: "" }
+    : null;
+}
 
 function responseQueue(
   overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
@@ -105,7 +112,11 @@ function responseQueue(
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
     const command = args.join(" ");
-    const fallback = responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
+    const fallback =
+      responses.get(command)?.shift() ??
+      fallbacks.get(command) ??
+      runtimeIdentityProfileExport(args) ??
+      success;
     return fallback.exitCode === undefined
       ? fallback
       : resultWithBlueprintPolicy(args, {
@@ -155,8 +166,9 @@ function installPolicyIdentityResponses(policyWriteFailure?: string): void {
     runtimeProviderListing: matchingProvider,
     policyWriteFailure,
   });
-  mockExeca.mockImplementation(async (_command: string, args: string[]) =>
-    identityPolicyResult(args),
+  mockExeca.mockImplementation(
+    async (_command: string, args: string[]) =>
+      runtimeIdentityProfileExport(args) ?? identityPolicyResult(args),
   );
 }
 
@@ -170,12 +182,13 @@ describe("blueprint identity wrapper", () => {
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
       resultWithBlueprintPolicy(
         args,
-        args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
+        runtimeIdentityProfileExport(args) ??
+          (args.join(" ") === "settings get --global --json" ? providersV2Enabled : success),
       ),
     );
     process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
     store.set("/blueprint", { type: "dir" });
-    store.set("/blueprint/provider-profiles/okta-runtime-v1.yaml", {
+    store.set(runtimeIdentityProfilePath, {
       type: "file",
       content: [
         "id: okta-runtime-v1",

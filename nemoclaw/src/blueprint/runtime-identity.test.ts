@@ -195,7 +195,12 @@ describe("runtime identity contract", () => {
           },
         };
         captureCommand[commandKey(args)]?.();
-        return responses.get(commandKey(args))?.shift() ?? success;
+        return (
+          responses.get(commandKey(args))?.shift() ??
+          (commandKey(args).startsWith("provider profile export ")
+            ? { exitCode: 0, stdout: importedProfileSources.at(-1) ?? profileDocument, stderr: "" }
+            : success)
+        );
       },
       formatError: (output, secretValues = []) =>
         secretValues.reduce(
@@ -332,6 +337,7 @@ describe("runtime identity contract", () => {
       "settings get --global --json",
       "provider get acme-okta-runtime",
       "provider profile import --file",
+      "provider profile export okta-runtime-v1 --output yaml",
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
       "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
     ]);
@@ -395,6 +401,41 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
   });
 
+  it("rejects a fresh import that exports a different profile before provider creation", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      {
+        exitCode: 0,
+        stdout: profileDocument.replace("OKTA_ACCESS_TOKEN", "DIFFERENT_TOKEN"),
+        stderr: "",
+      },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      /profile 'okta-runtime-v1' has an incompatible binding/,
+    );
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
+      "provider get acme-okta-runtime",
+      "provider profile import --file",
+      "provider profile export okta-runtime-v1 --output yaml",
+    ]);
+    expect(persistedReceipts).toEqual([]);
+  });
+
+  it("stops before provider creation when a fresh import cannot be verified", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 1, stdout: "", stderr: "export denied" },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/export denied/);
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+    );
+    expect(persistedReceipts).toEqual([]);
+  });
+
   it("rejects an incompatible existing profile", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
     responses.set("provider profile import --file", [
@@ -409,7 +450,7 @@ describe("runtime identity contract", () => {
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
-      /profile 'okta-runtime-v1' exists with an incompatible binding/,
+      /profile 'okta-runtime-v1' has an incompatible binding/,
     );
     expect(calls.map(({ args }) => commandKey(args))).toContain("provider get acme-okta-runtime");
   });
