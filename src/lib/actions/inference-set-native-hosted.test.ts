@@ -9,7 +9,7 @@ import { fixedNativeProvider } from "../inference/native-provider/fixed";
 import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
-import { createDeps } from "../../../test/helpers/inference-set";
+import { createDeps, HERMES_TARGET, OPENCLAW_TARGET } from "../../../test/helpers/inference-set";
 
 function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = []) {
   const definitions = [
@@ -280,19 +280,32 @@ it("keeps a Hermes sandbox on its recorded endpoint after another sandbox change
   );
 });
 
-it("preserves an existing user-supplied Hermes endpoint without native migration", async () => {
-  const { deps, calls, entry } = fixture();
-  entry.provider = "hermes-provider";
-  entry.endpointUrl = "https://custom.example/v1";
-  entry.credentialEnv = "OPENAI_API_KEY";
-  entry.preferredInferenceApi = "openai-completions";
-  await runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps);
-  expect(calls.attachProvider).not.toHaveBeenCalled();
-  expect(calls.createProvider).not.toHaveBeenCalled();
-  expect(entry.nativeHostedProviderAttachment).toBeUndefined();
-  expect(deps.inferenceRouteObserver.observeInferenceRoute).toHaveBeenCalled();
-  expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
-    expect.arrayContaining(["inference", "set", "--provider", "hermes-provider"]),
-    expect.anything(),
-  );
-});
+it.each([OPENCLAW_TARGET, HERMES_TARGET])(
+  "preserves a user-supplied Hermes endpoint in $agentName configuration",
+  async (target) => {
+    const agent = target.agentName;
+    const { deps, calls, entry } = fixture();
+    entry.provider = "hermes-provider";
+    entry.agent = agent;
+    deps.resolveAgentConfig = () => target;
+    entry.endpointUrl = "https://custom.example/v1";
+    entry.credentialEnv = "OPENAI_API_KEY";
+    entry.preferredInferenceApi = "openai-completions";
+    await runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps);
+    expect(calls.attachProvider).not.toHaveBeenCalled();
+    expect(calls.createProvider).not.toHaveBeenCalled();
+    expect(entry.nativeHostedProviderAttachment).toBeUndefined();
+    const configWrites =
+      agent === "hermes"
+        ? deps.calls.writeSandboxConfig.mock.calls
+        : deps.calls.setOpenClawConfigValues.mock.calls;
+    expect(JSON.stringify(configWrites)).toContain("https://inference.local/v1");
+    expect(JSON.stringify(configWrites)).not.toContain("https://inference-api.nousresearch.com");
+    expect(JSON.stringify(configWrites)).not.toContain("openshell:resolve:env:OPENAI_API_KEY");
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set", "--provider", "hermes-provider"]),
+      expect.anything(),
+    );
+  },
+);

@@ -150,6 +150,32 @@ describe("native hosted credential registration", () => {
     expect(JSON.stringify(result)).not.toContain("host-only-value");
   });
 
+  it("reports a native registration failure without exposing the supplied credential", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
+    const adapter = providerAdapter({
+      getProvider: vi.fn(async () => {
+        throw new Error(
+          "Gateway inspection failed for host-only-value at https://example.com/?token=other-secret",
+        );
+      }),
+    });
+    const result = await runCredentialsAddAction(
+      {
+        provider: "openai-api",
+        type: "openai",
+        credentials: ["OPENAI_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain("Gateway inspection failed");
+    expect(JSON.stringify(result)).not.toContain("host-only-value");
+    expect(JSON.stringify(result)).not.toContain("other-secret");
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("refuses a fixed provider endpoint override without registering anything", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
     const adapter = providerAdapter();

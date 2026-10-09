@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fixedNativeProvider } from "../../inference/native-provider/fixed";
 
 export function makeActiveTeamsMessagingPlan() {
   return {
@@ -118,18 +119,24 @@ export function makePreparedRecoveryManifest() {
 }
 
 /** Model a native provider retained across backup, optionally replaced before deletion. */
-export function nativeProviderRebuildScenario(replaced: boolean) {
-  const providerName = "nemoclaw-nvidia-prod-v1";
-  const profile = "nemoclaw-nvidia-inference-v1";
+export function nativeProviderRebuildScenario(replaced: boolean, provider = "nvidia-prod") {
+  const definition = fixedNativeProvider(provider)!;
+  const providerName = definition.providerName;
+  const profile = definition.profileId;
   const id = "11111111-2222-4333-8444-555555555555";
   let backedUp = false;
   const reads: string[] = [];
   const overrides = {
     sandboxEntry: {
-      provider: "nvidia-prod",
+      provider,
       model: "test/model",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      nativeNvidiaProviderAttachment: {
+      credentialEnv: definition.credentialEnv,
+      ...(provider === "hermes-provider"
+        ? { hermesAuthMethod: "oauth" as const, endpointUrl: definition.endpoint }
+        : {}),
+      [provider === "nvidia-prod"
+        ? "nativeNvidiaProviderAttachment"
+        : "nativeHostedProviderAttachment"]: {
         schemaVersion: 1,
         providerName,
         profileId: profile,
@@ -148,7 +155,7 @@ export function nativeProviderRebuildScenario(replaced: boolean) {
         stdout = [
           `Name: ${providerName}`,
           `Type: ${profile}`,
-          "Credential keys: NVIDIA_INFERENCE_API_KEY",
+          `Credential keys: ${definition.credentialEnv}`,
           "Config keys: <none>",
           `Id: ${backedUp && replaced ? "22222222-2222-4333-8444-555555555555" : id}`,
           "Resource version: 1",
@@ -157,7 +164,7 @@ export function nativeProviderRebuildScenario(replaced: boolean) {
         stdout = JSON.stringify([
           {
             name: providerName,
-            credential_keys: ["NVIDIA_INFERENCE_API_KEY"],
+            credential_keys: [definition.credentialEnv],
             credential_expires_at_ms: {},
           },
         ]);

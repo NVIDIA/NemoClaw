@@ -42,6 +42,7 @@ import {
   recoverCredentialGatewayTargetOrExit,
 } from "../credentials/command-support";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
+import { redactCredentialText } from "../security/credential-filter";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { assertEndpointResolvesPublic } from "../security/trusted-private-endpoint";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
@@ -436,6 +437,7 @@ export async function runCredentialsAddAction(
       ]);
     }
     return withGatewayRouteMutationLock(target.gatewayName, async () => {
+      const credentialValue = process.env[credentialName] ?? null;
       try {
         const readAuthority =
           deps.getNativeHostedProviderAuthority ?? getNativeHostedProviderAuthority;
@@ -449,7 +451,7 @@ export async function runCredentialsAddAction(
           gatewayName: target.gatewayName,
           adapter: providerAdapter,
           endpointUrl: existing?.endpointUrl,
-          credentialValue: fromExisting ? null : (process.env[credentialName] ?? null),
+          credentialValue: fromExisting ? null : credentialValue,
           reuseExistingCredential: fromExisting,
           readAuthority,
           writeAuthority: deps.setNativeHostedProviderAuthority ?? setNativeHostedProviderAuthority,
@@ -458,9 +460,14 @@ export async function runCredentialsAddAction(
           `Registered native provider for '${hosted.logicalProvider}'.`,
           `Select it with '${CLI_NAME} inference set --provider ${hosted.logicalProvider} --model <model>'.`,
         ]);
-      } catch {
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const safeDetail = redactCredentialText(
+          credentialValue ? detail.replaceAll(credentialValue, "[REDACTED]") : detail,
+        );
         return fail([
           `Could not register native provider '${hosted.logicalProvider}'. Verify its ownership and gateway state before retrying.`,
+          safeDetail,
         ]);
       }
     });

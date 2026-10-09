@@ -723,13 +723,14 @@ export function patchOpenClawInferenceConfig(
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
   inheritPrimaryReplyBudget = true,
   nativeEndpointUrl?: string,
+  nativeProvider = true,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(
     model,
     provider,
     preferredInferenceApi,
-    true,
+    nativeProvider,
     nativeEndpointUrl,
   );
   const inheritedMaxTokens = inheritPrimaryReplyBudget
@@ -832,13 +833,14 @@ export function patchHermesInferenceConfig(
   preferredInferenceApi: string | null = null,
   contextWindow?: number,
   nativeEndpointUrl?: string,
+  nativeProvider = true,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(
     model,
     provider,
     preferredInferenceApi,
-    true,
+    nativeProvider,
     nativeEndpointUrl,
   );
   applyHermesManagedRoute(config, {
@@ -1773,6 +1775,7 @@ async function runInferenceSetWithoutHostLock(
         preferredInferenceApi,
         contextWindow,
         nativeSelection.endpointUrl,
+        selectingNative,
       );
     } else {
       // Recompute the context window for the model being switched to, so it does
@@ -1796,6 +1799,7 @@ async function runInferenceSetWithoutHostLock(
         reasoningEffortRequest,
         true,
         nativeSelection.endpointUrl,
+        selectingNative,
       );
     }
 

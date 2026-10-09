@@ -844,9 +844,13 @@ async function rebuildSandboxUnlocked(
                 "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
             };
           }
+          const nativeAttachment =
+            resumeConfig.nativeNvidiaProviderAttachment ??
+            resumeConfig.nativeHostedProviderAttachment;
           if (
             !recreateOptions.rebuildProviderReconfigure &&
-            shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
+            resumeConfig.provider &&
+            (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))
           ) {
             const registration = await inspectRebuildGatewayProviderRegistration(
               resumeConfig.provider,
@@ -855,8 +859,7 @@ async function rebuildSandboxUnlocked(
               runtimeSelection,
               undefined,
               resumeConfig.credentialEnv,
-              resumeConfig.nativeNvidiaProviderAttachment ??
-                resumeConfig.nativeHostedProviderAttachment,
+              nativeAttachment,
             );
             if (registration !== "registered") {
               return {
