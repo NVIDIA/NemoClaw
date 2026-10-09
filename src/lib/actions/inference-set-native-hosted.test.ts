@@ -242,6 +242,7 @@ it("keeps a Hermes sandbox on its recorded endpoint after another sandbox change
     providerName: older.providerName,
     providerId: `id-${older.providerName}`,
     endpointUrl: older.endpoint,
+    allowedIps: ["8.8.8.8"],
   };
   entry.provider = "hermes-provider";
   entry.endpointUrl = older.endpoint;
