@@ -974,10 +974,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
       apiKey:
-        new URL(inferenceBaseUrl).hostname !== "inference.local" &&
+        !providerless &&
         ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(
           env.NEMOCLAW_UPSTREAM_PROVIDER || "",
-        )
+        ) &&
+        new URL(inferenceBaseUrl).hostname !== "inference.local"
           ? `openshell:resolve:env:${env.NEMOCLAW_UPSTREAM_PROVIDER === "compatible-endpoint" ? "COMPATIBLE_API_KEY" : "COMPATIBLE_ANTHROPIC_API_KEY"}`
           : "unused",
       api: inferenceApi,

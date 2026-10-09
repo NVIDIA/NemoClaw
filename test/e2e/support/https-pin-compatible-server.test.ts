@@ -23,7 +23,7 @@ it("serves an authenticated streamed completion for the native HTTPS agent fixtu
         port: server.port,
         path: "/v1/chat/completions",
         method: "POST",
-        rejectUnauthorized: false,
+        ca: server.certificate,
         headers: { authorization: "Bearer test-fixture-key", "content-type": "application/json" },
       },
       (result) => {

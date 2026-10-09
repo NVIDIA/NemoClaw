@@ -177,12 +177,14 @@
     {
       "live": "test/e2e/live/inference-routing.test.ts",
       "liveSources": [
+        "test/e2e/live/https-pin-compatible-server.ts",
         "test/e2e/live/inference-routing-helpers.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
+        "test/e2e/support/https-pin-compatible-server.test.ts",
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
         "nemoclaw/src/blueprint/runner.test.ts",
         "nemoclaw/src/blueprint/runner-identity.test.ts",
@@ -465,6 +467,7 @@
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
+        "test/onboarding/onboard-inference-reconciliation.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-leaks.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
