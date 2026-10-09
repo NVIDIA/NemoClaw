@@ -32,6 +32,7 @@ import {
 import { isTransientInferenceInvocationFailure } from "./inference-route-health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import { OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS } from "./launch-readiness/openclaw-pairing-qualification";
 import {
   isSandboxGatewayRunningForStatus,
   resolveGatewayRecoveryWaitSeconds,
@@ -125,7 +126,12 @@ async function waitForStartedNativeGatewayProcess(
 
   const now = deps.now ?? (() => performance.now());
   const deadline =
-    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
+    now() +
+    resolveGatewayRecoveryWaitSeconds(
+      OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS / 1_000,
+      deps.environment ?? process.env,
+    ) *
+      1_000;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;

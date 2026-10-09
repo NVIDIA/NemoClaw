@@ -28,7 +28,9 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   type FakeOpenAiCompatibleServer,
@@ -572,6 +574,8 @@ async function installCurrentNemoclawUpgrade(
   host: HostCliClient,
   artifacts: ArtifactSink,
   fakeBaseUrl: string,
+  sandbox: SandboxClient,
+  runtime: RuntimeProviderPrerequisite,
 ): Promise<void> {
   const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentBaseEnv = liveEnv({
@@ -607,6 +611,15 @@ async function installCurrentNemoclawUpgrade(
       ...(VERIFY_SYSTEMD_UPGRADE ? { home: `${os.homedir()}//` } : {}),
       onFailure: async () => {
         await Promise.allSettled([
+          ...LEGACY_SANDBOXES.map((sandboxName) =>
+            captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
+              sandboxName,
+              artifactPrefix: `current-install-${sandboxName}`,
+              env: currentEnv,
+              redactionValues,
+              runtime,
+            }),
+          ),
           bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} doctor`, {
             artifactName: "current-install-failure-doctor",
             env: currentEnv,
@@ -713,7 +726,7 @@ runOpenShellGatewayUpgrade(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, runtimeProvider }) => {
     await artifacts.writeJson("live-upgrade-target.json", {
       id: "openshell-gateway-upgrade",
       runner: "vitest",
@@ -823,7 +836,7 @@ runOpenShellGatewayUpgrade(
     );
 
     progress.phase("upgrade to the current OpenShell gateway");
-    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl);
+    await installCurrentNemoclawUpgrade(host, artifacts, fake.baseUrl, sandbox, runtimeProvider);
     const upgradedService = await captureGatewayUpgradeService(
       host,
       "upgraded",

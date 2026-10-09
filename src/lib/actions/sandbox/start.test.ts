@@ -446,12 +446,34 @@ describe("startSandbox native lifecycle", () => {
     },
   );
 
+  it.each(["openclaw", undefined])(
+    "allows stopped %s startup beyond 30 seconds and clears the stop record",
+    async (agent) => {
+      let elapsed = 0;
+      const h = harness({
+        now: () => elapsed,
+        delayGatewayProcessProbe: async (ms) => {
+          elapsed += ms;
+        },
+        probeGatewayProcess: async () => elapsed >= 60_000,
+      });
+      h.getSandbox.mockReturnValue(
+        sandbox({ agent, gatewayName: "nemoclaw-19080", stopped: true }),
+      );
+
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(elapsed).toBe(60_000);
+      expect(h.verifyGateway).toHaveBeenCalledExactlyOnceWith("my-sandbox");
+      expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    },
+  );
+
   it.each([
-    [undefined, 30_000],
-    ["", 30_000],
-    ["-1", 30_000],
-    ["Infinity", 30_000],
-    ["invalid", 30_000],
+    [undefined, 330_000],
+    ["", 330_000],
+    ["-1", 330_000],
+    ["Infinity", 330_000],
+    ["invalid", 330_000],
     ["0", 0],
     ["0.25", 250],
     ["4", 4_000],
