@@ -61,33 +61,24 @@ export function buildCancelRollbackMessage(
   return [
     "",
     `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}'.`,
+    ...(sandboxIdentityFingerprint
+      ? [
+          `  Run '${cliName()} ${sandboxName} destroy' to verify and remove the retained sandbox and clear the matching recovery record.`,
+        ]
+      : [
+          "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
+          "  Inspect the owning gateway. Destroy can clear the recovery record only after OpenShell confirms the sandbox absent.",
+          "  Do not delete the sandbox by mutable sandbox name.",
+        ]),
+    "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
     ...(recoveryContext
       ? [
           `  Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${recoveryContext.createAttemptNonce}`,
         ]
       : []),
     ...(sandboxIdentityFingerprint
-      ? [
-          `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
-          "  Preserve this fingerprint for identity-bound inspection, recovery, or removal.",
-        ]
-      : [
-          "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
-          "  Ask an OpenShell administrator to establish the exact sandbox identity before recovery or removal.",
-        ]),
-    "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
-    "  Do not delete the sandbox by mutable sandbox name.",
-    "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
-    ...(sandboxIdentityFingerprint
-      ? [
-          `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record.`,
-          recoveryContext
-            ? "  If it is still live, give the displayed create-attempt label to an OpenShell administrator for identity-bound removal."
-            : "  If it is still live, preserve the displayed fingerprint and ask an OpenShell administrator for identity-bound removal.",
-        ]
-      : [
-          "  NemoClaw cannot clear this recovery record until an OpenShell administrator establishes the exact sandbox identity.",
-        ]),
+      ? [`  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`]
+      : []),
   ];
 }
 
@@ -208,7 +199,7 @@ export function createSandboxCancelRollback(
         guidanceReported = true;
         if (recoveryPersistenceFailed) {
           deps.log(
-            "  NemoClaw could not save the onboarding recovery record; preserve the registry entry and exact sandbox identity for administrator recovery.",
+            "  NemoClaw could not save the onboarding recovery record; preserve the registry entry and terminal output. Do not delete the sandbox by mutable name.",
           );
         }
         for (const line of buildCancelRollbackMessage(

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 
-import { describe, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { requireValue } from "../core/require-value";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
@@ -11,6 +11,7 @@ import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
   createRemoteModelValidator,
+  resolveCompatibleEndpointSelection,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
 
@@ -67,59 +68,86 @@ describe("setupNim selection state helpers", () => {
   });
 });
 
-describe("createRemoteModelValidator", () => {
-  it.each([
-    "openai-completions",
-    "anthropic-messages",
-  ] as const)("uses the intended %s runtime API when validating custom Anthropic selections (#6289)", async (expectedApi) => {
-    const state = makeState();
-    state.provider = "compatible-anthropic-endpoint";
-    state.endpointUrl = "https://compatible.example";
-    state.model = "custom-model";
-    let validatedApi: string | undefined;
-    const { validateSelectedRemoteModel } = createRemoteModelValidator({
-      OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
-      ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
-      requireValue,
-      isBackToSelection: (_value): _value is never => false,
-      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-      validateCustomAnthropicSelection: async (
-        _label,
-        _endpointUrl,
-        _model,
-        _credentialEnv,
-        _helpUrl,
-        options,
-      ) => {
-        validatedApi = options?.intendedApi;
-        return { ok: true, api: validatedApi ?? null };
-      },
-      validateAnthropicSelectionWithRetryMessage: async () => ({
-        ok: false,
-        retry: "selection",
-      }),
-      validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-      shouldRequireResponsesToolCalling: () => false,
-      shouldSkipResponsesProbe: () => false,
-      getProbeAuthMode: () => undefined,
-    });
+describe("resolveCompatibleEndpointSelection", () => {
+  it("rejects an unsafe endpoint at the onboarding selection boundary", async () => {
+    const prompt = vi.fn(async () => "https://later.example.test/v1");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${String(code)}`);
+    }) as typeof process.exit);
 
-    const result = await validateSelectedRemoteModel({
-      selected: { key: "anthropicCompatible" },
-      remoteConfig: {
-        label: "Other Anthropic-compatible endpoint",
-        endpointUrl: "https://compatible.example",
-        helpUrl: null,
-      },
-      state,
-      selectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      intendedInferenceApi: expectedApi,
-    });
-
-    assert.equal(result, "selected");
-    assert.equal(validatedApi, expectedApi);
-    assert.equal(state.preferredInferenceApi, expectedApi);
+    try {
+      await expect(
+        resolveCompatibleEndpointSelection({
+          kind: "openai",
+          envUrl: "ftp://unsafe.example.test/v1",
+          recoveredEndpointUrl: null,
+          nonInteractive: true,
+          prompt,
+        }),
+      ).rejects.toThrow("process.exit:1");
+      expect(prompt).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith("  Endpoint URL must use HTTP or HTTPS.");
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
   });
+});
+
+describe("createRemoteModelValidator", () => {
+  it.each(["openai-completions", "anthropic-messages"] as const)(
+    "uses the intended %s runtime API when validating custom Anthropic selections (#6289)",
+    async (expectedApi) => {
+      const state = makeState();
+      state.provider = "compatible-anthropic-endpoint";
+      state.endpointUrl = "https://compatible.example";
+      state.model = "custom-model";
+      let validatedApi: string | undefined;
+      const { validateSelectedRemoteModel } = createRemoteModelValidator({
+        OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+        ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+        requireValue,
+        isBackToSelection: (_value): _value is never => false,
+        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomAnthropicSelection: async (
+          _label,
+          _endpointUrl,
+          _model,
+          _credentialEnv,
+          _helpUrl,
+          options,
+        ) => {
+          validatedApi = options?.intendedApi;
+          return { ok: true, api: validatedApi ?? null };
+        },
+        validateAnthropicSelectionWithRetryMessage: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
+        validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        shouldRequireResponsesToolCalling: () => false,
+        shouldSkipResponsesProbe: () => false,
+        getProbeAuthMode: () => undefined,
+      });
+
+      const result = await validateSelectedRemoteModel({
+        selected: { key: "anthropicCompatible" },
+        remoteConfig: {
+          label: "Other Anthropic-compatible endpoint",
+          endpointUrl: "https://compatible.example",
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        intendedInferenceApi: expectedApi,
+      });
+
+      assert.equal(result, "selected");
+      assert.equal(validatedApi, expectedApi);
+      assert.equal(state.preferredInferenceApi, expectedApi);
+    },
+  );
 
   it("forces custom compatible endpoints to chat completions unless the API is explicit", async () => {
     const state = makeState();
@@ -222,60 +250,56 @@ describe("createRemoteModelValidator", () => {
     assert.equal(state.nimContainer, "nemoclaw-nim-test");
   });
 
-  it("passes the selected provider only as validation context (#9298)", async () => {
-    const state = makeState();
-    state.provider = "gemini-api";
-    state.endpointUrl = "https://generativelanguage.googleapis.com/v1beta/openai";
-    state.model = "gemini-2.5-flash";
-    let receivedOptions: unknown;
-    const { validateSelectedRemoteModel } = createRemoteModelValidator({
-      OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
-      ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
-      requireValue,
-      isBackToSelection: (_value): _value is never => false,
-      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
-      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
-      validateAnthropicSelectionWithRetryMessage: async () => ({
-        ok: false,
-        retry: "selection",
-      }),
-      validateOpenAiLikeSelection: async (
-        _label,
-        _endpointUrl,
-        _model,
-        _credentialEnv,
-        _retryMessage,
-        _helpUrl,
-        options,
-      ) => {
-        receivedOptions = options;
-        return { ok: true, api: "openai-completions" };
-      },
-      shouldRequireResponsesToolCalling: () => true,
-      shouldSkipResponsesProbe: () => true,
-      getProbeAuthMode: () => undefined,
-    });
-
-    assert.equal(
-      await validateSelectedRemoteModel({
-        selected: { key: "gemini" },
-        remoteConfig: {
-          label: "Google Gemini",
-          endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-          helpUrl: null,
+  it.each(["nvidia-prod", "nvidia-nim"])(
+    "selects the Nemotron probe payload for NVIDIA Endpoints provider %s (#10880)",
+    async (provider) => {
+      const state = makeState();
+      state.provider = provider;
+      state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+      state.model = "nvidia/nemotron-3-super-120b-a12b";
+      let receivedOptions: { useNvidiaEndpointProbePayload?: boolean } | undefined;
+      const { validateSelectedRemoteModel } = createRemoteModelValidator({
+        OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+        ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+        requireValue,
+        isBackToSelection: (_value): _value is never => false,
+        validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+        validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+        validateAnthropicSelectionWithRetryMessage: async () => ({
+          ok: false,
+          retry: "selection",
+        }),
+        validateOpenAiLikeSelection: async (
+          _label,
+          _endpointUrl,
+          _model,
+          _credentialEnv,
+          _retryMessage,
+          _helpUrl,
+          options,
+        ) => {
+          receivedOptions = options;
+          return { ok: true, api: "openai-completions" };
         },
-        state,
-        selectedCredentialEnv: "GEMINI_API_KEY",
-      }),
-      "selected",
-    );
-    assert.deepEqual(receivedOptions, {
-      provider: "gemini-api",
-      requireResponsesToolCalling: true,
-      skipResponsesProbe: true,
-      authMode: undefined,
-      extraHeaders: [],
-      capabilityCache: undefined,
-    });
-  });
+        shouldRequireResponsesToolCalling: () => false,
+        shouldSkipResponsesProbe: () => true,
+        getProbeAuthMode: () => undefined,
+      });
+
+      assert.equal(
+        await validateSelectedRemoteModel({
+          selected: { key: "build" },
+          remoteConfig: {
+            label: "NVIDIA Endpoints",
+            endpointUrl: "https://integrate.api.nvidia.com/v1",
+            helpUrl: null,
+          },
+          state,
+          selectedCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        }),
+        "selected",
+      );
+      assert.equal(receivedOptions?.useNvidiaEndpointProbePayload, true);
+    },
+  );
 });

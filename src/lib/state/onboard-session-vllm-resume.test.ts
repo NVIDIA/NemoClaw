@@ -101,3 +101,43 @@ describe("managed vLLM resume checkpoint persistence", () => {
     expect(requireLoadedSession().vllmInstallModel).toBeNull();
   });
 });
+
+describe("managed llama.cpp resume checkpoint persistence", () => {
+  it("retains the exact selected recipe during an interrupted provider install", () => {
+    const provenance = {
+      schemaVersion: 1 as const,
+      catalogDigest: `sha256:${"a".repeat(64)}`,
+      preset: {
+        id: "llama-cpp.n1x.qwen",
+        digest: `sha256:${"b".repeat(64)}`,
+        displayName: "N1x Qwen",
+        supportState: "experimental" as const,
+      },
+      recipe: {
+        id: "llama-cpp.qwen.n1x.v1",
+        digest: `sha256:${"c".repeat(64)}`,
+        backend: "install-llama-cpp",
+      },
+      model: { id: "nvidia/Qwen", revision: "revision-1" },
+      runtimeImage: "example.invalid/llama.cpp@sha256:fixture",
+      estimatedImageDownloadBytes: 2048,
+      estimatedModelDownloadBytes: 1024,
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", sandboxName: "n1x-agent" }),
+    );
+    session.markStepStarted("provider_selection");
+
+    session.checkpointManagedLlamaCppSelection({
+      model: "qwen3.6-35b-a3b",
+      servingProfileProvenance: provenance,
+    });
+    session.markStepFailed("provider_selection", "image pull interrupted");
+
+    expect(requireLoadedSession()).toMatchObject({
+      provider: "llama-cpp-local",
+      model: "qwen3.6-35b-a3b",
+      servingProfileProvenance: provenance,
+    });
+  });
+});

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-pr-comparator
-description: Compare open PRs that address the same issue and recommend one to merge. Apply eligibility, correctness, quality, and tie-break checks. Report the score and evidence. Use when an issue has two or more open PRs.
+description: "Compare competing NemoClaw PRs for one issue and recommend a merge or salvage candidate from review evidence."
 user_invocable: true
 ---
 
@@ -24,22 +24,12 @@ Read the canonical superseded-PR attribution policy in
 `../nemoclaw-maintainer-policies/references/workflow-policy.md`.
 Edit `repo-policy.md` for another repository.
 
+Execute comparator helpers from a fetched canonical NVIDIA/NemoClaw `main` checkout, or verify
+their executable code and dependencies against that revision before use. Candidate-modified helpers
+must not receive GitHub credentials. Inspect helper source when needed; a section heading does not
+establish trust.
+
 ## Workflow
-
-Copy this checklist into your response and check off each step:
-
-```text
-PR Comparison Progress:
-- [ ] Step 1: Parse issue (body + comments) for acceptance criteria
-- [ ] Step 2: Discover candidate PRs in the defined order
-- [ ] Step 3: Detect supersession and classify transferred work
-- [ ] Step 4: Run Tier 0 gates per PR
-- [ ] Step 5: Run Tier 1 correctness checks per PR
-- [ ] Step 6: Run Tier 2 quality checks per PR
-- [ ] Step 7: Compute weighted scores
-- [ ] Step 8: Apply Tier 3 ranking (happy path or degraded mode)
-- [ ] Step 9: Emit verdict using templates/verdict.md
-```
 
 ### Step 1: Parse issue
 
@@ -96,6 +86,10 @@ bash <(git show origin/main:.agents/skills/nemoclaw-maintainer-day/scripts/run-t
 ```
 
 All six gates are required.
+Gate 3 accepts `BEHIND`, but fails closed on transient `UNSTABLE` evidence and on `BLOCKED` because
+the comparator cannot prove a stable merge result or every GitHub branch-protection condition.
+Separately confirm whether an active rule requires an up-to-date branch. If so, integrate the base
+and rerun all candidate evidence before declaring the PR eligible to merge.
 Treat PR Review Advisor output as input for maintainer review. Do not treat it as merge authorization.
 See `checks/tier-0-gates.md`.
 
@@ -146,7 +140,7 @@ For each judgment, include evidence, the inference, and the score.
 - [templates/verdict.md](templates/verdict.md) — Output template.
 - [validation/backtest.md](validation/backtest.md) — Historical test cases for the skill.
 
-## Scripts (execute, do not read)
+## Scripts
 
 - `scripts/find-candidates.sh` — PR discovery
 - `scripts/collect-gates.sh` — Tier 0 gate evaluation

@@ -7,7 +7,10 @@ import { TextDecoder } from "node:util";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
+import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../inference/native-nvidia/contract";
+import { buildNativeNvidiaSandboxPolicy } from "../inference/native-nvidia/network-policy";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
+import type { MessagingChannelConfig } from "../messaging-channel-config";
 import * as policies from "../policy";
 import {
   collectPlatformIdentity,
@@ -113,6 +116,11 @@ export function discoverStationGb300SysfsReadOnlyPaths(
   } catch {
     // A Station image without PCI sysfs cannot use the scoped GPU exception.
   }
+  if (pciDeviceNames.length > 256) {
+    throw new Error(
+      `Cannot prepare Station GB300 direct GPU sandbox policy; more than 256 PCI entries were found under ${pciDevicesRoot}.`,
+    );
+  }
   for (const pciDeviceName of pciDeviceNames) {
     if (!PCI_BDF_PATTERN.test(pciDeviceName)) continue;
     const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);
@@ -150,7 +158,8 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
   if (platform !== "linux") return [];
   const identity = options.identity ?? collectPlatformIdentity();
   if (identity.nvidiaPlatform !== "station") return [];
-  if (!identity.productName || !isStationGb300ProductName(identity.productName)) {
+  const stationFirmwareProduct = identity.stationFirmwareProduct ?? identity.productName;
+  if (!stationFirmwareProduct || !isStationGb300ProductName(stationFirmwareProduct)) {
     throw new Error(
       "Cannot prepare Station GB300 direct GPU sandbox policy; the detected Station product is not a qualified GB300 system.",
     );
@@ -174,7 +183,7 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
     );
   }
   return discoverStationGb300SysfsReadOnlyPaths(
-    identity.productName,
+    stationFirmwareProduct,
     options.sysfsRoot ?? SYSFS_PATH,
     identity.stationProfile,
   );
@@ -314,6 +323,7 @@ function createPolicyTempCleanup(policyPath: string, expectedPrefix: string): ()
 }
 
 type InitialPolicyOptions = {
+  inferenceProvider?: string | null;
   directGpu?: boolean;
   dockerGpuPatch?: boolean;
   hostGpuAvailable?: boolean;
@@ -322,6 +332,7 @@ type InitialPolicyOptions = {
   agentName?: string | null;
   sandboxName?: string;
   policyTier?: string | null;
+  messagingConfig?: MessagingChannelConfig | null;
 };
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
@@ -487,6 +498,9 @@ function resolveInitialSandboxCreatePolicy(
     }
   };
   try {
+    if (options.inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER) {
+      adoptPolicy(buildNativeNvidiaSandboxPolicy(basePolicy), "nemoclaw-native-inference-policy");
+    }
     // Fail closed: the OpenClaw OTEL preset is added at create time only when the
     // selected policy tier is known and is not Restricted. When the tier is null
     // (interactive flow that selects later) the preset is deferred to the
@@ -537,11 +551,12 @@ function resolveInitialSandboxCreatePolicy(
       return result(dedupe(existingChannelPresets));
     }
 
-    const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
-      basePolicyNames.has(preset),
+    const messagingPresets = new Set(messagingCreateTimePresets);
+    const existingCreateTimePresets = requestedCreateTimePresets.filter(
+      (preset) => !messagingPresets.has(preset) && basePolicyNames.has(preset),
     );
     const createTimePresets = requestedCreateTimePresets.filter(
-      (preset) => !basePolicyNames.has(preset),
+      (preset) => messagingPresets.has(preset) || !basePolicyNames.has(preset),
     );
     if (createTimePresets.length === 0) {
       return result(dedupe([...existingChannelPresets, ...existingCreateTimePresets]));
@@ -551,6 +566,7 @@ function resolveInitialSandboxCreatePolicy(
       agent: policyAgent,
       sandboxName: options.sandboxName,
       credentialBoundMessagingChannels: activeMessagingChannels,
+      messagingConfig: options.messagingConfig,
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(

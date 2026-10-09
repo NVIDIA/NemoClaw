@@ -1,16 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { normalizeProcessExitCode } from "../../core/process-exit";
+import { hasValidDeferredN1xManagedVllmReplacementAuthority } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
 import { sameGatewayOwner } from "../../onboard/gateway-ownership";
 import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
 import { isOnboardDeferredExitError } from "../../onboard/session-bootstrap";
-import * as shields from "../../shields";
 import { decisionSelected, isDecisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { Session } from "../../state/onboard-session";
@@ -30,16 +29,11 @@ import {
   getRebuildSandboxGpuOverrides,
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
-import {
-  type McpRebuildPreparation,
-  printMcpRebuildRetryCommand,
-  restoreMcpRegistryForRebuildRetry,
-} from "./rebuild-mcp-phase";
+import { type McpRebuildPreparation, printMcpRebuildRetryCommand } from "./rebuild-mcp-phase";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-import type { RebuildShieldsWindow } from "./rebuild-shields";
 
 export interface RebuildRecreatePhaseInput {
   sandboxName: string;
@@ -60,12 +54,10 @@ export interface RebuildRecreatePhaseInput {
   credentialEnv: string | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   recoveryRecreate: boolean;
+  preparedBackupRecovery?: boolean;
   registryRollback: RebuildRegistryRollback;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
-  rebuildShieldsWindow: RebuildShieldsWindow;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
-  onCreated: () => void;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -105,12 +97,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     credentialEnv: rebuildCredentialEnv,
     baseImagePreflight: rebuildBaseImagePreflight,
     recoveryRecreate,
+    preparedBackupRecovery = false,
     registryRollback,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
-    rebuildShieldsWindow,
-    relockShieldsIfNeeded,
-    onCreated,
     log,
     bail,
   } = input;
@@ -169,6 +159,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       s,
       onboardSession.createSession({
         mode: "non-interactive",
+        servingProfileProvenance: sb.servingProfileProvenance,
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
@@ -180,6 +171,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
           ? sessionBefore?.migratedLegacyValueHashes
           : null,
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
+        routerPort:
+          resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPort : undefined,
         routerCredentialHash:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
         // The inner resume compares its requested host mounts against this
@@ -190,6 +183,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          fromImage: recreateOptions.fromImage,
           ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
             ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
             : {}),
@@ -212,6 +206,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
+    s.metadata.fromImage = recreateOptions.fromImage;
     s.provider = resumeConfig.provider;
     s.model = resumeConfig.model;
     s.nimContainer = resumeConfig.nimContainer;
@@ -241,14 +236,23 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     `Recreate env will target NEMOCLAW_SANDBOX_NAME=${sandboxName}; NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`,
   );
   log(
-    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
+    `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile}, fromImage: ${recreateOptions.fromImage} })`,
   );
 
   let onboardFailed = false;
   let onboardExitCode = 1;
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
+  const replacementAuthorityValid = hasValidDeferredN1xManagedVllmReplacementAuthority(
+    recreateOptions,
+    sb,
+    resumeConfig,
+  );
+  if (replacementAuthorityValid && recreateOptions.reinstallDeferredN1xManagedVllm === true) {
+    process.env.NEMOCLAW_PROVIDER = "install-vllm";
+  }
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+  const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
   // The outer rebuild already made its sole backup before the destroy phase deleted
   // the sandbox without tearing down the gateway/session needed by onboard --resume.
@@ -256,6 +260,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   // where a second backup is impossible after deletion. Keep the bypass scoped to
   // this call; remove it when onboard accepts an explicit outer-backup handoff.
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  // The outer rebuild owns and has already validated this backup. Inner onboard
+  // must publish the replacement before the outer restore phase applies it.
+  delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   if (rebuildMessagingPlan) MessagingSetupApplier.writePlanToEnv(rebuildMessagingPlan);
   // Isolation removed the ambient reasoning inputs so an unrelated onboard
   // cannot steer this recreate (#5735). The recreate still has to reapply the
@@ -273,13 +280,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const savedExitCode = process.exitCode;
   process.exitCode = undefined;
   try {
+    if (!replacementAuthorityValid) {
+      throw new Error("Deferred N1x managed-vLLM replacement authority is invalid.");
+    }
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
+      ...(recreateJournal.runtimeSelection
+        ? { runtimeSelection: recreateJournal.runtimeSelection }
+        : {}),
+      ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
-      ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
-        ? { rebuildPreservedEnv: backupManifest.preservedEnv }
-        : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
     const returnedExitCode = normalizeProcessExitCode(process.exitCode);
@@ -319,9 +330,13 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     } else {
       process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = previousRecreateWithoutBackup;
     }
+    if (previousRestoreLatestBackup === undefined) {
+      delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+    } else {
+      process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = previousRestoreLatestBackup;
+    }
   }
 
-  if (!onboardFailed) onCreated();
   if (onboardFailed) {
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
@@ -330,7 +345,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     }
 
     registryRollback.restoreForRetry();
-    restoreMcpRegistryForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
+    log("Recreate failed: preserved source-derived MCP handoff for retry");
 
     console.error("");
     if (recoveryRecreate) {
@@ -359,17 +374,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       },
     );
     if (backupManifest) {
-      console.error("    3. Then restore your workspace state:");
       console.error(
-        `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
+        "       The retry will restore the complete native agent home from this backup.",
       );
     }
-    if (rebuildShieldsWindow.wasLocked) {
-      console.error(`    ${backupManifest ? 4 : 3}. Restore shields lockdown:`);
-      console.error(`       ${CLI_NAME} ${sandboxName} shields up`);
-    }
     console.error("");
-    relockShieldsIfNeeded(false);
     bail(
       backupManifest
         ? `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`
@@ -379,7 +388,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     return false;
   }
 
-  if (recoveryRecreate) shields.clearShieldsState(sandboxName);
   const preservedRegistryFields = {
     ...(hasRebuildHermesToolGateways ? { hermesToolGateways: [...rebuildHermesToolGateways] } : {}),
   };

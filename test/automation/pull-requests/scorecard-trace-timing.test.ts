@@ -43,7 +43,7 @@ function zippedTimingSummary(text: string): Buffer {
   }
 }
 
-function zipEntries(entries: Record<string, string>): string {
+function zipEntries(entries: Record<string, string>): Buffer {
   const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-zip-"));
   const zipPath = path.join(tempDir, "artifact.zip");
   const payload = JSON.stringify(entries);
@@ -57,10 +57,12 @@ function zipEntries(entries: Record<string, string>): string {
     ],
     { encoding: "utf8" },
   );
-  return zipPath;
+  const archive = readFileSync(zipPath);
+  rmSync(tempDir, { recursive: true, force: true });
+  return archive;
 }
 
-function zipSymlink(entryName: string, target: string): string {
+function zipSymlink(entryName: string, target: string): Buffer {
   const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-symlink-"));
   const zipPath = path.join(tempDir, "artifact.zip");
   execFileSync(
@@ -74,10 +76,12 @@ function zipSymlink(entryName: string, target: string): string {
     ],
     { encoding: "utf8" },
   );
-  return zipPath;
+  const archive = readFileSync(zipPath);
+  rmSync(tempDir, { recursive: true, force: true });
+  return archive;
 }
 
-function zipDuplicateEntry(entryName: string, text: string): string {
+function zipDuplicateEntry(entryName: string, text: string): Buffer {
   const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-duplicate-"));
   const zipPath = path.join(tempDir, "artifact.zip");
   execFileSync(
@@ -91,7 +95,9 @@ function zipDuplicateEntry(entryName: string, text: string): string {
     ],
     { encoding: "utf8" },
   );
-  return zipPath;
+  const archive = readFileSync(zipPath);
+  rmSync(tempDir, { recursive: true, force: true });
+  return archive;
 }
 
 function traceGithubFixture(options: {
@@ -495,47 +501,26 @@ describe("cloud onboard scorecard trace timing", () => {
     const duplicateZip = zipDuplicateEntry(TRACE_SUMMARY_FILE, timingSummary());
     const corruptCrcZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
     const unsupportedCreatorZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
-    const corruptCrcArchive = readFileSync(corruptCrcZip);
-    const centralDirectoryOffset = corruptCrcArchive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    const centralDirectoryOffset = corruptCrcZip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
     expect(centralDirectoryOffset).toBeGreaterThanOrEqual(0);
-    corruptCrcArchive[centralDirectoryOffset + 16] ^= 0xff;
-    writeFileSync(corruptCrcZip, corruptCrcArchive);
-    const unsupportedCreatorArchive = readFileSync(unsupportedCreatorZip);
-    const unsupportedCreatorOffset = unsupportedCreatorArchive.indexOf(
+    corruptCrcZip[centralDirectoryOffset + 16] ^= 0xff;
+    const unsupportedCreatorOffset = unsupportedCreatorZip.indexOf(
       Buffer.from([0x50, 0x4b, 0x01, 0x02]),
     );
     expect(unsupportedCreatorOffset).toBeGreaterThanOrEqual(0);
-    unsupportedCreatorArchive[unsupportedCreatorOffset + 5] = 10;
-    writeFileSync(unsupportedCreatorZip, unsupportedCreatorArchive);
-    const warnings: string[] = [];
-    try {
-      expect(traceTiming.readValidatedTraceSummaryZip(validZip)).toContain(
-        "nemoclaw.trace_timing.v1",
-      );
-      expect(traceTiming.readValidatedTraceSummaryZip(productionShapeZip)).toContain(
-        "nemoclaw.trace_timing.v1",
-      );
-      expect(traceTiming.readValidatedTraceSummaryZip(traversalZip)).toBeNull();
-      expect(traceTiming.readValidatedTraceSummaryZip(symlinkZip)).toBeNull();
-      expect(traceTiming.readValidatedTraceSummaryZip(duplicateZip)).toBeNull();
-      expect(
-        traceTiming.readValidatedTraceSummaryZip(corruptCrcZip, (message) =>
-          warnings.push(message),
-        ),
-      ).toBeNull();
-      expect(traceTiming.readValidatedTraceSummaryZip(unsupportedCreatorZip)).toBeNull();
-      expect(warnings).toEqual([
-        "Trace timing artifact ZIP validation failed; ignoring the malformed or unsupported archive.",
-      ]);
-    } finally {
-      rmSync(path.dirname(validZip), { recursive: true, force: true });
-      rmSync(path.dirname(productionShapeZip), { recursive: true, force: true });
-      rmSync(path.dirname(traversalZip), { recursive: true, force: true });
-      rmSync(path.dirname(symlinkZip), { recursive: true, force: true });
-      rmSync(path.dirname(duplicateZip), { recursive: true, force: true });
-      rmSync(path.dirname(corruptCrcZip), { recursive: true, force: true });
-      rmSync(path.dirname(unsupportedCreatorZip), { recursive: true, force: true });
-    }
+    unsupportedCreatorZip[unsupportedCreatorOffset + 5] = 10;
+
+    expect(traceTiming.readValidatedTraceSummaryArchive(validZip)).toContain(
+      "nemoclaw.trace_timing.v1",
+    );
+    expect(traceTiming.readValidatedTraceSummaryArchive(productionShapeZip)).toContain(
+      "nemoclaw.trace_timing.v1",
+    );
+    expect(traceTiming.readValidatedTraceSummaryArchive(traversalZip)).toBeNull();
+    expect(traceTiming.readValidatedTraceSummaryArchive(symlinkZip)).toBeNull();
+    expect(traceTiming.readValidatedTraceSummaryArchive(duplicateZip)).toBeNull();
+    expect(traceTiming.readValidatedTraceSummaryArchive(corruptCrcZip)).toBeNull();
+    expect(traceTiming.readValidatedTraceSummaryArchive(unsupportedCreatorZip)).toBeNull();
   });
 
   it("covers trace timing fallback branches with mocked GitHub data", async () => {

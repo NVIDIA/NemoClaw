@@ -8,8 +8,9 @@ export default class InferenceGetCommand extends NemoClawCommand {
   static id = "inference:get";
   static strict = true;
   static enableJsonFlag = true;
-  static summary = "Show the active NemoClaw inference route";
-  static description = "Read the live OpenShell inference route through the NemoClaw CLI.";
+  static summary = "Show the selected NemoClaw inference path";
+  static description =
+    "Read the selected sandbox's native NVIDIA provider path or the live shared OpenShell route.";
   static usage = ["inference get [--json]"];
   static examples = ["<%= config.bin %> inference get", "<%= config.bin %> inference get --json"];
   static flags = {};
@@ -17,7 +18,10 @@ export default class InferenceGetCommand extends NemoClawCommand {
   public async run(): Promise<unknown> {
     await this.parse(InferenceGetCommand);
     try {
-      const result = await runInferenceGet({ quiet: this.jsonEnabled() });
+      const result = await runInferenceGet({
+        cliName: this.config.bin,
+        quiet: this.jsonEnabled(),
+      });
       if (this.jsonEnabled()) return result;
     } catch (error) {
       if (error instanceof InferenceGetError) {

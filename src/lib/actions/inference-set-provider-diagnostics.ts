@@ -1,35 +1,50 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
-import { parseGatewayProviderNames } from "../credentials/provider-list";
+import type { OpenShellInferenceRouteMutationError } from "../adapters/openshell/inference-route";
 import {
-  buildOpenshellInferenceSetFailureMessage,
-  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-  openshellReportsProviderNotFound,
-} from "./inference-set-error";
+  type CaptureOpenShellInferenceRoute,
+  createCliOpenShellInferenceRouteMutator,
+  createCliOpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route-cli";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import { CLI_NAME } from "../cli/branding";
+import { classifyGatewayProviderNames } from "../credentials/provider-list";
+import { redactFullWithUrls } from "../security/redact";
 
 const OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS = 5_000;
 
 interface ProviderDiagnosticDeps {
-  captureOpenshell: (
-    args: string[],
-    opts?: Pick<CaptureOpenshellOptions, "ignoreError" | "maxBuffer" | "timeout">,
-  ) => CaptureOpenshellResult;
+  providerAdapter: OpenShellProviderAdapter;
   log: (message: string) => void;
 }
 
-export function queryRegisteredGatewayProviders(
+export function redactInferenceSetRouteDiagnostic(value: string): string {
+  return redactFullWithUrls(value);
+}
+
+export function createDefaultInferenceSetRouteMutator(capture: CaptureOpenShellInferenceRoute) {
+  return createCliOpenShellInferenceRouteMutator(capture, {
+    redactDiagnostic: redactInferenceSetRouteDiagnostic,
+  });
+}
+
+export function createDefaultInferenceSetRouteObserver(capture: CaptureOpenShellInferenceRoute) {
+  return createCliOpenShellInferenceRouteObserver(capture);
+}
+
+export async function queryRegisteredGatewayProviders(
+  gatewayName: string,
   deps: ProviderDiagnosticDeps,
-): string[] | undefined {
+): Promise<string[] | undefined> {
   try {
-    const result = deps.captureOpenshell(["provider", "list", "--names"], {
-      ignoreError: true,
-      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-      timeout: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
+    const result = await deps.providerAdapter.listProviders({
+      target: namedOpenShellGateway(gatewayName),
+      timeoutMs: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
     });
-    if (result.status === 0) {
-      return parseGatewayProviderNames(result.output).credentialNames;
+    if (result.ok) {
+      return classifyGatewayProviderNames(result.value.names).credentialNames;
     }
   } catch (_error: unknown) {
     // #5924: intentionally treat every thrown query or parsing error identically.
@@ -40,23 +55,33 @@ export function queryRegisteredGatewayProviders(
   return undefined;
 }
 
-export function buildInferenceSetFailure(
-  setResult: CaptureOpenshellResult,
-  provider: string,
+export async function buildInferenceSetFailure(
+  error: OpenShellInferenceRouteMutationError,
+  ambiguous: boolean,
+  gatewayName: string,
   deps: ProviderDiagnosticDeps,
-): { exitCode: number; message: string } {
-  const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
-  const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
-  const providerNotFound = openshellReportsProviderNotFound(`${stderr}\n${stdout}`, provider);
-  const exitCode = setResult.status ?? 1;
+): Promise<{ exitCode: number; message: string }> {
+  const providerNotFound = error.kind === "command" && error.reason === "provider_not_found";
+  const registeredProviders = providerNotFound
+    ? await queryRegisteredGatewayProviders(gatewayName, deps)
+    : undefined;
+  const providerLine =
+    registeredProviders === undefined
+      ? ""
+      : registeredProviders.length > 0
+        ? `\nRegistered providers: ${registeredProviders.join(", ")}`
+        : "\nNo providers registered";
+  const tip = providerNotFound
+    ? `\nTip: register a new provider with \`${CLI_NAME} onboard\`.`
+    : "";
+  const recovery = ambiguous
+    ? `\nInspect gateway '${gatewayName}', then rerun the same \`${CLI_NAME} inference set\` command.`
+    : "";
   return {
-    exitCode,
-    message: buildOpenshellInferenceSetFailureMessage({
-      exitCode,
-      providerNotFound,
-      registeredProviders: providerNotFound ? queryRegisteredGatewayProviders(deps) : undefined,
-      stderr,
-      stdout,
-    }),
+    exitCode:
+      error.kind === "command" && error.exitCode !== null && error.exitCode !== 0
+        ? error.exitCode
+        : 1,
+    message: `${error.message}${providerLine}${tip}${recovery}`,
   };
 }

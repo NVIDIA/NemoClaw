@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { endpointlessProviderProfilePath } from "../adapters/openshell/provider-profile";
 import {
-  endpointlessProviderProfilePath,
-  ensureEndpointlessProviderProfile,
   type EndpointlessProviderProfileRunner,
-} from "../adapters/openshell/provider-profile";
+  registerCheckedInProviderProfile,
+} from "../adapters/openshell/provider-profile-registration";
 
 export const MESSAGING_CREDENTIAL_PROVIDER_TYPE = "nemoclaw-mcp-v1"; // gitleaks:allow
 
@@ -18,17 +18,15 @@ export function ensureMessagingCredentialProviderProfile(input: {
   readonly root: string;
   readonly runOpenshell: EndpointlessProviderProfileRunner;
 }): void {
-  const result = ensureEndpointlessProviderProfile({
-    profileId: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    inferenceCapable: false,
+  const result = registerCheckedInProviderProfile({
     profilePath: messagingCredentialProviderProfilePath(input.root),
     runOpenshell: input.runOpenshell,
   });
   if (result.ok) return;
-  if (result.reason === "import-failed") {
+  if (result.operation === "import") {
     throw new Error("Could not import the OpenShell messaging credential profile.");
   }
-  if (result.reason === "export-failed") {
+  if (!(result.error.kind === "command" && result.error.reason === "profile_incompatible")) {
     throw new Error(
       `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' could not be exported for validation.`,
     );

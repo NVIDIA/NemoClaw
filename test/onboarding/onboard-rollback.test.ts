@@ -35,7 +35,7 @@ if (!isOnboardRollbackInternals(onboardInternals)) {
 const { buildOrphanedSandboxRollbackMessage } = onboardInternals;
 
 describe("ghost-sandbox rollback message (#2174)", () => {
-  it("reports the surviving sandbox and manual identity-checked cleanup", () => {
+  it("reports the surviving sandbox and fail-closed recovery", () => {
     const lines = buildOrphanedSandboxRollbackMessage(
       "alpha",
       new Error("All dashboard ports in range 18789-18798 are occupied"),
@@ -47,8 +47,13 @@ describe("ghost-sandbox rollback message (#2174)", () => {
     expect(lines).toContain(
       "  NemoClaw left the sandbox running because OpenShell deletion targets a mutable name.",
     );
-    expect(lines).toContain("  Verify the sandbox identity, then clean up manually:");
-    expect(lines).toContain('    openshell sandbox delete -g "nemoclaw-18080" "alpha"');
+    expect(lines).toContain(
+      '  Recovery remains blocked while gateway "nemoclaw-18080" reports this sandbox present.',
+    );
+    expect(lines).toContain(
+      "  Do not delete it by mutable name; run 'nemoclaw alpha destroy' to check for authoritative absence.",
+    );
+    expect(lines.join("\n")).not.toContain("openshell sandbox delete");
   });
 
   it("renders non-Error throwables via String coercion", () => {
@@ -56,15 +61,19 @@ describe("ghost-sandbox rollback message (#2174)", () => {
     expect(lines).toContain("  raw string failure");
   });
 
-  it("escapes the sandbox name into the manual-cleanup command exactly", () => {
+  it("escapes the gateway and preserves the sandbox name in recovery guidance", () => {
     const lines = buildOrphanedSandboxRollbackMessage(
       'weird-name_42"',
       new Error("oops"),
       'gateway"name',
     );
     expect(lines).toContain(
-      '    openshell sandbox delete -g "gateway\\\"name" "weird-name_42\\\""',
+      '  Recovery remains blocked while gateway "gateway\\\"name" reports this sandbox present.',
     );
+    expect(lines).toContain(
+      "  Do not delete it by mutable name; run 'nemoclaw weird-name_42\" destroy' to check for authoritative absence.",
+    );
+    expect(lines.join("\n")).not.toContain("openshell sandbox delete");
   });
 
   it("does not suggest deletion when the owning gateway is unknown", () => {

@@ -1,16 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CONTEXT_PATTERNS } from "./secret-patterns";
+import { CONTEXT_PATTERNS, URL_TOKEN_PATTERN_SOURCE } from "./secret-patterns";
 
 type SensitiveKeyDetector = (key: string) => boolean;
 type StandaloneSecretRedactor = (text: string, replacement: string) => string;
 type MalformedUrlRedactor = (text: string) => string | null;
 
-// Redaction intentionally accepts every RFC-style URI scheme. Proxy and
-// custom-scheme URLs can carry credentials too; an allowlist here would create
-// a bypass rather than enforce a network boundary.
-export const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
+/** @deprecated Retained for package compatibility; use redaction helpers for untrusted diagnostics. */
+export const URL_TOKEN_PATTERN = new RegExp(URL_TOKEN_PATTERN_SOURCE, "gi");
 
 const URL_TRAILING_DELIMITERS = ")]}>.,;:!?";
 const MAX_URL_PARSE_ATTEMPTS = 9;

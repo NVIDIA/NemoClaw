@@ -82,7 +82,7 @@ flowchart TB
 | Layer | What it protects | Enforcement point | Changeable at runtime |
 | --- | --- | --- | --- |
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
-| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
+| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Configuration ownership depends on the agent runtime. Refer to [Understand Filesystem Controls](./security-controls/filesystem-controls). |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
 | Gateway Authentication | Unauthorized devices or clients reaching the OpenShell gateway or dashboard surfaces when present. | OpenShell gateway | No. Set at image build / onboarding time. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
@@ -114,7 +114,7 @@ NemoClaw allows a credential source only in the process that is intended to hold
 
 | Execution path | Rule |
 |---|---|
-| Host-brokered provider | Discover and use host credentials only in the host adapter. The sandbox receives a narrow `inference.local` interface, not the host credentials. |
+| Host-brokered provider | Discover and use host credentials only through OpenShell-managed providers. Most providers expose `inference.local`; NVIDIA Endpoints uses a sandbox-attached least-privilege provider with placeholder credential rewriting. The sandbox receives no raw host credential. |
 | Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
 | Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
 | New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |
@@ -144,7 +144,7 @@ NemoClaw's host-local Amazon Bedrock adapter runs outside this sandbox credentia
 
 #### Hermes Managed Inference Credential Discovery
 
-NemoClaw configures Hermes with a custom provider through `inference.local`, and the shipped Hermes image does not install the optional native Bedrock dependency.
+NemoClaw configures Hermes with a custom provider. Most providers use `inference.local`; NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`. The shipped Hermes image does not install the optional native Bedrock dependency.
 AWS credential discovery for supported Bedrock inference therefore remains in NemoClaw's host-local adapter, outside the sandbox.
 If direct Hermes Bedrock support is added later, it must apply the same unavailable-metadata rule and include Hermes-specific credential-probe acceptance tests before it is enabled.
 
@@ -153,7 +153,7 @@ If direct Hermes Bedrock support is added later, it must apply the same unavaila
 
 #### Deep Agents Managed Inference Credential Discovery
 
-NemoClaw configures the managed `dcode` runtime with a generated OpenAI-compatible route through `inference.local`.
+NemoClaw configures the managed `dcode` runtime with a generated OpenAI-compatible route. Most providers use `inference.local`; NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`.
 The sandbox receives a placeholder route key, not the upstream provider credential.
 The managed launchers reject credential-shaped environment values and upstream auth files before Deep Agents Code starts, so provider discovery stays on the host-side OpenShell boundary.
 If you need a new sandbox-direct credential source, design it as an explicit provider or MCP integration instead of placing secrets in `/sandbox/.deepagents`.
@@ -180,7 +180,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `integrate.api.nvidia.com` allows POST only to inference and embedding paths and GET to model listings). Read-only endpoints such as `docs.openclaw.ai`, the OpenClaw `npm_registry` baseline entry, and the `pypi` preset allow GET only (PyPI also allows HEAD). The broader `npm` preset is an intentional exception: npm/Yarn registry traffic uses L4 pass-through for Node 22 undici CONNECT compatibility. While that preset is active, NemoClaw temporarily aligns the overlapping baseline npm endpoint with the same reviewed L4 metadata because OpenShell 0.0.106 requires a single connection mode. |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes. The sandbox-attached NVIDIA inference provider allows POST only to `/v1/chat/completions` and GET only to `/v1/models`; it does not permit embedding requests. Read-only endpoints such as `docs.openclaw.ai`, the OpenClaw `npm_registry` baseline entry, and the `pypi` preset allow GET only (PyPI also allows HEAD). The broader `npm` preset is an intentional exception: npm/Yarn registry traffic uses L4 pass-through for Node 22 undici CONNECT compatibility. While that preset is active, NemoClaw temporarily aligns the overlapping baseline npm endpoint with the same reviewed L4 metadata because OpenShell 0.0.116 requires a single connection mode. |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -216,6 +216,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 |---|---|---|
 | `brave` | Brave Search API. | Agent can issue search queries. |
 | `brew` | Homebrew (Linuxbrew) package manager. The sandbox base image includes the `brew` binary; this preset opens network egress to GitHub and the Homebrew formulae index so `brew install` can fetch bottles. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
+| `brew-balanced` | The same Homebrew endpoints and binaries as `brew`, with GET and HEAD only for `raw.githubusercontent.com`. Balanced selects this preset; Open keeps `brew`. | Allows downloading and installing arbitrary Homebrew packages, which may contain malicious code. |
 | `claude-code` | Claude Code CLI API, browser login, telemetry, and crash-report endpoints. | Allows a separately installed Claude Code CLI to reach Anthropic and telemetry hosts with its own credentials. On `platform.claude.com` the preset allows GET and POST on `/v1/oauth/**` only, which the browser login uses to exchange its authorization code. Do not use this preset for NemoClaw inference routing. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
 | `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `git`. |
@@ -287,7 +288,7 @@ Review filesystem defaults, writable paths, agent state, and Landlock enforcemen
 
 ## Process Controls
 
-Review capability drops, resource limits, runtime identity, and image hardening in [Understand Process Controls](./security-controls/process-controls).
+Review capability ownership, resource limits, runtime identity, and image hardening in [Understand Process Controls](./security-controls/process-controls).
 
 ## Gateway Authentication Controls
 
@@ -297,17 +298,17 @@ Review runtime-specific gateway access, dashboard exposure where applicable, sec
 
 OpenShell routes all inference traffic through the gateway to isolate provider credentials from the sandbox.
 
-### Routed Inference through `inference.local`
+### OpenShell-managed inference paths
 
-The OpenShell gateway intercepts all inference requests from the agent and routes them to the configured provider.
+OpenShell mediates all inference requests from the agent and routes them to the configured provider.
 The agent never receives the provider API key.
 
 | Aspect | Detail |
 |---|---|
-| Default | The agent talks to `inference.local`. The host owns the credential and upstream endpoint. |
-| What you can change | You cannot configure this architecture. The system always enforces it. |
-| Risk if bypassed | If the agent could reach an inference endpoint directly (by adding it to the network policy), it would need an API key. Since the sandbox does not contain credentials, this acts as defense-in-depth. However, adding an inference provider's host to the network policy without going through OpenShell routing could let the agent use a stolen or hardcoded key. |
-| Recommendation | Do not add inference provider hosts (such as `api.openai.com` or `api.anthropic.com`) to the network policy for NemoClaw model traffic. Use OpenShell inference routing instead. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |
+| Default | Most providers use the shared `inference.local` route. NVIDIA Endpoints uses a sandbox-attached provider for `integrate.api.nvidia.com`. OpenShell owns the credential and upstream endpoint in both cases. |
+| What you can change | You select a supported provider. NemoClaw selects and enforces that provider's managed path. |
+| Risk if bypassed | Adding an unowned provider endpoint to network policy bypasses NemoClaw's managed provider boundary and could let an agent use a stolen or hardcoded key. The NVIDIA Endpoints path is not a bypass: its checked-in OpenShell provider profile restricts the endpoint, methods, paths, and binaries, then rewrites a placeholder credential at the egress boundary. |
+| Recommendation | Do not add inference provider hosts to network policy for NemoClaw model traffic. Use the provider path created by onboarding. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |
 
 ### Provider Trust Tiers
 
@@ -328,18 +329,29 @@ Review the data policies of any cloud provider you use.
 
 ### Experimental Providers
 
-The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM on eligible hosts other than N1x and generic Linux managed vLLM install/start.
-DGX Spark and DGX Station managed vLLM entries appear by default.
-N1x omits local NVIDIA NIM, and N1x Express offers only the Deferred managed-vLLM preview.
-N1x remains outside the supported-platform set because its physical NemoClaw Express E2E validation is incomplete.
-After NemoClaw qualifies the N1x identity, you must provide explicit managed-vLLM preview intent before onboarding can use this path.
-On hosts other than N1x, an already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` also appears in the menu without a flag because selecting it is an explicit user action.
+The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM on eligible hosts other than native N1x FASTOS and generic Linux managed vLLM install/start.
+Managed vLLM install/start is Docker-backed and requires Docker on `PATH`; attaching an already-running local vLLM server is separate.
+DGX Spark and DGX Station managed vLLM entries appear by default when Docker is available.
+Native N1x FASTOS omits local NVIDIA NIM and offers the Deferred managed-vLLM preview or explicitly selected standard onboarding.
+Native N1x FASTOS remains outside the supported-platform set because its physical NemoClaw Express E2E validation is incomplete.
+After NemoClaw qualifies the native N1x identity, you must provide explicit Express or standard-onboarding intent.
+A qualifying Windows WSL N1x or Station GB300 host uses managed llama.cpp through Windows Express.
+The installer leaves provider and recipe selection to onboarding.
+When no provider is requested or recorded and `NEMOCLAW_MODEL` is unset, onboarding selects managed llama.cpp; an optional compatible `NEMOCLAW_LLAMACPP_RECIPE` value makes the managed recipe explicit.
+Onboarding accepts one proof-backed N1x GPU identity or a bounded Station GB300 Windows product observation whose reconciled proof includes an `NVIDIA GB300` device; the Windows chassis product name does not participate in N1x selection.
+Qualification also requires Linux Arm64 WSL, local Docker Desktop on the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+If neither readiness contract matches before managed selection starts, Windows Express selects WSL-local Ollama.
+If a required check fails after managed selection starts, onboarding stops before installation.
+Other Windows WSL Express installs also use WSL-local Ollama.
+Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration is enabled, `DOCKER_HOST` is unset, Docker uses the local `default` context, and Ollama has a loopback-only listener that is reachable from Docker and rejects unrecognized HTTP `Host` headers.
+An already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` appears in standard onboarding because selecting it is an explicit user action.
+Native N1x requires you to decline or disable Express or set `NEMOCLAW_PROVIDER=vllm` first.
 
 | Aspect | Detail |
 |---|---|
-| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. DGX Spark and DGX Station managed vLLM entries are offered by default. On hosts other than N1x, already-running vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` is offered when detected. |
-| What you can change | On eligible hosts other than N1x, set `NEMOCLAW_EXPERIMENTAL=1` before onboarding to surface Local NIM and generic Linux managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
-| Risk if selected | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path pulls a container image and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
+| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. When Docker is available, DGX Spark and DGX Station managed vLLM entries are offered by default. Native N1x separately offers the Deferred managed-vLLM preview; its standard onboarding offers already-running vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` when detected and requires explicit standard-onboarding intent. Qualifying Windows WSL N1x and Station GB300 Express runs use managed llama.cpp. |
+| What you can change | On eligible hosts other than native N1x FASTOS, set `NEMOCLAW_EXPERIMENTAL=1` before onboarding to surface Local NIM and, when Docker is available on `PATH`, generic Linux managed vLLM. To request only the Docker-backed managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
+| Risk if selected | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path requires Docker, pulls a container image, and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
 | Recommendation | Use experimental providers only for evaluation. Do not rely on them for always-on assistants. |
 
 ## Posture Profiles
@@ -353,7 +365,7 @@ They provide guidance on which controls to keep tight or relax.
 Use for always-on assistants with minimal external access.
 
 - Select the Restricted tier during onboarding.
-  Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew` presets.
+  Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew-balanced` package presets.
 - Choose no web search when prompted.
   Enabling web search adds the selected `brave` or `tavily` preset even with the Restricted tier.
 - Keep the remaining defaults and do not add other presets.
@@ -396,17 +408,19 @@ The following patterns weaken security without providing meaningful benefit.
 |---------|---------------|-------------------|
 | Omitting `protocol: rest` on REST API endpoints without a compatibility reason | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. Use L4 pass-through only for documented cases such as npm/Yarn on Node 22, where the client requires a CONNECT tunnel that L7 inspection would break. |
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
-| Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
-| Leaving generated agent config writable on sensitive workloads | The generated config tree contains model routing, channel settings, and runtime integration state (`/sandbox/.openclaw` for OpenClaw, `/sandbox/.hermes` for Hermes, `/sandbox/.deepagents` for Deep Agents). Writable config lets the agent drift from host-managed policy and routing. | Keep generated config under NemoClaw control for always-on assistants handling sensitive data. |
+| Adding an entrypoint capability layer | OpenShell owns child capability enforcement for managed sandboxes. A second entrypoint policy can drift from exec and connect behavior. | Keep OpenShell enforcement enabled. For direct container launches, make the container runtime the owner and pass `--cap-drop=ALL`. |
+| Treating mutable agent config as an isolation boundary | The generated config tree contains model routing, channel settings, and runtime integration state (`/sandbox/.openclaw` for OpenClaw, `/sandbox/.hermes` for Hermes, `/sandbox/.deepagents` for Deep Agents). NemoClaw supports this state as mutable, so the agent can change it independently of host-managed policy and credential routing. | Treat OpenShell policy and credential providers as the enforcement boundary. Monitor agent-config drift and recreate the sandbox from trusted inputs after suspected compromise. |
 | Adding inference provider hosts to the network policy for NemoClaw inference | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. Apply `claude-code` only when intentionally running the separate Claude Code CLI inside the sandbox. |
-| Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
+| Assuming the retired device-auth bypass disables pairing | OpenClaw 2026.9.1 ignores the legacy `NEMOCLAW_DISABLE_DEVICE_AUTH` compatibility input, so relying on it can leave an operator unable to connect and mistaken about the active authentication controls. | Complete the normal device-pairing flow for every browser or CLI device. Use loopback access or SSH port forwarding for remote dashboards. |
 
 ## Known Limitations
 
 | Limitation | Impact | Mitigation |
 |-----------|--------|------------|
 | Bypassing managed gateway paths | Network policy and inference auth are not enforced when an agent runtime is launched outside the NemoClaw-managed gateway path. | Use NemoClaw-managed sandbox entrypoints for production workflows. |
-| Same-UID lifecycle control in the OpenShell-managed topology | The root controller authenticates the host action, verifies a stable process shape, pidfd-targets the observed child, and proves replacement health. It cannot establish malicious process provenance when the supervisor, gateway, and agent share the sandbox UID. Mutable config also has managed cold-start trust and time-of-check/time-of-use limits unless it is root-owned and locked. | Use a direct root-entrypoint deployment when UID isolation and the root restart seal are required. Lock managed config before treating the strict hash as a trust anchor, and recreate a sandbox after suspected same-UID compromise. |
+<AgentOnly variant="openclaw,hermes">
+| Same-UID native lifecycle in the OpenShell-managed topology | The native supervisor, gateway, and agent share the sandbox UID. OpenShell contains the sandbox, but a same-user agent can signal or imitate peer processes. NemoClaw's readiness and health checks prove service availability, not process provenance. | Keep the managed image under OpenShell. Use a direct root-entrypoint deployment outside OpenShell when separate gateway and agent UIDs are required. Recreate a sandbox after suspected same-UID compromise. |
+</AgentOnly>
 | Direct filesystem writes bypass application-layer scanners | Application-layer scanners can intercept agent tool calls, not arbitrary raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. Application-layer scanning is defense-in-depth, not a filesystem-level control. |
 | Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 

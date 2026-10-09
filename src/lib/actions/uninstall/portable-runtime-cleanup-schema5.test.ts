@@ -8,13 +8,13 @@ import { describe, expect, it, vi } from "vitest";
 import { runPortableRuntimeCleanupTransaction } from "./portable-runtime-cleanup";
 
 describe("Hermes Portable runtime uninstall cleanup", () => {
-  it("orders schema-5 lifecycle locks before the process registry lock (#9608)", () => {
+  it("orders schema-5 lifecycle locks before the process registry lock (#9608)", async () => {
     const order: string[] = [];
     const continueLegacyOpenShell = vi.fn(() => true);
     const homeDir = path.resolve("test", "fixtures", "hermes-portable-uninstall");
     let registryHeld = false;
 
-    const result = runPortableRuntimeCleanupTransaction(
+    const result = await runPortableRuntimeCleanupTransaction(
       {
         env: {},
         gatewayName: "nemoclaw",
@@ -26,24 +26,26 @@ describe("Hermes Portable runtime uninstall cleanup", () => {
       continueLegacyOpenShell,
       {
         inspectHermesPortableSandboxNames: () => ["beta", "alpha"],
-        runHermesPortableUninstall: () => {
+        runHermesPortableUninstall: async () => {
+          expect(registryHeld).toBe(true);
+          await Promise.resolve();
           expect(registryHeld).toBe(true);
           order.push("transaction");
           return { phase: "completed", sandboxContainersRemoved: 2, targetCount: 2 };
         },
-        withLifecycleLock: (sandboxName, operation) => {
+        withLifecycleLock: async (sandboxName, operation) => {
           order.push(`acquire:${sandboxName}`);
           try {
-            return operation();
+            return await operation();
           } finally {
             order.push(`release:${sandboxName}`);
           }
         },
-        withRegistryLock: (_registryFile, operation) => {
+        withRegistryLock: async (_registryFile, operation) => {
           order.push("acquire:registry");
           registryHeld = true;
           try {
-            return operation();
+            return await operation();
           } finally {
             registryHeld = false;
             order.push("release:registry");

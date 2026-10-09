@@ -11,7 +11,7 @@ export type DebugSandboxAvailability =
 export interface RunDebugCommandDeps {
   getDefaultSandbox: () => Promise<DebugSandboxSelection | null>;
   getSandboxAvailability: (name: string) => Promise<DebugSandboxAvailability>;
-  runDebug: (options: DebugOptions) => void;
+  runDebug: (options: DebugOptions) => void | Promise<void>;
   env?: NodeJS.ProcessEnv;
   errorLine?: (message: string) => void;
   exit?: (code: number) => never;
@@ -64,12 +64,16 @@ export async function runDebugCommandWithOptions(
         );
         errorLine("  Verify OpenShell authentication and gateway identity, then retry.");
       } else if (availability.state === "invalid_gateway") {
-        errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} has an invalid registered gateway binding.`);
+        errorLine(
+          `Error: Sandbox '${explicit.name}'${sourceLabel} has an invalid registered gateway binding.`,
+        );
         errorLine(
           "  Restore gatewayName and gatewayPort from a trusted backup. Otherwise, back up and remove the sandbox before onboarding it again. Do not copy a gateway binding from another sandbox.",
         );
       } else {
-        errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} exists in the local registry but not in OpenShell.`);
+        errorLine(
+          `Error: Sandbox '${explicit.name}'${sourceLabel} exists in the local registry but not in OpenShell.`,
+        );
         errorLine("  Run `nemoclaw onboard` again to recreate or select a sandbox.");
       }
       exit(1);
@@ -87,5 +91,5 @@ export async function runDebugCommandWithOptions(
     opts.gatewayName = defaultSandbox.gatewayName;
   }
 
-  deps.runDebug(opts);
+  await deps.runDebug(opts);
 }

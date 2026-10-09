@@ -1,40 +1,68 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
+import type {
+  OpenShellSandboxBufferedCommandExecutor,
+  OpenShellSandboxBufferedCommandRequest,
+} from "../../adapters/openshell/sandbox-command";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+} from "../../adapters/openshell/sandbox-observer";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { getSandboxInferenceConfig } from "../../inference/config";
+import {
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+} from "../../inference/native-nvidia";
 import { validateInferenceResponseBody } from "../../inference/health";
-import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
-import { shellQuote } from "../../runner";
+import {
+  MIN_PROBE_REPLY_TOKENS,
+  resolveMaxTokensField,
+  resolveProbeReplyTokens,
+} from "../../inference/max-tokens-field";
+import {
+  NVCF_FUNCTION_NOT_FOUND_MARKER,
+  NVCF_FUNCTION_NOT_FOUND_SHELL_ERE,
+  NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS,
+  nvcfFunctionNotFoundMessage,
+} from "../../inference/nvcf-model-access";
+import { ROOT, shellQuote } from "../../runner";
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
+  buildSandboxCommandEnvironment,
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
-} from "./process-recovery";
+} from "../../adapters/sandbox/command-transport";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type SandboxInferenceInvocationInput = {
   sandboxName: string;
   gatewayName?: string;
+  runtimeSelection?: OpenShellRuntimeSelection;
   agentName?: string | null;
   provider: string;
   model: string;
   preferredInferenceApi: string | null;
+  nativeProvider?: boolean;
 };
 
 export type SandboxInferenceInvocationResult =
   | { ok: true }
-  | { ok: false; detail: string; httpStatus: number | null };
+  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string };
 
 export type SandboxInferenceInvocationDeps = {
-  runOpenshell?: typeof runOpenshellProviderCommand;
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   execute?: (
     sandboxName: string,
     command: string,
     timeout?: number,
     options?: SandboxExecCommandOptions,
-  ) => SandboxCommandResult | null;
+  ) => Promise<SandboxCommandResult | null>;
 };
 
 /**
@@ -42,9 +70,13 @@ export type SandboxInferenceInvocationDeps = {
  * Status and start run in an interactive wait and use the shorter timeout.
  */
 export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
-export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 30_000;
+// The request itself permits up to 90 seconds, so readiness must also allow
+// bounded process startup and cleanup rather than cancelling a valid response.
+export const INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS = 90;
+export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 95_000;
 const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
 
+/** Build the protocol-specific request used to verify sandbox inference. */
 function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   endpoint: string;
   headers: string[];
@@ -55,9 +87,18 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     input.provider,
     input.preferredInferenceApi,
   );
+  const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const baseUrl = (
+    useNativeNvidia
+      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+      : isNativeNvidiaProvider(input.provider)
+        ? "https://inference.local/v1"
+        : config.inferenceBaseUrl
+  ).replace(/\/+$/u, "");
+  const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
   if (config.inferenceApi === "anthropic-messages") {
     return {
-      endpoint: "https://inference.local/v1/messages",
+      endpoint: `${apiBaseUrl}/messages`,
       headers: ["anthropic-version: 2023-06-01"],
       payload: {
         model: input.model,
@@ -68,7 +109,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   if (config.inferenceApi === "openai-responses" || config.inferenceApi === "responses") {
     return {
-      endpoint: "https://inference.local/v1/responses",
+      endpoint: `${apiBaseUrl}/responses`,
       headers: [],
       payload: {
         model: input.model,
@@ -78,84 +119,95 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     };
   }
   return {
-    endpoint: "https://inference.local/v1/chat/completions",
+    endpoint: `${apiBaseUrl}/chat/completions`,
     headers: [],
     payload: {
       model: input.model,
-      [resolveMaxTokensField(input.model)]: MIN_PROBE_REPLY_TOKENS,
+      [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
       messages: [{ role: "user", content: "Reply with OK" }],
       stream: false,
     },
   };
 }
 
+/** The endpoint this input's API family posts to, for callers that report a hop. */
+export function resolveSandboxInferenceInvocationEndpoint(
+  input: SandboxInferenceInvocationInput,
+): string {
+  return buildProbeRequest(input).endpoint;
+}
+
 export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
 ): string {
   const request = buildProbeRequest(input);
-  const headerArgs = ["Content-Type: application/json", ...request.headers]
-    .map((header) => `-H ${shellQuote(header)}`)
-    .join(" ");
+  const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const headerArgs =
+    ["Content-Type: application/json", ...request.headers]
+      .map((header) => `-H ${shellQuote(header)}`)
+      .join(" ") + (useNativeNvidia ? ' -H "$AUTH_HEADER"' : "");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
+    ...(useNativeNvidia ? [NATIVE_NVIDIA_AUTH_HEADER_SCRIPT] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
-    `code=$(curl -sS --connect-timeout 5 --max-time 90 --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
+    `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
     "printf '%s\\n' \"$code\"",
-    'case "$code" in 2??) cat "$body"; exit 0 ;; *) exit 1 ;; esac',
+    // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
+    // here instead, so status can name the cause the onboarding probe already
+    // recognises without carrying the body that proved it (#10879).
+    `case "$code" in 2??) cat "$body"; exit 0 ;; 404) grep ${NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS} ${shellQuote(NVCF_FUNCTION_NOT_FOUND_SHELL_ERE)} "$body" && printf '%s\\n' ${shellQuote(NVCF_FUNCTION_NOT_FOUND_MARKER)}; exit 1 ;; *) exit 1 ;; esac`,
   ].join("; ");
 }
 
-export function buildDcodeSandboxInferenceInvocationArgs(
+export function buildDcodeSandboxInferenceInvocationRequest(
   input: SandboxInferenceInvocationInput,
-): string[] {
-  return [
-    "sandbox",
-    "exec",
-    "--name",
-    input.sandboxName,
-    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
-    "--no-tty",
-    "--env",
-    "HOME=/usr/local/lib/nemoclaw",
-    "--env",
-    "BASH_ENV=",
-    "--env",
-    "ENV=",
-    "--",
-    DCODE_MANAGED_EXEC_LAUNCHER,
-    "/bin/sh",
-    "-c",
-    buildSandboxInferenceInvocationCommand(input),
-  ];
+  timeoutMilliseconds: number,
+): OpenShellSandboxBufferedCommandRequest {
+  const gatewayName = input.gatewayName ?? input.runtimeSelection?.gatewayName;
+  return {
+    sandboxName: input.sandboxName,
+    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+    command: [
+      DCODE_MANAGED_EXEC_LAUNCHER,
+      "/bin/sh",
+      "-c",
+      buildSandboxInferenceInvocationCommand(input),
+    ],
+    sandboxEnvironment: {
+      BASH_ENV: "",
+      ENV: "",
+      HOME: "/usr/local/lib/nemoclaw",
+    },
+    environment: buildSandboxCommandEnvironment(input.runtimeSelection),
+    tty: false,
+    timeoutMilliseconds,
+  };
 }
 
-function executeDcodeSandboxInferenceInvocation(
+async function executeDcodeSandboxInferenceInvocation(
   input: SandboxInferenceInvocationInput,
   deps: SandboxInferenceInvocationDeps,
   timeoutMs: number,
-): SandboxCommandResult | null {
-  const runOpenshell = deps.runOpenshell ?? runOpenshellProviderCommand;
+): Promise<SandboxCommandResult | null> {
+  const commandExecutor =
+    deps.commandExecutor ?? createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
   try {
-    const result = runOpenshell(buildDcodeSandboxInferenceInvocationArgs(input), {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
-    });
-    if (
-      result.error ||
-      typeof result.stdout !== "string" ||
-      typeof result.stderr !== "string" ||
-      result.stderr.trim()
-    ) {
+    const completed = await commandExecutor.runBuffered(
+      buildDcodeSandboxInferenceInvocationRequest(input, timeoutMs),
+    );
+    if (completed.outcome.kind !== "completed") {
       return null;
     }
+    // Preserve failed curl/launcher exit codes even when they emit stderr.
+    // Successful evidence still rejects startup stderr; diagnostics never echo it.
+    if (completed.outcome.exitCode === 0 && completed.stderr.trim()) return null;
     return {
-      status: result.status ?? 1,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      status: completed.outcome.exitCode,
+      stdout: completed.stdout,
+      stderr: completed.stderr,
     };
   } catch {
     return null;
@@ -165,34 +217,39 @@ function executeDcodeSandboxInferenceInvocation(
 /**
  * Send one minimal agent request over the configured gateway route from the
  * still-running sandbox. The request uses OpenShell's stored provider
- * credential through inference.local; no host credential is placed in the
- * command or its output.
+ * credential through the attached OpenShell provider or managed route; no host
+ * credential is placed in the command or its output.
  */
-export function probeSandboxInferenceInvocation(
+export async function probeSandboxInferenceInvocation(
   input: SandboxInferenceInvocationInput,
   deps: SandboxInferenceInvocationDeps = {},
   timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
-): SandboxInferenceInvocationResult {
+): Promise<SandboxInferenceInvocationResult> {
   let result: SandboxCommandResult | null;
   if (input.agentName === DCODE_AGENT_NAME) {
-    result = executeDcodeSandboxInferenceInvocation(input, deps, timeoutMs);
+    result = await executeDcodeSandboxInferenceInvocation(input, deps, timeoutMs);
   } else {
     const execute = deps.execute ?? executeSandboxExecCommand;
-    const execOptions: SandboxExecCommandOptions = input.gatewayName
-      ? { gatewayName: input.gatewayName, allowLocalDockerFallback: false }
-      : {};
-    result = execute(
+    const execOptions: SandboxExecCommandOptions = {
+      ...(input.gatewayName ? { gatewayName: input.gatewayName } : {}),
+      ...(input.runtimeSelection ? { runtimeSelection: input.runtimeSelection } : {}),
+    };
+    result = await execute(
       input.sandboxName,
       buildSandboxInferenceInvocationCommand(input),
       timeoutMs,
       execOptions,
-    );
+    ).catch((error: unknown) => {
+      if (!(error instanceof SandboxCommandTransportError)) throw error;
+      return null;
+    });
   }
   if (!result) {
     return {
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
   if (result.status === 0) {
@@ -212,14 +269,25 @@ export function probeSandboxInferenceInvocation(
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus,
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
+  // Only the fixed marker is read back, never the line that carried it, so an
+  // upstream body can still not reach diagnostics (#6195).
+  const nvcfFunctionNotFound = result.stdout
+    .split("\n")
+    .some((line) => line.trim() === NVCF_FUNCTION_NOT_FOUND_MARKER);
+  const detail = httpStatus
+    ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
+    : `sandbox inference invocation probe exited with status ${result.status}`;
   return {
     ok: false,
-    detail: httpStatus
-      ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
-      : `sandbox inference invocation probe exited with status ${result.status}`,
+    detail:
+      httpStatus === "404" && nvcfFunctionNotFound
+        ? `${detail}: ${nvcfFunctionNotFoundMessage(input.model).replace(/\.$/, "")}`
+        : detail,
     httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
+    endpoint: resolveSandboxInferenceInvocationEndpoint(input),
   };
 }

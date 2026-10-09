@@ -230,7 +230,7 @@ describe("onboard preflight credential-store warning (#9457)", () => {
       assessHost: headlessDockerDesktopHost,
       detectGpu: () => null,
       warnIfHostProxyMissesLoopback: vi.fn(),
-      assertDockerBridgeAndContainerDnsHealthy: bridge,
+      assertRuntimeProviderHealthy: bridge,
       validateSandboxGpuPreflight: vi.fn(),
     };
     const result = runFatalOnboardRuntimePreflight({}, context);

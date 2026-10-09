@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   dockerRemoveVolumesByPrefix: vi.fn(),
   resolveGatewayTeardownAuthority: vi.fn(),
   spawnSync: vi.fn(),
-  stopStaleDashboardListeners: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -20,13 +19,10 @@ vi.mock("node:child_process", () => ({
 vi.mock("../../adapters/docker/volume", () => ({
   dockerRemoveVolumesByPrefix: mocks.dockerRemoveVolumesByPrefix,
 }));
-vi.mock("../../onboard/gateway-teardown-authority", () => ({
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
   resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
 }));
-vi.mock("../../onboard/stale-gateway-cleanup", () => ({
-  stopStaleDashboardListeners: mocks.stopStaleDashboardListeners,
-}));
-
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 
 describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
@@ -56,7 +52,7 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     fs.rmSync(stateDir, { force: true, recursive: true });
   });
 
-  it("preserves unverifiable PID evidence so final cleanup can converge on retry (#4662)", () => {
+  it("preserves unverifiable PID evidence so final cleanup can converge on retry (#4662)", async () => {
     const pid = 456;
     let pidIsAlive = true;
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
@@ -81,7 +77,7 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     );
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
 
-    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).toThrow(
+    await expect(cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).rejects.toThrow(
       /PID-file process\(es\) 456.*do not prove ownership/,
     );
     expect(fs.readFileSync(pidFile, "utf-8")).toBe(`${pid}\n`);
@@ -93,13 +89,15 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
 
     pidIsAlive = false;
-    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).not.toThrow();
+    await expect(
+      cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell),
+    ).resolves.toBeUndefined();
     expect(fs.existsSync(pidFile)).toBe(false);
     expect(fs.existsSync(runtimeMarker)).toBe(false);
-    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw-8081"],
+      expect.objectContaining({ ignoreError: true, stdio: ["ignore", "pipe", "pipe"] }),
+    );
     expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith(
       "openshell-cluster-nemoclaw-8081",
       { ignoreError: true },

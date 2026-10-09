@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { type CleanupHost, CleanupRegistry } from "../fixtures/cleanup.ts";
+import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import {
   assertCleanupSucceededOrAbsent,
   cleanupAcquiredResource,
@@ -20,6 +21,43 @@ import {
 } from "../fixtures/cleanup-resources.ts";
 
 describe("cleanup resources", () => {
+  it("keeps installer state under the account home and removes only its disposable workspace", async () => {
+    const accountHome = fs.mkdtempSync(path.join(process.cwd(), "installer-account-home-"));
+    const sentinel = path.join(accountHome, "keep");
+    fs.writeFileSync(sentinel, "account data");
+    const userInfo = os.userInfo();
+    const account = vi.spyOn(os, "userInfo").mockReturnValue({ ...userInfo, homedir: accountHome });
+    const cleanup = new CleanupRegistry();
+    try {
+      const root = createPublicInstallWorkspace(cleanup);
+      expect(path.dirname(root)).toBe(accountHome);
+      expect(fs.statSync(root).mode & 0o777).toBe(0o700);
+      fs.mkdirSync(path.join(root, "home", ".local", "state"), { recursive: true });
+      expect((await cleanup.runAll()).failures).toEqual([]);
+      expect(fs.existsSync(root)).toBe(false);
+      expect(fs.readFileSync(sentinel, "utf8")).toBe("account data");
+    } finally {
+      account.mockRestore();
+      fs.rmSync(accountHome, { recursive: true, force: true });
+    }
+  });
+
+  it("disposes an installer workspace when fixture initialization fails immediately", async () => {
+    const cleanup = new CleanupRegistry();
+    let home = "";
+    try {
+      home = createPublicInstallWorkspace(cleanup);
+      throw new Error("fixture initialization failed");
+    } catch (error) {
+      expect(error).toEqual(new Error("fixture initialization failed"));
+      expect(path.dirname(home)).toBe(os.userInfo().homedir);
+      expect(fs.existsSync(home)).toBe(true);
+    } finally {
+      expect((await cleanup.runAll()).failures).toEqual([]);
+    }
+    expect(fs.existsSync(home)).toBe(false);
+  });
+
   it("tears down acquired resources in reverse order", async () => {
     const calls: string[] = [];
     const host: CleanupHost = {
@@ -109,7 +147,8 @@ describe("cleanup resources", () => {
     expect(calls).toBe(1);
   });
 
-  it.each(["full-e2e.test.ts", "hermes-e2e.test.ts"])(
+  // full-e2e-gateway.test.ts exercises OpenClaw's actual setup and teardown callbacks.
+  it.each(["hermes-e2e.test.ts"])(
     "registers sandbox cleanup before installer side effects [case %#] (#7146)",
     (fileName) => {
       const source = fs.readFileSync(
@@ -128,6 +167,24 @@ describe("cleanup resources", () => {
       );
     },
   );
+
+  it("registers cleanup for the concurrent-gateway GC orphan tag before invoking GC (#12582)", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "..", "live", "concurrent-gateway-ports.test.ts"),
+      "utf8",
+    );
+    const tagImage = source.indexOf('["image", "tag", registeredImageTag, orphanTag]');
+    const registerCleanup = source.indexOf(
+      'cleanup.trackDisposable("remove temporary concurrent gateway GC tag"',
+    );
+    const runGc = source.indexOf('["gc", "--yes"]');
+    const cleanupRemovesTag = source.indexOf('["image", "rm", orphanTag]', registerCleanup);
+
+    expect(tagImage).toBeGreaterThanOrEqual(0);
+    expect(registerCleanup).toBeGreaterThan(tagImage);
+    expect(cleanupRemovesTag).toBeGreaterThan(registerCleanup);
+    expect(runGc).toBeGreaterThan(registerCleanup);
+  });
 
   it("continues typed cleanup after a resource failure", async () => {
     const calls: string[] = [];
@@ -174,22 +231,22 @@ describe("cleanup resources", () => {
     });
   });
 
-  it("reports failed shields restoration before continuing sandbox cleanup", async () => {
+  it("reports a failed dependent cleanup before continuing primary cleanup", async () => {
     const calls: string[] = [];
     const cleanup = new CleanupRegistry();
-    cleanup.trackDisposable("destroy shields sandbox", () => {
+    cleanup.trackDisposable("destroy sandbox", () => {
       calls.push("destroy");
     });
-    cleanup.trackDisposable("restore shields before destroy", () => {
+    cleanup.trackDisposable("stop gateway before destroy", () => {
       calls.push("restore");
-      throw new Error("shields up exited 1");
+      throw new Error("gateway stop exited 1");
     });
 
     const result = await cleanup.runAll();
     expect(calls).toEqual(["restore", "destroy"]);
     expect(result).toEqual({
-      passed: ["destroy shields sandbox"],
-      failures: [{ name: "restore shields before destroy", message: "shields up exited 1" }],
+      passed: ["destroy sandbox"],
+      failures: [{ name: "stop gateway before destroy", message: "gateway stop exited 1" }],
     });
   });
 

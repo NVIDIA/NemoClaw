@@ -31,7 +31,7 @@ export function classifyTestDepth(
       verdict: "unit_sufficient",
       rationale:
         "Changes are limited to tests, documentation, or metadata that cannot affect runtime behavior directly.",
-      suggestedTests: ["Run the relevant existing unit/doc validation for the touched files."],
+      suggestedTests: ["Unit or documentation validation candidate for the touched files."],
     };
   }
   if (riskPlan.requiredJobs.length > 0 || riskPlan.requiredTargets.length > 0) {
@@ -41,14 +41,14 @@ export function classifyTestDepth(
       suggestedTests: [
         ...riskPlan.requiredJobs.map(
           (job) =>
-            `Run the \`${job.id}\` E2E job for ${job.reasons.join("; ")} Matched files: ${job.matchedFiles
+            `Existing \`${job.id}\` E2E job validation candidate for ${job.reasons.join("; ")} Matched files: ${job.matchedFiles
               .slice(0, 5)
               .map((file) => `\`${file}\``)
               .join(", ")}.`,
         ),
         ...riskPlan.requiredTargets.map(
           (target) =>
-            `Run the \`${target.id}\` typed E2E target for ${target.reasons.join("; ")} Matched files: ${target.matchedFiles
+            `Existing \`${target.id}\` typed E2E target validation candidate for ${target.reasons.join("; ")} Matched files: ${target.matchedFiles
               .slice(0, 5)
               .map((file) => `\`${file}\``)
               .join(", ")}.`,
@@ -75,7 +75,7 @@ export function classifyTestDepth(
       verdict: "runtime_validation_recommended",
       rationale: `Runtime/sandbox/infrastructure paths need behavioral runtime validation: ${e2eSignals.slice(0, 8).join(", ")}.`,
       suggestedTests: [
-        "Add or identify targeted runtime/integration validation for the changed behavior; do not report external E2E job pass/fail here.",
+        "Runtime or integration validation candidate for the changed behavior; external E2E job results are outside this context.",
       ],
     };
   }
@@ -85,7 +85,7 @@ export function classifyTestDepth(
       verdict: "runtime_validation_recommended",
       rationale: `Changed runtime code adds a process or container boundary: ${runtimeBoundaryFiles.join(", ")}.`,
       suggestedTests: [
-        "Add or identify a targeted integration test for the changed process or container behavior.",
+        "Integration validation candidate for the changed process or container behavior.",
       ],
     };
   }
@@ -97,14 +97,14 @@ export function classifyTestDepth(
       verdict: "mocks_recommended",
       rationale: `Changed code has I/O, state, credentials, provider, or config behavior that should be covered with behavioral mocks: ${mockSignals.slice(0, 8).join(", ")}.`,
       suggestedTests: [
-        "Add or confirm behavioral tests with mocked filesystem/network/process boundaries.",
+        "Behavioral validation candidate with mocked filesystem, network, or process boundaries.",
       ],
     };
   }
   return {
     verdict: "unit_sufficient",
     rationale: "Changed files look like deterministic logic that can be covered with unit tests.",
-    suggestedTests: ["Run targeted unit tests for the changed modules."],
+    suggestedTests: ["Targeted unit validation candidate for the changed modules."],
   };
 }
 

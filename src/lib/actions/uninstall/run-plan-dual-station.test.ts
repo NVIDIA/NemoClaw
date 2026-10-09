@@ -30,8 +30,8 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, {
     hasPortableRuntimeCleanup: () => false,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
@@ -62,7 +62,7 @@ function managedRuntimeBindingPath(receiptPath: string): string {
 describe("managed distributed vLLM runtime uninstall", () => {
   it.each(["dual-station-vllm-runtime.json", "managed-cluster-vllm-runtime.json"])(
     "removes the runtime owned by %s before the remaining full-uninstall steps",
-    (receiptFile) => {
+    async (receiptFile) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-pair-"));
       const stateDir = path.join(home, ".nemoclaw");
       fs.mkdirSync(stateDir, { mode: 0o700 });
@@ -76,7 +76,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       const runDocker = vi.fn(() => ok());
 
       try {
-        const result = runUninstallPlan(
+        const result = await runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => true,
@@ -103,7 +103,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     },
   );
 
-  it("stops a distributed runtime before requesting shared Hugging Face cache-data cleanup", () => {
+  it("stops a distributed runtime before requesting shared Hugging Face cache-data cleanup", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-cache-order-"));
     const stateDir = path.join(home, ".nemoclaw");
     const receiptPath = path.join(stateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE);
@@ -116,7 +116,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const runHuggingFaceCacheDataCleanup = vi.fn(() => ok());
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: true, keepOpenShell: true },
         {
           commandExists: (command) => command === "openshell",
@@ -159,7 +159,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
       vi.resetModules();
       const { runUninstallPlan: runPortUninstallBase } = await import("./run-plan");
-      const result = runPortUninstallBase(
+      const result = await runPortUninstallBase(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -199,7 +199,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("associates a canonical cluster discovery binding with its durable receipt", () => {
+  it("associates a canonical cluster discovery binding with its durable receipt", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-claim-"));
     const stateDir = path.join(home, ".nemoclaw");
     const receiptPath = path.join(stateDir, "managed-cluster-vllm-runtime.json");
@@ -214,7 +214,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -254,7 +254,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       receiptFile: "dual-station-vllm-runtime.json",
       bindingSegments: ["managed-cluster-managed-serving.json.spark-worker.ssh-binding"],
     },
-  ])("refuses $title", ({ receiptFile, bindingSegments }) => {
+  ])("refuses $title", async ({ receiptFile, bindingSegments }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-claim-other-"));
     const stateDir = path.join(home, ".nemoclaw");
     const receiptPath = path.join(stateDir, receiptFile);
@@ -269,7 +269,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const runDocker = vi.fn(() => ok());
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -298,7 +298,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("targets the exact Station receipt found under a stale non-default gateway root", () => {
+  it("targets the exact Station receipt found under a stale non-default gateway root", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-stale-station-"));
     const receiptPath = path.join(
       home,
@@ -312,7 +312,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
@@ -337,7 +337,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("preserves host-global pair ownership while sibling gateways remain", () => {
+  it("preserves host-global pair ownership while sibling gateways remain", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-scoped-"));
     const stateDir = path.join(home, ".nemoclaw");
     const gatewayStateDir = path.join(
@@ -375,7 +375,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
         withProvenManagedGatewayProcess({
           isPortFree: () => true,
@@ -405,7 +405,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("does not start the remaining uninstall steps when managed pair cleanup fails", () => {
+  it("does not start the remaining uninstall steps when managed pair cleanup fails", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-fail-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
@@ -417,7 +417,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const runDocker = vi.fn(() => ok());
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         {
           commandExists: () => true,
@@ -448,7 +448,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("refuses ambiguous Spark and Station receipts before cleanup or other mutation", () => {
+  it("refuses ambiguous Spark and Station receipts before cleanup or other mutation", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-conflict-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
@@ -466,7 +466,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const rmSync = vi.fn();
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         {
           commandExists: () => true,
@@ -498,7 +498,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     "managed-cluster-vllm-runtime.json.rank-1.ssh-binding",
     "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
     "dual-station-vllm-runtime.json.ssh-binding",
-  ])("refuses an orphaned %s before cleanup or other mutation", (bindingEntry) => {
+  ])("refuses an orphaned %s before cleanup or other mutation", async (bindingEntry) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-binding-orphan-"));
     const stateDir = path.join(home, ".nemoclaw");
     const bindingPath = path.join(stateDir, bindingEntry);
@@ -509,7 +509,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const rmSync = vi.fn();
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         {
           commandExists: () => true,
@@ -566,7 +566,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
         vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
         vi.resetModules();
         const { runUninstallPlan: runFreshUninstallPlan } = await import("./run-plan");
-        const result = runFreshUninstallPlan(
+        const result = await runFreshUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: () => true,
@@ -619,7 +619,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
         fs.writeFileSync(stateDir, "not a directory\n", { mode: 0o600 });
       },
     },
-  ])("fails closed when the host-global managed state root is a $shape", ({ arrange }) => {
+  ])("fails closed when the host-global managed state root is a $shape", async ({ arrange }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-unsafe-root-"));
     const stateDir = path.join(home, ".nemoclaw");
     arrange(stateDir, home);
@@ -628,7 +628,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const runDocker = vi.fn(() => ok());
 
     try {
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,

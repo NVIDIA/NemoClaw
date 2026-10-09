@@ -6,18 +6,27 @@ import type { SandboxEntry } from "../../state/registry";
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  captureResolvedOpenshellAsync: vi.fn(async () => ({ status: 0, output: "" })),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0 })),
 }));
 vi.mock("../../gateway-runtime-action", () => ({
-  getNamedGatewayLifecycleState: vi.fn(() => ({ kind: "healthy_named" })),
+  getNamedGatewayLifecycleState: vi.fn().mockResolvedValue({
+    state: "healthy_named",
+    activeGateway: "nemoclaw",
+    diagnostic: "Connected.",
+    recoveryBlocked: false,
+    unavailable: false,
+  }),
 }));
 vi.mock("../../inference/local", () => ({
   findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+  isLocalProviderHostHealthy: vi.fn(() => true),
   probeLocalProviderHealth: vi.fn(() => ({ ok: true })),
 }));
 vi.mock("../../inference/ollama/proxy", () => ({
   ensureOllamaAuthProxy: vi.fn(() => true),
+  isProxyHealthy: vi.fn(() => true),
   probeOllamaAuthProxyHealth: vi.fn(() => ({ ok: true })),
 }));
 vi.mock("../../runner", () => ({
@@ -64,10 +73,10 @@ function makeRepairDeps(probes: SandboxInferenceRouteProbe[]) {
   };
   const queue = [...probes];
   const deps: SandboxInferenceRouteRepairDeps = {
-    probe: vi.fn(() => queue.shift() ?? broken()),
+    probe: vi.fn(async () => queue.shift() ?? broken()),
     shouldApplyVmDnsMonkeypatch: vi.fn(() => false),
     applyVmDnsMonkeypatch: vi.fn(() => ({ ok: false })),
-    reapplyVmInferenceRoute: vi.fn((sandboxName) => {
+    reapplyVmInferenceRoute: vi.fn(async (sandboxName) => {
       calls.reapplications.push(sandboxName);
       return queue.shift() ?? broken();
     }),
@@ -82,10 +91,10 @@ function makeRepairDeps(probes: SandboxInferenceRouteProbe[]) {
 }
 
 describe("sandbox connect inconclusive route repair", () => {
-  it("fails closed without repair when the initial probe is inconclusive (#6192)", () => {
+  it("fails closed without repair when the initial probe is inconclusive (#6192)", async () => {
     const { calls, deps } = makeRepairDeps([inconclusive()]);
 
-    const result = repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
+    const result = await repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
 
     expect(result).toEqual({
       healthy: false,
@@ -96,10 +105,10 @@ describe("sandbox connect inconclusive route repair", () => {
     expect(calls.reapplications).toEqual([]);
   });
 
-  it("fails closed when non-legacy route reapply remains inconclusive (#6192)", () => {
+  it("fails closed when non-legacy route reapply remains inconclusive (#6192)", async () => {
     const { calls, deps } = makeRepairDeps([broken(), inconclusive()]);
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "vm-box",
       sandbox({ openshellDriver: "vm" }),
       {},
@@ -114,10 +123,10 @@ describe("sandbox connect inconclusive route repair", () => {
     expect(calls.reapplications).toEqual(["vm-box"]);
   });
 
-  it("fails closed when a legacy repair probe remains inconclusive (#6192)", () => {
+  it("fails closed when a legacy repair probe remains inconclusive (#6192)", async () => {
     const { calls, deps } = makeRepairDeps([broken(), inconclusive()]);
 
-    const result = repairSandboxInferenceRouteWithDeps(
+    const result = await repairSandboxInferenceRouteWithDeps(
       "legacy-box",
       sandbox({ openshellDriver: "kubernetes" }),
       {},

@@ -194,7 +194,16 @@ export function ensureOpenshellForOnboard(
     localBin: null,
     futureShellPathHint: null,
   };
-  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.106";
+  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.116";
+
+  if (deps.shouldUseOpenshellDevChannel()) {
+    deps.error("");
+    deps.error(
+      "  ✗ NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
+    );
+    deps.error("");
+    deps.exit(1);
+  }
 
   if (!deps.isOpenshellInstalled()) {
     deps.log("  openshell CLI not found. Installing...");
@@ -218,22 +227,21 @@ export function ensureOpenshellForOnboard(
       const currentVersionOutput = deps.runCaptureOpenshell(["--version"], {
         ignoreError: true,
       });
-      const needsDevChannel =
-        deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
-        deps.shouldUseOpenshellDevChannel() &&
-        !deps.isOpenshellDevVersion(currentVersionOutput);
+      const needsStableRelease = deps.isOpenshellDevVersion(currentVersionOutput);
       const needsDockerDriverBinaries =
         deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
         !areRequiredDockerDriverBinariesPresent(deps, platform, {}, arch);
       const needsMessagingFeatures = !deps.hasRequiredOpenshellMessagingFeatures();
       const needsUpgrade =
         !deps.versionGte(currentVersion, minOpenshellVersion) ||
-        needsDevChannel ||
+        needsStableRelease ||
         needsDockerDriverBinaries ||
         needsMessagingFeatures;
       if (needsUpgrade) {
-        if (needsDevChannel) {
-          deps.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
+        if (needsStableRelease) {
+          deps.log(
+            "  OpenShell development builds are unsupported. Reinstalling exact stable 0.0.116...",
+          );
         } else if (needsDockerDriverBinaries) {
           const required = platform === "linux" ? "gateway and sandbox" : "gateway";
           deps.log(
@@ -261,6 +269,20 @@ export function ensureOpenshellForOnboard(
   });
   deps.log(`  \u2713 openshell CLI: ${openshellVersionOutput || "unknown"}`);
   const installedOpenshellVersion = deps.getInstalledOpenshellVersion(openshellVersionOutput);
+  if (!installedOpenshellVersion) {
+    deps.error("");
+    deps.error("  \u2717 OpenShell version could not be determined after installation.");
+    deps.error("    Install exact stable OpenShell 0.0.116 and retry.");
+    deps.error("");
+    deps.exit(1);
+  }
+  if (deps.isOpenshellDevVersion(openshellVersionOutput)) {
+    deps.error("");
+    deps.error("  ✗ OpenShell development builds are not supported by this NemoClaw release.");
+    deps.error("    Install exact stable OpenShell 0.0.116 and retry.");
+    deps.error("");
+    deps.exit(1);
+  }
   if (
     installedOpenshellVersion &&
     minOpenshellVersion &&
@@ -292,7 +314,7 @@ export function ensureOpenshellForOnboard(
     deps.exit(1);
   }
 
-  const maxOpenshellVersion = deps.getBlueprintMaxOpenshellVersion();
+  const maxOpenshellVersion = deps.getBlueprintMaxOpenshellVersion() ?? "0.0.116";
   if (
     installedOpenshellVersion &&
     maxOpenshellVersion &&

@@ -11,7 +11,7 @@ import {
   LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
 } from "../helpers/launch-readiness-fixture";
-import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
+import { syntheticForwardNodeOptions } from "../helpers/platform-override-node-options";
 import { execTimeout } from "../helpers/timeouts";
 
 /**
@@ -318,7 +318,6 @@ if (args[0] === "logs") {
 }
 
 if (args[0] === "forward" && args[1] === "list") {
-  process.stdout.write("${sandboxName} 127.0.0.1 ${dashboardPort} 12345 running\\n");
   process.exit(0);
 }
 
@@ -514,10 +513,8 @@ export function setupFixture(
   const curlPath = path.join(homeLocalBin, "curl");
   const psPath = path.join(homeLocalBin, "ps");
   const sandboxName = String(sandboxEntry.name);
-  // The OpenShell stub advertises this forward as running. Back that claim
-  // with a real listener so probe-only forward ownership checks behave the
-  // same on Linux and macOS, not according to whether a host happens to have
-  // the historical default port open.
+  // Model a reachable direct ForwardTcp service. Direct services do not create
+  // entries in the legacy `openshell forward list` registry.
   const dashboardPort = startFixtureForwardListener(tmpDir);
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
@@ -590,7 +587,7 @@ export function runConnect(
       encoding: "utf-8",
       env: {
         HOME: tmpDir,
-        NODE_OPTIONS: nonWslPlatformNodeOptions(tmpDir, ""),
+        NODE_OPTIONS: syntheticForwardNodeOptions(tmpDir, ""),
         PATH: `${path.join(tmpDir, ".local", "bin")}:/usr/bin:/bin`,
         NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
         NEMOCLAW_NO_CONNECT_HINT: "1",

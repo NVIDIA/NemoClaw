@@ -22,19 +22,30 @@ const {
   redirectInheritedChildStdoutToStderr,
 }: typeof import("../../cli/stdout-guard") = require("../../cli/stdout-guard");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
-const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
-  require("../../core/non-interactive");
+const {
+  isNonInteractiveEnv,
+}: typeof import("../../core/non-interactive") = require("../../core/non-interactive");
 const { sleepMs, waitForPort } = require("../../core/wait");
-const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
-  require("./model-discovery");
+const {
+  ensurePulledOllamaModel,
+}: typeof import("./model-discovery") = require("./model-discovery");
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
+  clearPendingOllamaModelCleanup,
+  isLocalOllamaRouteOwner,
+  loadPendingOllamaModelCleanup,
+}: typeof import("./model-ownership") = require("./model-ownership");
+const {
   getBootstrapOllamaModelOptions,
+  findReachableOllamaHost,
   getOllamaModelOptions,
-  getOllamaWarmupCommand,
   getResolvedOllamaHost,
+  loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  prepareOllamaApiExecution,
   probeOllamaModelCapabilities,
+  persistResolvedOllamaHost,
+  runOllamaWarmup,
   selectDefaultOllamaModel,
   validateOllamaModel,
 } = require("../local");
@@ -56,6 +67,7 @@ const {
 } = require("../../state/mcp-lifecycle-lock");
 const { openRegularFileNoFollow } = require("../../adapters/fs/regular-file");
 const {
+  assertNoAuthProxyEndpointEligible,
   formatOllamaProxyUnreachableMessage,
   probeOllamaProxySandboxReachability,
 } = require("../../onboard/ollama-proxy-reachability");
@@ -122,6 +134,11 @@ function withOllamaProxyLifecycleLock<T>(operation: () => T): T {
 /** Serialize model-holder checks and GPU release across sandbox commands. */
 function withOllamaModelOwnershipLock<T>(operation: () => T): T {
   return withMcpLifecycleLockSync(OLLAMA_MODEL_OWNERSHIP_LOCK, operation);
+}
+
+/** Serialize async host-route publication with final ownership retirement. */
+function withOllamaModelOwnershipTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withMcpLifecycleLock(OLLAMA_MODEL_OWNERSHIP_LOCK, operation);
 }
 
 function withOllamaProxyLifecycleTransaction<T>(operation: () => Promise<T> | T): Promise<T> {
@@ -339,6 +356,38 @@ function runCurlCaptureWithAuthConfig(
   return result.status === 0 ? String(result.stdout || "") : "";
 }
 
+/** Fixed export reads capture one credential only after the observer admits retained intent. */
+export function createOllamaExportProbe() {
+  let token: string | null = null;
+  const args = [
+    "-q",
+    "--noproxy",
+    "*",
+    "-fsS",
+    "--connect-timeout",
+    "3",
+    "--max-time",
+    "5",
+    "--max-filesize",
+    "65536",
+  ];
+  const readProxy = (port: number, route: string) => {
+    token ??= readProxyStateFile(PROXY_TOKEN_PATH);
+    if (!token) throw new Error("The existing Ollama proxy credential is unavailable.");
+    return runCurlCaptureWithAuthConfig(args, `http://127.0.0.1:${port}${route}`, token);
+  };
+  return {
+    backend: readProxyBackendIdentity(),
+    proxyPort: readProxyStateFile(PROXY_PORT_PATH),
+    pid: readProxyStateFile(PROXY_PID_PATH),
+    processMatches: isOllamaProxyProcess,
+    readActiveConfig: (port: number) => readProxy(port, "/_nemoclaw/proxy-config"),
+    readProxyModels: (port: number) => readProxy(port, "/api/tags"),
+    readDaemonModels: (port: number) =>
+      runCurlCaptureWithAuthConfig(args, `http://127.0.0.1:${port}/api/tags`),
+  };
+}
+
 // ── PID persistence ──────────────────────────────────────────────
 
 function persistProxyPid(pid: number | null | undefined): void {
@@ -355,20 +404,52 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
   return isLocalAdapterProcess(pid, isOllamaAuthProxyCommandLine, runCapture);
 }
 
+const SKIP_BIND_PROBE_ENV = "NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE";
+
+// The proxy process reads its own env (see assertBackendBoundToLoopback in
+// ollama-auth-proxy.mts), but it is spawned with an explicit allowlisted env
+// rather than inheriting the parent's. An override the operator sets on
+// the parent `nemoclaw onboard` command must be forwarded explicitly here to
+// take effect (#10240).
+function buildOllamaAuthProxySpawnEnv(token: string, url: string | null): Record<string, string> {
+  return {
+    OLLAMA_PROXY_TOKEN: token,
+    OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
+    OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+    [PROXY_STATUS_ENV]: PROXY_STATUS_PATH,
+    ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
+    ...(process.env[SKIP_BIND_PROBE_ENV] === "1" ? { [SKIP_BIND_PROBE_ENV]: "1" } : {}),
+  };
+}
+
+/**
+ * Print the audit warning for a forwarded bind-probe override.
+ *
+ * The proxy emits its own `SECURITY PROBE SKIPPED` warning, but the managed
+ * launch spawns it with `stdio: "ignore"`, so that copy reaches nobody. Until
+ * a durable record exists (#9846), the host is the only surface an operator
+ * can see, so print it here whenever the override is actually forwarded.
+ */
+function printBindProbeSkipWarning(): void {
+  console.error("");
+  console.error(`  ⚠ SECURITY PROBE SKIPPED: ${SKIP_BIND_PROBE_ENV}=1 disabled the Ollama auth`);
+  console.error("    proxy's loopback bind check for this run.");
+  console.error("    A selected backend reachable on a non-loopback interface bypasses");
+  console.error("    the proxy's token check entirely.");
+  console.error(`    Unset ${SKIP_BIND_PROBE_ENV} to restore enforcement.`);
+  console.error("");
+}
+
 function spawnOllamaAuthProxy(token: string, backendUrl?: string): number | null {
   // Clear any stale status file so a read after this spawn observes the new
   // proxy's exit reason (or finds no file when the proxy starts cleanly).
   clearStaleProxyStatus(PROXY_STATUS_PATH);
   const url = backendUrl || readProxyStateFile(PROXY_BACKEND_PATH);
+  const env = buildOllamaAuthProxySpawnEnv(token, url);
+  if (env[SKIP_BIND_PROBE_ENV] === "1") printBindProbeSkipWarning();
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
-    env: {
-      OLLAMA_PROXY_TOKEN: token,
-      OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
-      OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-      [PROXY_STATUS_ENV]: PROXY_STATUS_PATH,
-      ...(url ? { OLLAMA_BACKEND_URL: url } : {}),
-    },
+    env,
     buildEnv: buildSubprocessEnv,
   });
   persistProxyPid(child.pid);
@@ -399,6 +480,15 @@ function killStaleProxy(): void {
   } catch {
     /* ignore */
   }
+}
+
+/** Stop the host-global proxy only when a lock-scoped registry read finds no owner. */
+function killStaleProxyIfUnused(hasRemainingOwner: () => boolean): boolean {
+  return withOllamaProxyLifecycleLock(() => {
+    if (hasRemainingOwner()) return false;
+    killStaleProxy();
+    return true;
+  });
 }
 
 // ── Port-conflict diagnostics ────────────────────────────────────
@@ -534,7 +624,9 @@ function attemptStartOllamaAuthProxyWithTokenUnlocked(
         printProxyPortConflict(owners);
       } else {
         console.error(`  Error: Ollama auth proxy exited during startup on :${OLLAMA_PROXY_PORT}.`);
-        console.error("  Containers will not be able to reach the inference endpoint without the proxy.");
+        console.error(
+          "  Containers will not be able to reach the inference endpoint without the proxy.",
+        );
         console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
       }
     }
@@ -570,15 +662,31 @@ function startOllamaAuthProxyWithTokenUnlocked(
   }
 }
 
-function startOllamaAuthProxyWithToken(proxyToken: string, backendUrl?: string): boolean {
-  return withOllamaProxyLifecycleLock(() => {
-    const releaseReservedPortOnFailure = !readProxyStateFile(PROXY_TOKEN_PATH);
-    return startOllamaAuthProxyWithTokenUnlocked(
-      proxyToken,
-      backendUrl,
-      releaseReservedPortOnFailure,
+function sharedProxyBackendConflict(): Error {
+  return new Error(
+    "The shared protected loopback route already serves another inference backend. " +
+      "NemoClaw will not replace it while existing sandboxes may depend on it. " +
+      "Use the already configured endpoint. To select a different backend, back up your sandboxes, " +
+      "remove the final NemoClaw gateway with the uninstaller, and then reinstall; moving or removing a sandbox alone does not release this host-global binding.",
+  );
+}
+
+/** A retained backend remains owned even when its credential cannot be recovered. */
+function assertSharedProxyBackend(
+  establishedBackendUrl: string | null,
+  requestedBackendUrl: string,
+  token: string | null,
+): void {
+  if (establishedBackendUrl !== null && establishedBackendUrl !== requestedBackendUrl) {
+    throw sharedProxyBackendConflict();
+  }
+  if (establishedBackendUrl !== null && !token) {
+    throw new Error(
+      "The shared protected loopback route credential is missing. " +
+        "Restore the existing proxy credential from backup before retrying. " +
+        "NemoClaw preserved the recorded backend and proxy process.",
     );
-  });
+  }
 }
 
 function startOllamaAuthProxy(backendUrl?: string): boolean {
@@ -587,6 +695,14 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
     // already mounted in the sandbox. A compatible custom endpoint uses the
     // explicit fresh-token path below until provider selection commits it.
     let proxyToken = loadPersistedProxyToken();
+    const requestedBackendUrl = backendUrl ?? `http://127.0.0.1:${OLLAMA_PORT}`;
+    const persistedBackend = readProxyBackendIdentity();
+    // Token-only legacy state predates backend identity persistence and has
+    // always implied local Ollama. A recorded backend, however, is ownership
+    // evidence and must never be replaced with a different route.
+    const establishedBackendUrl =
+      persistedBackend.url ?? (proxyToken ? `http://127.0.0.1:${OLLAMA_PORT}` : null);
+    assertSharedProxyBackend(establishedBackendUrl, requestedBackendUrl, proxyToken);
     const reservedNewToken = !proxyToken;
     if (!proxyToken) {
       proxyToken = generateProxyToken();
@@ -598,7 +714,7 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
     try {
       const started = startOllamaAuthProxyWithTokenUnlocked(
         proxyToken,
-        backendUrl,
+        requestedBackendUrl,
         reservedNewToken,
       );
       if (!started && reservedNewToken) removeLocalAdapterFile(PROXY_TOKEN_PATH);
@@ -610,19 +726,30 @@ function startOllamaAuthProxy(backendUrl?: string): boolean {
   });
 }
 
-function noAuthProxy(endpointUrl: string) {
-  const endpoint = new URL(endpointUrl);
-  if (!startOllamaAuthProxyWithToken(generateProxyToken(), endpoint.origin)) {
-    restorePersistedOllamaAuthProxy();
-    throw new Error("Could not start the protected loopback route.");
-  }
-  return {
-    baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
-    credentialValue: getOllamaProxyToken()!,
-    persist: () =>
-      persistProxyToken(getOllamaProxyToken()!, endpoint.origin, "compatible-endpoint"),
-    restore: restorePersistedOllamaAuthProxy,
-  };
+function noAuthProxy(endpointUrl: string, options: { allowLegacyRecordedEndpoint?: boolean } = {}) {
+  return withOllamaProxyLifecycleLock(() => {
+    const endpoint = new URL(endpointUrl);
+    const persistedToken = loadPersistedProxyToken();
+    const persistedBackend = readProxyBackendIdentity();
+    const establishedBackendUrl =
+      persistedBackend.url ?? (persistedToken ? `http://127.0.0.1:${OLLAMA_PORT}` : null);
+    assertSharedProxyBackend(establishedBackendUrl, endpoint.origin, persistedToken);
+    assertNoAuthProxyEndpointEligible(endpointUrl, options);
+
+    const proxyToken = persistedToken ?? generateProxyToken();
+    if (
+      !startOllamaAuthProxyWithTokenUnlocked(proxyToken, endpoint.origin, persistedToken === null)
+    ) {
+      restorePersistedOllamaAuthProxy();
+      throw new Error("Could not start the protected loopback route.");
+    }
+    return {
+      baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
+      credentialValue: proxyToken,
+      persist: () => persistProxyToken(proxyToken, endpoint.origin, "compatible-endpoint"),
+      restore: restorePersistedOllamaAuthProxy,
+    };
+  });
 }
 
 function restorePersistedOllamaAuthProxy(): void {
@@ -1043,30 +1170,47 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
 
     // The endpoint is restricted to the local Ollama hosts NemoClaw probes and
     // the model id is normalized before being serialized as JSON request data.
-    const proc = spawn(
-      "curl",
-      [
-        "-sN",
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        String(TIMEOUT_MS / 1000),
-        "-X",
-        "POST",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        // codeql[js/file-access-to-http]: local-only Ollama API with a normalized model id.
-        body,
-        url,
-      ],
-      {
+    let execution;
+    let proc;
+    try {
+      execution = prepareOllamaApiExecution(
+        [
+          "curl",
+          "-sN",
+          "--connect-timeout",
+          "10",
+          "--max-time",
+          String(TIMEOUT_MS / 1000),
+          "-X",
+          "POST",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          // codeql[js/file-access-to-http]: local-only Ollama API with a normalized model id.
+          body,
+          url,
+        ],
+        host,
+        {
+          env: buildSubprocessEnv(),
+          operation: `Windows-host Ollama model pull for '${model}'`,
+        },
+      );
+      const [executable, ...args] = execution.command;
+      proc = spawn(executable, args, {
         stdio: ["ignore", "pipe", "pipe"],
         // #2616: inject NO_PROXY=localhost so the streamed pull against the
         // local Ollama daemon doesn't tunnel through the user's host proxy.
-        env: buildSubprocessEnv(),
-      },
-    );
+        env: execution.env,
+      });
+    } catch (error) {
+      execution?.cleanup();
+      console.error(
+        `  Docker request failed to start: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      resolve(false);
+      return;
+    }
 
     const readline = require("readline");
     const rl = readline.createInterface({ input: proc.stdout });
@@ -1146,6 +1290,7 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
     });
 
     proc.on("error", (err: Error) => {
+      execution.cleanup();
       finishLine();
       console.error(`  Pull failed to start: ${err.message}`);
       resolve(false);
@@ -1155,6 +1300,7 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
     // child's stdio streams are fully drained, ensuring readline has emitted
     // the final 'line' event for the trailing `success` JSON.
     proc.on("close", (code: number | null) => {
+      execution.cleanup();
       finishLine();
       if (sawError) {
         resolve(false);
@@ -1164,7 +1310,9 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
         // curl exit 28 covers both the connection timeout and the complete
         // request limit. Elapsed time distinguishes the operator actions.
         if (code === 28) {
-          console.error(httpPullTimeoutErrorHint(performance.now() - startedAtMs, TIMEOUT_MS, host));
+          console.error(
+            httpPullTimeoutErrorHint(performance.now() - startedAtMs, TIMEOUT_MS, host),
+          );
         } else {
           console.error(`  Model pull exited with code ${String(code)} (network error).`);
           console.error("  Already-downloaded layers are kept; re-running the pull resumes them.");
@@ -1311,7 +1459,7 @@ async function prepareOllamaModel(
   }
 
   console.log(`  Loading Ollama model: ${model}`);
-  run(getOllamaWarmupCommand(model), { ignoreError: true });
+  runOllamaWarmup(model, run);
   const allowToolsIncompatible = capCheck.allowToolsIncompatible === true;
   const result = validateOllamaModel(model, undefined, undefined, undefined, {
     allowToolsIncompatible,
@@ -1356,10 +1504,14 @@ export type OllamaUnloadResult = {
 };
 
 type OllamaUnloadOptions = {
-  readonly getResolvedOllamaHost?: typeof getResolvedOllamaHost;
+  readonly findReachableOllamaHost?: (
+    stateRoot?: string,
+  ) => ReturnType<typeof findReachableOllamaHost>;
+  readonly ollamaHostStateRoot?: string;
   readonly maxAttempts?: number;
   readonly sleep?: (milliseconds: number) => void;
   readonly spawnSync?: typeof spawnSync;
+  readonly prepareOllamaApiExecution?: typeof prepareOllamaApiExecution;
 };
 
 function boundedCurlError(result): string | undefined {
@@ -1368,7 +1520,9 @@ function boundedCurlError(result): string | undefined {
 }
 
 function transientCurlFailure(status: number | null): boolean {
-  return status === 6 || status === 7 || status === 18 || status === 28 || status === 52 || status === 56;
+  return (
+    status === 6 || status === 7 || status === 18 || status === 28 || status === 52 || status === 56
+  );
 }
 
 function defaultReleaseSleep(milliseconds: number): void {
@@ -1379,19 +1533,28 @@ function defaultReleaseSleep(milliseconds: number): void {
 function discoverResidentOllamaModels(
   attempt: number,
   selectedModels: readonly string[] | null,
+  releaseHost: string,
   releaseEndpoint: string,
   spawnSyncImpl: typeof spawnSync,
+  prepareExecution: typeof prepareOllamaApiExecution,
 ): OllamaModelDiscoveryEvidence {
   const endpoint = `${releaseEndpoint}/api/ps`;
   let result;
   try {
-    result = spawnSyncImpl(
-      "curl",
-      ["-sS", "--fail-with-body", "--max-time", "3", endpoint],
-      // #2616: env-sanitize so an ambient HTTP proxy cannot intercept the
-      // loopback-only Ollama ownership and release checks.
-      { encoding: "utf8", env: buildSubprocessEnv() },
+    const execution = prepareExecution(
+      ["curl", "-sS", "--fail-with-body", "--max-time", "3", endpoint],
+      releaseHost,
+      {
+        env: buildSubprocessEnv(),
+        operation: "Ollama resident-model discovery",
+      },
     );
+    const [command, ...args] = execution.command;
+    try {
+      result = spawnSyncImpl(command, args, { encoding: "utf8", env: execution.env });
+    } finally {
+      execution.cleanup();
+    }
   } catch (error) {
     return {
       attempt,
@@ -1471,20 +1634,51 @@ function unloadOllamaModels(
   onlyModels?: readonly string[],
   options: OllamaUnloadOptions = {},
 ): OllamaUnloadResult {
-  const releaseEndpoint = buildLocalOllamaEndpoint(
-    options.getResolvedOllamaHost ?? getResolvedOllamaHost,
-  );
-  const spawnSyncImpl = options.spawnSync ?? spawnSync;
-  const sleepImpl = options.sleep ?? defaultReleaseSleep;
-  const maxAttempts = Math.max(1, options.maxAttempts ?? OLLAMA_RELEASE_MAX_ATTEMPTS);
   const requestedModels = onlyModels?.map((model) => model.trim()).filter(Boolean) ?? [];
   let selectedModels: readonly string[] | null = onlyModels?.length ? requestedModels : null;
+  let releaseHost: string | null;
+  if (options.findReachableOllamaHost) {
+    releaseHost = options.findReachableOllamaHost(options.ollamaHostStateRoot);
+  } else {
+    const persistedHost = loadPersistedOllamaHost(options.ollamaHostStateRoot);
+    releaseHost = findReachableOllamaHost(undefined, {}, options.ollamaHostStateRoot, {
+      revalidate: true,
+    });
+    if (persistedHost && releaseHost !== persistedHost) {
+      releaseHost = null;
+    } else if (releaseHost && !persistedHost) {
+      persistResolvedOllamaHost(releaseHost, options.ollamaHostStateRoot);
+    }
+  }
+  if (!releaseHost) {
+    return {
+      ok: false,
+      outcome: "discovery-failed",
+      endpoint: buildLocalOllamaEndpoint(),
+      selectedModels: selectedModels ?? [],
+      discoveries: [],
+      requests: [],
+      message: "No reachable local Ollama endpoint was found for cleanup",
+    };
+  }
+  const releaseEndpoint = buildLocalOllamaEndpoint(() => releaseHost!);
+  const spawnSyncImpl = options.spawnSync ?? spawnSync;
+  const prepareExecution = options.prepareOllamaApiExecution ?? prepareOllamaApiExecution;
+  const sleepImpl = options.sleep ?? defaultReleaseSleep;
+  const maxAttempts = Math.max(1, options.maxAttempts ?? OLLAMA_RELEASE_MAX_ATTEMPTS);
   const discoveries: OllamaModelDiscoveryEvidence[] = [];
   const requests: OllamaUnloadRequestEvidence[] = [];
   let lastMatchedModels: readonly string[] = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const discovery = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
+    const discovery = discoverResidentOllamaModels(
+      attempt,
+      selectedModels,
+      releaseHost,
+      releaseEndpoint,
+      spawnSyncImpl,
+      prepareExecution,
+    );
     discoveries.push(discovery);
     if (discovery.error) {
       if (attempt < maxAttempts && transientCurlFailure(discovery.status)) {
@@ -1520,9 +1714,9 @@ function unloadOllamaModels(
       const endpoint = `${releaseEndpoint}/api/generate`;
       let result;
       try {
-        result = spawnSyncImpl(
-          "curl",
+        const execution = prepareExecution(
           [
+            "curl",
             "-sS",
             "--fail-with-body",
             "-o",
@@ -1537,8 +1731,18 @@ function unloadOllamaModels(
             JSON.stringify({ model, keep_alive: 0 }),
             endpoint,
           ],
-          { encoding: "utf8", env: buildSubprocessEnv() },
+          releaseHost,
+          {
+            env: buildSubprocessEnv(),
+            operation: `Ollama model release for '${model}'`,
+          },
         );
+        const [command, ...args] = execution.command;
+        try {
+          result = spawnSyncImpl(command, args, { encoding: "utf8", env: execution.env });
+        } finally {
+          execution.cleanup();
+        }
       } catch (error) {
         result = {
           status: null,
@@ -1577,7 +1781,14 @@ function unloadOllamaModels(
     }
 
     sleepImpl(OLLAMA_RELEASE_VERIFY_DELAY_MS);
-    const verification = discoverResidentOllamaModels(attempt, selectedModels, releaseEndpoint, spawnSyncImpl);
+    const verification = discoverResidentOllamaModels(
+      attempt,
+      selectedModels,
+      releaseHost,
+      releaseEndpoint,
+      spawnSyncImpl,
+      prepareExecution,
+    );
     discoveries.push(verification);
     if (verification.error) {
       if (attempt < maxAttempts && transientCurlFailure(verification.status)) {
@@ -1620,13 +1831,20 @@ function unloadOllamaModels(
 }
 
 export {
+  buildOllamaAuthProxySpawnEnv,
   checkOllamaModelToolSupport,
+  clearPendingOllamaModelCleanup,
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   getOllamaPullTimeoutMs,
+  isLocalOllamaRouteOwner,
   isProxyHealthy,
   killStaleProxy,
+  killStaleProxyIfUnused,
+  loadPendingOllamaModelCleanup,
+  loadPersistedOllamaHost,
   noAuthProxy,
+  ollamaModelRefsMatch,
   persistAndProbeOllamaProxy,
   persistProxyToken,
   prepareOllamaModel,
@@ -1637,5 +1855,6 @@ export {
   startOllamaAuthProxy,
   unloadOllamaModels,
   withOllamaModelOwnershipLock,
+  withOllamaModelOwnershipTransaction,
   withOllamaProxyLifecycleTransaction,
 };

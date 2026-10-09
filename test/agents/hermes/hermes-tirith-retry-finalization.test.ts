@@ -169,14 +169,15 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
 
   it("runs reset-aware retry preparation in the root startup path", () => {
     const run = runTirithFinalizer([
-      "verify_hermes_config_integrity() { :; }",
+      "refresh_hermes_runtime_config_hashes() { :; }",
+      "HERMES_HASH_FILE=/etc/nemoclaw/hermes.config-hash",
       "prepare_hermes_lazy_dependencies() { :; }",
       "ensure_hermes_config_root_mode() { :; }",
       "ensure_hermes_runtime_api_server_key() { :; }",
-      "apply_shields_up_runtime_env() { :; }",
       "validate_hermes_env_secret_boundary() { :; }",
       "validate_hermes_runtime_env_secret_boundary() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
+      "migrate_legacy_hermes_dashboard_state() { :; }",
       "configure_messaging_channels() { :; }",
       "TIRITH_RETRY_MARKER_CLEARED=1",
       'rm -f "$MARKER"',

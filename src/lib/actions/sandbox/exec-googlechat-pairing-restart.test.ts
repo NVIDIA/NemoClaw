@@ -7,30 +7,28 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
   execSandbox,
   isGoogleChatPairingApproval,
+  isOpenClawAgentRosterMutation,
   type ExecSandboxDeps,
-  type SandboxExecCleanupDeps,
 } from "./exec";
 import { restartSandboxGatewayWithDeps } from "./gateway-restart";
 
-const CLEANUP_SKIPPED: SandboxExecCleanupDeps = {
-  getSandbox: () => null,
-  inspectMutableConfigPerms: () => {
-    throw new Error("cleanup should be skipped for an unregistered sandbox");
-  },
-  repairMutableConfigPerms: () => {
-    throw new Error("cleanup should be skipped for an unregistered sandbox");
-  },
-};
-
-function depsFor(status: number, restartGateway = vi.fn(() => ({ ok: true }))): ExecSandboxDeps {
+function depsFor(
+  status: number,
+  restartGateway = vi.fn(async () => ({ ok: true })),
+): ExecSandboxDeps {
   return {
-    resolveBinary: () => "openshell",
     selectGateway: () => ({ outcome: "selected", gatewayName: "nemoclaw-alpha" }),
-    run: () => ({ status }),
-    cleanupDeps: CLEANUP_SKIPPED,
+    commandExecutor: {
+      probeDirectory: async () => ({ state: "present" }),
+      runStreaming: async () => ({
+        outcome: { kind: "completed", exitCode: status },
+        release: () => {},
+      }),
+    },
     restartGateway,
     resolveSandboxAgent: () => "openclaw",
     policyHint: {
@@ -92,7 +90,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("restarts the managed gateway after the exact approval succeeds", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
       depsFor(0, restartGateway),
@@ -103,53 +101,12 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("restarts only after the mutable OpenClaw config contract is verified", async () => {
-    const order: string[] = [];
-    const restartGateway = vi.fn(() => {
-      order.push("restart");
-      return { ok: true };
-    });
-    const deps = depsFor(0, restartGateway);
-    deps.run = () => {
-      order.push("command");
-      return { status: 0 };
-    };
-    deps.cleanupDeps = {
-      getSandbox: () => ({ agent: "openclaw" }),
-      inspectMutableConfigPerms: () => {
-        order.push("cleanup");
-        return {
-          applies: true,
-          ok: true,
-          dirMode: "2770",
-          dirOwner: "sandbox:sandbox",
-          fileMode: "660",
-          fileOwner: "sandbox:sandbox",
-          configDir: "/sandbox/.openclaw",
-          configFile: "openclaw.json",
-          issues: [],
-        };
-      },
-      repairMutableConfigPerms: () => {
-        throw new Error("healthy config should not need repair");
-      },
-    };
-
-    const exitCode = await runAndCaptureExit(
-      ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
-      deps,
-    );
-
-    expect(order).toEqual(["command", "cleanup", "restart"]);
-    expect(exitCode).toBe(0);
-  });
-
   it("authorizes the approved sender after a sandbox-process approval and managed restart", async () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-pairing-"));
     const openshellPath = path.join(fixtureRoot, "openshell");
     const configPath = path.join(fixtureRoot, "openclaw.json");
     const runtimePath = path.join(fixtureRoot, "gateway-runtime.json");
-    const supervisorLog = path.join(fixtureRoot, "supervisor.log");
+    const restartLog = path.join(fixtureRoot, "restart.log");
     const sender = "googlechat:users/123456789";
 
     fs.writeFileSync(configPath, JSON.stringify({ commands: { ownerAllowFrom: [] } }));
@@ -181,25 +138,10 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       const exitCode = await runAndCaptureExit(
         ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
         {
-          resolveBinary: () => openshellPath,
           selectGateway: () => ({ outcome: "selected", gatewayName: "nemoclaw-alpha" }),
-          cleanupDeps: {
-            getSandbox: () => ({ agent: "openclaw" }),
-            inspectMutableConfigPerms: () => ({
-              applies: true,
-              ok: true,
-              dirMode: "2770",
-              dirOwner: "sandbox:sandbox",
-              fileMode: "660",
-              fileOwner: "sandbox:sandbox",
-              configDir: "/sandbox/.openclaw",
-              configFile: "openclaw.json",
-              issues: [],
-            }),
-            repairMutableConfigPerms: () => {
-              throw new Error("healthy config should not need repair");
-            },
-          },
+          commandExecutor: createCliOpenShellSandboxCommandExecutor({
+            resolveBinary: () => openshellPath,
+          }),
           resolveSandboxAgent: () => "openclaw",
           restartGateway: (sandboxName) =>
             restartSandboxGatewayWithDeps(sandboxName, {
@@ -208,7 +150,8 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                 getSessionAgent: () => null,
                 getSandbox: () => ({ name: sandboxName, agent: "openclaw" }),
                 resolveSandboxDashboardPort: () => 18789,
-                requestGatewaySupervisorAction: (_name, action) => {
+                buildOpenClawReadinessProbeCommand: () => "readiness-probe",
+                executeSandboxExecCommand: async (_name, command) => {
                   const result = spawnSync(
                     process.execPath,
                     [
@@ -220,13 +163,13 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                         'fs.appendFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG, process.argv[1] + "\\n");',
                         'process.stdout.write("GATEWAY_PID=4242\\n");',
                       ].join("\n"),
-                      action,
+                      command,
                     ],
                     {
                       encoding: "utf8",
                       env: {
                         ...process.env,
-                        NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG: supervisorLog,
+                        NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG: restartLog,
                       },
                     },
                   );
@@ -236,14 +179,13 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
                     stderr: result.stderr,
                   };
                 },
-                executeSandboxExecCommand: () => null,
-                waitForRecoveredSandboxGateway: () => true,
+                waitForSandboxControlPlaneReady: async () => true,
+                waitForRecoveredSandboxGateway: async () => true,
                 ensureSandboxPortForward: () => true,
                 ensureHermesDashboardPortForwardIfEnabled: () => null,
                 recoverMessagingHostForward: () => null,
                 recoverDeclaredAgentForwardPorts: () => null,
-                printGatewayWedgeDiagnostics: () => false,
-                inspectHermesMcpReconciliationRefusal: () => null,
+                printGatewayWedgeDiagnostics: async () => false,
               },
             }),
           policyHint: {
@@ -269,42 +211,17 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(fs.readFileSync(supervisorLog, "utf8")).toBe("restart\n");
+      expect(fs.readFileSync(restartLog, "utf8")).toBe(
+        "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH NEMOCLAW_OPENCLAW_HOST_RESTART=1 openclaw gateway restart --safe --skip-deferral --json\n",
+      );
       expect(nextDm.status, nextDm.stderr).toBe(0);
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }
   });
 
-  it("does not restart when post-command config cleanup fails", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const deps = depsFor(0, restartGateway);
-    deps.cleanupDeps = {
-      getSandbox: () => {
-        throw new Error("invalid registry JSON");
-      },
-      inspectMutableConfigPerms: CLEANUP_SKIPPED.inspectMutableConfigPerms,
-      repairMutableConfigPerms: CLEANUP_SKIPPED.repairMutableConfigPerms,
-    };
-
-    const exitCode = await runAndCaptureExit(
-      ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
-      deps,
-    );
-
-    expect(restartGateway).not.toHaveBeenCalled();
-    expect(exitCode).toBe(1);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("pairing approval committed for 'alpha'"),
-    );
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("nemoclaw alpha gateway restart"),
-    );
-  });
-
   it("fails the public command when activation restart fails", async () => {
-    const restartGateway = vi.fn(() => ({ ok: false }));
+    const restartGateway = vi.fn(async () => ({ ok: false }));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
@@ -322,7 +239,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("reports a controlled partial commit when the activation restart throws", async () => {
-    const restartGateway = vi.fn(() => {
+    const restartGateway = vi.fn(async () => {
       throw new Error("supervisor transport unavailable");
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -341,7 +258,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("does not restart after a failed approval", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "googlechat", "BADCODE"],
       depsFor(17, restartGateway),
@@ -352,7 +269,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   });
 
   it("leaves unrelated successful exec commands unchanged", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "telegram", "ABCD1234"],
       depsFor(0, restartGateway),
@@ -365,7 +282,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   it.each(["hermes", "custom-agent"])(
     "does not restart a recorded non-OpenClaw %s sandbox",
     async (agent) => {
-      const restartGateway = vi.fn(() => ({ ok: true }));
+      const restartGateway = vi.fn(async () => ({ ok: true }));
       const deps = depsFor(0, restartGateway);
       deps.resolveSandboxAgent = () => agent;
 
@@ -380,7 +297,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
   );
 
   it("does not restart an unregistered sandbox", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const deps = depsFor(0, restartGateway);
     deps.resolveSandboxAgent = () => null;
 
@@ -393,37 +310,8 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("does not activate or claim managed recovery without an owning gateway", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
-    const deps = depsFor(0, restartGateway);
-    deps.selectGateway = () => ({ outcome: "unregistered", gatewayName: null });
-    deps.cleanupDeps = {
-      getSandbox: () => {
-        throw new Error("invalid registry JSON");
-      },
-      inspectMutableConfigPerms: CLEANUP_SKIPPED.inspectMutableConfigPerms,
-      repairMutableConfigPerms: CLEANUP_SKIPPED.repairMutableConfigPerms,
-    };
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const exitCode = await runAndCaptureExit(
-      ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
-      deps,
-    );
-
-    expect(restartGateway).not.toHaveBeenCalled();
-    expect(exitCode).toBe(1);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("approval was not rolled back"));
-    expect(errorSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("managed gateway activation failed"),
-    );
-    expect(errorSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("nemoclaw alpha gateway restart"),
-    );
-  });
-
   it("fails closed when the recorded sandbox identity cannot be read", async () => {
-    const restartGateway = vi.fn(() => ({ ok: true }));
+    const restartGateway = vi.fn(async () => ({ ok: true }));
     const deps = depsFor(0, restartGateway);
     deps.resolveSandboxAgent = () => {
       throw new Error("registry unavailable");
@@ -439,6 +327,56 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
     expect(exitCode).toBe(1);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("pairing approval committed for 'alpha'"),
+    );
+  });
+});
+
+describe("OpenClaw agent roster gateway activation", () => {
+  it("recognizes only native agent roster mutations", () => {
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agents", "add", "work"])).toBe(true);
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agents", "delete", "work"])).toBe(true);
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agents", "list", "--json"])).toBe(false);
+    expect(isOpenClawAgentRosterMutation(["openclaw", "agent", "--agent", "work"])).toBe(false);
+    expect(isOpenClawAgentRosterMutation(["sh", "-lc", "openclaw agents add work"])).toBe(false);
+  });
+
+  it.each(["add", "delete"])(
+    "restarts the managed gateway after agents %s succeeds",
+    async (verb) => {
+      const restartGateway = vi.fn(async () => ({ ok: true }));
+      const exitCode = await runAndCaptureExit(
+        ["openclaw", "agents", verb, "work"],
+        depsFor(0, restartGateway),
+      );
+
+      expect(restartGateway).toHaveBeenCalledExactlyOnceWith("alpha");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not restart after a failed roster mutation", async () => {
+    const restartGateway = vi.fn(async () => ({ ok: true }));
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "agents", "add", "work"],
+      depsFor(2, restartGateway),
+    );
+
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(exitCode).toBe(2);
+  });
+
+  it("fails with explicit recovery after a committed roster update cannot activate", async () => {
+    const restartGateway = vi.fn(async () => ({ ok: false }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "agents", "add", "work"],
+      depsFor(0, restartGateway),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("roster update committed"));
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw alpha gateway restart"),
     );
   });
 });

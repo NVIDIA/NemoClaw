@@ -306,48 +306,46 @@ describe("Docker GPU startup command validation (#6110)", () => {
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ";",
-    "&&",
-    "$(id)",
-    "`id`",
-    "value>file",
-    'value"quoted',
-  ])("rejects shell metacharacters in %s before touching the original container", (invalidToken) => {
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRename = vi.fn(() => ({ status: 0 }));
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+  it.each([";", "&&", "$(id)", "`id`", "value>file", 'value"quoted'])(
+    "rejects shell metacharacters in %s before touching the original container",
+    (invalidToken) => {
+      const dockerStop = vi.fn(() => ({ status: 0 }));
+      const dockerRename = vi.fn(() => ({ status: 0 }));
+      const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
 
-    expect(() =>
-      recreateOpenShellDockerSandboxWithGpu(
-        {
-          sandboxName: "alpha",
-          timeoutSecs: 1,
-          openshellSandboxCommand: ["env", invalidToken, "nemoclaw-start"],
-        },
-        {
-          dockerCapture: vi.fn((args: readonly string[]) =>
-            args[0] === "ps"
-              ? "old-container-id\n"
-              : args[0] === "inspect"
-                ? JSON.stringify([inspectFixture()])
-                : "",
-          ),
-          detectSandboxFallbackDns: vi.fn(() => null),
-          dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
-          dockerRunDetached,
-          dockerRename,
-          dockerRm: vi.fn(() => ({ status: 0 })),
-          dockerStop,
-          readDir: vi.fn(() => null),
-          readFile: vi.fn(() => null),
-        },
-      ),
-    ).toThrow("OpenShell sandbox startup command tokens contain unsupported shell metacharacters");
-    expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerRename).not.toHaveBeenCalled();
-    expect(dockerRunDetached).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        recreateOpenShellDockerSandboxWithGpu(
+          {
+            sandboxName: "alpha",
+            timeoutSecs: 1,
+            openshellSandboxCommand: ["env", invalidToken, "nemoclaw-start"],
+          },
+          {
+            dockerCapture: vi.fn((args: readonly string[]) =>
+              args[0] === "ps"
+                ? "old-container-id\n"
+                : args[0] === "inspect"
+                  ? JSON.stringify([inspectFixture()])
+                  : "",
+            ),
+            detectSandboxFallbackDns: vi.fn(() => null),
+            dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+            dockerRunDetached,
+            dockerRename,
+            dockerRm: vi.fn(() => ({ status: 0 })),
+            dockerStop,
+            readDir: vi.fn(() => null),
+            readFile: vi.fn(() => null),
+          },
+        ),
+      ).toThrow(
+        "OpenShell sandbox startup command tokens contain unsupported shell metacharacters",
+      );
+      expect(dockerStop).not.toHaveBeenCalled();
+      expect(dockerRename).not.toHaveBeenCalled();
+      expect(dockerRunDetached).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects malformed required ulimits before touching the original container", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));

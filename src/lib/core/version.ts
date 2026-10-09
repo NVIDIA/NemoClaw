@@ -124,9 +124,14 @@ export function validateBuildIdentity(identity: Readonly<BuildIdentity>): BuildI
 
 export function resolveSourceBuildIdentity(opts: VersionOptions = {}): BuildIdentity {
   const root = rootDirectory(opts);
+  const sourceRevision = resolveSourceRevision(root);
+  const existingIdentity = readBuildIdentity(root);
+  if (existingIdentity?.sourceRevision === sourceRevision) {
+    return existingIdentity;
+  }
   return validateBuildIdentity({
     nemoclawVersion: resolveSourceVersion(root),
-    sourceRevision: resolveSourceRevision(root),
+    sourceRevision,
   });
 }
 

@@ -60,7 +60,11 @@ export function getHeadSha(head: string): string {
   return execFileSync("git", ["rev-parse", head], { encoding: "utf8" }).trim();
 }
 
-export function gitOutput(commands: string[][], maxBuffer: number, cwd?: string): string | undefined {
+export function gitOutput(
+  commands: string[][],
+  maxBuffer: number,
+  cwd?: string,
+): string | undefined {
   for (const command of commands) {
     try {
       return execFileSync("git", command, { encoding: "utf8", maxBuffer, cwd });

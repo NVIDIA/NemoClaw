@@ -15,6 +15,7 @@ import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
 import {
   buildLaunchReadinessRegistryProjection,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   type LaunchReadinessDeps,
   launchReadinessDigest,
@@ -236,6 +237,13 @@ describe("launch readiness validation", () => {
           stderr: "",
         } as ReturnType<NonNullable<LaunchReadinessDeps["capture"]>>;
       },
+      commandExecutor: {
+        runBuffered: vi.fn(async () => ({
+          outcome: { kind: "completed" as const, exitCode: 0 },
+          stdout: "",
+          stderr: "",
+        })),
+      },
       gatewayHealth: async (sandboxName, gatewayName) => {
         externalEvents.push("gateway-health");
         gatewayHealthRequests.push([sandboxName, gatewayName]);
@@ -246,8 +254,8 @@ describe("launch readiness validation", () => {
         forwardRequests.push([sandboxName, gatewayName]);
         return forwardsHealthy;
       },
-      smoke: () => ({ ok: true }),
-      inferenceProbe: (sandboxName, _agent, gatewayName) => {
+      smoke: async () => ({ ok: true }),
+      inferenceProbe: async (sandboxName, _agent, gatewayName) => {
         externalEvents.push("inference-health");
         inferenceHealthRequests.push([sandboxName, gatewayName]);
         return { healthy: true, broken: false, httpStatus: 200, detail: "OK 200" };
@@ -333,6 +341,76 @@ describe("launch readiness validation", () => {
       requiredRoles: ["operator"],
       requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
     });
+  });
+
+  it("binds a custom OpenClaw image to its observed live version without stamping it managed", async () => {
+    sandbox = {
+      ...sandbox,
+      agent: null,
+      agentVersion: null,
+      nemoclawVersion: null,
+      fromDockerfile: "/tmp/custom-openclaw/Dockerfile",
+    };
+    const currentDeps = deps();
+    const commandExecutor = currentDeps.commandExecutor!;
+    vi.mocked(commandExecutor.runBuffered).mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "openclaw 2026.9.1\n",
+      stderr: "",
+    });
+    const qualify = vi.fn(
+      (
+        _sandboxName: string,
+        _gatewayName: string,
+        openclawVersion: string,
+        _stateDirectory: string,
+      ): LaunchReadinessOpenClawSessionQualification => ({
+        schemaVersion: 1,
+        kind: "openclaw-pairing",
+        openclawVersion,
+        deviceIdentitySha256: DIGEST,
+        pairingStateSha256,
+        requiredRoles: ["operator"],
+        requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
+      }),
+    );
+    currentDeps.observeOpenClawPairingQualification = qualify;
+
+    const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(first).toMatchObject({ kind: "fallback", category: "missing" });
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+    ).resolves.toEqual({ kind: "published" });
+
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith({
+      sandboxName: SANDBOX,
+      target: { kind: "named", gatewayName: GATEWAY_NAME },
+      command: ["sh", "-lc", "openclaw --version"],
+      timeoutMilliseconds: 10_000,
+      outputLimitBytes: 4_096,
+    });
+    expect(qualify).toHaveBeenCalledWith(SANDBOX, GATEWAY_NAME, "2026.9.1", "/sandbox/.openclaw");
+    expect(publishedIdentity?.session).toMatchObject({
+      kind: "openclaw-pairing",
+      openclawVersion: "2026.9.1",
+    });
+    expect(sandbox).toMatchObject({ agentVersion: null, nemoclawVersion: null });
+  });
+
+  it("does not invent or probe a version for a managed OpenClaw image with missing metadata", async () => {
+    sandbox = { ...sandbox, agentVersion: null };
+    const currentDeps = deps();
+    const first = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(first).toMatchObject({ kind: "fallback", category: "missing" });
+
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
+    ).resolves.toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+    });
+    expect(currentDeps.commandExecutor!.runBuffered).not.toHaveBeenCalled();
+    expect(publishedIdentity).toBeNull();
   });
 
   it("fences a concurrent OpenClaw pairing change before launch acceptance (#9023)", async () => {
@@ -510,6 +588,61 @@ describe("launch readiness validation", () => {
       "gateway:end",
       "sandbox:end",
     ]);
+  });
+
+  it("returns unsafe authority evidence without entering the mutation callback (#10638)", async () => {
+    const currentDeps = deps();
+    const evidence = {
+      resource: "persistent receipt" as const,
+      path: "/home/test/.nemoclaw/launch-readiness/receipt.json",
+      expectedUid: 1000,
+      observedUid: 1000,
+      expectedMode: "0600" as const,
+      observedMode: "0640",
+      operation: "inspect" as const,
+      errorCode: null,
+      repair: "chmod" as const,
+    };
+    currentDeps.checkMutationAuthority = vi.fn(() => ({ kind: "unsafe" as const, evidence }));
+    const mutation = vi.fn();
+
+    await expect(
+      withLaunchReadinessMutationGate(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        mutation,
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "unsafe", evidence });
+    expect(mutation).not.toHaveBeenCalled();
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({
+        ...evidence,
+        repair: "manual",
+      }),
+    ).toContain("verifying it is owned by the current user");
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({
+        ...evidence,
+        path: "/home/$HOME/it's.json",
+      }),
+    ).toContain(`chmod 0600 -- '/home/$HOME/it'"'"'s.json'`);
+    const writeFailure = formatLaunchReadinessUnsafeAuthorityEvidence({
+      ...evidence,
+      operation: "write",
+      repair: "manual",
+      errorCode: "EROFS",
+    });
+    expect(writeFailure).toContain("write error EROFS");
+    expect(writeFailure).toContain("filesystem allow writes");
+    expect(writeFailure).not.toContain("chmod");
+    expect(formatLaunchReadinessUnsafeAuthorityEvidence(undefined)).toContain(
+      "Repair the current user's secure OS runtime authority",
+    );
   });
 
   it("rejects a stale fenced epoch before entering the mutation callback (#8942)", async () => {
@@ -733,7 +866,7 @@ describe("launch readiness validation", () => {
     });
 
     routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
-    currentDeps.inferenceProbe = () => ({
+    currentDeps.inferenceProbe = async () => ({
       healthy: false,
       broken: true,
       httpStatus: 503,
@@ -756,7 +889,7 @@ describe("launch readiness validation", () => {
       };
       routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
       const currentDeps = await createAcceptedLease();
-      currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, _gatewayName) => ({
+      currentDeps.inferenceProbe = vi.fn(async (_sandboxName, _agent, _gatewayName) => ({
         healthy: httpStatus < 500,
         broken: httpStatus >= 500,
         httpStatus,
@@ -795,7 +928,7 @@ describe("launch readiness validation", () => {
     };
     routeOutput = "Gateway Inference:\n\n  Provider: nvidia\n  Model: model-a\n";
     const currentDeps = await createAcceptedLease();
-    currentDeps.inferenceProbe = vi.fn((_sandboxName, _agent, gatewayName) => ({
+    currentDeps.inferenceProbe = vi.fn(async (_sandboxName, _agent, _gatewayName) => ({
       healthy: true,
       broken: false,
       httpStatus: 299,
@@ -835,10 +968,17 @@ describe("launch readiness validation", () => {
   });
 
   it("uses terminal-agent smoke health for a supported non-OpenClaw runtime", async () => {
-    sandbox = entry("langchain-deepagents-code");
+    sandbox = {
+      ...entry("langchain-deepagents-code"),
+      provider: "nvidia-prod",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
     const currentDeps = deps();
+    currentDeps.inferenceInvocationProbe = async () => ({ ok: true });
     const gatewayHealth = vi.fn(async () => true);
-    const smoke = vi.fn(() => ({ ok: true }) as const);
+    const smoke = vi.fn(async () => ({ ok: true }) as const);
     currentDeps.gatewayHealth = gatewayHealth;
     currentDeps.smoke = smoke;
     await createAcceptedLease(currentDeps);
@@ -847,19 +987,51 @@ describe("launch readiness validation", () => {
     expect(smoke).toHaveBeenCalledWith(
       SANDBOX,
       expect.objectContaining({ name: "langchain-deepagents-code" }),
-      expect.any(Function),
-      GATEWAY_NAME,
     );
     expect(gatewayHealth).not.toHaveBeenCalled();
     expect(externalEvents).not.toContain("pairing-qualification");
     expect(publishedIdentity?.session).toBeNull();
   });
 
+  it("rejects a Deep Agents Code lease when model discovery succeeds but inference fails (#11520)", async () => {
+    sandbox = {
+      ...entry("langchain-deepagents-code"),
+      provider: "nvidia-prod",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
+    const currentDeps = deps();
+    currentDeps.inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
+    await createAcceptedLease(currentDeps);
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "accepted",
+    });
+
+    currentDeps.inferenceInvocationProbe = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    }));
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(decision).toMatchObject({ kind: "fallback", category: "health", fenceFailed: false });
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toMatchObject({ kind: "validation-failed", category: "health" });
+    expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        model: "model-a",
+      }),
+    );
+  });
+
   it("uses ordinary terminal smoke health for feature-gated NemoCUA (#9649)", async () => {
     sandbox = entry(" nemocua ");
     const currentDeps = deps();
     const gatewayHealth = vi.fn(async () => true);
-    const smoke = vi.fn(() => ({ ok: true }) as const);
+    const smoke = vi.fn(async () => ({ ok: true }) as const);
     const cuaAgent = {
       ...loadAgent("hermes"),
       name: "nemocua",
@@ -880,113 +1052,74 @@ describe("launch readiness validation", () => {
     expect(gatewayHealth).not.toHaveBeenCalled();
   });
 
-  it("uses an exact versioned allowlist for launch-affecting registry state", () => {
-    const agent = loadAgent("openclaw");
-    const projection = buildLaunchReadinessRegistryProjection(sandbox, agent) as Record<
-      string,
-      unknown
-    >;
-    expect(Object.keys(projection).sort()).toEqual(
-      [
-        "agent",
-        "agentVersion",
-        "dashboardPort",
-        "dashboardRemoteBindPrepared",
-        "dcodeAutoApprovalMode",
-        "fromDockerfile",
-        "gatewayName",
-        "gatewayPort",
-        "gpuEnabled",
-        "hermesAuthMethod",
-        "hermesDashboardEnabled",
-        "hermesDashboardInternalPort",
-        "hermesDashboardPort",
-        "hermesDashboardTui",
-        "hermesInferenceProvider",
-        "hermesToolGateways",
-        "hostGpuDetected",
-        "hostMounts",
-        "imageTag",
-        "inference",
-        "interactiveCommand",
-        "lifecycleGeneration",
-        "lifecycleLiveIdentityFingerprint",
-        "mcpSha256",
-        "messagingSha256",
-        "name",
-        "nemoclawVersion",
-        "observabilityEnabled",
-        "openclawImagePluginInstalls",
-        "openshellDriver",
-        "openshellVersion",
-        "sandboxGpuDevice",
-        "sandboxGpuEnabled",
-        "sandboxGpuMode",
-        "sandboxGpuProof",
-        "servingProfileProvenance",
-        "toolDisclosure",
-        "version",
-        "webSearchEnabled",
-        "webSearchProvider",
-        "workloadIdentitySha256",
-      ].sort(),
-    );
-    expect(projection.version).toBe(2);
-    expect(projection.portableLifecycleReceipt).toBeUndefined();
-    expect(
-      launchReadinessDigest(buildLaunchReadinessRegistryProjection(sandbox, agent, DIGEST)),
-    ).not.toBe(launchReadinessDigest(projection));
-    const original = launchReadinessDigest(projection);
-    const mutations: SandboxEntry[] = [
-      { ...sandbox, agentVersion: "1.0.1" },
-      { ...sandbox, nemoclawVersion: "changed" },
-      {
-        ...sandbox,
+  it.each([
+    ["agent version", (current: SandboxEntry) => ({ ...current, agentVersion: "1.0.1" })],
+    ["NemoClaw version", (current: SandboxEntry) => ({ ...current, nemoclawVersion: "changed" })],
+    [
+      "host mount",
+      (current: SandboxEntry) => ({
+        ...current,
         hostMounts: [
           {
             source: "/private/host/project",
             target: "/sandbox/project",
-            readOnly: true,
+            readOnly: true as const,
             sourceIdentity: { device: "1", inode: "2" },
           },
         ],
-      },
-      { ...sandbox, gpuEnabled: true },
-      { ...sandbox, hostGpuDetected: true },
-      { ...sandbox, sandboxGpuEnabled: true },
-      { ...sandbox, sandboxGpuMode: "1" },
-      { ...sandbox, sandboxGpuDevice: "0" },
-      { ...sandbox, servingProfileProvenance: servingProfile() },
-      { ...sandbox, hermesAuthMethod: "oauth" },
-      { ...sandbox, webSearchEnabled: true, webSearchProvider: "brave" },
-      { ...sandbox, observabilityEnabled: true },
-      { ...sandbox, hermesDashboardEnabled: true, hermesDashboardPort: 3000 },
-      { ...sandbox, dashboardRemoteBindPrepared: true },
-      {
-        ...sandbox,
+      }),
+    ],
+    ["GPU request", (current: SandboxEntry) => ({ ...current, gpuEnabled: true })],
+    ["host GPU state", (current: SandboxEntry) => ({ ...current, hostGpuDetected: true })],
+    ["sandbox GPU state", (current: SandboxEntry) => ({ ...current, sandboxGpuEnabled: true })],
+    ["sandbox GPU mode", (current: SandboxEntry) => ({ ...current, sandboxGpuMode: "1" })],
+    ["sandbox GPU device", (current: SandboxEntry) => ({ ...current, sandboxGpuDevice: "0" })],
+    [
+      "serving profile",
+      (current: SandboxEntry) => ({ ...current, servingProfileProvenance: servingProfile() }),
+    ],
+    ["Hermes auth", (current: SandboxEntry) => ({ ...current, hermesAuthMethod: "oauth" })],
+    [
+      "web search",
+      (current: SandboxEntry) => ({
+        ...current,
+        webSearchEnabled: true,
+        webSearchProvider: "brave",
+      }),
+    ],
+    ["observability", (current: SandboxEntry) => ({ ...current, observabilityEnabled: true })],
+    [
+      "Hermes dashboard",
+      (current: SandboxEntry) => ({
+        ...current,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 3000,
+      }),
+    ],
+    [
+      "dashboard bind",
+      (current: SandboxEntry) => ({ ...current, dashboardRemoteBindPrepared: true }),
+    ],
+    [
+      "GPU proof",
+      (current: SandboxEntry) => ({
+        ...current,
         sandboxGpuProof: {
-          status: "verified",
+          status: "verified" as const,
           cudaVerified: true,
           label: "cuda",
           at: "2026-01-01T00:00:00.000Z",
         },
-      },
-      {
-        ...sandbox,
-        openclawImagePluginInstalls: [
-          { id: "plugin", installPath: "/sandbox/.openclaw/extensions/plugin", loadPaths: [] },
-        ],
-      },
-    ];
-    expect(
-      mutations.every(
-        (mutation) =>
-          !Object.is(
-            launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
-            original,
-          ),
-      ),
-    ).toBe(true);
+      }),
+    ],
+  ])("invalidates accepted readiness after a launch-affecting %s change", async (_name, mutate) => {
+    const currentDeps = await createAcceptedLease();
+    sandbox = (mutate as (current: SandboxEntry) => SandboxEntry)(sandbox);
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      recoveryBlocked: false,
+    });
   });
 
   it("binds current Portable lifecycle state into final readiness publication (#9207)", async () => {
@@ -1293,6 +1426,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, observationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const pairingObservationUnavailable = deps();
@@ -1301,6 +1435,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
     });
 
     const hashUnavailable = deps();
@@ -1311,7 +1446,11 @@ describe("launch readiness validation", () => {
       stderr: "",
     });
     expect(await publishLaunchReadiness(publication, hashUnavailable)).toEqual({
-      kind: "evidence-failed",
+      kind: "policy-observation-failed",
+      error: {
+        kind: "schema",
+        message: "OpenShell returned an invalid sandbox policy document.",
+      },
     });
 
     const inferenceObservationUnavailable = deps();
@@ -1323,6 +1462,7 @@ describe("launch readiness validation", () => {
     });
     expect(await publishLaunchReadiness(publication, inferenceObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const unavailable = deps();
@@ -1331,26 +1471,8 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, unavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-store", reason: "unclassified" },
     });
-  });
-
-  it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
-    const currentDeps = deps();
-    const publishLease = vi.fn();
-    currentDeps.publishLease = publishLease;
-
-    await expect(
-      publishLaunchReadiness(
-        {
-          sandboxName: SANDBOX,
-          gatewayName: GATEWAY_NAME,
-          gatewayPort: GATEWAY_PORT,
-          epochId: null,
-        },
-        currentDeps,
-      ),
-    ).resolves.toEqual({ kind: "evidence-failed" });
-    expect(publishLease).not.toHaveBeenCalled();
   });
 
   it("rejects in-progress lifecycle and policy mutations", () => {

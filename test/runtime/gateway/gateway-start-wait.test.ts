@@ -133,7 +133,7 @@ describe("gateway bootstrap secret repair", () => {
       loadOnboard();
 
     expect(getGatewayLocalEndpoint()).toBe("https://127.0.0.1:9443");
-    expect(getDockerDriverGatewayEnv("openshell 0.0.37", "linux")).toMatchObject({
+    expect(getDockerDriverGatewayEnv("openshell 0.0.116", "linux")).toMatchObject({
       OPENSHELL_BIND_ADDRESS: "0.0.0.0",
       OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:9443",
       OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",

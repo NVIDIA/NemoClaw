@@ -1,21 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureOpenshell } from "../../adapters/openshell/runtime";
-import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
-import {
-  buildEnableSandboxAuditLogsArgs,
-  buildSandboxLogsArgs,
-  getLogsProbeTimeoutMs,
-} from "../../domain/sandbox/logs";
+import { cliOpenShellSandboxSettings } from "../../adapters/openshell/sandbox-settings-cli";
+import { cliOpenShellSandboxLogs } from "../../adapters/openshell/sandbox-logs-cli";
+import { getLogsProbeTimeoutMs } from "../../domain/sandbox/logs";
 import { findRecentPolicyDenial, type PolicyDenialMatch } from "./exec-policy-hint-detection";
-import {
-  buildPolicyDenialExecHint,
-  buildScopeUpgradeExecHint,
-  hasPendingDeviceRequest,
-  shouldProbePolicyDenial,
-  shouldProbeScopeUpgrade,
-} from "./exec-policy-hint-rendering";
+import { buildPolicyDenialExecHint, shouldProbePolicyDenial } from "./exec-policy-hint-rendering";
 
 /** Number of recent log lines to scan for a denial event. */
 export const POLICY_HINT_TAIL_LINES = 200;
@@ -26,25 +16,18 @@ export const POLICY_HINT_TAIL_LINES = 200;
 export const POLICY_HINT_PROBE_ATTEMPTS = 3;
 export const POLICY_HINT_PROBE_RETRY_MS = 120;
 export const POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS = 1_000;
-// The pending-devices probe is not the host-side audit-log read the ceiling
-// above was sized for. It enters the sandbox and starts the OpenClaw CLI
-// before any JSON is printed. That does not fit in one second on a slower
-// host. A probe that times out is indistinguishable from "nothing is
-// pending", so the hint never appears in the one case it exists for
-// (#10070). This budget is fixed rather than derived from the log-read
-// setting, so no unrelated setting can extend how long a failed exec waits
-// for optional guidance. The probe runs only after an OpenClaw command
-// already failed, so the operator is reading an error either way.
-export const POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS = 5_000;
 
-export type PolicyDenialLogProbe = (sandboxName: string, gatewayName?: string) => string;
-export type PolicyDenialAuditEnabler = (sandboxName: string, gatewayName?: string) => void;
-
-export type PendingDeviceProbe = (sandboxName: string, gatewayName?: string) => string;
+export type PolicyDenialLogProbe = (
+  sandboxName: string,
+  gatewayName?: string,
+) => string | Promise<string>;
+export type PolicyDenialAuditEnabler = (
+  sandboxName: string,
+  gatewayName?: string,
+) => void | Promise<void>;
 
 export type PolicyDenialHintDeps = {
   probeLogs?: PolicyDenialLogProbe;
-  probePendingDevices?: PendingDeviceProbe;
   enableAudit?: PolicyDenialAuditEnabler;
   env?: NodeJS.ProcessEnv;
   writeStderr?: (line: string) => void;
@@ -65,96 +48,32 @@ function runtimeTimeoutMs(): number {
   return Math.min(getLogsProbeTimeoutMs(), POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS);
 }
 
-function defaultEnableAudit(sandboxName: string, gatewayName?: string): void {
-  const result = captureOpenshell(buildEnableSandboxAuditLogsArgs(sandboxName, gatewayName), {
-    ignoreError: true,
-    includeStderr: true,
-    timeout: runtimeTimeoutMs(),
+async function defaultEnableAudit(sandboxName: string, gatewayName?: string): Promise<void> {
+  const result = await cliOpenShellSandboxSettings.enableAuditLogs({
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    sandboxName,
+    timeoutMs: runtimeTimeoutMs(),
   });
-  if (result.error || result.status !== 0) {
-    throw result.error ?? new Error(`failed to enable audit logs (exit ${result.status})`);
-  }
+  if (!result.ok) throw new Error(result.error.message);
 }
 
-function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
-  const options: SandboxLogsOptions = {
-    follow: false,
+async function defaultProbeLogs(sandboxName: string, gatewayName?: string): Promise<string> {
+  const result = await cliOpenShellSandboxLogs.read({
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    sandboxName,
+    source: "openshell",
     lines: String(POLICY_HINT_TAIL_LINES),
     since: null,
-  };
-  const result = captureOpenshell(buildSandboxLogsArgs(sandboxName, options, gatewayName), {
-    ignoreError: true,
-    includeStderr: true,
-    timeout: runtimeTimeoutMs(),
+    timeoutMs: runtimeTimeoutMs(),
   });
-  if (result.error || result.status !== 0) {
-    throw result.error ?? new Error(`failed to read audit logs (exit ${result.status})`);
-  }
-  return String(result.output ?? "");
-}
-
-function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): string {
-  // Built inline rather than through buildOpenshellExecArgs so this optional
-  // probe does not create an emission -> exec import cycle.
-  const argv = ["sandbox", "exec", "--name", sandboxName];
-  if (gatewayName) argv.push("-g", gatewayName);
-  argv.push("--no-tty", "--", "openclaw", "devices", "list", "--json");
-  const result = captureOpenshell(argv, {
-    ignoreError: true,
-    includeStderr: false,
-    timeout: POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS,
-  });
-  if (result.error || result.status !== 0) {
-    throw result.error ?? new Error(`failed to list pending devices (exit ${result.status})`);
-  }
-  return String(result.output ?? "");
-}
-
-/**
- * Emit the scope-upgrade remedy after a failed in-sandbox OpenClaw command.
- * #5324 added `openclaw devices approve`; this names it at the point of failure
- * so the operator does not have to already know the command. Every dependency
- * is best-effort and never replaces the command's output or exit code.
- *
- * The probe is a presence check. NemoClaw cannot correlate a pending request
- * with the failed command, the expected device, or an acceptable scope set, so
- * no field of the payload reaches the hint and the approve line keeps its
- * literal placeholder. Naming an id here would present an unrelated pending
- * `operator.admin` request as this command's remedy.
- */
-export async function maybeEmitScopeUpgradeHint(
-  cliName: string,
-  sandboxName: string,
-  commandCode: number,
-  hadInvocationError: boolean,
-  command: readonly string[],
-  deps: PolicyDenialHintDeps = {},
-  gatewayName?: string,
-): Promise<string | null> {
-  const env = deps.env ?? process.env;
-  if (!shouldProbeScopeUpgrade(commandCode, hadInvocationError, command, env)) return null;
-
-  let devicesOutput: string;
-  try {
-    devicesOutput = (deps.probePendingDevices ?? defaultProbePendingDevices)(
-      sandboxName,
-      gatewayName,
+  if (result.outcome.kind === "failed" || result.outcome.exitCode !== 0) {
+    throw new Error(
+      result.outcome.kind === "failed"
+        ? result.outcome.error.message
+        : `failed to read audit logs (exit ${result.outcome.exitCode})`,
     );
-  } catch {
-    // Deliberately silent: a failed optional probe must not append host
-    // diagnostics to the child's error output.
-    return null;
   }
-
-  if (!hasPendingDeviceRequest(devicesOutput)) return null;
-
-  try {
-    const hint = buildScopeUpgradeExecHint(cliName, sandboxName);
-    (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
-    return hint;
-  } catch {
-    return null;
-  }
+  return result.content + result.diagnostic;
 }
 
 /**
@@ -186,7 +105,7 @@ export async function maybeEmitPolicyDenialHint(
   const retryDelayMs = deps.retryDelayMs ?? POLICY_HINT_PROBE_RETRY_MS;
 
   try {
-    enableAudit(sandboxName, gatewayName);
+    await enableAudit(sandboxName, gatewayName);
   } catch {
     // Deliberately silent: audit setup is optional and retained logs may still
     // contain the denial. Printing this diagnostic, even under a new debug
@@ -197,7 +116,7 @@ export async function maybeEmitPolicyDenialHint(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let logOutput: string;
     try {
-      logOutput = probeLogs(sandboxName, gatewayName);
+      logOutput = await probeLogs(sandboxName, gatewayName);
     } catch {
       // Deliberately silent for the same output-preservation boundary: a failed
       // optional probe must not append host diagnostics to the child's error.

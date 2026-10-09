@@ -20,8 +20,6 @@ const BASELINE_EXCLUSION_FEATURE_IMPACTS: Readonly<
 > = {
   openclaw: {
     nvidia: "Direct NVIDIA API inference may stop working.",
-    openclaw_gateway_dialback:
-      "OpenClaw sessions_spawn and multi-agent delegation may stop working.",
     clawhub: "ClawHub authentication and skill or plugin discovery may stop working.",
     openclaw_api: "OpenClaw authentication and plugin discovery may stop working.",
     openclaw_docs: "In-sandbox access to OpenClaw documentation may stop working.",
@@ -34,6 +32,7 @@ const BASELINE_EXCLUSION_FEATURE_IMPACTS: Readonly<
   },
   "langchain-deepagents-code": {
     github: "Git operations and GitHub API or source access may stop working.",
+    "observability-otlp-local": "DCode host-local trace export may stop working.",
     pypi: "Python package installation through pip may stop working.",
   },
 };

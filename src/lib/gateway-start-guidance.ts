@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "./cli/branding";
+import type { OpenShellSandboxError } from "./adapters/openshell/sandbox-observer";
 import type { GatewayManagementDeclaration } from "./onboard/gateway-management";
 import type { OpenShellGatewayLauncher } from "./onboard/compute/plan";
 
@@ -70,9 +71,22 @@ export function resolveGatewayLauncher(
  */
 export function gatewayStartGuidance(
   gatewayName?: string,
-  launcher: OpenShellGatewayLauncher = resolveGatewayLauncher({ gatewayName }),
+  launcher?: OpenShellGatewayLauncher,
 ): string {
-  if (launcher === "nemoclaw") {
+  let resolvedLauncher = launcher;
+  if (resolvedLauncher === undefined) {
+    try {
+      resolvedLauncher = resolveGatewayLauncher({ gatewayName });
+    } catch (error) {
+      const gatewayManagement =
+        require("./onboard/gateway-management") as typeof import("./onboard/gateway-management");
+      if (error instanceof gatewayManagement.GatewayManagementDeclarationError) {
+        return error.message;
+      }
+      throw error;
+    }
+  }
+  if (resolvedLauncher === "nemoclaw") {
     return `Start the gateway again with \`${CLI_NAME} onboard\`.`;
   }
   const subject = gatewayName ? `the '${gatewayName}' gateway` : "the OpenShell gateway";
@@ -83,4 +97,29 @@ export function gatewayStartGuidance(
     `${CLI_DISPLAY_NAME} does not start ${subject} on this host. ` +
     `Start it with the deployment that owns the gateway process, then run \`${select}\`.`
   );
+}
+
+/** Give an error-specific recovery action for a failed live-policy read. */
+export function formatOpenShellPolicyRecoveryAction(
+  error: OpenShellSandboxError,
+  retryCommand: string,
+  gatewayName?: string,
+  unreachableGatewayRecovery?: string,
+): string {
+  const selectRecordedGateway = gatewayName
+    ? `Select the sandbox's recorded gateway first with \`openshell gateway select ${gatewayName}\`. `
+    : "";
+  if (error.kind === "authentication") {
+    return `Restore authentication for the sandbox's OpenShell gateway, then retry \`${retryCommand}\`.`;
+  }
+  if (error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable")) {
+    return `${selectRecordedGateway}Verify the gateway with \`openshell status\`. ${unreachableGatewayRecovery ?? gatewayStartGuidance(gatewayName)} Then retry \`${retryCommand}\`.`;
+  }
+  if (error.kind === "transport") {
+    return `${selectRecordedGateway}Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${retryCommand}\`.`;
+  }
+  if (error.kind === "schema") {
+    return `Update the OpenShell CLI and gateway to compatible versions, then retry \`${retryCommand}\`.`;
+  }
+  return `${selectRecordedGateway}Inspect \`openshell status\`, correct the policy-read failure, then retry \`${retryCommand}\`.`;
 }

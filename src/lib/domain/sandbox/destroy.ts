@@ -2,21 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
+import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { resolveSandboxContainerOwner } from "./container-owner";
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
-
-function stripAnsi(value = ""): string {
-  return String(value).replace(ANSI_RE, "");
-}
-
-export type SpawnLikeResult = {
-  error?: Error;
-  status: number | null;
-  stdout?: string;
-  stderr?: string;
-};
 
 export type DestroyGatewayCleanupDecision = "cleanup" | "preserve" | "prompt";
 
@@ -46,45 +35,6 @@ export type LiveSandboxProbeSnapshot = {
   dockerContainersBySandboxName: ReadonlyMap<string, DockerSandboxContainerSnapshot>;
 };
 
-export function isMissingSandboxDeleteOutput(output = ""): boolean {
-  return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
-    stripAnsi(output),
-  );
-}
-
-/**
- * True when a `sandbox delete` failure is a gateway transport error (the
- * OpenShell gateway at 127.0.0.1:8080 is not listening) rather than a real
- * delete rejection. When the gateway process is down every gateway call gets a
- * connection-refused/transport error, which used to make `destroy` fatal with
- * no bypass (#6046).
- */
-export function isGatewayUnreachableDeleteOutput(output = ""): boolean {
-  return /connection refused|os error (?:61|111)|tcp connect error|error trying to connect|transport error|failed to connect to|connect(?:ion)? timed out|deadline has elapsed|connection reset/i.test(
-    stripAnsi(output),
-  );
-}
-
-export function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult): {
-  output: string;
-  alreadyGone: boolean;
-  gatewayUnreachable: boolean;
-  timedOut?: true;
-} {
-  const output = `${deleteResult.stdout || ""}${deleteResult.stderr || ""}`.trim();
-  const failed = deleteResult.status !== 0;
-  const timedOut =
-    failed && (deleteResult.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-  const alreadyGone = failed && !timedOut && isMissingSandboxDeleteOutput(output);
-  return {
-    output,
-    alreadyGone,
-    gatewayUnreachable:
-      failed && !alreadyGone && (timedOut || isGatewayUnreachableDeleteOutput(output)),
-    ...(timedOut ? { timedOut: true as const } : {}),
-  };
-}
-
 export function shouldStopHostServicesAfterDestroy(input: {
   deleteSucceededOrAlreadyGone: boolean;
   registeredSandboxCount: number;
@@ -97,19 +47,14 @@ export function shouldStopHostServicesAfterDestroy(input: {
   );
 }
 
-export function shouldCleanupGatewayAfterDestroy(input: {
-  deleteSucceededOrAlreadyGone: boolean;
-  removedRegistryEntry: boolean;
-  noRegisteredSandboxes: boolean;
-  noLiveSandboxes: boolean;
-}): boolean {
-  return (
-    input.deleteSucceededOrAlreadyGone &&
-    input.removedRegistryEntry &&
-    input.noRegisteredSandboxes &&
-    input.noLiveSandboxes
-  );
+export function isDestroyNonInteractiveEnv(): boolean {
+  return isNonInteractiveEnv();
 }
+
+export type LiveSandboxProbeVerdict =
+  | { readonly status: "none" }
+  | { readonly status: "unavailable" }
+  | { readonly status: "present"; readonly sandboxNames: readonly string[] };
 
 /**
  * Decide the non-UI gateway cleanup path for a final sandbox destroy.
@@ -172,23 +117,38 @@ export function getLiveSandboxNames(liveList: LiveSandboxListSnapshot): string[]
   return parseLiveSandboxEntries(liveList.output).map((entry) => entry.name);
 }
 
-export function hasNoLiveSandboxes({
-  liveList,
-  dockerContainersBySandboxName,
-}: LiveSandboxProbeSnapshot): boolean {
+export function classifyLiveSandboxesWithResourceObservation(
+  liveList: LiveSandboxListSnapshot,
+  hasRunningResource: (sandboxName: string, knownSandboxNames: readonly string[]) => boolean,
+): LiveSandboxProbeVerdict {
   // Fail closed: if OpenShell cannot report authoritative sandbox state,
   // preserve the shared gateway so a sandbox never loses its listener.
   if (liveList.status !== 0) {
-    return false;
+    return { status: "unavailable" };
   }
   const entries = parseLiveSandboxEntries(liveList.output);
   const sandboxNames = entries.map((entry) => entry.name);
-  return entries.every((entry) => {
-    if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
-    return !hasRunningDockerSandboxContainer(
-      entry.name,
-      dockerContainersBySandboxName.get(entry.name),
+  const liveSandboxNames = entries
+    .filter(
+      (entry) =>
+        !TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "") ||
+        hasRunningResource(entry.name, sandboxNames),
+    )
+    .map((entry) => entry.name);
+  return liveSandboxNames.length === 0
+    ? { status: "none" }
+    : { status: "present", sandboxNames: liveSandboxNames };
+}
+
+export function classifyLiveSandboxes({
+  liveList,
+  dockerContainersBySandboxName,
+}: LiveSandboxProbeSnapshot): LiveSandboxProbeVerdict {
+  return classifyLiveSandboxesWithResourceObservation(liveList, (sandboxName, sandboxNames) =>
+    hasRunningDockerSandboxContainer(
+      sandboxName,
+      dockerContainersBySandboxName.get(sandboxName),
       sandboxNames,
-    );
-  });
+    ),
+  );
 }

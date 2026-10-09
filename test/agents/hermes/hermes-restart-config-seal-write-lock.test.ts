@@ -96,38 +96,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     }
   });
 
-  it("refuses host config writes while shields are up and restores the locked posture", () => {
-    const fixture = createRestartFixture();
-    const expectedDigest = createHash("sha256").update(fixture.trustedConfig).digest("hex");
-    fs.chmodSync(fixture.sandboxDir, 0o755);
-    fs.chmodSync(fixture.hermesDir, 0o755);
-    fs.chmodSync(fixture.configPath, 0o444);
-    fs.chmodSync(fixture.envPath, 0o444);
-    fs.chmodSync(fixture.compatHashPath, 0o444);
-
-    try {
-      const updated = runWriteConfig(
-        fixture,
-        expectedDigest,
-        "model:\n  default: must-not-apply\n",
-      );
-
-      expect(updated.status).not.toBe(0);
-      expect(updated.stderr).toContain("config writes are unavailable while shields are up");
-      expect(fs.readFileSync(fixture.configPath, "utf-8")).toBe(fixture.trustedConfig);
-      expect(mode(fixture.sandboxDir)).toBe(0o755);
-      expect(mode(fixture.hermesDir)).toBe(0o755);
-      expect(mode(fixture.configPath)).toBe(0o444);
-      expect(mode(fixture.envPath)).toBe(0o444);
-      expect(strictHashIsValid(fixture)).toBe(true);
-      expect(fs.existsSync(fixture.statePath)).toBe(false);
-      expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(false);
-    } finally {
-      fs.rmSync(fixture.root, { recursive: true, force: true });
-    }
-  });
-
-  it("serializes restart sealing against a host-held shields mutation lock", () => {
+  it("serializes restart sealing against a host-held config mutation lock", () => {
     const fixture = createRestartFixture();
     const token = randomBytes(32).toString("hex");
 

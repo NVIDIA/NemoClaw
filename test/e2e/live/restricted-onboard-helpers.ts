@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -15,25 +14,6 @@ export function liveOnboardAttempts(): number {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function ensureDockerAvailable(opts: {
-  host: HostCliClient;
-  artifactName: string;
-  skip: SkipFn;
-  scenarioLabel: string;
-}): Promise<void> {
-  const docker = await opts.host.command("docker", ["info"], {
-    artifactName: opts.artifactName,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  if (docker.exitCode === 0) return;
-  const text = [docker.stdout, docker.stderr].filter(Boolean).join("\n");
-  if (process.env.GITHUB_ACTIONS === "true") {
-    throw new Error(`Docker is required for ${opts.scenarioLabel} live E2E: ${text}`);
-  }
-  opts.skip(`Docker is required for ${opts.scenarioLabel} live E2E`);
 }
 
 export type RestrictedOnboardOptions = {

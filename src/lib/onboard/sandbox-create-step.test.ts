@@ -141,36 +141,37 @@ describe("runSandboxCreateStep", () => {
   it.each([
     { label: "OpenClaw", agent: null },
     { label: "Hermes", agent: { name: "hermes" } as SandboxCreateStepContext["agent"] },
-  ])("persists the $label startup command for Docker-driver container restarts", async ({
-    agent,
-  }) => {
-    const launch = makeLaunch({
-      sandboxStartupCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
-    });
-    const patch = makePatch();
-    const deps = makeDeps(launch, patch, { status: 0, output: "created" });
+  ])(
+    "leaves $label startup persistence with OpenShell on a Docker-driver gateway",
+    async ({ agent }) => {
+      const launch = makeLaunch({
+        sandboxStartupCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+      });
+      const patch = makePatch();
+      const deps = makeDeps(launch, patch, { status: 0, output: "created" });
 
-    await runSandboxCreateStep(
-      makeContext({
-        agent,
-        prebuild: {
-          buildCtx: "/tmp/ctx",
-          buildId: "b1",
-          dockerDriverGateway: true,
-          origin: "generated",
-        },
-      }),
-      deps,
-    );
+      await runSandboxCreateStep(
+        makeContext({
+          agent,
+          prebuild: {
+            buildCtx: "/tmp/ctx",
+            buildId: "b1",
+            dockerDriverGateway: true,
+            origin: "generated",
+          },
+        }),
+        deps,
+      );
 
-    expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        route: "native",
-        persistStartupCommand: true,
-        openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
-      }),
-    );
-  });
+      expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          route: "native",
+          persistStartupCommand: false,
+          openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+        }),
+      );
+    },
+  );
 
   it("gates restart-safe persistence on the step's own portable env, not process.env (#9462)", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "default");
@@ -201,7 +202,7 @@ describe("runSandboxCreateStep", () => {
     );
   });
 
-  it("persists DCode startup with its exact Docker resource limits", async () => {
+  it("keeps DCode startup native while retaining limits for GPU compatibility", async () => {
     const launch = makeLaunch({
       sandboxStartupCommand: ["env", "nemoclaw-start"],
     });
@@ -225,7 +226,8 @@ describe("runSandboxCreateStep", () => {
 
     expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        persistStartupCommand: true,
+        persistStartupCommand: false,
+        openshellSandboxCommand: ["env", "nemoclaw-start"],
         requiredUlimits: [
           { name: "nproc", soft: 512, hard: 512 },
           { name: "nofile", soft: 65_536, hard: 65_536 },

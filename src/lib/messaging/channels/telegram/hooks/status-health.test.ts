@@ -42,25 +42,24 @@ function probeStdout(logLines: string[], procLines: string[]): string {
 type ExecResult = { status: number; stdout: string; stderr: string } | null;
 
 function makeExec(result: ExecResult) {
-  return vi.fn((_sandbox: string, _command: string, _timeout: number): ExecResult => result);
+  return vi.fn(
+    async (_sandbox: string, _command: string, _timeout: number): Promise<ExecResult> => result,
+  );
 }
 
-// The hook is synchronous; the handler type is a sync|Promise union, so narrow.
-function reportOf(
-  result: MessagingHookResult | Promise<MessagingHookResult>,
-): ChannelHealthReport | undefined {
-  const value = (result as MessagingHookResult).outputs?.channelHealth?.value as unknown as
+function reportOf(result: MessagingHookResult): ChannelHealthReport | undefined {
+  const value = result.outputs?.channelHealth?.value as unknown as
     | { report?: ChannelHealthReport }
     | undefined;
   return value?.report;
 }
 
-function outputsOf(result: MessagingHookResult | Promise<MessagingHookResult>) {
-  return (result as MessagingHookResult).outputs;
+function outputsOf(result: MessagingHookResult) {
+  return result.outputs;
 }
 
 describe("telegram.statusHealth hook", () => {
-  it("probes the gateway log and reports healthy for a ready bridge with inbound (#6743)", () => {
+  it("probes the gateway log and reports healthy for a ready bridge with inbound (#6743)", async () => {
     const exec = makeExec({
       status: 0,
       stdout: probeStdout(
@@ -72,7 +71,7 @@ describe("telegram.statusHealth hook", () => {
       ),
       stderr: "",
     });
-    const result = createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
+    const result = await createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
     expect(reportOf(result)?.verdict).toBe("healthy");
 
     // The probe reads the gateway's own breadcrumbs and never calls the Bot API.
@@ -83,12 +82,12 @@ describe("telegram.statusHealth hook", () => {
     expect(command).not.toMatch(/curl/i);
   });
 
-  it("emits a syntactically valid /bin/sh probe script (#6743)", () => {
+  it("emits a syntactically valid /bin/sh probe script (#6743)", async () => {
     // The probe is a multiline sh script (grep/awk pipelines, marker sequencing).
     // A shell syntax regression would fail every real probe while mocked-stdout
     // tests stay green, so validate the generated command with `sh -n`.
     const exec = makeExec({ status: 0, stdout: probeStdout([], []), stderr: "" });
-    createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
+    await createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
     const command = exec.mock.calls[0]?.[1] ?? "";
     const validation = spawnSync("sh", ["-n", "-c", command], { encoding: "utf-8" });
     expect(validation.status, validation.stderr || validation.stdout).toBe(0);
@@ -97,19 +96,19 @@ describe("telegram.statusHealth hook", () => {
     expect(command).toMatch(/pgrep -fa/);
   });
 
-  it("reports not_started when pgrep completes with no gateway process", () => {
+  it("reports not_started when pgrep completes with no gateway process", async () => {
     const exec = makeExec({ status: 0, stdout: probeStdout([], []), stderr: "" });
-    const result = createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
+    const result = await createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
     expect(reportOf(result)?.verdict).toBe("not_started");
   });
 
-  it("reports probe_failed when the sandbox exec fails", () => {
+  it("reports probe_failed when the sandbox exec fails", async () => {
     const exec = makeExec(null);
-    const result = createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
+    const result = await createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
     expect(reportOf(result)?.verdict).toBe("probe_failed");
   });
 
-  it("treats a non-zero exec as a failed probe even with healthy-looking stdout (#6887)", () => {
+  it("treats a non-zero exec as a failed probe even with healthy-looking stdout (#6887)", async () => {
     // A timed-out/killed exec can still carry partial stdout with a stale
     // provider-ready line — a non-zero status must not read as healthy.
     const exec = makeExec({
@@ -122,31 +121,31 @@ describe("telegram.statusHealth hook", () => {
       ),
       stderr: "sandbox exec timed out",
     });
-    const result = createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
+    const result = await createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
     expect(reportOf(result)?.verdict).toBe("probe_failed");
   });
 
-  it("derives config_gap / policy_gap from the host-fact inputs", () => {
+  it("derives config_gap / policy_gap from the host-fact inputs", async () => {
     const exec = makeExec({ status: 0, stdout: probeStdout([], []), stderr: "" });
     const hook = createTelegramStatusHealthHook({ executeSandboxCommand: exec });
     expect(
-      reportOf(hook(context({ ...BASE_INPUTS, channelEnabledInRegistry: false })))?.verdict,
+      reportOf(await hook(context({ ...BASE_INPUTS, channelEnabledInRegistry: false })))?.verdict,
     ).toBe("config_gap");
-    expect(reportOf(hook(context({ ...BASE_INPUTS, presetApplied: false })))?.verdict).toBe(
+    expect(reportOf(await hook(context({ ...BASE_INPUTS, presetApplied: false })))?.verdict).toBe(
       "policy_gap",
     );
   });
 
-  it("no-ops for a non-telegram channel or without an exec runner", () => {
+  it("no-ops for a non-telegram channel or without an exec runner", async () => {
     const exec = makeExec({ status: 0, stdout: probeStdout([], []), stderr: "" });
     expect(
       outputsOf(
-        createTelegramStatusHealthHook({ executeSandboxCommand: exec })(
+        await createTelegramStatusHealthHook({ executeSandboxCommand: exec })(
           context(BASE_INPUTS, "slack"),
         ),
       ),
     ).toBeUndefined();
-    expect(outputsOf(createTelegramStatusHealthHook({})(context()))).toBeUndefined();
+    expect(outputsOf(await createTelegramStatusHealthHook({})(context()))).toBeUndefined();
     expect(exec).not.toHaveBeenCalled();
   });
 });

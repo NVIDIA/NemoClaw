@@ -84,16 +84,17 @@ describe("inference provider route identifier rename (#7177)", () => {
     expect(patched).toContain("ARG NEMOCLAW_PROVIDER_KEY=inference");
   });
 
-  it.each(
-    MANAGED_DOCKERFILES,
-  )("declares the non-secret route identifier and no secret-shaped name in %s", (relative) => {
-    const source = fs.readFileSync(path.join(process.cwd(), relative), "utf-8");
-    expect(source).toMatch(/^ARG NEMOCLAW_INFERENCE_PROVIDER_ID=/m);
-    expect(source).toMatch(
-      /^\s*NEMOCLAW_INFERENCE_PROVIDER_ID=\$\{NEMOCLAW_INFERENCE_PROVIDER_ID\}/m,
-    );
-    expect(source).not.toContain("NEMOCLAW_PROVIDER_KEY");
-  });
+  it.each(MANAGED_DOCKERFILES)(
+    "declares the non-secret route identifier and no secret-shaped name in %s",
+    (relative) => {
+      const source = fs.readFileSync(path.join(process.cwd(), relative), "utf-8");
+      expect(source).toMatch(/^ARG NEMOCLAW_INFERENCE_PROVIDER_ID=/m);
+      expect(source).toMatch(
+        /^\s*NEMOCLAW_INFERENCE_PROVIDER_ID=\$\{NEMOCLAW_INFERENCE_PROVIDER_ID\}/m,
+      );
+      expect(source).not.toContain("NEMOCLAW_PROVIDER_KEY");
+    },
+  );
 
   it("reads the route identifier from NEMOCLAW_INFERENCE_PROVIDER_ID", () => {
     const settings = readHermesBuildSettings({
@@ -201,6 +202,8 @@ describe("Hermes runtime provider route identifier boundary (#7177)", () => {
       env: {
         HOME: os.tmpdir(),
         PATH: process.env.PATH ?? "",
+        HERMES_BUNDLED_PLUGINS: "/opt/hermes/plugins",
+        HERMES_HOME: "/sandbox/.hermes",
         HERMES_LAZY_INSTALL_TARGET: "/sandbox/.hermes/lazy-packages",
         ...env,
       },

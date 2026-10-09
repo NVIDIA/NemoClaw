@@ -62,6 +62,10 @@ The daily cutoff is the maintainer-defined point where the release tag is prepar
 
 At cutoff:
 
+Start [independent readiness checks](../../nemoclaw-maintainer-cut-release-tag/references/candidate-evidence.md#start-independent-checks-at-kickoff)
+at kickoff. Overlap authorized documentation preparation with image waits. This changes preparation
+order, not the candidate evidence or maintainer decisions required below.
+
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
@@ -93,11 +97,10 @@ qualification` aggregate does not replace the candidate result.
 
 ## General E2E Decision
 
-The general E2E decision records whether the maintainer chooses focused tests, the full suite, or the
-displayed general E2E status. General E2E informs the maintainer; it does not decide whether a tag
-can exist. Show the newest full run's full SHA, status, conclusion, attempt, created, started, and
-last-updated timestamps, age at inspection, workflow URL, `Release qualification` URL, and any
-failed, cancelled, skipped, queued, or active results.
+General E2E informs the maintainer; it does not decide whether a tag can exist. Follow
+[Report the Release Context](../../nemoclaw-maintainer-e2e/SKILL.md#report-the-release-context)
+to inspect and report the newest full run and any maintainer-requested runs.
+Record that evidence in the release decision.
 
 Offer three choices:
 

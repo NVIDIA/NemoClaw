@@ -75,15 +75,13 @@ Stream logs while you reproduce a problem:
 $$nemoclaw my-assistant logs --follow
 ```
 
-<AgentOnly variant="openclaw">
-The log command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
-</AgentOnly>
-<AgentOnly variant="hermes">
-The log command reads both Hermes gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+<AgentOnly variant="openclaw,hermes">
+The log command reads both agent gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-The log command reads Deep Agents sandbox output and OpenShell audit events, so policy denials appear beside terminal-runtime logs.
+The log command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
 </AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and policy-denial events can be missing.
 
 ## Collect Diagnostics
 

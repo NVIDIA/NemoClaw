@@ -7,7 +7,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 /**
- * Patch the Langfuse validator bundled with pinned Hermes v2026.7.20 / 0.19.0.
+ * Patch the Langfuse validator bundled with pinned Hermes v2026.9.14 / 0.21.3.
  *
  * Hermes rejects OpenShell resolver placeholders before the Langfuse SDK can
  * turn them into outbound authentication headers. NemoClaw keeps the real
@@ -16,12 +16,18 @@ import { pathToFileURL } from "node:url";
  * pinned Hermes implementation drifts.
  *
  * Remove this patch when the pinned Hermes release natively accepts exact,
- * same-name OpenShell placeholders while retaining its raw-key prefix checks.
- * Issue #7446 tracks that removal condition.
+ * same-name OpenShell placeholders, retains its raw-key prefix checks, and
+ * rejects non-HTTPS authenticated Langfuse base URLs. Issue #7446 tracks that
+ * removal condition.
  */
 const DEFAULT_PLUGIN_PATH = "/opt/hermes/plugins/observability/langfuse/__init__.py";
 
 const replacements = [
+  {
+    name: "HTTPS URL parser",
+    old: `from typing import Any, Dict, Optional\n`,
+    patched: `from typing import Any, Dict, Optional\nfrom urllib.parse import urlsplit\n`,
+  },
   {
     name: "credential-name binding",
     old: `\
@@ -44,22 +50,74 @@ _LANGFUSE_OPENSHELL_KEYS: Dict[str, str] = {
   {
     name: "credential validation",
     old: `\
-    if value.startswith(expected):
+    if not expected or value.startswith(expected):
         return None
-    return (
+    preview = "<empty>" if not value else repr(value) if len(value) <= 12 else repr(value[:6] + "...")
 `,
     patched: `\
-    if value.startswith(expected):
+    if not expected or value.startswith(expected):
         return None
     openshell_key = _LANGFUSE_OPENSHELL_KEYS.get(env_name)
-    # Keep the revision bound aligned with NemoClaw's OpenShell credential
+    # Keep the generation bound aligned with NemoClaw's OpenShell credential
     # observation contract in mcp-bridge-provider-readiness.ts.
     if openshell_key and re.fullmatch(
-        rf"openshell:resolve:env:(?:v[0-9]{{1,20}}_)?{re.escape(openshell_key)}",
+        rf"openshell:resolve:env:(?:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_)?{re.escape(openshell_key)}",
         value,
     ):
         return None
-    return (
+    preview = "<empty>" if not value else repr(value) if len(value) <= 12 else repr(value[:6] + "...")
+`,
+  },
+  {
+    name: "HTTPS base URL validation",
+    old: `\
+    return f"{env_name}={preview} (expected {expected!r} prefix)"
+
+
+def _settled_client() -> Any:
+`,
+    patched: `\
+    return f"{env_name}={preview} (expected {expected!r} prefix)"
+
+
+def _validate_langfuse_base_url(value: str) -> Optional[str]:
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError:
+        return "HERMES_LANGFUSE_BASE_URL must be a valid absolute HTTPS URL"
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return (
+            "HERMES_LANGFUSE_BASE_URL must be an absolute HTTPS URL "
+            "without credentials, query parameters, or a fragment"
+        )
+    return None
+
+
+def _settled_client() -> Any:
+`,
+  },
+  {
+    name: "HTTPS base URL gate",
+    old: `\
+    sample_rate = _secret("HERMES_LANGFUSE_SAMPLE_RATE")
+`,
+    patched: `\
+    base_url_issue = _validate_langfuse_base_url(str(kwargs["base_url"]))
+    if base_url_issue:
+        logger.warning(
+            "Langfuse plugin: invalid base URL, traces will NOT be emitted (%s).",
+            base_url_issue,
+        )
+        return None
+    sample_rate = _secret("HERMES_LANGFUSE_SAMPLE_RATE")
 `,
   },
 ] as const;

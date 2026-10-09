@@ -8,8 +8,11 @@ import {
   type GpuDetection,
   type NvidiaPlatform,
 } from "../inference/nim.js";
+import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
+import { isDgxStationGb300GpuName } from "../inference/dgx-station-identity.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
+import { collectWslNvidiaProduct } from "../inference/platform-identity/n1x-wsl.js";
 import { resolveOpenshell } from "./openshell-resolver.js";
 import {
   type CollectPlatformIdentityOptions,
@@ -18,7 +21,11 @@ import {
   projectPlatformQualification,
 } from "./platform-qualification.js";
 import { measureObservationAge, staleEvidence } from "./observation-age.js";
-import { buildSystemReadinessProbeEnv, createSystemReadinessCapture } from "./probe-env.js";
+import {
+  buildSystemReadinessProbeEnv,
+  createSystemReadinessCapture,
+  createSystemReadinessCaptureEx,
+} from "./probe-env.js";
 import { sanitizeReadinessText } from "./sanitize.js";
 import {
   type EvidenceScalar,
@@ -42,6 +49,7 @@ export interface HostObservations {
   isHeadlessLikely: boolean;
   dockerInstalled: boolean;
   dockerReachable: boolean;
+  dockerProbeIssue?: HostAssessment["dockerProbeIssue"];
   dockerHostInvalid: boolean;
   runtime: string;
   dockerCgroupVersion?: string;
@@ -70,6 +78,9 @@ export interface HostObservations {
   cdiNvidiaGpuSpecMissing: boolean;
   cdiNvidiaGpuSpecStale?: boolean;
   cdiNvidiaGpuSpecNeedsRepair?: boolean;
+  runtimeProviderId?: string;
+  runtimeProviderOwnsHostReadiness?: boolean;
+  containerGpuProof?: ContainerGpuProofStatus;
   platformIdentity?: PlatformIdentity;
 }
 
@@ -84,7 +95,10 @@ export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
   detectGpu?: () =>
-    | (Pick<GpuDetection, "count" | "wslDockerDesktopGpuProofPassed"> &
+    | (Pick<
+        GpuDetection,
+        "count" | "containerGpuProof" | "n1xWslProduct" | "stationGb300WslProduct"
+      > &
         Partial<
           Pick<
             GpuDetection,
@@ -101,7 +115,11 @@ export interface CollectHostObservationsOptions {
     | null;
   detectNvidiaDriverVersion?: () => string | undefined;
   detectHostGpuPlatform?: () => NvidiaPlatform;
-  wslDockerDesktopGpuProofPassed?: boolean;
+  runtimeProvider?: Readonly<{
+    providerId: string;
+    ownsHostReadiness: boolean;
+  }>;
+  containerGpuProof?: ContainerGpuProofStatus;
   collectPlatformIdentity?: () => PlatformIdentity;
   platformIdentityOptions?: CollectPlatformIdentityOptions;
   now?: () => Date;
@@ -112,6 +130,27 @@ export interface CreateHostReadinessReportOptions {
   sourceRevision: string;
   now?: () => Date;
   maxObservationAgeMs?: number;
+}
+
+export interface WslNvidiaProductObservation {
+  n1xWslProduct: boolean | null;
+  stationGb300WslProduct: boolean | null;
+}
+
+/** Collect and classify the Windows product once with the bounded readiness transport. */
+export function collectWslNvidiaProductObservation(
+  isWsl: boolean,
+  collector: typeof collectWslNvidiaProduct = collectWslNvidiaProduct,
+): WslNvidiaProductObservation {
+  const probeEnv = buildSystemReadinessProbeEnv();
+  const observed = collector({
+    isWsl,
+    runCaptureImpl: createSystemReadinessCapture(probeEnv),
+  });
+  return {
+    n1xWslProduct: observed?.n1x ?? null,
+    stationGb300WslProduct: observed?.stationGb300 ?? null,
+  };
 }
 
 function safeReportText(value: string): string {
@@ -127,7 +166,8 @@ function adaptHostAssessment(
   nvidiaDriverVersion?: string,
   gpu?: ReturnType<NonNullable<CollectHostObservationsOptions["detectGpu"]>>,
   platformIdentity?: PlatformIdentity,
-  wslDockerDesktopGpuProofPassed?: boolean,
+  runtimeProvider?: CollectHostObservationsOptions["runtimeProvider"],
+  containerGpuProof?: ContainerGpuProofStatus,
 ): HostObservations {
   return {
     platform: host.platform,
@@ -136,6 +176,7 @@ function adaptHostAssessment(
     isHeadlessLikely: host.isHeadlessLikely,
     dockerInstalled: host.dockerInstalled,
     dockerReachable: host.dockerReachable,
+    dockerProbeIssue: host.dockerProbeIssue,
     dockerHostInvalid: host.dockerHostInvalid === true,
     runtime: host.runtime,
     dockerCgroupVersion: host.dockerCgroupVersion,
@@ -157,12 +198,11 @@ function adaptHostAssessment(
       gpu?.totalMemoryMB === undefined ? undefined : gpu.totalMemoryMB * 1024 * 1024,
     nvidiaGpuMemoryAvailableBytes:
       gpu?.availableMemoryMB === undefined ? undefined : gpu.availableMemoryMB * 1024 * 1024,
-    nvidiaGpuMemoryPerDeviceBytes:
-      gpu?.gpus?.length
-        ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
-        : gpu?.perGpuMB === undefined
-          ? undefined
-          : gpu.perGpuMB * 1024 * 1024,
+    nvidiaGpuMemoryPerDeviceBytes: gpu?.gpus?.length
+      ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
+      : gpu?.perGpuMB === undefined
+        ? undefined
+        : gpu.perGpuMB * 1024 * 1024,
     nvidiaGpuUnifiedMemory: gpu?.unifiedMemory,
     nvidiaGpuComputeConstrained: gpu?.computeConstrained,
     hostGpuPlatform,
@@ -171,9 +211,17 @@ function adaptHostAssessment(
     cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
     cdiNvidiaGpuSpecStale: host.cdiNvidiaGpuSpecStale,
     cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair,
-    platformIdentity: platformIdentity
-      ? { ...platformIdentity, wslDockerDesktopGpuProofPassed }
-      : { wslDockerDesktopGpuProofPassed },
+    platformIdentity: {
+      ...platformIdentity,
+      n1xWslGpu: host.isWsl && hostGpuPlatform === "n1x" ? true : undefined,
+      stationGb300WslGpu:
+        host.isWsl && gpu?.gpus
+          ? gpu.gpus.some(({ name }) => isDgxStationGb300GpuName(name))
+          : undefined,
+    },
+    runtimeProviderId: runtimeProvider?.providerId,
+    runtimeProviderOwnsHostReadiness: runtimeProvider?.ownsHostReadiness,
+    containerGpuProof,
   };
 }
 
@@ -193,6 +241,7 @@ function observeHost(
   try {
     const probeEnv = buildSystemReadinessProbeEnv();
     const runCaptureImpl = createSystemReadinessCapture(probeEnv);
+    const runCaptureExImpl = createSystemReadinessCaptureEx(probeEnv);
     const resolveReadinessOpenshell = () => {
       const commandVResult = runCaptureImpl(["sh", "-c", 'command -v "$1"', "--", "openshell"], {
         ignoreError: true,
@@ -208,6 +257,7 @@ function observeHost(
           env: process.env,
           resolveOpenshellImpl: resolveReadinessOpenshell,
           runCaptureImpl,
+          runCaptureExImpl,
         });
     const gpuProbeAllowed =
       !assessment.isWsl || assessment.runtime !== "docker-desktop" || assessment.dockerReachable;
@@ -219,18 +269,30 @@ function observeHost(
     const gpu = gpuProbeAllowed
       ? options.detectGpu
         ? options.detectGpu()
-        : detectGpu({ proveArm64WslDockerDesktopGpu: null, runCaptureImpl })
+        : detectGpu({ proveArm64ContainerGpu: null, runCaptureImpl })
       : null;
     const hasNvidiaGpu =
       assessment.hasNvidiaGpu || gpu?.type === "nvidia" || gpu?.platform === "jetson";
-    const wslDockerDesktopGpuProofPassed =
-      options.wslDockerDesktopGpuProofPassed ??
-      (assessment.isWsl &&
-      assessment.runtime === "docker-desktop" &&
-      assessment.dockerReachable &&
-      hasNvidiaGpu
-        ? gpu?.wslDockerDesktopGpuProofPassed
-        : undefined);
+    const containerGpuProof = options.containerGpuProof ?? gpu?.containerGpuProof;
+    const platformIdentityOptions = { ...options.platformIdentityOptions };
+    if (
+      !Object.prototype.hasOwnProperty.call(platformIdentityOptions, "n1xWslProductObservation") &&
+      gpu &&
+      Object.prototype.hasOwnProperty.call(gpu, "n1xWslProduct")
+    ) {
+      platformIdentityOptions.n1xWslProductObservation = gpu.n1xWslProduct ?? null;
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        platformIdentityOptions,
+        "stationGb300WslProductObservation",
+      ) &&
+      gpu &&
+      Object.prototype.hasOwnProperty.call(gpu, "stationGb300WslProduct")
+    ) {
+      platformIdentityOptions.stationGb300WslProductObservation =
+        gpu.stationGb300WslProduct ?? null;
+    }
     return {
       observedAt,
       observations: adaptHostAssessment(
@@ -249,9 +311,15 @@ function observeHost(
         gpu,
         (
           options.collectPlatformIdentity ??
-          (() => collectPlatformIdentity(options.platformIdentityOptions))
+          (() =>
+            collectPlatformIdentity({
+              ...platformIdentityOptions,
+              isWsl: assessment.isWsl,
+              runCaptureImpl,
+            }))
         )(),
-        wslDockerDesktopGpuProofPassed,
+        options.runtimeProvider,
+        containerGpuProof,
       ),
     };
   } catch (error) {
@@ -286,6 +354,7 @@ function stateOf(value: boolean | undefined): ReadinessState {
   return value === undefined ? "unknown" : value ? "present" : "absent";
 }
 
+/** Project every host capability as unknown when collection cannot produce usable evidence. */
 function unknownProjection(evidenceIds: readonly string[]): {
   observations: ReadinessObservation[];
   capabilities: ReadinessCapability[];
@@ -295,11 +364,15 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.os.platform",
     "host.os.architecture",
     "host.os.wsl",
+    "host.os.distribution",
+    "host.os.version",
+    "host.os.pretty_name",
     "host.session.headless",
     "host.docker.installed",
     "host.docker.reachable",
     "host.docker.host_invalid",
     "host.docker.runtime",
+    "host.runtime.provider",
     "host.docker.cpus",
     "host.docker.memory_bytes",
     "host.docker.cgroup_version",
@@ -316,6 +389,8 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.gpu.memory_per_device_bytes",
     "host.gpu.unified_memory",
     "host.gpu.compute_constrained",
+    "host.gpu.container_proof_provider",
+    "host.gpu.container_proof",
     "host.gpu.container_toolkit",
     "host.gpu.nvidia_runtime",
     "host.gpu.cdi",
@@ -335,14 +410,20 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.gpu.container_toolkit_available",
     "host.gpu.cdi_healthy",
     "host.platform.supported",
+    "host.platform.identity_consistent",
     "host.platform.linux_supported",
     "host.platform.macos_apple_silicon",
     "host.platform.wsl_docker_desktop",
     "host.platform.wsl_native_docker",
     "host.platform.wsl_runtime_available",
     "host.platform.wsl_gpu_passthrough",
+    "host.platform.n1x_wsl",
+    "host.platform.station_gb300_wsl",
     "host.platform.dgx_spark",
     "host.platform.n1x",
+    "host.platform.dgx_station_hardware",
+    "host.platform.dgx_station_software",
+    "host.platform.dgx_station_runtime",
     "host.platform.dgx_station",
   ];
   return {
@@ -359,6 +440,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
   };
 }
 
+/** Convert a bounded host snapshot into stable observations, capabilities, and findings. */
 export function projectHostReadiness(
   snapshot: Readonly<HostObservationSnapshot>,
   options: CreateHostReadinessReportOptions,
@@ -387,7 +469,11 @@ export function projectHostReadiness(
     ({ observations, capabilities, findings } = projected);
   } else {
     const dockerHostBlocks = host.dockerHostInvalid;
-    const dockerEvidenceUsable = host.dockerReachable && !dockerHostBlocks;
+    const dockerProbeInconclusive = host.dockerProbeIssue !== undefined;
+    const dockerInfoInconclusive =
+      host.dockerProbeIssue === "info_timeout" || host.dockerProbeIssue === "info_unavailable";
+    const dockerEvidenceUsable =
+      host.dockerReachable && !dockerHostBlocks && !dockerProbeInconclusive;
     const cdiApplies =
       host.platform === "linux" &&
       dockerEvidenceUsable &&
@@ -418,11 +504,18 @@ export function projectHostReadiness(
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
       observation("host.os.wsl", host.isWsl),
+      observation("host.os.distribution", host.platformIdentity?.osId),
+      observation("host.os.version", host.platformIdentity?.osVersionId),
+      observation("host.os.pretty_name", host.platformIdentity?.osPrettyName),
       observation("host.session.headless", host.isHeadlessLikely),
       observation("host.docker.installed", host.dockerInstalled),
-      observation("host.docker.reachable", dockerHostBlocks ? undefined : host.dockerReachable),
+      observation(
+        "host.docker.reachable",
+        dockerHostBlocks || dockerInfoInconclusive ? undefined : host.dockerReachable,
+      ),
       observation("host.docker.host_invalid", host.dockerHostInvalid),
       observation("host.docker.runtime", dockerEvidenceUsable ? host.runtime : undefined),
+      observation("host.runtime.provider", host.runtimeProviderId),
       observation("host.docker.cpus", dockerEvidenceUsable ? host.dockerCpus : undefined),
       observation(
         "host.docker.memory_bytes",
@@ -472,6 +565,8 @@ export function projectHostReadiness(
         "host.gpu.compute_constrained",
         host.hasNvidiaGpu ? host.nvidiaGpuComputeConstrained : undefined,
       ),
+      observation("host.gpu.container_proof_provider", host.containerGpuProof?.providerId),
+      observation("host.gpu.container_proof", host.containerGpuProof?.passed),
       observation(
         "host.gpu.container_toolkit",
         host.hasNvidiaGpu ? host.nvidiaContainerToolkitInstalled : false,
@@ -491,7 +586,12 @@ export function projectHostReadiness(
       dockerReachable: dockerEvidenceUsable,
       runtime: host.runtime,
       hasNvidiaGpu: host.hasNvidiaGpu,
+      runtimeProviderId: host.runtimeProviderId,
+      runtimeProviderOwnsHostReadiness: host.runtimeProviderOwnsHostReadiness,
+      containerGpuProof: host.containerGpuProof,
       ...host.platformIdentity,
+      nvidiaGpuCount: host.nvidiaGpuCount,
+      nvidiaGpuMemoryPerDeviceBytes: host.nvidiaGpuMemoryPerDeviceBytes,
     });
     evidence.push(...platform.evidence);
     qualifications = platform.qualifications;
@@ -501,7 +601,7 @@ export function projectHostReadiness(
       capability("host.docker.endpoint_supported", stateOf(!host.dockerHostInvalid)),
       capability(
         "host.docker.daemon_reachable",
-        dockerHostBlocks
+        dockerHostBlocks || dockerInfoInconclusive
           ? "unknown"
           : host.dockerInstalled
             ? stateOf(host.dockerReachable)
@@ -537,6 +637,29 @@ export function projectHostReadiness(
       capability("host.gpu.cdi_healthy", cdiApplies ? stateOf(cdiHealthy) : "present"),
     ];
     findings = [...platform.findings];
+    if (host.platform === "linux") {
+      const osId = host.platformIdentity?.osId;
+      const osVersionId = host.platformIdentity?.osVersionId;
+      if (!osId || !osVersionId) {
+        findings.push(
+          finding(
+            "host.os.release_inconclusive",
+            "warning",
+            "The host operating-system distribution and version could not be identified from /etc/os-release.",
+            [],
+          ),
+        );
+      } else if (osId !== "ubuntu" || osVersionId !== "24.04") {
+        findings.push(
+          finding(
+            "host.os.release_unqualified",
+            "warning",
+            "The detected host operating-system release has not been qualified for host-level onboarding.",
+            [],
+          ),
+        );
+      }
+    }
     if (!host.dockerInstalled)
       findings.push(
         finding("host.docker.unavailable", "blocking", "Docker is not installed.", [
@@ -548,8 +671,19 @@ export function projectHostReadiness(
         finding(
           "host.docker.host_invalid",
           "blocking",
-          "DOCKER_HOST is not a supported absolute local Unix socket endpoint.",
+          // DOCKER_CONTEXT selects an endpoint too, so the text names the
+          // endpoint rather than one of the two variables that chose it (#11719).
+          "The selected Docker endpoint is not a supported absolute local Unix socket.",
           ["host.docker.endpoint_supported"],
+        ),
+      );
+    else if (dockerProbeInconclusive)
+      findings.push(
+        finding(
+          "host.docker.probe_inconclusive",
+          "warning",
+          "The selected Docker authority did not return complete probe evidence.",
+          ["host.docker.daemon_reachable", "host.docker.runtime_supported"],
         ),
       );
     else if (host.dockerInstalled && !host.dockerReachable)

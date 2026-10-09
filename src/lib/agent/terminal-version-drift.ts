@@ -14,14 +14,11 @@
 // promoted image and every resumed sandbox satisfy the active manifest.
 
 import { parseVersionFromText } from "../adapters/openshell/client";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { evaluateStaleness } from "../sandbox/version-scheme";
 import type { AgentDefinition } from "./defs";
-
-export type RunCaptureOpenshell = (
-  args: string[],
-  opts?: { ignoreError?: boolean; timeout?: number },
-) => string | { output?: string | null } | null;
 
 export interface TerminalAgentVersionStale {
   status: "stale";
@@ -73,17 +70,17 @@ function unverifiedResult(
  * `unparseable-output` when the runtime cannot be verified. Unverified probes
  * never silently pass the version gate.
  */
-export function checkTerminalAgentVersion(
+export async function checkTerminalAgentVersion(
   sandboxName: string,
   agent: AgentDefinition,
-  runCaptureOpenshell: RunCaptureOpenshell,
-): TerminalAgentVersionCheck {
+  executor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<TerminalAgentVersionCheck> {
   const expectedVersion = agent.expectedVersion;
   if (!expectedVersion) {
     return { status: "not-required", installedVersion: null, expectedVersion: null };
   }
 
-  let result: ReturnType<RunCaptureOpenshell>;
+  let result;
   try {
     // `version_command` is shell-form input from repository-shipped agent
     // manifests. Keep this boundary aligned with terminal-smoke.ts; convert it
@@ -92,15 +89,20 @@ export function checkTerminalAgentVersion(
     // Pi's exact resource-limit login profile requires Bash because Ubuntu
     // /bin/sh cannot inspect nproc.
     const shellPath = agent.name === "pi" ? "/bin/bash" : "sh";
-    result = runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", shellPath, "-lc", agent.versionCommand],
-      { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
-    );
+    result = await executor.runBuffered({
+      sandboxName,
+      target: selectedOpenShellGateway(),
+      command: [shellPath, "-lc", agent.versionCommand],
+      timeoutMilliseconds: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
   } catch {
     return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
   }
 
-  const output = typeof result === "string" ? result : (result?.output ?? null);
+  if (result.outcome.kind === "failed") {
+    return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
+  }
+  const output = result.stdout || null;
   if (!output) {
     return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
   }

@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
+  listHostGatewayRegistryEntries: vi.fn(),
   getSandbox: vi.fn(),
+  recordSandboxStopIntent: vi.fn(),
+  updateSandbox: vi.fn(),
   backupSandboxState: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
@@ -14,10 +17,12 @@ const mocks = vi.hoisted(() => ({
   startStoppedSandboxContainerForBackup: vi.fn(),
   backupStartedSandboxState: vi.fn(),
   returnSandboxContainerToStopped: vi.fn(),
+  startedSandboxBackupTransactionDeadline: vi.fn(() => 330_000),
+  retainStrictPreUpgradeRecoveryState: vi.fn(),
+  discardIncompleteBackup: vi.fn(),
   isSandboxContainerDefinitivelyAbsent: vi.fn(),
-  openBackupShieldsWindow: vi.fn(),
-  relockBackupShieldsWindow: vi.fn(),
   withSandboxMutationLock: vi.fn(),
+  enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
   assertNoHermesPortableHostAuthority: vi.fn(),
   defaultPortableStateDir: vi.fn(),
   withPortableHostFence: vi.fn(),
@@ -49,6 +54,13 @@ vi.mock("../state/registry", () => ({
     entry.pendingRouteReservation !== true,
   listSandboxes: mocks.listSandboxes,
   getSandbox: mocks.getSandbox,
+  recordSandboxStopIntent: mocks.recordSandboxStopIntent,
+  updateSandbox: mocks.updateSandbox,
+}));
+vi.mock("../state/registry/lock", () => ({ withRegistryLockAt: vi.fn() }));
+vi.mock("../state/gateway-registry", async () => ({
+  resolveHome: (await import("../state/state-root")).resolveHome,
+  listHostGatewayRegistryEntries: mocks.listHostGatewayRegistryEntries,
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
@@ -57,13 +69,20 @@ vi.mock("../state/sandbox", () => ({
 vi.mock("../state/mcp-lifecycle-lock", () => ({
   withSandboxMutationLock: mocks.withSandboxMutationLock,
 }));
+vi.mock("../state/migrations/removed-immutability", () => ({
+  enforceRemovedImmutabilityMigrationBoundary: mocks.enforceRemovedImmutabilityMigrationBoundary,
+}));
 vi.mock("../state/portable-uninstall-retirement", () => ({
   assertNoHermesPortableHostAuthority: mocks.assertNoHermesPortableHostAuthority,
   defaultPortableStateDir: mocks.defaultPortableStateDir,
   withPortableHostFence: mocks.withPortableHostFence,
 }));
 vi.mock("./sandbox/snapshot/backup-authority", () => ({
-  backupSandboxStateWithManagedAuthority: (name: string) => mocks.backupSandboxState(name),
+  backupSandboxStateWithManagedAuthority: (name: string, options: Record<string, unknown>) =>
+    Object.keys(options).length > 0
+      ? mocks.backupSandboxState(name, options)
+      : mocks.backupSandboxState(name),
+  discardIncompleteBackup: mocks.discardIncompleteBackup,
 }));
 vi.mock("../openshell-sandbox-list", () => ({
   captureSandboxListWithGatewayPreflightOrExit: mocks.captureSandboxListWithGatewayPreflightOrExit,
@@ -91,17 +110,16 @@ vi.mock("./sandbox/stopped-sandbox-backup", () => ({
   backupStartedSandboxState: mocks.backupStartedSandboxState,
   returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
   isSandboxContainerDefinitivelyAbsent: mocks.isSandboxContainerDefinitivelyAbsent,
+  startedSandboxBackupTransactionDeadline: mocks.startedSandboxBackupTransactionDeadline,
+  startedSandboxBackupWorkDeadline: (transactionDeadlineMs: number) =>
+    transactionDeadlineMs - 30_000,
 }));
-vi.mock("./sandbox/backup-shields-window", () => ({
-  openBackupShieldsWindow: mocks.openBackupShieldsWindow,
-  relockBackupShieldsWindow: mocks.relockBackupShieldsWindow,
+vi.mock("./sandbox/snapshot/strict-pre-upgrade-recovery", () => ({
+  retainStrictPreUpgradeRecoveryState: mocks.retainStrictPreUpgradeRecoveryState,
 }));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
 }));
-
-// ../domain/maintenance/images is left unmocked so the gc tests run the real
-// orphan-detection helpers and can assert on gc's actual output.
 
 import {
   backupAll,
@@ -115,6 +133,9 @@ describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
+    mocks.retainStrictPreUpgradeRecoveryState.mockImplementation(
+      async (_sandbox, result) => result,
+    );
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     readySandboxNames = new Set(["sb-good", "sb-bad"]);
     liveSandboxNames = new Set();
@@ -127,12 +148,9 @@ describe("backupAll", () => {
     mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(false);
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
     mocks.returnSandboxContainerToStopped.mockReturnValue(true);
-    mocks.openBackupShieldsWindow.mockImplementation(() => ({
-      relocked: false,
-      wasLocked: false,
-    }));
-    mocks.relockBackupShieldsWindow.mockReturnValue(true);
+    mocks.recordSandboxStopIntent.mockReturnValue(true);
     mocks.withSandboxMutationLock.mockImplementation(runSandboxMutationAction);
+    mocks.enforceRemovedImmutabilityMigrationBoundary.mockReset();
     mocks.assertNoHermesPortableHostAuthority.mockReset();
     mocks.defaultPortableStateDir.mockImplementation(
       (env: NodeJS.ProcessEnv) => env.NEMOCLAW_TEST_STATE_DIR ?? `${env.HOME}/.nemoclaw`,
@@ -171,7 +189,10 @@ describe("backupAll", () => {
   });
 
   it("returns before gateway preflight when no sandboxes are registered", async () => {
-    mocks.listSandboxes.mockReturnValue({ sandboxes: [], defaultSandbox: null });
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [],
+      defaultSandbox: null,
+    });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await backupAll();
@@ -318,6 +339,7 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.withSandboxMutationLock.mockRejectedValueOnce(
       new Error("Timed out waiting for the sandbox mutation lock"),
@@ -332,9 +354,34 @@ describe("backupAll", () => {
 
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(mocks.startStoppedSandboxContainerForBackup).not.toHaveBeenCalled();
-    expect(mocks.openBackupShieldsWindow).not.toHaveBeenCalled();
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
     expect(mocks.returnSandboxContainerToStopped).not.toHaveBeenCalled();
+  });
+
+  it("checks retired immutability recovery artifacts inside the mutation lock", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    readySandboxNames = new Set(["alpha"]);
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.enforceRemovedImmutabilityMigrationBoundary).toHaveBeenCalledWith("alpha", {
+      allowStateRecord: true,
+    });
+    expect(
+      mocks.enforceRemovedImmutabilityMigrationBoundary.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.backupSandboxState.mock.invocationCallOrder[0]);
   });
 
   it("does not back up when gateway preflight exits", async () => {
@@ -395,84 +442,12 @@ describe("backupAll", () => {
     logSpy.mockRestore();
   });
 
-  it("keeps each Shields window, backup, and relock in one lifecycle transaction (#7952)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "alpha" }, { name: "beta" }],
-      defaultSandbox: "alpha",
-    });
-    readySandboxNames = new Set(["alpha", "beta"]);
-    const events: string[] = [];
-    mocks.withSandboxMutationLock.mockImplementation(
-      async (name: string, action: () => unknown) => {
-        events.push(`lock:start:${name}`);
-        try {
-          return await action();
-        } finally {
-          events.push(`lock:end:${name}`);
-        }
-      },
-    );
-    mocks.openBackupShieldsWindow.mockImplementation(
-      (
-        name: string,
-        options: {
-          allowLegacyHermesProtocol?: boolean;
-          deferAutoRestoreWhileOwnerAlive?: boolean;
-          shieldsUpCommand: string;
-        },
-      ) => {
-        events.push(`open:${name}`);
-        expect(options.allowLegacyHermesProtocol).toBeUndefined();
-        expect(options.deferAutoRestoreWhileOwnerAlive).toBeUndefined();
-        expect(options.shieldsUpCommand).toBe(`nemoclaw ${name} shields up`);
-        return { relocked: false, wasLocked: true };
-      },
-    );
-    mocks.backupSandboxState.mockImplementation((name: string) => {
-      events.push(`backup:${name}`);
-      return {
-        success: true,
-        backedUpDirs: ["workspace"],
-        failedDirs: [],
-        backedUpFiles: [],
-        failedFiles: [],
-        manifest: { backupPath: `/backups/${name}/timestamp` },
-      };
-    });
-    mocks.relockBackupShieldsWindow.mockImplementation(
-      (name: string, window: { relocked: boolean }) => {
-        events.push(`relock:${name}`);
-        window.relocked = true;
-        return true;
-      },
-    );
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    await backupAll();
-
-    expect(events).toEqual([
-      "lock:start:alpha",
-      "open:alpha",
-      "backup:alpha",
-      "relock:alpha",
-      "lock:end:alpha",
-      "lock:start:beta",
-      "open:beta",
-      "backup:beta",
-      "relock:beta",
-      "lock:end:beta",
-    ]);
-    expect(mocks.withSandboxMutationLock).toHaveBeenNthCalledWith(1, "alpha", expect.any(Function));
-    expect(mocks.withSandboxMutationLock).toHaveBeenNthCalledWith(2, "beta", expect.any(Function));
-  });
-
-  it("relocks shields after a credential permission failure and keeps the failure hard (#6455)", async () => {
+  it("keeps a credential permission failure hard (#6455)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "alpha" }],
       defaultSandbox: "alpha",
     });
     readySandboxNames = new Set(["alpha"]);
-    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
     mocks.backupSandboxState.mockReturnValue({
       success: false,
       backedUpDirs: ["workspace"],
@@ -489,138 +464,10 @@ describe("backupAll", () => {
 
     await expect(backupAll()).rejects.toThrow("exit:1");
 
-    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
       "backup failed (credentials (permission denied))",
     );
-  });
-
-  it("counts an unlock failure and continues with later sandboxes (#6455)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "alpha" }, { name: "beta" }],
-      defaultSandbox: "alpha",
-    });
-    readySandboxNames = new Set(["alpha", "beta"]);
-    mocks.openBackupShieldsWindow.mockImplementation((name: string) =>
-      name === "alpha" ? null : { relocked: false, wasLocked: false },
-    );
-    mocks.backupSandboxState.mockImplementation((name: string) => ({
-      success: true,
-      backedUpDirs: ["workspace"],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      manifest: { backupPath: `/backups/${name}/timestamp` },
-    }));
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
-
-    await expect(backupAll()).rejects.toThrow("exit:1");
-
-    expect(mocks.backupSandboxState).toHaveBeenCalledTimes(1);
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("beta");
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "alpha: backup failed (could not safely unlock shields)",
-    );
-    expect(logSpy.mock.calls.flat().join("\n")).toContain("1 backed up, 1 failed, 0 skipped");
-  });
-
-  it("aborts remaining backups when shields cannot be restored (#6455)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "alpha" }, { name: "beta" }],
-      defaultSandbox: "alpha",
-    });
-    readySandboxNames = new Set(["alpha", "beta"]);
-    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
-    mocks.backupSandboxState.mockReturnValue({
-      success: true,
-      backedUpDirs: ["workspace"],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      manifest: { backupPath: "/backups/alpha/timestamp" },
-    });
-    mocks.relockBackupShieldsWindow.mockReturnValue(false);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    await expect(backupAll()).rejects.toThrow(
-      "Shields lockdown could not be restored for 'alpha' after backup-all",
-    );
-
-    expect(mocks.backupSandboxState).toHaveBeenCalledTimes(1);
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("alpha");
-    expect(mocks.openBackupShieldsWindow).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves a backup error when shields restoration also fails (#6455)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "alpha" }],
-      defaultSandbox: "alpha",
-    });
-    readySandboxNames = new Set(["alpha"]);
-    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
-    const backupError = new Error("EACCES: permission denied, open '/var/backups/state'");
-    mocks.backupSandboxState.mockImplementation(() => {
-      throw backupError;
-    });
-    const relockError = new Error("policy restore failed");
-    mocks.relockBackupShieldsWindow.mockImplementation(() => {
-      throw relockError;
-    });
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    const failure = await backupAll().catch((error: unknown) => error);
-
-    expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
-    expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).message).toContain(
-      "Backup for 'alpha' failed and Shields lockdown could not be restored",
-    );
-    expect((failure as AggregateError).errors).toEqual([
-      backupError,
-      expect.objectContaining({
-        cause: relockError,
-        message: expect.stringContaining(
-          "Shields lockdown could not be restored for 'alpha' after backup-all",
-        ),
-      }),
-    ]);
-    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
-  });
-
-  it("preserves an orphan-manifest error when shields restoration also fails (#6455)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "alpha" }],
-      defaultSandbox: "alpha",
-    });
-    readySandboxNames = new Set(["alpha"]);
-    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
-    const orphanMessage = "Agent 'alpha' not found: /agents/alpha/manifest.yaml";
-    mocks.backupSandboxState.mockImplementation(() => {
-      throw new Error(orphanMessage);
-    });
-    mocks.relockBackupShieldsWindow.mockReturnValue(false);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    const failure = await backupAll().catch((error: unknown) => error);
-
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).message).toContain(
-      "encountered an orphan manifest and Shields lockdown could not be restored",
-    );
-    expect((failure as AggregateError).errors).toEqual([
-      expect.objectContaining({ message: orphanMessage }),
-      expect.objectContaining({
-        message: expect.stringContaining(
-          "Shields lockdown could not be restored for 'alpha' after backup-all",
-        ),
-      }),
-    ]);
   });
 
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
@@ -696,7 +543,12 @@ describe("backupAll", () => {
       manifest: { backupPath: "/backups/sb-good/timestamp" },
     });
     mocks.startStoppedSandboxContainerForBackup.mockImplementation((name: string) =>
-      name === "sb-stopped" ? { containerName: "openshell-sb-stopped-abc" } : null,
+      name === "sb-stopped"
+        ? {
+            containerName: "openshell-sb-stopped-abc",
+            runtimeProviderId: "docker",
+          }
+        : null,
     );
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: true,
@@ -713,13 +565,23 @@ describe("backupAll", () => {
     }) as never);
 
     await backupAll();
-
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped");
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
-    expect(mocks.relockBackupShieldsWindow.mock.invocationCallOrder.at(-1)!).toBeLessThan(
-      mocks.returnSandboxContainerToStopped.mock.invocationCallOrder.at(-1)!,
+    expect(mocks.startStoppedSandboxContainerForBackup).toHaveBeenCalledWith("sb-stopped", {
+      deadlineMs: 330_000,
+    });
+    expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped", {
+      deadlineMs: 330_000,
+      deferSanitizationDeadlineCleanup: true,
+      deferCompletionPublication: true,
+    });
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
+      {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      },
+      {
+        deadlineMs: 330_000,
+      },
     );
     const logOutput = logSpy.mock.calls.flat().join("\n");
     expect(logOutput).toContain("Starting stopped sandbox 'sb-stopped' to back it up");
@@ -727,7 +589,6 @@ describe("backupAll", () => {
     expect(logOutput).toContain("2 backed up, 0 failed, 0 skipped");
     expect(logOutput).not.toContain("Skipping 'sb-stopped'");
   });
-
   it("keeps the stopped-container lifecycle inside one backup transaction (#7952)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-stopped" }],
@@ -752,12 +613,10 @@ describe("backupAll", () => {
     mocks.startStoppedSandboxContainerForBackup.mockImplementation((name: string) => {
       expect(lockActive).toBe(true);
       events.push(`start:${name}`);
-      return { containerName: "openshell-sb-stopped-abc" };
-    });
-    mocks.openBackupShieldsWindow.mockImplementation((name: string) => {
-      expect(lockActive).toBe(true);
-      events.push(`open:${name}`);
-      return { relocked: false, wasLocked: true };
+      return {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      };
     });
     mocks.backupStartedSandboxState.mockImplementation(async (name: string) => {
       expect(lockActive).toBe(true);
@@ -771,14 +630,14 @@ describe("backupAll", () => {
         manifest: { backupPath: "/backups/sb-stopped/timestamp" },
       };
     });
-    mocks.relockBackupShieldsWindow.mockImplementation((name: string) => {
-      expect(lockActive).toBe(true);
-      events.push(`relock:${name}`);
-      return true;
-    });
     mocks.returnSandboxContainerToStopped.mockImplementation(() => {
       expect(lockActive).toBe(true);
       events.push("stop:sb-stopped");
+      return true;
+    });
+    mocks.recordSandboxStopIntent.mockImplementation(() => {
+      expect(lockActive).toBe(true);
+      events.push("retain-stop:sb-stopped");
       return true;
     });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -788,10 +647,9 @@ describe("backupAll", () => {
     expect(events).toEqual([
       "lock:start:sb-stopped",
       "start:sb-stopped",
-      "open:sb-stopped",
       "backup:sb-stopped",
-      "relock:sb-stopped",
       "stop:sb-stopped",
+      "retain-stop:sb-stopped",
       "lock:end:sb-stopped",
     ]);
     expect(lockActive).toBe(false);
@@ -799,7 +657,7 @@ describe("backupAll", () => {
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-stopped", expect.any(Function));
   });
 
-  it("returns the container to stopped and counts a failure when the started backup fails (#6500)", async () => {
+  it("fails strict backup when stopped-state intent cannot be retained", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-stopped" }],
       defaultSandbox: null,
@@ -807,28 +665,249 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    mocks.recordSandboxStopIntent.mockReturnValue(false);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(backupAll()).rejects.toThrow("could not retain that lifecycle intent");
+
+    expect(mocks.recordSandboxStopIntent).toHaveBeenCalledWith(
+      "sb-stopped",
+      true,
+      mocks.updateSandbox,
+    );
+  });
+
+  it("retains strict pre-upgrade recovery state inside the sandbox mutation lock", async () => {
+    const sandbox = { name: "sb-good", gatewayName: "nemoclaw" };
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [sandbox],
+      defaultSandbox: "sb-good",
+    });
+    readySandboxNames = new Set(["sb-good"]);
+    const manifest = { backupPath: "/backups/sb-good/timestamp" };
+    const events: string[] = [];
+    let lockActive = false;
+    mocks.withSandboxMutationLock.mockImplementation(
+      async (name: string, action: () => unknown) => {
+        events.push(`lock:start:${name}`);
+        lockActive = true;
+        try {
+          return await action();
+        } finally {
+          lockActive = false;
+          events.push(`lock:end:${name}`);
+        }
+      },
+    );
+    mocks.backupSandboxState.mockImplementation(() => {
+      expect(lockActive).toBe(true);
+      events.push("backup");
+      return {
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest,
+      };
+    });
+    mocks.retainStrictPreUpgradeRecoveryState.mockImplementation(
+      async (receivedSandbox, receivedResult) => {
+        expect(lockActive).toBe(true);
+        expect(receivedSandbox).toBe(sandbox);
+        expect(receivedResult.manifest).toBe(manifest);
+        events.push("retain-recovery");
+        return receivedResult;
+      },
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAllUnderPortableHostFence({
+      purpose: "pre-upgrade",
+      requireAll: true,
+    });
+    expect(events).toEqual(["lock:start:sb-good", "backup", "retain-recovery", "lock:end:sb-good"]);
+    expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledWith(
+      sandbox,
+      expect.objectContaining({ manifest }),
+      { gatewayName: "nemoclaw", workspace: "default" },
+      undefined,
+    );
+  });
+  it.each([
+    { purpose: "pre-upgrade" as const, requireAll: false },
+    { purpose: "pre-uninstall" as const, requireAll: true },
+  ])(
+    "does not retain policy for $purpose when requireAll=$requireAll",
+    async ({ purpose, requireAll }) => {
+      mocks.listSandboxes.mockReturnValue({
+        sandboxes: [{ name: "sb-good" }],
+        defaultSandbox: "sb-good",
+      });
+      readySandboxNames = new Set(["sb-good"]);
+      mocks.backupSandboxState.mockReturnValue({
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest: { backupPath: "/backups/sb-good/timestamp" },
+      });
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await backupAllUnderPortableHostFence({ purpose, requireAll });
+
+      expect(mocks.retainStrictPreUpgradeRecoveryState).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns a started container to stopped when strict recovery retention fails", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: "sb-stopped",
+    });
+    readySandboxNames = new Set();
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    mocks.retainStrictPreUpgradeRecoveryState.mockRejectedValue(
+      new Error("recorded gateway is unavailable"),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      backupAllUnderPortableHostFence({
+        purpose: "pre-upgrade",
+        requireAll: true,
+      }),
+    ).rejects.toThrow("recorded gateway is unavailable");
+
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
+      {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      },
+      {
+        deadlineMs: 330_000,
+      },
+    );
+    expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the cleanup reserve exclusive when strict recovery retention consumes the backup deadline (#11936)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: "sb-stopped",
+    });
+    readySandboxNames = new Set();
+    const started = { containerName: "container", runtimeProviderId: "docker" };
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue(started);
+    mocks.startedSandboxBackupTransactionDeadline
+      .mockReturnValueOnce(330_000)
+      .mockReturnValueOnce(360_000);
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    mocks.retainStrictPreUpgradeRecoveryState.mockImplementation(async (_sandbox, result) => {
+      now = 400_000;
+      return result;
+    });
+    const stopClock: number[] = [];
+    mocks.returnSandboxContainerToStopped.mockImplementation(() => {
+      stopClock.push(Date.now());
+      return true;
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAllUnderPortableHostFence({
+      purpose: "pre-upgrade",
+      requireAll: true,
+    });
+
+    expect(mocks.retainStrictPreUpgradeRecoveryState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { gatewayName: "nemoclaw", workspace: "default" },
+      330_000,
+    );
+    expect(stopClock).toEqual([400_000]);
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(started, {
+      deadlineMs: 360_000,
+    });
+    expect(mocks.recordSandboxStopIntent).toHaveBeenCalledWith(
+      "sb-stopped",
+      true,
+      expect.anything(),
+    );
+  });
+  it("removes a rejected partial strict snapshot after a failed stopped-state restoration (#11936)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    readySandboxNames = new Set();
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: false,
+      error: "symlink audit failed; partial permission cleanup timed out",
       backedUpDirs: [],
-      failedDirs: ["identity"],
-      failedDirReasons: { identity: "permission denied" },
+      failedDirs: [],
       backedUpFiles: [],
       failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/incomplete" },
     });
+    mocks.discardIncompleteBackup.mockImplementation((_sandbox, result) => result);
+    mocks.returnSandboxContainerToStopped.mockReturnValue(false);
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(backupAll()).rejects.toThrow("exit:1");
+    await expect(backupAll()).rejects.toThrow(
+      "could not return its container to the stopped state",
+    );
 
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
-    expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "backup failed (identity (permission denied))",
+    expect(mocks.returnSandboxContainerToStopped.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.discardIncompleteBackup.mock.invocationCallOrder[0],
+    );
+    expect(mocks.discardIncompleteBackup.mock.calls[0]?.[2]).toBeGreaterThan(Date.now());
+    expect(mocks.discardIncompleteBackup).toHaveBeenCalledWith(
+      "sb-stopped",
+      expect.objectContaining({
+        error: "symlink audit failed; partial permission cleanup timed out",
+        manifest: { backupPath: "/backups/sb-stopped/incomplete" },
+      }),
+      expect.any(Number),
+      "strict pre-upgrade",
     );
   });
 
@@ -840,6 +919,7 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.backupStartedSandboxState.mockResolvedValue({
       success: true,
@@ -862,61 +942,6 @@ describe("backupAll", () => {
     );
   });
 
-  it("keeps stopped-container cleanup in the transaction when Shields relock fails (#7952)", async () => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-stopped" }],
-      defaultSandbox: "sb-stopped",
-    });
-    readySandboxNames = new Set();
-    let lockActive = false;
-    mocks.withSandboxMutationLock.mockImplementation(
-      async (_name: string, action: () => unknown) => {
-        lockActive = true;
-        try {
-          return await action();
-        } finally {
-          lockActive = false;
-        }
-      },
-    );
-    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
-      containerName: "openshell-sb-stopped-abc",
-    });
-    mocks.openBackupShieldsWindow.mockReturnValue({ relocked: false, wasLocked: true });
-    mocks.backupStartedSandboxState.mockResolvedValue({
-      success: true,
-      backedUpDirs: ["workspace"],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
-    });
-    const relockError = new Error("policy restore failed");
-    mocks.relockBackupShieldsWindow.mockImplementation(() => {
-      expect(lockActive).toBe(true);
-      throw relockError;
-    });
-    mocks.returnSandboxContainerToStopped.mockImplementation(() => {
-      expect(lockActive).toBe(true);
-      return true;
-    });
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    const failure = await backupAll().catch((error: unknown) => error);
-
-    expect(failure).toEqual(
-      expect.objectContaining({
-        cause: relockError,
-        message: expect.stringContaining("Shields lockdown could not be restored"),
-      }),
-    );
-    expect(lockActive).toBe(false);
-    expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
-    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
-    expect(mocks.openBackupShieldsWindow).toHaveBeenCalledOnce();
-  });
-
   it("returns a started container to stopped when an orphan manifest skips backup (#6500)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-stopped" }],
@@ -925,6 +950,7 @@ describe("backupAll", () => {
     readySandboxNames = new Set();
     mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
       containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
     });
     mocks.backupStartedSandboxState.mockRejectedValue(
       new Error("Agent 'sb-stopped' not found: /path/to/manifest.yaml"),
@@ -933,7 +959,15 @@ describe("backupAll", () => {
 
     await backupAll();
 
-    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith(
+      {
+        containerName: "openshell-sb-stopped-abc",
+        runtimeProviderId: "docker",
+      },
+      {
+        deadlineMs: 330_000,
+      },
+    );
     const output = logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Returned 'sb-stopped' to its stopped state");
     expect(output).toContain("Skipped 'sb-stopped' (orphan manifest)");
@@ -1052,8 +1086,6 @@ describe("backupAll", () => {
     });
 
     await expect(backupAll()).rejects.toThrow(/EACCES/);
-
-    expect(mocks.relockBackupShieldsWindow).toHaveBeenCalledOnce();
   });
 
   it("re-throws an Agent-not-found message without the `: manifest.yaml` suffix (loadAgent contract)", async () => {
@@ -1227,7 +1259,7 @@ describe("backupAll", () => {
     );
     mocks.withSandboxMutationLock.mockImplementation((name: string, action: () => unknown) =>
       name === "sb-stranded"
-        ? Promise.reject(new Error("Sandbox mutation containment is active"))
+        ? Promise.reject(new Error("Sandbox mutation lock is unavailable"))
         : action(),
     );
     mocks.backupSandboxState.mockReturnValue({
@@ -1245,9 +1277,10 @@ describe("backupAll", () => {
     }) as never);
 
     await backupAll();
-
     expect(exitSpy).not.toHaveBeenCalled();
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good", {
+      deferCompletionPublication: true,
+    });
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledTimes(1);
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-good", expect.any(Function));
@@ -1393,13 +1426,19 @@ describe("backupAll", () => {
 describe("shouldSkipUnreachableSandboxBackup", () => {
   it("is true only for exactly '1'", () => {
     expect(
-      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "1" }),
+      shouldSkipUnreachableSandboxBackup({
+        NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "1",
+      }),
     ).toBe(true);
     expect(
-      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "0" }),
+      shouldSkipUnreachableSandboxBackup({
+        NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "0",
+      }),
     ).toBe(false);
     expect(
-      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "true" }),
+      shouldSkipUnreachableSandboxBackup({
+        NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "true",
+      }),
     ).toBe(false);
     expect(shouldSkipUnreachableSandboxBackup({})).toBe(false);
   });
@@ -1433,34 +1472,29 @@ describe("garbageCollectImages", () => {
     expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(stateDir, "gc");
   });
 
-  it("surfaces a local-repo orphan while preserving a registered local image (#6301)", async () => {
-    // Local repo holds an orphan (gc-test-orphan-111) plus a still-registered
-    // image (live-222); the gateway repo holds only an in-use image.
+  it.each([
+    "nemoclaw-sandbox-local",
+    "localhost:5000/nemoclaw-sandbox-local",
+    "127.0.0.1:5000/nemoclaw-sandbox-local",
+  ])("surfaces an orphan in %s while preserving a registered image (#6301)", async (imageRepo) => {
     mocks.dockerListImagesFormat.mockImplementation((repo: string) =>
-      repo === "nemoclaw-sandbox-local"
-        ? "nemoclaw-sandbox-local:gc-test-orphan-111\t3GB\nnemoclaw-sandbox-local:live-222\t2GB"
+      repo === imageRepo
+        ? `${imageRepo}:gc-test-orphan-111\t3GB\n${imageRepo}:live-222\t2GB`
         : "openshell/sandbox-from:in-use\t1GB",
     );
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [
-        { imageTag: "nemoclaw-sandbox-local:live-222" },
-        { imageTag: "openshell/sandbox-from:in-use" },
-      ],
-      defaultSandbox: null,
-    });
+    mocks.listHostGatewayRegistryEntries.mockReturnValue([
+      { entry: { imageTag: `${imageRepo}:live-222` } },
+      { entry: { imageTag: "openshell/sandbox-from:in-use" } },
+    ]);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-
     await garbageCollectImages({ dryRun: true });
-
     const out = logSpy.mock.calls.flat().join("\n");
     logSpy.mockRestore();
 
-    // The local orphan is reported, the still-registered local image is not,
-    // and both repos are scanned.
-    expect(out).toContain("nemoclaw-sandbox-local:gc-test-orphan-111");
-    expect(out).not.toContain("nemoclaw-sandbox-local:live-222");
-    const scannedRepos = mocks.dockerListImagesFormat.mock.calls.map((call) => call[0]);
-    expect(scannedRepos).toContain("openshell/sandbox-from");
-    expect(scannedRepos).toContain("nemoclaw-sandbox-local");
+    expect(out).toContain(`${imageRepo}:gc-test-orphan-111`);
+    expect(out).not.toContain(`${imageRepo}:live-222`);
+    expect(mocks.dockerListImagesFormat.mock.calls.map((call) => call[0])).toEqual(
+      expect.arrayContaining(["openshell/sandbox-from", imageRepo]),
+    );
   });
 });

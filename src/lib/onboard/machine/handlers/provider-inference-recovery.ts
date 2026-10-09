@@ -59,9 +59,9 @@ export function createRecovery(
   const receipt = options.recoveryReceipt ?? null;
   const receiptAuthorizesIncompleteSession = Boolean(
     receipt &&
-      receipt.sessionId &&
-      receipt.sessionId === sessionId &&
-      receipt.sandboxName === sandboxName,
+    receipt.sessionId &&
+    receipt.sessionId === sessionId &&
+    receipt.sandboxName === sandboxName,
   );
   const now = options.now ?? (() => Date.now());
   return {

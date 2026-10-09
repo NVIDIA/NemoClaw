@@ -13,6 +13,7 @@ import {
   releaseOnboardLock,
   type LockResult,
 } from "../state/onboard-session";
+import { inspectCheckpoint } from "../state/onboard-checkpoint";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../state/hermes-portable-uninstall/journal";
 import {
   inspectPortableOnboardSupersession,
@@ -145,6 +146,19 @@ function completedSession(bytes: Buffer, expected?: Profile) {
   return session;
 }
 
+function assertMatchingRegistryAgent(
+  sandboxName: string,
+  agent: string,
+  rawEntry: Record<string, unknown>,
+  row: Registry["sandboxes"][string],
+): void {
+  const matchesAgent = row.agent === agent || (agent === "openclaw" && row.agent === null);
+  if (rawEntry.agent === row.agent && matchesAgent) return;
+  throw new Error(
+    `Completed onboarding registry field "agent" does not match trusted onboarding for sandbox ${JSON.stringify(sandboxName)}. Restore the registry entry from trusted completed-onboarding state, then retry uninstall.`,
+  );
+}
+
 function verifyAuthority(
   boundary: PortableOnboardRetirementBoundary,
   expected: Profile,
@@ -178,17 +192,8 @@ function verifyAuthority(
   if (!fs.readFileSync(boundary.registryFile).equals(registryBytes))
     throw new Error("Completed onboarding registry changed while normalizing");
   const row = registry.sandboxes[sandboxName];
-  const matchesRegistryAgent = (agent: unknown) =>
-    agent === identity?.agent || (identity?.agent === "openclaw" && agent === null);
-  if (
-    identity &&
-    rawEntry &&
-    row &&
-    (rawEntry.agent !== row.agent || !matchesRegistryAgent(row.agent))
-  )
-    throw new Error(
-      `Completed onboarding registry field "agent" does not match trusted onboarding for sandbox ${JSON.stringify(sandboxName)}. Restore the registry entry from trusted completed-onboarding state, then retry uninstall.`,
-    );
+  if (identity && rawEntry && row)
+    assertMatchingRegistryAgent(sandboxName, identity.agent, rawEntry, row);
   if (
     !identity ||
     !gateway ||
@@ -297,6 +302,103 @@ function artifactDirectory(homeDir: string, root: "config" | "receipt" | "regist
     : root === "receipt"
       ? path.join(homeDir, ".nemoclaw/portable-demo-lifecycle")
       : path.join(homeDir, ".nemoclaw");
+}
+
+/** Report whether this host owns a portable lifecycle receipt. */
+function ownsPortableLifecycleReceipt(boundary: PortableOnboardRetirementBoundary): boolean {
+  return (
+    readPortableAuthorityDirectory(
+      path.join(boundary.homeDir, ".nemoclaw/portable-demo-lifecycle"),
+      false,
+    ).entries.length > 0
+  );
+}
+
+function assertOrdinaryOnboardAuthority(
+  boundary: PortableOnboardRetirementBoundary,
+  rawSession: Record<string, unknown>,
+  checkpoint: ReturnType<typeof inspectCheckpoint> & { status: "loaded" },
+  deps: PortableAuthorityAdmissionDeps,
+): void {
+  const { sandboxIdentity, gatewayAuthority } = checkpoint.checkpoint;
+  const rawMachine = rawSession.machine;
+  const sandboxNameCleared = rawSession.sandboxName === null;
+  if (
+    rawSession.version !== 1 ||
+    typeof rawSession.sessionId !== "string" ||
+    checkpoint.checkpoint.sessionId !== rawSession.sessionId ||
+    !rawMachine ||
+    typeof rawMachine !== "object" ||
+    Array.isArray(rawMachine) ||
+    (rawMachine as Record<string, unknown>).version !== 1 ||
+    (rawMachine as Record<string, unknown>).state !== "complete" ||
+    !Number.isSafeInteger((rawMachine as Record<string, unknown>).revision) ||
+    ((rawMachine as Record<string, unknown>).revision as number) < 0 ||
+    checkpoint.checkpoint.machineState !== "complete" ||
+    (!sandboxNameCleared &&
+      (typeof rawSession.sandboxName !== "string" || !rawSession.sandboxName)) ||
+    (rawSession.agent !== null && typeof rawSession.agent !== "string") ||
+    sandboxIdentity.kind !== "selected" ||
+    (!sandboxNameCleared && sandboxIdentity.value.name !== rawSession.sandboxName) ||
+    sandboxIdentity.value.agent !== (rawSession.agent ?? "openclaw") ||
+    gatewayAuthority.kind !== "selected"
+  ) {
+    throw new Error("Completed ordinary onboarding identity is incomplete");
+  }
+  const bytes = readPortableAuthoritySnapshot(boundary.registryFile);
+  if (!bytes) throw new Error("Completed onboarding registry is missing");
+  const rawRegistry = strictJson(bytes, "Completed onboarding registry");
+  const rawSandboxes = rawRegistry.sandboxes;
+  if (!rawSandboxes || typeof rawSandboxes !== "object" || Array.isArray(rawSandboxes))
+    throw new Error("Completed onboarding registry authority is incomplete");
+  const rawRow = (rawSandboxes as Record<string, unknown>)[sandboxIdentity.value.name];
+  const rawEntry =
+    rawRow && typeof rawRow === "object" && !Array.isArray(rawRow)
+      ? (rawRow as Record<string, unknown>)
+      : null;
+  if (!fs.readFileSync(boundary.registryFile).equals(bytes))
+    throw new Error("Completed onboarding registry bytes changed before normalization");
+  const registry = deps.loadRegistry();
+  if (!fs.readFileSync(boundary.registryFile).equals(bytes))
+    throw new Error("Completed onboarding registry changed while normalizing");
+  if (sandboxNameCleared) {
+    // `destroy` clears the completed session's sandboxName after it removes
+    // the last registry row. Accept that state only when no sandbox remains.
+    if (
+      rawRegistry.defaultSandbox !== null ||
+      Object.keys(rawSandboxes).length !== 0 ||
+      registry.defaultSandbox !== null ||
+      Object.keys(registry.sandboxes).length !== 0
+    ) {
+      throw new Error("Completed ordinary onboarding registry authority is incomplete");
+    }
+    return;
+  }
+  if (!rawEntry || rawRegistry.defaultSandbox !== sandboxIdentity.value.name)
+    throw new Error("Completed onboarding registry authority is incomplete");
+  const row = registry.sandboxes[sandboxIdentity.value.name];
+  if (!row || registry.defaultSandbox !== sandboxIdentity.value.name)
+    throw new Error("Completed onboarding registry authority is incomplete");
+  assertMatchingRegistryAgent(
+    sandboxIdentity.value.name,
+    sandboxIdentity.value.agent,
+    rawEntry,
+    row,
+  );
+  if (
+    rawEntry.name !== sandboxIdentity.value.name ||
+    row.name !== sandboxIdentity.value.name ||
+    rawEntry.openshellDriver !== "docker" ||
+    row.openshellDriver !== "docker" ||
+    rawEntry.pendingRouteReservation === true ||
+    row.pendingRouteReservation === true ||
+    rawEntry.gatewayName !== gatewayAuthority.value.gatewayName ||
+    row.gatewayName !== gatewayAuthority.value.gatewayName ||
+    rawEntry.gatewayPort !== gatewayAuthority.value.gatewayPort ||
+    row.gatewayPort !== gatewayAuthority.value.gatewayPort
+  ) {
+    throw new Error("Completed ordinary onboarding registry authority is incomplete");
+  }
 }
 
 function rejectUnknownRetirementArtifacts(
@@ -456,7 +558,20 @@ async function recover(
     );
     return;
   }
-  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, recovery !== null);
+  // A host that owns no portable lifecycle resource has no portable authority
+  // to protect, so an abandoned `~/.config/nemoclaw/portable` must not gate an
+  // ordinary onboarding. `admission()` already draws that line for the same
+  // directory, and `hasPortableUninstallAuthority` draws it for uninstall
+  // (#10545). Onboarding is the last path that inspected it unconditionally,
+  // which refused every run on a host where an empty directory survived at an
+  // ordinary umask (#10740).
+  rejectUnknownRetirementArtifacts(
+    boundary.homeDir,
+    recovery,
+    recovery !== null,
+    false,
+    recovery !== null || ownsPortableLifecycleReceipt(boundary),
+  );
   if (!recovery) return;
   await resumeBeforeOnboard(boundary, recovery, deps);
   const completed = inspectPortableRetirementRecovery(boundary.homeDir);
@@ -500,6 +615,20 @@ export function hasPortableUninstallAuthority(
     if (sessionBytes) {
       const raw = strictJson(sessionBytes, "Onboarding session");
       if (raw.status === "complete" && raw.resumable === false) {
+        const inspected = inspectCheckpoint(raw.checkpoint);
+        if (inspected.status !== "loaded" || inspected.checkpoint.profile.kind !== "selected") {
+          throw new Error("Completed onboarding profile authority is incomplete");
+        }
+        if (inspected.checkpoint.profile.value === "default") {
+          if (inspected.checkpoint.runtimeAuthority.kind !== "unset") {
+            throw new Error("Completed ordinary onboarding has portable runtime authority");
+          }
+          assertOrdinaryOnboardAuthority(boundary, raw, inspected, deps);
+          // No receipt or retirement record exists to authorize Portable cleanup.
+          // Ordinary teardown does not need the rest of a historical onboarding
+          // session to satisfy the stricter Portable retirement contract.
+          return false;
+        }
         const session = completedSession(sessionBytes);
         const profile = session.checkpoint!.profile.value;
         provePortableOnboardAuthority(admission(boundary, profile, deps));
@@ -551,7 +680,17 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
   deps: PortableRetirementAuthorityDeps,
 ): Promise<void> {
   const recovery = inspectPortableOnboardSupersession(boundary.homeDir);
-  if (recovery === null) return rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
+  // Same rule as the entry gate, so a completed ordinary onboarding cannot be
+  // failed at its last step by the directory it was already admitted past, and
+  // a host that gained a lifecycle receipt during the run is still inspected.
+  if (recovery === null)
+    return rejectUnknownRetirementArtifacts(
+      boundary.homeDir,
+      recovery,
+      true,
+      false,
+      expected === "portable" || ownsPortableLifecycleReceipt(boundary),
+    );
   await lockedAuthority(boundary, expected, deps, (authority) =>
     supersedePortableRetirementAfterOnboard(boundary.homeDir, authority),
   );
@@ -561,13 +700,15 @@ export function printPortableOnboardLockContention(
   displayName: string,
   lockResult: LockResult,
 ): void {
-  console.error(`  Another ${displayName} onboarding run is already in progress.`);
-  if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
+  console.error(`  Could not acquire the ${displayName} onboarding lock.`);
+  if (lockResult.holderPid) console.error(`  Recorded lock PID: ${lockResult.holderPid}`);
   if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
-  console.error("  Wait for the active onboarding run to finish.");
   console.error(
-    "  If the recorded process is no longer running, rerun this command; NemoClaw verifies stale ownership before removing its lock.",
+    lockResult.holderPid
+      ? "  Wait for any active onboarding run to finish before retrying."
+      : "  The lock has no verified owner. Wait briefly before retrying.",
   );
+  console.error("  Rerun this command to retry lock acquisition.");
 }
 
 export function beginPortableOnboardRetirementEntry(

@@ -48,11 +48,11 @@ describe("credentials CLI dispatch", () => {
 
   it("credentials add declares its help usage, description, and flags", () => {
     expect(CredentialsAddCommand.usage).toContain(
-      "credentials add <PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]",
+      "credentials add <PROVIDER> --type <TYPE> [--agent AGENT] [--credential ENV_NAME] [--config K=V] [--from-existing]",
     );
     expect(CredentialsAddCommand.description).toContain("Register a provider credential");
     expect(Object.keys(CredentialsAddCommand.flags)).toEqual(
-      expect.arrayContaining(["type", "credential", "from-existing"]),
+      expect.arrayContaining(["type", "agent", "credential", "from-existing"]),
     );
   });
 

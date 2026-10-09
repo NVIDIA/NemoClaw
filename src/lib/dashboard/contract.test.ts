@@ -28,10 +28,10 @@ describe("buildChain", () => {
     expect(c.forwardTarget).toBe("19000");
   });
 
-  it("binds to 0.0.0.0 for non-loopback URL and includes both CORS origins", () => {
+  it("keeps a loopback bind for a non-loopback URL and includes both CORS origins", () => {
     const c = buildChain({ chatUiUrl: "https://my-brev-host.example.com:18789" });
-    expect(c.forwardTarget).toBe("0.0.0.0:18789");
-    expect(c.bindAddress).toBe("0.0.0.0");
+    expect(c.forwardTarget).toBe("18789");
+    expect(c.bindAddress).toBe("127.0.0.1");
     expect(c.corsOrigins[0]).toBe("http://127.0.0.1:18789");
     expect(c.corsOrigins).toContain("https://my-brev-host.example.com:18789");
     expect(c.shouldDisableDeviceAuth).toBe(true);
@@ -104,7 +104,7 @@ describe("buildChain", () => {
   it("canonicalizes schemeless non-loopback URLs", () => {
     const c = buildChain({ chatUiUrl: "remote-host:18789" });
     expect(c.accessUrl).toBe("http://remote-host:18789");
-    expect(c.forwardTarget).toBe("0.0.0.0:18789");
+    expect(c.forwardTarget).toBe("18789");
     expect(c.shouldDisableDeviceAuth).toBe(true);
   });
 
@@ -118,6 +118,12 @@ describe("buildChain", () => {
 
   // #3259 — explicit operator opt-in to bind dashboard on all interfaces
   // for remote-SSH-deployed hosts (Brev / cloud workstations).
+  it("does not widen the bind when only a non-loopback CHAT_UI_URL is configured", () => {
+    const c = buildChain({ chatUiUrl: "https://dashboard.example.com:18789" });
+    expect(c.forwardTarget).toBe("18789");
+    expect(c.bindAddress).toBe("127.0.0.1");
+  });
+
   it("binds to 0.0.0.0 when bindOverride='0.0.0.0' is set, even for loopback URL", () => {
     const c = buildChain({ chatUiUrl: "http://127.0.0.1:18789", bindOverride: "0.0.0.0" });
     expect(c.forwardTarget).toBe("0.0.0.0:18789");

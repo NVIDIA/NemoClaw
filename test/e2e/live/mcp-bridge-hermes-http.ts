@@ -1,8 +1,31 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { redactString } from "../fixtures/redaction.ts";
+
+/** Capture supervisor evidence even when sandbox exec is unavailable; never replace the failure. */
+export async function captureHermesMcpLifecycleFailure(
+  host: Pick<HostCliClient, "command" | "openshellCommandPath">,
+  result: { exitCode: number | null; timedOut: boolean },
+  options: {
+    agent: string;
+    sandboxName: string;
+    redactionValues: string[];
+    operation: "restart" | "remove";
+  },
+): Promise<void> {
+  if (options.agent !== "hermes") return;
+  await captureSandboxFailureDiagnostics(host, result, {
+    sandboxName: options.sandboxName,
+    redactionValues: options.redactionValues,
+    artifactPrefix: `hermes-mcp-${options.operation}-failure`,
+  });
+}
 
 export const HERMES_MCP_HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
 export const HERMES_MCP_RESULT_TOKEN_MARKER = "NEMOCLAW_HERMES_MCP_RESULT_TOKEN=";
@@ -50,7 +73,7 @@ export function buildHermesMcpChatProbeScript(payload: string, resultToken: stri
     "set -e",
     `printf '\\n${HERMES_MCP_HTTP_STATUS_MARKER}%s\\n' "$status" >&2`,
     'if [ "$curl_rc" -ne 0 ]; then exit "$curl_rc"; fi',
-    `case "$status" in 2??) if grep -Fq -- ${shellQuote(resultToken)} "$response_file"; then printf '${HERMES_MCP_RESULT_TOKEN_MARKER}present\\n' >&2; else printf '${HERMES_MCP_RESULT_TOKEN_MARKER}missing\\n' >&2; fi ;; *) emit_failure_body ;; esac`,
+    `case "$status" in 2??) if grep -Fq -- ${shellQuote(resultToken)} "$response_file"; then printf '${HERMES_MCP_RESULT_TOKEN_MARKER}present\\n' >&2; else printf '${HERMES_MCP_RESULT_TOKEN_MARKER}missing\\n' >&2; emit_failure_body; fi ;; *) emit_failure_body ;; esac`,
   ].join("\n");
 }
 
@@ -122,9 +145,35 @@ export function assertHermesMcpHttpResponse(
     );
   }
   if (!hasResultToken(result.stderr)) {
-    throw new Error("Hermes real MCP tool call response did not contain the fixture result token");
+    const body = sanitizedPreview(result.stdout, explicitRedactionValues);
+    throw new Error(
+      `Hermes real MCP tool call response did not contain the fixture result token; redacted response body: ${body}`,
+    );
   }
   if (result.stdout !== "") {
     throw new Error("Hermes real MCP tool call success path emitted response contents");
   }
+}
+
+export async function readHermesGatewayIdentity(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactName: string,
+) {
+  return sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        "/usr/bin/python3 -I -S - <<'PY'",
+        "import json, pathlib",
+        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+        "pid = record if isinstance(record, int) else record['pid']",
+        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+        "PY",
+      ].join("\n"),
+    ),
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 60_000 },
+  );
 }

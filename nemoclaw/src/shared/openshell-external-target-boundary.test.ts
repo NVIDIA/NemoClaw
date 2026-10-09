@@ -20,13 +20,16 @@ vi.mock("node:fs", async (importOriginal) => ({
   ...fsMocks,
 }));
 
-import { buildSanitizedExternalOpenShellTargetPlan } from "./openshell-external-target-boundary.cjs";
+import {
+  buildSanitizedExternalOpenShellTargetPlan,
+  withExternalOpenShellTargetCa,
+} from "./openshell-external-target-boundary.cjs";
 
 const CA_FILE = "/var/run/openshell-target/private-ca.pem";
 const AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
 const AUTHENTICATION_CONTENTS = "private-authentication-material";
 const CA_PEM = rootCertificates[0];
-const COMPATIBILITY = { minVersion: "0.0.106", maxVersion: "0.0.106" };
+const COMPATIBILITY = { minVersion: "0.0.116", maxVersion: "0.0.116" };
 const REGULAR_FILE_METADATA = {
   isFile: () => true,
   isSymbolicLink: () => false,
@@ -71,7 +74,7 @@ function externalTarget() {
   return {
     endpoint: "https://openshell.example.test:8443",
     workspace: "default",
-    expected_release: "0.0.106",
+    expected_release: "0.0.116",
     lifecycle: "external",
     trust: { ca_file: CA_FILE },
     authentication: { credential_file: AUTHENTICATION_FILE },
@@ -132,7 +135,7 @@ describe("external OpenShell target boundary", () => {
     expect(plan).toEqual({
       endpoint: "https://openshell.example.test:8443",
       workspace: "default",
-      expected_release: "0.0.106",
+      expected_release: "0.0.116",
       lifecycle: "external",
       authentication_source: "file",
       ca_fingerprint: `sha256:${createHash("sha256")
@@ -149,6 +152,23 @@ describe("external OpenShell target boundary", () => {
     expect(rendered).not.toContain(AUTHENTICATION_CONTENTS);
     expect(rendered).not.toContain("BEGIN CERTIFICATE");
     expect(rendered).not.toMatch(/mtls|oidc/iu);
+    expect(Object.isFrozen(plan)).toBe(true);
+  });
+
+  it("passes public-health CA bytes when the authentication file is absent (#9872)", async () => {
+    fileContents.delete(AUTHENTICATION_FILE);
+
+    const result = await withExternalOpenShellTargetCa(
+      externalTarget(),
+      COMPATIBILITY,
+      async (plan, caContents) => ({ plan, caContents }),
+    );
+
+    expect(result.plan.endpoint).toBe("https://openshell.example.test:8443");
+    expect(result.caContents.toString("utf8")).toBe(CA_PEM);
+    expect(readFilePaths).toContain(CA_FILE);
+    expect(readFilePaths).not.toContain(AUTHENTICATION_FILE);
+    expect(fsMocks.openSync).not.toHaveBeenCalledWith(AUTHENTICATION_FILE, expect.any(Number));
   });
 
   it.each([
@@ -243,18 +263,28 @@ describe("external OpenShell target boundary", () => {
   });
 
   it("rejects an incompatible expected release before reading files (#9872)", () => {
-    const target = { ...externalTarget(), expected_release: "0.0.107" };
+    const compatibility = { minVersion: "0.0.105", maxVersion: "0.0.105" };
 
-    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY)).toThrow(
-      /outside the compatible range/,
+    expect(() =>
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), compatibility),
+    ).toThrow(/outside the compatible range/);
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
+  });
+
+  it("rejects a range-compatible release that public health does not support (#9872)", () => {
+    const target = { ...externalTarget(), expected_release: "0.0.105" };
+    const compatibility = { minVersion: "0.0.105", maxVersion: "0.0.116" };
+
+    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, compatibility)).toThrow(
+      "external OpenShell target expected_release must be 0.0.116",
     );
     expect(fsMocks.openSync).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["non-semantic", { minVersion: "current", maxVersion: "0.0.106" }],
-    ["unsafe", { minVersion: "0.0.106", maxVersion: "9007199254740992.0.0" }],
-    ["reversed", { minVersion: "0.0.107", maxVersion: "0.0.106" }],
+    ["non-semantic", { minVersion: "current", maxVersion: "0.0.116" }],
+    ["unsafe", { minVersion: "0.0.116", maxVersion: "9007199254740992.0.0" }],
+    ["reversed", { minVersion: "0.0.117", maxVersion: "0.0.116" }],
   ])("rejects a %s compatibility range before reading files", (_name, compatibility) => {
     expect(() =>
       buildSanitizedExternalOpenShellTargetPlan(externalTarget(), compatibility),

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { isHijackedDockerInternalUrl } = require("./onboard-host-docker-internal");
 const {
@@ -10,6 +10,16 @@ const {
   probeOpenAiLikeEndpoint,
   probeOpenAiLikeEndpointOptimized,
 } = require("./onboard-probes");
+
+function clearProxyUrlModuleCache(): void {
+  delete require.cache[require.resolve("../core/ollama-proxy-port")];
+  delete require.cache[require.resolve("./onboard-host-docker-internal")];
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  clearProxyUrlModuleCache();
+});
 
 describe("host.docker.internal onboarding inference policy", () => {
   it("does not treat host.docker.internal as a usable sandbox URL", () => {
@@ -31,6 +41,16 @@ describe("host.docker.internal onboarding inference policy", () => {
     expect(result.failures).toEqual([
       expect.objectContaining({ name: "host.docker.internal reachability" }),
     ]);
+  });
+
+  it("reports the configured auth-proxy port after a proxy-port migration", () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+    clearProxyUrlModuleCache();
+    const { getHostDockerInternalProbeFailure } = require("./onboard-host-docker-internal");
+
+    expect(getHostDockerInternalProbeFailure().message).toMatch(
+      /host\.openshell\.internal:12435\/v1/,
+    );
   });
 
   it("rejects host.docker.internal even when strict chat-completions tool calling is required", () => {
@@ -106,7 +126,12 @@ describe("host.docker.internal onboarding inference policy", () => {
       expect(seenCommands).toHaveLength(1);
       seenCommands.forEach(({ command, args }) => {
         expect(command).toBe("docker");
-        expect(args).toContain("curlimages/curl:8.10.1");
+        expect(args.slice(0, 3)).toEqual([
+          "run",
+          "--rm",
+          "docker.io/curlimages/curl@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b",
+        ]);
+        expect(args).not.toContain("curlimages/curl:8.10.1");
         expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
         expect(args).not.toContain("--volume");
       });

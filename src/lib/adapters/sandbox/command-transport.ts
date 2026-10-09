@@ -1,9 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
-import { resolveOpenshellSandboxSshHost } from "../openshell/sandbox-ssh-host";
+import type {
+  OpenShellSandboxBufferedCommandExecutor,
+  OpenShellSandboxCommandError,
+} from "../openshell/sandbox-command";
+import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
+
+import { createCliOpenShellSandboxCommandExecutor } from "../openshell/sandbox-command-cli";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "../openshell/runtime-selection";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { buildSubprocessEnv } from "../../subprocess-env";
+import {
+  buildSandboxExecMarkedCommand,
+  extractSandboxExecCommandStdout,
+} from "./sandbox-exec-output";
 
 export type SandboxCommandResult = {
   status: number;
@@ -12,194 +26,126 @@ export type SandboxCommandResult = {
 };
 
 export type SandboxExecCommandOptions = {
-  allowLocalDockerFallback?: boolean;
+  /** Internal bounded probes must retain their caller deadline despite ambient overrides. */
+  honorCallerTimeout?: boolean;
   gatewayName?: string;
+  runtimeEnv?: NodeJS.ProcessEnv;
 };
 
 export type CommandTransportDependencies = {
   buildSandboxExecMarkedCommand: (command: string) => string;
   buildSubprocessEnv: () => NodeJS.ProcessEnv;
-  captureSandboxSshConfig: (
-    sandboxName: string,
-    options: { ignoreError: boolean; timeout: number },
-  ) => { output: string; status: number | null };
-  dockerSpawnSync: (
-    args: readonly string[],
-    options: Parameters<typeof spawnSync>[2],
-  ) => ReturnType<typeof spawnSync>;
   extractSandboxExecCommandStdout: (output: string) => string | null;
-  getOpenshellBinary: () => string;
-  isDirectSandboxFallbackUnavailableError: (error: unknown) => boolean;
-  openshellProbeTimeoutMs: number;
-  privilegedSandboxExecArgv: (sandboxName: string, command: string[]) => string[];
-  root: string;
-  withPrivilegedSandboxExecutionLease: <T>(
-    sandboxName: string,
-    operation: string,
-    fn: () => T,
-  ) => T;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
 };
 
 export const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
 
-function resolveSandboxExecTimeout(timeout: number): number {
-  const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
-  return Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
-}
-
-export function executeSandboxCommandTransport(
-  deps: CommandTransportDependencies,
-  sandboxName: string,
-  command: string,
-  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-): SandboxCommandResult | null {
-  return deps.withPrivilegedSandboxExecutionLease(
-    sandboxName,
-    "sandbox SSH command transport",
-    () => {
-      const sshConfigResult = deps.captureSandboxSshConfig(sandboxName, {
-        ignoreError: true,
-        timeout: deps.openshellProbeTimeoutMs,
-      });
-      if (sshConfigResult.status !== 0) return null;
-      if (!sshConfigResult.output.trim()) return null;
-      const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfigResult.output);
-      if (sshHost === null) return null;
-
-      const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-");
-      try {
-        const result = spawnSync(
-          "ssh",
-          [
-            "-F",
-            tmpSshConfig.file,
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "UserKnownHostsFile=/dev/null",
-            "-o",
-            "ConnectTimeout=5",
-            "-o",
-            "LogLevel=ERROR",
-            sshHost,
-            command,
-          ],
-          {
-            encoding: "utf-8",
-            env: deps.buildSubprocessEnv(),
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout,
-          },
-        );
-        return {
-          status: result.status ?? 1,
-          stdout: (result.stdout || "").trim(),
-          stderr: (result.stderr || "").trim(),
-        };
-      } catch {
-        return null;
-      } finally {
-        tmpSshConfig.cleanup();
-      }
-    },
-  );
-}
-
-function parseSandboxCommandResult(
-  deps: CommandTransportDependencies,
-  result: ReturnType<typeof spawnSync>,
-): SandboxCommandResult | null {
-  if (result.error) return null;
-  const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout || "");
-  const stderr = typeof result.stderr === "string" ? result.stderr : String(result.stderr || "");
-  const commandStdout = deps.extractSandboxExecCommandStdout(stdout);
-  if (commandStdout === null) return null;
-  return {
-    status: result.status ?? 1,
-    stdout: commandStdout,
-    stderr: stderr.trim(),
-  };
-}
-
-function executeLocalDockerSandboxCommand(
-  deps: CommandTransportDependencies,
-  sandboxName: string,
-  markedCommand: string,
-  timeout: number,
-): SandboxCommandResult | null {
-  let argv: string[];
-  try {
-    argv = deps.privilegedSandboxExecArgv(sandboxName, ["sh", "-c", markedCommand]);
-  } catch (error) {
-    // Docker discovery failure or a stopped/nonexistent direct container means
-    // there is no local fallback. Identity refusals, unsupported drivers,
-    // registry corruption, and ambiguous matches are security-boundary
-    // diagnostics: let callers surface them instead of collapsing them into an
-    // inconclusive OpenShell transport result.
-    if (deps.isDirectSandboxFallbackUnavailableError(error)) return null;
-    throw error;
-  }
-
-  try {
-    const result = deps.dockerSpawnSync(argv, {
-      encoding: "utf-8",
-      env: deps.buildSubprocessEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout,
-    });
-    return parseSandboxCommandResult(deps, result);
-  } catch {
-    return null;
+/** A transport failure must not be interpreted as a remote exit or authorize a retry. */
+export class SandboxCommandTransportError extends Error {
+  constructor(readonly kind: OpenShellSandboxCommandError["kind"] | "malformed") {
+    super(`Sandbox command transport failed (${kind}); the command was not retried.`);
+    this.name = "SandboxCommandTransportError";
   }
 }
 
-export function executeSandboxExecCommandTransport(
+export async function executeSandboxExecCommandTransport(
   deps: CommandTransportDependencies,
   sandboxName: string,
   command: string,
   timeout: number,
   options: SandboxExecCommandOptions,
-): SandboxCommandResult | null {
-  return deps.withPrivilegedSandboxExecutionLease(
+): Promise<SandboxCommandResult> {
+  const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
+  const completed = await deps.commandExecutor.runBuffered({
     sandboxName,
-    "sandbox OpenShell command transport",
-    () => {
-      const markedCommand = deps.buildSandboxExecMarkedCommand(command);
-      const effectiveTimeout = resolveSandboxExecTimeout(timeout);
-      try {
-        const gatewayArgs = options.gatewayName ? ["-g", options.gatewayName] : [];
-        const result = spawnSync(
-          deps.getOpenshellBinary(),
-          [
-            "sandbox",
-            "exec",
-            "--name",
-            sandboxName,
-            ...gatewayArgs,
-            "--",
-            "sh",
-            "-c",
-            markedCommand,
-          ],
-          {
-            cwd: deps.root,
-            encoding: "utf-8",
-            env: deps.buildSubprocessEnv(),
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: effectiveTimeout,
-          },
-        );
-        const parsed = parseSandboxCommandResult(deps, result);
-        if (parsed !== null) return parsed;
-      } catch {
-        // OpenShell transport failed; try the trusted direct-container fallback.
-      }
-      if (options.allowLocalDockerFallback === false) return null;
-      // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
-      // refusal cannot be caught and retried against changing container state.
-      // The outer execution lease covers argv resolution and the complete fallback
-      // subprocess lifetime without an unleased gap after the OpenShell attempt.
-      return executeLocalDockerSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);
+    target: options.gatewayName
+      ? namedOpenShellGateway(options.gatewayName)
+      : selectedOpenShellGateway(),
+    command: ["sh", "-c", deps.buildSandboxExecMarkedCommand(command)],
+    environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
+    timeoutMilliseconds:
+      !options.honorCallerTimeout && Number.isFinite(timeoutOverride) && timeoutOverride > 0
+        ? timeoutOverride
+        : timeout,
+  });
+  if (completed.outcome.kind === "failed") {
+    throw new SandboxCommandTransportError(completed.outcome.error.kind);
+  }
+  const stdout = deps.extractSandboxExecCommandStdout(completed.stdout);
+  if (stdout === null) throw new SandboxCommandTransportError("malformed");
+  return { status: completed.outcome.exitCode, stdout, stderr: completed.stderr.trim() };
+}
+
+export type SandboxExecCommandExecutionOptions = SandboxExecCommandOptions & {
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
+  runtimeSelection?: OpenShellRuntimeSelection;
+};
+
+/** Ordinary probes must not evaluate runtime-owned or sandbox-user-owned shell state. */
+export function wrapOrdinarySandboxCommand(command: readonly string[]): string[] {
+  return [
+    "/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-p",
+    "-c",
+    'builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"',
+    "nemoclaw-runtime-env",
+    ...command,
+  ];
+}
+
+function commandTransportDependencies(
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor = createCliOpenShellSandboxCommandExecutor(
+    { hostCwd: REPOSITORY_ROOT },
+  ),
+): CommandTransportDependencies {
+  return {
+    buildSandboxExecMarkedCommand,
+    buildSubprocessEnv,
+    extractSandboxExecCommandStdout,
+    commandExecutor: {
+      runBuffered: (request) =>
+        commandExecutor.runBuffered({
+          ...request,
+          command: wrapOrdinarySandboxCommand(request.command),
+        }),
+    },
+  };
+}
+
+/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
+export function buildSandboxCommandEnvironment(
+  runtimeSelection?: OpenShellRuntimeSelection,
+  runtimeEnv?: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : (runtimeEnv ?? buildSubprocessEnv());
+}
+
+export async function executeSandboxExecCommand(
+  sandboxName: string,
+  command: string,
+  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  options: SandboxExecCommandExecutionOptions = {},
+): Promise<SandboxCommandResult> {
+  const { runtimeSelection, commandExecutor, ...transportOptions } = options;
+  const runtimeEnv = buildSandboxCommandEnvironment(runtimeSelection, options.runtimeEnv);
+  return executeSandboxExecCommandTransport(
+    commandTransportDependencies(commandExecutor),
+    sandboxName,
+    command,
+    timeout,
+    {
+      ...transportOptions,
+      ...(runtimeSelection
+        ? {
+            gatewayName: runtimeSelection.gatewayName,
+          }
+        : {}),
+      ...(runtimeEnv ? { runtimeEnv } : {}),
     },
   );
 }

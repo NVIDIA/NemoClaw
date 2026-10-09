@@ -47,7 +47,7 @@ if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_GOOGLE_CHAT_ACCESS_TOKE
     raise RuntimeError("Google Chat credential is not revision-scoped")
 
 sys.path.insert(0, "/opt/hermes")
-override_path = "/sandbox/.hermes/plugins/nemoclaw/googlechat_adapter.py"
+override_path = "/opt/hermes/plugins/nemoclaw/googlechat_adapter.py"
 spec = importlib.util.spec_from_file_location("nemoclaw_googlechat_e2e", override_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

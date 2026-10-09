@@ -1,0 +1,12 @@
+{
+  "kind": "nemoclaw-review-queue-e2e-result-v1",
+  "dispatchArtifact": "e2e-dispatch-123-2",
+  "selectedWorkflowJobs": ["live", "staging-brev-launchable"],
+  "results": [
+    { "job": "base-image-publication", "result": "success" },
+    { "job": "generate-matrix", "result": "success" },
+    { "job": "live", "result": "success" },
+    { "job": "staging-brev-launchable", "result": "success" }
+  ],
+  "status": "pass"
+}

@@ -7,11 +7,11 @@
 set -euo pipefail
 
 if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2'
+  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3'
   exit 0
 fi
 
-unset BASH_ENV ENV OPENAI_PROXY DEEPAGENTS_CODE_APPROVAL_MODE DEEPAGENTS_CODE_STARTUP_MODE
+unset BASH_ENV ENV OPENAI_PROXY
 while IFS= read -r _nemoclaw_auto_approval_env; do
   unset "$_nemoclaw_auto_approval_env"
 done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
@@ -35,6 +35,7 @@ export LANGCHAIN_TRACING_V2=false
 export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
+unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 unset PYTHONHOME PYTHONPATH
 
@@ -136,7 +137,8 @@ run_dcode() {
 #       identifiers (e.g. with hyphens) are still classified.
 #     * OpenShell credential placeholders are allowed only when the complete
 #       value names the same valid env key, either canonically or with an
-#       OpenShell `v<digits>_` revision prefix. Any other occurrence is refused.
+#       OpenShell `v<digits>_` revision prefix or `s<64 lowercase hex>_` stable
+#       handle. Any other occurrence is refused.
 # - Regression: test/agents/deepagents/langchain-deepagents-code-secret-pattern-parity.test.ts
 #   pins the canonical TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and
 #   SECRET_BLOCK_PATTERNS fingerprints (source + flags), while
@@ -236,6 +238,9 @@ is_managed_token_value_for_name() {
   case "$name" in
     DEEPAGENTS_CODE_OPENAI_API_KEY)
       [ "$value" = "nemoclaw-managed-inference" ] && return 0
+      ;;
+    NEMOCLAW_ATTACHED_PROVIDER_API_KEY)
+      [ "$value" = "nemoclaw-openshell-provider" ] && return 0
       ;;
     SLACK_BOT_TOKEN)
       case "$value" in
@@ -437,7 +442,12 @@ is_dynamic_dotenv_value() {
 is_openshell_env_placeholder_for_name() {
   local name="$1"
   local value="$2"
-  local canonical revision_prefix revision_suffix versioned revision
+  local canonical revision_prefix stable_prefix generation_suffix versioned revision stable handle
+
+  if [ "$name" = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY" ]; then
+    [ "$value" = "${NVIDIA_INFERENCE_API_KEY:-}" ] || return 1
+    name=NVIDIA_INFERENCE_API_KEY
+  fi
 
   # OPENSHELL_TLS_KEY is supervisor infrastructure, not a provider credential.
   # Never let a provider placeholder bypass that supervisor-only boundary.
@@ -455,15 +465,28 @@ is_openshell_env_placeholder_for_name() {
   [ "$value" = "$canonical" ] && return 0
 
   revision_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}v"
-  revision_suffix="_${name}"
+  stable_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}s"
+  generation_suffix="_${name}"
   versioned="${value#"$revision_prefix"}"
-  [ "$versioned" != "$value" ] || return 1
-  revision="${versioned%"$revision_suffix"}"
-  [ "$revision" != "$versioned" ] || return 1
-  [ "$versioned" = "$revision$revision_suffix" ] || return 1
-  [ "${#revision}" -le 20 ] || return 1
-  case "$revision" in
-    "" | *[!0-9]*) return 1 ;;
+  if [ "$versioned" != "$value" ]; then
+    revision="${versioned%"$generation_suffix"}"
+    [ "$revision" != "$versioned" ] || return 1
+    [ "$versioned" = "$revision$generation_suffix" ] || return 1
+    [ "${#revision}" -le 20 ] || return 1
+    case "$revision" in
+      "" | *[!0-9]*) return 1 ;;
+      *) return 0 ;;
+    esac
+  fi
+
+  stable="${value#"$stable_prefix"}"
+  [ "$stable" != "$value" ] || return 1
+  handle="${stable%"$generation_suffix"}"
+  [ "$handle" != "$stable" ] || return 1
+  [ "$stable" = "$handle$generation_suffix" ] || return 1
+  [ "${#handle}" -eq 64 ] || return 1
+  case "$handle" in
+    *[!0123456789abcdef]*) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -660,6 +683,13 @@ assert_no_codex_auth_credentials() {
     refuse_auth_store_credentials "$auth_file"
   fi
 }
+
+# Restored native config.toml files can still reference the old environment key.
+# Keep that consumer on the current supervisor placeholder, never a fixed token.
+# Remove this alias when supported restored configs no longer use the old key.
+if is_openshell_env_placeholder_for_name NVIDIA_INFERENCE_API_KEY "${NVIDIA_INFERENCE_API_KEY:-}"; then
+  export NEMOCLAW_ATTACHED_PROVIDER_API_KEY="$NVIDIA_INFERENCE_API_KEY"
+fi
 
 assert_no_secret_runtime_env
 assert_no_secret_env_file
@@ -861,7 +891,36 @@ case "${1:-}" in
     ;;
 esac
 
-unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST
+is_non_interactive_long_option() {
+  case "$1" in
+    --non | --non- | --non-i | --non-in | --non-int | --non-inte | --non-inter | --non-intera | --non-interac | --non-interact | --non-interacti | --non-interactiv | --non-interactive)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+managed_headless=false
+for arg in "$@"; do
+  case "$arg" in
+    -n | -n?*)
+      managed_headless=true
+      break
+      ;;
+    *)
+      if is_non_interactive_long_option "${arg%%=*}"; then
+        managed_headless=true
+        break
+      fi
+      ;;
+  esac
+done
+
+if [ "$managed_headless" = true ]; then
+  unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST
+fi
 
 reject_managed_override() {
   local posture="$1"
@@ -910,7 +969,9 @@ for arg in "$@"; do
       reject_managed_override "MCP posture" "$arg"
       ;;
     --shell-allow-list | --shell-allow-list=* | -S | -S?*)
-      reject_managed_override "shell allow-list posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless shell posture" "$arg"
+      fi
       ;;
     --u | --up | --upd | --upda | --updat | --update | --update=*)
       reject_managed_override "dependency update posture" "$arg"
@@ -928,16 +989,22 @@ for arg in "$@"; do
       reject_managed_override "rubric model posture" "$arg"
       ;;
     --sta | --sta=* | --star | --star=* | --start | --start=* | --startu | --startu=* | --startup | --startup=* | --startup-*)
-      reject_managed_override "startup command posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless startup command posture" "$arg"
+      fi
       ;;
     --interpreter)
-      reject_managed_override "interpreter posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless interpreter posture" "$arg"
+      fi
       ;;
     --interpreter-t | --interpreter-t=* | --interpreter-to | --interpreter-to=* | --interpreter-too | --interpreter-too=* | --interpreter-tool | --interpreter-tool=* | --interpreter-tools | --interpreter-tools=*)
-      reject_managed_override "interpreter posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless interpreter posture" "$arg"
+      fi
       ;;
-    -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve)
-      if [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
+    -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve | --yolo)
+      if [ "$managed_headless" = true ] || [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
         reject_managed_override "tool approval posture" "$arg"
       fi
       ;;
@@ -982,14 +1049,25 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
       arg_index=$((value_index + 1))
       continue
       ;;
-    --non-interactive=*)
-      if prompt_is_blank "${current_arg#--non-interactive=}"; then
-        reject_empty_non_interactive "--non-interactive"
-      fi
-      ;;
     -n?*)
       if prompt_is_blank "${current_arg#-n}"; then
         reject_empty_non_interactive "-n"
+      fi
+      ;;
+    *)
+      current_name="${current_arg%%=*}"
+      if is_non_interactive_long_option "$current_name"; then
+        if [ "$current_name" = "$current_arg" ]; then
+          value_index=$((arg_index + 1))
+          if [ "$value_index" -lt "${#dcode_args[@]}" ] && prompt_is_blank "${dcode_args[value_index]}"; then
+            reject_empty_non_interactive "$current_name"
+          fi
+          arg_index=$((value_index + 1))
+          continue
+        fi
+        if prompt_is_blank "${current_arg#*=}"; then
+          reject_empty_non_interactive "$current_name"
+        fi
       fi
       ;;
   esac

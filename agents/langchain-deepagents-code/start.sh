@@ -10,41 +10,6 @@ unset BASH_ENV ENV
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-readonly NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE="/usr/local/lib/nemoclaw/dcode-login-profile.sh"
-
-verify_dcode_login_profile() {
-  [ -d /sandbox ] \
-    && [ ! -L /sandbox ] \
-    && [ -f "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
-    && [ ! -L "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
-    && [ "$(stat -c '%U:%G:%a' "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" 2>/dev/null || true)" = "root:root:444" ] \
-    && [ ! -L /sandbox/.bash_profile ] \
-    && [ "$(stat -c '%U:%G:%a' /sandbox 2>/dev/null || true)" = "root:sandbox:1775" ] \
-    && [ "$(stat -c '%U:%G:%a' /sandbox/.bash_profile 2>/dev/null || true)" = "root:root:444" ] \
-    && cmp -s "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" /sandbox/.bash_profile
-}
-
-protect_dcode_login_profile() {
-  local source_metadata
-  source_metadata="$(stat -c '%U:%G:%a' "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" 2>/dev/null || true)"
-  if [ ! -f "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
-    || [ -L "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
-    || [ "$source_metadata" != "root:root:444" ]; then
-    printf '%s\n' '[SECURITY] Managed DCode login profile is missing or unsafe.' >&2
-    exit 1
-  fi
-
-  chown root:sandbox /sandbox
-  chmod 1775 /sandbox
-  rm -f -- /sandbox/.bash_profile
-  install -o root -g root -m 0444 \
-    "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" /sandbox/.bash_profile
-  if ! verify_dcode_login_profile; then
-    printf '%s\n' '[SECURITY] Could not protect the managed DCode login profile.' >&2
-    exit 1
-  fi
-}
-
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
 if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
@@ -69,18 +34,10 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# The published managed image uses uid 0 as its OCI entry user so every start
-# can repair the protected login-profile boundary before immediately dropping
-# to the legacy sandbox-user path. A sandbox-user image still verifies the
-# image-baked boundary before continuing.
+# Root entrypoints hand off agent work without reading personal shell files.
 if [ "$(id -u)" -eq 0 ]; then
-  protect_dcode_login_profile
   exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
     /usr/local/bin/nemoclaw-start "$@"
-fi
-if ! verify_dcode_login_profile; then
-  printf '%s\n' '[SECURITY] DCode login profile is not protected; rebuild this sandbox.' >&2
-  exit 1
 fi
 
 while IFS= read -r _nemoclaw_auto_approval_env; do
@@ -104,6 +61,7 @@ export LANGCHAIN_TRACING_V2=false
 export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
+unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
 # Harden RLIMITs (nproc + nofile) for the long-running Deep Agents Code process
@@ -150,7 +108,7 @@ if [ -e /etc/openshell-tls/ca-bundle.pem ] \
   || [ -L /etc/openshell-tls/ca-bundle.pem ]; then
   readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
 else
-  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/nemoclaw/managed-startup-ca-bundle.pem"
+  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/tmp/nemoclaw-managed-startup-ca-bundle.pem"
 fi
 readonly MANAGED_PROXY_OWNER_UID=0
 
@@ -320,6 +278,7 @@ prepare_runtime_env() {
     write_export_if_set DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
+    printf '%s\n' 'unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY'
     # shellcheck disable=SC2016
     printf '%s\n' 'export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"'
     printf '%s\n' 'unset ALL_PROXY all_proxy OPENAI_PROXY'

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir>]" >&2
+  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--runtime-user <root|sandbox>] [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir> --audit-evidence-from <absolute-dir>]" >&2
   exit 2
 }
 
@@ -19,8 +19,16 @@ dcode_base=""
 source_root="$PWD"
 cache_to=""
 cache_from=""
+audit_evidence_from=""
+runtime_user="sandbox"
+prepared_stages=(npm12 openclaw-system hermes-system langchain-deepagents-code-system)
 while (($# > 0)); do
   case "$1" in
+    --audit-evidence-from)
+      (($# >= 2)) || usage
+      audit_evidence_from="$2"
+      shift 2
+      ;;
     --cache-to)
       (($# >= 2)) || usage
       cache_to="$2"
@@ -34,6 +42,11 @@ while (($# > 0)); do
     --revision)
       (($# >= 2)) || usage
       revision="$2"
+      shift 2
+      ;;
+    --runtime-user)
+      (($# >= 2)) || usage
+      runtime_user="$2"
       shift 2
       ;;
     --cohort)
@@ -81,6 +94,8 @@ done
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || usage
 [[ "$cohort" =~ ^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] || usage
 [[ "$platform" == "linux/amd64" || "$platform" == "linux/arm64" ]] || usage
+[[ "$runtime_user" == "root" || "$runtime_user" == "sandbox" ]] || usage
+[[ -z "$cache_to" || -z "$cache_from" ]] || usage
 case "$platform" in
   linux/amd64) npm_target_cpu="x64" ;;
   linux/arm64) npm_target_cpu="arm64" ;;
@@ -88,11 +103,28 @@ esac
 target_arch="${platform#linux/}"
 npm_target_os="linux"
 npm_target_libc="glibc"
-[[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+[[ "$openclaw_base" == candidate ||
+  "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$openclaw_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$hermes_base" == candidate ||
+  "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$hermes_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/hermes@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$dcode_base" == candidate ||
+  "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$dcode_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$dcode_base" != candidate || -z "$cache_from" ]] || usage
+[[ "$openclaw_base" != candidate || -z "$cache_from" ]] || usage
+[[ "$hermes_base" != candidate || -z "$cache_from" ]] || usage
+prepared_identity="$revision $platform $openclaw_base $hermes_base $dcode_base"
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
+controller_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+trusted_audit_config="$controller_root/ci/reviewed-npm-audit.json"
+trusted_audit_exceptions="$controller_root/ci/npm-audit-exceptions.json"
+trusted_receipt_verifier="$controller_root/scripts/lib/npm-audit-receipt.mts"
+[[ -f "$trusted_audit_config" && ! -L "$trusted_audit_config" ]] || usage
+[[ -f "$trusted_audit_exceptions" && ! -L "$trusted_audit_exceptions" ]] || usage
+[[ -f "$trusted_receipt_verifier" && ! -L "$trusted_receipt_verifier" ]] || usage
 seed_helper="$source_root/scripts/checks/materialize-locked-npm-cache-seed.mts"
 source_lockfile="$source_root/nemoclaw/package-lock.json"
 source_seed_dir="$source_root/tools/mcp-tool-discovery-runtime/npm-cache-seed"
@@ -127,7 +159,7 @@ if [[ -n "$cache_from" ]]; then
     echo "ERROR: protected managed-image imported cache contains a symlink" >&2
     exit 1
   }
-  for agent in openclaw hermes langchain-deepagents-code; do
+  for agent in hermes langchain-deepagents-code "${prepared_stages[@]}"; do
     cache_source="$cache_from/$agent"
     [[ -d "$cache_source/blobs/sha256" && -f "$cache_source/index.json" ]] || {
       echo "ERROR: protected managed-image imported cache is incomplete for ${agent}" >&2
@@ -158,6 +190,17 @@ if [[ -n "$cache_from" ]]; then
     echo "ERROR: protected managed-image imported cache has no locked messaging npm cache seed manifest" >&2
     exit 1
   }
+  [[ -f "$cache_from/prepared-inputs" && "$(cat "$cache_from/prepared-inputs")" == "$prepared_identity" ]] || {
+    echo "ERROR: prepared inputs do not match the revision, platform, and bases" >&2
+    exit 1
+  }
+fi
+
+if [[ -n "$audit_evidence_from" ]]; then
+  [[ -n "$cache_from" && "$audit_evidence_from" == /* && "$audit_evidence_from" != *$'\n'* && -d "$audit_evidence_from" && ! -L "$audit_evidence_from" ]] || usage
+  audit_evidence_from="$(cd -- "$audit_evidence_from" && pwd -P)"
+elif [[ -n "$cache_from" ]]; then
+  usage
 fi
 
 for command in curl docker jq node sha256sum; do
@@ -166,6 +209,19 @@ for command in curl docker jq node sha256sum; do
     exit 1
   }
 done
+
+# docker/setup-buildx-action records its selected builder below DOCKER_CONFIG
+# unless BUILDX_CONFIG is explicit. The protected E2E workflow installs Buildx
+# before Docker authentication, and authentication then selects an isolated
+# DOCKER_CONFIG. Keep the trusted setup action's builder visible to candidate
+# builds dispatched from workflow revisions that predate the explicit job env.
+if [[ -z "${BUILDX_CONFIG:-}" && "${GITHUB_ACTIONS:-}" == "true" && -n "${DOCKER_CONFIG:-}" && -n "${HOME:-}" ]]; then
+  setup_buildx_config="${HOME}/.docker/buildx"
+  if [[ -d "$setup_buildx_config" && ! -L "$setup_buildx_config" ]]; then
+    BUILDX_CONFIG="$(cd -- "$setup_buildx_config" && pwd -P)"
+    export BUILDX_CONFIG
+  fi
+fi
 
 work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
 seed_overlay_active=0
@@ -193,9 +249,116 @@ trap restore_worktree EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# A PR dependency upgrade needs its own base; a published main base cannot
+# satisfy the candidate's no-deps profile. Keep this build on the CPU runner
+# and bind the exported OCI bytes to the exact source, platform and run.
+prepare_candidate_base() {
+  local agent="$1" dockerfile="$2" cache_name="$3"
+  prepared_base="$4"
+  prepared_base_layout=""
+  local receipt_helper="$controller_root/scripts/checks/protected-dcode-base-receipt.mts"
+  if [[ "$prepared_base" == candidate ]]; then
+    [[ "$(git -C "$source_root" rev-parse --verify HEAD)" == "$revision" ]] || {
+      echo "ERROR: candidate base checkout does not match its revision" >&2
+      exit 1
+    }
+    git -C "$source_root" diff --quiet HEAD -- || {
+      echo "ERROR: candidate base checkout has tracked modifications" >&2
+      exit 1
+    }
+    prepared_base_layout="${cache_to:-$work_dir}/${cache_name}-base"
+    local base_receipt="${cache_to:-$work_dir}/${cache_name}-base-receipt.json"
+    local base_tag="localhost:5000/nemoclaw-managed-protected-base/${agent}:${revision}"
+    docker buildx build \
+      --file "$source_root/$dockerfile" \
+      --platform "$platform" \
+      --provenance=false --sbom=false \
+      --label "org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw" \
+      --label "org.opencontainers.image.revision=${revision}" \
+      --label "io.nvidia.nemoclaw.agent=${agent}" \
+      --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}" \
+      --output "type=image,name=${base_tag},push=true,oci-mediatypes=true" \
+      --output "type=oci,dest=${prepared_base_layout},tar=false" \
+      "$source_root"
+    prepared_base="$(CHECKOUT_SHA="$revision" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT="$cohort" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM="$platform" \
+      node "$receipt_helper" write "$prepared_base_layout" "$base_receipt" "$agent")"
+    # Prove the pushed manifest and the offline artifact have the same identity.
+    docker buildx imagetools inspect "$prepared_base" --raw >"$work_dir/${cache_name}-candidate-base.raw"
+    [[ "sha256:$(sha256sum "$work_dir/${cache_name}-candidate-base.raw" | awk '{print $1}')" == "${prepared_base##*@}" ]] || {
+      echo "ERROR: candidate base registry and OCI artifact digests differ" >&2
+      exit 1
+    }
+  elif [[ "$prepared_base" == localhost:5000/* ]]; then
+    prepared_base_layout="$cache_from/${cache_name}-base"
+    local verified_base
+    verified_base="$(CHECKOUT_SHA="$revision" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT="$cohort" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM="$platform" \
+      node "$receipt_helper" verify "$prepared_base_layout" "$cache_from/${cache_name}-base-receipt.json" "$agent")"
+    [[ "$verified_base" == "$prepared_base" ]] || {
+      echo "ERROR: candidate base artifact does not match the prepared base reference" >&2
+      exit 1
+    }
+  fi
+}
+
+prepare_candidate_base openclaw Dockerfile.base openclaw "$openclaw_base"
+openclaw_base="$prepared_base"
+openclaw_base_layout="$prepared_base_layout"
+prepare_candidate_base hermes agents/hermes/Dockerfile.base hermes "$hermes_base"
+hermes_base="$prepared_base"
+hermes_base_layout="$prepared_base_layout"
+prepare_candidate_base langchain-deepagents-code agents/langchain-deepagents-code/Dockerfile.base dcode "$dcode_base"
+dcode_base="$prepared_base"
+dcode_base_layout="$prepared_base_layout"
+prepared_identity="$revision $platform $openclaw_base $hermes_base $dcode_base"
+
+audit_receipt=""
+audit_raw_report=""
+audit_policy_result=""
+audit_receipt_sha256=""
+audit_policy_result_sha256=""
+validate_audit_evidence() {
+  local directory="$1"
+  [[ -d "$directory" && ! -L "$directory" && -z "$(find "$directory" -type l -print -quit)" ]] || {
+    echo "ERROR: protected managed-image reviewed audit evidence is missing or unsafe" >&2
+    exit 1
+  }
+  audit_receipt="$directory/mcporter-runtime.receipt.json"
+  audit_raw_report="$directory/mcporter-runtime.raw.json"
+  [[ -f "$audit_receipt" && -s "$audit_receipt" && -f "$audit_raw_report" && -s "$audit_raw_report" ]] || {
+    echo "ERROR: protected managed-image reviewed audit evidence is incomplete" >&2
+    exit 1
+  }
+  audit_receipt_sha256="$(sha256sum "$audit_receipt" | awk '{print $1}')"
+  audit_policy_result="$work_dir/mcporter-runtime.policy.json"
+  node --no-warnings "$trusted_receipt_verifier" \
+    --receipt "$audit_receipt" \
+    --package-json "$source_root/agents/openclaw/mcporter-runtime/package.json" \
+    --package-lock "$source_root/agents/openclaw/mcporter-runtime/package-lock.json" \
+    --raw-report "$audit_raw_report" \
+    --exceptions "$trusted_audit_exceptions" \
+    --graph mcporter-runtime \
+    --audit-config "$trusted_audit_config" \
+    --registry https://registry.yarnpkg.com \
+    --threshold high \
+    --result "$audit_policy_result"
+  [[ -f "$audit_policy_result" && -s "$audit_policy_result" && ! -L "$audit_policy_result" ]] || {
+    echo "ERROR: protected managed-image reviewed audit policy result is missing or unsafe" >&2
+    exit 1
+  }
+  audit_policy_result_sha256="$(sha256sum "$audit_policy_result" | awk '{print $1}')"
+}
+
+if [[ -n "$cache_from" ]]; then
+  validate_audit_evidence "$audit_evidence_from"
+fi
+
 if [[ -n "$cache_from" ]]; then
   imported_seed="$work_dir/npm-cache-seed-import"
-  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+  node --no-warnings "$seed_helper" copy \
     --lockfile "$source_lockfile" \
     --seed "$cache_from/npm-cache-seed" \
     --output "$imported_seed" \
@@ -208,7 +371,7 @@ if [[ -n "$cache_from" ]]; then
   cp -pR -- "$imported_seed" "$source_seed_dir"
 
   imported_mcp_seed="$work_dir/mcp-runtime-npm-cache-seed-import"
-  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+  node --no-warnings "$seed_helper" copy \
     --lockfile "$source_mcp_lockfile" \
     --seed "$cache_from/mcp-runtime-npm-cache-seed" \
     --output "$imported_mcp_seed" \
@@ -221,7 +384,7 @@ if [[ -n "$cache_from" ]]; then
   cp -pR -- "$imported_mcp_seed" "$source_mcp_seed_dir"
 
   imported_messaging_seed="$work_dir/messaging-npm-cache-seed-import"
-  node --experimental-strip-types --no-warnings "$seed_helper" copy \
+  node --no-warnings "$seed_helper" copy \
     --lockfile "$source_messaging_lockfile" \
     --seed "$cache_from/messaging-npm-cache-seed" \
     --output "$imported_messaging_seed" \
@@ -346,8 +509,12 @@ build_agent() {
   local metadata="$work_dir/${agent}-build-metadata.json"
   local exact_image_raw="$work_dir/${agent}-image-exact.raw"
   local -a cache_args=()
+  local -a agent_stages=("${agent}-system")
+  if [[ "$agent" == "openclaw" ]]; then
+    agent_stages=(npm12 "${agent_stages[@]}")
+  fi
 
-  if [[ -n "$cache_to" ]]; then
+  if [[ -n "$cache_to" && "$agent" != "openclaw" ]]; then
     local cache_destination="$cache_to/$agent"
     cache_args+=(--cache-to "type=local,dest=${cache_destination},mode=max")
   fi
@@ -355,29 +522,59 @@ build_agent() {
     local cache_source="$cache_from/$agent"
     cache_args+=(--network none)
     if [[ "$agent" == "openclaw" ]]; then
-      # The exported cache is produced before the locked npm seeds are overlaid.
-      # Do not import its layer graph: some BuildKit versions still reuse
+      # Rebuild from the overlaid locked npm seeds. Some BuildKit versions reuse
       # empty-seed COPY results when --no-cache and --cache-from are combined.
       cache_args+=(--no-cache)
     else
       cache_args+=(--cache-from "type=local,src=${cache_source}")
     fi
+    # Consume prepared system files by digest, outside the imported layer graph.
+    local stage stage_digest
+    for stage in "${agent_stages[@]}"; do
+      stage_digest="$(jq -er '.manifests | if length == 1 then .[0].digest else error("expected one prepared image") end' "$cache_from/$stage/index.json")"
+      [[ "$stage_digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+        echo "ERROR: protected managed-image prepared stage has no immutable digest: ${stage}" >&2
+        exit 1
+      }
+      cache_args+=(--build-context "$stage=oci-layout://${cache_from}/${stage}@${stage_digest}")
+    done
+  fi
+
+  if [[ "$agent" == "openclaw" && -n "$audit_receipt" ]]; then
+    cache_args+=(
+      --secret "id=nemoclaw-mcporter-audit-receipt,src=${audit_receipt}"
+      --secret "id=nemoclaw-mcporter-audit-raw-report,src=${audit_raw_report}"
+      --secret "id=nemoclaw-mcporter-audit-policy-result,src=${audit_policy_result}"
+      --build-arg "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${audit_receipt_sha256}"
+      --build-arg "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${audit_policy_result_sha256}"
+    )
   fi
 
   local base_digest="${base_reference##*@}"
-  docker buildx imagetools inspect "$base_reference" --raw >"$exact_base_raw"
-  local actual_base
-  actual_base="sha256:$(sha256sum "$exact_base_raw" | awk '{print $1}')"
-  [[ "$actual_base" == "$base_digest" ]] || {
-    echo "ERROR: ${agent} exact base bytes do not match its descriptor" >&2
-    exit 1
-  }
+  local base_layout=""
+  case "$agent" in
+    openclaw) base_layout="$openclaw_base_layout" ;;
+    hermes) base_layout="$hermes_base_layout" ;;
+    langchain-deepagents-code) base_layout="$dcode_base_layout" ;;
+  esac
+  if [[ -n "$base_layout" ]]; then
+    # The verified local OCI input survives deletion of the CPU job's registry.
+    cache_args+=(--build-context "$base_reference=oci-layout://${base_layout}@${base_digest}")
+  else
+    docker buildx imagetools inspect "$base_reference" --raw >"$exact_base_raw"
+    local actual_base
+    actual_base="sha256:$(sha256sum "$exact_base_raw" | awk '{print $1}')"
+    [[ "$actual_base" == "$base_digest" ]] || {
+      echo "ERROR: ${agent} exact base bytes do not match its descriptor" >&2
+      exit 1
+    }
+  fi
 
   scripts/check-production-build-args.sh \
     -f "$dockerfile_path" \
     --build-arg "BASE_IMAGE=${base_reference}" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=${runtime_user}" \
     --build-arg "TARGETARCH=${target_arch}"
 
   local -a build_command=(docker buildx build
@@ -402,7 +599,7 @@ build_agent() {
     # Buildx target explicitly so that default cannot override linux/arm64.
     --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=${runtime_user}"
     --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
   run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
@@ -435,11 +632,16 @@ build_agent() {
     --arg cohort "$cohort" \
     --arg image_id "$image_id" \
     --arg platform "$platform" \
+    --arg runtime_user "$runtime_user" \
     --arg revision "$revision" '
       length == 1 and
       .[0].Id == $image_id and
       ((.[0].Config.User // "") as $user |
-        $user == "" or $user == "root" or $user == "0") and
+        if $runtime_user == "root" then
+          $user == "" or $user == "root" or $user == "0"
+        else
+          $user == "sandbox"
+        end) and
       .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
       .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
       .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
@@ -467,6 +669,17 @@ build_agent() {
       localContentId: $localContentId,
       baseReference: $baseReference
     }' >>"$contracts"
+
+  if [[ -n "$cache_to" ]]; then
+    # OCI inputs remain available when the offline build misses a cached layer.
+    local stage
+    for stage in "${agent_stages[@]}"; do
+      docker buildx build --file "$dockerfile_path" --platform "$platform" \
+        --target "$stage" --provenance=false --sbom=false \
+        --build-arg "BASE_IMAGE=${base_reference}" --build-arg "TARGETARCH=${target_arch}" \
+        --output "type=oci,dest=${cache_to}/${stage},tar=false" "$source_root"
+    done
+  fi
 }
 
 build_agent \
@@ -483,19 +696,20 @@ build_agent \
   "$dcode_base"
 
 if [[ -n "$cache_to" ]]; then
-  node --experimental-strip-types --no-warnings "$seed_helper" export \
+  printf '%s\n' "$prepared_identity" >"$cache_to/prepared-inputs"
+  node --no-warnings "$seed_helper" export \
     --lockfile "$source_lockfile" \
     --output "$cache_to/npm-cache-seed" \
     --os "$npm_target_os" \
     --cpu "$npm_target_cpu" \
     --libc "$npm_target_libc"
-  node --experimental-strip-types --no-warnings "$seed_helper" export \
+  node --no-warnings "$seed_helper" export \
     --lockfile "$source_mcp_lockfile" \
     --output "$cache_to/mcp-runtime-npm-cache-seed" \
     --os "$npm_target_os" \
     --cpu "$npm_target_cpu" \
     --libc "$npm_target_libc"
-  node --experimental-strip-types --no-warnings "$seed_helper" export \
+  node --no-warnings "$seed_helper" export \
     --lockfile "$source_messaging_lockfile" \
     --output "$cache_to/messaging-npm-cache-seed" \
     --os "$npm_target_os" \

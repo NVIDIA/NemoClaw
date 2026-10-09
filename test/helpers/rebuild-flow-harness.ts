@@ -35,41 +35,77 @@ export const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 export const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
 export const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
 export const gatewayState = requireDist("./gateway-state.js");
+export const forwardRecovery = requireDist("./forward-recovery.js");
 export const gatewayTeardownAuthority = requireDist(
   "../../onboard/gateway-teardown-authority.js",
 ) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 export const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 export const mcpBridge = requireDist("./mcp-bridge.js");
+export const mcpBridgeProvider = requireDist("./mcp-bridge-provider.js");
+export const mcpBridgeProviderInspection = requireDist("./mcp-bridge-provider-inspection.js");
+export const mcpBridgeSource = requireDist("./mcp-bridge-source.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
+export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
 export const nim = requireDist("../../inference/nim.js");
 export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
+export const managedWorkloadRebuild = requireDist(
+  "../../onboard/workload/rebuild.js",
+) as typeof import("../../src/lib/onboard/workload/rebuild");
+export const rebuildBackupPhase = requireDist(
+  "./rebuild-backup-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-backup-phase");
 export const onboardSession = requireDist("../../state/onboard-session.js");
+export const removedImmutabilityMigration = requireDist(
+  "../../state/migrations/removed-immutability.js",
+);
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+export const providerCommand = requireDist("../../adapters/openshell/provider-command.js");
 export const policies = requireDist("../../policy/index.js");
+export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
+export const portableRetirementAuthority = requireDist(
+  "../../onboard/portable-retirement-authority.js",
+);
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );
+export const commandTransport = requireDist("../../adapters/sandbox/command-transport.js");
 export const processRecovery = requireDist("./process-recovery.js");
+export const portableReceiptReadiness = requireDist(
+  "../../onboard/experimental/portable-runtime-receipt-readiness.js",
+) as typeof import("../../src/lib/onboard/experimental/portable-runtime-receipt-readiness");
+export const pairingSettlement = requireDist(
+  "../../onboard/machine/finalization-deps.js",
+) as typeof import("../../src/lib/onboard/machine/finalization-deps");
+export const launchReadiness = requireDist(
+  "./launch-readiness.js",
+) as typeof import("../../src/lib/actions/sandbox/launch-readiness");
+export const openClawLifecycle = requireDist(
+  "./runtime/openclaw-lifecycle.js",
+) as typeof import("../../src/lib/actions/sandbox/runtime/openclaw-lifecycle");
 export const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
 export const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
+export const snapshotBackup = requireDist("./snapshot/backup-authority.js");
 export const rebuildInference = requireDist("./inference-invocation-probe.js");
+export const rebuildProviderPreflight = requireDist("./rebuild-provider-preflight.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
-export const rebuildShields = requireDist("./rebuild-shields.js");
+export const rebuildPreflightPhase = requireDist(
+  "./rebuild-preflight-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-preflight-phase");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 export const registry = requireDist("../../state/registry.js");
+export const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
 export const registryPersistence = requireDist("../../state/registry/persistence.js");
 export const resolve = requireDist("../../adapters/openshell/resolve.js");
 export const sandboxList = requireDist("../../openshell-sandbox-list.js");
 export const sandboxSession = requireDist("../../state/sandbox-session.js");
 export const sandboxState = requireDist("../../state/sandbox.js");
 export const sandboxVersion = requireDist("../../sandbox/version.js");
-export const shields = requireDist("../../shields/index.js");
 export const tempFiles = requireDist("../../onboard/temp-files.js");
 
 export function purgeRebuildModule(): void {
@@ -85,6 +121,39 @@ export function sourceSandboxGateway(argv: string[], verb: string): string | nul
   return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
     ? (argv[gatewayFlag + 1] ?? null)
     : null;
+}
+
+export function captureResolvedRebuildFixture(
+  argv: string[],
+  deletedSourceGateways: ReadonlySet<string>,
+) {
+  const livePolicy = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+  if (argv[0] === "policy" && argv.includes("--output")) {
+    const output = JSON.stringify({
+      scope: "sandbox",
+      sandbox: "alpha",
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "sha256:rebuild-policy",
+      active_version: 1,
+      policy: { version: 1, network_policies: { host_preserved: {} } },
+    });
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  if (argv[0] === "policy") {
+    const output = `Version: 1\nActive: 1\n---\n${livePolicy}`;
+    return { status: 0, output, stdout: output, stderr: "" };
+  }
+  const probedGateway = sourceSandboxGateway(argv, "get");
+  const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+  return probedGateway && !deletedSourceGateways.has(probedGateway)
+    ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
+    : {
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "Error: sandbox alpha not found",
+      };
 }
 
 const harnessTempDirs: string[] = [];
@@ -129,6 +198,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    providerCommand.setProviderCommandRuntimeHooksForTest({});
     purgeRebuildModule();
     for (const dir of harnessTempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });

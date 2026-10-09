@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateOnboardGatewayReadinessAdmission,
   evaluateOnboardReadinessAdmission,
+  hasExplicitDeferredN1xOnboardingIntent,
   ONBOARD_READINESS_ADMISSION_REASON_IDS,
   ONBOARD_READINESS_FINDING_IDS,
   ONBOARD_REQUIRED_CAPABILITY_IDS,
@@ -22,6 +23,27 @@ const DEFAULT_OPTIONS: OnboardReadinessAdmissionOptions = {
   allowUnsupportedRuntime: false,
   allowStorageRemediation: true,
 };
+
+describe("Deferred N1x onboarding intent", () => {
+  it.each([
+    ["managed-vLLM", { NEMOCLAW_PROVIDER: "install-vllm" }, true],
+    ["ordinary onboarding", { NEMOCLAW_NO_EXPRESS: "1" }, true],
+    ["a standard provider", { NEMOCLAW_PROVIDER: "ollama" }, true],
+    ["a normalized provider alias", { NEMOCLAW_PROVIDER: " Open-Router " }, true],
+    ["an unknown provider", { NEMOCLAW_PROVIDER: "unknown-provider" }, false],
+    ["the excluded NIM provider", { NEMOCLAW_PROVIDER: "nim-local" }, false],
+    ["the excluded NIM alias", { NEMOCLAW_PROVIDER: "nim" }, false],
+    [
+      "the excluded NIM provider with Express disabled",
+      { NEMOCLAW_PROVIDER: "nim-local", NEMOCLAW_NO_EXPRESS: "1" },
+      false,
+    ],
+    ["an unsupported opt-out value", { NEMOCLAW_NO_EXPRESS: "true" }, false],
+    ["no intent", {}, false],
+  ] as const)("recognizes %s (#11041)", (_scenario, env, expected) => {
+    expect(hasExplicitDeferredN1xOnboardingIntent(env)).toBe(expected);
+  });
+});
 
 function capability(id: string, state: ReadinessCapability["state"]): ReadinessCapability {
   return { id, state };
@@ -105,6 +127,40 @@ describe("onboarding readiness admission (#7411)", () => {
     expect(
       evaluateOnboardReadinessAdmission(report({ status: "inconclusive" }), DEFAULT_OPTIONS),
     ).toEqual({ admitted: true, waivedFindingIds: [] });
+  });
+
+  it("waives only the recorded legacy DGX Station finding during rebuild", () => {
+    const stationCapabilities = [
+      ...withCapabilityState(
+        requiredCapabilities(),
+        ONBOARD_REQUIRED_CAPABILITY_IDS.platformSupported,
+        "absent",
+      ),
+      capability("host.platform.dgx_station", "absent"),
+    ];
+    const stationFinding = finding("host.platform.dgx_station_unqualified");
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities: stationCapabilities, findings: [stationFinding] }),
+        { ...DEFAULT_OPTIONS, allowLegacyDgxStationQualification: true },
+      ),
+    ).toEqual({ admitted: true, waivedFindingIds: [stationFinding.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities: stationCapabilities, findings: [stationFinding] }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({ admitted: false, findingIds: [stationFinding.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({
+          capabilities: stationCapabilities,
+          findings: [stationFinding, finding("host.example.blocked")],
+        }),
+        { ...DEFAULT_OPTIONS, allowLegacyDgxStationQualification: true },
+      ),
+    ).toMatchObject({ admitted: false, findingIds: ["host.example.blocked"] });
   });
 
   it("fails on every unwaived blocking or fatal finding and retains report order", () => {
@@ -235,13 +291,59 @@ describe("onboarding readiness admission (#7411)", () => {
     });
   });
 
-  it.each(
-    [
-        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
-        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
-        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
-      ],
-  )(
+  it("defers standard Docker readiness only to a selected provider-owned host route", () => {
+    const capabilities = [
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+    ].reduce((current, id) => withCapabilityState(current, id, "unknown"), requiredCapabilities());
+    const dockerFindings = [
+      finding(ONBOARD_READINESS_FINDING_IDS.dockerUnavailable),
+      finding(ONBOARD_READINESS_FINDING_IDS.dockerHostInvalid),
+      finding(ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable),
+      finding(ONBOARD_READINESS_FINDING_IDS.runtimeUnsupported),
+      finding(ONBOARD_READINESS_FINDING_IDS.storageIncompatible),
+    ];
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: dockerFindings, status: "incompatible" }),
+        { ...DEFAULT_OPTIONS, providerOwnsHostReadiness: true },
+      ),
+    ).toEqual({
+      admitted: true,
+      waivedFindingIds: dockerFindings.map(({ id }) => id),
+    });
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: dockerFindings, status: "incompatible" }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({
+      admitted: false,
+      findingIds: dockerFindings.map(({ id }) => id),
+    });
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({
+          capabilities,
+          findings: [...dockerFindings, finding("host.example.blocked")],
+          status: "incompatible",
+        }),
+        { ...DEFAULT_OPTIONS, providerOwnsHostReadiness: true },
+      ),
+    ).toMatchObject({ admitted: false, findingIds: ["host.example.blocked"] });
+  });
+
+  it.each([
+    ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+    ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+    ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+  ])(
     "admits only the pre-mutation facts that portable host preparation can replace [case %#]",
     (id) => {
       let capabilities = withCapabilityState(

@@ -48,8 +48,19 @@ type TrustedSupervisorManifest = {
   runtimeTemplateSha256: readonly string[];
 };
 
+type ConsumerPinLayout = {
+  assets: readonly string[];
+  manifests: readonly string[];
+};
+
+type OpenShellPinLayout = {
+  brev: ConsumerPinLayout;
+  installer: ConsumerPinLayout;
+};
+
 type OpenShellReleaseTrust = {
   brevTemplateSha256: readonly string[];
+  featureGateTemplateSha256?: readonly string[];
   formula: {
     asset: "openshell.rb";
     sha256: string;
@@ -60,9 +71,62 @@ type OpenShellReleaseTrust = {
     asset: string;
     sha256: string;
   }[];
+  pinLayout: OpenShellPinLayout;
   sandboxBuilds: readonly TrustedSandboxBuild[];
   supervisor: TrustedSupervisorManifest | null;
   version: string;
+};
+
+const LEGACY_OPENSHELL_PIN_LAYOUT: OpenShellPinLayout = {
+  brev: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+    ],
+    manifests: [],
+  },
+  installer: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-apple-darwin.tar.gz",
+      "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-apple-darwin.tar.gz",
+      "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+      "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
+      "openshell.rb",
+    ],
+    manifests: [],
+  },
+};
+
+const V00116_OPENSHELL_PIN_LAYOUT: OpenShellPinLayout = {
+  brev: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+    ],
+    manifests: ["openshell-checksums-sha256.txt"],
+  },
+  installer: {
+    assets: [
+      "openshell-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-unknown-linux-musl.tar.gz",
+      "openshell-aarch64-apple-darwin.tar.gz",
+      "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+      "openshell-gateway-aarch64-apple-darwin.tar.gz",
+      "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
+      "openshell.rb",
+    ],
+    manifests: [
+      "openshell-checksums-sha256.txt",
+      "openshell-gateway-checksums-sha256.txt",
+      "openshell-sandbox-checksums-sha256.txt",
+    ],
+  },
 };
 
 type CliOptions = {
@@ -89,6 +153,45 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // supervisor runtime template. Its prospective digest is repeated only for
 // release records with a supervisor identity, and its trust test constructs
 // the exact follow-up template before the runtime change can land.
+const V00116_BREV_TEMPLATE_BASELINE_SHA256 = Object.freeze([
+  "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+  "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+  "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
+  // Exact #11251 template after immutable stable-channel enforcement.
+  "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
+  // Exact #11080 npm 12 bootstrap after the #11251 stable-channel cutover.
+  "98c46cfee5bc38cd378a991a7c60573836a6c774008caf5c5dd7bc6a1910e1ce",
+  // Exact #12192 bootstrap diagnostics template; release pins stay unchanged.
+  "336065ba8f55f686e3dedec9109b2dfeff16e9256e7a1be135bd32b1db0c4bee",
+  // Exact self-contained #12192 npm diagnostics; release pins stay unchanged.
+  "60aa3d473597638b50bc9ba637a86dee08aed5727c1d0297f72476c0c6690f2f",
+  // Exact #12192 secure npm diagnostics; release pins stay unchanged.
+  "67bc3071e844cbe4cbc8c94084523804fab3d59b0c705077cdda822ce66fd1db",
+  // Exact #12192 shared npm diagnostics; release pins stay unchanged.
+  "9bb436b8a08b085c5f7ca8a98bf1bc0cddc3cd51a792f897c6593499ab0b2da0",
+  // Exact #12239 stale bundled npm replacement for #12192; release pins stay unchanged.
+  "f37877d31f786fe39c16ef35efd8e1effd2494eaced09e28c04e7df37247f0f5",
+] as const);
+
+const V00116_INSTALLER_TEMPLATE_BASELINE_SHA256 = Object.freeze([
+  "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
+  // Exact #11251 template after immutable stable-override validation.
+  "24cb9e67b855e8a69df32aae992f4756ef2b29bcdc7846ef57bcfeacb3c1a9a3",
+  // Exact #12374 curl timeout/retry template; release pins and verification stay unchanged.
+  "6808b7c667aef5c9ebdfe269ae1f9b4c181b5de6a6e62bdb526fac4338f5ee4f",
+] as const);
+
+const V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256 = Object.freeze([
+  // Exact #11251 gateway-preparation runtime template.
+  "6093aa5b0f20988cfc59e0613cdf1fb21f814b43cc3ec95bb17da14dc0620b60",
+  // Exact #11251 template after the reviewed 0.0.116-only recovery gate.
+  "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
+  // Exact #11251 template after stable supervisor override binding.
+  "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
+  // Exact #11251 template after fail-closed gateway recovery validation.
+  "3d0f00a56ecb90e4077b6a1c455df8a659818cf8949b58e41ccc4f410ff9c13d",
+] as const);
+
 const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
   {
     brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
@@ -133,8 +236,11 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.72",
   },
   {
@@ -174,6 +280,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       },
     ],
     supervisor: null,
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.82",
   },
   {
@@ -204,6 +311,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     ],
     sandboxBuilds: [],
     supervisor: null,
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.85",
   },
   {
@@ -249,8 +357,11 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.99",
   },
   {
@@ -299,8 +410,11 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.101",
   },
   {
@@ -346,14 +460,20 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.103",
   },
   {
+    // The final template pre-authorizes the exact Brev Node/npm bootstrap in #11080 because
+    // dependent installer validation reads this trust record from the base branch.
     brevTemplateSha256: [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+      "ee86b418f29c48e4d4042cdb9bb5424eaaef0d89782134646c4b539e2849703e",
     ],
     formula: {
       asset: "openshell.rb",
@@ -413,27 +533,126 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       runtimeTemplateSha256: [
         "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+        // Allow the gateway-preparation runtime template; image and manifest digest stay unchanged.
+        "b6e467dd20e1bcb27d26d40ccc56eaef2a0c1321537108884e0941661a840373",
       ],
     },
+    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
     version: "0.0.106",
   },
+  {
+    brevTemplateSha256: [
+      ...V00116_BREV_TEMPLATE_BASELINE_SHA256,
+      // Exact #12239 control-normalized npm diagnostics for #12192; release pins stay unchanged.
+      "cfd709a9e481145a4e8ade4054d77ea487011f49458af0f995ec89733d762cb2",
+      // Exact #12376 npm replacement; base trust must precede runtime adoption.
+      "00869358ea440c38fc81d8f921f5eaf9380368fa036b2fc5db07bd84c933c968",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116/openshell.rb",
+    },
+    // The v0.0.116 release publishes only MUSL standalone sandbox archives.
+    // Trust only the exact full-cutover installer template whose stable Linux
+    // path selects that ABI. The historical v0.0.106 record retains the GNU templates.
+    installerTemplateSha256: [...V00116_INSTALLER_TEMPLATE_BASELINE_SHA256],
+    manifests: [
+      {
+        asset: "openshell-checksums-sha256.txt",
+        sha256: "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e",
+      },
+      {
+        asset: "openshell-gateway-checksums-sha256.txt",
+        sha256: "572d80ded99fab0c2cf75f8108c62ab3e8455356b3c3b38de1be98806a2440e9",
+      },
+      {
+        asset: "openshell-sandbox-checksums-sha256.txt",
+        sha256: "0cb63b3b4436214224872c1ba245bda0d92d904822aa4f28015081269f398f93",
+      },
+    ],
+    sandboxBuilds: [
+      {
+        required: false,
+        sha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40",
+      },
+      {
+        required: false,
+        sha256: "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d",
+      },
+    ],
+    supervisor: {
+      image: "ghcr.io/nvidia/openshell/supervisor",
+      manifestDigest: "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
+      required: false,
+      runtimeTemplateSha256: [
+        // Preserve the reviewed 0.0.116 supervisor templates.
+        ...V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256,
+        // Exact #12376 thread-group template from #12614; base trust precedes runtime adoption.
+        "2fb91b00c15aad1e5780a9e4199ca8ad944e849e3a32ad2b9bbb54c0255c0318",
+      ],
+    },
+    pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    featureGateTemplateSha256: ["3404b35030ce0adef3998dcdedf27245610534ddefaa741e125539b3d2e1a735"],
+    version: "0.0.116",
+  },
+  {
+    brevTemplateSha256: [
+      ...V00116_BREV_TEMPLATE_BASELINE_SHA256,
+      // Exact 0.1.2 pin selection with the merged main bootstrap diagnostics.
+      "bef651219365f79cfd3543fb7506bc941265e7580be164d916ff1efff9026fc5",
+      "7e9c35c5610f151345bb996a5e475af95e25c83ab9d95497f502002f74a1497b",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "a8ceb321f3d397a7ff9d07b0ffd6c06ad5d78021b9e477f5aca898ba98aa9bb8",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell.rb",
+    },
+    // OpenShell 0.1.2 retains the MUSL standalone sandbox layout.
+    installerTemplateSha256: [
+      ...V00116_INSTALLER_TEMPLATE_BASELINE_SHA256,
+      // Exact 0.1.2 pinned-sandbox feature check; runtime policy checks remain required.
+      "610fa58bc4242f23e6ce5e22444dd595995c5a9466bf406a34e5a548869377bc",
+    ],
+    manifests: [
+      {
+        asset: "openshell-checksums-sha256.txt",
+        sha256: "13ed9929ef1a9bc0dbbbbddfd13f14870cea2f64bee3786d848c7b1836785dc7",
+      },
+      {
+        asset: "openshell-gateway-checksums-sha256.txt",
+        sha256: "df589be474d16af9cd38b22ab6738241d9a45a9caa5fa4847c3aa51de8b7c8aa",
+      },
+      {
+        asset: "openshell-sandbox-checksums-sha256.txt",
+        sha256: "8475250201e4f72180c0d49b7898c7b33c28412f0373ef002a58c87c734255ae",
+      },
+    ],
+    sandboxBuilds: [
+      {
+        required: false,
+        sha256: "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1",
+      },
+      {
+        required: false,
+        sha256: "9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa",
+      },
+    ],
+    supervisor: {
+      image: "ghcr.io/nvidia/openshell/supervisor",
+      manifestDigest: "sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
+      required: false,
+      runtimeTemplateSha256: [
+        ...V00116_SUPERVISOR_TEMPLATE_BASELINE_SHA256,
+        "dceba5ee9bf6d9cd20adf637d63d008c932f751c073bbb0a83cdce087518e917",
+      ],
+    },
+    pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    // #12603's reviewed split-supervisor check accepts only the selected sandbox hashes.
+    featureGateTemplateSha256: ["3a402736ff8a2e02b5b26382521b4a4b9774046856c42f5be093b56480d6711e"],
+    version: "0.1.2",
+  },
 ] as const;
-const EXPECTED_INSTALLER_ASSETS = [
-  "openshell-x86_64-unknown-linux-musl.tar.gz",
-  "openshell-aarch64-unknown-linux-musl.tar.gz",
-  "openshell-aarch64-apple-darwin.tar.gz",
-  "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
-  "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
-  "openshell-gateway-aarch64-apple-darwin.tar.gz",
-  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
-  "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
-  "openshell.rb",
-] as const;
-const EXPECTED_BREV_ASSETS = [
-  "openshell-x86_64-unknown-linux-musl.tar.gz",
-  "openshell-aarch64-unknown-linux-musl.tar.gz",
-] as const;
-
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
 }
@@ -453,6 +672,20 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
   ) {
     fail(`OpenShell v${release.version} must have exactly three trusted release-manifest digests`);
   }
+  const trustedManifestAssets = new Set(release.manifests.map((manifest) => manifest.asset));
+  for (const [consumer, layout] of [
+    ["installer", release.pinLayout.installer],
+    ["Brev launchable", release.pinLayout.brev],
+  ] as const) {
+    const entries = [...layout.assets, ...layout.manifests];
+    if (
+      layout.assets.length === 0 ||
+      new Set(entries).size !== entries.length ||
+      layout.manifests.some((asset) => !trustedManifestAssets.has(asset))
+    ) {
+      fail(`trusted OpenShell v${release.version} ${consumer} pin layout is invalid`);
+    }
+  }
   if (
     !release.formula ||
     release.formula.asset !== "openshell.rb" ||
@@ -467,6 +700,9 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     release.installerTemplateSha256.some((sha256) => !SHA256_PATTERN.test(sha256)) ||
     release.brevTemplateSha256.length === 0 ||
     release.brevTemplateSha256.some((sha256) => !SHA256_PATTERN.test(sha256)) ||
+    (release.featureGateTemplateSha256 !== undefined &&
+      (release.featureGateTemplateSha256.length === 0 ||
+        release.featureGateTemplateSha256.some((sha256) => !SHA256_PATTERN.test(sha256)))) ||
     release.sandboxBuilds.some((pin) => !SHA256_PATTERN.test(pin.sha256))
   ) {
     fail(`trusted OpenShell v${release.version} template or sandbox record is invalid`);
@@ -591,6 +827,41 @@ function assertExactAssetSet(
         `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
     );
   }
+}
+
+function assertTrustedManifestPins(
+  pins: InstallerPin[],
+  release: OpenShellReleaseTrust,
+  expectedAssets: readonly string[],
+  sourceLabel: string,
+): void {
+  assertExactAssetSet(pins, expectedAssets, sourceLabel);
+  const trusted = new Map(release.manifests.map((manifest) => [manifest.asset, manifest.sha256]));
+  for (const pin of pins) {
+    if (trusted.get(pin.asset) !== pin.sha256) {
+      fail(
+        `${sourceLabel} ${pin.asset} must match the base-trusted v${release.version} manifest digest`,
+      );
+    }
+  }
+}
+
+export function validateReleasePinLayout(
+  pins: InstallerPin[],
+  releaseVersion: string,
+  consumer: "installer" | "Brev launchable",
+  sourceLabel: string,
+): InstallerPin[] {
+  // Resolve the base-trusted record before inspecting the candidate-authored
+  // table shape. A candidate must never select its own layout contract.
+  const release = trustedRelease(releaseVersion);
+  const layout = consumer === "installer" ? release.pinLayout.installer : release.pinLayout.brev;
+  const manifestNames = new Set(release.manifests.map((manifest) => manifest.asset));
+  const manifestPins = pins.filter((pin) => manifestNames.has(pin.asset));
+  const assetPins = pins.filter((pin) => !manifestNames.has(pin.asset));
+  assertExactAssetSet(assetPins, layout.assets, sourceLabel);
+  assertTrustedManifestPins(manifestPins, release, layout.manifests, `${sourceLabel} manifest`);
+  return assetPins;
 }
 
 // invalidState: the blueprint and stable runtime selectors request a newer
@@ -1500,15 +1771,14 @@ function parseCliOptions(argv: string[]): CliOptions {
   return { blueprint, brevInstaller, format, installer, supervisorRuntime };
 }
 
-function runCli(): void {
-  const options = parseCliOptions(process.argv.slice(2));
-  const blueprintSource = readInstallerInput(options.blueprint, "blueprint");
-  const installerSource = readInstallerInput(options.installer, "installer");
-  const brevInstallerSource = readInstallerInput(options.brevInstaller, "Brev launchable");
-  const supervisorRuntimeSource = readInstallerInput(
-    options.supervisorRuntime,
-    "supervisor runtime",
-  );
+export function validateInstallerSources(sources: {
+  blueprintSource: string;
+  installerSource: string;
+  brevInstallerSource: string;
+  supervisorRuntimeSource: string;
+}) {
+  const { blueprintSource, installerSource, brevInstallerSource, supervisorRuntimeSource } =
+    sources;
   const installerPins = extractInstallerPins(installerSource, {
     functionName: "openshell_pinned_sha256",
     sourceLabel: "installer",
@@ -1520,16 +1790,17 @@ function runCli(): void {
   const installerReleaseVersions = [
     ...new Set(installerPins.map((pin) => pin.releaseVersion)),
   ].sort();
-  for (const version of installerReleaseVersions) {
-    assertExactAssetSet(
+  const installerAssetPins = installerReleaseVersions.flatMap((version) =>
+    validateReleasePinLayout(
       installerPins.filter((pin) => pin.releaseVersion === version),
-      EXPECTED_INSTALLER_ASSETS,
+      version,
+      "installer",
       installerReleaseVersions.length === 1
         ? "installer pin table"
         : `installer pin table for ${version}`,
-    );
-  }
-  assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
+    ),
+  );
+  const installerReleases = installerReleaseVersions.map(trustedRelease);
   const brevReleaseVersions = [...new Set(brevPins.map((pin) => pin.releaseVersion))].sort();
   if (brevReleaseVersions.length !== 1) {
     fail(
@@ -1540,9 +1811,14 @@ function runCli(): void {
   if (!installerReleaseVersions.includes(releaseVersion)) {
     fail(`installer pin table has no assets for selected release ${releaseVersion}`);
   }
-  const pins = [...installerPins, ...brevPins];
+  const brevAssetPins = validateReleasePinLayout(
+    brevPins,
+    releaseVersion,
+    "Brev launchable",
+    "Brev pin table",
+  );
+  const pins = [...installerAssetPins, ...brevAssetPins];
   const release = trustedRelease(releaseVersion);
-  const installerReleases = installerReleaseVersions.map(trustedRelease);
   const sandboxBuildPins = extractSandboxBuildPins(installerSource);
   assertTrustedSandboxBuildPins(sandboxBuildPins, release);
   const supervisor =
@@ -1581,6 +1857,65 @@ function runCli(): void {
       fail(`installer pin-table release ${releaseVersion} must match ${label} ${runtimeVersion}`);
     }
   }
+  return { releaseVersion, pins, installerReleases, installerTemplateSha256, brevTemplateSha256 };
+}
+
+/** Validate the host feature-check module before protected E2E adopts its template. */
+export function validateOpenShellFeatureGateSource(source: string, releaseVersion: string): void {
+  const release = trustedRelease(releaseVersion);
+  if (Buffer.byteLength(source) > MAX_INSTALLER_INPUT_BYTES || source.includes("\0")) {
+    fail("feature gate source is invalid or too large");
+  }
+  const header = "const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([\n";
+  const start = source.indexOf(header);
+  if (start < 0 || source.indexOf(header, start + header.length) !== -1) {
+    fail("feature gate must contain one literal sandbox build map");
+  }
+  const bodyStart = start + header.length;
+  const end = source.indexOf("\n]);", bodyStart);
+  if (end < 0) fail("feature gate sandbox build map is unterminated");
+  const pins = source
+    .slice(bodyStart, end)
+    .split("\n")
+    .flatMap((line) => {
+      if (/^  \/\/[^\r\n]*$/u.test(line)) return [];
+      const match = /^  \["([a-f0-9]{64})", "([0-9]+\.[0-9]+\.[0-9]+)"\],$/u.exec(line);
+      if (!match) fail("feature gate sandbox build map must contain only literal pins");
+      return [{ sha256: match[1]!, version: match[2]! }];
+    });
+  const allowed = new Set(
+    TRUSTED_OPENSHELL_RELEASES.flatMap((record) =>
+      record.sandboxBuilds.map((pin) => `${record.version}:${pin.sha256}`),
+    ),
+  );
+  const actual = new Set(pins.map((pin) => `${pin.version}:${pin.sha256}`));
+  if (
+    new Set(pins.map((pin) => pin.sha256)).size !== pins.length ||
+    pins.some((pin) => !allowed.has(`${pin.version}:${pin.sha256}`)) ||
+    release.sandboxBuilds.length === 0 ||
+    release.sandboxBuilds.some((pin) => !actual.has(`${releaseVersion}:${pin.sha256}`))
+  ) {
+    fail(
+      "feature gate sandbox identities must be unique, base-trusted and include the selected release",
+    );
+  }
+  const normalized =
+    source.slice(0, bodyStart) + "<normalized-sandbox-build-pins>" + source.slice(end);
+  const digest = createHash("sha256").update(normalized).digest("hex");
+  if (!release.featureGateTemplateSha256?.includes(digest)) {
+    fail(`feature gate operational template is not base-trusted; actual_sha256=${digest}`);
+  }
+}
+
+function runCli(): void {
+  const options = parseCliOptions(process.argv.slice(2));
+  const { pins, installerReleases, installerTemplateSha256, brevTemplateSha256 } =
+    validateInstallerSources({
+      blueprintSource: readInstallerInput(options.blueprint, "blueprint"),
+      installerSource: readInstallerInput(options.installer, "installer"),
+      brevInstallerSource: readInstallerInput(options.brevInstaller, "Brev launchable"),
+      supervisorRuntimeSource: readInstallerInput(options.supervisorRuntime, "supervisor runtime"),
+    });
   if (options.format === "json") {
     process.stdout.write(
       `${JSON.stringify(

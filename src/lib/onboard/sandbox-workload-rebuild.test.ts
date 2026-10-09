@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
@@ -19,9 +19,9 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import type {
   BuiltManagedStartupOnboardProfile,
@@ -34,6 +34,7 @@ import {
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import {
   buildManagedWorkloadRebuildReceipt,
+  type ManagedWorkloadRebuildCatalogHandoff,
   type ManagedWorkloadRebuildHandoff,
   type ManagedWorkloadReceipt,
   managedWorkloadRebuildDependencies,
@@ -44,15 +45,17 @@ import {
   stageManagedWorkloadRebuildProfile,
 } from "./workload/rebuild";
 import type { SandboxWorkloadRuntimeCapabilities } from "./workload/source";
+import { ManagedImageCatalogUnavailableError } from "./managed-image/catalog";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+let installedRoot: string;
 const ORIGINAL_PREPARE = managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource;
 type RebuildProfileInput = Omit<
   ManagedStartupOnboardProfileInput,
   "agentName" | "environment" | "corporateCa"
 >;
 
-function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInput {
+function rebuildProfileInput(agent: ManagedImageAgent): RebuildProfileInput {
   const common = {
     chatUiUrl: "http://127.0.0.1:18789",
     effectiveDashboardPort: 18_789,
@@ -113,12 +116,29 @@ function rebuildProfileInput(agent: ShippedManagedImageAgent): RebuildProfileInp
       manageDashboard: false,
       hermesDashboardState: { config: null, enabled: false },
     },
-  } as const satisfies Record<ShippedManagedImageAgent, RebuildProfileInput>;
+    pi: {
+      ...common,
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "nvidia",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-completions",
+        primaryModelRef: null,
+        compatibility: null,
+      },
+      chatUiUrl: "",
+      effectiveDashboardPort: 0,
+      manageDashboard: false,
+      hermesDashboardState: { config: null, enabled: false },
+    },
+  } as const satisfies Record<ManagedImageAgent, RebuildProfileInput>;
   return profiles[agent];
 }
 
 function managedContract(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   generation: "old" | "new",
   platform: ManagedImagePlatform = "linux/amd64",
 ): ManagedImageContractV1 {
@@ -143,7 +163,7 @@ function managedContract(
   };
 }
 
-function profileTransport(agent: ShippedManagedImageAgent): BuiltManagedStartupOnboardProfile {
+function profileTransport(agent: ManagedImageAgent): BuiltManagedStartupOnboardProfile {
   const profile = managedStartupE2eProfile(agent);
   const encodedProfile = encodeManagedStartupProfile(profile);
   return {
@@ -155,7 +175,7 @@ function profileTransport(agent: ShippedManagedImageAgent): BuiltManagedStartupO
 }
 
 function receipt(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   generation: "old" | "new",
   platform: ManagedImagePlatform = "linux/amd64",
 ): ManagedWorkloadReceipt {
@@ -179,7 +199,7 @@ function receipt(
 }
 
 function entry(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
 ): SandboxEntry {
   const workload = receipt(agent, "old", platform);
@@ -241,23 +261,25 @@ function provider(
 }
 
 function replacement(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
+  revision?: string,
 ) {
   const image = managedContract(agent, "new", platform);
+  const contract = revision ? { ...image, source: { ...image.source, revision } } : image;
   return {
     source: {
       kind: "managed-image" as const,
-      reference: image.reference,
-      contract: image,
+      reference: contract.reference,
+      contract,
     },
-    release: image.source.release,
+    release: contract.source.release,
     fallbackDiagnostic: null,
   };
 }
 
 function completeHandoff(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   catalog: Awaited<ReturnType<typeof prepareManagedWorkloadRebuildHandoff>>,
 ): ManagedWorkloadRebuildHandoff {
   return {
@@ -266,50 +288,192 @@ function completeHandoff(
   };
 }
 
+beforeEach(() => {
+  vi.stubEnv("NEMOCLAW_INSTALL_REF", "");
+  installedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-installed-"));
+  fs.mkdirSync(path.join(installedRoot, "dist"));
+  fs.writeFileSync(
+    path.join(installedRoot, "dist", "build-identity.json"),
+    JSON.stringify({ nemoclawVersion: "0.0.100", sourceRevision: "b".repeat(40) }),
+  );
+  fs.writeFileSync(path.join(installedRoot, ".version"), "0.0.100\n");
+});
+
 afterEach(() => {
+  fs.rmSync(installedRoot, { force: true, recursive: true });
+  vi.unstubAllEnvs();
   managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = ORIGINAL_PREPARE;
 });
 
 describe("managed workload rebuild preflight", () => {
-  it.each(
-    AGENTS,
-  )("prepares exact current-release authority for %s without a Dockerfile fallback", async (agent) => {
-    const prepare = vi.fn(async () => replacement(agent));
+  it.each(AGENTS)(
+    "resolves the installed source catalog for an untagged %s rebuild (#12632)",
+    async (agent) => {
+      const version = "0.0.130-9-gbbbbbbbbb";
+      fs.rmSync(path.join(installedRoot, ".version"));
+      fs.writeFileSync(
+        path.join(installedRoot, "dist", "build-identity.json"),
+        JSON.stringify({ nemoclawVersion: version, sourceRevision: "b".repeat(40) }),
+      );
+      const catalog = Object.fromEntries(
+        AGENTS.map((name) => {
+          const image = managedContract(name, "new");
+          return [name, { ...image, source: { ...image.source, release: `v${version}` } }];
+        }),
+      );
+      const resolveCatalog = vi.fn(async () => catalog);
+      managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = (input) =>
+        ORIGINAL_PREPARE(input, { resolveCatalog });
+
+      const handoff = await prepareManagedWorkloadRebuildHandoff(entry(agent), {
+        runtime: runtime(),
+        provider: provider(),
+        rootDir: installedRoot,
+      });
+
+      expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+        release: `v${version}`,
+        platform: "linux/amd64",
+        revision: "b".repeat(40),
+      });
+      expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
+      expect(handoff?.replacement.source.contract.source.revision).toBe("b".repeat(40));
+      expect(handoff?.replacement.release).toBe(`v${version}`);
+    },
+  );
+
+  it("retains source authority for an exact-SHA install with a release stamp (#12632)", async () => {
+    vi.stubEnv("NEMOCLAW_INSTALL_REF", "b".repeat(40));
+    const prepare = vi.fn(async () => replacement("openclaw"));
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
 
-    const handoff = await prepareManagedWorkloadRebuildHandoff(entry(agent), {
+    await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
       runtime: runtime(),
       provider: provider(),
-      version: "0.0.100",
+      rootDir: installedRoot,
     });
 
-    expect(handoff).toMatchObject({
-      schemaVersion: 1,
-      providerId: "mxc",
-      agent,
-      previousReceipt: {
-        kind: "managed-image",
-        platform: "linux/amd64",
-        release: "v0.0.99",
-      },
-      replacement: {
-        source: {
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        version: "0.0.100",
+        catalogRevision: "b".repeat(40),
+        policy: "require-managed",
+      }),
+    );
+  });
+
+  it("rejects a missing installed-source catalog before returning a replacement (#12632)", async () => {
+    fs.rmSync(path.join(installedRoot, ".version"));
+    const resolveCatalog = vi.fn(async () => {
+      throw new ManagedImageCatalogUnavailableError("GHCR manifest request returned HTTP 404");
+    });
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = (input) =>
+      ORIGINAL_PREPARE(input, { resolveCatalog });
+    const original = structuredClone(entry("openclaw"));
+    const sandbox = structuredClone(original);
+
+    await expect(
+      prepareManagedWorkloadRebuildHandoff(sandbox, {
+        runtime: runtime(),
+        provider: provider(),
+        rootDir: installedRoot,
+      }),
+    ).rejects.toThrow(
+      "Managed workload rebuild preflight failed: Sandbox workload preparation failed:",
+    );
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: "v0.0.100",
+      platform: "linux/amd64",
+      revision: "b".repeat(40),
+    });
+    expect(sandbox).toEqual(original);
+  });
+
+  it("rejects an exact install ref that disagrees with the installed build (#12632)", async () => {
+    vi.stubEnv("NEMOCLAW_INSTALL_REF", "c".repeat(40));
+    const prepare = vi.fn();
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+
+    await expect(
+      prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+        runtime: runtime(),
+        provider: provider(),
+        rootDir: installedRoot,
+      }),
+    ).rejects.toThrow("the exact install ref does not match the installed build identity");
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(AGENTS)(
+    "prepares exact current-release authority for %s without a Dockerfile fallback",
+    async (agent) => {
+      const prepare = vi.fn(async () => replacement(agent));
+      managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+
+      const handoff = await prepareManagedWorkloadRebuildHandoff(entry(agent), {
+        runtime: runtime(),
+        provider: provider(),
+        rootDir: installedRoot,
+        version: "0.0.100",
+      });
+
+      expect(handoff).toMatchObject({
+        schemaVersion: 1,
+        providerId: "mxc",
+        agent,
+        previousReceipt: {
           kind: "managed-image",
-          contract: { agent, platform: "linux/amd64" },
+          platform: "linux/amd64",
+          release: "v0.0.99",
         },
-        release: "v0.0.100",
-      },
-    });
-    expect(prepare).toHaveBeenCalledWith({
-      agentName: agent,
-      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
-      runtime: runtime(),
-      version: "0.0.100",
-      policy: "require-managed",
-    });
-    expect(Object.isFrozen(handoff)).toBe(true);
-    expect(Object.isFrozen(handoff?.previousProfile.proxy)).toBe(true);
-    expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
+        replacement: {
+          source: {
+            kind: "managed-image",
+            contract: { agent, platform: "linux/amd64" },
+          },
+          release: "v0.0.100",
+        },
+      });
+      expect(prepare).toHaveBeenCalledWith({
+        agentName: agent,
+        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+        runtime: runtime(),
+        version: "0.0.100",
+        policy: "require-managed",
+      });
+      expect(Object.isFrozen(handoff)).toBe(true);
+      expect(Object.isFrozen(handoff?.previousProfile.proxy)).toBe(true);
+      expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
+    },
+  );
+
+  it("rejects a Hermes base-image override before managed rebuild catalog resolution (#11138)", async () => {
+    const credentialBearingOverride =
+      "https://registry-user:registry-password@registry.example.test/hermes-base:latest";
+    const catalog = Object.fromEntries(
+      AGENTS.map((agent) => [agent, managedContract(agent, "new")]),
+    );
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = ORIGINAL_PREPARE;
+    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", credentialBearingOverride);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON", JSON.stringify(catalog));
+
+    let rejection: Error | null = null;
+    try {
+      await prepareManagedWorkloadRebuildHandoff(entry("hermes"), {
+        runtime: runtime(),
+        provider: provider(),
+        rootDir: installedRoot,
+        version: "0.0.100",
+      });
+    } catch (error) {
+      rejection = error as Error;
+    }
+
+    expect(rejection?.message).toContain("'NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF' is set");
+    expect(rejection?.message).not.toContain(credentialBearingOverride);
+    expect(rejection?.message).not.toContain("registry-password");
   });
 
   it("retains the live qualification revision during rebuild preflight (#9385)", async () => {
@@ -321,6 +485,7 @@ describe("managed workload rebuild preflight", () => {
     await prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
       version: "0.0.100",
     });
 
@@ -349,6 +514,7 @@ describe("managed workload rebuild preflight", () => {
       await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
         runtime: runtime(),
         provider: provider(),
+        rootDir: installedRoot,
         version: "0.0.100",
       });
 
@@ -366,24 +532,33 @@ describe("managed workload rebuild preflight", () => {
     }
   });
 
-  it("rejects a qualification revision that conflicts with durable authority (#9385)", async () => {
-    const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
+  it("uses the GitHub Actions qualification revision and retains the previous workload receipt during rebuild (#10970)", async () => {
+    const prepare = vi.fn(async () => replacement("openclaw", "linux/amd64", "c".repeat(40)));
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
     vi.stubEnv("GITHUB_ACTIONS", "true");
     vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
 
-    await expect(
-      prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
-        runtime: runtime(),
-        provider: provider(),
-        version: "0.0.100",
-      }),
-    ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
-    expect(prepare).not.toHaveBeenCalled();
+    const handoff = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+      runtime: runtime(),
+      provider: provider(),
+      rootDir: installedRoot,
+      version: "0.0.100",
+    });
+
+    expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
+    expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
+    expect(prepare).toHaveBeenCalledExactlyOnceWith({
+      agentName: "openclaw",
+      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+      runtime: runtime(),
+      version: "0.0.100",
+      policy: "require-managed",
+      catalogRevision: "c".repeat(40),
+    });
   });
 
-  it("rejects a PR catalog revision that conflicts with durable authority (#9464)", async () => {
-    const prepare = vi.fn(async () => replacement("openclaw"));
+  it("accepts an exact PR replacement catalog newer than durable authority (#9464)", async () => {
+    const prepare = vi.fn(async () => replacement("openclaw", "linux/amd64", "c".repeat(40)));
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
@@ -394,14 +569,24 @@ describe("managed workload rebuild preflight", () => {
     vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG", catalogPath);
 
     try {
-      await expect(
-        prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
-          runtime: runtime(),
-          provider: provider(),
-          version: "0.0.100",
-        }),
-      ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
-      expect(prepare).not.toHaveBeenCalled();
+      const handoff = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+        runtime: runtime(),
+        provider: provider(),
+        rootDir: installedRoot,
+        version: "0.0.100",
+      });
+
+      expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
+      expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
+      expect(prepare).toHaveBeenCalledExactlyOnceWith({
+        agentName: "openclaw",
+        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+        runtime: runtime(),
+        version: "0.0.100",
+        policy: "require-managed",
+        catalogPath,
+        expectedCatalogRevision: "c".repeat(40),
+      });
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
@@ -416,6 +601,7 @@ describe("managed workload rebuild preflight", () => {
     await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
       version: "0.0.100",
     });
 
@@ -436,6 +622,7 @@ describe("managed workload rebuild preflight", () => {
     const handoff = await prepareManagedWorkloadRebuildHandoff(entry(agent, "linux/arm64"), {
       runtime: runtime("mxc", "linux/arm64"),
       provider: provider(),
+      rootDir: installedRoot,
       version: "0.0.100",
     });
 
@@ -498,18 +685,21 @@ describe("managed workload rebuild preflight", () => {
       provider("mxc", { authorizesRebuild: false }),
       /does not authorize 'rebuild'/u,
     ],
-  ] as const)("rejects %s drift before catalog resolution", async (_label, row, target, selected, error) => {
-    const prepare = vi.fn();
-    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+  ] as const)(
+    "rejects %s drift before catalog resolution",
+    async (_label, row, target, selected, error) => {
+      const prepare = vi.fn();
+      managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
 
-    await expect(
-      prepareManagedWorkloadRebuildHandoff(row, {
-        runtime: target,
-        provider: selected,
-      }),
-    ).rejects.toThrow(error);
-    expect(prepare).not.toHaveBeenCalled();
-  });
+      await expect(
+        prepareManagedWorkloadRebuildHandoff(row, {
+          runtime: target,
+          provider: selected,
+        }),
+      ).rejects.toThrow(error);
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
 
   it("revalidates retained profile and receipt authority against the live row", async () => {
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = vi.fn(async () =>
@@ -519,6 +709,7 @@ describe("managed workload rebuild preflight", () => {
     const catalog = await prepareManagedWorkloadRebuildHandoff(row, {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
     });
 
     expect(managedWorkloadRebuildHandoffMatchesEntry(catalog!, row, provider())).toBe(true);
@@ -539,6 +730,7 @@ describe("managed workload rebuild preflight", () => {
     const catalog = await prepareManagedWorkloadRebuildHandoff(entry("hermes"), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
     });
     const complete = completeHandoff("hermes", catalog);
 
@@ -556,6 +748,7 @@ describe("managed workload rebuild preflight", () => {
     const catalog = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
     });
     const crossAgentHandoff: ManagedWorkloadRebuildHandoff = {
       ...catalog!,
@@ -575,6 +768,7 @@ describe("managed workload rebuild preflight", () => {
     const catalog = await prepareManagedWorkloadRebuildHandoff(entry(agent), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
     });
 
     const staged = stageManagedWorkloadRebuildProfile(catalog!, rebuildProfileInput(agent), {});
@@ -596,6 +790,44 @@ describe("managed workload rebuild preflight", () => {
     );
   });
 
+  it.each([
+    ["explicit", 65_536, 8_192, false],
+    ["upper-bound", 4_194_304, 1_000_000_000, true],
+    ["omitted", null, null, null],
+  ] as const)(
+    "preserves Pi %s tuning instead of ambient values during startup-profile reconstruction",
+    (_label, contextWindow, maxTokens, reasoning) => {
+      const previousProfile = {
+        ...managedStartupE2eProfile("pi"),
+        tuning: { contextWindow, maxTokens, reasoning, reasoningEffort: null },
+      };
+      const encodedProfile = encodeManagedStartupProfile(previousProfile);
+      const catalog: ManagedWorkloadRebuildCatalogHandoff = {
+        schemaVersion: 1,
+        providerId: "mxc",
+        agent: "pi",
+        previousReceipt: {
+          ...receipt("pi", "old"),
+          encodedProfile,
+          startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+        },
+        previousContract: managedContract("pi", "old"),
+        previousProfile,
+        replacement: replacement("pi"),
+        corporateCa: null,
+      };
+
+      const staged = stageManagedWorkloadRebuildProfile(catalog, rebuildProfileInput("pi"), {
+        NEMOCLAW_CONTEXT_WINDOW: "131072",
+        NEMOCLAW_MAX_TOKENS: "4096",
+        NEMOCLAW_REASONING: "false",
+      });
+      const decoded = decodeManagedStartupProfile(staged.replacementProfile.encodedProfile);
+
+      expect(decoded.tuning).toEqual(previousProfile.tuning);
+    },
+  );
+
   it("replays credential-bearing proxy intent without persisting credentials", async () => {
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = vi.fn(async () =>
       replacement("openclaw"),
@@ -603,6 +835,7 @@ describe("managed workload rebuild preflight", () => {
     const catalog = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
     });
     const replayHandoff = {
       ...catalog!,
@@ -637,6 +870,7 @@ describe("managed workload rebuild preflight", () => {
     const catalog = await prepareManagedWorkloadRebuildHandoff(entry("hermes"), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
     });
     const pem = MANAGED_STARTUP_E2E_CORPORATE_CA_PEM;
     const withCorporateCa = {
@@ -669,6 +903,7 @@ describe("managed workload rebuild preflight", () => {
     const catalog = await prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
       runtime: runtime(),
       provider: provider(),
+      rootDir: installedRoot,
     });
 
     const source = prepareSandboxWorkloadSourceFromRebuildHandoff(catalog!, runtime(), provider());

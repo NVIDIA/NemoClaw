@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-guide"
-description: "Guides human users' AI agents to the NemoClaw docs MCP server and canonical Fern documentation in Markdown form. Use when users ask how to install, configure, operate, troubleshoot, secure, or learn NemoClaw with an AI coding assistant. Trigger keywords - nemoclaw docs, use nemoclaw with ai agent, nemoclaw mcp docs, nemoclaw install help, nemoclaw quickstart, nemoclaw markdown docs, llms.txt, agent skills."
+description: "Find official NemoClaw documentation for installation, configuration, operation, or troubleshooting. Also handles requested docs MCP setup."
 license: "Apache-2.0"
 ---
 
@@ -11,48 +11,24 @@ Do not answer from stale copied docs or generated skill references when the live
 
 ## Retrieval Order
 
-1. If the assistant supports MCP, configure the NemoClaw docs MCP server at `https://docs.nvidia.com/nemoclaw/_mcp/server`.
-2. Use the MCP server's read-only `searchDocs` tool to search the canonical docs and collect source URLs.
+1. If the NemoClaw docs MCP server is already configured, use its read-only `searchDocs` tool to find task-relevant docs.
+2. Otherwise, use the Markdown index and pages below. Docs lookup does not require installing or configuring MCP.
 3. If MCP is not available, fetch the AI documentation index first: `https://docs.nvidia.com/nemoclaw/llms.txt`.
 4. Fetch the specific `.md` page listed in the index or returned by docs search for the user's task.
 5. If you only find an HTML documentation URL, replace the `.html` suffix with `.md`, or append `.md` to the route when the URL has no suffix.
 6. Prefer the user's selected agent variant. Do not mix variant-specific instructions unless you explain why.
 
-## Configure the MCP Server
+## Optional setup and starting pages
 
-For Claude Code, run:
-
-```bash
-claude mcp add --transport http fern-docs https://docs.nvidia.com/nemoclaw/_mcp/server
-```
-
-For Cursor, add `https://docs.nvidia.com/nemoclaw/_mcp/server` to the MCP server configuration.
-For other MCP clients, configure a streamable HTTP MCP server at that URL.
-
-## Starting Pages
-
-Use these pages first for common onboarding flows:
-
-- OpenClaw home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.md`.
-- OpenClaw prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites.md`.
-- OpenClaw quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md`.
-- Hermes home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/home.md`.
-- Hermes prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/prerequisites.md`.
-- Hermes quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md`.
-- Deep Agents home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/home.md`.
-- Deep Agents prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/prerequisites.md`.
-- Deep Agents quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md`.
-- Pi home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/home.md`.
-- Pi quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/get-started/quickstart.md`.
-- Pi operations: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/manage-sandboxes/run-pi.md`.
-- Pi support and security: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/reference/pi-support.md`.
-- Pi command reference: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/reference/commands.md`.
+Read [Docs Access](references/docs-access.md) when the user requests MCP configuration or when
+starting an installation needs direct links for the selected agent variant. Ordinary docs questions
+can use the index without reading that reference.
 
 ## How to Help the User
 
-- Ask which agent variant they want to use before giving setup instructions: OpenClaw, Hermes, Deep Agents, or Pi. State that Pi remains a release candidate until the selected release activates it.
-- Ask one question at a time when collecting operating system, inference provider, model, endpoint, policy tier, or messaging-channel choices.
-- Run commands for non-technical users when your environment allows it, after explaining what the command does and getting permission.
+- Use the selected agent variant from the request or current sandbox. Ask when it cannot be determined and changes the instructions. Check the selected release's support status, including Pi activation.
+- Ask only for missing operating-system, provider, model, endpoint, policy, or channel choices that affect the requested task.
+- Run commands within the user's requested scope and the environment's permissions. Explain material effects; request authorization only for effects outside that scope.
 - Summarize important command output instead of asking the user to paste terminal output into chat.
 - Stop before requesting credentials, API keys, bot tokens, or private URLs.
 - Never ask the user to paste secrets into chat.
@@ -70,7 +46,7 @@ Use these pages first for common onboarding flows:
 
 ## Response Requirements
 
-- Cite the Markdown documentation pages you used. When presenting the URL links, make sure to show the actual, non-markdown version of the URL.
+- Cite the documentation pages used with direct source links.
 - Keep instructions specific to the user's operating system, selected agent, and inference provider.
 - Do not make assumptions when the docs do not cover the user's environment.
-- Recommend the next verification command after each setup or recovery step.
+- Verify the requested setup or recovery outcome with the relevant documented check.

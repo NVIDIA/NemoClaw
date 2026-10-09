@@ -17,7 +17,10 @@ import {
   applyPreEnableChecks as applyPlanPreEnableChecks,
   type MessagingHookPhaseOptions,
 } from "./hook-phases";
-import { applyCredentialsAtOpenShell as applyCredentialsPlanAtOpenShell } from "./openshell-provider";
+import {
+  applyCredentialsAtOpenShell as applyCredentialsPlanAtOpenShell,
+  cleanupProvidersAtOpenShell as cleanupProvidersPlanAtOpenShell,
+} from "./openshell-provider";
 import { applyPolicyAtOpenShell as applyPolicyPlanAtOpenShell } from "./policy";
 import {
   MESSAGING_SETUP_APPLIER_ENV_KEY,
@@ -28,6 +31,8 @@ import {
   type MessagingOpenShellRunner,
   type MessagingPolicyApplyOptions,
   type MessagingPolicyApplyResult,
+  type MessagingProviderCleanupOptions,
+  type MessagingProviderCleanupResult,
   type MessagingSetupEnvOptions,
 } from "./types";
 
@@ -171,8 +176,15 @@ export class MessagingSetupApplier {
   static applyCredentialsAtOpenShell(
     plan: SandboxMessagingPlan,
     options: MessagingCredentialApplyOptions,
-  ): MessagingCredentialApplyResult {
+  ): Promise<MessagingCredentialApplyResult> {
     return applyCredentialsPlanAtOpenShell(plan, options);
+  }
+
+  static cleanupProvidersAtOpenShell(
+    providerNames: readonly string[],
+    options: MessagingProviderCleanupOptions,
+  ): Promise<MessagingProviderCleanupResult> {
+    return cleanupProvidersPlanAtOpenShell(providerNames, options);
   }
 
   static applyPolicyAtOpenShell(

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Exact-target gateway authority resolution for rebuild, teardown, and provider credential mutations.
+ * Exact-target gateway authority resolution for rebuild, teardown, forward recovery,
+ * and provider credential mutations.
  *
  * Onboarding binds authority before gateway effects. Credentials add and reset,
  * stop, final-sandbox cleanup, and uninstall can run after onboarding exits.
@@ -10,12 +11,14 @@
  * signal processes, or remove runtime resources (#6576).
  */
 
+import { isExternallySupervised } from "./gateway-ownership";
 import fs from "node:fs";
 import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { inspectCheckpoint } from "../state/onboard-checkpoint";
+import { resolveCheckpointForResume } from "../state/onboard-checkpoint-migrate";
 import type { Session } from "../state/onboard-session";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
@@ -54,7 +57,7 @@ export type GatewayTeardownAuthorityResolver = (
   deps?: GatewayTeardownAuthorityDeps,
 ) => GatewayOwner;
 
-type GatewayAuthorityEffect = "credential mutation" | "rebuild" | "teardown";
+type GatewayAuthorityEffect = "credential mutation" | "forward recovery" | "rebuild" | "teardown";
 
 const FRESH_ONBOARDING_CHECKPOINT_RECOVERY =
   " Start a fresh onboarding run to replace the invalid checkpoint before retrying.";
@@ -163,7 +166,9 @@ function resolveGatewayEffectAuthority(
       ? "gateway teardown"
       : effect === "rebuild"
         ? "sandbox rebuild"
-        : "provider credential mutation";
+        : effect === "forward recovery"
+          ? "sandbox forward recovery"
+          : "provider credential mutation";
   if (resolveGatewayName(target.gatewayPort) !== target.gatewayName) {
     throw new GatewayAuthorityError(
       `Refusing ${operation} for noncanonical target '${target.gatewayName}@${String(target.gatewayPort)}'.`,
@@ -229,6 +234,54 @@ export function resolveGatewayTeardownAuthority(
 }
 
 /**
+ * Confirm that current-schema onboarding state stopped before gateway effects
+ * and still names the exact authority selected for teardown.
+ */
+export function isInterruptedPreGatewayTeardownSession(
+  value: unknown,
+  target: GatewayTeardownTarget,
+  owner: GatewayOwner,
+): boolean {
+  if (!isInterruptedPreGatewaySession(value)) return false;
+  const inspected = resolveCheckpointForResume(value);
+  if (inspected.status !== "loaded") return false;
+  const authority = inspected.checkpoint.gatewayAuthority;
+  return Boolean(
+    authority.kind === "selected" &&
+    sameGatewayOwner(gatewayOwnerFromCheckpoint(authority.value), owner) &&
+    authority.value.gatewayName === target.gatewayName &&
+    authority.value.gatewayPort === target.gatewayPort,
+  );
+}
+
+/** Confirm only the durable lifecycle shape, without granting teardown authority. */
+export function isInterruptedPreGatewaySession(value: unknown): boolean {
+  const record = (candidate: unknown): Record<string, unknown> | null =>
+    typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)
+      ? (candidate as Record<string, unknown>)
+      : null;
+  const session = record(value);
+  const failure = record(session?.failure);
+  const machine = record(session?.machine);
+  const steps = record(session?.steps);
+  const preflight = record(steps?.preflight);
+  const gateway = record(steps?.gateway);
+  const sandbox = record(steps?.sandbox);
+  return Boolean(
+    session &&
+    session.resumable === true &&
+    session.status === "failed" &&
+    session.lastStepStarted === "preflight" &&
+    failure?.interrupted === true &&
+    failure.step === "preflight" &&
+    machine?.state === "failed" &&
+    preflight?.status === "failed" &&
+    gateway?.status === "pending" &&
+    sandbox?.status === "pending",
+  );
+}
+
+/**
  * Resolve authority for a transactional sandbox rebuild. A rebuild may adopt
  * the one-way managed-service migration introduced when a previously recorded
  * packaged gateway is no longer selected and NemoClaw uses its standalone
@@ -242,10 +295,49 @@ export function resolveGatewayRebuildAuthority(
   return resolveGatewayEffectAuthority(target, "rebuild", deps);
 }
 
+/** Revalidate the exact checkpointed authority before a host forward is inspected or launched. */
+export function resolveGatewayForwardAuthority(
+  target: GatewayTeardownTarget,
+  deps: GatewayTeardownAuthorityDeps = {},
+): GatewayOwner {
+  return resolveGatewayEffectAuthority(target, "forward recovery", deps);
+}
+
 /** Revalidate the exact checkpointed authority before a provider credential mutation. */
 export function resolveGatewayCredentialMutationAuthority(
   target: GatewayTeardownTarget,
   deps: GatewayTeardownAuthorityDeps = {},
 ): GatewayOwner {
   return resolveGatewayEffectAuthority(target, "credential mutation", deps);
+}
+
+export async function removeGatewayRegistrationThroughAdapter(options: {
+  gatewayName: string;
+  allowLegacyDestroy: boolean;
+  runtimeSelection?: import("../adapters/openshell/gateway-observer").ObserveOpenShellGatewayRequest["runtimeSelection"];
+  lifecycle: import("../adapters/openshell/gateway-lifecycle").OpenShellGatewayLifecycle;
+  revalidateAuthority: () => GatewayOwner;
+}): Promise<import("../adapters/openshell/gateway-lifecycle").OpenShellGatewayMutationResult> {
+  const request = {
+    target: { kind: "named" as const, gatewayName: options.gatewayName },
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+  };
+  const removed = await options.lifecycle.removeGateway(request);
+  if (removed.ok) return removed;
+  if (removed.ambiguous) {
+    // Reconcile both authority and registry after a possibly completed mutation.
+    // Retain evidence and report failure even if the registry now appears absent.
+    options.revalidateAuthority();
+    await options.lifecycle.listGateways(request);
+    return removed;
+  }
+  if (!removed.unsupported || !options.allowLegacyDestroy) return removed;
+  const owner = options.revalidateAuthority();
+  if (isExternallySupervised(owner) || owner.gatewayName !== options.gatewayName) return removed;
+  const destroyed = await options.lifecycle.destroyGateway(request);
+  if (!destroyed.ok && destroyed.ambiguous) {
+    options.revalidateAuthority();
+    await options.lifecycle.listGateways(request);
+  }
+  return destroyed;
 }

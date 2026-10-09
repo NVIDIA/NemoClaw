@@ -9,13 +9,12 @@ const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
-    executeSandboxCommand: (_name: string, _script: string) => ({
+    executeSandboxCommand: async (_name: string, _script: string) => ({
       status: 0,
       stdout: "200",
       stderr: "",
     }),
     probeHostPort: (_port: number, _path: string) => 200,
-    captureForwardList: () => "my-sandbox  127.0.0.1  18789  12345  running",
     getMessagingChannels: (_name: string) => [] as string[],
     providerExistsInGateway: (_name: string) => true,
     ...overrides,
@@ -33,7 +32,7 @@ describe("verifyDeployment agent dashboard probes", () => {
     const sandboxScripts: string[] = [];
     const hostProbes: Array<{ port: number; path: string }> = [];
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         sandboxScripts.push(script);
         if (script.includes("inference.local")) return { status: 0, stdout: "200", stderr: "" };
         if (script.includes("openclaw --version")) return { status: 0, stdout: "", stderr: "" };
@@ -99,7 +98,7 @@ describe("verifyDeployment agent OpenAI-compatible API host forward (#9290)", ()
     expect(result.verification.dashboardReachable).toBe(true);
     const api = result.diagnostics.find((d) => d.link === "api");
     expect(api?.status).toBe("fail");
-    expect(api?.hint).toContain("openshell forward start --background 8642 my-sandbox");
+    expect(api?.hint).toContain("nemoclaw my-sandbox recover");
   });
 
   it("fails verification when the API host forward answers with a server error", async () => {

@@ -8,6 +8,17 @@ import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp
 import { managedVllmStateDir } from "./vllm-api-key";
 
 const HOST_GLOBAL_VLLM_LIFECYCLE_LOCK = "dual-station-vllm:host-global";
+
+/** Resolve host-global vLLM lock options without touching the filesystem. */
+export function resolveHostGlobalVllmLifecycleLockOptions(
+  options: McpLifecycleLockOptions = {},
+  homeDir?: string,
+): McpLifecycleLockOptions & { stateDir: string } {
+  return {
+    ...options,
+    stateDir: options.stateDir ?? path.join(managedVllmStateDir(homeDir), "state"),
+  };
+}
 const DUAL_STATION_CONTROLLER_CONFIG_DIR = "/etc/nemoclaw";
 export const DUAL_STATION_CONTROLLER_UID_FILE = path.join(
   DUAL_STATION_CONTROLLER_CONFIG_DIR,
@@ -129,11 +140,11 @@ export function withHostGlobalVllmLifecycleLock<T>(
   operation: () => Promise<T> | T,
   options: McpLifecycleLockOptions = {},
 ): Promise<T> {
-  const stateDir = options.stateDir ?? path.join(managedVllmStateDir(), "state");
-  return withMcpLifecycleLock(HOST_GLOBAL_VLLM_LIFECYCLE_LOCK, operation, {
-    ...options,
-    stateDir,
-  });
+  return withMcpLifecycleLock(
+    HOST_GLOBAL_VLLM_LIFECYCLE_LOCK,
+    operation,
+    resolveHostGlobalVllmLifecycleLockOptions(options),
+  );
 }
 
 /**

@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export type OpenShellGatewayTarget = { kind: "named"; gatewayName: string } | { kind: "selected" };
+import type { OpenShellGatewayTarget } from "./gateway-scope";
+
+export type { OpenShellGatewayTarget } from "./gateway-scope";
 
 export type OpenShellSandboxReadiness = "ready" | "not_ready" | "terminal";
 
@@ -26,7 +28,10 @@ export type OpenShellSandboxErrorKind =
   | "timeout"
   | "transport";
 
-export type OpenShellSandboxTransportReason = "identity_mismatch" | "unreachable";
+export type OpenShellSandboxTransportReason =
+  | "endpoint_override"
+  | "identity_mismatch"
+  | "unreachable";
 
 export type OpenShellSandboxError =
   | Readonly<{
@@ -58,6 +63,10 @@ export type LookupOpenShellSandboxRequest = ListOpenShellSandboxesRequest &
     sandboxName: string;
   }>;
 
+export type OpenShellSandboxReadinessProbe = (
+  request: LookupOpenShellSandboxRequest,
+) => Promise<OpenShellSandboxResult<OpenShellSandboxReadiness>>;
+
 /** Transport-neutral sandbox observation capabilities used by NemoClaw. */
 export interface OpenShellSandboxObserver {
   listSandboxes(
@@ -72,3 +81,8 @@ export function namedOpenShellGateway(gatewayName: string): OpenShellGatewayTarg
 export function selectedOpenShellGateway(): OpenShellGatewayTarget {
   return { kind: "selected" };
 }
+export type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+  OpenShellProviderMetadata,
+} from "./provider-adapter";

@@ -793,12 +793,7 @@ function stopBedrockRuntimeAdapterLocked(
       return stopFailure(runtime, evidenceResult.message);
     }
     if (evidenceResult.kind === "pid-only") {
-      return retireAbsentPidOnlyEvidence(
-        evidencePaths,
-        journalPath,
-        evidenceResult.pid,
-        runtime,
-      );
+      return retireAbsentPidOnlyEvidence(evidencePaths, journalPath, evidenceResult.pid, runtime);
     }
     if (evidenceResult.kind === "absent") {
       if (scanOrphans) {

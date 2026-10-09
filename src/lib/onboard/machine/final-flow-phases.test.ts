@@ -2,12 +2,283 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { context, createPhases } from "../../../../test/helpers/onboard-final-flow-phases";
+import {
+  context,
+  createPhases,
+  createProviderlessComponentFlow,
+} from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
-import { runFinalOnboardFlowSlice } from "./final-flow-phases";
+import {
+  runFinalOnboardFlowSlice,
+  shouldInitializeNativeOpenclawInferenceRoute,
+} from "./final-flow-phases";
 import { advanceTo } from "./result";
 
 describe("final onboard flow phases", () => {
+  it.each([
+    {
+      name: "fresh custom image",
+      sessionStatus: "pending" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "fresh external image",
+      sessionStatus: "pending" as const,
+      fromDockerfile: null,
+      fromImage: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "failed custom-image resume",
+      sessionStatus: "failed" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "completed custom-image reuse",
+      sessionStatus: "complete" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: false,
+      expected: false,
+    },
+    {
+      name: "custom-image rebuild",
+      sessionStatus: "pending" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: true,
+      expected: false,
+    },
+    {
+      name: "standard image onboarding",
+      sessionStatus: "pending" as const,
+      fromDockerfile: null,
+      fromImage: null,
+      rebuild: false,
+      expected: false,
+    },
+  ])("initializes the native route only for $name (#12033)", (testCase) => {
+    const session = createSession();
+    session.steps.openclaw.status = testCase.sessionStatus;
+    session.metadata.fromImage = testCase.fromImage;
+
+    expect(
+      shouldInitializeNativeOpenclawInferenceRoute(
+        context({ session, fromDockerfile: testCase.fromDockerfile }),
+        testCase.rebuild,
+      ),
+    ).toBe(testCase.expected);
+  });
+
+  it("passes verified sandbox identity authority to custom-image route setup (#12033)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
+    });
+
+    await branchPhase.run(
+      context({ fromDockerfile: "/tmp/CustomDockerfile", revalidateSandboxIdentity }),
+    );
+
+    expect(setupOpenclaw).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      revalidateSandboxIdentity,
+      "chat",
+      true,
+      "nemoclaw-19090",
+      expect.any(Function),
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nemoclaw-19090",
+    );
+    expect(waitForStartedOpenclawGatewayProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      setupOpenclaw.mock.invocationCallOrder[0],
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+    );
+  });
+
+  it.each([false, null])(
+    "refuses custom-image configuration when gateway startup returns %s",
+    async (startup) => {
+      const setupOpenclaw = vi.fn();
+      const [branchPhase] = createPhases("openclaw", [], {
+        setupOpenclaw,
+        waitForStartedOpenclawGatewayProcess: vi.fn(async () => startup),
+      });
+
+      await expect(
+        branchPhase.run(
+          context({
+            fromDockerfile: "/tmp/CustomDockerfile",
+            revalidateSandboxIdentity: vi.fn(),
+          }),
+        ),
+      ).rejects.toThrow(
+        /^OpenClaw startup did not settle before configuration for sandbox 'my-sandbox'\.$/u,
+      );
+      expect(setupOpenclaw).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
+    });
+    const session = createSession();
+    session.metadata.fromImage = `registry.example.test/openclaw@sha256:${"a".repeat(64)}`;
+
+    await branchPhase.run(
+      context({
+        session,
+        revalidateSandboxIdentity,
+      }),
+    );
+
+    expect(setupOpenclaw).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      revalidateSandboxIdentity,
+      "chat",
+      true,
+      "nemoclaw-19090",
+      expect.any(Function),
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nemoclaw-19090",
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+    );
+  });
+
+  it("rejects custom-image route setup without verified sandbox identity (#12033)", async () => {
+    const [branchPhase] = createPhases("openclaw");
+
+    await expect(
+      branchPhase.run(context({ fromDockerfile: "/tmp/CustomDockerfile" })),
+    ).rejects.toThrow(/requires verified sandbox identity/u);
+  });
+
+  describe.each(["openclaw", "hermes"])("%s providerless component lifecycle", (agentName) => {
+    it("completes providerless onboarding only after verified component activation (#11486)", async () => {
+      const flow = createProviderlessComponentFlow(agentName);
+      const result = await flow.run();
+      expect(result.session.machine.state).toBe("complete");
+      expect(flow.transport).toHaveBeenCalledOnce();
+      expect(flow.revalidate).toHaveBeenCalledTimes(2);
+      expect(flow.evidence).toHaveBeenLastCalledWith(null);
+      expect(flow.order).toEqual(["verify-proof", "activate"]);
+      const branchState = agentName === "openclaw" ? "openclaw" : "agent_setup";
+      await expect(createPhases(branchState)[3].run(flow.initial)).rejects.toThrow(
+        "Providerless component activation has not completed in this onboarding run.",
+      );
+    });
+
+    it("preserves failed providerless activation evidence after rejection (#11486)", async () => {
+      const flow = createProviderlessComponentFlow(agentName);
+      flow.response.result = "rejected";
+      const result = await flow.run();
+      expect(result.session.machine.state).toBe("finalizing");
+      expect(result.session.externalComponentActivation).toMatchObject({
+        sandboxIdentityFingerprint: flow.proof.sandboxIdentityFingerprint,
+        lifecycleGeneration: flow.proof.lifecycleGeneration,
+        resultClass: "failed",
+      });
+      expect(flow.transport).toHaveBeenCalledOnce();
+      expect(flow.order).toEqual(["verify-proof", "activate"]);
+    });
+
+    it.each([
+      {
+        outcome: "timed-out response",
+        arrange: (flow: ReturnType<typeof createProviderlessComponentFlow>) =>
+          flow.transport.mockRejectedValue(new Error("timeout")),
+        requests: 1,
+        order: ["verify-proof", "activate"],
+      },
+      {
+        outcome: "malformed response",
+        arrange: (flow: ReturnType<typeof createProviderlessComponentFlow>) =>
+          flow.transport.mockResolvedValue("{}"),
+        requests: 1,
+        order: ["verify-proof", "activate"],
+      },
+      {
+        outcome: "changed endpoint",
+        arrange: (flow: ReturnType<typeof createProviderlessComponentFlow>) =>
+          flow.revalidateEndpoint.mockImplementation(() => {
+            throw new Error("changed endpoint");
+          }),
+        requests: 0,
+        order: ["verify-proof"],
+      },
+      {
+        outcome: "changed identity or policy proof",
+        arrange: (flow: ReturnType<typeof createProviderlessComponentFlow>) =>
+          flow.revalidate
+            .mockImplementationOnce(() => undefined)
+            .mockImplementationOnce(() => {
+              throw new Error("drift");
+            }),
+        requests: 1,
+        order: ["verify-proof", "activate"],
+      },
+    ])(
+      "preserves ambiguous providerless activation evidence for $outcome (#11486)",
+      async ({ arrange, requests, order }) => {
+        const flow = createProviderlessComponentFlow(agentName);
+        arrange(flow);
+        const result = await flow.run();
+        expect(result.session.machine.state).toBe("finalizing");
+        expect(result.session.externalComponentActivation).toMatchObject({
+          sandboxIdentityFingerprint: flow.proof.sandboxIdentityFingerprint,
+          lifecycleGeneration: flow.proof.lifecycleGeneration,
+          resultClass: "ambiguous",
+        });
+        expect(flow.transport).toHaveBeenCalledTimes(requests);
+        expect(flow.order).toEqual(order);
+      },
+    );
+
+    it("refuses providerless activation when policy proof is unavailable (#11486)", async () => {
+      const flow = createProviderlessComponentFlow(agentName);
+      flow.createProof.mockImplementation(() => {
+        throw new Error("policy unavailable");
+      });
+      await expect(flow.run()).rejects.toThrow("policy unavailable");
+      expect(flow.transport).not.toHaveBeenCalled();
+    });
+  });
+
   it("selects the requested branch setup state", () => {
     expect(createPhases("openclaw")[0].state).toBe("openclaw");
     expect(createPhases("agent_setup")[0].state).toBe("agent_setup");
@@ -25,7 +296,7 @@ describe("final onboard flow phases", () => {
     const finalizationResult = await finalizationPhase.run(policiesResult.context);
     await postVerifyPhase.run(finalizationResult.context);
 
-    expect(order).toEqual(["openclaw", "policies", "set-default", "agent-forward", "verify"]);
+    expect(order).toEqual(["openclaw", "agent-forward", "policies", "set-default", "verify"]);
   });
 
   it("carries merged policy messaging channels into the final flow context", async () => {

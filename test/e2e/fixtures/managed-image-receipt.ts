@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,14 +9,17 @@ import {
   isShippedManagedImageAgent,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
-  parseManagedImageContractV1,
+  managedImagePlatformForNodeArchitecture,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractV1,
   type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
-import { liveE2eManagedImageCatalog } from "../../../src/lib/onboard/workload/preparation.ts";
+import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
 import { readConfigFile } from "../../../src/lib/state/config-io.ts";
 import { parseSandboxRegistryEntries } from "../../../src/lib/state/registry-normalization.ts";
 import { cloneSandboxWorkloadReceipt } from "../../../src/lib/state/registry/workload.ts";
@@ -33,55 +35,10 @@ function readCandidateCatalog(
     throw new Error("stock onboarding requires a selected candidate managed-image catalog");
   }
 
-  let descriptor: number | null = null;
   try {
-    descriptor = fs.openSync(selected.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-    const metadata = fs.fstatSync(descriptor);
-    const pathMetadata = fs.lstatSync(selected.path);
-    if (
-      pathMetadata.isSymbolicLink() ||
-      !metadata.isFile() ||
-      metadata.dev !== pathMetadata.dev ||
-      metadata.ino !== pathMetadata.ino ||
-      metadata.size < 2 ||
-      metadata.size > 64 * 1024
-    ) {
-      throw new Error();
-    }
-    const parsed = JSON.parse(fs.readFileSync(descriptor, "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-    const catalog = parsed as Record<string, unknown>;
-    if (
-      JSON.stringify(Object.keys(catalog).sort()) !==
-      JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
-    ) {
-      throw new Error();
-    }
-
-    const contracts = new Map<ShippedManagedImageAgent, ManagedImageContractV1>();
-    let cohort: string | null = null;
-    let platform: ManagedImagePlatform | null = null;
-    let release: string | null = null;
-    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-      const contract = parseManagedImageContractV1(catalog[agent], agent);
-      cohort ??= contract.source.cohort;
-      platform ??= contract.platform;
-      release ??= contract.source.release;
-      if (
-        contract.source.revision !== selected.revision ||
-        contract.source.cohort !== cohort ||
-        contract.platform !== platform ||
-        contract.source.release !== release
-      ) {
-        throw new Error();
-      }
-      contracts.set(agent, contract);
-    }
-    return contracts;
+    return readLiveE2eManagedImageCatalogContracts(selected);
   } catch {
     throw new Error("stock onboarding candidate managed-image catalog is invalid");
-  } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
   }
 }
 
@@ -100,11 +57,19 @@ function selectedManagedImageRevision(environment: NodeJS.ProcessEnv): string {
   return catalog.revision;
 }
 
-export function assertManagedImageReceiptMatchesSelectedCohort(options: {
+interface SelectedManagedImageAuthority {
+  readonly platform: ManagedImagePlatform;
+  readonly reference: string;
+  readonly release: string | null;
+  readonly sourceCohort: string;
+  readonly sourceRevision: string;
+}
+
+function selectedManagedImageAuthority(options: {
   readonly environment: NodeJS.ProcessEnv;
   readonly expectedAgent: ShippedManagedImageAgent;
-  readonly workload?: Record<string, unknown>;
-}): void {
+  readonly platform: unknown;
+}): SelectedManagedImageAuthority {
   const revision = options.environment.E2E_MANAGED_IMAGE_REVISION?.trim() ?? "";
   const rawReceipt = options.environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT?.trim() ?? "";
   if (!revision) {
@@ -113,26 +78,23 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
         "stock onboarding requires the complete selected managed-image cohort receipt",
       );
     }
-    const platform = options.workload?.platform;
     if (
-      typeof platform !== "string" ||
-      !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(platform)
+      typeof options.platform !== "string" ||
+      !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(options.platform)
     ) {
       throw new Error("stock onboarding candidate managed-image catalog is invalid");
     }
     const contract = readCandidateCatalog(options.environment).get(options.expectedAgent);
-    if (
-      !contract ||
-      contract.platform !== platform ||
-      options.workload?.kind !== "managed-image" ||
-      options.workload.reference !== contract.reference ||
-      options.workload.release !== contract.source.release ||
-      options.workload.sourceRevision !== contract.source.revision ||
-      options.workload.sourceCohort !== contract.source.cohort
-    ) {
+    if (!contract || contract.platform !== options.platform) {
       throw new Error("stock onboarding must use the exact agent image from the selected cohort");
     }
-    return;
+    return {
+      platform: contract.platform,
+      reference: contract.reference,
+      release: contract.source.release,
+      sourceCohort: contract.source.cohort,
+      sourceRevision: contract.source.revision,
+    };
   }
   if (!REVISION_PATTERN.test(revision) || !rawReceipt || Buffer.byteLength(rawReceipt) > 8 * 1024) {
     throw new Error("stock onboarding requires the complete selected managed-image cohort receipt");
@@ -168,11 +130,10 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
     throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
   }
 
-  const platform = options.workload?.platform;
   const agentImages = (images as Record<string, unknown>)[options.expectedAgent];
   if (
-    typeof platform !== "string" ||
-    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(platform) ||
+    typeof options.platform !== "string" ||
+    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(options.platform) ||
     !agentImages ||
     typeof agentImages !== "object" ||
     Array.isArray(agentImages) ||
@@ -181,14 +142,56 @@ export function assertManagedImageReceiptMatchesSelectedCohort(options: {
   ) {
     throw new Error("stock onboarding selected managed-image cohort receipt is invalid");
   }
-  const expectedReference = (agentImages as Record<string, unknown>)[platform];
+  const reference = (agentImages as Record<string, unknown>)[options.platform];
+  const referencePrefix = `${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`;
   if (
-    typeof expectedReference !== "string" ||
-    !expectedReference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`) ||
+    typeof reference !== "string" ||
+    !reference.startsWith(referencePrefix) ||
+    !/^[a-f0-9]{64}$/i.test(reference.slice(referencePrefix.length))
+  ) {
+    throw new Error("stock onboarding must use the exact agent image from the selected cohort");
+  }
+  return {
+    platform: options.platform as ManagedImagePlatform,
+    reference,
+    release: null,
+    sourceCohort: cohort as string,
+    sourceRevision: revision,
+  };
+}
+
+/** Resolve the selected E2E image from its candidate catalog or publication receipt. */
+export function selectedE2eManagedImageReference(options: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly expectedAgent: ShippedManagedImageAgent;
+  readonly nodeArchitecture?: string;
+}): string {
+  const nodeArchitecture = options.nodeArchitecture ?? process.arch;
+  const platform = managedImagePlatformForNodeArchitecture(nodeArchitecture);
+  if (platform === null) {
+    throw new Error(
+      `selected E2E managed image does not support host architecture '${nodeArchitecture}'`,
+    );
+  }
+  return selectedManagedImageAuthority({ ...options, platform }).reference;
+}
+
+export function assertManagedImageReceiptMatchesSelectedCohort(options: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly expectedAgent: ShippedManagedImageAgent;
+  readonly workload?: Record<string, unknown>;
+}): void {
+  const selected = selectedManagedImageAuthority({
+    environment: options.environment,
+    expectedAgent: options.expectedAgent,
+    platform: options.workload?.platform,
+  });
+  if (
     options.workload?.kind !== "managed-image" ||
-    options.workload.reference !== expectedReference ||
-    options.workload.sourceRevision !== revision ||
-    options.workload.sourceCohort !== cohort
+    options.workload.reference !== selected.reference ||
+    (selected.release !== null && options.workload.release !== selected.release) ||
+    options.workload.sourceRevision !== selected.sourceRevision ||
+    options.workload.sourceCohort !== selected.sourceCohort
   ) {
     throw new Error("stock onboarding must use the exact agent image from the selected cohort");
   }
@@ -221,9 +224,6 @@ export function assertStockManagedImageReceipt(options: {
   readonly sandboxName: string;
 }): StockManagedImageReceiptEvidence | null {
   const environment = options.environment ?? process.env;
-  const workloadSource =
-    environment.E2E_WORKLOAD_SOURCE?.trim() ?? process.env.E2E_WORKLOAD_SOURCE?.trim();
-  if (workloadSource === "local-dockerfile") return null;
   const revision = selectedManagedImageRevision(environment);
   const home = environment.HOME?.trim() || os.homedir();
   const registryPath = path.join(
@@ -292,7 +292,11 @@ export function shouldAssertStockManagedImageReceipt(
       path.basename(args[0] ?? "") === "nemoclaw.js" && args[1] === "onboard" ? 1 : -1;
   }
   if (onboardArgumentIndex < 0) return false;
-  return !args
-    .slice(onboardArgumentIndex + 1)
-    .some((argument) => argument === "--from" || argument.startsWith("--from="));
+  const onboardArguments = args.slice(onboardArgumentIndex + 1);
+  if (onboardArguments.some((argument) => argument === "--help" || argument === "-h")) {
+    return false;
+  }
+  return !onboardArguments.some(
+    (argument) => argument === "--from" || argument.startsWith("--from="),
+  );
 }

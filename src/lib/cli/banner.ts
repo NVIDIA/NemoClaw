@@ -3,7 +3,7 @@
 
 // sourceOfTruth: nemoclaw/src/shared/banner-boundary.cts
 // generatedBoundary: build:cli emits the canonical .cjs/.d.cts before this
-// module is compiled (mirrors src/lib/policy/merge.ts). Keep this file
+// module is compiled (mirrors src/lib/adapters/openshell/policy-boundary.ts). Keep this file
 // implementation-free. It keeps the ../cli/banner import path stable for
 // src/lib/tunnel/services.ts.
 import { renderBox as canonicalRenderBox } from "../../../nemoclaw/dist/shared/banner-boundary.cjs";

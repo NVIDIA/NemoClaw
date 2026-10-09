@@ -11,6 +11,7 @@ import {
   assertDeepAgentsTraceContract,
   hasConfirmedOpenShellPolicyDenial,
   observabilityPresetState,
+  validateCaptureDirectory,
 } from "../live/deepagents-observability-contract.ts";
 import {
   isPrivateBridgeIpv4,
@@ -77,7 +78,7 @@ function validSpans(): TestSpan[] {
 
 const expectations = {
   ambientCanary: AMBIENT_CANARY,
-  redaction: { marker: REDACTION_MARKER, rawCredential: RAW_CREDENTIAL },
+  redaction: { rawCredential: RAW_CREDENTIAL },
   serviceName: SERVICE_NAME,
   llmExchanges: [
     {
@@ -167,7 +168,14 @@ describe("Deep Agents OTLP trace contract", () => {
     });
     expect(() =>
       assertDeepAgentsTraceContract([traceRequest(missingMarker)], expectations),
-    ).toThrow(/credential-shaped OTLP content lacks the redaction marker/);
+    ).toThrow(/direct prompt and response markers were not associated on one managed LLM span/);
+  });
+
+  it("rejects empty captures through the required span contracts", () => {
+    expect(() => assertDeepAgentsTraceContract([], expectations)).toThrow(/managed LLM span/);
+    expect(() => assertDeepAgentsTraceContract([], { ...expectations, llmExchanges: [] })).toThrow(
+      /managed TOOL span/,
+    );
   });
 
   it("fails closed on malformed requests, wrong service identity, and ambient canaries", () => {
@@ -302,14 +310,43 @@ describe("Deep Agents observability policy proof", () => {
 });
 
 describe("bounded private OTLP capture server", () => {
-  it("accepts only private bridge addresses unless a hermetic test opts into loopback", () => {
+  it("accepts only approved host bridge addresses unless a hermetic test opts into loopback", () => {
     expect(isPrivateBridgeIpv4("10.1.2.3")).toBe(true);
     expect(isPrivateBridgeIpv4("172.31.0.1")).toBe(true);
     expect(isPrivateBridgeIpv4("192.168.1.1")).toBe(true);
+    expect(isPrivateBridgeIpv4("169.254.2.2")).toBe(true);
+    expect(isPrivateBridgeIpv4("169.254.2.3")).toBe(false);
+    expect(isPrivateBridgeIpv4("169.254.169.254")).toBe(false);
     expect(isPrivateBridgeIpv4("127.0.0.1")).toBe(false);
     expect(isPrivateBridgeIpv4("127.0.0.1", true)).toBe(true);
     expect(isPrivateBridgeIpv4("0.0.0.0", true)).toBe(false);
     expect(isPrivateBridgeIpv4("8.8.8.8", true)).toBe(false);
+  });
+
+  it("rejects an incorrect content type at the collector and through capture validation", async () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-otlp-content-type-"));
+    const started = await startOtlpCaptureServers({
+      allowLoopback: true,
+      bindIp: "127.0.0.1",
+      captureDir,
+      collectorPort: 0,
+      decoyPort: 0,
+    });
+    try {
+      const status = await request(
+        started.collectorPort,
+        { "content-length": "4", "content-type": "application/json" },
+        "test",
+      );
+      expect([415, null]).toContain(status);
+      await waitForMetadata(captureDir, 1);
+      expect(() =>
+        validateCaptureDirectory(captureDir, started.collectorPort, "allow-probe", expectations),
+      ).toThrow(/records a rejected request: unexpected content type/);
+    } finally {
+      await started.close();
+      fs.rmSync(captureDir, { force: true, recursive: true });
+    }
   });
 
   it("bounds per-request, aggregate, and request-count capture volume", async () => {

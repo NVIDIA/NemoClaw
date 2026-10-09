@@ -92,6 +92,53 @@ ensure_docker
     };
   }
 
+  it.each([
+    ["managed Docker", {}, ["PORTABLE_OVERRIDE", "ENSURE_DOCKER", "ENSURE_BUILD_DEPS"]],
+    [
+      "native managed Podman",
+      { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+      ["PORTABLE_OVERRIDE", "ENSURE_BUILD_DEPS"],
+    ],
+    [
+      "portable experimental Podman compatibility",
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable", NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+      ["PORTABLE_OVERRIDE", "ENSURE_DOCKER", "ENSURE_BUILD_DEPS"],
+    ],
+  ] as const)("selects host bootstrap for %s", (_name, environment, expected) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-bootstrap-"));
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+maybe_offer_express_install() { :; }
+ensure_station_express_host() { :; }
+prepare_portable_experimental_runtime_override() { printf 'PORTABLE_OVERRIDE\\n'; }
+ensure_docker() { printf 'ENSURE_DOCKER\\n'; }
+ensure_openshell_build_deps() { printf 'ENSURE_BUILD_DEPS\\n'; }
+prepare_installer_host
+`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          ...environment,
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(expected);
+  });
+
   it("reports when Docker is reachable for a non-docker-group Linux user", () => {
     const { result, sudoLog } = runEnsureDockerWithStubs({
       dockerScript: `#!/usr/bin/env bash

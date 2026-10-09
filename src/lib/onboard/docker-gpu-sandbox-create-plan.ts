@@ -73,10 +73,9 @@ export function resolveDockerGpuSandboxCreatePlan(
 ): DockerGpuSandboxCreatePlan {
   const env = options.env ?? process.env;
   const portableLifecycle = options.portableLifecycle === true;
-  const dockerDesktopWsl =
-    portableLifecycle
-      ? false
-      : (options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)());
+  const dockerDesktopWsl = portableLifecycle
+    ? false
+    : (options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)());
   const gpuRoutePlan = resolveDockerGpuRoutePlan(config, {
     // The hidden portable profile reaches OpenShell through its Docker-compatible
     // endpoint, but rootless Podman owns sandbox lifecycle. Keep Docker-only

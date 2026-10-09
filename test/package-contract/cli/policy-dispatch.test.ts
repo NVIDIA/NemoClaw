@@ -16,6 +16,9 @@ const CREDENTIALS_PATH = JSON.stringify(
 );
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const CROSS_PORT_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "state", "registry", "cross-port.js"),
+);
 const YAML_PATH = JSON.stringify(requireForTest.resolve("yaml"));
 
 type PolicyCall = {
@@ -34,14 +37,16 @@ describe("compiled CLI policy contracts", () => {
 const YAML = require(${YAML_PATH});
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
+(async () => {
 registry.registerSandbox({ name: "openclaw-contract", agent: "openclaw", policies: [] });
 registry.registerSandbox({ name: "hermes-contract", agent: "hermes", policies: [] });
-const openclaw = YAML.parse(policies.loadPresetForSandbox("openclaw-contract", "telegram"));
-const hermes = YAML.parse(policies.loadPresetForSandbox("hermes-contract", "telegram"));
+const openclaw = YAML.parse(await policies.loadPresetForSandbox("openclaw-contract", "telegram"));
+const hermes = YAML.parse(await policies.loadPresetForSandbox("hermes-contract", "telegram"));
 process.stdout.write("__RESULT__" + JSON.stringify({
   openclawKeys: Object.keys(openclaw.network_policies || {}),
   hermesKeys: Object.keys(hermes.network_policies || {}),
 }));
+})().catch(error => { console.error(error); process.exitCode = 1; });
 `;
     fs.writeFileSync(scriptPath, script);
     const result = spawnSync(process.execPath, [scriptPath], {
@@ -65,6 +70,7 @@ process.stdout.write("__RESULT__" + JSON.stringify({
       const scriptPath = path.join(tmpDir, "policy-add-external.js");
       const script = String.raw`
 const registry = require(${REGISTRY_PATH});
+const crossPort = require(${CROSS_PORT_PATH});
 const policies = require(${POLICIES_PATH});
 const credentials = require(${CREDENTIALS_PATH});
 const calls = [];
@@ -93,6 +99,10 @@ credentials.prompt = async (message) => {
 };
 registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+crossPort.findSandboxAcrossGatewayRoots = (name) =>
+  name === "test-sandbox"
+    ? { entry: { name }, gatewayPort: null, registryFile: "test-registry" }
+    : null;
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
 Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
   process.stdout.write("\n__CALLS__" + JSON.stringify(calls));

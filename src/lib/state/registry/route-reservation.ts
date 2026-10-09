@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import { isWebSearchProvider } from "../../inference/web-search/provider";
 import { normalizePendingSandboxCreateIdentity } from "./pending-create-identity";
 import type { PendingSandboxCreateIdentity, SandboxEntry } from "./types";
@@ -21,6 +22,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "lifecycleLiveIdentityFingerprint",
   "model",
   "name",
+  "nativeNvidiaProviderAttachment",
   "openshellDriver",
   "pendingRouteReservation",
   "pendingCreateIdentity",
@@ -78,6 +80,12 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
     return false;
   }
   if (entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean") {
+    return false;
+  }
+  if (
+    entry.nativeNvidiaProviderAttachment !== undefined &&
+    !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
+  ) {
     return false;
   }
   return (
@@ -176,6 +184,23 @@ export function isRouteOnlySandboxReservation(entry: {
 /** True only for a completed registry entry available to normal sandbox consumers. */
 export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?: true }): boolean {
   return entry.pendingRouteReservation !== true;
+}
+
+/** True when an entry participates in the inference route shared by its gateway. */
+export function isSharedGatewayRouteParticipant(entry: {
+  pendingRouteReservation?: true;
+  createdAt?: string;
+  provider?: string | null;
+  model?: string | null;
+}): boolean {
+  if (isPublishedSandboxRegistration(entry)) return true;
+  return (
+    isRouteOnlySandboxReservation(entry) &&
+    typeof entry.provider === "string" &&
+    entry.provider.trim().length > 0 &&
+    typeof entry.model === "string" &&
+    entry.model.trim().length > 0
+  );
 }
 
 /** Return true only when the pending inference route reservation belongs to the exact onboarding session. */

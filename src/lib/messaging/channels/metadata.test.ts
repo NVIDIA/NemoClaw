@@ -7,6 +7,7 @@ import YAML from "yaml";
 
 import { describe, expect, it } from "vitest";
 
+import { loadAgent } from "../../agent/defs";
 import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
 import { resolveMessagingChannelPolicyPresetPath } from "./policy";
 import {
@@ -189,8 +190,22 @@ describe("built-in messaging channel metadata", () => {
       "teams",
     ]);
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
-      "https://discord.com/api/v10/gateway or validate the configured",
+      "Any HTTP response confirms reachability. A transport error or OpenShell policy",
     );
+    const openClawDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "openclaw",
+    }).discord;
+    expect(openClawDiscordWarning).toContain("OpenClaw validation uses its Node runtime:");
+    expect(openClawDiscordWarning).not.toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    const hermesDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "hermes",
+    }).discord;
+    expect(hermesDiscordWarning).toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    expect(hermesDiscordWarning).not.toContain("OpenClaw validation uses its Node runtime:");
     expect(listOpenClawManagedChannelNames()).toEqual([
       "telegram",
       "discord",
@@ -229,7 +244,7 @@ describe("built-in messaging channel metadata", () => {
       ),
     ).toMatchObject({
       discord: "npm:@openclaw/discord@{{openclaw.version}}",
-      wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+      wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.9",
       slack: "npm:@openclaw/slack@{{openclaw.version}}",
       whatsapp: "npm:@openclaw/whatsapp@{{openclaw.version}}",
       teams: "npm:@openclaw/msteams@{{openclaw.version}}",
@@ -267,6 +282,8 @@ describe("built-in messaging channel metadata", () => {
   });
 
   it("requires committed npm integrity pins for built-in OpenClaw plugin installs", () => {
+    const openClawVersion = loadAgent("openclaw").expectedVersion ?? "";
+    expect(openClawVersion, "OpenClaw manifest must declare an expected version").not.toBe("");
     const npmPluginInstalls = listBuiltInMessagingChannelManifests({ agent: "openclaw" }).flatMap(
       (manifest) =>
         (manifest.agentPackages ?? [])
@@ -279,7 +296,7 @@ describe("built-in messaging channel metadata", () => {
           .map((agentPackage) => ({
             packageKey: `${manifest.id}/${agentPackage.id}`,
             committedIntegrity:
-              agentPackage.integrity ?? agentPackage.integrityByVersion?.["2026.7.1"],
+              agentPackage.integrity ?? agentPackage.integrityByVersion?.[openClawVersion],
           })),
     );
 
@@ -287,32 +304,32 @@ describe("built-in messaging channel metadata", () => {
       {
         packageKey: "discord/openclawPluginPackage",
         committedIntegrity:
-          "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
+          "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
       },
       {
         packageKey: "wechat/openclawPluginPackage",
         committedIntegrity:
-          "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+          "sha512-SfaYehR1Cwq2VV5HxJBp9sVilMms420VfZlMbF4YjRbWomr5+GxfXp9HkeU6y5TbnOc4Ysq0qPw1yBvJwbenBA==",
       },
       {
         packageKey: "slack/openclawPluginPackage",
         committedIntegrity:
-          "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
+          "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
       },
       {
         packageKey: "whatsapp/openclawPluginPackage",
         committedIntegrity:
-          "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
+          "sha512-vOWQIk7FpLHrhMmO+FaLi+pnFB82hiWNJJFJONkBuofERh2SMEz7EMut/vECFFEjFnmOZSVlYfRlxhbNkd/R6g==",
       },
       {
         packageKey: "teams/openclawPluginPackage",
         committedIntegrity:
-          "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
+          "sha512-py5KvGOTcd0qGGRf3EuqbH2jO+kZtvMquDMjwGkT6x9F4XZtaCBL/lmLitb4hDb5xaIpPP8ZLIbT8GIMXQr3Og==",
       },
       {
         packageKey: "googlechat/openclawPluginPackage",
         committedIntegrity:
-          "sha512-Dv0xOmcxAThEr6hoK+ioofHNu18hfbIceQrEHX3AHZPpOUiTJvToVpA5eX87NQINewwfSJf0gVhE6kSbSk2Aew==",
+          "sha512-LUO8Lg07IhzJfEzxn+GSij8WMS/uX3hTmv0SydTy/0fKSN7iZksf74TaZg50kOoBi8FzeqeXo/zoGVuk0Mj1Ig==",
       },
     ]);
   });
@@ -324,11 +341,13 @@ describe("built-in messaging channel metadata", () => {
         policyKeys: ["alpha_key"],
         agentPolicyKeys: { hermes: ["alpha_hermes"] },
         validationWarningLines: ["alpha warning"],
+        validationWarningLinesByAgent: { hermes: ["alpha Hermes warning"] },
       }),
       manifestWithPreset("beta", {
         name: "shared",
         policyKeys: ["beta_key"],
         validationWarningLines: ["beta warning"],
+        validationWarningLinesByAgent: { openclaw: ["beta OpenClaw warning"] },
       }),
     ];
 
@@ -339,8 +358,13 @@ describe("built-in messaging channel metadata", () => {
     ]);
     expect(getMessagingPolicyPresetValidationWarnings({ manifests }).shared).toEqual([
       "alpha warning",
+      "alpha Hermes warning",
       "beta warning",
+      "beta OpenClaw warning",
     ]);
+    expect(
+      getMessagingPolicyPresetValidationWarnings({ agent: "hermes", manifests }).shared,
+    ).toEqual(["alpha warning", "alpha Hermes warning", "beta warning"]);
   });
 
   it("derives OpenClaw managed channel names from explicit runtime metadata", () => {

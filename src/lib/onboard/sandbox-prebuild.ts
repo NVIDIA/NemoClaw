@@ -16,15 +16,12 @@ import {
 import { dockerSpawn } from "../adapters/docker/exec";
 import { dockerImageInspectFormat } from "../adapters/docker/inspect";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
-import {
-  LOCAL_SANDBOX_IMAGE_REPO,
-  PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
-} from "../domain/sandbox/image-tag";
+import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
-import { isPortableExperimentalProfile } from "./docker-driver-platform";
+import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -33,7 +30,9 @@ const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
 export interface SandboxPrebuildInput {
   buildCtx: string;
   buildId: string;
-  createArgs: readonly string[];
+  /** Deferred Portable path only. Ordinary creation passes the typed source reference. */
+  createArgs?: readonly string[];
+  sourceReference?: string;
   sandboxName: string;
   dockerDriverGateway: boolean;
   origin: SandboxBuildContextOrigin;
@@ -57,6 +56,8 @@ export interface SandboxPrebuildInput {
 
 export interface SandboxPrebuildResult {
   createArgs: string[];
+  /** Final source for callers that keep the ordinary create plan typed. */
+  sourceReference?: string;
   imageRef: string | null;
   /** Immutable local image identity; mutable tags never authorize fallback. */
   imageId: string | null;
@@ -140,6 +141,7 @@ export function resolveSandboxPrebuildEnabled(
   return !env.VITEST && env.NODE_ENV !== "test";
 }
 
+/** Bind Portable build and push tags to the same registry authority used by readiness checks. */
 export function sandboxLocalImageRef(
   sandboxName: string,
   buildId: string,
@@ -153,7 +155,7 @@ export function sandboxLocalImageRef(
   const buildPart = sanitize(buildId).slice(-32) || "build";
   const namePart = sanitize(sandboxName).slice(0, 127 - buildPart.length) || "sandbox";
   const repository = isPortableExperimentalProfile(env)
-    ? PORTABLE_LOCAL_SANDBOX_IMAGE_REPO
+    ? `${PORTABLE_LOCAL_REGISTRY}/${LOCAL_SANDBOX_IMAGE_REPO}`
     : LOCAL_SANDBOX_IMAGE_REPO;
   return `${repository}:${namePart}-${buildPart}`;
 }
@@ -168,11 +170,27 @@ export function sandboxLocalImageRef(
  * mount contracts.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
+ * Portable builds require HTTP 200 from the managed IPv4 registry before any
+ * build or publication operation. Unavailable registries reject without fallback.
+ * @throws When the portable registry is unavailable or a required build fails.
+ * @returns The prebuilt image identity, or unchanged arguments for an eligible fallback.
  */
 export async function prebuildSandboxImageIfEligible(
   input: SandboxPrebuildInput,
 ): Promise<SandboxPrebuildResult> {
-  const createArgs = [...input.createArgs];
+  const createArgs = [...(input.createArgs ?? [])];
+  const fromIndex = createArgs.indexOf("--from");
+  const initialSourceReference = input.sourceReference ?? createArgs[fromIndex + 1];
+  const result = (
+    sourceReference: string | undefined,
+    imageRef: string | null,
+    imageId: string | null,
+  ): SandboxPrebuildResult => ({
+    createArgs,
+    ...(input.sourceReference !== undefined && sourceReference ? { sourceReference } : {}),
+    imageRef,
+    imageId,
+  });
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
   const portable = isPortableExperimentalProfile(env);
@@ -185,25 +203,23 @@ export async function prebuildSandboxImageIfEligible(
     if (requiresLocalBuildKit) {
       throw new Error("Local BuildKit is required for this generated sandbox image");
     }
-    return { createArgs, imageRef: null, imageId: null };
+    return result(initialSourceReference, null, null);
   }
   if (input.origin !== "generated") {
     log(
       "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
     );
-    return { createArgs, imageRef: null, imageId: null };
+    return result(initialSourceReference, null, null);
   }
-  const fromIndex = createArgs.indexOf("--from");
-  const fromDockerfile = createArgs[fromIndex + 1];
+  const fromDockerfile = initialSourceReference;
   if (
-    fromIndex < 0 ||
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
     if (requiresLocalBuildKit) {
       throw new Error("Local BuildKit requires the generated staged Dockerfile");
     }
-    return { createArgs, imageRef: null, imageId: null };
+    return result(initialSourceReference, null, null);
   }
   let trustedContext: TrustedStagedBuildContext | null;
   try {
@@ -218,7 +234,7 @@ export async function prebuildSandboxImageIfEligible(
     log(
       `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
     );
-    return { createArgs, imageRef: null, imageId: null };
+    return result(initialSourceReference, null, null);
   }
   if (!trustedContext) {
     if (requiresLocalBuildKit) {
@@ -227,10 +243,25 @@ export async function prebuildSandboxImageIfEligible(
     log(
       "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
     );
-    return { createArgs, imageRef: null, imageId: null };
+    return result(initialSourceReference, null, null);
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
+  if (portable) {
+    const registryUrl = new URL("/v2/", `http://${PORTABLE_LOCAL_REGISTRY}`);
+    try {
+      const response = await fetch(registryUrl, {
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000),
+      });
+      await response.body?.cancel();
+      if (response.status !== 200) throw new Error("Registry is not ready");
+    } catch {
+      throw new Error(
+        `Managed local registry at ${registryUrl.origin} is unavailable. Sandbox image build has not started. Restore the managed registry, then verify that ${registryUrl.href} returns HTTP 200 before retrying.`,
+      );
+    }
+  }
   const builderName = portable ? "rootless Podman" : "BuildKit";
   const buildImage = input.buildImage ?? createHostImageCommand(portable ? "podman" : "docker");
   log(`  Building sandbox image with ${builderName} (skips the slower in-gateway builder)...`);
@@ -267,7 +298,7 @@ export async function prebuildSandboxImageIfEligible(
     log(
       `  Local ${builderName} build could not start (${detail}); using the gateway builder instead.`,
     );
-    return { createArgs, imageRef: null, imageId: null };
+    return result(initialSourceReference, null, null);
   } finally {
     if (preparedDockerEnvironment) {
       warnIfDockerBuildEnvironmentCleanupFailed(
@@ -283,7 +314,7 @@ export async function prebuildSandboxImageIfEligible(
       throw new Error(`Local BuildKit build failed${detail}`);
     }
     log(`  Local ${builderName} build failed${detail}; using the gateway builder instead.`);
-    return { createArgs, imageRef: null, imageId: null };
+    return result(initialSourceReference, null, null);
   }
 
   if (portable) {
@@ -313,7 +344,7 @@ export async function prebuildSandboxImageIfEligible(
     }
   }
 
-  createArgs[fromIndex + 1] = imageRef;
+  if (fromIndex >= 0) createArgs[fromIndex + 1] = imageRef;
   const inspectImageId =
     input.inspectImageId ??
     ((ref: string) =>
@@ -334,9 +365,5 @@ export async function prebuildSandboxImageIfEligible(
       "  Local image identity could not be proven; an operator-authorized GPU compatibility fallback may fail closed if no exact native container identity becomes available.",
     );
   }
-  return {
-    createArgs,
-    imageRef,
-    imageId,
-  };
+  return result(imageRef, imageRef, imageId);
 }

@@ -10,6 +10,8 @@ export {
   hasPassCredentialSegment,
   SECRET_BLOCK_PATTERNS,
   SECRET_PATTERNS,
+  replaceUrlTokens,
   STRUCTURED_TOKEN_PATTERNS,
   TOKEN_PREFIX_PATTERNS,
+  URL_TOKEN_PATTERN_SOURCE,
 } from "../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";

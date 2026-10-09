@@ -200,23 +200,20 @@ describe("vllm model registry", () => {
     expect(DEFAULT_VLLM_MODEL.envValue).toBe("qwen3.6-27b");
   });
 
-  it("resolves a model by its env slug (case-insensitive)", () => {
-    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
-    expect(deepseek).toBeDefined();
+  it.each(
+    VLLM_MODELS.flatMap((model) =>
+      [
+        ["environment", model.envValue],
+        ["Hugging Face", model.id],
+        ["served-model", model.servedModelId ?? model.id],
+      ].map(([aliasType, alias]) => ({ aliasType, alias, model, envValue: model.envValue })),
+    ),
+  )("resolves the $aliasType alias for $envValue", ({ model, alias }) => {
     expect(
       selectVllmModelFromEnv({
-        NEMOCLAW_VLLM_MODEL: "DeepSeek-R1-Distill-70B",
+        NEMOCLAW_VLLM_MODEL: alias.toUpperCase(),
       } as NodeJS.ProcessEnv),
-    ).toEqual(deepseek);
-  });
-
-  it("resolves a model by its full Hugging Face id", () => {
-    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
-    expect(
-      selectVllmModelFromEnv({
-        NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
-      } as NodeJS.ProcessEnv),
-    ).toEqual(deepseek);
+    ).toEqual(model);
   });
 
   it("registers DeepSeek V4 Flash as a managed-vLLM override", () => {
@@ -592,9 +589,25 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
+  it("configures two sequences within the N1x serving envelope (#10955)", () => {
+    const qwen35b = VLLM_MODELS.find((model) => model.envValue === "qwen3.6-35b-a3b-nvfp4");
+    const n1xProfile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
+    const n1xModel = resolveVllmModelRuntime(n1xProfile, qwen35b!, "arm64").model;
+    const command = buildVllmServeCommand(n1xModel);
+
+    expect(command).toContain("--gpu-memory-utilization 0.6");
+    expect(command).toContain("--max-model-len 32768");
+    expect(command).toContain("--max-num-seqs 2");
+    expect(command).toContain("--max-num-batched-tokens 4096");
+    expect(command).not.toContain("--gpu-memory-utilization 0.4");
+    expect(command).not.toContain("--max-model-len 262144");
+  });
+
   it("builds the MTP-free NVFP4 serve command for DGX Spark (#7127)", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
-    const cmd = buildVllmServeCommand(qwen35b!);
+    const sparkProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const sparkModel = resolveVllmModelRuntime(sparkProfile, qwen35b!, "arm64").model;
+    const cmd = buildVllmServeCommand(sparkModel);
     // The current NVIDIA model card no longer needs Spark-specific env exports.
     expect(cmd).not.toContain("VLLM_USE_FLASHINFER_MOE_FP4");
     expect(cmd).not.toContain("VLLM_FP8_MOE_BACKEND");

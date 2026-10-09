@@ -109,15 +109,13 @@ network_policies:
           - allow: { method: GET, path: "/devtools/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
+      - { path: /usr/local/bin/agent-browser* }
       - { path: /usr/local/bin/node* }
       - { path: /usr/local/bin/npx* }
       - { path: /usr/bin/node* }
       - { path: /usr/bin/npx* }
       - { path: /opt/hermes/node_modules/.bin/agent-browser* }
       - { path: /opt/hermes/node_modules/.bin/playwright* }
-      - { path: /sandbox/.hermes-data/node/bin/node* }
-      - { path: /sandbox/.hermes-data/node/bin/npx* }
-      - { path: /sandbox/.hermes-data/node/bin/agent-browser* }
       - { path: /sandbox/.hermes/node/bin/node* }
       - { path: /sandbox/.hermes/node/bin/npx* }
       - { path: /sandbox/.hermes/node/bin/agent-browser* }

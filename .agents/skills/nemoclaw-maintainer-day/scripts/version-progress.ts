@@ -4,7 +4,7 @@
 /**
  * Check progress for a version label: shipped vs still open.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version> [--repo OWNER/REPO]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version> [--repo OWNER/REPO]
  */
 
 import { run, parseStringArg } from "./shared.ts";

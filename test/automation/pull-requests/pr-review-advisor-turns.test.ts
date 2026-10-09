@@ -1,22 +1,48 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 import { settleAdvisorTurn } from "../../../tools/advisors/session.mts";
-import { advisorExecutionErrors } from "../../../tools/pr-review-advisor/analyze.mts";
-import { artifactPaths } from "../../../tools/pr-review-advisor/artifacts.mts";
-
+import { advisorTurnFlowDiagnostics } from "../../../tools/advisors/turn-protocol.mts";
 
 describe("PR review advisor turn trace", () => {
-  it("keeps the HTML session as the only debugging transcript", () => {
-    expect(artifactPaths("artifacts/pr-review-advisor")).toEqual({
-      result: path.join("artifacts/pr-review-advisor", "pr-review-advisor-result.json"),
-      finalResult: path.join("artifacts/pr-review-advisor", "pr-review-advisor-final-result.json"),
-      summary: path.join("artifacts/pr-review-advisor", "pr-review-advisor-summary.md"),
-      sessionHtml: path.join("artifacts/pr-review-advisor", "pr-review-advisor-session.html"),
+  it("reports bounded tool-flow metadata without tool arguments (#11686)", () => {
+    const repeatedUnknownStarts = new Array<{ type: "tool_start"; toolName: string }>(10_000).fill({
+      type: "tool_start",
+      toolName: "untrusted\nvalue",
     });
+    const diagnostics = advisorTurnFlowDiagnostics(
+      [
+        { type: "tool_start", toolName: "read" },
+        { type: "tool_end", toolName: "read", isError: true },
+        { type: "tool_end", toolName: "submit", isError: false },
+        ...repeatedUnknownStarts,
+        {
+          type: "read",
+          path: "/secret/path",
+          offset: 0,
+          endOffset: 1,
+          fileSize: 1,
+          reachesEnd: true,
+        },
+      ],
+      ["context", "submit"],
+      new Set(["context", "read", "submit"]),
+    );
+
+    expect(diagnostics).toEqual({
+      textEvents: 0,
+      readEvents: 1,
+      toolStarts: 10_001,
+      toolEnds: 2,
+      toolFailures: 1,
+      failedToolNames: ["read"],
+      unmatchedToolEndNames: ["submit"],
+      unsettledToolNames: ["<unknown>"],
+      missingRequiredToolNames: ["context"],
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain("secret");
+    expect(JSON.stringify(diagnostics)).not.toContain("untrusted");
   });
 
   it("settles turns and reports provider or callback errors (#6446)", async () => {
@@ -72,20 +98,6 @@ describe("PR review advisor turn trace", () => {
       "artifact disk full",
       "async artifact disk full",
       "unknown advisor turn callback failure",
-    ]);
-    expect(
-      advisorExecutionErrors({
-        text: "partial",
-        raw: "raw transcript\n",
-        turnTexts: ["partial"],
-        turnErrors: ["stage: provider rejected"],
-        turnCallbackErrors: ["stage: disk full"],
-        fatalError: "timed out after 100 ms",
-      }),
-    ).toEqual([
-      "session: timed out after 100 ms",
-      "turn: stage: provider rejected",
-      "artifact: stage: disk full",
     ]);
   });
 });

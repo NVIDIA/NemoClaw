@@ -13,24 +13,28 @@ export interface PreflightGatewaySequenceDeps {
   externallySupervised: boolean;
   supportsLifecycleCommands: boolean;
   isDockerDriverGatewayEnabled: boolean;
+  /** Provider readiness already owns reuse, listener, and runtime absence decisions. */
+  managedGatewayObservationAuthoritative?: boolean;
   gatewayName: string;
   cliDisplayName: string;
-  dashboardPort: number;
+  dashboardPort?: number;
   verifyGatewayContainerRunning(name: string): GatewayContainerState;
-  recoverGatewayRuntime(): Promise<boolean>;
-  waitForGatewayHttpReady(): Promise<boolean>;
+  recoverGatewayRuntime(): boolean | Promise<boolean>;
+  waitForGatewayHttpReady(): boolean | Promise<boolean>;
   getGatewayLocalEndpoint(): string;
   stopDashboardForward(): void;
   stopAllDashboardForwards(): void;
-  getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
+  getGatewayClusterImageDrift():
+    | { currentVersion: string; expectedVersion: string }
+    | null
+    | Promise<{ currentVersion: string; expectedVersion: string } | null>;
   exitProcess(code: number): never;
-  destroyGateway(): boolean;
+  destroyGateway(): boolean | Promise<boolean>;
   destroyGatewayForReuse(
-    destroyGateway: () => boolean,
+    destroyGateway: () => boolean | Promise<boolean>,
     successMessage: string,
     failureMessage: string,
-  ): GatewayReuseState;
-  runOpenshell(args: string[], options: { ignoreError: true }): unknown;
+  ): GatewayReuseState | Promise<GatewayReuseState>;
   dockerInspect(
     args: string[],
     opts: { ignoreError: true; suppressOutput: true },
@@ -62,6 +66,7 @@ export interface PreflightGatewaySequenceDeps {
 export async function runPreflightGatewaySequence(
   deps: PreflightGatewaySequenceDeps,
 ): Promise<GatewayReuseState> {
+  if (deps.managedGatewayObservationAuthoritative) return deps.gatewayReuseState;
   let gatewayReuseState = await reconcilePreflightGatewayReuseState({
     gatewayReuseState: deps.gatewayReuseState,
     supportsLifecycleCommands: deps.supportsLifecycleCommands,
@@ -79,15 +84,14 @@ export async function runPreflightGatewaySequence(
     exitProcess: deps.exitProcess,
   });
 
-  gatewayReuseState = applyPreflightGatewayCleanup({
+  gatewayReuseState = await applyPreflightGatewayCleanup({
     gatewayReuseState,
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,
     externallySupervised: deps.externallySupervised,
     cliDisplayName: deps.cliDisplayName,
-    dashboardPort: deps.dashboardPort,
     log: deps.log,
     warn: deps.warn,
-    runOpenshell: deps.runOpenshell,
+    stopAllDashboardForwards: deps.stopAllDashboardForwards,
     destroyGateway: deps.destroyGateway,
     destroyGatewayForReuse: deps.destroyGatewayForReuse,
   });

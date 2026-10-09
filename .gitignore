@@ -7,6 +7,7 @@
 __pycache__/
 coverage/
 dist/
+nemoclaw/runner-dist/
 artifacts/pr-review-advisor-local/
 docs/_build/
 node_modules/

@@ -32,6 +32,50 @@ The image build runs `pip3 check` and asserts all eight installed package versio
 The complete point-in-time audit now reports only two duplicate database records for `setuptools==82.0.1`; that record is outside the Critical/High remediation scope.
 This review does not claim the complete lock is vulnerability-free.
 
+## Managed QuickJS Wasmtime Configuration
+
+Deep Agents Code `0.1.55` selects `langchain-quickjs==0.3.5`, `quickjs-rs==0.2.5`,
+and `wasmtime==46.0.1`. The released `quickjs-rs` package creates a default
+Wasmtime engine. On Linux, Wasmtime's default copy-on-write linear-memory
+initialization creates `wasm-memory-image` with `memfd_create` flags
+`MFD_CLOEXEC | MFD_ALLOW_SEALING`. OpenShell blocks that syscall in the managed
+sandbox, so the first interactive model turn fails when Deep Agents initializes
+its JavaScript interpreter.
+
+The managed image patches the exact `quickjs-rs==0.2.5` engine constructor to
+set `Config.memory_init_cow = False`. This Wasmtime option uses ordinary memory
+initialization and does not require NemoClaw to weaken the OpenShell sandbox
+restriction. The image build rejects another `quickjs-rs` version or source
+shape. After patching, the image build runs `validate-quickjs-runtime.py` through
+the pinned LangChain REPL. It exercises the worker thread, OXC transform, async
+shell-tool bridge, snapshot restoration, and a second synchronous tool call.
+The live Deep Agents TUI check runs the same validator with
+`--require-memfd-denied` before its interactive sessions. That mode requires
+`EPERM` before importing Wasmtime, so cached artifacts cannot hide initialization
+failures. It adds no syscall permissions. The build and sandbox probes have
+bounded process deadlines, and failure messages omit third-party exception text.
+
+PR #11972 first appears in release source at `v0.0.128`. The reopened #11847 report used
+`v0.0.127`, whose source does not contain the patch. That report does not
+establish a regression of the patch. Existing sandboxes require a rebuilt
+managed image; updating the host CLI alone does not patch installed packages.
+
+Remove this patch when a reviewed `quickjs-rs` or Deep Agents Code release
+provides an equivalent non-memfd Wasmtime configuration and the live check
+passes through that upstream path.
+
+## Native NVIDIA Model Credentials
+
+The hardened DCode model constructor ignores mutable `config.toml` credentials.
+For the root-owned `https://integrate.api.nvidia.com/v1` route, it reads the
+supervisor-provided `NVIDIA_INFERENCE_API_KEY` placeholder and requires that the
+complete placeholder names that environment variable. Missing values, real keys,
+and placeholders for other variables fail before constructing the model.
+OpenShell resolves the placeholder at its proxy; the model process receives no
+real inference key. Other managed routes retain the synthetic inference token.
+The constructor regression test exercises this installed package patch, including
+versioned placeholders, instead of relying on a configuration round trip.
+
 ## Progressive MCP Tool Catalog Compatibility
 
 Deep Agents Code `0.1.55` with LangChain `1.3.14` can supply `search_tools` with a `ToolRuntime.tools` view that omits loaded MCP tools.
@@ -139,7 +183,7 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `6bb8dc8108c5dd7e7f71c39aacfb0da07d285b7a324eecd691177a9ca460cfc0`
+- Adapter module SHA-256: `97eaed5781f9c7df4478c96263b0742fb545b322846fe0c73c39a3bfba4553a9`
 - Adapter project metadata SHA-256: `7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
@@ -189,17 +233,19 @@ without consulting an index. Its `deepagents.harness_profiles` entry
 point runs after built-in profiles are registered, reads the reviewed canonical
 profile through one exact-version/hash-gated private registry lookup, and uses
 Deep Agents' public registration API to map it to the two exact `openai:` model
-keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. It layers
-one first-party middleware onto those aliases that rejects only a
-case-insensitive `[content]` value, with optional whitespace around the token
-and brackets, passed as the complete `execute` command;
-the canonical NVIDIA profile and unrelated models remain unchanged. The
-released SDK has no public profile getter or alias API. The adapter does not add
+keys used by NemoClaw's managed OpenAI-compatible `ChatOpenAI` route. It adds one
+first-party middleware that rejects only a case-insensitive `[content]` value,
+with optional whitespace around the token and brackets, passed as the complete
+`execute` command. It also replaces the native policy-nudge instance at the
+same middleware position on the OpenAI aliases. The adapted instance removes
+`nemotron_` control names only from copied provider requests. OpenRouter retains
+the native nudge and the managed execute guard. The canonical NVIDIA profile
+and unrelated models remain unchanged. The released SDK has no public profile getter or alias API. The adapter does not add
 a provider-wide OpenAI profile.
 
 ### Managed Ultra compatibility workarounds
 
-Two localized behaviors close separate invalid states on the managed Ultra
+Four localized behaviors close separate invalid states on the managed Ultra
 aliases. They are not a new provider profile and do not modify the reviewed
 canonical NVIDIA profile.
 
@@ -214,6 +260,18 @@ enlarge the installed trust surface solely to deduplicate two immutable strings.
 The focused profile-plugin suite extracts the identifiers from every production
 consumer and requires the exact sets to match, preventing drift without adding
 another mutable build artifact.
+
+For OpenAI prompt-cache affinity, Deep Agents Code `0.1.55` defaults
+`models.openai_prompt_cache_key` to enabled for every model whose provider
+resolves to `openai`, including compatible endpoints. It adds the thread ID as
+a top-level `prompt_cache_key`. NVIDIA Endpoints rejects that OpenAI-specific
+field. The managed package patch overrides the upstream config decision to
+false, so `ConfigurableModelMiddleware` does not inject the field. The provider
+request otherwise remains unchanged. Focused generated-package tests and the
+isolated image validator require the opt-out. The live DCode E2E proves the
+managed request returns assistant text. Remove the override only after NVIDIA
+Endpoints accepts `prompt_cache_key` or a reviewed Deep Agents release scopes
+the default by endpoint capability.
 
 For `force_nonempty_content`, the invalid state originates in the NVIDIA Ultra
 chat template/serving path: a Chat Completions response that combines reasoning
@@ -230,10 +288,35 @@ tests verify that both managed Ultra IDs receive the argument and unrelated
 models do not. The focused managed-model-params patch test verifies that the
 managed provider resolver supplies it only for those IDs, and the Deep Agents
 E2E test verifies the installed request settings.
-Remove this argument only after a reviewed serving-template or client update
+The native NVIDIA attachment uses `https://integrate.api.nvidia.com/v1`
+directly and omits this argument at both supply points. Live native endpoint
+requests showed that enabling it moves reasoning into answer content, while
+omitting it preserves separate reasoning and valid tool calls with null content.
+The native endpoint exception is exact; the managed `inference.local` aliases
+retain the workaround. Focused tests cover the native exception in both the
+config generator and patched constructor.
+Remove this argument from the managed route only after a reviewed serving-template or client update
 produces nonempty assistant content for reasoning-plus-tool-call turns without
 it, and the live DCode Ultra E2E passes for both managed model IDs with both
 supply points deleted.
+
+For internal control names, the invalid state originates in the managed
+OpenAI-compatible request path. The native Ultra profile inserts local
+`HumanMessage` controls with `nemotron_` names. NVIDIA Endpoints accepts the
+streaming HTTP request but returns an in-stream bad-request event instead of
+assistant text when those names reach its chat template. Deep Agents then wraps
+the event in `RemoteException`, so managed `dcode -n` exits 1 with no response
+(#10549). Deep Agents merges middleware overrides by exact type, so the adapter
+wraps a new native policy-nudge instance and replaces the original at the same
+position for OpenAI aliases. OpenRouter aliases retain the native policy nudge. The wrapper repairs the request after the native nudge runs. It clears
+only copied `nemotron_` names and preserves content, graph-state metadata,
+user-supplied names, plain messages, the canonical profile, and unrelated
+models. Focused fixture tests and the isolated image validator cover sync and
+async calls, graph-state preservation, unrelated-message identity, and the
+native appended nudge. The Deep Agents E2E repeats the installed contract. Remove this
+middleware only after a reviewed NVIDIA serving-template or Deep Agents update
+accepts the named native controls through the managed `ChatOpenAI` route and
+the live non-interactive E2E passes without the adapter.
 
 For the `[content]` guard, the invalid state is a model-produced tool call whose
 complete `execute.command` is the placeholder, ignoring case and whitespace
@@ -265,9 +348,10 @@ upstream release moves the registry out of process. The image validator runs
 under isolated Python, verifies the installed entry-point metadata and adapter
 source hash before the upstream source checks, checks both upstream files again
 after profile loading,
-resolves the complete native middleware plus the managed guard for both aliases,
-proves the canonical middleware remains unchanged, compiles a graph, exercises
-sync and async placeholder rejection, proves concrete-command and parser/native
+resolves the complete native middleware with the adapted policy nudge plus the
+managed guard for both aliases, proves the canonical middleware remains
+unchanged, compiles a graph, exercises sync and async message-name repair and placeholder rejection,
+proves graph-state and unrelated-message preservation, concrete-command, and parser/native
 dispatch parity through the actual graph, and confirms an unrelated OpenAI model
 receives no Ultra behavior. The Docker build separately imports the adapter,
 Deep Agents, and DCode under isolated Python immediately after installation;

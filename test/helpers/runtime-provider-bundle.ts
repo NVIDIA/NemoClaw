@@ -5,8 +5,6 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderCleanupInput,
-  type RuntimeProviderLifecycleInput,
-  type RuntimeProviderLifecycleStopHooks,
   type RuntimeProviderWorkloadProfile,
 } from "../../src/lib/onboard/runtime-provider/contract";
 import type {
@@ -80,6 +78,32 @@ export function createInMemoryRuntimeProviderBundle({
           }
         : { action: "retain" as const, reason: "no-owned-image" as const };
   };
+  const projectGatewayHostRuntime = () => ({
+    providerId,
+    openShellDriver: "memory",
+    bindAddress: "127.0.0.1",
+    grpcHost: "127.0.0.1",
+    sshGatewayHost: "127.0.0.1",
+    portCheckHost: "127.0.0.1",
+    socketPath: null,
+    requiredServerIpSans: [],
+    sandboxHostAddress: null,
+    usesHostGatewayRoute: false,
+    resourceOwnership: { label: "test.managed", value: providerId },
+    gatewayConfig: {
+      sandboxNamespace: "scoped" as const,
+      hostGatewayIp: null,
+      includeSupervisorBin: true,
+      processOwnership: "scoped-namespace" as const,
+    },
+    network: {
+      sandboxSourceCidrs: () => [],
+      inspect: () => undefined,
+      usesHostGatewayRoute: () => false,
+      run: () => ({ status: 0 }),
+      ensureProbeImageCached: () => ({ ok: true as const, alreadyCached: true }),
+    },
+  });
   return {
     identity: {
       contractVersion: RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
@@ -91,7 +115,6 @@ export function createInMemoryRuntimeProviderBundle({
       providerId,
       supported: true,
       hostLocalInference: hostLocalInference !== undefined,
-      directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
       readOnlyHostMounts: {
@@ -108,6 +131,7 @@ export function createInMemoryRuntimeProviderBundle({
         status: "ok",
         detail: "ready",
       }),
+      validateSandboxGpu: () => undefined,
       preflightLifecycle: () => null,
     },
     gateway: {
@@ -115,6 +139,10 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      finalSandboxLiveness: "openshell-and-docker",
+      ownsHostReadiness: false,
+      observeHostRuntime: projectGatewayHostRuntime,
+      prepareHostRuntime: projectGatewayHostRuntime,
     },
     workload: {
       providerId,
@@ -151,25 +179,17 @@ export function createInMemoryRuntimeProviderBundle({
       providerId,
       supported: true,
       channelStopTransport: "openshell",
-      start(input: RuntimeProviderLifecycleInput) {
-        state.running.add(input.sandboxName);
-        event("start", input.sandboxName);
-        input.log(`  In-memory workload '${input.sandboxName}' started.`);
-        return { exitCode: 0 };
-      },
-      async verifyStarted(input: RuntimeProviderLifecycleInput) {
-        event("verify-started", input.sandboxName);
-      },
-      stop(input: RuntimeProviderLifecycleInput, hooks: RuntimeProviderLifecycleStopHooks) {
-        const wasRunning = state.running.delete(input.sandboxName);
-        const beforeStop = wasRunning ? hooks.beforeStop : () => undefined;
-        const recordStop = wasRunning ? () => event("stop", input.sandboxName) : () => undefined;
-        beforeStop();
-        recordStop();
-        return {
-          exitCode: 0,
-          state: wasRunning ? "stopped" : "already-stopped",
-        };
+      privilegedSandboxControl: {
+        resolveTarget: ({ sandboxName }) => ({
+          providerId,
+          resourceHandle: `in-memory:${sandboxName}`,
+        }),
+        execute: () => ({
+          status: 0,
+          signal: null,
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.alloc(0),
+        }),
       },
     },
     mutationAuthority: {
@@ -177,8 +197,6 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       operations: [
         "registration",
-        "start",
-        "stop",
         "inference-set",
         "rebuild",
         "clone",
@@ -187,7 +205,6 @@ export function createInMemoryRuntimeProviderBundle({
         "workload-cleanup",
       ],
     },
-    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),
@@ -230,6 +247,13 @@ export function createInMemoryRuntimeProviderBundle({
         { operation: "sandbox-lifecycle", engineId: "memory", displayName: "In-memory" },
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],
+      capture: () => ({ status: 0, stdout: "", stderr: "" }),
+      nvidiaContainer: hostLocalInference
+        ? {
+            capture: () => ({ status: 0, stdout: "", stderr: "" }),
+            cleanup: () => ({ status: "absent" }),
+          }
+        : undefined,
     },
   };
 }

@@ -4,27 +4,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reviewQualityIssues } from "../../../tools/pr-review-advisor/review-quality.mts";
 import {
   buildSystemPrompt,
   readTrustedSecurityRubric,
 } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
-import { ROOT, validResult } from "../../helpers/pr-review-advisor-test-fixtures.ts";
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 
 describe("PR review advisor", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("flags low-quality normalized advisor fields for same-session validation", () => {
-    const currentFinding = validResult().findings[0]!;
-    const result = validResult({
-      findings: [{ ...currentFinding, impact: "No impact provided." }],
-    });
-
-    expect(reviewQualityIssues(result)).toContain(
-      "findings[1] trusted-code boundary has placeholder impact",
-    );
   });
 
   it("loads the security rubric from the trusted module checkout, not cwd", () => {
@@ -73,21 +61,22 @@ describe("PR review advisor", () => {
     [
       "a duplicate category name",
       (rubric: string) =>
-        rubric.replace("## Category 2: Input Validation and Data Sanitization", "## Category 2: Secrets and Credentials"),
+        rubric.replace(
+          "## Category 2: Input Validation and Data Sanitization",
+          "## Category 2: Secrets and Credentials",
+        ),
       "category names must be unique",
     ],
     [
       "an empty category section",
       (rubric: string) =>
-        rubric.replace(
-          /### Meaning\n\nKeep credentials[^\n]*\n/u,
-          "### Meaning\n\n",
-        ),
+        rubric.replace(/### Meaning\n\nKeep credentials[^\n]*\n/u, "### Meaning\n\n"),
       "category 1 has empty Meaning",
     ],
     [
       "a different final category",
-      (rubric: string) => rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
+      (rubric: string) =>
+        rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
       "category 9 must be System Security",
     ],
     [
@@ -105,5 +94,4 @@ describe("PR review advisor", () => {
 
     expect(() => readTrustedSecurityRubric()).toThrow(message);
   });
-
 });

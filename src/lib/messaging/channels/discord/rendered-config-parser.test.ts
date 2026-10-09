@@ -92,7 +92,10 @@ describe("discord rendered config parser", () => {
     };
 
     expect(
-      discordRenderedConfigParser.getValue(keys.find((key) => key.key === "guildIds")!, source),
+      discordRenderedConfigParser.getValue(
+        keys.find((key) => key.key === "guildIds")!,
+        source,
+      ),
     ).toEqual(["1504155275899437177", "1504155275899437178"]);
     expect(
       discordRenderedConfigParser.getValue(
@@ -101,7 +104,10 @@ describe("discord rendered config parser", () => {
       ),
     ).toBe(true);
     expect(
-      discordRenderedConfigParser.getValue(keys.find((key) => key.key === "guildUsers")!, source),
+      discordRenderedConfigParser.getValue(
+        keys.find((key) => key.key === "guildUsers")!,
+        source,
+      ),
     ).toEqual(["U01ABC2DEF3", "U04XYZ5RST6"]);
   });
 

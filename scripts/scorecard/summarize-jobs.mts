@@ -100,9 +100,7 @@ function elapsedMs(
   return finishMs - startMs;
 }
 
-function normalizeRunnerClass(
-  labels: string[] | null | undefined,
-): JobTimingRow["runnerClass"] {
+function normalizeRunnerClass(labels: string[] | null | undefined): JobTimingRow["runnerClass"] {
   if (!labels || labels.length === 0) return "unknown";
   const normalized = new Set(labels.map((label) => label.toLowerCase()));
   if (normalized.has("self-hosted")) return "unknown";
@@ -112,15 +110,13 @@ function normalizeRunnerClass(
 
 function summarizeJobTimings(jobs: ApiJob[]): JobTimingRow[] {
   return jobs
-    .map(
-      (job): JobTimingRow => ({
-        executionMs: elapsedMs(job.started_at, job.completed_at),
-        name: job.name,
-        outcome: classifyApiJob(job),
-        queueMs: elapsedMs(job.created_at, job.started_at),
-        runnerClass: normalizeRunnerClass(job.labels),
-      }),
-    )
+    .map((job): JobTimingRow => ({
+      executionMs: elapsedMs(job.started_at, job.completed_at),
+      name: job.name,
+      outcome: classifyApiJob(job),
+      queueMs: elapsedMs(job.created_at, job.started_at),
+      runnerClass: normalizeRunnerClass(job.labels),
+    }))
     .filter((row) => row.executionMs !== null || row.queueMs !== null)
     .sort(
       (left, right) =>

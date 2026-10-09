@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  managedWorkloadRebuild,
+  rebuildProviderPreflight,
+} from "../../../../test/helpers/rebuild-flow-harness";
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   configureDcodeSession,
   expectNoDcodeMutation,
@@ -11,11 +16,93 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("rebuildSandbox DCode flow: preflight", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it.each([false, true])(
+    "rejects an invalid host key before an unavailable catalog with force %s (#12742)",
+    async (force) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: {
+          ...makeDcodeSandboxEntry(),
+          provider: "nvidia-prod",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          nativeNvidiaProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-nvidia-inference-v1",
+            providerName: "nemoclaw-nvidia-prod-v1",
+            providerId: "native-provider-id",
+          },
+        },
+        hydrateCredentialEnv: () => "invalid-rebuild-test-credential",
+      });
+      configureDcodeSession(harness);
+      vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockRestore();
+      const catalog = vi
+        .spyOn(managedWorkloadRebuild, "prepareManagedWorkloadRebuildHandoff")
+        .mockRejectedValue(new Error("managed image catalog is unavailable"));
+
+      await expect(
+        harness.rebuildSandbox("alpha", force ? ["--yes", "--force"] : ["--yes"], {
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("Host inference credential validation failed");
+
+      expect(catalog).not.toHaveBeenCalled();
+      expectNoDcodeMutation(harness);
+    },
+  );
+
+  it.each([false, true])(
+    "rejects an invalid host inference key before DCode mutation with force %s (#12742)",
+    async (force) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: {
+          ...makeDcodeSandboxEntry(),
+          provider: "nvidia-prod",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        },
+        hydrateCredentialEnv: () => "invalid-rebuild-test-credential",
+      });
+      configureDcodeSession(harness);
+      vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockRestore();
+
+      await expect(
+        harness.rebuildSandbox("alpha", force ? ["--yes", "--force"] : ["--yes"], {
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("Host inference credential validation failed");
+
+      expectNoDcodeMutation(harness);
+    },
+  );
+
+  it("preserves DCode when the host key is rejected after backup (#12742)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      hydrateCredentialEnv: () => "host-test-key",
+      beforeBackup: () => {
+        vi.mocked(
+          rebuildProviderPreflight.validateRebuildHostInferenceCredential,
+        ).mockResolvedValue(false);
+      },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("Host inference credential could not be validated before sandbox deletion");
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["defaults legacy state to disabled", undefined, undefined, "disabled", null],
@@ -28,25 +115,28 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       "thread-opt-in",
       "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in",
     ],
-  ] as const)("resolves durable DCode mode: %s (#6478)", (_label, recorded, requested, expected, error) => {
-    const config = resolveRebuildDurableConfig(
-      "alpha",
-      {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        nemoclawVersion: "0.1.0",
-        ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
-      },
-      null,
-      undefined,
-      undefined,
-      false,
-      requested,
-    );
+  ] as const)(
+    "resolves durable DCode mode: %s (#6478)",
+    (_label, recorded, requested, expected, error) => {
+      const config = resolveRebuildDurableConfig(
+        "alpha",
+        {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          nemoclawVersion: "0.1.0",
+          ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
+        },
+        null,
+        undefined,
+        undefined,
+        false,
+        requested,
+      );
 
-    expect(config.dcodeAutoApprovalMode).toBe(expected);
-    expect(config.dcodeAutoApprovalModeError).toBe(error);
-  });
+      expect(config.dcodeAutoApprovalMode).toBe(expected);
+      expect(config.dcodeAutoApprovalModeError).toBe(error);
+    },
+  );
 
   it("rejects a DCode auto-approval override for unsupported agents before mutation (#6478)", async () => {
     const harness = createRebuildFlowHarness({

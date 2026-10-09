@@ -253,6 +253,9 @@ export function createMutableSandboxPolicyResult(
         livePolicyVersion,
       );
     }
+    if (args.join(" ") === "policy get -g test-gateway --base test-sandbox") {
+      return { exitCode: 0, stdout: JSON.stringify(livePolicy), stderr: "" };
+    }
     if (args[0] === "provider" && args[1] === "get" && typeof args[2] === "string") {
       return {
         exitCode: 0,
@@ -267,6 +270,33 @@ export function createMutableSandboxPolicyResult(
       };
     }
     return resultWithBlueprintPolicy(args, successResult());
+  };
+}
+
+/** Adds runtime-identity command responses to a mutable blueprint policy fixture. */
+export function createMutableIdentityPolicyResult(options: {
+  readonly readMergedPolicy: () => Record<string, unknown>;
+  readonly runtimeProviderListing: string;
+  readonly policyWriteFailure?: string;
+}): (args: readonly string[]) => CommandResult {
+  let runtimeProviderReads = 0;
+  const policyResult = createMutableSandboxPolicyResult(options.readMergedPolicy);
+  return (args) => {
+    const command = args.join(" ");
+    if (command === "settings get --global --json") return providersV2EnabledResult();
+    if (command === "provider get test-provider") return failureResult("provider not found");
+    if (command === "provider get acme-okta-runtime") {
+      runtimeProviderReads += 1;
+      return runtimeProviderReads === 1
+        ? failureResult("provider not found")
+        : { exitCode: 0, stdout: options.runtimeProviderListing, stderr: "" };
+    }
+    if (options.policyWriteFailure && args[0] === "policy" && args[1] === "set") {
+      return failureResult(
+        `Error: code: 'failed_precondition', message: '${options.policyWriteFailure}'`,
+      );
+    }
+    return policyResult(args);
   };
 }
 

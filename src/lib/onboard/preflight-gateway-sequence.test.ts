@@ -28,7 +28,6 @@ function harness(overrides: {
   const destroyGatewayForReuse = vi.fn(
     (): GatewayReuseState => overrides.destroyedReuseState ?? "missing",
   );
-  const runOpenshell = vi.fn();
   const dockerStop = vi.fn();
   const dockerRm = vi.fn();
   const dockerRemoveVolumesByPrefix = vi.fn();
@@ -57,7 +56,6 @@ function harness(overrides: {
     exitProcess: exitProcess as unknown as (code: number) => never,
     destroyGateway,
     destroyGatewayForReuse,
-    runOpenshell,
     dockerInspect: () => {
       inspectCalls += 1;
       // Only the first inspect finds the orphan; the post-removal inspect
@@ -81,7 +79,6 @@ function harness(overrides: {
       dockerRm,
       dockerRemoveVolumesByPrefix,
       clearRegistry,
-      runOpenshell,
       stopDashboardForward,
       stopAllDashboardForwards,
     },
@@ -108,27 +105,39 @@ describe("full preflight gateway sequence under external supervision (#6576)", (
     expectNoDestructiveEffect(h);
   });
 
-  it.each<GatewayReuseState>([
-    "healthy",
-    "stale",
-    "active-unnamed",
-    "foreign-active",
-  ])("performs no cleanup and preserves reuse state %s", async (gatewayReuseState) => {
-    const h = harness({
-      gatewayReuseState,
-      externallySupervised: true,
-      containerState: "missing",
-      orphanContainerPresent: true,
-      httpReady: false,
-      imageDrift: { currentVersion: "1.0.0", expectedVersion: "2.0.0" },
-    });
-    const result = await runPreflightGatewaySequence(h.deps);
-    expect(result).toBe(gatewayReuseState);
-    expectNoDestructiveEffect(h);
-  });
+  it.each<GatewayReuseState>(["healthy", "stale", "active-unnamed", "foreign-active"])(
+    "performs no cleanup and preserves reuse state %s",
+    async (gatewayReuseState) => {
+      const h = harness({
+        gatewayReuseState,
+        externallySupervised: true,
+        containerState: "missing",
+        orphanContainerPresent: true,
+        httpReady: false,
+        imageDrift: { currentVersion: "1.0.0", expectedVersion: "2.0.0" },
+      });
+      const result = await runPreflightGatewaySequence(h.deps);
+      expect(result).toBe(gatewayReuseState);
+      expectNoDestructiveEffect(h);
+    },
+  );
 });
 
 describe("full preflight gateway sequence when NemoClaw owns the gateway (#6576)", () => {
+  it("skips Docker reuse and cleanup when the selected provider owns readiness (#10984)", async () => {
+    const h = harness({
+      gatewayReuseState: "healthy",
+      externallySupervised: false,
+      containerState: "missing",
+      orphanContainerPresent: true,
+      httpReady: false,
+    });
+    h.deps.managedGatewayObservationAuthoritative = true;
+
+    await expect(runPreflightGatewaySequence(h.deps)).resolves.toBe("healthy");
+    expectNoDestructiveEffect(h);
+  });
+
   it("still removes a genuinely orphaned container end-to-end", async () => {
     const h = harness({
       gatewayReuseState: "missing",
@@ -153,9 +162,7 @@ describe("full preflight gateway sequence when NemoClaw owns the gateway (#6576)
     });
     await runPreflightGatewaySequence(h.deps);
     expect(h.destructive.destroyGatewayForReuse).toHaveBeenCalledTimes(1);
-    expect(h.destructive.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "3000"], {
-      ignoreError: true,
-    });
+    expect(h.destructive.stopAllDashboardForwards).toHaveBeenCalledOnce();
   });
 
   it("feeds each stage the reuse state the previous stage produced", async () => {

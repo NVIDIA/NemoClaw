@@ -7,7 +7,6 @@ import {
   SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
-import type { PreservedEnvFile } from "../state/preserved-env";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
@@ -46,7 +45,6 @@ export type PrepareSandboxDockerfilePatchInput = {
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
-  rebuildPreservedEnv?: readonly PreservedEnvFile[];
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
@@ -99,6 +97,12 @@ function enforceDockerGpuPatchPreserveNetwork(
   return impl(...args);
 }
 
+function reverifySandboxBridgeGatewayReachability(port?: number): Promise<void> {
+  const { verifySandboxBridgeGatewayReachableOrExit } =
+    require("./gateway-sandbox-reachability") as typeof import("./gateway-sandbox-reachability");
+  return verifySandboxBridgeGatewayReachableOrExit(true, { skip: false, port });
+}
+
 function patchStagedDockerfile(
   ...args: Parameters<PatchStagedDockerfile>
 ): ReturnType<PatchStagedDockerfile> {
@@ -121,7 +125,6 @@ export async function prepareSandboxDockerfilePatch({
   preferredInferenceApi,
   webSearchConfig,
   toolDisclosure = DEFAULT_TOOL_DISCLOSURE,
-  rebuildPreservedEnv,
   dcodeAutoApprovalMode,
   hermesToolGateways,
   sandboxGpuConfig,
@@ -181,6 +184,7 @@ export async function prepareSandboxDockerfilePatch({
       selectedRoute: selectedGpuRoute,
       gatewayPort,
       log,
+      reverifyBridgeReachability: () => reverifySandboxBridgeGatewayReachability(gatewayPort),
     },
   );
   const darwinVmCompat = false;
@@ -212,7 +216,6 @@ export async function prepareSandboxDockerfilePatch({
         agentName: managedAgentName,
         buildIdPolicy,
         toolDisclosure,
-        ...(rebuildPreservedEnv ? { rebuildPreservedEnv } : {}),
         ...(!fromDockerfile ? { trustedManagedDockerfile: true } : {}),
         ...(!fromDockerfile && managedAgentName === "openclaw"
           ? { wslDashboardExposure: managedOpenClawWslExposure }

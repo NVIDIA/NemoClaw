@@ -11,14 +11,7 @@ import {
   type SessionUpdates,
 } from "../state/onboard-session";
 import type { OnboardMachineEvent } from "./machine/events";
-import {
-  advanceTo,
-  branchTo,
-  completeOnboardMachine,
-  failOnboardMachine,
-  pauseOnboardMachine,
-  retryTo,
-} from "./machine/result";
+import { advanceTo, branchTo, completeOnboardMachine } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import {
   InvalidOnboardMachineTransitionError,

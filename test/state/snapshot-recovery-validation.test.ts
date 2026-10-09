@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,15 +26,21 @@ function writeBackup(
 ): Record<string, unknown> {
   const backupPath = path.join(BACKUPS_ROOT, sandboxName, timestamp);
   fs.mkdirSync(backupPath, { recursive: true });
+  const archivePath = path.join(backupPath, "native-home.tar");
+  const tar = spawnSync("tar", ["-cf", archivePath, "--files-from", "/dev/null"]);
+  assert.equal(tar.status, 0, "Could not create native-state test archive");
   const manifest = {
-    version: 1,
+    version: 2,
     sandboxName,
     timestamp,
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    dir: "/sandbox/.openclaw",
+    nativeState: {
+      root: "/sandbox",
+      archive: "native-home.tar",
+      sha256: createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex"),
+    },
     backupPath,
     blueprintDigest: null,
     ...overrides,
@@ -53,7 +62,7 @@ beforeEach(() => {
 });
 
 describe("prepared rebuild backup recovery validation (#6114)", () => {
-  it("removes only an exact backup child owned by the target sandbox", () => {
+  it("removes only an exact backup child owned by the target sandbox (#10639)", () => {
     const manifest = writeBackup("alpha", "2026-07-01T06-50-42-043Z");
     const outsidePath = path.join(TMP_HOME, "outside-backup");
     fs.mkdirSync(outsidePath, { recursive: true });
@@ -64,7 +73,18 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(fs.existsSync(outsidePath)).toBe(true);
   });
 
-  it("refuses to remove a backup path that is a symbolic link", () => {
+  it("retains an incomplete backup when its cleanup deadline has expired (#11936)", () => {
+    const manifest = writeBackup("alpha", "2026-07-01T06-50-42-044Z");
+    const backupPath = String(manifest.backupPath);
+
+    expect(sandboxState.removeSandboxStateBackup("alpha", backupPath, Date.now())).toBe(false);
+    expect(fs.existsSync(backupPath)).toBe(true);
+    expect(sandboxState.removeSandboxStateBackup("alpha", backupPath, Date.now() + 5_000)).toBe(
+      true,
+    );
+  });
+
+  it("refuses to remove a backup path that is a symbolic link (#10639)", () => {
     const sandboxBackupRoot = path.join(BACKUPS_ROOT, "alpha");
     const backupPath = path.join(sandboxBackupRoot, "2026-07-01T06-50-42-043Z");
     const outsidePath = path.join(TMP_HOME, "outside-backup");
@@ -88,6 +108,16 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     expect(sandboxState.getLatestBackup("alpha")).toBeNull();
   });
 
+  it("does not select a manifest carrying retired selective backup fields", () => {
+    writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
+      stateDirs: ["workspace"],
+      backedUpDirs: ["workspace"],
+    });
+
+    expect(sandboxState.listBackups("alpha")).toEqual([]);
+    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+  });
+
   it("accepts an exact sandbox and agent identity from its timestamped backup path", () => {
     writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
       agentVersion: "2026.5.27",
@@ -104,90 +134,6 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
         timestamp: "2026-07-01T06-50-42-044Z",
       }),
     });
-  });
-
-  it("round-trips validated OpenClaw image-plugin provenance through recovery", () => {
-    const openclawImagePluginInstalls = [
-      {
-        id: "weather",
-        installPath: "/sandbox/.openclaw/extensions/weather",
-        loadPaths: [],
-      },
-      {
-        id: "npm-plugin",
-        installPath: "/sandbox/.openclaw/npm/node_modules/npm-plugin",
-        loadPaths: [],
-      },
-    ];
-    writeBackup("alpha", "2026-07-01T06-50-42-045Z", {
-      reconcileOpenClawImagePluginProvenance: true,
-      openclawImagePluginInstalls,
-    });
-    const latest = sandboxState.getLatestBackup("alpha");
-
-    expect(latest?.openclawImagePluginInstalls).toEqual(openclawImagePluginInstalls);
-    expect(latest?.reconcileOpenClawImagePluginProvenance).toBe(true);
-    expect(sandboxState.validateRebuildRecoveryManifest("alpha", "openclaw", latest!)).toEqual({
-      ok: true,
-      manifest: expect.objectContaining({
-        reconcileOpenClawImagePluginProvenance: true,
-        openclawImagePluginInstalls,
-      }),
-    });
-  });
-
-  it("rejects a marked manifest without explicit image-plugin provenance", () => {
-    const manifest = writeBackup("alpha", "2026-07-01T06-50-42-045Z", {
-      reconcileOpenClawImagePluginProvenance: true,
-    });
-
-    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
-    expect(
-      sandboxState.restoreRecreatedSandboxState("alpha", String(manifest.backupPath), {
-        targetAgentType: "openclaw",
-        freshOpenClawImagePluginInstalls: [],
-      }),
-    ).toMatchObject({
-      success: false,
-      error: sandboxState.OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR,
-    });
-  });
-
-  it.each([
-    ["a non-array value", { weather: "/sandbox/.openclaw/extensions/weather" }],
-    [
-      "an unsafe plugin id",
-      [
-        {
-          id: "../weather",
-          installPath: "/sandbox/.openclaw/extensions/weather",
-          loadPaths: [],
-        },
-      ],
-    ],
-    [
-      "a relative install path",
-      [{ id: "weather", installPath: "extensions/weather", loadPaths: [] }],
-    ],
-    [
-      "duplicate install paths",
-      [
-        {
-          id: "weather",
-          installPath: "/sandbox/.openclaw/extensions/weather",
-          loadPaths: [],
-        },
-        {
-          id: "weather-copy",
-          installPath: "/sandbox/.openclaw/extensions/weather",
-          loadPaths: [],
-        },
-      ],
-    ],
-  ])("rejects image-plugin provenance with %s", (_case, openclawImagePluginInstalls) => {
-    writeBackup("alpha", "2026-07-01T06-50-42-046Z", { openclawImagePluginInstalls });
-
-    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
   });
 
   it("rejects a persisted manifest that disappears or becomes malformed after discovery", () => {
@@ -252,15 +198,23 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
   });
 
   it("requires a non-empty managed-image fingerprint", () => {
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "0.0.71" })).toBe(true);
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: "0.0.71",
+      }),
+    ).toBe(true);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: null })).toBe(false);
     expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "  " })).toBe(false);
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: 123 } as never)).toBe(
-      false,
-    );
-    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: {} } as never)).toBe(
-      false,
-    );
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: 123,
+      } as never),
+    ).toBe(false);
+    expect(
+      sandboxState.hasPositiveManagedImageEvidence({
+        nemoclawVersion: {},
+      } as never),
+    ).toBe(false);
   });
 
   it("allows legacy managed-image recovery only with per-row authority and no custom image (#6114)", () => {

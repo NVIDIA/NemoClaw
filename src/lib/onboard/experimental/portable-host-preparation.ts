@@ -21,11 +21,14 @@ import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   isPortableExperimentalProfile,
   parseDockerNetworkIpamEntries,
+  PORTABLE_ARCHITECTURE,
   PORTABLE_DOCKER_NETWORK_NAME,
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_HOST,
   PORTABLE_REGISTRY_IP,
+  PORTABLE_REGISTRY_PORT,
   resolveDockerDriverNetworkName,
 } from "../docker-driver-platform";
 import {
@@ -53,6 +56,7 @@ const RETIRED_PORTABLE_HOST_GATEWAY_IP = "169.254.1.2";
 // label renders as `<no value>`, which contains a space and would corrupt
 // whitespace splitting.
 const DOCKER_FIELD_SEPARATOR = "|";
+const PODMAN_NETWORK_IPAM_INSPECT_FORMAT = "{{json .Subnets}}";
 // Portable onboarding created the sandbox network on this subnet before #9707
 // moved it out of the link-local block that netavark refuses. Name the retired
 // value so an upgraded host gets the removal command instead of the generic
@@ -66,7 +70,13 @@ const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
 const REGISTRY_COMMAND_TIMEOUT_MS = 300_000;
+// Stored image references can retain localhost; resolve them through the same IPv4 listener.
 const REGISTRY_FRAGMENT = `[[registry]]
+location = "${PORTABLE_LOCAL_REGISTRY}"
+insecure = true
+
+[[registry]]
+prefix = "localhost:5000"
 location = "${PORTABLE_LOCAL_REGISTRY}"
 insecure = true
 `;
@@ -87,6 +97,7 @@ type SpawnResult = ReturnType<typeof spawnSync>;
 
 export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
+  architecture?: NodeJS.Architecture;
   home?: string;
   uid?: number;
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
@@ -647,11 +658,25 @@ function ensurePortableSandboxNetwork(
   networkName: string,
   assertSocketAuthority: () => void,
 ): void {
-  const networkInspection = docker(
+  let networkInspection = docker(
     ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
     env,
   );
   if (networkInspection.error) {
+    requireCommand(networkInspection, "Inspecting the portable sandbox network");
+  }
+  // podman-docker exposes Podman's native network-inspect object, whose IPAM
+  // field is `Subnets` rather than Docker's `IPAM.Config`. Retry only that
+  // explicit template-schema mismatch; an absent network still follows the
+  // create path below.
+  if (
+    networkInspection.status !== 0 &&
+    commandDetail(networkInspection).includes("can't evaluate field IPAM")
+  ) {
+    networkInspection = docker(
+      ["network", "inspect", "--format", PODMAN_NETWORK_IPAM_INSPECT_FORMAT, networkName],
+      env,
+    );
     requireCommand(networkInspection, "Inspecting the portable sandbox network");
   }
   if (networkInspection.status === 0) {
@@ -702,9 +727,7 @@ function ensureRegistryContainer(
     );
   }
   const stoppedAddressUnavailable = running !== "true" && networkIp === "invalid IP";
-  if (
-    exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP && !stoppedAddressUnavailable
-  ) {
+  if (exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP && !stoppedAddressUnavailable) {
     throw new Error(
       `Refusing to move managed container '${REGISTRY_CONTAINER}' from unexpected network address '${networkIp}'. Expected ${PORTABLE_REGISTRY_IP}.`,
     );
@@ -740,7 +763,7 @@ function ensureRegistryContainer(
         "--ip",
         PORTABLE_REGISTRY_IP,
         "-p",
-        "127.0.0.1:5000:5000",
+        `${PORTABLE_REGISTRY_HOST}:${PORTABLE_REGISTRY_PORT}:5000`,
         "--restart=always",
         REGISTRY_IMAGE,
       ],
@@ -760,6 +783,12 @@ export function preparePortableExperimentalHost(
   const dockerNetworkName = resolveDockerDriverNetworkName(env);
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("The portable experimental profile requires Linux.");
+  }
+  const architecture = deps.architecture ?? process.arch;
+  if (architecture !== PORTABLE_ARCHITECTURE.host) {
+    throw new Error(
+      `The portable experimental profile requires Linux x86_64 (amd64); detected Linux ${architecture}.`,
+    );
   }
   const uid = deps.uid ?? process.geteuid?.() ?? process.getuid?.();
   if (!Number.isInteger(uid) || Number(uid) < 0) {
@@ -982,6 +1011,7 @@ export const portableHostPreparationInternals = {
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
+  ensurePortableSandboxNetwork,
   ensurePortableHostGatewayAlias,
   portableHostGatewayAliasState,
   validateOwnedConfigAuthority,

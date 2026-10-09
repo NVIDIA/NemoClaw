@@ -65,6 +65,16 @@ export function validateHermesDashboardWorkflow(workflow: HermesDashboardWorkflo
     "1",
     `${CANONICAL_JOB} must enable Hermes dashboard coverage`,
   );
+  for (const [name, expected] of Object.entries({
+    NEMOCLAW_HERMES_DASHBOARD: "1",
+    NEMOCLAW_DASHBOARD_PORT: "19000",
+    NEMOCLAW_HERMES_DASHBOARD_PORT: "19000",
+    NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19120",
+    NEMOCLAW_HERMES_DASHBOARD_TUI: "1",
+    NEMOCLAW_HERMES_API_PORT: "8643",
+  })) {
+    requireEqual(errors, env[name], expected, `${CANONICAL_JOB} must qualify ${name}=${expected}`);
+  }
   requireEqual(
     errors,
     env.NEMOCLAW_E2E_INFERENCE_MODE,

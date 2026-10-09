@@ -4,8 +4,8 @@
 // Generate Hermes config.yaml and .env from NemoClaw build-arg env vars.
 //
 // Called at Docker image build time. Reads NEMOCLAW_* env vars and writes:
-//   ~/.hermes/config.yaml  — Hermes configuration (immutable at runtime)
-//   ~/.hermes/.env         — Base environment placeholders (immutable at runtime)
+//   ~/.hermes/config.yaml  — Mutable Hermes configuration
+//   ~/.hermes/.env         — Mutable base environment placeholders
 //
 // Sets what's required for Hermes to run inside OpenShell:
 //   - Model and inference endpoint (custom provider pointing at inference.local)

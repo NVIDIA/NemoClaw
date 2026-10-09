@@ -10,6 +10,10 @@ import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
 import { shouldRunLiveE2E } from "./test/e2e/fixtures/live-project-gate.ts";
 import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import {
+  sourceCoverageExternal,
+  sourceCoveragePlugin,
+} from "./test/helpers/source-coverage-plugin";
+import {
   resolveCliCoverageShardScheduling,
   resolveIntegrationProjectScheduling,
 } from "./test/helpers/integration-project-scheduling";
@@ -33,16 +37,17 @@ const canonicalCredentialFilterBoundary = path.resolve(
 const canonicalOpenShellExternalTargetBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-external-target-boundary.cts",
 );
+const canonicalOpenShellObservationBoundary = path.resolve(
+  "nemoclaw/src/shared/openshell-observation-boundary.cts",
+);
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
+const canonicalPortBoundary = path.resolve("nemoclaw/src/shared/port-boundary.cts");
 const canonicalPrivateNetworksBoundary = path.resolve(
   "nemoclaw/src/shared/private-networks-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
-const canonicalSnapshotSanitizerBoundary = path.resolve(
-  "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
-);
 // Map the generated shared .cjs specifiers back to their .cts source so
 // source-mode test projects exercise the single source of truth rather than a
 // possibly-stale build artifact.
@@ -60,8 +65,16 @@ const canonicalSourceAliases = [
     replacement: canonicalOpenShellExternalTargetBoundary,
   },
   {
+    find: /^.*openshell-observation-boundary\.cjs$/,
+    replacement: canonicalOpenShellObservationBoundary,
+  },
+  {
     find: /^.*openshell-policy-boundary\.cjs$/,
     replacement: canonicalOpenShellPolicyBoundary,
+  },
+  {
+    find: /^.*port-boundary\.cjs$/,
+    replacement: canonicalPortBoundary,
   },
   {
     find: /^.*private-networks-boundary\.cjs$/,
@@ -70,10 +83,6 @@ const canonicalSourceAliases = [
   {
     find: /^.*sandbox-name\.cjs$/,
     replacement: canonicalSandboxName,
-  },
-  {
-    find: /^.*snapshot-sanitizer-boundary\.cjs$/,
-    replacement: canonicalSnapshotSanitizerBoundary,
   },
 ];
 const e2ePhaseCollectionAlias =
@@ -90,6 +99,7 @@ const e2ePhaseCollectionAlias =
       ]
     : [];
 const typedSourceTransform = {
+  plugins: [sourceCoveragePlugin()],
   oxc: {
     include: /\.(?:[cm]?ts|[jt]sx)$/,
   },
@@ -107,7 +117,10 @@ const controlledNonLiveEnv = {
 // test/helpers/normalize-fixture-umask.ts (#6448).
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const isolatedTestStateSetup = "test/helpers/isolate-test-state.ts";
-const pluginVitestProject = defineProject(pluginVitestProjectOptions);
+const pluginVitestProject = defineProject({
+  ...pluginVitestProjectOptions,
+  plugins: [sourceCoveragePlugin()],
+});
 // Pull-request jobs execute the base branch's trusted composite action, so an
 // action change in a PR cannot constrain that PR's own Vitest workers. Apply a
 // bounded cap from the validated shard environment instead; this is shared by the
@@ -126,6 +139,7 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    server: { deps: { external: [sourceCoverageExternal] } },
     ...cliCoverageShardScheduling,
     globalSetup: "test/helpers/vitest-temp-root.ts",
     tags: [
@@ -181,11 +195,6 @@ export default defineConfig({
           env: {
             ...controlledNonLiveEnv,
             NODE_OPTIONS: sourceNodeOptions,
-            // Integration fixtures exercise onboarding against controlled fake
-            // Docker state. Keep a base-image Dockerfile change in the PR from
-            // redirecting those fixtures into the real local-build guard.
-            NEMOCLAW_SANDBOX_BASE_IMAGE_REF:
-              "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
@@ -277,7 +286,8 @@ export default defineConfig({
       },
     ],
     coverage: {
-      provider: "v8",
+      provider: "custom",
+      customProviderModule: "./test/helpers/source-coverage-provider.mts",
       include: ["src/**/*.ts", "bin/**/*.js", "nemoclaw/src/**/*.ts", "nemoclaw/src/**/*.cts"],
       exclude: ["**/*.test.ts", "dist/**"],
       reporter: ["text-summary", "json-summary"],

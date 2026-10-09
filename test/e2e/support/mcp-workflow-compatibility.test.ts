@@ -12,6 +12,27 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow runtime compatibility", () => {
+  it.each([
+    ["22.19.0", "openshell-dev-artifact"],
+    ["22.19.0", "mcp-bridge-dev"],
+    ["^22.19.0", "openshell-dev-artifact"],
+    ["^22.19.0", "mcp-bridge-dev"],
+  ])("accepts the compatible Node selector %s in %s", (version, jobName) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-node-selector-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8"));
+      const setup = workflow.jobs[jobName].steps.find((step: { uses?: string }) =>
+        step.uses?.startsWith("actions/setup-node@"),
+      );
+      setup.with["node-version"] = version;
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual([]);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("accepts compatibility-step keys in any order (#6426)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

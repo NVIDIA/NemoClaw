@@ -203,7 +203,7 @@ async function buildReport(options: CliOptions): Promise<BenchReport> {
     metrics.push(ingestPolicyOverhead(artifact));
   } else {
     metrics.push(unsupportedTraceMetric("sandbox-cold-start"));
-    metrics.push(unsupportedTraceMetric("policy-shield-overhead"));
+    metrics.push(unsupportedTraceMetric("policy-application-overhead"));
   }
 
   return {

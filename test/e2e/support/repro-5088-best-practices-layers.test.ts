@@ -62,7 +62,7 @@ describe("best-practices.mdx security-layer consistency (#5088)", () => {
     expect(text).not.toMatch(/^### Locked-Down \(Default\)$/m);
     expect(profile).toContain("Select the Restricted tier during onboarding.");
     expect(profile).toContain(
-      "Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew` presets.",
+      "Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew-balanced` package presets.",
     );
     expect(profile).toContain("Choose no web search when prompted.");
     expect(profile).toContain(

@@ -14,7 +14,7 @@ export default class CredentialsCommand extends NemoClawCommand {
   static usage = ["credentials <list|add|reset>"];
   static examples = [
     "<%= config.bin %> credentials list",
-    "<%= config.bin %> credentials add tavily-search --type tavily --credential TAVILY_API_KEY",
+    "<%= config.bin %> credentials add tavily-search --type tavily --agent hermes --credential TAVILY_API_KEY",
     "<%= config.bin %> credentials reset nvidia-prod --yes",
   ];
   static flags = {};

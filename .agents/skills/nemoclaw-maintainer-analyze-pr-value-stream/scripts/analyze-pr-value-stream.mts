@@ -271,12 +271,6 @@ type AnalysisOptions = {
   topTestsPerShard: number;
 };
 
-function boundedInteger(value: number, name: string, minimum: number, maximum: number): number {
-  if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
-    throw new Error(`${name} must be an integer from ${minimum} through ${maximum}`);
-  return value;
-}
-
 function normalizeAnalysisInput(input: Input): AnalysisOptions {
   if (!Number.isSafeInteger(input.number) || input.number < 1)
     throw new Error("number must be a positive integer");
@@ -842,7 +836,7 @@ async function collectWaterfall(context: WaterfallCollectionContext): Promise<Wa
           jobsPayload.jobs.length !== jobsPayload.total_count
         )
           throw new Error("workflow job list exceeded the complete bounded waterfall contract");
-        const runCreated = parseTime(run.created_at, "workflow createdAt");
+
         const shardJobs = jobsPayload.jobs.filter((job: any) => SHARD_JOB_NAME.test(job?.name));
         let artifactsByName = new Map<string, any>();
         if (shardJobs.length > 0 && maxTestArtifacts > 0) {

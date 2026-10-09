@@ -52,7 +52,7 @@ function runGeneratorProcess(
     .filter(([, value]) => value === undefined)
     .forEach(([name]) => Reflect.deleteProperty(childEnv, name));
   return {
-    ...spawnSync(process.execPath, ["--experimental-strip-types", script], {
+    ...spawnSync(process.execPath, [script], {
       cwd: process.cwd(),
       encoding: "utf8",
       env: childEnv,
@@ -84,6 +84,17 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain("[warnings]");
     expect(config).toContain('suppress = ["tavily"]');
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
+  });
+
+  it("uses the attached-provider placeholder for native NVIDIA inference (#12558)", () => {
+    const config = runGenerator({
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+    });
+
+    expect(config).not.toContain("force_nonempty_content");
+    expect(config).toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
+    expect(config).not.toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
   });
 
   it("keeps the legacy provider key when the renamed route variables are absent", () => {
@@ -195,30 +206,29 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(fs.existsSync(path.join(result.home, ".deepagents", "config.toml"))).toBe(false);
   });
 
-  it.each([
-    "nvidia/nemotron-3-ultra-550b-a55b",
-    "nvidia/nvidia/nemotron-3-ultra",
-  ])("adds the required coding-agent request options for %s", (model) => {
-    const config = runGenerator({ NEMOCLAW_MODEL: model });
+  it.each(["nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nvidia/nemotron-3-ultra"])(
+    "adds the required coding-agent request options for %s",
+    (model) => {
+      const config = runGenerator({ NEMOCLAW_MODEL: model });
 
-    expect(config).toContain(`[models.providers.openai.params."${model}"]`);
-    expect(config).toContain(
-      "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
-    );
-  });
+      expect(config).toContain(`[models.providers.openai.params."${model}"]`);
+      expect(config).toContain(
+        "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
+      );
+    },
+  );
 
-  it.each([
-    "low",
-    "medium",
-    "high",
-  ])("records the onboarding reasoning effort as a managed request parameter: %s (#7938)", (effort) => {
-    const config = runGenerator({ NEMOCLAW_REASONING_EFFORT: effort });
+  it.each(["low", "medium", "high"])(
+    "records the onboarding reasoning effort as a managed request parameter: %s (#7938)",
+    (effort) => {
+      const config = runGenerator({ NEMOCLAW_REASONING_EFFORT: effort });
 
-    expect(config).toContain(
-      '[models.providers.openai.params."nvidia/nemotron-3-super-120b-a12b"]',
-    );
-    expect(config).toContain(`extra_body = { reasoning_effort = "${effort}" }`);
-  });
+      expect(config).toContain(
+        '[models.providers.openai.params."nvidia/nemotron-3-super-120b-a12b"]',
+      );
+      expect(config).toContain(`extra_body = { reasoning_effort = "${effort}" }`);
+    },
+  );
 
   it("keeps both managed request parameters for an Ultra model with a reasoning effort (#7938)", () => {
     const config = runGenerator({

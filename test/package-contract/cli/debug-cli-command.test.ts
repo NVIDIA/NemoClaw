@@ -1,36 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_PATH = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const NVIDIA_TEST_SECRET = "nvapi-TEST-NOT-A-REAL-DIAGNOSTIC-KEY";
 const GITHUB_TEST_SECRET = "ghp_TEST_NOT_A_REAL_DIAGNOSTIC_TOKEN";
 
+// Each command variant owns a separate home, fake bin, and archive.
+vi.setConfig({ maxConcurrency: 3 });
+
 type CliResult = {
   status: number | null;
   output: string;
 };
 
-function runCli(args: string[], env: NodeJS.ProcessEnv): CliResult {
-  const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    env,
-    killSignal: "SIGKILL",
-    timeout: 30_000,
+function runCli(args: string[], env: NodeJS.ProcessEnv, signal: AbortSignal): Promise<CliResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [CLI_PATH, ...args],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env,
+        killSignal: "SIGKILL",
+        signal,
+        timeout: 30_000,
+      },
+      (error, stdout, stderr) => {
+        const status = typeof error?.code === "number" ? error.code : 0;
+        error && typeof error.code !== "number"
+          ? reject(error)
+          : resolve({ status, output: `${stdout}${stderr}` });
+      },
+    );
   });
-  expect(result.error).toBeUndefined();
-  return {
-    status: result.status,
-    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
-  };
 }
 
 function writeExecutable(filePath: string, lines: string[]): void {
@@ -44,9 +55,10 @@ function extractedFiles(root: string): string[] {
 }
 
 describe("compiled diagnostics CLI", () => {
-  it.each(["dmesg", "log", "nvidia-smi"])(
-    "creates a scoped redacted archive and rejects unknown sandboxes without partial output [%s] (#7617)",
-    (command) => {
+  it.concurrent.for([{ command: "dmesg" }, { command: "log" }, { command: "nvidia-smi" }])(
+    "creates a scoped redacted archive and rejects unknown sandboxes without partial output [$command] (#7617)",
+    { timeout: 30_000 },
+    async ({ command }, { signal }) => {
       const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-contract-"));
       const home = path.join(fixtureRoot, "home");
       const bin = path.join(fixtureRoot, "bin");
@@ -99,7 +111,11 @@ describe("compiled diagnostics CLI", () => {
       };
 
       try {
-        const result = runCli(["debug", "--quick", "--sandbox", "alpha", "--output", archive], env);
+        const result = await runCli(
+          ["debug", "--quick", "--sandbox", "alpha", "--output", archive],
+          env,
+          signal,
+        );
         expect(result.status, result.output).toBe(0);
         expect(result.output).toContain("Collecting diagnostics for sandbox 'alpha'");
         expect(result.output).not.toContain(NVIDIA_TEST_SECRET);
@@ -120,9 +136,10 @@ describe("compiled diagnostics CLI", () => {
         expect(archiveText).not.toMatch(/nvapi-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}/);
 
         const unknownArchive = path.join(fixtureRoot, "unknown.tar.gz");
-        const unknown = runCli(
+        const unknown = await runCli(
           ["debug", "--quick", "--sandbox", "does-not-exist", "--output", unknownArchive],
           env,
+          signal,
         );
         expect(unknown.status).not.toBe(0);
         expect(unknown.output).toContain("does-not-exist");
@@ -134,6 +151,5 @@ describe("compiled diagnostics CLI", () => {
         fs.rmSync(fixtureRoot, { recursive: true, force: true });
       }
     },
-    30_000,
   );
 });

@@ -29,13 +29,12 @@ describe("MCP URL target special-use filtering", () => {
     expect(isBlockedMcpUrlTargetHost(address)).toBe(true);
   });
 
-  it.each([
-    "8.8.8.8",
-    "1.1.1.1",
-    "2606:4700:4700::1111",
-  ])("keeps globally routable address %s eligible", (address) => {
-    expect(isBlockedMcpUrlTargetHost(address)).toBe(false);
-  });
+  it.each(["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"])(
+    "keeps globally routable address %s eligible",
+    (address) => {
+      expect(isBlockedMcpUrlTargetHost(address)).toBe(false);
+    },
+  );
 });
 
 describe("MCP and private-networks.yaml SSRF denylist parity", () => {

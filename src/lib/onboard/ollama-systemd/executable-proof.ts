@@ -5,9 +5,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 
+import { sanitizeReadinessText } from "../../readiness/sanitize";
+
 const OFFICIAL_OLLAMA_EXECUTABLE_PATH = "/usr/local/bin/ollama";
 const METADATA_TIMEOUT_MS = 5_000;
-const EXECUTION_PROOF_TIMEOUT_MS = 15_000;
+const EXECUTION_PROOF_TIMEOUT_SECONDS = 15;
+const EXECUTION_PROOF_TIMEOUT_MS = EXECUTION_PROOF_TIMEOUT_SECONDS * 1_000;
+const EXECUTION_PROOF_SUPERVISOR_TIMEOUT_MS = EXECUTION_PROOF_TIMEOUT_MS + 2_000;
+const EXECUTION_PROOF_SYSTEMD_KILL_AFTER = "250ms";
+const EXECUTION_PROOF_TIMEOUT_KILL_AFTER = "0.25s";
+const EXECUTION_FAILURE_DETAIL_LIMIT = 240;
+const SYSTEMD_RUN_TIMEOUT_RESULT = /^\s*Finished with result: timeout\s*$/mu;
 const MAX_PROGRAM_HEADERS = 1_024;
 const MAX_PROGRAM_HEADER_SIZE = 1_024;
 const MAX_INTERPRETER_PATH_BYTES = 4_096;
@@ -18,6 +26,16 @@ const SERVICE_USER_ACCESS_SCRIPT = [
   "status=$?",
   `/usr/bin/printf '${SERVICE_USER_ACCESS_MARKER}:%s\\n' "$status"`,
   'exit "$status"',
+].join("\n");
+// Keep the wrapper alive until GNU timeout can escalate to KILL for the whole group.
+const DIRECT_SERVICE_USER_PROOF_SCRIPT = [
+  "trap ':' TERM",
+  '"$1" --version',
+  "status=$?",
+  'case "$status" in',
+  "  124|137) exit 1 ;;",
+  '  *) exit "$status" ;;',
+  "esac",
 ].join("\n");
 
 export type OllamaExecutablePathMetadata = {
@@ -369,17 +387,87 @@ function runServiceUserProof(
   executablePath: string,
   options: OllamaSystemdExecutableProofOptions,
 ): OllamaExecutableCaptureResult {
-  return options.runCaptureExImpl(
+  // The transient service owns the complete proof cgroup. RuntimeMaxSec stops
+  // every descendant before the outer synchronous runner can release its caller.
+  const result = options.runCaptureExImpl(
     [
+      ...commandPrefix(options.sudoPrefix),
+      "/usr/bin/env",
+      "LC_ALL=C",
+      "/usr/bin/systemd-run",
+      "--wait",
+      "--pipe",
+      "--collect",
+      "--service-type=exec",
+      `--uid=${serviceUser}`,
+      "--property=KillMode=control-group",
+      `--property=RuntimeMaxSec=${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,
+      `--property=TimeoutStopSec=${EXECUTION_PROOF_SYSTEMD_KILL_AFTER}`,
+      "--property=SendSIGKILL=yes",
+      executablePath,
+      "--version",
+    ],
+    { timeout: EXECUTION_PROOF_SUPERVISOR_TIMEOUT_MS },
+  );
+  return {
+    ...result,
+    timedOut: result.timedOut || SYSTEMD_RUN_TIMEOUT_RESULT.test(result.stderr ?? ""),
+  };
+}
+
+function runBoundedDirectServiceUserProof(
+  serviceUser: string,
+  executablePath: string,
+  options: OllamaSystemdExecutableProofOptions,
+): OllamaExecutableCaptureResult {
+  // Keep GNU timeout outside sudo so it is the direct child supervised by the
+  // runner and owns the complete sudo/service-user proof process group. Without
+  // this ordering, the outer timeout could stop only sudo and orphan descendants.
+  const result = options.runCaptureExImpl(
+    [
+      fs.existsSync("/usr/bin/gnutimeout") ? "/usr/bin/gnutimeout" : "/usr/bin/timeout",
+      "--signal=TERM",
+      `--kill-after=${EXECUTION_PROOF_TIMEOUT_KILL_AFTER}`,
+      `${String(EXECUTION_PROOF_TIMEOUT_SECONDS)}s`,
       ...commandPrefix(options.sudoPrefix),
       "-u",
       sudoServiceUserArgument(serviceUser),
       "--",
+      "/usr/bin/env",
+      "LC_ALL=C",
+      "/bin/sh",
+      "-c",
+      DIRECT_SERVICE_USER_PROOF_SCRIPT,
+      "nemoclaw-direct-service-user-proof",
       executablePath,
-      "--version",
     ],
-    { timeout: EXECUTION_PROOF_TIMEOUT_MS },
+    { timeout: EXECUTION_PROOF_SUPERVISOR_TIMEOUT_MS },
   );
+  return {
+    ...result,
+    // The wrapper remaps a completed child exit 124/137 to 1. Those statuses
+    // therefore identify GNU timeout's own deadline handling here.
+    timedOut: result.timedOut || result.exitCode === 124 || result.exitCode === 137,
+  };
+}
+
+function runServiceUserProofWithFallback(
+  serviceUser: string,
+  executablePath: string,
+  options: OllamaSystemdExecutableProofOptions,
+): {
+  precedingSystemdTimeout: OllamaExecutableCaptureResult | null;
+  result: OllamaExecutableCaptureResult;
+  source: "direct proof" | "systemd-run";
+} {
+  const systemdResult = runServiceUserProof(serviceUser, executablePath, options);
+  return systemdResult.timedOut
+    ? {
+        precedingSystemdTimeout: systemdResult,
+        result: runBoundedDirectServiceUserProof(serviceUser, executablePath, options),
+        source: "direct proof",
+      }
+    : { precedingSystemdTimeout: null, result: systemdResult, source: "systemd-run" };
 }
 
 function runServiceUserPathAccessProof(
@@ -409,6 +497,16 @@ function serviceUserPathAccessOutcome(
   if (result.exitCode !== 0 && result.exitCode !== 1) return "invalid";
   if (result.stdout.trim() !== `${SERVICE_USER_ACCESS_MARKER}:${result.exitCode}`) return "invalid";
   return result.exitCode === 0 ? "accessible" : "inaccessible";
+}
+
+function executionFailureDetail(
+  result: OllamaExecutableCaptureResult,
+  source: "direct proof" | "systemd-run",
+): string {
+  const detail = sanitizeReadinessText(result.stderr ?? "", EXECUTION_FAILURE_DETAIL_LIMIT)
+    .replace(/\s+/gu, " ")
+    .trim();
+  return detail ? ` ${source} detail: ${detail}` : ` ${source} returned no diagnostic detail.`;
 }
 
 /** Prove that systemd's configured Ollama user can execute the exact binary and PT_INTERP. */
@@ -470,16 +568,23 @@ export function proveOllamaSystemdServiceExecutable(
     );
   }
 
-  const initialProof = runServiceUserProof(metadata.serviceUser, metadata.executablePath, options);
+  const {
+    precedingSystemdTimeout,
+    result: initialProof,
+    source: initialProofSource,
+  } = runServiceUserProofWithFallback(metadata.serviceUser, metadata.executablePath, options);
   if (!initialProof.timedOut && initialProof.exitCode === 0) {
     return { ...metadata, interpreterPath, ok: true, repaired: false };
   }
   if (initialProof.timedOut) {
     return failed(
       "execution-timeout",
-      `Ollama ExecStart did not complete '--version' as systemd User '${metadata.serviceUser}' within 15 seconds`,
+      `systemd-run timed out after ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds, and the direct service-user recovery proof also timed out after ${String(EXECUTION_PROOF_TIMEOUT_SECONDS)} seconds for Ollama ExecStart '--version' as systemd User '${metadata.serviceUser}'`,
     );
   }
+  const proofFailureDetail = precedingSystemdTimeout
+    ? ` systemd-run timed out.${executionFailureDetail(precedingSystemdTimeout, "systemd-run")}${executionFailureDetail(initialProof, initialProofSource)}`
+    : executionFailureDetail(initialProof, initialProofSource);
 
   const executableAccessResult = runServiceUserPathAccessProof(
     metadata.serviceUser,
@@ -496,7 +601,7 @@ export function proveOllamaSystemdServiceExecutable(
   if (executableAccess === "invalid") {
     return failed(
       "execution-failed",
-      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the execute-access check returned no confirmed result from that user`,
+      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the execute-access check returned no confirmed result from that user.${proofFailureDetail}`,
     );
   }
 
@@ -515,7 +620,7 @@ export function proveOllamaSystemdServiceExecutable(
   if (interpreterAccess === "invalid") {
     return failed(
       "execution-failed",
-      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the PT_INTERP execute-access check returned no confirmed result from that user`,
+      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the PT_INTERP execute-access check returned no confirmed result from that user.${proofFailureDetail}`,
     );
   }
   if (interpreterAccess === "inaccessible") {
@@ -535,7 +640,7 @@ export function proveOllamaSystemdServiceExecutable(
         : "the execute-access check did not confirm missing execute access";
     return failed(
       "execution-failed",
-      `Ollama ExecStart '--version' ${proofOutcome} as systemd User '${metadata.serviceUser}', and ${accessOutcome}`,
+      `Ollama ExecStart '--version' ${proofOutcome} as systemd User '${metadata.serviceUser}', and ${accessOutcome}.${proofFailureDetail}`,
     );
   }
 
@@ -571,7 +676,11 @@ export function proveOllamaSystemdServiceExecutable(
     );
   }
 
-  const repairedProof = runServiceUserProof(metadata.serviceUser, metadata.executablePath, options);
+  const { result: repairedProof } = runServiceUserProofWithFallback(
+    metadata.serviceUser,
+    metadata.executablePath,
+    options,
+  );
   if (!repairedProof.timedOut && repairedProof.exitCode === 0) {
     return { ...metadata, interpreterPath, ok: true, repaired: true };
   }

@@ -285,6 +285,24 @@ verify_dual_station_controller_uid_binding 1001 "$config_dir" "$binding_file"
     }
   });
 
+  it.each([
+    ["direct root", "0", "", "1002", "pid=42 process=openshell"],
+    ["non-root controller", "1001", "", "1001", "pid=42 process=openshell"],
+    ["another non-root user", "1001", "", "1002", ""],
+    ["sudo controller", "0", "1001", "1001", "pid=42 process=openshell"],
+    ["another sudo user", "0", "1001", "1002", ""],
+  ])("scopes agent conflicts for %s", (_case, effectiveUid, sudoUid, ownerUid, expected) => {
+    const { home, result, output } = runSourced(
+      `agent_process_conflicts '${ownerUid} 42 1 openshell x' '${effectiveUid}' '${sudoUid}' 99 98`,
+    );
+    try {
+      expect(result.status, output).toBe(0);
+      expect(output.trim()).toBe(expected);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("recognizes only the frozen legacy head and routes it around workload preparation", () => {
     const digest =
       "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416";
@@ -379,13 +397,28 @@ printf 'REUSE=%s MIGRATE=%s\n' "$_STATION_EXPRESS_DEFERRED_MANAGED_PAIR" "$_STAT
     },
   );
 
-  it("passes legacy migration to the coordinator without managed-pair reuse", () => {
+  it.each([
+    {
+      name: "continues with an unchanged legacy single-Station head",
+      headStatus: 0,
+      status: 0,
+      message: /using the existing single-Station Ultra recipe/u,
+    },
+    {
+      name: "refuses fallback when the legacy single-Station head changes",
+      headStatus: 1,
+      status: 1,
+      message:
+        /nemoclaw-vllm.*legacy image.*ownership contract.*restore the original single-Station workload/u,
+    },
+  ])("$name (#12283)", ({ headStatus, status, message }) => {
     const argsFile = path.join(os.tmpdir(), `nemoclaw-legacy-args-${process.pid}-${Date.now()}`);
     const { home, result, output } = runInstallerBody(
       `
 node() {
   if [[ "\${1:-}" == "--no-warnings" ]]; then
     printf '%s\\n' "$*" >"$ARGS_FILE"
+    : >"$HOME/after-discovery"
     printf '%s\\n' '{"kind":"single-station","reason":"fixture"}'
     return 0
   fi
@@ -397,18 +430,29 @@ _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_INSTALL_MODE='express'
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
 _STATION_EXPRESS_MIGRATING_LEGACY_HEAD=1
+command_exists() { return 0; }
+docker() {
+  local image="$STATION_ULTRA_LEGACY_VLLM_IMAGE"
+  if [[ -f "$HOME/after-discovery" && "$LEGACY_HEAD_STATUS" == "1" ]]; then image='changed-image'; fi
+  printf 'inspect\\n' >>"$HOME/docker-inspections"
+  printf '/nemoclaw-vllm|true|%s|true|-|-|-|-|-|-|-|-\\n' "$image"
+}
+station_migratable_legacy_single_head_running || exit 97
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
 unset NEMOCLAW_DGX_STATION_PEER
 ensure_station_express_pair
 `,
-      { ARGS_FILE: argsFile },
+      { ARGS_FILE: argsFile, LEGACY_HEAD_STATUS: String(headStatus) },
     );
     try {
-      expect(result.status, output).not.toBe(0);
+      expect(result.status, output).toBe(status);
       const args = fs.readFileSync(argsFile, "utf8");
       expect(args).toContain("--migrate-legacy-single-head");
       expect(args).not.toContain("--reuse-existing-managed-pair");
-      expect(output).toMatch(/legacy single-Station head.*refusing migration/u);
+      expect(output).toMatch(message);
+      expect(fs.readFileSync(path.join(home, "docker-inspections"), "utf8")).toBe(
+        "inspect\ninspect\n",
+      );
     } finally {
       fs.rmSync(argsFile, { force: true });
       fs.rmSync(home, { recursive: true, force: true });

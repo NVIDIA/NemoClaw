@@ -11,7 +11,11 @@ const TRANSACTION = path.resolve(
   "../../..",
   "agents/hermes/mcp-config-transaction.py",
 );
-const GUARD = path.resolve(import.meta.dirname, "../../..", "agents/hermes/runtime-config-guard.py");
+const GUARD = path.resolve(
+  import.meta.dirname,
+  "../../..",
+  "agents/hermes/runtime-config-guard.py",
+);
 
 function runPython(source: string, args: string[] = []) {
   return spawnSync("python3", ["-c", source, TRANSACTION, GUARD, ...args], {

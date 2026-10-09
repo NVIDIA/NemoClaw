@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../gateway-binding/identity";
 
 export { DEFAULT_GATEWAY_PORT, GATEWAY_PORT };
 
@@ -96,8 +96,15 @@ function stateRootParentOwnershipFailure(stateDir: string): string | null {
     let inspected: fs.Stats;
     try {
       inspected = fs.lstatSync(ancestor);
-    } catch {
-      return `the gateway state directory's ancestor '${ancestor}' cannot be inspected`;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const knownCode =
+        code === "ENOENT" ||
+        code === "EACCES" ||
+        code === "EPERM" ||
+        code === "ENOTDIR" ||
+        code === "ELOOP";
+      return `the gateway state directory's ancestor '${ancestor}' cannot be inspected${knownCode ? ` (${code})` : ""}`;
     }
     if (
       !inspected.isDirectory() ||
@@ -249,6 +256,13 @@ export function managedGatewayStateRootOwnershipFailure(
   return options.allowLegacyManagedState
     ? null
     : "the managed gateway state root marker and legacy managed configuration are both missing";
+}
+
+/** After validating external supervision, accept its private root without a managed marker. */
+export function externallySupervisedGatewayStateRootOwnershipFailure(
+  target: ManagedGatewayStateRootTarget,
+): string | null {
+  return managedGatewayStateRootOwnershipFailure(target, { allowLegacyManagedState: true });
 }
 
 /** Whether onboarding reserved this managed root but wrote no gateway state into it. */

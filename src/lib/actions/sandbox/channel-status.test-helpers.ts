@@ -7,7 +7,6 @@ import { vi } from "vitest";
 // both of which require runner.ts via CJS; runner.ts uses `require()` calls
 // vitest cannot resolve from a TS source file. Stub the heavy modules so the
 // tests stay focused on the orchestrator's diagnostic glue. See
-// src/lib/shields/index.test.ts for the same workaround pattern.
 vi.mock("../../policy", () => ({
   getAppliedPresets: vi.fn(() => []),
   getGatewayPresets: vi.fn(() => null),
@@ -34,7 +33,8 @@ vi.mock("../../agent/defs", () => ({
   loadAgent: vi.fn(),
 }));
 
-vi.mock("./process-recovery", () => ({
+vi.mock("../../adapters/sandbox/command-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/sandbox/command-transport")>()),
   executeSandboxExecCommand: vi.fn(),
 }));
 
@@ -56,7 +56,6 @@ const PROBED_AT = new Date("2026-05-28T04:00:00.000Z");
 
 function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
   const configDir = name === "openclaw" ? "/sandbox/.openclaw" : "/sandbox/.hermes";
-  const stateDirs = name === "openclaw" ? ["whatsapp"] : ["platforms"];
   return {
     name,
     agentDir: `/fake/${name}`,
@@ -79,16 +78,9 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
         configFile: name === "openclaw" ? "openclaw.json" : "config.yaml",
         envFile: name === "hermes" ? ".env" : null,
         format: name === "openclaw" ? "json" : "yaml",
-        shieldsFiles: name === "hermes" ? [".env"] : [],
       };
     },
     get inferenceProviderOptions() {
-      return [];
-    },
-    get stateDirs() {
-      return stateDirs;
-    },
-    get stateFiles() {
       return [];
     },
     get versionCommand() {
@@ -113,9 +105,6 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
       return null;
     },
     get policyAdditionsPath() {
-      return null;
-    },
-    get policyPermissivePath() {
       return null;
     },
     get pluginDir() {

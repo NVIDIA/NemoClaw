@@ -130,7 +130,6 @@ function runParser(mutate: (source: string) => string = (source) => source) {
   return spawnSync(
     "node",
     [
-      "--experimental-strip-types",
       "--no-warnings",
       PARSER,
       "--blueprint",

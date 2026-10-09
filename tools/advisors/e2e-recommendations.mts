@@ -7,7 +7,6 @@ import path from "node:path";
 // These modules resolve relative to the trusted advisor implementation, not
 // the analyzed PR worktree. PR-provided TypeScript is never imported.
 import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
-import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
 import {
   credentialFreeTestProjectForFile,
   credentialFreeTestRowFromModule,
@@ -87,6 +86,20 @@ export type E2eTargetRecommendation = {
   reason: string;
 };
 
+export type E2eRecommendationSelector = Omit<E2eTargetRecommendation, "workflow">;
+
+export function isSupportedE2eSelector(
+  item: Pick<E2eRecommendationSelector, "selectorType" | "id">,
+  allowedJobIds: ReadonlySet<string>,
+  supportedTargetIds?: readonly string[],
+): boolean {
+  if (!TARGET_ID_PATTERN.test(item.id)) return false;
+  if (item.selectorType === "all") return item.id === E2E_ALL_ID;
+  if (item.selectorType === "job") return allowedJobIds.has(item.id);
+  if (supportedTargetIds) return supportedTargetIds.includes(item.id);
+  return getTarget(item.id) !== undefined;
+}
+
 export type E2eChangedCredentialFreeTest = {
   id: string;
   file: string;
@@ -160,7 +173,6 @@ export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInv
     allowedJobIds: allJobIds.filter((id) => candidateJobIds.has(id) && isPrE2ePlanningJob(id)),
     manualOnlyJobIds: allJobIds.filter((id) => !candidateJobIds.has(id) || !isPrE2ePlanningJob(id)),
     liveSupportedTargetIds: listTargets()
-      .filter((target) => liveTargetSupport(target).supported)
       .map((target) => target.id)
       .sort(),
   };
@@ -602,12 +614,12 @@ function deterministicFreeStandingJobRecommendations(
   return output.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function deterministicRiskRecommendations(
+export function deterministicRiskRecommendations(
   riskPlan: RiskPlan,
-  context: E2eTargetNormalizationContext,
+  context?: E2eTargetNormalizationContext,
 ): E2eTargetRecommendation[] {
   const jobs = riskPlan.requiredJobs
-    .filter((job) => context.allowedJobIds.has(job.id))
+    .filter((job) => !context || context.allowedJobIds.has(job.id))
     .map((job) => ({
       id: job.id,
       workflow: E2E_WORKFLOW,
@@ -617,8 +629,8 @@ function deterministicRiskRecommendations(
     }));
   const targets = riskPlan.requiredTargets
     .filter((target) => {
-      const definition = getTarget(target.id);
-      return definition !== undefined && liveTargetSupport(definition).supported;
+      if (!context) return true;
+      return getTarget(target.id) !== undefined;
     })
     .map((target) => ({
       id: target.id,
@@ -650,17 +662,20 @@ function suppressFanoutForFocusedJobs(
     : recommendations;
 }
 
-function mergeRecommendations(
-  first: E2eTargetRecommendation[],
-  second: E2eTargetRecommendation[],
-): E2eTargetRecommendation[] {
-  const seen = new Set<string>();
-  return [...first, ...second].filter((item) => {
+export function mergeRecommendations<T extends E2eRecommendationSelector>(
+  first: T[],
+  second: T[],
+): T[] {
+  const selected = new Map<string, T>();
+  for (const item of [...first, ...second]) {
     const key = `${item.selectorType}:${item.id}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const previous = selected.get(key);
+    selected.set(
+      key,
+      previous ? { ...previous, required: previous.required || item.required } : item,
+    );
+  }
+  return [...selected.values()];
 }
 
 function sanitizeTargetRecommendations(
@@ -678,16 +693,7 @@ function sanitizeTargetRecommendations(
     if (!id || !suppliedReason || !workflow || !ALLOWED_WORKFLOWS.has(workflow)) continue;
     const selectorType = normalizeSelectorType(item.selectorType);
     if (!selectorType) continue;
-    if (selectorType === "all" && id !== E2E_ALL_ID) continue;
-    if (selectorType === "job" && !context.allowedJobIds.has(id)) continue;
-    if (selectorType !== "job" && !TARGET_ID_PATTERN.test(id)) continue;
-    const targetDefinition = selectorType === "target" ? getTarget(id) : undefined;
-    if (
-      selectorType === "target" &&
-      (!targetDefinition || !liveTargetSupport(targetDefinition).supported)
-    ) {
-      continue;
-    }
+    if (!isSupportedE2eSelector({ selectorType, id }, context.allowedJobIds)) continue;
     const key = `${selectorType}:${id}`;
     if (seen.has(key)) continue;
     seen.add(key);

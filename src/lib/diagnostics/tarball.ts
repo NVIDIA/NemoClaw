@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { renameSync, rmSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { closeSync, constants, openSync, renameSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 export interface CreateTarballOptions {
   info: (message: string) => void;
@@ -14,9 +15,9 @@ export interface CreateTarballOptions {
 }
 
 /**
- * Archive `collectDir` into a tarball at `output`. Writes to a sibling
- * `.partial.<pid>` path and renames atomically on success so a pre-existing
- * file at `output` is preserved when `tar` fails. Sets `process.exitCode = 1`
+ * Archive `collectDir` through an exclusively created private descriptor so tar
+ * cannot follow a pre-created symlink. Atomically publish the randomized sibling
+ * only after success, preserving existing output on failure. Set `process.exitCode`
  * on failure so callers do not have to remember.
  */
 export function createTarball(
@@ -25,41 +26,63 @@ export function createTarball(
   options: CreateTarballOptions,
 ): boolean {
   const { info, warn, error, timeoutMs = 60_000 } = options;
-  const partial = `${output}.partial.${process.pid}`;
-  const result = spawnSync(
-    "tar",
-    ["czf", partial, "-C", dirname(collectDir), basename(collectDir)],
-    {
-      stdio: "inherit",
-      timeout: timeoutMs,
-    },
-  );
-  if (result.status !== 0 || result.signal) {
-    const reason = result.signal
-      ? `killed by signal ${result.signal}`
-      : `exited with code ${result.status ?? "unknown"}`;
-    error(`Failed to create tarball at ${output} (tar ${reason})`);
-    try {
-      rmSync(partial, { force: true });
-    } catch {
-      /* best-effort cleanup of partial tarball */
-    }
-    process.exitCode = 1;
-    return false;
-  }
+  const partial = join(dirname(output), `.nemoclaw-debug-${randomUUID()}.partial`);
+  let descriptor: number | undefined;
+  let ownsPartial = false;
   try {
-    renameSync(partial, output);
+    descriptor = openSync(
+      partial,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    );
+    ownsPartial = true;
+    const result = spawnSync("tar", ["czf", "-", "-C", dirname(collectDir), basename(collectDir)], {
+      stdio: ["ignore", descriptor, "inherit"],
+      timeout: timeoutMs,
+    });
+    closeSync(descriptor);
+    descriptor = undefined;
+    if (result.status !== 0 || result.signal || result.error) {
+      const reason = result.error
+        ? result.error.message
+        : result.signal
+          ? `killed by signal ${result.signal}`
+          : `exited with code ${result.status ?? "unknown"}`;
+      error(`Failed to create tarball at ${output} (tar ${reason})`);
+      process.exitCode = 1;
+      return false;
+    }
+    try {
+      renameSync(partial, output);
+    } catch (err) {
+      error(
+        `Failed to move tarball into place at ${output}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exitCode = 1;
+      return false;
+    }
+    ownsPartial = false;
   } catch (err) {
     error(
-      `Failed to move tarball into place at ${output}: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to create tarball at ${output}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    try {
-      rmSync(partial, { force: true });
-    } catch {
-      /* best-effort */
-    }
     process.exitCode = 1;
     return false;
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        /* best-effort close after an archive failure */
+      }
+    }
+    if (ownsPartial) {
+      try {
+        rmSync(partial, { force: true });
+      } catch {
+        /* best-effort cleanup of the owned partial tarball */
+      }
+    }
   }
   info(`Tarball written to ${output}`);
   warn(

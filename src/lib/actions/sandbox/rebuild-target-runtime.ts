@@ -3,7 +3,6 @@
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { getCredential } from "../../credentials/store";
-import * as nim from "../../inference/nim";
 import {
   type WebSearchProvider,
   webSearchEnvFor,
@@ -13,6 +12,7 @@ import {
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
+import { verifySandboxBridgeGatewayReachableOrExit } from "../../onboard/gateway-sandbox-reachability";
 import { initialDockerGpuRoute, resolveDockerGpuRoutePlan } from "../../onboard/docker-gpu-route";
 import { isDockerDesktopWslRuntime } from "../../onboard/docker-gpu-sandbox-create";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
@@ -25,6 +25,7 @@ import { agentSupportsWebSearchProvider } from "../../onboard/web-search-support
 import { redact } from "../../security/redact";
 import {
   preflightRebuildCredentials,
+  preflightRebuildHostCredential,
   type RebuildBail,
   type RebuildLog,
 } from "./rebuild-credential-preflight";
@@ -114,6 +115,18 @@ export type RebuildTargetRuntimePreflightResult =
     }
   | { ok: false };
 
+export async function preflightRebuildTargetHostCredential(
+  target: RebuildTargetConfig,
+  bail: RebuildBail,
+): Promise<boolean> {
+  const credentialEnv = target.credentialEnv;
+  return preflightRebuildHostCredential(
+    { ...target.resumeConfig, credentialEnv },
+    credentialEnv ? rebuildOnboardDependencies.hydrateCredentialEnv(credentialEnv) : null,
+    bail,
+  );
+}
+
 export async function preflightRebuildTargetRuntime(
   target: RebuildTargetConfig,
   sb: RebuildSandboxEntry,
@@ -144,31 +157,18 @@ export async function preflightRebuildTargetRuntime(
     );
     return { ok: false };
   }
-  if (webSearchProvider) {
-    const credentialEnv = webSearchEnvFor(webSearchProvider);
-    const collidingBridge = Object.values(sb.mcp?.bridges ?? {}).find((entry) =>
-      entry.env.includes(credentialEnv),
-    );
-    if (collidingBridge) {
-      printRebuildPreflightFailure(
-        `the recorded ${webSearchLabelFor(webSearchProvider)} credential is also owned by MCP server '${collidingBridge.server}'.`,
-        `Use a distinct credential name; ${credentialEnv} cannot be shared across managed providers.`,
-        "Web Search and MCP credential ownership conflict",
-        bail,
-      );
-      return { ok: false };
-    }
-  }
-
   const managesDashboard = shouldManageDashboardForAgent(target.agentDefinition);
   const gpuEnv = { ...process.env };
   delete gpuEnv.NEMOCLAW_SANDBOX_GPU;
   delete gpuEnv.NEMOCLAW_SANDBOX_GPU_DEVICE;
-  const sandboxGpuConfig = resolveSandboxGpuConfig(nim.detectGpu(), {
-    flag: recreateOptions.sandboxGpu,
-    device: recreateOptions.sandboxGpuDevice,
-    env: gpuEnv,
-  });
+  const sandboxGpuConfig = resolveSandboxGpuConfig(
+    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(sb.openshellDriver),
+    {
+      flag: recreateOptions.sandboxGpu,
+      device: recreateOptions.sandboxGpuDevice,
+      env: gpuEnv,
+    },
+  );
   if (sandboxGpuConfig.errors.length > 0) {
     printRebuildPreflightFailure(
       "the recorded sandbox GPU state cannot be recreated.",
@@ -191,6 +191,11 @@ export async function preflightRebuildTargetRuntime(
       selectedRoute,
       gatewayPort: recreateOptions.targetGatewayPort,
       log,
+      reverifyBridgeReachability: () =>
+        verifySandboxBridgeGatewayReachableOrExit(true, {
+          skip: false,
+          port: recreateOptions.targetGatewayPort,
+        }),
     });
   } catch (err) {
     printRebuildPreflightFailure(
@@ -239,16 +244,19 @@ export async function preflightRebuildTargetRuntime(
       return { ok: false };
     }
 
-    // Credential preflight must use the same trusted selection. Legacy registry
-    // rows may recover provider/model from their own matching onboard session;
-    // checking the raw row first would miss that remote credential requirement.
+    // Revalidate after image preparation: a key accepted before catalog lookup
+    // can be revoked while the image builds. Stop before backup in that case.
+    // Use the resolved selection, including an API family recovered from the
+    // sandbox's matching session, so every probe checks the recreate target.
     if (
-      !preflightRebuildCredentials(
+      !(await preflightRebuildCredentials(
         {
           ...sb,
           provider: target.resumeConfig.provider,
           model: target.resumeConfig.model,
+          endpointUrl: target.resumeConfig.endpointUrl,
           credentialEnv: target.credentialEnv,
+          preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
           hermesAuthMethod: target.durableConfig.hermesAuthMethod,
         },
         log,
@@ -260,7 +268,7 @@ export async function preflightRebuildTargetRuntime(
             requiresGatewayProviderReconfigure = true;
           },
         },
-      )
+      ))
     ) {
       return { ok: false };
     }

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-onboard
-description: Prepare a NemoClaw source checkout for compliant contribution through the repository's one-command setup and readiness doctor. Use when a new contributor asks to set up a development machine, prepare a checkout for a first PR, repair local contributor tooling, verify contributor readiness, launch the pinned coding agent, or decide whether optional runtime onboarding is needed. Trigger keywords - contributor setup, developer onboarding, first PR, dev setup, dev doctor, repair checkout, prepare development machine.
+description: "Set up, repair, or check a NemoClaw contributor checkout. Also handles requested development CLI exposure, runtime onboarding, and pinned-agent launch."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -17,7 +17,7 @@ Do not duplicate its dependency, build, hook, CLI-exposure, or readiness logic i
 2. Inspect the worktree and current branch without discarding or overwriting existing changes.
 3. Refresh the trusted `origin/main` reference, then compare the entire checkout/worktree diff against that up-to-date base before executing any checkout-local code.
    Include staged, unstaged, and untracked files; review lockfiles and all transitively executed source, not only the entry script or package manifests.
-4. If any execution surface differs from trusted `origin/main`, review the diff and obtain explicit approval before running it.
+4. If an execution surface differs from trusted `origin/main`, review the diff before running it. Existing implementation authorization covers in-scope repository-local validation. Isolate candidate code from host credentials and host mutations. This includes setup scripts and installed hooks. Stop before execution if that isolation cannot be established. Ask only for exposure or side effects outside that authorization.
 
 ## Route by Intent
 
@@ -34,7 +34,8 @@ CLI exposure is an explicit opt-in that may use an npm link or a user-local shim
 
 ## Handle User-Controlled Changes
 
-Pause and obtain explicit approval before installing or changing host packages, starting or replacing a container runtime, accepting a license, generating or registering a signing key, changing GitHub state, or changing global Git configuration.
+Require explicit authorization before installing or changing host packages, starting or replacing a container runtime, accepting a license, generating or registering a signing key, changing GitHub state, or changing global Git configuration.
+Use authorization already supplied for that action and scope; ask only when it is missing.
 
 - Ask for contributor name and email only when the doctor reports that identity is missing.
 - Prefer repository-local Git identity changes when the user approves them.
@@ -49,7 +50,8 @@ Reserve setup and `--repair` for repository-local dependency, build, or hook rep
 
 ## Decide on Runtime Onboarding
 
-Ask whether the intended issue requires a live gateway or sandbox after source setup is ready.
+Determine whether the intended issue requires a live gateway or sandbox from its validation boundary.
+Ask only if that need or the authorization for it is unresolved.
 Documentation work and isolated unit tests normally do not require runtime onboarding.
 
 If runtime validation is required and the user approves it, run:

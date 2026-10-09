@@ -43,10 +43,10 @@ function createInput(
 }
 
 describe("prepareCreateSandboxMessaging", () => {
-  it("does not read messaging credentials when no channel is enabled (#9833)", () => {
+  it("does not read messaging credentials when no channel is enabled (#9833)", async () => {
     const getValidatedMessagingTokenByEnvKey = vi.fn(() => "secret-value");
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: [],
         getValidatedMessagingTokenByEnvKey,
@@ -57,7 +57,7 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.messagingTokenDefs).toEqual([]);
   });
 
-  it("filters token definitions and reuses missing-token providers with matching bindings", () => {
+  it("filters token definitions and reuses missing-token providers with matching bindings", async () => {
     const registerExtraPlaceholderProviders = vi.fn(() => ["SLACK_BOT_TOKEN_AGENT_A"]);
     const providerMatchesGatewayCredential = vi.fn(
       (name: string, type: string, credentialKey: string) =>
@@ -66,7 +66,7 @@ describe("prepareCreateSandboxMessaging", () => {
         credentialKey === "SLACK_BOT_TOKEN",
     );
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["slack", "telegram"],
         disabledChannels: ["telegram"],
@@ -93,7 +93,7 @@ describe("prepareCreateSandboxMessaging", () => {
     );
   });
 
-  it("reattaches an exact durable provider when rebuild resumes without channel prompts", () => {
+  it("reattaches an exact durable provider when rebuild resumes without channel prompts", async () => {
     const providerMatchesGatewayCredential = vi.fn(
       (name: string, type: string, credentialKey: string) =>
         name === "demo-discord-bridge" &&
@@ -101,7 +101,7 @@ describe("prepareCreateSandboxMessaging", () => {
         credentialKey === "DISCORD_BOT_TOKEN",
     );
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: null,
         requireExactProviderBinding: true,
@@ -118,7 +118,7 @@ describe("prepareCreateSandboxMessaging", () => {
     );
   });
 
-  it("reuses an existing gateway bridge provider when the bridge secret is not resolvable", () => {
+  it("reuses an existing gateway bridge provider when the bridge secret is not resolvable", async () => {
     // Deferred rebuild in a fresh process: the pasted secret is env-only and
     // gone, so no bridge token def exists — but the gateway still durably
     // holds the refresh material, so the provider only needs re-attaching.
@@ -130,7 +130,7 @@ describe("prepareCreateSandboxMessaging", () => {
         credentialKey === "GOOGLE_CHAT_ACCESS_TOKEN",
     );
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
         providerMatchesGatewayCredential,
@@ -149,13 +149,13 @@ describe("prepareCreateSandboxMessaging", () => {
     );
   });
 
-  it("refuses and reports a bridge the gateway holds for a different agent", () => {
+  it("refuses and reports a bridge the gateway holds for a different agent", async () => {
     // onboard recreates a sandbox name under a new agent (`Delete and recreate
     // '<name>' as <agent>?`), and the provider name carries no agent. Reusing the
     // stale binding would mint the previous agent's token — for Hermes that means
     // an OpenClaw profile whose scopes omit pubsub, so `:pull` fails with 403.
     // Refusing it also has to surface, or the channel silently leaves the intent.
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         agentName: "hermes",
         enabledChannels: ["googlechat"],
@@ -169,8 +169,8 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.missingBridgeChannels).toEqual(["googlechat"]);
   });
 
-  it("reuses a bridge the gateway holds for the agent being onboarded", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("reuses a bridge the gateway holds for the agent being onboarded", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         agentName: "hermes",
         enabledChannels: ["googlechat"],
@@ -184,12 +184,12 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.missingBridgeChannels).toEqual([]);
   });
 
-  it("does not reuse a Hermes bridge when onboarding OpenClaw", () => {
+  it("does not reuse a Hermes bridge when onboarding OpenClaw", async () => {
     const gatewayHoldsHermesBinding = vi.fn(
       (_name: string, type: string) => type === "google-chat-hermes-bridge",
     );
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
         providerMatchesGatewayCredential: gatewayHoldsHermesBinding,
@@ -200,10 +200,10 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.reusableMessagingChannels).not.toContain("googlechat");
   });
 
-  it("routes the bridge through upsert instead of reuse when the secret is resolvable", () => {
+  it("routes the bridge through upsert instead of reuse when the secret is resolvable", async () => {
     const providerMatchesGatewayCredential = vi.fn(() => true);
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
         env: {
@@ -225,10 +225,10 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
-  it("configures no bridge for an agent no channel manifest supports", () => {
+  it("configures no bridge for an agent no channel manifest supports", async () => {
     // Defaulting an unknown agent to OpenClaw would hand a sandbox with no
     // messaging support the OpenClaw Google Chat bridge and its credential.
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         agentName: "deepagents",
         enabledChannels: ["googlechat"],
@@ -250,8 +250,8 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.reusableMessagingChannels).not.toContain("googlechat");
   });
 
-  it("does not reuse a bridge provider without an exact gateway binding", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("does not reuse a bridge provider without an exact gateway binding", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
         providerMatchesGatewayCredential: () => false,
@@ -263,12 +263,12 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.missingBridgeChannels).toEqual(["googlechat"]);
   });
 
-  it("does not reuse the bridge provider of a disabled channel", () => {
+  it("does not reuse the bridge provider of a disabled channel", async () => {
     // The matcher would accept this provider, so only the disabled guard can
     // keep it out — and a disabled channel is not a missing one either.
     const providerMatchesGatewayCredential = vi.fn(() => true);
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
         disabledChannels: ["googlechat"],
@@ -281,10 +281,10 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
-  it("reports missing Brave API keys before registering extra placeholder providers", () => {
+  it("reports missing Brave API keys before registering extra placeholder providers", async () => {
     const registerExtraPlaceholderProviders = vi.fn(() => ["BRAVE_API_KEY_AGENT_A"]);
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         webSearchConfig: { fetchEnabled: true },
         env: { [BRAVE_API_KEY_ENV]: "   " },
@@ -300,13 +300,13 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(registerExtraPlaceholderProviders).not.toHaveBeenCalled();
   });
 
-  it("reuses an exact Brave gateway provider when the raw key is unavailable (#6743)", () => {
+  it("reuses an exact Brave gateway provider when the raw key is unavailable (#6743)", async () => {
     const providerMatchesGatewayCredential = vi.fn(
       (name: string, type: string, credentialEnv: string) =>
         name === "demo-brave-search" && type === "brave" && credentialEnv === BRAVE_API_KEY_ENV,
     );
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         webSearchConfig: { fetchEnabled: true },
         requireExactProviderBinding: true,
@@ -324,8 +324,8 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.reusableMessagingProviders).toEqual(["demo-brave-search"]);
   });
 
-  it("reports a missing Tavily key using the selected provider credential", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("reports a missing Tavily key using the selected provider credential", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         webSearchConfig: { fetchEnabled: true, provider: "tavily" },
         env: { [BRAVE_API_KEY_ENV]: "brv-does-not-satisfy-tavily" },
@@ -338,10 +338,10 @@ describe("prepareCreateSandboxMessaging", () => {
     );
   });
 
-  it("adds the Brave provider token from the credential store before host env fallback", () => {
+  it("adds the Brave provider token from the credential store before host env fallback", async () => {
     const registerExtraPlaceholderProviders = vi.fn(() => []);
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         webSearchConfig: { fetchEnabled: true },
         env: { [BRAVE_API_KEY_ENV]: "brv-host" },
@@ -360,8 +360,8 @@ describe("prepareCreateSandboxMessaging", () => {
     });
   });
 
-  it("adds a per-sandbox Tavily provider with credential-store precedence", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("adds a per-sandbox Tavily provider with credential-store precedence", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         webSearchConfig: { fetchEnabled: true, provider: "tavily" },
         env: { [TAVILY_API_KEY_ENV]: "tvly-host" },
@@ -378,8 +378,8 @@ describe("prepareCreateSandboxMessaging", () => {
     });
   });
 
-  it("uses the versioned Hermes Tavily profile for Hermes sandboxes", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("uses the versioned Hermes Tavily profile for Hermes sandboxes", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         agentName: "hermes",
         webSearchConfig: { fetchEnabled: true, provider: "tavily" },
@@ -395,8 +395,8 @@ describe("prepareCreateSandboxMessaging", () => {
     });
   });
 
-  it("removes both Slack bot and app token definitions when Slack is disabled", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("removes both Slack bot and app token definitions when Slack is disabled", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         disabledChannels: ["slack"],
         getValidatedMessagingTokenByEnvKey: (_channels, envKey) =>
@@ -409,10 +409,10 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.messagingTokenDefs.map(({ envKey }) => envKey)).not.toContain("SLACK_APP_TOKEN");
   });
 
-  it("includes all static token-backed channels by default without probing reusable providers", () => {
+  it("includes all static token-backed channels by default without probing reusable providers", async () => {
     const providerMatchesGatewayCredential = vi.fn(() => true);
 
-    const result = prepareCreateSandboxMessaging(
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: null,
         providerMatchesGatewayCredential,
@@ -432,8 +432,8 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
-  it("binds static messaging credentials to the endpointless provider profile (#9875)", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("binds static messaging credentials to the endpointless provider profile (#9875)", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["discord", "slack"],
         getValidatedMessagingTokenByEnvKey: (_channels, envKey) => `${envKey}-value`,
@@ -459,8 +459,8 @@ describe("prepareCreateSandboxMessaging", () => {
     ]);
   });
 
-  it("uses BRAVE_API_KEY from host env when the credential store has no value", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("uses BRAVE_API_KEY from host env when the credential store has no value", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         webSearchConfig: { fetchEnabled: true },
         env: { [BRAVE_API_KEY_ENV]: "  brv-host  " },
@@ -475,8 +475,8 @@ describe("prepareCreateSandboxMessaging", () => {
     });
   });
 
-  it("does not create static token definitions for tokenless QR channels", () => {
-    const result = prepareCreateSandboxMessaging(
+  it("does not create static token definitions for tokenless QR channels", async () => {
+    const result = await prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["whatsapp"],
       }),

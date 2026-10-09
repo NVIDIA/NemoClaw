@@ -16,6 +16,7 @@ import type {
 } from "./host-local-inference";
 import { serializeHostLocalInferenceReceipt } from "./host-local-inference";
 import {
+  assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent,
   assertPreparedHostLocalInferenceRuntimePresent,
   confirmHostLocalInferenceAuthority,
   type ManagedHostLocalInferenceService,
@@ -730,6 +731,33 @@ describe("host-local inference lifecycle authority", () => {
     expect(runtimeProvider.assertAuthority).not.toHaveBeenCalled();
     expect(runtimeProvider.assertTransactionCurrent).not.toHaveBeenCalled();
     expect(onTimingComplete).toHaveBeenCalledWith(4);
+  });
+
+  it("retains the published recovery operation between full runtime inspections", () => {
+    const value = receipt("ollama");
+    const entry = sandbox("alpha", value, { agent: "hermes" });
+    const runtimeProvider = provider({
+      preparePublishedRecoveryEntry: (current) => ({ running: false, receipt: current }),
+    });
+    const prepared = requiredPrepared(
+      prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority(
+        runtimeProvider.bundle,
+        entry,
+        {},
+        undefined,
+        runtimeProvider.operation,
+      ),
+    );
+
+    assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent(
+      runtimeProvider.bundle,
+      entry,
+      prepared,
+    );
+
+    expect(runtimeProvider.operation.assertTransactionCurrent).toHaveBeenCalledOnce();
+    expect(runtimeProvider.runtime.inspectManaged).not.toHaveBeenCalled();
+    expect(runtimeProvider.prepareDestroy).not.toHaveBeenCalled();
   });
 
   it("fails closed when published recovery has no dedicated entry proof", () => {

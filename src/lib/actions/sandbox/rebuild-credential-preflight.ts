@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
+  validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
+  type HostCredentialTarget,
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
 
@@ -16,16 +19,16 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
   HERMES_INFERENCE_CREDENTIAL_ENV: string;
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV: string;
-  inspectHermesProviderBinding: (runOpenshellFn: typeof runOpenshell) => {
+  inspectHermesProviderBinding: (runOpenshellFn: typeof runOpenshell) => Promise<{
     exists: boolean;
     credentialKeys: string[] | null;
-  };
+  }>;
   registerHermesInferenceProvider: (
     apiKey: string,
     runOpenshellFn: typeof runOpenshell,
     credentialEnv?: string,
     baseUrl?: string,
-  ) => void;
+  ) => Promise<void>;
 };
 
 export type RebuildBail = (message: string, code?: number) => never;
@@ -62,11 +65,11 @@ function nonEmptyString(value: unknown): string | null {
   return normalized || null;
 }
 
-function preflightHermesProviderCredentials(
+async function preflightHermesProviderCredentials(
   persistedAuthMethod: unknown,
   credentialEnv: string | null,
   log: RebuildLog,
-): boolean {
+): Promise<boolean> {
   const authMethod =
     normalizeHermesRebuildAuthMethod(persistedAuthMethod) ||
     (credentialEnv === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV ? "api_key" : null);
@@ -74,7 +77,7 @@ function preflightHermesProviderCredentials(
     authMethod === "api_key"
       ? hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
       : hermesProviderAuth.HERMES_INFERENCE_CREDENTIAL_ENV;
-  const binding = hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
+  const binding = await hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
 
   if (binding.exists) {
     const matches =
@@ -107,12 +110,12 @@ function preflightHermesProviderCredentials(
         console.log(
           "  Hermes Provider is not registered in OpenShell; registering it from the configured exported API-key environment variable before rebuild.",
         );
-        hermesProviderAuth.registerHermesInferenceProvider(
+        await hermesProviderAuth.registerHermesInferenceProvider(
           envKey,
           runOpenshell,
           hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
         );
-        const registered = hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
+        const registered = await hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
         return (
           registered.credentialKeys?.length === 1 &&
           registered.credentialKeys[0] === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
@@ -146,17 +149,58 @@ function preflightHermesProviderCredentials(
   return false;
 }
 
-export function preflightRebuildCredentials(
+export async function preflightRebuildHostCredential(
+  target: HostCredentialTarget,
+  credentialValue: string | null,
+  bail: RebuildBail,
+): Promise<boolean> {
+  if (!credentialValue || (await validateRebuildHostInferenceCredential(target, credentialValue)))
+    return true;
+  console.error("");
+  console.error(
+    `  ${RD}Rebuild preflight failed:${R} the host inference credential could not be validated.`,
+  );
+  console.error("  Check the host inference credential and recorded endpoint, then retry rebuild.");
+  console.error("  Sandbox is untouched — no data was lost.");
+  bail("Host inference credential validation failed");
+  return false;
+}
+
+export async function preflightRebuildCredentials(
   sb: RebuildSandboxEntry,
   log: RebuildLog,
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
-): boolean {
-  const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
+): Promise<boolean> {
+  const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(
+    sb.provider,
+    sb.credentialEnv,
+    sb.endpointUrl,
+  );
   const rebuildProvider = sb.provider;
+  const nativeAttachment = normalizeNativeNvidiaProviderAttachment(
+    sb.nativeNvidiaProviderAttachment,
+  );
+  if (nativeAttachment) {
+    if (
+      !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+        nativeAttachment,
+      }))
+    )
+      return false;
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: rebuildCredentialEnv },
+      rebuildCredentialEnv
+        ? rebuildOnboardDependencies.hydrateCredentialEnv(rebuildCredentialEnv)
+        : null,
+      bail,
+    );
+  }
 
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
-    if (!preflightHermesProviderCredentials(sb.hermesAuthMethod, rebuildCredentialEnv, log)) {
+    if (
+      !(await preflightHermesProviderCredentials(sb.hermesAuthMethod, rebuildCredentialEnv, log))
+    ) {
       bail("Missing Hermes Provider credentials");
       return false;
     }
@@ -164,7 +208,9 @@ export function preflightRebuildCredentials(
   }
 
   if (!rebuildCredentialEnv) {
-    if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+    if (
+      !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail))
+    ) {
       return false;
     }
     log(
@@ -178,11 +224,11 @@ export function preflightRebuildCredentials(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
   if (
-    !checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+    !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
       allowProviderReconfigure: options.allowMissingGatewayProviderWithHostCredential,
       hostCredentialAvailable: Boolean(credentialValue),
       onProviderReconfigureRequired: options.onGatewayProviderReconfigureRequired,
-    })
+    }))
   ) {
     return false;
   }
@@ -192,7 +238,13 @@ export function preflightRebuildCredentials(
     );
     return true;
   }
-  if (credentialValue) return true;
+  if (credentialValue) {
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: rebuildCredentialEnv },
+      credentialValue,
+      bail,
+    );
+  }
 
   console.error("");
   console.error(`  ${RD}Rebuild preflight failed:${R} provider credential not found.`);

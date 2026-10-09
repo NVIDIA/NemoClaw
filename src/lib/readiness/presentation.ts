@@ -35,10 +35,7 @@ const ENVIRONMENT_DETAIL_KEYS = new Set([
 ]);
 
 function bounded(value: string, maxLength: number): string {
-  return sanitizeReadinessText(
-    String(redactForLog(value)).replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1<REDACTED>@"),
-    maxLength,
-  );
+  return sanitizeReadinessText(String(redactForLog(value)), maxLength);
 }
 
 function scalar(value: EvidenceScalar): EvidenceScalar {
@@ -285,13 +282,22 @@ export function createPublicHostProbeReadinessReport(
   report: Readonly<SystemReadinessReport>,
 ): SystemReadinessReport {
   const publicReport = createPublicReadinessReport(report);
-  if (!hasRemediableStorageConflict(publicReport)) return publicReport;
+  const findings = publicReport.findings.map((entry) =>
+    entry.id === "host.platform.wsl_gpu_passthrough_inconclusive"
+      ? {
+          ...entry,
+          summary:
+            "This read-only host probe did not run the container CUDA proof. Onboarding runs it after host and gateway readiness checks pass.",
+        }
+      : entry,
+  );
+  if (!hasRemediableStorageConflict(publicReport)) return { ...publicReport, findings };
 
   return {
     ...publicReport,
     status: "supported",
     exitCode: 0,
-    findings: publicReport.findings.map((entry) =>
+    findings: findings.map((entry) =>
       entry.id === "host.docker.storage_incompatible" ? { ...entry, severity: "warning" } : entry,
     ),
   };

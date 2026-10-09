@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 _COMMAND = "/usr/local/lib/nemoclaw/dcode-wrapper.sh"
-_CONFIG = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
+_CONFIG = Path("/sandbox/.deepagents/.mcp.json")
 _MAX_BYTES = 131_072
 _TOOL = "worker-broker_worker_task_context"
 _REFLECTED_CREDENTIAL = "Bearer sk-proj-validation-credential-value"

@@ -43,33 +43,33 @@ describe("Google Chat service-account enrollment", () => {
     expect(serviceAccountJsonError(value)).toContain(message);
   });
 
-  it.each([
-    "environment",
-    "credential store",
-  ] as const)("rejects malformed existing JSON from the %s before persistence", async (source) => {
-    const env: NodeJS.ProcessEnv =
-      source === "environment" ? { GOOGLECHAT_SERVICE_ACCOUNT: "not-json" } : {};
-    const saveCredential = vi.fn();
-    const prompt = vi.fn();
-    const registry = new MessagingHookRegistry([
-      createGooglechatTokenPasteHookRegistration({
-        env,
-        getCredential: () => (source === "credential store" ? "not-json" : null),
-        saveCredential,
-        prompt,
-        log: () => {},
-      }),
-    ]);
+  it.each(["environment", "credential store"] as const)(
+    "rejects malformed existing JSON from the %s before persistence",
+    async (source) => {
+      const env: NodeJS.ProcessEnv =
+        source === "environment" ? { GOOGLECHAT_SERVICE_ACCOUNT: "not-json" } : {};
+      const saveCredential = vi.fn();
+      const prompt = vi.fn();
+      const registry = new MessagingHookRegistry([
+        createGooglechatTokenPasteHookRegistration({
+          env,
+          getCredential: () => (source === "credential store" ? "not-json" : null),
+          saveCredential,
+          prompt,
+          log: () => {},
+        }),
+      ]);
 
-    await expect(
-      runMessagingHook(serviceAccountHook, registry, {
-        channelId: "googlechat",
-        isInteractive: false,
-      }),
-    ).rejects.toThrow("Service account JSON could not be parsed");
-    expect(prompt).not.toHaveBeenCalled();
-    expect(saveCredential).not.toHaveBeenCalled();
-  });
+      await expect(
+        runMessagingHook(serviceAccountHook, registry, {
+          channelId: "googlechat",
+          isInteractive: false,
+        }),
+      ).rejects.toThrow("Service account JSON could not be parsed");
+      expect(prompt).not.toHaveBeenCalled();
+      expect(saveCredential).not.toHaveBeenCalled();
+    },
+  );
 
   it("ignores malformed existing JSON interactively and persists a valid replacement", async () => {
     const env: NodeJS.ProcessEnv = {};

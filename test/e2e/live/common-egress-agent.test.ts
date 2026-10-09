@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
+import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
+import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -22,9 +23,10 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   assessPersonalPublicFetchToolEvidence,
   classifyHermesAgentAssertion,
@@ -61,7 +63,7 @@ Do not invoke any other target tool. Do not use web_search, Brave Search, or Tav
 Set web_fetch maxChars to no more than 8000.
 After web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.`;
 const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
-const ONBOARD_TIMEOUT_MS = 25 * 60_000;
+const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
 const HERMES_AGENT_TIMEOUT_MS = 150_000;
 const HERMES_AGENT_ATTEMPTS = 3;
 const KEEP_SANDBOX =
@@ -238,25 +240,13 @@ function cleanupAttempt(result: ShellProbeResult): CleanupAttempt {
 
 async function assertPrerequisites(
   host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   secrets: SecretStore,
-  skip: SkipFn,
 ): Promise<HostedInferenceConfig> {
-  expect(
-    fs.existsSync(CLI_DIST_ENTRYPOINT),
-    "run `npm run build:cli` before live repo CLI targets",
-  ).toBe(true);
-
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-common-egress",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+  await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-common-egress",
+    scenarioLabel: "common-egress agent",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for common-egress agent E2E: ${text(docker)}`);
-    }
-    skip("Docker is required for common-egress agent E2E");
-  }
 
   const openshell = await host.command("openshell", ["--version"], {
     artifactName: "prereq-openshell-version-common-egress",
@@ -379,7 +369,6 @@ async function runOnboard(
     skip: SkipFn;
     tier: "balanced" | "open" | "personal";
     extraEnv?: NemoEnv;
-    extraRedactionValues?: string[];
   },
 ): Promise<ShellProbeResult> {
   const onboard = await host.command(
@@ -396,13 +385,16 @@ async function runOnboard(
       cwd: REPO_ROOT,
       env: commandEnv({
         ...args.hosted.env,
+        BRAVE_API_KEY: "",
+        TAVILY_API_KEY: "",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
         ...args.extraEnv,
         NEMOCLAW_AGENT: args.agent,
         NEMOCLAW_POLICY_MODE: "suggested",
         NEMOCLAW_POLICY_TIER: args.tier,
         NEMOCLAW_SANDBOX_NAME: args.sandboxName,
       }),
-      redactionValues: [args.hosted.apiKey, ...(args.extraRedactionValues ?? [])],
+      redactionValues: [args.hosted.apiKey],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
@@ -602,7 +594,7 @@ describe.sequential("common-egress agent live targets", () => {
   openClawTest(
     "C1 OpenClaw balanced excludes weather until explicitly added, then permits a verified wttr.in curl",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted OpenClaw prerequisites",
@@ -613,16 +605,15 @@ describe.sequential("common-egress agent live targets", () => {
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
-      const braveApiKey = secrets.required("BRAVE_API_KEY");
       await artifacts.target.declare({
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         contract: [
-          "OpenClaw balanced onboarding applies exactly six expected presets without weather",
+          "OpenClaw balanced onboarding applies exactly five expected presets without weather",
           "explicit policy-add weather applies the weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
           "a real OpenClaw agent turn validates one wttr.in response and leaves its body as proof",
@@ -637,16 +628,21 @@ describe.sequential("common-egress agent live targets", () => {
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         skip,
         tier: "balanced",
-        extraEnv: { BRAVE_API_KEY: braveApiKey },
-        extraRedactionValues: [braveApiKey],
       });
 
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_BALANCED_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify balanced egress excludes weather");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
       ).toEqual([
-        { name: "brave", provenance: "from openclaw agent" },
-        { name: "brew", provenance: "user-added" },
+        { name: "brew-balanced", provenance: "user-added" },
         { name: "huggingface", provenance: "user-added" },
         { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },
@@ -664,8 +660,7 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-after-weather-add"),
       ).toEqual([
-        { name: "brave", provenance: "from openclaw agent" },
-        { name: "brew", provenance: "user-added" },
+        { name: "brew-balanced", provenance: "user-added" },
         { name: "huggingface", provenance: "user-added" },
         { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },
@@ -745,7 +740,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
   openClawTest(
     "C2 OpenClaw open includes public reference and agent fetches Wikidata",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted OpenClaw prerequisites",
@@ -755,8 +750,8 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
@@ -777,6 +772,14 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         skip,
         tier: "open",
       });
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_OPEN_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify public-reference egress policy");
       await assertPolicyContains(sandbox, OPENCLAW_OPEN_SANDBOX, "c2-policy", [
         "www.wikidata.org",
@@ -804,7 +807,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   hermesTest(
     "C3 Hermes open includes public reference plus Nous presets and agent fetches Wikidata",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted Hermes prerequisites",
@@ -814,8 +817,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       await artifacts.target.declare({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
@@ -866,7 +869,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   openClawTest(
     "C4 Personal permits a public fetch without Brave Search or Tavily Search API keys",
     {
-      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      timeout: testTimeout(COMMON_EGRESS_TEST_TIMEOUT_MS),
       meta: {
         e2ePhases: [
           "validate hosted representative-agent prerequisites",
@@ -878,8 +881,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         ],
       },
     },
-    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
-      const hosted = await assertPrerequisites(host, secrets, skip);
+    async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, runtimeProvider, secrets);
       const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
@@ -912,6 +915,14 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         },
       });
 
+      await approveOpenClawAdminScope(
+        host,
+        sandbox,
+        OPENCLAW_PERSONAL_SANDBOX,
+        commandEnv(hosted.env),
+        [hosted.apiKey],
+        false,
+      );
       progress.phase("verify Personal policy and absent Brave Search or Tavily Search API keys");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),

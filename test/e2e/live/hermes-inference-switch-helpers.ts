@@ -8,6 +8,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
+import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -46,7 +49,7 @@ import {
   runBoundedRetry,
   type RetryEvidence,
   type RetryFailureClass,
-} from "../fixtures/retry-policy.ts";
+} from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -69,7 +72,7 @@ export const RUNTIME_SWITCH_API =
   resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-export const PROXY_RESOLUTION_PROVIDER = "nvidia-prod";
+export const PROXY_RESOLUTION_PROVIDER = "hermes-proxy-resolution-e2e";
 export const PROXY_RESOLUTION_MODEL = "nvidia/nemotron-proxy-resolution-e2e";
 export const PROXY_FORBIDDEN_MARKERS = [
   "openshell:resolve:env:",
@@ -220,25 +223,17 @@ export async function prepareProxyResolutionRoute({
   apiKey,
   host,
   mockBaseline,
-  publicProvider,
   redactionValues,
 }: {
   apiKey: string;
   host: HostCliClient;
   mockBaseline: FakeOpenAiCompatibleServer | undefined;
-  publicProvider: ShellProbeResult | null;
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
     mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
-
-  // Hosted mode already registered and attached the exact nvidia-prod
-  // provider. The mock path needs an OpenAI provider for its local fixture.
-  if (publicProvider !== null) {
-    return { model, requestOffset };
-  }
 
   const registered = await host.command(
     "openshell",
@@ -644,7 +639,7 @@ export async function installHermes(
         cwd: REPO_ROOT,
         env: env(apiKey, installEnv),
         redactionValues: [apiKey],
-        timeoutMs: 25 * 60_000,
+        timeoutMs: execTimeout(25 * 60_000),
       },
     );
     const retry =
@@ -668,6 +663,7 @@ export async function runHermesInferenceSetWithRetry(
     artifacts?: InferenceSwitchRetryArtifactSink;
     compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
     delay?: (milliseconds: number) => Promise<void>;
+    publicNvidiaApiKey?: string | null;
   } = {},
 ): Promise<ShellProbeResult> {
   const args = [
@@ -688,12 +684,15 @@ export async function runHermesInferenceSetWithRetry(
     onEvidence: evidenceArtifacts
       ? (evidence) => writeInferenceSwitchRetryEvidence(evidenceArtifacts, evidence)
       : undefined,
-    run: (attempt, verify) =>
-      host.command("node", verify ? args : [...args, "--no-verify"], {
-        artifactName: verify
-          ? `hermes-inference-set-${attempt}`
-          : "hermes-inference-set-no-verify-after-transient-failures",
-        env: env(undefined, compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null)),
+    run: (attempt) =>
+      host.command("node", args, {
+        artifactName: `hermes-inference-set-${attempt}`,
+        env: env(undefined, {
+          ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
+          ...(options.publicNvidiaApiKey
+            ? { NVIDIA_INFERENCE_API_KEY: options.publicNvidiaApiKey }
+            : {}),
+        }),
         redactionValues,
         timeoutMs: 180_000,
       }),
@@ -735,6 +734,7 @@ export function maybeAssertPidStable(
 }
 
 export function expectedBaseUrl(): string {
+  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) return NVIDIA_HOSTED_NATIVE_ENDPOINT;
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? "https://inference.local"
     : "https://inference.local/v1";
@@ -812,7 +812,13 @@ function quotePayload(payload: string): string {
   return payload.replace(/'/gu, `'\\''`);
 }
 
-export function inferenceLocalCommand(payload: string): string {
+export function sandboxInferenceCommand(payload: string): string {
+  if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) {
+    // The upstream URL is the managed route for an attached OpenShell
+    // provider. OpenShell authorizes this profile-scoped request and replaces
+    // the placeholder without exposing the provider credential to the sandbox.
+    return `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; curl -sS --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
+  }
   return RUNTIME_SWITCH_API === "anthropic-messages"
     ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`
     : `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${quotePayload(payload)}'`;

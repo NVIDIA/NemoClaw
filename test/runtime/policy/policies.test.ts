@@ -28,14 +28,20 @@ const policies = requireForTest(
 const resolveOpenshellModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "resolve.ts"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };
-const policyStateModule = requireForTest(
-  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "policy-state.ts"),
-) as typeof import("../../../src/lib/adapters/openshell/policy-state");
+const sandboxIdentityModule = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "sandbox-identity-cli.ts"),
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-identity-cli");
+const policyReaderModule = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "sandbox-policy-cli.ts"),
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-policy-cli");
 const registryForTest = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
 ) as typeof import("../../../src/lib/state/registry");
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
+const MESSAGING_PLAN_FIXTURES_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "test", "helpers", "messaging-plan-fixtures.ts"),
+);
 const SOURCE_NODE_ARGS = ["--import", "tsx"];
 
 function requirePresetContent(content: string | null): string {
@@ -46,14 +52,66 @@ function requirePresetContent(content: string | null): string {
   return content;
 }
 
+function writePolicyFixtureOpenShell(options: {
+  readonly callsPath: string;
+  readonly executablePath: string;
+  readonly policyPath: string;
+  readonly sandboxName: string;
+}): void {
+  fs.writeFileSync(
+    options.executablePath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(options.callsPath)}
+if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: ${options.sandboxName}\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy get" ]; then
+  if [[ " $* " == *" --output json "* ]]; then
+    printf '%s\n' ${JSON.stringify(livePolicyMetadata(options.sandboxName))}
+    exit 0
+  fi
+  if [ -f ${JSON.stringify(options.policyPath)} ]; then
+    cat ${JSON.stringify(options.policyPath)}
+  else
+    printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  fi
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(options.policyPath)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+    { mode: 0o755 },
+  );
+}
+
 describe("policies", () => {
   beforeEach(() => {
-    vi.spyOn(policyStateModule, "inspectSandboxPolicy").mockReturnValue({
-      policySource: "sandbox",
-      effectivePolicy: {},
-      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+    vi.spyOn(
+      policyReaderModule.cliOpenShellSandboxPolicyReader,
+      "inspectSandboxPolicy",
+    ).mockResolvedValue({
+      ok: true,
+      value: {
+        policySource: "sandbox",
+        effectivePolicy: {},
+        policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+      },
     });
-    vi.spyOn(policyStateModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+    vi.spyOn(sandboxIdentityModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
       SANDBOX_IDENTITY,
     );
   });
@@ -129,15 +187,36 @@ describe("policies", () => {
       expect(policies.getPresetValidationWarning("wechat")).toContain("WeChat");
     });
 
-    it("adds Discord validation guidance for Node probes instead of curl or DNS-only checks", () => {
-      const warning = policies.getPresetValidationWarning("discord");
+    it.each([
+      {
+        agent: "openclaw" as const,
+        expectedLabel: "OpenClaw validation uses its Node runtime",
+        expectedCommand: "node -e",
+        absentCommand: "/opt/hermes/.venv/bin/python",
+      },
+      {
+        agent: "hermes" as const,
+        expectedLabel: "Hermes validation uses its virtual-environment Python runtime",
+        expectedCommand: "/opt/hermes/.venv/bin/python -c",
+        absentCommand: "node -e",
+      },
+    ])(
+      "adds $agent-specific Discord validation guidance for proxy-visible runtime checks",
+      ({ agent, expectedLabel, expectedCommand, absentCommand }) => {
+        const warning = policies.getPresetValidationWarning("discord", { agent });
 
-      expect(warning).toContain("curl");
-      expect(warning).toContain("preset binary allowlist");
-      expect(warning).toContain("Node HTTPS");
-      expect(warning).toContain("https://discord.com/api/v10/gateway");
-      expect(warning).toContain('dns.resolve("gateway.discord.gg")');
-    });
+        expect(warning).toContain("curl");
+        expect(warning).toContain("preset binary allowlist");
+        expect(warning).not.toContain("Node HTTPS");
+        expect(warning).toContain("https://discord.com/api/v10/gateway");
+        expect(warning).toContain('dns.resolve("gateway.discord.gg")');
+        expect(warning).toContain("Any HTTP response confirms reachability");
+        expect(warning).not.toContain("prints 200 on success");
+        expect(warning).toContain(expectedLabel);
+        expect(warning).toContain(expectedCommand);
+        expect(warning).not.toContain(absentCommand);
+      },
+    );
 
     it("adds Jira validation guidance that makes blocked versus redirected curl observable", () => {
       const warning = policies.getPresetValidationWarning("jira");
@@ -169,56 +248,27 @@ describe("policies", () => {
       const callsPath = path.join(tmpDir, "calls.log");
       const policyOut = path.join(tmpDir, "policy.yaml");
       const script = String.raw`
+(async () => {
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 ${managedRegistrationSource("test-sandbox")}
-const result = policies.applyPresets("test-sandbox", ["npm", "pypi"]);
+const result = await policies.applyPresets("test-sandbox", ["npm", "pypi"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
   calls: fs.readFileSync(process.env.CALLS_PATH, "utf-8").trim().split("\n").filter(Boolean),
   policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
   registry: registry.getSandbox("test-sandbox"),
 }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
-      fs.writeFileSync(
-        fakeOpenshell,
-        `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
-if [ "$1 $2" = "sandbox get" ]; then
-  printf 'Name: test-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
-  exit 0
-fi
-if [ "$1 $2" = "policy get" ]; then
-  if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(livePolicyMetadata("test-sandbox"))}
-    exit 0
-  fi
-  if [ -f ${JSON.stringify(policyOut)} ]; then
-    cat ${JSON.stringify(policyOut)}
-  else
-    printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
-  fi
-  exit 0
-fi
-if [ "$1 $2" = "policy set" ]; then
-  policy_file=""
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--policy" ]; then
-      policy_file="$2"
-      break
-    fi
-    shift
-  done
-  cp "$policy_file" ${JSON.stringify(policyOut)}
-  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
-  exit 0
-fi
-exit 1
-`,
-        { mode: 0o755 },
-      );
+      writePolicyFixtureOpenShell({
+        callsPath,
+        executablePath: fakeOpenshell,
+        policyPath: policyOut,
+        sandboxName: "test-sandbox",
+      });
 
       try {
         const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
@@ -250,151 +300,32 @@ exit 1
       }
     });
 
-    it("uses agent-specific preset content for Hermes Discord", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-"));
-      const fakeOpenshell = path.join(tmpDir, "openshell");
-      const policyOut = path.join(tmpDir, "policy.yaml");
-      const script = String.raw`
-const fs = require("node:fs");
-const registry = require(${REGISTRY_PATH});
-const policies = require(${POLICIES_PATH});
-${managedRegistrationSource("hermes-sandbox", "hermes")}
-const result = policies.applyPresets("hermes-sandbox", ["discord"]);
-process.stdout.write("\n__RESULT__" + JSON.stringify({
-  result,
-  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
-  registry: registry.getSandbox("hermes-sandbox"),
-}));
-`;
-      fs.writeFileSync(
-        fakeOpenshell,
-        `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1 $2" = "sandbox get" ]; then
-  printf 'Name: hermes-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
-  exit 0
-fi
-if [ "$1 $2" = "policy get" ]; then
-  if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(livePolicyMetadata("hermes-sandbox"))}
-    exit 0
-  fi
-  if [ -f ${JSON.stringify(policyOut)} ]; then
-    cat ${JSON.stringify(policyOut)}
-  else
-    printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
-  fi
-  exit 0
-fi
-if [ "$1 $2" = "policy set" ]; then
-  policy_file=""
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--policy" ]; then
-      policy_file="$2"
-      break
-    fi
-    shift
-  done
-  cp "$policy_file" ${JSON.stringify(policyOut)}
-  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
-  exit 0
-fi
-exit 1
-`,
-        { mode: 0o755 },
-      );
-
-      try {
-        const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
-          cwd: REPO_ROOT,
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmpDir,
-            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
-            POLICY_OUT: policyOut,
-          },
-        });
-
-        expect(result.status).toBe(0);
-        const payload = parseResultPayload(result.stdout);
-        const parsed = YAML.parse(payload.policy);
-        const discordPolicy = parsed.network_policies.discord;
-        const binaries = discordPolicy.binaries.map((entry: { path: string }) => entry.path);
-        expect(binaries).toContain("/usr/bin/python3*");
-        expect(binaries).toContain("/opt/hermes/.venv/bin/python");
-        const discordCom = discordPolicy.endpoints.find(
-          (endpoint: { host?: string }) => endpoint.host === "discord.com",
-        );
-        const mutationRules = discordCom.rules
-          .map((rule: { allow?: { method?: string; path?: string } }) => rule.allow)
-          .filter((rule: { method?: string } | undefined) =>
-            ["PUT", "PATCH", "DELETE"].includes(rule?.method || ""),
-          );
-        expect(mutationRules).toContainEqual({
-          method: "PATCH",
-          path: "/api/v*/channels/*/messages/*",
-        });
-        expect(mutationRules).not.toContainEqual({ method: "PATCH", path: "/**" });
-        expect(payload.registry).not.toHaveProperty("policies");
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
-    });
-
     it("uses agent-specific preset aliases for Hermes WeChat", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-wechat-"));
       const fakeOpenshell = path.join(tmpDir, "openshell");
+      const callsPath = path.join(tmpDir, "calls.log");
       const policyOut = path.join(tmpDir, "policy.yaml");
       const script = String.raw`
+(async () => {
 const fs = require("node:fs");
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 ${managedRegistrationSource("hermes-sandbox", "hermes")}
-const result = policies.applyPresets("hermes-sandbox", ["wechat"]);
+const result = await policies.applyPresets("hermes-sandbox", ["wechat"]);
 process.stdout.write("\n__RESULT__" + JSON.stringify({
   result,
   policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
   registry: registry.getSandbox("hermes-sandbox"),
 }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
-      fs.writeFileSync(
-        fakeOpenshell,
-        `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1 $2" = "sandbox get" ]; then
-  printf 'Name: hermes-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
-  exit 0
-fi
-if [ "$1 $2" = "policy get" ]; then
-  if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(livePolicyMetadata("hermes-sandbox"))}
-    exit 0
-  fi
-  if [ -f ${JSON.stringify(policyOut)} ]; then
-    cat ${JSON.stringify(policyOut)}
-  else
-    printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
-  fi
-  exit 0
-fi
-if [ "$1 $2" = "policy set" ]; then
-  policy_file=""
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--policy" ]; then
-      policy_file="$2"
-      break
-    fi
-    shift
-  done
-  cp "$policy_file" ${JSON.stringify(policyOut)}
-  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
-  exit 0
-fi
-exit 1
-`,
-        { mode: 0o755 },
-      );
+      writePolicyFixtureOpenShell({
+        callsPath,
+        executablePath: fakeOpenshell,
+        policyPath: policyOut,
+        sandboxName: "hermes-sandbox",
+      });
 
       try {
         const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
@@ -421,13 +352,99 @@ exit 1
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
+
+    it("replaces stale generic runtime grants when reapplying Hermes Discord", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-discord-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const callsPath = path.join(tmpDir, "calls.log");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+(async () => {
+const fs = require("node:fs");
+const YAML = require("yaml");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+const { makeMessagingPlan } = require(${MESSAGING_PLAN_FIXTURES_PATH});
+${managedRegistrationSource("hermes-sandbox", "hermes")}
+registry.updateSandbox("hermes-sandbox", {
+  messaging: {
+    schemaVersion: 1,
+    plan: makeMessagingPlan({
+      sandboxName: "hermes-sandbox",
+      agent: "hermes",
+      channels: ["discord"],
+    }),
+  },
+});
+const initialResult = await policies.applyPresets("hermes-sandbox", ["discord"]);
+const previousPolicy = YAML.parse(fs.readFileSync(process.env.POLICY_OUT, "utf-8"));
+previousPolicy.network_policies.discord.binaries.unshift(
+  { path: "/usr/local/bin/node" },
+  { path: "/usr/bin/python3*" },
+);
+fs.writeFileSync(process.env.POLICY_OUT, YAML.stringify(previousPolicy));
+const reapplyResult = await policies.applyPreset("hermes-sandbox", "discord");
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  initialResult,
+  reapplyResult,
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("hermes-sandbox"),
+}));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+`;
+      writePolicyFixtureOpenShell({
+        callsPath,
+        executablePath: fakeOpenshell,
+        policyPath: policyOut,
+        sandboxName: "hermes-sandbox",
+      });
+
+      try {
+        const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        const payload = parseResultPayload(result.stdout);
+        expect(payload.initialResult).toBe(true);
+        expect(payload.reapplyResult).toBe(true);
+        const discordPolicy = YAML.parse(payload.policy).network_policies.discord;
+        const binaries = discordPolicy.binaries.map((entry: { path: string }) => entry.path);
+        expect(binaries).toEqual([
+          "/opt/hermes/.venv/bin/python3",
+          "/opt/hermes/.venv/bin/python",
+          "/usr/bin/python3",
+          "/usr/bin/python3.13",
+        ]);
+        expect(binaries).not.toContain("/usr/local/bin/node");
+        expect(binaries).not.toContain("/usr/bin/python3*");
+        const discordComEndpoints = discordPolicy.endpoints.filter(
+          (endpoint: { host?: string }) => endpoint.host === "discord.com",
+        );
+        expect(discordComEndpoints).toHaveLength(1);
+        expect(discordComEndpoints[0].credential_binding).toEqual({
+          provider: "hermes-sandbox-discord-bridge",
+        });
+        expect(payload.registry).not.toHaveProperty("policies");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("applyPreset disclosure logging", () => {
     const hasScopeHeader = (m: unknown): m is string =>
       typeof m === "string" && m.includes("Effective egress that would be opened");
 
-    it("logs egress endpoints before applying", () => {
+    it("logs egress endpoints before applying", async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-disclosure-"));
       const fakeOpenshell = path.join(tmpDir, "openshell");
       fs.writeFileSync(
@@ -443,7 +460,7 @@ exit 1
       vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
       try {
         try {
-          policies.applyPreset("test-sandbox", "npm");
+          await policies.applyPreset("test-sandbox", "npm");
         } catch {
           /* applyPreset may throw if sandbox not running — we only care about the log */
         }
@@ -460,12 +477,12 @@ exit 1
       }
     });
 
-    it("does not log when preset does not exist", () => {
+    it("does not log when preset does not exist", async () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       try {
-        policies.applyPreset("test-sandbox", "nonexistent");
+        await policies.applyPreset("test-sandbox", "nonexistent");
         const messages = logSpy.mock.calls.map((call) =>
           typeof call[0] === "string" ? call[0] : undefined,
         );
@@ -476,7 +493,7 @@ exit 1
       }
     });
 
-    it("does not log when preset does not exist under any sandbox load path", () => {
+    it("does not log when preset does not exist under any sandbox load path", async () => {
       const noHostPreset =
         "preset:\n  name: empty\n\nnetwork_policies:\n  empty_rule:\n    name: empty_rule\n    endpoints: []\n";
       const loadSpy = vi.spyOn(policies, "loadPreset").mockReturnValue(noHostPreset);
@@ -488,7 +505,7 @@ exit 1
 
       try {
         try {
-          policies.applyPreset("test-sandbox", "empty");
+          await policies.applyPreset("test-sandbox", "empty");
         } catch {
           /* applyPreset may throw if sandbox not running */
         }
@@ -505,99 +522,9 @@ exit 1
     });
   });
 
-  describe("buildPolicySetCommand", () => {
-    it("returns an argv array with sandbox name as a separate element", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      // The binary is resolved via resolveOpenshell() so it may be an absolute
-      // path; assert the openshell tail and the rest of the argv shape.
-      expect(cmd[0]).toMatch(/openshell$/);
-      expect(cmd.slice(1)).toEqual([
-        "policy",
-        "set",
-        "--policy",
-        "/tmp/policy.yaml",
-        "--wait",
-        "my-assistant",
-      ]);
-    });
-
-    it("preserves shell metacharacters literally in sandbox name (no injection)", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
-      expect(cmd).toContain("test; whoami");
-      // The metacharacters are a literal argv element, not shell-interpreted
-    });
-
-    it("places --wait before the sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
-      const waitIdx = cmd.indexOf("--wait");
-      const nameIdx = cmd.indexOf("test-box");
-      expect(waitIdx < nameIdx).toBeTruthy();
-    });
-
-    it("pins policy reads and writes to an explicit gateway (#9833)", () => {
-      expect(
-        policies
-          .buildPolicySetCommand("/tmp/policy.yaml", "my-assistant", "nemoclaw-18080")
-          .slice(1),
-      ).toEqual([
-        "policy",
-        "set",
-        "-g",
-        "nemoclaw-18080",
-        "--policy",
-        "/tmp/policy.yaml",
-        "--wait",
-        "my-assistant",
-      ]);
-      expect(policies.buildPolicyGetCommand("my-assistant", "nemoclaw-18080").slice(1)).toEqual([
-        "policy",
-        "get",
-        "-g",
-        "nemoclaw-18080",
-        "--base",
-        "my-assistant",
-      ]);
-    });
-
-    it("uses the resolved openshell binary for every policy command", () => {
-      const resolved = "/opt/nvidia/bin/openshell";
-      const resolveSpy = vi
-        .spyOn(resolveOpenshellModule, "resolveOpenshell")
-        .mockReturnValue(resolved);
-      try {
-        expect(policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "set",
-          "--policy",
-          "/tmp/policy.yaml",
-          "--wait",
-          "my-assistant",
-        ]);
-        expect(policies.buildPolicyGetCommand("my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "get",
-          "--base",
-          "my-assistant",
-        ]);
-        expect(policies.buildPolicyGetFullCommand("my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "get",
-          "--full",
-          "my-assistant",
-        ]);
-      } finally {
-        resolveSpy.mockRestore();
-      }
-    });
-  });
-
   // Regression for issue #4224: when openshell is installed at ~/.local/bin/openshell
   // (the installer's user-local location) but PATH from a non-interactive shell does
-  // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
-  // resolve openshell to an absolute path so spawnSync does not raise ENOENT.
+  // not include ~/.local/bin/, the OpenShell resolver must still find it.
   describe("spawnSync openshell ENOENT in non-interactive shells (#4224)", () => {
     let tmpHome: string;
     let fakeOpenshell: string;
@@ -633,26 +560,6 @@ exit 1
       if (origBin === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
       else process.env.NEMOCLAW_OPENSHELL_BIN = origBin;
       fs.rmSync(tmpHome, { recursive: true, force: true });
-    });
-
-    it("buildPolicySetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([
-        fakeOpenshell,
-        "policy",
-        "set",
-        "--policy",
-        "/tmp/policy.yaml",
-        "--wait",
-        "my-assistant",
-      ]);
-    });
-
-    it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
-      const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--base", "my-assistant"]);
     });
 
     it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {
@@ -714,11 +621,12 @@ exit 1
     // catch the real-world bug, spy on this process's mkdtempSync calls:
     // if the assertion fires before mkdtempSync, no nemoclaw-policy-* dir
     // should be requested.
-    it("applyPreset does not create temp dirs when bounded policy observation loses OpenShell", () => {
+    it("applyPreset does not create temp dirs when bounded policy observation loses OpenShell", async () => {
       const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
       const resolveSpy = vi
         .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValueOnce(fakeOpenshell)
         .mockReturnValueOnce(fakeOpenshell)
         .mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
@@ -732,8 +640,17 @@ exit 1
       }) as never);
 
       try {
-        expect(policies.applyPreset("my-assistant", "npm")).toBe(false);
+        // Transactional callers retain control to roll back rather than exiting.
+        expect(await policies.applyPreset("my-assistant", "npm", { nonFatal: true })).toBe(false);
         expect(exitSpy).not.toHaveBeenCalled();
+
+        resolveSpy.mockReset().mockReturnValueOnce(fakeOpenshell).mockReturnValue(null);
+
+        // Normal command entry points still exit nonzero when OpenShell is unavailable.
+        await expect(
+          (async () => await policies.applyPreset("my-assistant", "npm"))(),
+        ).rejects.toThrow(/__test_exit__/);
+        expect(exitSpy).toHaveBeenCalledWith(1);
         // No `nemoclaw-policy-*` temp dir should have been created before
         // the resolvability check exited.
         expect(
@@ -786,7 +703,7 @@ exit 1
       fs.rmSync(tmpHome, { recursive: true, force: true });
     });
 
-    it("aborts applyPresetContent (returns false) when policy get exits 0 with degraded output", () => {
+    it("aborts applyPresetContent (returns false) when policy get exits 0 with degraded output", async () => {
       fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
       const errs: string[] = [];
       const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
@@ -797,7 +714,7 @@ exit 1
         logs.push(a.map((x) => String(x)).join(" "));
       });
       try {
-        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
+        const result = await policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
           custom: { sourcePath: "/tmp/x.yaml" },
         });
         expect(result).toBe(false);
@@ -809,7 +726,7 @@ exit 1
       }
     });
 
-    it("aborts applyPresets (returns false) when policy get exits 0 with degraded output", () => {
+    it("aborts applyPresets (returns false) when policy get exits 0 with degraded output", async () => {
       fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
       const errs: string[] = [];
       const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
@@ -817,7 +734,7 @@ exit 1
       });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       try {
-        const result = policies.applyPresets("alpha", ["npm"]);
+        const result = await policies.applyPresets("alpha", ["npm"]);
         expect(result).toBe(false);
         expect(errs.join("\n")).toContain("Policy-dependent operations must stop");
       } finally {
@@ -891,7 +808,7 @@ exit 0
       fs.rmSync(tmpHome, { recursive: true, force: true });
     });
 
-    it("refuses a custom preset when sandbox policy state cannot be located", () => {
+    it("refuses a custom preset when sandbox policy state cannot be located", async () => {
       // The sandbox is ready on the gateway but missing from the local
       // registry, so the first observed authority cannot be persisted.
       registryModule.getSandbox = () => null;
@@ -901,7 +818,7 @@ exit 0
       });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       try {
-        const result = policies.applyPresetContent(
+        const result = await policies.applyPresetContent(
           "my-assistant",
           "slack-files-upload",
           CUSTOM_CONTENT,
@@ -917,7 +834,7 @@ exit 0
       }
     });
 
-    it("refuses a built-in preset when sandbox policy state cannot be located", () => {
+    it("refuses a built-in preset when sandbox policy state cannot be located", async () => {
       registryModule.getSandbox = () => null;
       const updateSpy = vi.fn(() => true);
       registryModule.updateSandbox = updateSpy;
@@ -927,7 +844,12 @@ exit 0
       });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       try {
-        const result = policies.applyPresetContent("my-assistant", "github", BUILTIN_CONTENT, {});
+        const result = await policies.applyPresetContent(
+          "my-assistant",
+          "github",
+          BUILTIN_CONTENT,
+          {},
+        );
         expect(result).toBe(false);
         expect(updateSpy).not.toHaveBeenCalled();
         const combined = errors.join("\n");
@@ -939,7 +861,7 @@ exit 0
       }
     });
 
-    it("applies a well-formed custom preset without recording a policy copy", () => {
+    it("applies a well-formed custom preset without recording a policy copy", async () => {
       let sandbox: Record<string, unknown> = managedSandboxEntry("my-assistant");
       registryModule.getSandbox = () => sandbox;
       registryModule.updateSandbox = (_name: string, updates: Record<string, unknown>) => {
@@ -949,7 +871,7 @@ exit 0
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {
-        const result = policies.applyPresetContent(
+        const result = await policies.applyPresetContent(
           "my-assistant",
           "slack-files-upload",
           CUSTOM_CONTENT,

@@ -1,18 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveNemoclawStateDir } from "../state/paths";
 import type { SandboxEntry } from "../state/registry";
-import * as agentForwardStop from "./agent-forward-stop";
 import type { ReleaseGatewayPortResult } from "./gateway-port-release";
 import type { GatewayStopDeps } from "./gateway-stop";
 import * as gatewayStop from "./gateway-stop";
 import * as sandboxGatewayStop from "./sandbox-gateway-stop";
-import { stopAll } from "./services";
+import { resolveServicePidDir, resolveTunnelPidDir, stopAll } from "./services";
+
+const neutralOllamaCleanup = () => undefined;
 
 vi.mock("../adapters/docker", () => ({
   dockerCapture: vi.fn(),
@@ -24,6 +26,26 @@ vi.mock("../adapters/docker", () => ({
 vi.mock("../adapters/openshell/resolve", () => ({
   resolveOpenshell: vi.fn(() => null),
 }));
+
+describe("gateway-scoped host-side tunnel PID directory (#11628)", () => {
+  it("uses one dashboard tunnel directory for every sandbox selection", () => {
+    const alpha = resolveTunnelPidDir({ sandboxName: "alpha" });
+    const beta = resolveTunnelPidDir({ sandboxName: "beta" });
+
+    expect(alpha).toBe(beta);
+    expect(alpha).toBe(join(resolveNemoclawStateDir(), "tunnel"));
+  });
+
+  it("keeps purpose-specific service directories sandbox scoped", () => {
+    expect(resolveServicePidDir({ sandboxName: "alpha" })).toBe("/tmp/nemoclaw-services-alpha");
+    expect(resolveServicePidDir({ sandboxName: "beta" })).toBe("/tmp/nemoclaw-services-beta");
+  });
+
+  it("honors an explicit PID directory for dedicated tunnel consumers", () => {
+    const pidDir = join(tmpdir(), "googlechat-owned-tunnel");
+    expect(resolveTunnelPidDir({ pidDir, sandboxName: "alpha" })).toBe(pidDir);
+  });
+});
 
 function sandboxList(sandboxes: SandboxEntry[]): NonNullable<GatewayStopDeps["listSandboxes"]> {
   return vi.fn(() => ({ sandboxes, defaultSandbox: sandboxes[0]?.name ?? null }));
@@ -128,6 +150,22 @@ describe("releaseGatewayPortForStop", () => {
     );
   });
 
+  it("does not treat a restored automatic port as authority for a no-name stop (#10824)", () => {
+    const release = gatewayRelease(releaseResult({ port: 8990, stopped: [99] }));
+
+    const outcome = gatewayStop.releaseGatewayPortForStop(undefined, {
+      env: {
+        NEMOCLAW_GATEWAY_PORT: "8990",
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT: "1",
+      },
+      listSandboxes: sandboxList([]),
+      releaseManagedGatewayPort: release,
+    });
+
+    expect(outcome).toBe("not-scoped");
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it("does not release when NEMOCLAW_GATEWAY_PORT is set but not a usable port (#8952)", () => {
     const release = gatewayRelease(releaseResult({ port: 8814, stopped: [99] }));
 
@@ -221,7 +259,7 @@ describe("stopAll gateway-stop wiring", () => {
     vi.restoreAllMocks();
   });
 
-  it("orders supervised-agent full stop as sandbox guard, forwards, then gateway release", () => {
+  it("orders supervised-agent full stop as sandbox guard then gateway release", () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-gateway-stop-wiring-"));
     vi.stubEnv("PATH", "");
     const order: string[] = [];
@@ -239,15 +277,15 @@ describe("stopAll gateway-stop wiring", () => {
         order.push("gateway-release");
         return "attempted";
       });
-    const stopAgentForwards = vi
-      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {
-        order.push("host-forwards");
-      });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, sandboxName: "alpha", releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        sandboxName: "alpha",
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -256,15 +294,11 @@ describe("stopAll gateway-stop wiring", () => {
       info: expect.any(Function),
       warn: expect.any(Function),
     });
-    expect(stopAgentForwards).toHaveBeenCalledWith("alpha", {
-      info: expect.any(Function),
-      warn: expect.any(Function),
-    });
     expect(releaseForStop).toHaveBeenCalledWith("alpha", {
       info: expect.any(Function),
       warn: expect.any(Function),
     });
-    expect(order).toEqual(["sandbox-guard", "host-forwards", "gateway-release"]);
+    expect(order).toEqual(["sandbox-guard", "gateway-release"]);
     const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(output).toContain("Hermes Agent gateway is managed by the sandbox");
     expect(output).toContain("All services stopped");
@@ -276,19 +310,15 @@ describe("stopAll gateway-stop wiring", () => {
     const releaseForStop = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => "attempted");
-    const stopAgentForwards = vi
-      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, sandboxName: "alpha" });
+      stopAll({ pidDir, sandboxName: "alpha", unloadOllamaModels: neutralOllamaCleanup });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
 
     expect(releaseForStop).not.toHaveBeenCalled();
-    expect(stopAgentForwards).not.toHaveBeenCalled();
   });
 
   it("releases an explicit gateway port on full stop even without a sandbox name (#8952)", () => {
@@ -297,19 +327,19 @@ describe("stopAll gateway-stop wiring", () => {
     const releaseForStop = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => "attempted");
-    const stopAgentForwards = vi
-      .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
 
-    expect(stopAgentForwards).not.toHaveBeenCalled();
     expect(releaseForStop).toHaveBeenCalledWith(undefined, {
       info: expect.any(Function),
       warn: expect.any(Function),
@@ -323,12 +353,15 @@ describe("stopAll gateway-stop wiring", () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-unscoped-gateway-stop-"));
     vi.stubEnv("PATH", "");
     vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "not-scoped");
-    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -344,12 +377,15 @@ describe("stopAll gateway-stop wiring", () => {
     vi.stubEnv("PATH", "");
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8814");
     vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "unconfirmed");
-    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => {});
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, releaseGatewayPort: true });
+      stopAll({
+        pidDir,
+        releaseGatewayPort: true,
+        unloadOllamaModels: neutralOllamaCleanup,
+      });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -358,4 +394,46 @@ describe("stopAll gateway-stop wiring", () => {
     expect(logged).not.toContain("All services stopped");
     expect(logged).toContain("managed gateway release was not confirmed");
   });
+
+  it.each([
+    ["not-scoped", "managed gateway was not released"],
+    ["unconfirmed", "managed gateway release was not confirmed"],
+  ] as const)(
+    "does not release the gateway when cloudflared cleanup is incomplete (%s)",
+    (gatewayOutcome, gatewayMessage) => {
+      const pidDir = mkdtempSync(join(tmpdir(), `nemoclaw-${gatewayOutcome}-cloudflared-stop-`));
+      writeFileSync(join(pidDir, "cloudflared.pid"), "4242");
+      const releaseGatewayPort = vi
+        .spyOn(gatewayStop, "releaseGatewayPortForStop")
+        .mockImplementation(() => gatewayOutcome);
+      vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
+      const signalCloudflared = vi.fn(() => "unavailable" as const);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      try {
+        expect(() =>
+          stopAll({
+            pidDir,
+            releaseGatewayPort: true,
+            unloadOllamaModels: neutralOllamaCleanup,
+            processControl: {
+              isAlive: () => true,
+              commandLine: () => null,
+              signalCloudflared,
+            },
+          }),
+        ).toThrow("Cloudflared cleanup is incomplete");
+      } finally {
+        rmSync(pidDir, { recursive: true, force: true });
+      }
+
+      const logged = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+      expect(signalCloudflared).not.toHaveBeenCalled();
+      expect(logged).toContain("Host service cleanup remains incomplete");
+      expect(logged).toContain("cloudflared was not stopped");
+      expect(logged).not.toContain(gatewayMessage);
+      expect(logged).not.toContain("Host services stopped");
+      expect(releaseGatewayPort).not.toHaveBeenCalled();
+    },
+  );
 });

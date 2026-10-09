@@ -118,14 +118,9 @@ export function writeTimedOutAgentTurnFailure(
     "  The output above is a partial trace. Tool calls in it may have already applied side effects.\n",
   );
   proc.stderr.write("  Documented recovery paths:\n");
-  proc.stderr.write(
-    `    ${CLI_NAME} ${target} sessions list          — locate the session key\n`,
-  );
+  proc.stderr.write(`    ${CLI_NAME} ${target} sessions list          — locate the session key\n`);
   proc.stderr.write(
     `    ${CLI_NAME} ${target} sessions export <key>  — export the partial transcript\n`,
-  );
-  proc.stderr.write(
-    `    ${CLI_NAME} ${target} shields down           — unlock configuration writes\n`,
   );
   proc.stderr.write(
     `    ${CLI_NAME} ${target} config set --key <deadline-key> --value <seconds> --restart  — raise the deadline\n`,

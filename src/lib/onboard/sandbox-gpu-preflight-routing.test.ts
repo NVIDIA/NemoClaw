@@ -13,6 +13,7 @@ import {
   formatSandboxGpuPassthroughNote,
   parseDockerRuntimeNames,
   sandboxGpuRemediationLines,
+  validatePodmanSandboxGpuPreflight,
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
 
@@ -117,6 +118,40 @@ describe("sandbox GPU preflight routing", () => {
         exitProcess,
       ),
     ).not.toThrow();
+  });
+
+  it("validates native Podman GPU support through CDI without Docker inspection", () => {
+    const findReadableNvidiaCdiSpecFiles = vi.fn(() => ["/etc/cdi/nvidia.yaml"]);
+
+    expect(() =>
+      validatePodmanSandboxGpuPreflight(sandboxGpuConfig(), {
+        platform: "linux",
+        findReadableNvidiaCdiSpecFiles,
+      }),
+    ).not.toThrow();
+    expect(findReadableNvidiaCdiSpecFiles).toHaveBeenCalledWith(["/etc/cdi", "/var/run/cdi"]);
+  });
+
+  it("reports native Podman CDI admission failures without Docker remediation", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitProcess = (code: number): never => {
+      throw new Error(`exit:${code}`);
+    };
+
+    try {
+      expect(() =>
+        validatePodmanSandboxGpuPreflight(
+          sandboxGpuConfig(),
+          { platform: "linux", findReadableNvidiaCdiSpecFiles: vi.fn(() => []) },
+          exitProcess,
+        ),
+      ).toThrow("exit:1");
+      const message = errorSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(message).toContain("Podman CDI GPU support was not detected");
+      expect(message).not.toContain("Docker");
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("still fails when the fallback CDI spec dirs hold no NVIDIA spec (#7330)", () => {

@@ -22,7 +22,7 @@ export interface GatewayTokenCommandDeps {
    * gateway.auth.token, or a bearer_token agent's web-auth key (e.g. Hermes'
    * API_SERVER_KEY).
    */
-  fetchToken: (sandboxName: string) => string | null;
+  fetchToken: (sandboxName: string) => Promise<string | null> | string | null;
   /**
    * Resolve the agent name registered for the sandbox (e.g. "openclaw",
    * "hermes"). When omitted -- or when the lookup throws -- the OpenClaw
@@ -102,11 +102,11 @@ function notApplicableLines(sandboxName: string, agent: string): readonly string
  * failure. The caller is responsible for rendering failures and for having
  * validated that the sandbox exists in the registry.
  */
-export function runGatewayTokenCommand(
+export async function runGatewayTokenCommand(
   sandboxName: string,
   options: GatewayTokenCommandOptions,
   deps: GatewayTokenCommandDeps,
-): void {
+): Promise<void> {
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
@@ -132,7 +132,7 @@ export function runGatewayTokenCommand(
 
   let token: string | null;
   try {
-    token = deps.fetchToken(sandboxName);
+    token = await deps.fetchToken(sandboxName);
   } catch {
     token = null;
   }

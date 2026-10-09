@@ -75,7 +75,7 @@ _lock_rm=""
 if [ "${SKILL_VERIFY_NO_CLEAR_LOCK:-0}" != "1" ]; then
   _lock_rm="rm -f '/sandbox/.openclaw/agents/main/sessions/${SESSION_ID}.jsonl.lock' 2>/dev/null || true; "
 fi
-remote_cmd="pm=\$(printf '%s' '${prompt_b64}' | base64 -d) || exit 1; nv=\$(printf '%s' '${nv_b64}' | base64 -d) || exit 1; export NVIDIA_INFERENCE_API_KEY=\"\$nv\"; ${_lock_rm}${AGENT_LAUNCHER}openclaw agent --agent main --local -m \"\$pm\" --session-id '${SESSION_ID}'"
+remote_cmd="pm=\$(printf '%s' '${prompt_b64}' | base64 -d) || exit 1; nv=\$(printf '%s' '${nv_b64}' | base64 -d) || exit 1; export NVIDIA_INFERENCE_API_KEY=\"\$nv\"; ${_lock_rm}${AGENT_LAUNCHER}openclaw agent --agent main -m \"\$pm\" --session-id '${SESSION_ID}'"
 
 info "Running openclaw agent in sandbox '${SANDBOX_NAME}' (session ${SESSION_ID})..."
 

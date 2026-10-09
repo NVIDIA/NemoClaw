@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
+import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
@@ -12,7 +13,17 @@ type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
   sandboxName: string;
 };
 
+type RebuildCompatibleEndpointSmokeOptions = Pick<
+  Parameters<
+    typeof import("../../onboard/compatible-endpoint-smoke").verifyCompatibleEndpointSandboxSmoke
+  >[0],
+  "sandboxName" | "provider" | "model" | "endpointUrl" | "credentialEnv"
+> & { environment: NodeJS.ProcessEnv; gatewayName?: string };
+
 type RebuildOnboardModule = {
+  verifyRebuiltOpenClawCompatibleEndpoint: (
+    options: RebuildCompatibleEndpointSmokeOptions,
+  ) => Promise<void>;
   ensureValidatedWebSearchCredential: (
     config: NonNullable<RebuildDurableConfig["webSearchConfig"]>,
     nonInteractive?: boolean,
@@ -23,6 +34,27 @@ type RebuildOnboardModule = {
     options: RebuildAuthoritativePreflightOptions,
   ) => Promise<CheckpointGatewayAuthority>;
 };
+
+type RuntimePreflightGpuDetector = Pick<
+  typeof import("../../onboard/fatal-runtime-preflight"),
+  "detectGpuWithRuntimeProviderProofForProvider"
+>;
+
+export function detectGpuWithRuntimeProviderProofForRebuild(
+  providerId: string | null | undefined,
+  loadRuntimePreflight: () => RuntimePreflightGpuDetector = () =>
+    require("../../onboard/fatal-runtime-preflight") as RuntimePreflightGpuDetector,
+): import("../../inference/nim").GpuDetection | null {
+  try {
+    const gpu = loadRuntimePreflight().detectGpuWithRuntimeProviderProofForProvider(providerId);
+    return gpu?.containerGpuProof &&
+      gpu.containerGpuProof.providerId !== normalizeRuntimeProviderIdentity(providerId)
+      ? null
+      : gpu;
+  } catch {
+    return null;
+  }
+}
 
 function loadOnboardModule(): RebuildOnboardModule {
   return require("../../onboard") as RebuildOnboardModule;
@@ -35,6 +67,16 @@ function loadOnboardModule(): RebuildOnboardModule {
  * the onboarding APIs are side-effect-free named imports.
  */
 export const rebuildOnboardDependencies = {
+  verifyRebuiltOpenClawCompatibleEndpoint(
+    options: RebuildCompatibleEndpointSmokeOptions,
+  ): Promise<void> {
+    return loadOnboardModule().verifyRebuiltOpenClawCompatibleEndpoint(options);
+  },
+  detectGpuWithRuntimeProviderProof(
+    providerId: string | null | undefined,
+  ): import("../../inference/nim").GpuDetection | null {
+    return detectGpuWithRuntimeProviderProofForRebuild(providerId);
+  },
   ensureValidatedWebSearchCredential(
     config: NonNullable<RebuildDurableConfig["webSearchConfig"]>,
     nonInteractive?: boolean,

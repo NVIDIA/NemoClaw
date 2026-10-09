@@ -13,7 +13,59 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
-  it("writes provider-qualified model refs while preserving model metadata", () => {
+  it("replaces the vLLM credential when switching to native NVIDIA inference", () => {
+    const config: ConfigObject = {
+      models: { providers: { inference: { apiKey: "unused", models: [] } } },
+    };
+    patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/test-model");
+    expect(config).toMatchObject({
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+          },
+        },
+      },
+    });
+    patchOpenClawInferenceConfig(config, "vllm-local", "local-model");
+    expect(config).toMatchObject({
+      models: {
+        providers: { inference: { baseUrl: "https://inference.local/v1", apiKey: "unused" } },
+      },
+    });
+  });
+
+  it.each([undefined, null, 16384])(
+    "updates only the selected model's context when the resolved window is %s",
+    (contextWindow) => {
+      const otherModel = { id: "other", contextWindow: 65536, maxTokens: 4096 };
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/selected" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [otherModel, { id: "selected", contextWindow: 131072 }],
+            },
+          },
+        },
+      };
+
+      patchOpenClawInferenceConfig(config, "compatible-endpoint", "selected", null, contextWindow);
+
+      const models = providerModels(config, "inference");
+      expect(models).toHaveLength(2);
+      expect(models[0]).toEqual({ id: "other", contextWindow: 65536, maxTokens: 4096 });
+      expect(models[1].id).toBe("selected");
+      expect(Object.hasOwn(models[1], "contextWindow")).toBe(contextWindow !== null);
+      expect(models[1].contextWindow).toBe(
+        contextWindow === null ? undefined : (contextWindow ?? 131072),
+      );
+    },
+  );
+
+  it("writes provider-qualified model refs without inheriting another model's limits (#12033)", () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
       models: {
@@ -52,16 +104,23 @@ describe("patchOpenClawInferenceConfig", () => {
       mode: "merge",
       providers: {
         inference: {
-          baseUrl: "https://inference.local/v1",
-          apiKey: "unused",
+          baseUrl: "https://integrate.api.nvidia.com/v1",
+          apiKey: "${NVIDIA_INFERENCE_API_KEY}",
           api: "openai-completions",
           models: [
             {
               id: "nvidia/nemotron-3-super-120b-a12b",
               name: "inference/nvidia/nemotron-3-super-120b-a12b",
+              reasoning: true,
+              compat: { supportsStore: false },
+            },
+            {
+              id: "moonshotai/kimi-k2.6",
+              name: "inference/moonshotai/kimi-k2.6",
               contextWindow: 131072,
               maxTokens: 8192,
               reasoning: true,
+              compat: { supportsStore: false },
             },
           ],
         },
@@ -69,20 +128,19 @@ describe("patchOpenClawInferenceConfig", () => {
     });
   });
 
-  it("updates the explicit main agents.list model without changing secondary defaults", () => {
+  it("updates the explicit main agents.entries model without changing secondary defaults", () => {
     const config: ConfigObject = {
       agents: {
         defaults: { model: { primary: "inference/nvidia/old-model" } },
-        list: [
-          { id: "main", default: true, model: "inference/nvidia/old-model" },
-          {
-            id: "research",
+        entries: {
+          main: { default: true, model: "inference/nvidia/old-model" },
+          research: {
             default: true,
             model: "inference/nvidia/secondary-model",
             workspace: "/sandbox/.openclaw/workspace-research",
             agentDir: "/sandbox/.openclaw/agents/research",
           },
-        ],
+        },
       },
       models: {
         mode: "merge",
@@ -104,23 +162,30 @@ describe("patchOpenClawInferenceConfig", () => {
 
     expect(config.agents).toEqual({
       defaults: { model: { primary: "inference/nvidia/new-model" } },
-      list: [
-        { id: "main", default: true, model: "inference/nvidia/new-model" },
-        {
-          id: "research",
+      entries: {
+        main: { default: true, model: "inference/nvidia/new-model" },
+        research: {
           default: true,
           model: "inference/nvidia/secondary-model",
           workspace: "/sandbox/.openclaw/workspace-research",
           agentDir: "/sandbox/.openclaw/agents/research",
         },
-      ],
+      },
     });
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
-        baseUrl: "https://inference.local/v1",
-        apiKey: "unused",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         api: "openai-completions",
-        models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+        models: [
+          {
+            id: "nvidia/new-model",
+            name: "inference/nvidia/new-model",
+            compat: { supportsStore: false },
+          },
+          { id: "old-model", name: "inference/nvidia/old-model" },
+          { id: "secondary-model", name: "inference/nvidia/secondary-model" },
+        ],
       },
     });
   });
@@ -165,10 +230,16 @@ describe("patchOpenClawInferenceConfig", () => {
         mode: "merge",
         providers: {
           inference: {
-            baseUrl: "https://inference.local/v1",
-            apiKey: "unused",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
             api: "openai-completions",
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
+            models: [
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                compat: { supportsStore: false },
+              },
+            ],
           },
         },
       },
@@ -177,6 +248,39 @@ describe("patchOpenClawInferenceConfig", () => {
     const result = patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/model-a");
 
     expect(result.changed).toBe(false);
+  });
+
+  it("preserves limits for the selected model regardless of its array position (#12033)", () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/old-model" } } },
+      models: {
+        mode: "merge",
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+            api: "openai-completions",
+            models: [
+              { id: "nvidia/old-model", name: "inference/nvidia/old-model" },
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                contextWindow: 65536,
+                maxTokens: 4096,
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/model-a");
+
+    expect(providerModels(config, "inference")[1]).toMatchObject({
+      id: "nvidia/model-a",
+      contextWindow: 65536,
+      maxTokens: 4096,
+    });
   });
 
   it("records a provider switch in a request marker without replacing other headers", () => {
@@ -269,7 +373,45 @@ describe("patchOpenClawInferenceConfig", () => {
     ]);
   });
 
-  it("preserves a valid Anthropic target reply budget over the active provider value", () => {
+  it("does not inherit a custom image's baked reply budget during initial routing (#12033)", () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/baked-model" } } },
+      models: {
+        providers: {
+          inference: {
+            models: [
+              {
+                id: "baked-model",
+                name: "inference/baked-model",
+                maxTokens: 128,
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    patchOpenClawInferenceConfig(
+      config,
+      "anthropic-prod",
+      "claude-sonnet-4-6",
+      null,
+      undefined,
+      "anthropic-prod",
+      { effort: null, explicit: false },
+      false,
+    );
+
+    expect(providerModels(config, "anthropic")).toEqual([
+      {
+        id: "claude-sonnet-4-6",
+        name: "anthropic/claude-sonnet-4-6",
+        maxTokens: 4096,
+      },
+    ]);
+  });
+
+  it("does not inherit another Anthropic model's reply budget", () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/model-a" } } },
       models: {
@@ -290,8 +432,9 @@ describe("patchOpenClawInferenceConfig", () => {
       {
         id: "claude-sonnet-4-6",
         name: "anthropic/claude-sonnet-4-6",
-        maxTokens: 2048,
+        maxTokens: 8192,
       },
+      { id: "old-model", name: "anthropic/old-model", maxTokens: 2048 },
     ]);
   });
 

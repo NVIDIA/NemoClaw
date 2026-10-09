@@ -37,10 +37,16 @@ export function dockerBuild(
     ...(quiet ? ["--quiet"] : []),
 
     ...Object.entries(buildArgs ?? {})
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .sort(([left], [right]) => {
+        if (left < right) return -1;
+        return left > right ? 1 : 0;
+      })
       .flatMap(([key, value]) => ["--build-arg", `${key}=${value}`]),
     ...Object.entries(labels ?? {})
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .sort(([left], [right]) => {
+        if (left < right) return -1;
+        return left > right ? 1 : 0;
+      })
       .flatMap(([key, value]) => ["--label", `${key}=${value}`]),
     "-f",
     dockerfilePath,

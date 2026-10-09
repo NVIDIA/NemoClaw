@@ -36,11 +36,13 @@ export default class SandboxStatusCommand extends NemoClawCommand {
         !report.found ||
         ("portableLifecyclePhase" in report
           ? report.portableLifecyclePhase !== "active"
-          : report.gatewayState !== "present" ||
+          : (report.gatewayState !== "present" &&
+              !(report.gatewayState === "missing" && report.phase === "Stopped")) ||
             report.rpcIssue ||
             report.failureLayer ||
             isInferenceHealthFailing(report.inferenceHealth) ||
-            report.terminalRuntimeHealth?.kind === "degraded")
+            report.terminalRuntimeHealth?.kind === "degraded" ||
+            report.llamaCpp?.kind === "unavailable")
       ) {
         process.exitCode = 1;
       }

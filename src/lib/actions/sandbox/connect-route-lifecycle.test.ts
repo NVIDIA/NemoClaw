@@ -69,11 +69,11 @@ describe("connectSandbox route lifecycle", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "anthropic-prod",
         "--model",
         "claude-sonnet-4-20250514",
-        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );
@@ -81,6 +81,34 @@ describe("connectSandbox route lifecycle", () => {
       "openshell",
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
+    );
+  });
+
+  it("stops after an ambiguous route swap before probing or attempting repair", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/old-model\n",
+      inferenceSetResult: { status: null, output: "", signal: "SIGTERM" },
+      registryEntry: {
+        model: "claude-sonnet-4-20250514",
+        provider: "anthropic-prod",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const routeWrites = harness.runOpenshellSpy.mock.calls.filter(
+      ([args]) => Array.isArray(args) && args[0] === "inference" && args[1] === "set",
+    );
+    expect(routeWrites).toHaveLength(1);
+    const routeProbes = harness.sandboxRunBufferedSpy.mock.calls.filter(([request]) =>
+      JSON.stringify(request).includes("inference.local/v1/models"),
+    );
+    expect(routeProbes).toEqual([]);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Inspect gateway 'nemoclaw' before retrying the route mutation",
     );
   });
 
@@ -105,7 +133,31 @@ describe("connectSandbox route lifecycle", () => {
     expect(harness.runSetupDnsProxySpy).toHaveBeenCalled();
   });
 
-  it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
+  it("starts the auth proxy for a WSL Ollama route when Docker is not local", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3:0.6b\n",
+      inferenceProbeResponses: ["BROKEN 503", "BROKEN 503", "OK 200", "OK 200"],
+      isWsl: true,
+      frontOllamaWithProxy: true,
+      registryEntry: {
+        model: "qwen3:0.6b",
+        provider: "ollama-local",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.findReachableOllamaHostSpy).toHaveBeenCalledWith(undefined, {}, undefined, {
+      revalidate: true,
+    });
+    expect(harness.findReachableOllamaHostSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.shouldFrontOllamaWithProxySpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalled();
+    expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalled();
+  });
+
+  it("rejects hostile observed route values before drift recovery (#3726)", async () => {
     const sandboxName = "alpha's-box";
     const harness = createConnectHarness({
       inferenceGetOutput:
@@ -117,11 +169,16 @@ describe("connectSandbox route lifecycle", () => {
       },
     });
 
-    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).resolves.toBeUndefined();
+    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s-box'",
+    expect(errorOutput).not.toContain("openai; touch /tmp/pwn");
+    expect(errorOutput).not.toContain("$(id) model");
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set"]),
+      expect.any(Object),
     );
   });
 
@@ -147,7 +204,7 @@ describe("connectSandbox route lifecycle", () => {
       );
       expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
       expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-      const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
+      const routeProbeCalls = harness.sandboxRunBufferedSpy.mock.calls.filter((call) =>
         JSON.stringify(call[0]).includes("inference.local/v1/models"),
       );
       expect(routeProbeCalls).toHaveLength(2);
@@ -162,17 +219,20 @@ describe("connectSandbox route lifecycle", () => {
     ["model-only", null, "nvidia/test"],
     ["blank-provider", "   ", "nvidia/test"],
     ["blank-model", "nvidia-prod", "   "],
-  ] as const)("skips inference reconciliation for %s registry entries (#5937)", async (_description, provider, model) => {
-    const harness = createConnectHarness({ registryEntry: { model, provider } });
+  ] as const)(
+    "skips inference reconciliation for %s registry entries (#5937)",
+    async (_description, provider, model) => {
+      const harness = createConnectHarness({ registryEntry: { model, provider } });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw"],
-      expect.any(Object),
-    );
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-  });
+      expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
+        ["inference", "get", "-g", "nemoclaw"],
+        expect.any(Object),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not reset an inference route that already matches the sandbox", async () => {
     const harness = createConnectHarness({
@@ -244,11 +304,11 @@ describe("connectSandbox route lifecycle", () => {
         "set",
         "-g",
         "nemoclaw",
+        "--no-verify",
         "--provider",
         "nvidia-prod",
         "--model",
         "nvidia/nemotron-3-super-120b-a12b",
-        "--no-verify",
       ],
       expect.objectContaining({ ignoreError: true }),
     );

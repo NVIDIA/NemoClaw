@@ -8,6 +8,8 @@ import type {
   DockerGpuPatchFailureContext,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch";
+import type { AgentDefinition } from "../agent/defs";
+import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 
 function startupResult(): DockerGpuPatchResult {
@@ -68,6 +70,44 @@ describe("Docker startup-command sandbox creation", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps default-profile CPU DCode on the original OpenShell container", async () => {
+    const deps = makeDeps();
+    const findContainerIds = vi.fn(() => ["original-container"]);
+    const recreatePatch = vi.fn(() => startupResult());
+    const recreateStartupPatch = vi.fn(() => startupResult());
+    const patch = createDockerGpuSandboxCreatePatch({
+      ...resolveDockerStartupCommandPatch(
+        { name: "langchain-deepagents-code" } as AgentDefinition,
+        true,
+      ),
+      route: "native",
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "nemoclaw-start"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds,
+        recreatePatch,
+        recreateStartupPatch,
+        waitForSupervisor: vi.fn(async () => true),
+        finalizeBackup: vi.fn(async () => ({ backupRemoved: true, rolledBack: false })),
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await patch.ensureApplied();
+    await patch.waitForSupervisorReconnectIfNeeded();
+    await patch.commitAfterReady();
+
+    expect(findContainerIds).not.toHaveBeenCalled();
+    expect(recreatePatch).not.toHaveBeenCalled();
+    expect(recreateStartupPatch).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(patch.createFailureMessage()).toBeNull();
+    expect(patch.replacementRuntimeId()).toBeNull();
+    expect(patch.selectedMode()).toBeNull();
+  });
+
   it("uses the startup-command recreation path with DCode's exact resource limits", async () => {
     const dockerCaptureOutput: Record<string, string> = {
       ps: "old-container-id\n",
@@ -118,11 +158,11 @@ describe("Docker startup-command sandbox creation", () => {
     expect(patch.selectedMode()?.kind).toBe("startup-command");
   });
 
-  it("rolls back startup-command recreation when the supervisor does not reconnect", () => {
+  it("rolls back startup-command recreation when the supervisor does not reconnect", async () => {
     const deps = makeDeps();
     const result = startupResult();
     const capturePreRollbackDiagnostics = vi.fn(() => null);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalizeBackup = vi.fn(async () => ({ backupRemoved: false, rolledBack: true }));
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
       route: "native",
@@ -134,7 +174,7 @@ describe("Docker startup-command sandbox creation", () => {
       overrides: {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreateStartupPatch: vi.fn(() => result),
-        waitForSupervisor: vi.fn(() => false),
+        waitForSupervisor: vi.fn(async () => false),
         capturePreRollbackDiagnostics,
         finalizeBackup,
         onPatchFailureExit,
@@ -142,8 +182,7 @@ describe("Docker startup-command sandbox creation", () => {
     });
 
     patch.maybeApplyDuringCreate();
-    patch.waitForSupervisorReconnectIfNeeded();
-
+    await patch.waitForSupervisorReconnectIfNeeded();
     expect(capturePreRollbackDiagnostics).toHaveBeenCalledWith("alpha", result, deps);
     expect(capturePreRollbackDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
       finalizeBackup.mock.invocationCallOrder[0],
@@ -154,6 +193,37 @@ describe("Docker startup-command sandbox creation", () => {
     const context = (exitDeps as { context: DockerGpuPatchFailureContext }).context;
     expect(context.selectedMode?.kind).toBe("startup-command");
     expect(context.rolledBack).toBe(true);
+  });
+
+  it("forwards the selected startup-command operation when commit races a pending reconnect (#12080)", async () => {
+    const deps = makeDeps();
+    const result = startupResult();
+    const finalizeBackup = vi.fn(async () => ({ backupRemoved: false, rolledBack: true }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "native",
+      persistStartupCommand: true,
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "nemoclaw-start"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreateStartupPatch: vi.fn(() => result),
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    await expect(patch.commitAfterReady()).rejects.toThrow(/reconnects/);
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ message: expect.stringContaining("reconnects") }),
+      expect.objectContaining({
+        selectedMode: expect.objectContaining({ kind: "startup-command" }),
+      }),
+    );
   });
 
   it("defers a driver-owned managed cutover until the authoritative caller commits", async () => {
@@ -167,13 +237,14 @@ describe("Docker startup-command sandbox creation", () => {
     );
     const rollback = vi.fn(async () => {});
     const patch = createDockerGpuSandboxCreatePatch({
-      route: "native",
+      route: "compatibility",
       externalRecreation: true,
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
     });
     patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "a".repeat(64),
       selectedMode: {
         kind: "startup-command",
         label: "managed bootstrap",
@@ -186,7 +257,8 @@ describe("Docker startup-command sandbox creation", () => {
     });
     patch.maybeApplyDuringCreate();
     await patch.ensureApplied();
-    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.waitForSupervisorReconnectIfNeeded();
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(false);
     expect(commit).not.toHaveBeenCalled();
     const firstCommit = patch.commitAfterReady();
     const duplicateCommit = patch.commitAfterReady();
@@ -194,6 +266,41 @@ describe("Docker startup-command sandbox creation", () => {
     expect(rollback).not.toHaveBeenCalled();
     releaseCommit();
     await Promise.all([firstCommit, duplicateCommit]);
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(true);
+  });
+
+  it("does not cross the managed cutover when its durable handoff fence fails (#10560)", async () => {
+    const commit = vi.fn(async () => {});
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      externalRecreation: true,
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps: makeDeps(),
+    });
+    patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "b".repeat(64),
+      selectedMode: {
+        kind: "startup-command",
+        label: "managed bootstrap",
+        device: "",
+        args: [],
+      },
+      failureContext: { sandboxName: "alpha" },
+      commit,
+      rollback: vi.fn(async () => {}),
+    });
+
+    await expect(
+      patch.commitAfterReady({
+        beforeFinalHandoff: () => {
+          throw new Error("checkpoint persistence failed");
+        },
+      }),
+    ).rejects.toThrow("checkpoint persistence failed");
+
+    expect(commit).not.toHaveBeenCalled();
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(false);
   });
 
   it("rolls back a driver-owned cutover before reporting commit failure", async () => {
@@ -218,6 +325,7 @@ describe("Docker startup-command sandbox creation", () => {
       overrides: { onPatchFailureExit },
     });
     patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "c".repeat(64),
       selectedMode: {
         kind: "startup-command",
         label: "managed bootstrap",
@@ -276,7 +384,12 @@ describe("Docker startup-command sandbox creation", () => {
     expect(onPatchFailureExit).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ message: "startup recreate failed" }),
-      expect.objectContaining({ runCaptureOpenshell: deps.runCaptureOpenshell }),
+      expect.objectContaining({
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        // The printer must see the selected non-GPU operation even when the
+        // recreation threw before producing a result (#12080).
+        selectedMode: expect.objectContaining({ kind: "startup-command" }),
+      }),
     );
   });
 });

@@ -44,4 +44,50 @@ describe("host address discovery", () => {
       /host address discovery failed/,
     );
   });
+
+  it("uses the selected runtime provider's sandbox-to-host address", async () => {
+    const runner: CommandRunner = {
+      run: async () => {
+        throw new Error("provider-owned address must not run route discovery");
+      },
+    };
+
+    await expect(
+      discoverHostAddress(
+        new HostCliClient(runner),
+        "host-address",
+        {
+          NEMOCLAW_GATEWAY_RUNTIME: "podman",
+          OPENSHELL_PODMAN_SOCKET: "/tmp/podman.sock",
+        },
+        "linux",
+      ),
+    ).resolves.toEqual({ source: "runtime-provider", address: "169.254.2.2", probe: null });
+  });
+
+  it("preserves portable-profile route discovery", async () => {
+    const runner: CommandRunner = {
+      run: async (command) => ({
+        command: [command.command, ...command.args],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: "route 10.0.0.2\n",
+        stderr: "",
+        artifacts: { stdout: "stdout.txt", stderr: "stderr.txt", result: "result.json" },
+      }),
+    };
+
+    await expect(
+      discoverHostAddress(
+        new HostCliClient(runner),
+        "host-address",
+        {
+          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+          NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        },
+        "linux",
+      ),
+    ).resolves.toMatchObject({ source: "route", address: "10.0.0.2" });
+  });
 });

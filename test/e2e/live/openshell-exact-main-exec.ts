@@ -224,17 +224,17 @@ export async function assertExactMainChildProcessContracts(
   );
   assertChildProofReport(execChild, "exec");
 
-  // OpenShell main exposes connect only as a forced-TTY shell. Feed a bounded
-  // script on stdin and make the remote shell return the assertion status;
-  // an exact output marker distinguishes executed output from TTY input echo.
+  // NemoClaw connect opens a fresh TTY shell; OpenShell 0.0.116 connect instead
+  // attaches the running entrypoint. Feed the probe to NemoClaw's shell and
+  // require its exact output marker and assertion exit status.
   const connectChild = await host.command(
     "bash",
     [
       "-lc",
-      'printf \'%s\\n\' "$1" | "$2" sandbox connect "$3"',
+      'printf \'%s\\n\' "$1" | "$2" "$3" connect',
       "exact-main-connect-child",
       CONNECT_CHILD_PROBE,
-      host.openshellCommandPath,
+      host.commandPath,
       sandboxName,
     ],
     {

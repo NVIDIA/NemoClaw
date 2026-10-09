@@ -2,18 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
+import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
+import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
+import { EXTERNAL_IMAGE_AGENTS } from "../workload/source";
 import {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_PLATFORMS,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
-  type RuntimeProviderLifecycleInput,
-  type RuntimeProviderLifecycleResult,
+  type RuntimeProviderCleanupInput,
+  type RuntimeProviderContainerEngineOperation,
+  type RuntimeProviderMutationOperation,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceRouteAuthorityStore,
 } from "./host-local-inference";
-import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
+import {
+  createFilePersistedEngineAuthorityStore,
+  type PersistedEngineAuthorityStore,
+} from "./persisted-engine-authority";
 import {
   createPodmanHostLocalInferenceOperation,
   type PodmanExternalInferenceNetworkAuthority,
@@ -22,24 +32,36 @@ import {
   type PodmanPublishedResumeTiming,
   type PodmanInferenceRedactor,
 } from "./podman-host-local-inference";
+import { observeNativePodmanGatewayReadiness } from "./podman-gateway-readiness";
 import type {
   PodmanInferenceAuthorityReceipt,
   PodmanInferenceQualificationOptions,
 } from "./podman-preflight";
-import { startPodmanSandbox, stopPodmanSandbox } from "./podman-lifecycle";
+import { PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS } from "./podman-lifecycle";
+import { createPodmanPrivilegedSandboxControl } from "./podman-privileged-sandbox-control";
+import { inspectPodmanHost, type PodmanHostPreflightOptions } from "./podman-preflight";
 import {
-  inspectPodmanHost,
-  type PodmanHostPreflightOptions,
-  qualifyPodmanHost,
-} from "./podman-preflight";
-import { createPodmanStateMutationSurface } from "./podman-state-mutation";
-import type { PodmanStateMutationSurfaceOptions } from "./podman-state-mutation";
+  createCurrentPodmanOperationEngine,
+  capturePodmanDestroyIdentity,
+  capturePodmanDestroyIdentityByName,
+  createFilePodmanRouteAuthorityStore,
+  createPodmanRuntimeProviderSnapshotSurface,
+  type NativePodmanGatewayHostPreparationDeps,
+  planOwnedPodmanWorkloadCleanup,
+  prepareNativePodmanGatewayHostRuntime,
+  removeOwnedPodmanWorkload,
+  resolveNativePodmanSocketPath,
+} from "./podman-runtime-surfaces";
+import { resolvePodmanStateRoot } from "./podman-state-root";
+import { cleanupOwnedContainer, ownedContainerRunArguments } from "./owned-container-resource";
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
+  readonly externalImagePreparation?: PodmanBoundContainerEngine;
+  readonly gatewayInspection?: PodmanBoundContainerEngine;
   readonly hostLocalInference?: PodmanContainerEngine;
   readonly sandboxLifecycle: PodmanContainerEngine;
-  readonly stateMutation?: PodmanBoundContainerEngine;
+  readonly workloadCleanup?: PodmanBoundContainerEngine;
 }
 
 export interface PodmanHostLocalInferenceOptions {
@@ -60,17 +82,58 @@ export interface PodmanHostLocalInferenceOptions {
 
 export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly gatewaySocketPath?: string;
+  readonly gatewayHostPreparation?: NativePodmanGatewayHostPreparationDeps;
   readonly hostLocalInference?: PodmanHostLocalInferenceOptions;
   readonly preflight?: PodmanHostPreflightOptions;
-  readonly stateMutation?: Omit<PodmanStateMutationSurfaceOptions, "engine">;
 }
 
-const DORMANT_WORKLOAD_PROFILE = {
-  support: null,
-  hostArchitectures: [],
+const QUALIFIED_MANAGED_WORKLOAD_PROFILE = {
+  support: {
+    exactDigestReferences: true,
+    platforms: MANAGED_IMAGE_PLATFORMS,
+    startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
+    capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
+  },
+  hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: false,
 } as const satisfies RuntimeProviderWorkloadProfile;
+
+const QUALIFIED_EXTERNAL_IMAGE_SUPPORT = {
+  exactDigestReferences: true,
+  platforms: MANAGED_IMAGE_PLATFORMS,
+  agents: EXTERNAL_IMAGE_AGENTS,
+} as const;
+
+const EXTERNAL_IMAGE_INSPECT_FORMAT =
+  '[{"Id":{{json .ID}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"Config":{{json .Config}}}]';
+
+function isEmptyJsonArray(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function acceptsManagedWorkloadReceipt(
+  receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
+  externalImages: boolean,
+): boolean {
+  if (receipt?.kind === "external-image") {
+    return externalImages && cloneSandboxWorkloadReceipt(receipt)?.kind === "external-image";
+  }
+  if (receipt?.kind !== "managed-image" || receipt.platform === undefined) return false;
+  const support = QUALIFIED_MANAGED_WORKLOAD_PROFILE.support;
+  return (
+    support.platforms.includes(receipt.platform) &&
+    support.capabilityContractVersions.includes(receipt.capabilityContractVersion) &&
+    support.startupProfileContractVersions.includes(receipt.startupProfileContractVersion)
+  );
+}
 
 export const PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON =
   "Read-only host mounts are not qualified for the Podman runtime provider.";
@@ -81,48 +144,47 @@ function unsupported(providerId: string, reason: string) {
 
 function requireEngine(
   engine: PodmanContainerEngine,
-  operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle" | "state-mutation",
+  operation:
+    | "host-doctor"
+    | "external-image-preparation"
+    | "gateway-inspection"
+    | "host-local-inference"
+    | "sandbox-lifecycle"
+    | "workload-cleanup",
 ): void {
   if (engine.engineId !== "podman" || engine.operation !== operation) {
     throw new Error(`Podman provider requires a '${operation}' Podman engine.`);
   }
 }
 
-function preflightLifecycle(
-  input: RuntimeProviderLifecycleInput,
-  engine: PodmanContainerEngine,
-  options: PodmanHostPreflightOptions,
-): RuntimeProviderLifecycleResult | null {
-  try {
-    qualifyPodmanHost(engine, options);
-    return null;
-  } catch (error) {
-    return {
-      exitCode: 1,
-      message: `  ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-}
-
-/**
- * Construct an inert Podman provider candidate from explicitly scoped engine
- * dependencies. This factory is intentionally absent from the production
- * provider registry until managed startup, recovery, GPU, local inference,
- * installer, and protected E2E qualification land in later slices.
- */
+/** Construct the Podman provider from explicitly scoped operation authorities. */
 export function createPodmanRuntimeProviderBundle(
   options: PodmanRuntimeProviderOptions,
 ): RuntimeProviderBundle {
   const providerId = "podman";
   const {
     hostDoctor,
+    externalImagePreparation,
+    gatewayInspection,
     hostLocalInference: inferenceEngine,
     sandboxLifecycle,
-    stateMutation: stateMutationEngine,
+    workloadCleanup,
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
   const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
-  const stateMutationOptions = options.stateMutation;
+  const containerEngineOperations = new Map<
+    RuntimeProviderContainerEngineOperation,
+    PodmanContainerEngine
+  >([
+    ["host-doctor", hostDoctor],
+    ...(externalImagePreparation
+      ? ([["external-image-preparation", externalImagePreparation]] as const)
+      : []),
+    ...(gatewayInspection ? ([["gateway-inspection", gatewayInspection]] as const) : []),
+    ...(inferenceEngine ? ([["host-local-inference", inferenceEngine]] as const) : []),
+    ["sandbox-lifecycle", sandboxLifecycle],
+    ...(workloadCleanup ? ([["workload-cleanup", workloadCleanup]] as const) : []),
+  ] as const);
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");
   const providerEndpointAuthority = hostDoctor.endpointAuthorityId;
@@ -150,17 +212,40 @@ export function createPodmanRuntimeProviderBundle(
   ) {
     throw new Error("Podman published recovery operation authority is incomplete.");
   }
-  if (stateMutationEngine !== undefined) {
-    requireEngine(stateMutationEngine, "state-mutation");
-    if (stateMutationEngine.endpointAuthorityId !== providerEndpointAuthority) {
+  for (const [engine, operation] of [
+    [externalImagePreparation, "external-image-preparation"],
+    [gatewayInspection, "gateway-inspection"],
+    [workloadCleanup, "workload-cleanup"],
+  ] as const) {
+    if (!engine) continue;
+    requireEngine(engine, operation);
+    if (engine.endpointAuthorityId !== providerEndpointAuthority) {
       throw new Error("Podman provider engines must bind the same endpoint authority.");
     }
   }
-  if (stateMutationEngine === undefined && stateMutationOptions !== undefined) {
-    throw new Error("Podman provider requires its state-mutation engine with its options.");
-  }
   const preflight = options.preflight ?? {};
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
+  const projectGatewayHostRuntime = (
+    input: Parameters<RuntimeProviderBundle["gateway"]["prepareHostRuntime"]>[0],
+    hostPreparation?: NativePodmanGatewayHostPreparationDeps,
+  ) => {
+    if (
+      options.gatewaySocketPath !== undefined &&
+      input.socketPath !== undefined &&
+      resolveNativePodmanSocketPath(input.environment, input.socketPath) !==
+        options.gatewaySocketPath
+    ) {
+      throw new Error("Native Podman gateway socket differs from its bundle authority.");
+    }
+    return prepareNativePodmanGatewayHostRuntime(
+      {
+        ...input,
+        socketPath: options.gatewaySocketPath ?? input.socketPath,
+      },
+      gatewayInspection,
+      hostPreparation,
+    );
+  };
 
   return {
     identity: {
@@ -173,9 +258,8 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       hostLocalInference: inferenceEngine !== undefined,
-      directLifecycle: true,
       legacyGatewayContainerInspection: false,
-      workloadImageCleanup: false,
+      workloadImageCleanup: workloadCleanup !== undefined,
       readOnlyHostMounts: {
         supported: false,
         reason: PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON,
@@ -185,19 +269,34 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       inspectHost: () => inspectPodmanHost(hostDoctor, preflight),
-      preflightLifecycle: (_action, input) => preflightLifecycle(input, hostDoctor, preflight),
+      validateSandboxGpu: (config, exitProcess) =>
+        validatePodmanSandboxGpuPreflight(config, {}, exitProcess),
+      preflightLifecycle: () => null,
     },
     gateway: {
       providerId,
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      finalSandboxLiveness: "openshell-only",
+      ownsHostReadiness: true,
+      observeOwnedGateway: observeNativePodmanGatewayReadiness,
+      observeHostRuntime: (input) => projectGatewayHostRuntime(input),
+      prepareHostRuntime: (input) =>
+        projectGatewayHostRuntime(input, options.gatewayHostPreparation),
     },
     workload: {
       providerId,
       supported: true,
-      profile: DORMANT_WORKLOAD_PROFILE,
-      acceptsReceipt: () => false,
+      profile: {
+        ...QUALIFIED_MANAGED_WORKLOAD_PROFILE,
+        ...(externalImagePreparation
+          ? { externalImageSupport: QUALIFIED_EXTERNAL_IMAGE_SUPPORT }
+          : {}),
+      },
+      managedStateMountDriverId: "podman",
+      acceptsReceipt: (receipt) =>
+        acceptsManagedWorkloadReceipt(receipt, externalImagePreparation !== undefined),
     },
     hostLocalInference:
       inferenceEngine !== undefined && inferenceOptions !== undefined
@@ -205,7 +304,7 @@ export function createPodmanRuntimeProviderBundle(
             providerId,
             supported: true,
             services: ["ollama", "nim", "vllm"],
-            createOperation: ({ env, acceleration }) => {
+            createOperation: ({ env, acceleration, deadlineMs }) => {
               if (publishedRecoveryOperation) {
                 if (
                   env !== publishedRecoveryOperation.environment ||
@@ -220,6 +319,7 @@ export function createPodmanRuntimeProviderBundle(
                 engine: inferenceEngine,
                 env,
                 acceleration,
+                ...(deadlineMs === undefined ? {} : { deadlineMs }),
                 authorityStore: inferenceOptions.authorityStore,
                 routeAuthorityStore: inferenceOptions.routeAuthorityStore,
                 onFailureEvidence: inferenceOptions.onFailureEvidence,
@@ -229,7 +329,9 @@ export function createPodmanRuntimeProviderBundle(
                   : {}),
                 ...(inferenceOptions.authority ? { authority: inferenceOptions.authority } : {}),
                 ...(inferenceOptions.authorityQualification
-                  ? { authorityQualification: inferenceOptions.authorityQualification }
+                  ? {
+                      authorityQualification: inferenceOptions.authorityQualification,
+                    }
                   : {}),
                 ...(inferenceOptions.hermesPortablePublishedEngineAuthority
                   ? {
@@ -238,7 +340,9 @@ export function createPodmanRuntimeProviderBundle(
                     }
                   : {}),
                 ...(inferenceOptions.publishedResumeTiming
-                  ? { publishedResumeTiming: inferenceOptions.publishedResumeTiming }
+                  ? {
+                      publishedResumeTiming: inferenceOptions.publishedResumeTiming,
+                    }
                   : {}),
               });
             },
@@ -251,29 +355,47 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "openshell",
-      start: (input) => startPodmanSandbox(input, sandboxLifecycle),
-      verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
-      stop: (input, hooks) => stopPodmanSandbox(input, hooks, sandboxLifecycle),
+      containerMutationTimeoutMs: PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
+      privilegedSandboxControl: createPodmanPrivilegedSandboxControl(
+        sandboxLifecycle,
+        workloadCleanup,
+      ),
     },
-    mutationAuthority: {
+    mutationAuthority: unsupported(
+      providerId,
+      "Standard sandbox lifecycle mutation belongs to the shared OpenShell SDK action boundary.",
+    ),
+    bootstrap: unsupported(providerId, "OpenShell owns managed-image sandbox creation."),
+    snapshot:
+      gatewayInspection === undefined
+        ? unsupported(providerId, deferred)
+        : createPodmanRuntimeProviderSnapshotSurface(gatewayInspection),
+    recovery: {
       providerId,
       supported: true,
-      operations: ["start", "stop"],
+      recover: (sandbox) => ({
+        exitCode: 1,
+        message: `OpenShell owns lifecycle recovery for sandbox '${sandbox.name}'.`,
+      }),
     },
-    stateMutation:
-      stateMutationEngine === undefined
-        ? unsupported(
+    cleanup:
+      workloadCleanup === undefined
+        ? unsupported(providerId, deferred)
+        : {
             providerId,
-            "Podman state mutation remains disabled without injected candidate authority.",
-          )
-        : createPodmanStateMutationSurface({
-            engine: stateMutationEngine,
-            ...(stateMutationOptions ?? {}),
-          }),
-    bootstrap: unsupported(providerId, deferred),
-    snapshot: unsupported(providerId, deferred),
-    recovery: unsupported(providerId, deferred),
-    cleanup: unsupported(providerId, deferred),
+            supported: true,
+            ...(gatewayInspection
+              ? {
+                  captureDestroyIdentity: (input: RuntimeProviderCleanupInput) =>
+                    capturePodmanDestroyIdentity(input, gatewayInspection),
+                  captureDestroyIdentityByName: (sandboxName: string) =>
+                    capturePodmanDestroyIdentityByName(sandboxName, gatewayInspection),
+                }
+              : {}),
+            prepareDestroy: (_input, operations) => operations.detachProviders(),
+            planOwnedWorkloadCleanup: planOwnedPodmanWorkloadCleanup,
+            removeOwnedWorkload: (input) => removeOwnedPodmanWorkload(input, workloadCleanup),
+          },
     containerEngine: {
       providerId,
       supported: true,
@@ -283,6 +405,24 @@ export function createPodmanRuntimeProviderBundle(
           engineId: hostDoctor.engineId,
           displayName: hostDoctor.displayName,
         },
+        ...(externalImagePreparation
+          ? [
+              {
+                operation: "external-image-preparation" as const,
+                engineId: externalImagePreparation.engineId,
+                displayName: externalImagePreparation.displayName,
+              },
+            ]
+          : []),
+        ...(gatewayInspection
+          ? [
+              {
+                operation: "gateway-inspection" as const,
+                engineId: gatewayInspection.engineId,
+                displayName: gatewayInspection.displayName,
+              },
+            ]
+          : []),
         ...(inferenceEngine
           ? [
               {
@@ -297,16 +437,166 @@ export function createPodmanRuntimeProviderBundle(
           engineId: sandboxLifecycle.engineId,
           displayName: sandboxLifecycle.displayName,
         },
-        ...(stateMutationEngine
+        ...(workloadCleanup
           ? [
               {
-                operation: "state-mutation" as const,
-                engineId: stateMutationEngine.engineId,
-                displayName: stateMutationEngine.displayName,
+                operation: "workload-cleanup" as const,
+                engineId: workloadCleanup.engineId,
+                displayName: workloadCleanup.displayName,
               },
             ]
           : []),
       ],
+      capture: (operation, args, timeoutMs) => {
+        const engine = containerEngineOperations.get(operation);
+        if (!engine) {
+          throw new Error(`Podman provider does not register the '${operation}' engine operation.`);
+        }
+        return engine.capture(args, timeoutMs);
+      },
+      externalImagePreparation: externalImagePreparation
+        ? {
+            displayName: externalImagePreparation.displayName,
+            inspectLocal: (reference, timeoutMs) => {
+              const inspection = externalImagePreparation.capture(
+                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
+                timeoutMs,
+              );
+              if (inspection.error) return { status: "failed", error: inspection.error };
+              if (inspection.status === 0) return { status: "present", inspection };
+              const absenceProbe = externalImagePreparation.capture(
+                ["image", "inspect", reference],
+                timeoutMs,
+              );
+              if (absenceProbe.error) return { status: "failed", error: absenceProbe.error };
+              return absenceProbe.status !== 0 && isEmptyJsonArray(absenceProbe.stdout)
+                ? { status: "absent" }
+                : { status: "failed" };
+            },
+            pull: (reference, timeoutMs) =>
+              externalImagePreparation.capture(["pull", "--retry=0", reference], timeoutMs),
+            inspectPulled: (reference, timeoutMs) =>
+              externalImagePreparation.capture(
+                ["image", "inspect", "--format", EXTERNAL_IMAGE_INSPECT_FORMAT, reference],
+                timeoutMs,
+              ),
+            normalizeContentId: (value) => {
+              if (typeof value !== "string") return null;
+              if (/^sha256:[0-9a-f]{64}$/u.test(value)) return value;
+              return /^[0-9a-f]{64}$/u.test(value) ? `sha256:${value}` : null;
+            },
+          }
+        : undefined,
+      nvidiaContainer: inferenceEngine
+        ? {
+            capture: (operation, input, timeoutMs) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return engine.capture(
+                [
+                  "run",
+                  "--rm",
+                  ...ownedContainerRunArguments(input.resource),
+                  "--device",
+                  "nvidia.com/gpu=all",
+                  "--entrypoint",
+                  input.entrypoint,
+                  input.image,
+                  ...input.command,
+                ],
+                timeoutMs,
+              );
+            },
+            cleanup: (operation, resource, options) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return cleanupOwnedContainer(
+                resource,
+                `^${resource.name}$`,
+                (args, timeout) => engine.capture(args, timeout),
+                options,
+              );
+            },
+          }
+        : undefined,
     },
   };
+}
+
+function redactPodmanFailure(environment: NodeJS.ProcessEnv, value: string): string {
+  let redacted = value;
+  for (const key of ["NGC_API_KEY", "NIM_NGC_API_KEY"] as const) {
+    const secret = environment[key];
+    if (secret) redacted = redacted.replaceAll(secret, "[REDACTED]");
+  }
+  return redacted;
+}
+
+function createLazyPersistedEngineAuthorityStore(stateRoot: string): PersistedEngineAuthorityStore {
+  let store: PersistedEngineAuthorityStore | null = null;
+  const resolve = () => (store ??= createFilePersistedEngineAuthorityStore(stateRoot));
+  return Object.freeze({
+    load: (operation: Parameters<PersistedEngineAuthorityStore["load"]>[0]) =>
+      resolve().load(operation),
+    record: (authority: Parameters<PersistedEngineAuthorityStore["record"]>[0]) =>
+      resolve().record(authority),
+  });
+}
+
+/** Production Podman bundle selected only at the managed registration boundary. */
+export function createCurrentPodmanRuntimeProviderBundle(
+  environment: NodeJS.ProcessEnv = process.env,
+): RuntimeProviderBundle {
+  const stateRoot = resolvePodmanStateRoot(environment.HOME);
+  const engines = {
+    hostDoctor: createCurrentPodmanOperationEngine("host-doctor", environment),
+    externalImagePreparation: createCurrentPodmanOperationEngine(
+      "external-image-preparation",
+      environment,
+    ),
+    gatewayInspection: createCurrentPodmanOperationEngine("gateway-inspection", environment),
+    hostLocalInference: createCurrentPodmanOperationEngine("host-local-inference", environment),
+    sandboxLifecycle: createCurrentPodmanOperationEngine("sandbox-lifecycle", environment),
+    workloadCleanup: createCurrentPodmanOperationEngine("workload-cleanup", environment),
+  } as const;
+  const bundle = createPodmanRuntimeProviderBundle({
+    engines,
+    environment,
+    gatewaySocketPath: resolveNativePodmanSocketPath(environment),
+    gatewayHostPreparation: {},
+    hostLocalInference: {
+      authorityStore: createLazyPersistedEngineAuthorityStore(stateRoot),
+      routeAuthorityStore: createFilePodmanRouteAuthorityStore(stateRoot),
+      onFailureEvidence: (evidence) => {
+        console.error(
+          redactPodmanFailure(environment, `Podman ${evidence.phase}: ${evidence.message}`),
+        );
+      },
+      redactSensitive: (value) => redactPodmanFailure(environment, value),
+    },
+  });
+  return Object.freeze({
+    ...bundle,
+    mutationAuthority: Object.freeze({
+      providerId: "podman",
+      supported: true,
+      operations: Object.freeze([
+        "registration",
+        "inference-set",
+        "rebuild",
+        "clone",
+        "provider-cleanup",
+        "destroy",
+        "workload-cleanup",
+      ] satisfies readonly RuntimeProviderMutationOperation[]),
+    }),
+  });
 }

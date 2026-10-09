@@ -21,30 +21,26 @@ export type {
   RuntimeProviderBundleRegistry,
   RuntimeProviderChannelStopTransport,
   RuntimeProviderGatewayLauncher,
+  RuntimeProviderExternalImageSupport,
   RuntimeProviderManagedImageSupport,
-  RuntimeProviderPreparedStateMutationPlan,
-  RuntimeProviderStateMutationActivationProof,
-  RuntimeProviderStateMutationContext,
-  RuntimeProviderStateMutationFence,
-  RuntimeProviderStateMutationPlan,
-  RuntimeProviderStateMutationProtectionPosture,
-  RuntimeProviderStateMutationSelector,
-  RuntimeProviderStateMutationStateLockPlan,
-  RuntimeProviderStateMutationSurface,
+  RuntimeProviderWorkloadProfile,
   RuntimeProviderWorkloadCleanupPlan,
   RuntimeProviderWorkloadCleanupResult,
-  RuntimeProviderWorkloadProfile,
 } from "./contract";
+export type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
+export {
+  applyProviderManagedStartupRootRequest,
+  completeProviderManagedStartup,
+  finalizeProviderManagedStartupSharedState,
+  releaseProviderManagedStartupHold,
+  refreshManagedStartupCorporateCaTrust,
+  type ProviderManagedStartupTransaction,
+} from "../managed-startup/provider-root-apply";
 export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   createCurrentRuntimeProviderBundles,
   resolveCurrentRuntimeProviderBundle,
 } from "./current";
-export {
-  createFilePersistedEngineLifecycleStore,
-  hasActivePersistedEngineStateMutationTarget,
-  PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-} from "./persisted-engine-lifecycle";
 export type { RuntimeProviderDestructiveCleanupAuthority } from "./registry";
 export {
   normalizeRuntimeProviderIdentity,
@@ -55,11 +51,7 @@ export {
   requireRuntimeProviderHostLocalInferenceOperation,
   requireRuntimeProviderMutationAuthority,
   requireRuntimeProviderReadOnlyHostMounts,
-  requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
+  runtimeProviderSupportsContainerEngineOperation,
 } from "./registry";
-export {
-  prepareAgentDefinitionProtectionTransitionPlan,
-  prepareRuntimeProviderStateMutationPlan,
-} from "./state-mutation";

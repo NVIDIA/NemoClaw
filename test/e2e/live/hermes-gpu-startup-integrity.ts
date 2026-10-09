@@ -77,8 +77,8 @@ def parse_hash(data, label):
     except UnicodeDecodeError:
         fail(f"{label} is not ASCII")
     parts = text.split("\\n")
-    if len(parts) != 4 or parts[-1] != "":
-        fail(f"{label} does not contain exactly three records")
+    if len(parts) != 3 or parts[-1] != "":
+        fail(f"{label} does not contain exactly two records")
     lines = parts[:2]
     expected_paths = (str(config_path), str(env_path))
     digests = []
@@ -87,13 +87,7 @@ def parse_hash(data, label):
         if match is None or match.group(2) != expected_path:
             fail(f"{label} contains an unexpected file record")
         digests.append(match.group(1))
-    state_match = re.fullmatch(
-        r"# nemoclaw-hermes-mcp-state-v1 intended=([0-9a-f]{64}) applied=([0-9a-f]{64})",
-        parts[2],
-    )
-    if state_match is None:
-        fail(f"{label} contains an unexpected MCP state record")
-    return tuple(digests), state_match.groups()
+    return tuple(digests)
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -138,16 +132,10 @@ if api_key_lines != 1:
     fail("Hermes environment does not contain exactly one canonical generated API key")
 base_env_bytes = "".join(base_env_lines).encode("utf-8")
 
-strict_digests, strict_mcp_state = parse_hash(strict_hash_bytes, "Hermes strict hash")
-compat_digests, compat_mcp_state = parse_hash(
-    compat_hash_bytes, "Hermes compatibility hash"
-)
+strict_digests = parse_hash(strict_hash_bytes, "Hermes strict hash")
+compat_digests = parse_hash(compat_hash_bytes, "Hermes compatibility hash")
 strict_config_digest, strict_env_digest = strict_digests
 compat_config_digest, compat_env_digest = compat_digests
-if strict_mcp_state[0] != strict_mcp_state[1]:
-    fail("Hermes strict hash contains pending MCP state")
-if compat_mcp_state != strict_mcp_state:
-    fail("Hermes compatibility hash MCP state differs from the strict anchor")
 if not secrets.compare_digest(strict_config_digest, digest(config_bytes)):
     fail("Hermes config differs from the strict startup base")
 if not secrets.compare_digest(strict_env_digest, digest(base_env_bytes)):

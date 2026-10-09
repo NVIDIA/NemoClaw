@@ -11,6 +11,7 @@ import {
 } from "../state/onboard-checkpoint-types";
 import {
   checkpointSandboxIdentityMatches,
+  collectRequiredMessagingProviderBindings,
   observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
@@ -377,6 +378,104 @@ describe("requiredMessagingProviderBindings", () => {
       },
     ]);
   });
+
+  it("uses every credential and current provider identity for one active channel (#10660)", () => {
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "telegram",
+          displayName: "Telegram",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+        {
+          channelId: "slack",
+          displayName: "Slack",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegramBotToken",
+          sourceInput: "botToken",
+          providerName: "alpha-telegram-bridge",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+        {
+          channelId: "slack",
+          credentialId: "slackBotToken",
+          sourceInput: "botToken",
+          providerName: "alpha-slack-bridge",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:SLACK_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+        {
+          channelId: "slack",
+          credentialId: "slackAppToken",
+          sourceInput: "appToken",
+          providerName: "alpha-slack-bridge",
+          providerEnvKey: "SLACK_APP_TOKEN",
+          placeholder: "openshell:resolve:env:SLACK_APP_TOKEN",
+          credentialAvailable: true,
+        },
+      ],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+
+    expect(collectRequiredMessagingProviderBindings("alpha", plan, new Set(["slack"]))).toEqual([
+      {
+        name: "alpha-slack-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_BOT_TOKEN",
+      },
+      {
+        name: "alpha-slack-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_APP_TOKEN",
+      },
+    ]);
+    expect(requiredMessagingProviderBindings("alpha", plan)).toEqual([
+      {
+        name: "alpha-telegram-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "TELEGRAM_BOT_TOKEN",
+      },
+      {
+        name: "alpha-slack-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_BOT_TOKEN",
+      },
+      {
+        name: "alpha-slack-app",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_APP_TOKEN",
+      },
+    ]);
+  });
 });
 
 describe("planSandboxCreateReplay never opens a second sandbox (#5961)", () => {
@@ -417,31 +516,6 @@ describe("planSandboxCreateReplay never opens a second sandbox (#5961)", () => {
   it("reuses a live sandbox even when the create receipt was lost to a mid-create crash (#7022)", () => {
     expect(planSandboxCreateReplay(checkpoint(), { liveSandboxExists: true })).toEqual({
       action: "reuse",
-      identity: { name: "my-sandbox", agent: "openclaw" },
-    });
-  });
-});
-
-describe("crash-then-resume matrix proves at-most-once destructive create (#6228)", () => {
-  const states = [
-    "sandbox",
-    "openclaw",
-    "agent_setup",
-    "policies",
-    "finalizing",
-    "post_verify",
-  ] as const;
-
-  it.each(
-    states,
-  )("crash at %s: reuse a surviving sandbox, recreate under the same identity when it is gone", (state) => {
-    const cp = checkpoint({
-      machineState: state,
-      effectGroups: { sandbox_create: { completedAt: ISO, fingerprint: "fp" } },
-    });
-    expect(planSandboxCreateReplay(cp, { liveSandboxExists: true }).action).toBe("reuse");
-    expect(planSandboxCreateReplay(cp, { liveSandboxExists: false })).toEqual({
-      action: "create",
       identity: { name: "my-sandbox", agent: "openclaw" },
     });
   });

@@ -78,6 +78,8 @@ export interface PreparedHostLocalInferenceAuthority {
   readonly managedOperation?: HostLocalInferenceOperation;
   /** Exact managed state observed after the unchanged full published entry proof. */
   readonly managedInspection?: HostLocalManagedInferenceInspection;
+  /** Rechecks the retained registry row and operation endpoint without inspecting the runtime. */
+  readonly assertPublishedRecoveryTransactionCurrent?: () => void;
 }
 
 export type HostLocalInferenceRetirementResult =
@@ -90,6 +92,7 @@ export type HostLocalInferenceRetirementResult =
 export interface HostLocalInferenceLifecycleOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly homeDir?: string;
+  readonly deadlineMs?: number;
   readonly createLlamaCppAdapter?: (
     options: ManagedLlamaCppLifecycleAdapterOptions,
   ) => ManagedLlamaCppLifecycleAdapter;
@@ -243,6 +246,7 @@ function requireRuntime(
     {
       env: options.environment ?? process.env,
       acceleration,
+      ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
     },
     publishedRecoveryOperation,
   );
@@ -302,7 +306,11 @@ function requireRuntime(
   ) {
     fail("provider returned an incomplete managed inference lifecycle");
   }
-  return Object.freeze({ operation, runtime, assertAuthority: operation.assertAuthority });
+  return Object.freeze({
+    operation,
+    runtime,
+    assertAuthority: operation.assertAuthority,
+  });
 }
 
 function requireExactReceipt(
@@ -383,7 +391,21 @@ function prepare(
       ? "provider authority changed during destroy preflight"
       : "provider authority changed while it was being preserved",
   );
-  return Object.freeze({
+  const assertPublishedRecoveryTransactionCurrent =
+    authorityMode === "published-recovery"
+      ? () => {
+          if (
+            !required.operation.assertTransactionCurrent ||
+            required.operation.providerId !== provider.identity.id ||
+            required.operation.engine.engineId !== receipt.engineAuthority.engineId ||
+            required.operation.engine.operation !== "host-local-inference"
+          ) {
+            fail("published recovery operation authority is missing or changed");
+          }
+          required.operation.assertTransactionCurrent();
+        }
+      : undefined;
+  const prepared: PreparedHostLocalInferenceAuthority = {
     providerId: provider.identity.id,
     sandboxName: sandboxAuthority.sandboxName,
     serializedReceipt: serialized,
@@ -396,11 +418,16 @@ function prepare(
           destroyRuntime: runtime,
           assertDestroyRuntimeAuthority: required.assertAuthority,
           ...(authorityMode === "published-recovery"
-            ? { managedInspection, managedOperation: required.operation }
+            ? {
+                managedInspection,
+                managedOperation: required.operation,
+                assertPublishedRecoveryTransactionCurrent,
+              }
             : {}),
         }
       : {}),
-  });
+  };
+  return Object.freeze(prepared);
 }
 
 /** Re-prove a canonical receipt only while it remains bound to the complete sandbox row. */
@@ -530,6 +557,20 @@ export function assertHermesPortableHostLocalInferencePublishedRecoveryAuthority
     "published recovery runtime authority changed",
   );
   return current;
+}
+
+/** Recheck the retained published-recovery row and command endpoint without runtime inspection. */
+export function assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+): void {
+  requireCurrentSandboxAuthority(provider, sandbox, prepared, "destroy");
+  const assertTransactionCurrent = prepared.assertPublishedRecoveryTransactionCurrent;
+  if (!assertTransactionCurrent) {
+    fail("published recovery transaction currentness is missing");
+  }
+  assertTransactionCurrent();
 }
 
 export function confirmHostLocalInferenceAuthority(
@@ -728,7 +769,10 @@ export function retirePreparedHostLocalInferenceAuthority(
 ): HostLocalInferenceRetirementResult {
   const runtime = confirmHostLocalInferenceDestroyAuthority(provider, sandbox, prepared);
   if (sharedPeerStatus(provider, sandbox, prepared, peers) === "shared") {
-    return Object.freeze({ status: "shared" as const, receipt: prepared.receipt });
+    return Object.freeze({
+      status: "shared" as const,
+      receipt: prepared.receipt,
+    });
   }
   const result = runtime.destroy(prepared.receipt);
   requireExactReceipt(

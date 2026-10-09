@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseEnv } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
@@ -59,6 +60,17 @@ const HERMES_STRUCTURED_TOOL_SEARCH = {
   search_default_limit: 5,
   max_search_limit: 20,
 };
+
+it("uses a resolvable credential in every native NVIDIA inference configuration", () => {
+  const { config } = runConfigScript({
+    NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
+    NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+  });
+  const placeholder = "${NVIDIA_INFERENCE_API_KEY}";
+  expect(config.model.api_key).toBe(placeholder);
+  expect(config.providers["nvidia-prod"].api_key).toBe(placeholder);
+  expect(config.custom_providers[0].api_key).toBe(placeholder);
+});
 
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
@@ -180,16 +192,12 @@ function runConfigScriptRaw(
 ) {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
   const env = buildHermesTestEnv(envOverrides);
-  return spawnSync(
-    process.execPath,
-    ["--experimental-strip-types", opts.scriptPath || SCRIPT_PATH],
-    {
-      encoding: "utf-8",
-      cwd: opts.cwd,
-      env,
-      timeout: 10_000,
-    },
-  );
+  return spawnSync(process.execPath, [opts.scriptPath || SCRIPT_PATH], {
+    encoding: "utf-8",
+    cwd: opts.cwd,
+    env,
+    timeout: 10_000,
+  });
 }
 
 function expectGenerationError(
@@ -251,6 +259,14 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   fs.copyFileSync(
     path.join(import.meta.dirname, "../..", "src", "lib", "hermes-managed-route.ts"),
     path.join(fixtureRoot, "src", "lib", "hermes-managed-route.ts"),
+  );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", "src", "lib", "inference-credential.ts"),
+    path.join(fixtureRoot, "src", "lib", "inference-credential.ts"),
+  );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
+    path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
   );
   return fixtureScriptPath;
 }
@@ -475,14 +491,16 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("API_SERVER_KEY=");
   });
 
-  it("configures Hermes' native Tavily backend with an egress-resolved credential", () => {
+  it("omits the Tavily credential from the generated dotenv when web search is enabled", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      TAVILY_API_KEY: "build-only-test-credential",
     });
 
     expect(config.web).toEqual({ backend: "tavily" });
-    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(parseEnv(envFile).TAVILY_API_KEY).toBeUndefined();
+    expect(envFile).not.toContain("build-only-test-credential");
     expect(findRawSecretEnvEntries(envFile)).toEqual([]);
   });
 
@@ -831,7 +849,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.web).toEqual({ backend: "tavily" });
     expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
     expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
-    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(envFile).not.toContain("TAVILY_API_KEY=");
     expect(envFile).not.toContain("FIRECRAWL_GATEWAY_URL=");
     expect(envFile).toContain(
       "OPENAI_AUDIO_GATEWAY_URL=http://host.openshell.internal:11436/openai-audio\n",

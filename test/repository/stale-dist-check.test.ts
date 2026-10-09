@@ -129,7 +129,7 @@ describe("stale-dist-check", () => {
     writeFile(path.join(root, "dist", "lib", "stale-dist-check.js"), "", 1_000_000);
 
     const runHook = () =>
-      spawnSync(process.execPath, ["--experimental-strip-types", fixtureEntry], {
+      spawnSync(process.execPath, [fixtureEntry], {
         cwd: os.tmpdir(),
         encoding: "utf8",
         env: { ...process.env, NODE_OPTIONS: "" },

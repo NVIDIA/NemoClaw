@@ -42,7 +42,6 @@ const POLICY_PRESETS: PresetInfo[] = [
 
 let logSpy: MockInstance;
 let errSpy: MockInstance;
-let exitSpy: MockInstance;
 let promptMock: MockInstance;
 let getSandboxMock: MockInstance;
 let getAppliedPresetsMock: MockInstance;
@@ -89,7 +88,7 @@ beforeEach(() => {
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
 
@@ -105,9 +104,9 @@ beforeEach(() => {
   );
 
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
-  vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
-  getAppliedPresetsMock = vi.spyOn(policies, "getAppliedPresets").mockReturnValue([]);
-  getGatewayPresetsMock = vi.spyOn(policies, "getGatewayPresets").mockReturnValue(null);
+  vi.spyOn(policies, "listCustomPresets").mockResolvedValue([]);
+  getAppliedPresetsMock = vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([]);
+  getGatewayPresetsMock = vi.spyOn(policies, "getGatewayPresets").mockResolvedValue(null);
   selectFromListMock = vi.spyOn(policies, "selectFromList").mockResolvedValue("pypi");
   selectForRemovalMock = vi.spyOn(policies, "selectForRemoval").mockResolvedValue("pypi");
   vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
@@ -116,12 +115,12 @@ beforeEach(() => {
   });
   loadPresetForSandboxMock = vi
     .spyOn(policies, "loadPresetForSandbox")
-    .mockImplementation((_sandboxName: unknown, name: unknown) => {
+    .mockImplementation(async (_sandboxName: unknown, name: unknown) => {
       const presetName = String(name);
       return `network_policies:\n  ${presetName}:\n    name: ${presetName}\n    endpoints:\n      - host: ${presetName}.example.com\n        port: 443\n        protocol: rest\n        rules:\n          - allow: { method: GET, path: "/**" }\n`;
     });
-  applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
-  removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
+  applyPresetMock = vi.spyOn(policies, "applyPreset").mockResolvedValue(true);
+  removePresetMock = vi.spyOn(policies, "removePreset").mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -332,15 +331,31 @@ describe("addSandboxPolicy", () => {
     },
   );
 
-  it("prints Discord validation guidance when the preset name is provided", async () => {
+  it("prints Hermes Python Discord validation guidance when the preset name is provided", async () => {
+    arrangeSandbox("hermes");
+
     await addSandboxPolicy("test-sandbox", { preset: "discord", yes: true });
 
     expect(printedText()).toContain("curl is not in the preset binary allowlist");
-    expect(printedText()).toContain("Node HTTPS");
+    expect(printedText()).toContain("nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c");
+    expect(printedText()).toContain("except urllib.error.HTTPError as error: print(error.code)");
+    expect(printedText()).toContain("Any HTTP response confirms reachability");
+    expect(printedText()).not.toContain("prints 200 on success");
+    expect(printedText()).not.toMatch(/^\/opt\/hermes\/\.venv\/bin\/python -c/mu);
+    expect(printedText()).not.toContain("node -e");
     expect(promptMock).not.toHaveBeenCalled();
     expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord", {
       suppressDisclosure: true,
     });
+  });
+
+  it("prints OpenClaw Node Discord validation guidance without the Hermes probe", async () => {
+    arrangeSandbox("openclaw");
+
+    await addSandboxPolicy("test-sandbox", { preset: "discord", yes: true });
+
+    expect(printedText()).toContain("node -e");
+    expect(printedText()).not.toContain("/opt/hermes/.venv/bin/python");
   });
 
   it("does not print messaging guidance when a non-messaging preset is selected", async () => {

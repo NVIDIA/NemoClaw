@@ -831,7 +831,7 @@ function normalizeWindowsIdentityValue(value: string): string {
 
 function commandLineHasExactArgument(commandLine: string, expected: string): boolean {
   const escaped = normalizeWindowsIdentityValue(expected).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return new RegExp(`(?:^|[\\s\"])${escaped}(?=$|[\\s\"])`, "u").test(
+  return new RegExp(`(?:^|[\\s"])${escaped}(?=$|[\\s"])`, "u").test(
     normalizeWindowsIdentityValue(commandLine),
   );
 }
@@ -845,7 +845,7 @@ function commandLineHasExactArgumentPair(
   const pair = [first, second]
     .map((value) => normalizeWindowsIdentityValue(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
     .join('[\\s"]+');
-  return new RegExp(`(?:^|[\\s\"])${pair}(?=$|[\\s\"])`, "u").test(normalized);
+  return new RegExp(`(?:^|[\\s"])${pair}(?=$|[\\s"])`, "u").test(normalized);
 }
 
 export function sameWindowsProcessIdentity(
@@ -1167,13 +1167,11 @@ writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
     mode: "local",
     port: Number(port),
     controlUi: {
-      allowInsecureAuth: true,
-      dangerouslyDisableDeviceAuth: false,
       allowedOrigins: ["http://127.0.0.1:" + port],
     },
     trustedProxies: ["127.0.0.1", "::1"],
     auth: { token: "" },
-    reload: { mode: "hot" },
+    reload: { mode: "off" },
   },
 }), "utf8");
 
@@ -1336,7 +1334,7 @@ async function observeWindowsProcessIdentity(
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$process = Get-CimInstance Win32_Process -Filter \"ProcessId = ${processId}\" -ErrorAction Stop; if ($null -eq $process) { exit 3 }; $process | Select-Object ProcessId, ParentProcessId, ExecutablePath, CommandLine, CreationDate | ConvertTo-Json -Compress`,
+      `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${processId}" -ErrorAction Stop; if ($null -eq $process) { exit 3 }; $process | Select-Object ProcessId, ParentProcessId, ExecutablePath, CommandLine, CreationDate | ConvertTo-Json -Compress`,
     ],
     environment,
     progress,

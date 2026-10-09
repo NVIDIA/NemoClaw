@@ -94,9 +94,12 @@ export function isSubprocessEnvNameAllowed(name: string): boolean {
  */
 export { withLocalNoProxy };
 
-export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
+export function buildSubprocessEnvFrom(
+  source: NodeJS.ProcessEnv,
+  extra?: Record<string, string>,
+): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     if (isSubprocessEnvNameAllowed(key)) {
       env[key] = value;
@@ -107,6 +110,44 @@ export function buildSubprocessEnv(extra?: Record<string, string>): Record<strin
   }
   withLocalNoProxy(env);
   return env;
+}
+
+/**
+ * Build the environment for a Docker CLI command against one explicit
+ * authority. The default authority keeps its context and config selection.
+ * An explicit socket removes both unless the caller proves it was resolved
+ * from the selected context and still needs that context's config directory.
+ */
+export function buildDockerSubprocessEnv(
+  source: NodeJS.ProcessEnv,
+  dockerHost: string | undefined,
+  extra?: Record<string, string>,
+  options: { preserveDockerConfig?: boolean } = {},
+): Record<string, string> {
+  const env = buildSubprocessEnvFrom(source, extra);
+  delete env.DOCKER_HOST;
+  delete env.DOCKER_CONFIG;
+  delete env.DOCKER_CONTEXT;
+  if (dockerHost === undefined) {
+    const dockerConfig = extra?.DOCKER_CONFIG ?? source.DOCKER_CONFIG;
+    const dockerContext = extra?.DOCKER_CONTEXT ?? source.DOCKER_CONTEXT;
+    if (dockerConfig !== undefined) env.DOCKER_CONFIG = dockerConfig;
+    if (dockerContext !== undefined) env.DOCKER_CONTEXT = dockerContext;
+  } else {
+    env.DOCKER_HOST = dockerHost;
+    // A selected host can still depend on its client configuration for registry
+    // credentials, certificate paths, or credential helpers. Keep the exact
+    // caller-selected directory only when the caller opts into that authority.
+    const dockerConfig = extra?.DOCKER_CONFIG ?? source.DOCKER_CONFIG;
+    if (options.preserveDockerConfig && dockerConfig !== undefined) {
+      env.DOCKER_CONFIG = dockerConfig;
+    }
+  }
+  return env;
+}
+
+export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {
+  return buildSubprocessEnvFrom(process.env, extra);
 }
 
 // Names a Node.js child process needs to start and to resolve its own state

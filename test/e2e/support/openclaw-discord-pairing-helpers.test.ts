@@ -21,6 +21,7 @@ import {
   listenOnLoopback,
 } from "./fixtures/slack-forward-proxy.ts";
 import {
+  buildPairingAllowFromCommand,
   buildPairingApproveCommand,
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
@@ -28,6 +29,7 @@ import {
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
+import { waitForDiscordGatewayPort as waitForPort } from "./fixtures/discord-gateway-port";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const REVISIONED_DISCORD_PLACEHOLDER = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
@@ -71,18 +73,6 @@ function encodeClientText(payload: string): Buffer {
     .find(({ max }) => body.length <= max)
     ?.encode(body.length);
   return Buffer.concat([header ?? Buffer.alloc(0), mask, masked]);
-}
-
-async function waitForPort(portFile: string): Promise<number> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    try {
-      return Number(fs.readFileSync(portFile, "utf8").trim());
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  throw new Error("fake Discord Gateway did not write a port file");
 }
 
 async function sendDiscordIdentify(port: number, token: string): Promise<void> {
@@ -194,26 +184,24 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     const user = "user`touch /tmp/e2e-should-not-run`";
 
     const pendingCommand = buildPairingPendingCommand("discord", code, user);
+    const allowFromCommand = buildPairingAllowFromCommand("discord", user);
     const approveCommand = buildPairingApproveCommand("discord", code);
 
-    expect(pendingCommand).toContain("'abc$(touch /tmp/e2e-should-not-run)'");
-    expect(pendingCommand).toContain("'user`touch /tmp/e2e-should-not-run`'");
+    expect(pendingCommand).toContain(`'${JSON.stringify(["discord", code, user])}'`);
+    expect(pendingCommand).toContain("channel_pairing_requests");
+    expect(allowFromCommand).toContain("channel_pairing_allow_entries");
+    expect(allowFromCommand).toContain(`'${JSON.stringify(["discord", user])}'`);
     expect(approveCommand).toContain("'abc$(touch /tmp/e2e-should-not-run)'");
-    expect(pendingCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
+    expect(pendingCommand).not.toContain("pairing.json");
+    expect(allowFromCommand).not.toContain("allowFrom.json");
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 
-  it("finds the active OpenClaw package when shell startup shadows openclaw with a function", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-shadowed-"));
+  it("loads the managed OpenClaw package without starting a child shell", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-managed-root-"));
     try {
       const packageRoot = path.join(tmp, "openclaw-package");
-      const packageBin = path.join(packageRoot, "bin");
-      const pathBin = path.join(tmp, "path-bin");
-      const home = path.join(tmp, "home");
       const runtimeDir = path.join(packageRoot, "dist/plugin-sdk");
-      fs.mkdirSync(packageBin, { recursive: true });
-      fs.mkdirSync(pathBin, { recursive: true });
-      fs.mkdirSync(home, { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.writeFileSync(
         path.join(packageRoot, "package.json"),
@@ -221,27 +209,75 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
       fs.writeFileSync(
         path.join(runtimeDir, "conversation-runtime.js"),
-        "export const issuePairingChallenge = true;\n",
+        "export const issuePairingChallenge = () => true;\n",
       );
-      fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
-      fs.writeFileSync(
-        path.join(home, ".bashrc"),
-        "openclaw() { echo shadowed-shell-function; }\nexport -f openclaw\n",
-      );
-
       const result = spawnSync(process.execPath, ["--input-type=module"], {
-        input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nconst runtime = await loadConversationRuntime();\nconsole.log(runtime.issuePairingChallenge);\n`,
+        input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nconst runtime = await loadConversationRuntime();\nconsole.log(typeof runtime.issuePairingChallenge);\n`,
         encoding: "utf8",
         env: {
           ...process.env,
-          BASH_ENV: path.join(home, ".bashrc"),
-          PATH: `${pathBin}:${process.env.PATH ?? ""}`,
+          NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT: packageRoot,
         },
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("true");
+      expect(result.stdout).toContain("function");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adapts the OpenClaw 2026.9.1 split channel-pairing runtime", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-split-pairing-"));
+    try {
+      const packageRoot = path.join(tmp, "openclaw-package");
+      const runtimeDir = path.join(packageRoot, "dist/plugin-sdk");
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({ name: "openclaw", type: "module" }),
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "conversation-runtime.js"),
+        "export const upsertChannelPairingRequest = async (params) => ({ code: params.id + '-CODE', created: true });\n",
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "channel-pairing.js"),
+        [
+          "export function createChannelPairingChallengeIssuer(bound) {",
+          "  return async (challenge) => {",
+          "    const stored = await bound.upsertPairingRequest({ id: challenge.senderId, meta: challenge.meta });",
+          "    await challenge.sendPairingReply(stored.code);",
+          "    return stored;",
+          "  };",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}
+const runtime = await loadConversationRuntime();
+let reply = "";
+const paired = await runtime.issuePairingChallenge({
+  channel: "discord",
+  accountId: "default",
+  senderId: "U1",
+  senderIdLine: "Discord user id: U1",
+  meta: { channelId: "D1" },
+  upsertPairingRequest: ({ id, meta }) => runtime.upsertChannelPairingRequest({ channel: "discord", accountId: "default", id, meta }),
+  sendPairingReply: async (text) => { reply = text; },
+});
+console.log(JSON.stringify({ paired, reply }));
+`,
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT: packageRoot },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        paired: { code: "U1-CODE", created: true },
+        reply: "U1-CODE",
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -251,21 +287,15 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-missing-"));
     try {
       const packageRoot = path.join(tmp, "openclaw-package");
-      const packageBin = path.join(packageRoot, "bin");
-      const pathBin = path.join(tmp, "path-bin");
-      fs.mkdirSync(packageBin, { recursive: true });
-      fs.mkdirSync(pathBin, { recursive: true });
+      fs.mkdirSync(packageRoot, { recursive: true });
       fs.writeFileSync(
         path.join(packageRoot, "package.json"),
         JSON.stringify({ name: "openclaw" }),
       );
-      fs.writeFileSync(path.join(packageBin, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      fs.symlinkSync(path.join(packageBin, "openclaw"), path.join(pathBin, "openclaw"));
-
       const result = spawnSync(process.execPath, ["--input-type=module"], {
         input: `${LOAD_CONVERSATION_RUNTIME_SOURCE}\nawait loadConversationRuntime();\n`,
         encoding: "utf8",
-        env: { ...process.env, PATH: `${pathBin}:${process.env.PATH ?? ""}` },
+        env: { ...process.env, NEMOCLAW_E2E_OPENCLAW_PACKAGE_ROOT: packageRoot },
       });
 
       expect(result.status).not.toBe(0);
@@ -274,8 +304,6 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
       expect(result.stderr).toEqual(expect.stringContaining(packageRoot));
       expect(result.stderr).toEqual(expect.not.stringContaining("/usr/local/bin/openclaw"));
-      expect(result.stderr).toEqual(expect.not.stringContaining("/usr/bin/openclaw"));
-      expect(result.stderr).toEqual(expect.not.stringContaining("shadowed-shell-function"));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -387,24 +415,14 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(SLACK_PAIRING_SCRIPT).toContain(
       'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
     );
-    expect(SLACK_PAIRING_SCRIPT).toContain(
-      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
-    );
+    expect(SLACK_PAIRING_SCRIPT).toContain('parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")');
   });
 
   it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
-    expect(SLACK_PAIRING_SCRIPT).toContain(
-      'parseManagedCredentialReference("SLACK_APP_TOKEN")',
-    );
-    expect(SLACK_PAIRING_SCRIPT).toContain(
-      'parseManagedCredentialReference("SLACK_BOT_TOKEN")',
-    );
-    expect(SLACK_PAIRING_SCRIPT).not.toContain(
-      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    );
-    expect(SLACK_PAIRING_SCRIPT).not.toContain(
-      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-    );
+    expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_APP_TOKEN")');
+    expect(SLACK_PAIRING_SCRIPT).toContain('parseManagedCredentialReference("SLACK_BOT_TOKEN")');
+    expect(SLACK_PAIRING_SCRIPT).not.toContain("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+    expect(SLACK_PAIRING_SCRIPT).not.toContain("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
   });
 
   it.each([
@@ -425,6 +443,19 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     );
     expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
     expect(result.stderr).not.toContain("xapp-raw-slack-token");
+  });
+
+  it("waits for a complete Discord gateway port file", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-port-publication-"));
+    const portFile = path.join(tmp, "port");
+    try {
+      fs.writeFileSync(portFile, "");
+      const observed = waitForPort(portFile);
+      fs.writeFileSync(portFile, "43210\n");
+      await expect(observed).resolves.toBe(43210);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {

@@ -1,12 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createCliOpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle-cli";
+import { createCliOpenShellGatewayReuseObserver } from "../adapters/openshell/gateway-reuse-cli";
+import {
+  createCliOpenShellInferenceRouteMutator,
+  createCliOpenShellInferenceRouteObserver,
+} from "../adapters/openshell/inference-route-cli";
 import { processTreeBoundedOpenshellInvocation } from "../adapters/openshell/process-tree-timeout";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { ROOT, run, runCapture, shellQuote } from "../runner";
 import {
   type CaptureOpenshellOptions,
   type CaptureOpenshellResult,
+  captureSandboxRecreateOpenshellCommandAsync,
   captureSandboxRecreateOpenshellCommand,
 } from "./sandbox-recreate-probe";
 
@@ -20,11 +27,16 @@ export interface OpenshellCliDeps {
   setCachedBinary(binary: string): void;
   getGatewayPort(): number;
   getDockerDriverGatewayEndpoint(): string;
+  redactDiagnostic?(value: string): string;
   runCommand?: typeof run;
   runCaptureCommand?: typeof runCapture;
 }
 
 export interface OpenshellCliHelpers {
+  gatewayLifecycleAdapter: ReturnType<typeof createCliOpenShellGatewayLifecycle>;
+  gatewayReuseAdapter: ReturnType<typeof createCliOpenShellGatewayReuseObserver>;
+  inferenceRouteMutator: ReturnType<typeof createCliOpenShellInferenceRouteMutator>;
+  inferenceRouteObserver: ReturnType<typeof createCliOpenShellInferenceRouteObserver>;
   getOpenshellBinary(): string;
   openshellShellCommand(args: string[], options?: { openshellBinary?: string }): string;
   openshellArgv(args: string[], options?: { openshellBinary?: string }): string[];
@@ -114,7 +126,26 @@ export function createOpenshellCliHelpers(deps: OpenshellCliDeps): OpenshellCliH
     return safeOpenShellArgument(deps.getDockerDriverGatewayEndpoint(), "gateway endpoint");
   }
 
+  const captureInferenceRoute = (
+    args: string[],
+    options: Parameters<typeof captureSandboxRecreateOpenshellCommandAsync>[2],
+  ) =>
+    captureSandboxRecreateOpenshellCommandAsync(getOpenshellBinary(), args, {
+      ...options,
+      cwd: ROOT,
+      signalSource: {
+        add: (signal, listener) => process.on(signal, listener),
+        remove: (signal, listener) => process.removeListener(signal, listener),
+      },
+    });
+
   return {
+    gatewayLifecycleAdapter: createCliOpenShellGatewayLifecycle(captureOpenshell),
+    gatewayReuseAdapter: createCliOpenShellGatewayReuseObserver(captureOpenshell),
+    inferenceRouteMutator: createCliOpenShellInferenceRouteMutator(captureInferenceRoute, {
+      redactDiagnostic: deps.redactDiagnostic,
+    }),
+    inferenceRouteObserver: createCliOpenShellInferenceRouteObserver(captureInferenceRoute),
     getOpenshellBinary,
     openshellShellCommand,
     openshellArgv,

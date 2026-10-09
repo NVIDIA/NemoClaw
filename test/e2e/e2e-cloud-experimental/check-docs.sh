@@ -461,10 +461,11 @@ run_install_check() {
   local BOOTSTRAP_SH="$REPO_ROOT/install.sh"
   local PAYLOAD_SH="$REPO_ROOT/scripts/install.sh"
 
-  # The providers list has moved between layouts; tolerate both the legacy
-  # flat path and the post-refactor layered path.
+  # The provider definition has moved between layouts. Prefer the shared
+  # selection-key owner, then tolerate both legacy provider-module paths.
   local PROVIDERS_TS=""
   for _candidate in \
+    "$REPO_ROOT/src/lib/onboard/inference-providers/provider-selection-keys.ts" \
     "$REPO_ROOT/src/lib/onboard/providers.ts" \
     "$REPO_ROOT/src/lib/onboard-providers.ts"; do
     if [[ -f "$_candidate" ]]; then
@@ -483,12 +484,25 @@ run_install_check() {
   fi
 
   log "[install] comparing: NEMOCLAW_PROVIDER values in install.sh + scripts/install.sh"
-  log "[install]        vs: ${PROVIDERS_TS#"$REPO_ROOT"/} canonical 'Valid values' list"
+  log "[install]        vs: ${PROVIDERS_TS#"$REPO_ROOT"/} canonical provider list"
 
-  # The canonical values live in a single error-message line that lists every
-  # accepted NEMOCLAW_PROVIDER input. Extract the comma-separated payload.
+  # Read the shared TypeScript owner when present. Legacy layouts keep the
+  # canonical values in one error-message line.
   local _canonical
-  _canonical="$(grep -oE 'Valid values: [^"]+' "$PROVIDERS_TS" | head -1 | sed 's/^Valid values: //')"
+  if [[ "$PROVIDERS_TS" == */provider-selection-keys.ts ]]; then
+    _canonical="$(
+      "$NODE" --no-warnings --input-type=module -e '
+        import { pathToFileURL } from "node:url";
+        const source = await import(pathToFileURL(process.argv[1]).href);
+        const prefix = "Valid values: ";
+        const value = source.NON_INTERACTIVE_PROVIDER_VALID_VALUES;
+        if (typeof value !== "string" || !value.startsWith(prefix)) process.exit(1);
+        process.stdout.write(value.slice(prefix.length));
+      ' "$PROVIDERS_TS"
+    )"
+  else
+    _canonical="$(grep -oE 'Valid values: [^"]+' "$PROVIDERS_TS" | head -1 | sed 's/^Valid values: //')"
+  fi
   if [[ -z "$_canonical" ]]; then
     echo "check-docs: [install] could not locate canonical provider list in $PROVIDERS_TS" >&2
     return 1
@@ -613,8 +627,9 @@ run_install_check() {
     return 1
   fi
 
-  local _doc_provider_row _doc_provider_values
-  _doc_provider_row="$(grep -F "| \`NEMOCLAW_PROVIDER\` |" "$COMMANDS_REF" || true)"
+  local _doc_provider_row _doc_provider_values _backtick
+  _backtick="$(printf '\140')"
+  _doc_provider_row="$(grep -E "\|[[:space:]]*${_backtick}NEMOCLAW_PROVIDER${_backtick}[[:space:]]*\|" "$COMMANDS_REF" || true)"
   if [[ -z "$_doc_provider_row" ]]; then
     echo "check-docs: [install] no NEMOCLAW_PROVIDER row found in ${COMMANDS_REF#"$REPO_ROOT"/}" >&2
     _drift=1

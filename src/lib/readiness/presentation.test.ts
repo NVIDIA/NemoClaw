@@ -46,6 +46,24 @@ function report(
 }
 
 describe("public readiness presentation (#7412)", () => {
+  it("identifies the unattempted CUDA proof in a read-only WSL host probe (#12817)", () => {
+    const strictReport = report({
+      findings: [
+        {
+          id: "host.platform.wsl_gpu_passthrough_inconclusive",
+          severity: "warning",
+          summary: "Configured container-provider WSL GPU passthrough could not be proven.",
+        },
+      ],
+    });
+
+    const publicReport = createPublicHostProbeReadinessReport(strictReport);
+
+    expect(publicReport.findings[0]?.summary).toContain("did not run the container CUDA proof");
+    expect(strictReport.findings[0]?.summary).toContain("could not be proven");
+    expect(publicReport).toMatchObject({ mutated: false });
+  });
+
   it("rejects reports that claim host mutation", () => {
     const mutatedReport = { ...report(), mutated: true } as unknown as SystemReadinessReport;
 
@@ -159,22 +177,22 @@ describe("public readiness presentation (#7412)", () => {
     });
   });
 
-  it.each([
-    `nvapi-${"a".repeat(24)}`,
-    "not-a-source-revision",
-  ])("rejects the invalid source revision %s (#7777)", (sourceRevision) => {
-    expect(() =>
-      createPublicReadinessReport(
-        report({
-          provenance: {
-            nemoclawVersion: "0.1.0",
-            observedAt: "2026-06-01T12:00:00.000Z",
-            sourceRevision,
-          },
-        }),
-      ),
-    ).toThrow("NemoClaw build identity has an invalid source revision.");
-  });
+  it.each([`nvapi-${"a".repeat(24)}`, "not-a-source-revision"])(
+    "rejects the invalid source revision %s (#7777)",
+    (sourceRevision) => {
+      expect(() =>
+        createPublicReadinessReport(
+          report({
+            provenance: {
+              nemoclawVersion: "0.1.0",
+              observedAt: "2026-06-01T12:00:00.000Z",
+              sourceRevision,
+            },
+          }),
+        ),
+      ).toThrow("NemoClaw build identity has an invalid source revision.");
+    },
+  );
 
   it("rejects a described version that names a different source revision (#7777)", () => {
     expect(() =>
@@ -270,6 +288,24 @@ describe("public readiness presentation (#7412)", () => {
     expect(serialized).not.toContain("envVars");
     expect(publicReport.evidence[0]?.summary.length).toBeLessThanOrEqual(1024);
     expect(String(publicReport.evidence[0]?.details?.stderr).length).toBeLessThanOrEqual(1024);
+  });
+
+  it.each([
+    { label: "single quote", quote: "'" },
+    { label: "double quote", quote: '"' },
+  ])("redacts URL credentials split by a $label at the public boundary", ({ quote }) => {
+    const publicReport = createPublicReadinessReport(
+      report({
+        evidence: [
+          {
+            id: "host.probe.output",
+            summary: `https://service-user:service-password${quote}opaque@example.test/path`,
+          },
+        ],
+      }),
+    );
+
+    expect(publicReport.evidence[0]?.summary).toBe("https://example.test/path");
   });
 
   it("neutralizes terminal and bidirectional controls across the public report", () => {

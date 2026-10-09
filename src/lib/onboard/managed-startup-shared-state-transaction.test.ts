@@ -188,11 +188,10 @@ describe("managed startup shared-state transaction", () => {
         fs.chmodSync(target, 0o600);
       });
       const createManagedDrift: Record<ManagedStartupAgent, () => void> = {
-        openclaw: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
+        openclaw: () => undefined,
         hermes: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
         "langchain-deepagents-code": () => {
           fs.mkdirSync(path.join(root, ".state"));
-          fs.mkdirSync(path.join(root, "skills"));
         },
         pi: () => {
           fs.mkdirSync(path.join(root, "agent"));
@@ -211,9 +210,9 @@ describe("managed startup shared-state transaction", () => {
       });
       expect(mode(root)).toBe(0o750);
       const absentManagedPaths: Record<ManagedStartupAgent, readonly string[]> = {
-        openclaw: [".config-hash"],
+        openclaw: [],
         hermes: [".config-hash"],
-        "langchain-deepagents-code": [".state", "skills"],
+        "langchain-deepagents-code": [".state"],
         pi: ["agent", path.join("agent", "models.json")],
       };
       expect(
@@ -325,16 +324,16 @@ describe("managed startup shared-state transaction", () => {
     );
   });
 
-  it("retains the no-mounted-state-root boundary for other agents", () => {
+  it("accepts the exact declared OpenClaw state root mount", () => {
     const root = agentRoot("openclaw");
     fs.mkdirSync(root);
     fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
     simulateMountedStateRoot(root);
 
-    expect(() =>
+    expect(
       beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options),
-    ).toThrow(/crosses a nested filesystem mount/u);
-    expect(fs.existsSync(transactionDirectory)).toBe(false);
+    ).toBe(true);
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
   });
 
   it("tracks only active post-install messaging outputs and leaves disabled targets alone", () => {
@@ -839,11 +838,11 @@ describe("managed startup shared-state transaction", () => {
     expect(fs.existsSync(transactionDirectory)).toBe(false);
   });
 
-  it("does not rewrite unchanged shield-like files or directory metadata", () => {
+  it("does not rewrite unchanged files or directory metadata", () => {
     const root = agentRoot("openclaw");
     fs.mkdirSync(root, { mode: 0o755 });
     const config = path.join(root, "openclaw.json");
-    fs.writeFileSync(config, "shielded\n");
+    fs.writeFileSync(config, "unchanged\n");
     fs.chmodSync(config, 0o444);
     beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options);
     const rename = vi.spyOn(fs, "renameSync");
@@ -852,7 +851,7 @@ describe("managed startup shared-state transaction", () => {
     expect(rollbackManagedStartupSharedStateTransaction("openclaw", options)).toBe(true);
     expect(rename).not.toHaveBeenCalled();
     expect(chown).not.toHaveBeenCalled();
-    expect(fs.readFileSync(config, "utf8")).toBe("shielded\n");
+    expect(fs.readFileSync(config, "utf8")).toBe("unchanged\n");
     expect(mode(config)).toBe(0o444);
   });
 

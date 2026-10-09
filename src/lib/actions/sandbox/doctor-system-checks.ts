@@ -1,21 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
+import { GATEWAY_PORT } from "../../core/ports";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
-import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
+import {
+  type OllamaHostInventoryProbeOptions,
+  probeOllamaHostInventory,
+} from "../../inference/health";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   resolveCurrentRuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import { qualifyPortableAgentLifecycleAuthority } from "../../onboard/experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import type { SandboxEntry } from "../../state/registry";
-import { readCloudflaredState } from "../../tunnel/services";
+import {
+  findHostUnmanagedCloudflaredPids,
+  migrateLegacyCloudflaredState,
+  readCloudflaredState,
+  resolveTunnelPidDir,
+} from "../../tunnel/services";
 import {
   buildGatewayInspectFailureChecks,
   type GatewayInspectOptions,
@@ -23,7 +30,11 @@ import {
 import { captureHostCommand } from "./doctor-host-command";
 import type { DoctorCheck } from "./doctor-report";
 
-export const withSandboxDoctorLifecycleLock = withMcpLifecycleLock;
+export const withSandboxDoctorLifecycleLock = withSandboxLifecycleLock;
+
+export function gatewayDoctorStartHint(gatewayName: string): string {
+  return `${gatewayStartGuidance(gatewayName)} Then retry this command.`;
+}
 
 export function inspectSandboxDoctorPortableAuthority(
   sandboxName: string,
@@ -150,8 +161,64 @@ function staleCloudflaredPidCheck(pid: number): DoctorCheck {
   };
 }
 
-export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
-  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+function unverifiedCloudflaredPidCheck(pid: number): DoctorCheck {
+  return {
+    group: "Local services",
+    label: "cloudflared",
+    status: "warn",
+    detail: `PID ${pid}, identity unavailable`,
+    hint: "process identity is unavailable; restore process inspection access, then retry",
+  };
+}
+
+function legacyCloudflaredMigrationWarning(
+  sandboxName: string,
+  gatewayPort: number,
+  migrateState: typeof migrateLegacyCloudflaredState,
+): DoctorCheck | null {
+  try {
+    migrateState({ sandboxName, gatewayPort });
+    return null;
+  } catch (error) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: error instanceof Error ? error.message : "legacy cloudflared migration failed",
+      hint: `inspect each process and stop only the unintended one, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
+    };
+  }
+}
+
+export function cloudflaredDoctorCheck(
+  sandboxName: string,
+  gatewayPort: number = GATEWAY_PORT,
+  readState: typeof readCloudflaredState = readCloudflaredState,
+  migrateState: typeof migrateLegacyCloudflaredState = migrateLegacyCloudflaredState,
+): DoctorCheck {
+  const usesProductionState = readState === readCloudflaredState;
+  if (usesProductionState) {
+    const warning = legacyCloudflaredMigrationWarning(sandboxName, gatewayPort, migrateState);
+    if (warning) return warning;
+  }
+  const state = readState(resolveTunnelPidDir({ gatewayPort }));
+  const managedPid =
+    state.kind === "stale-pid-process" || state.kind === "unverified-pid-process"
+      ? state.pid
+      : null;
+  const unmanagedPids =
+    usesProductionState && state.kind !== "running"
+      ? findHostUnmanagedCloudflaredPids(managedPid)
+      : [];
+  if (unmanagedPids.length > 0) {
+    return {
+      group: "Local services",
+      label: "cloudflared",
+      status: "warn",
+      detail: `unmanaged PID${unmanagedPids.length === 1 ? "" : "s"} ${unmanagedPids.join(", ")}`,
+      hint: "cloudflared is running without NemoClaw ownership; stop it through its process manager before running `nemoclaw tunnel start`",
+    };
+  }
   switch (state.kind) {
     case "stopped":
       return stoppedCloudflaredCheck();
@@ -159,6 +226,8 @@ export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
       return staleCloudflaredPidFileCheck();
     case "stale-pid-process":
       return staleCloudflaredPidCheck(state.pid);
+    case "unverified-pid-process":
+      return unverifiedCloudflaredPidCheck(state.pid);
     case "running":
       return {
         group: "Local services",
@@ -169,36 +238,29 @@ export function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
   }
 }
 
-export function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
-  const endpoint = `http://127.0.0.1:${OLLAMA_PORT}/api/tags`;
-  const result = captureHostCommand(
-    "curl",
-    buildValidatedCurlCommandArgs(["-sS", "--connect-timeout", "2", "--max-time", "4", endpoint]),
-    6000,
-  );
+export type OllamaDoctorCheckDeps = OllamaHostInventoryProbeOptions;
+
+export function ollamaDoctorCheck(
+  currentProvider: string,
+  deps: OllamaDoctorCheckDeps = {},
+): DoctorCheck {
+  const { endpoint, inventory } = probeOllamaHostInventory(deps);
   const required = currentProvider === "ollama-local";
-  if (result.status !== 0) {
+  if (inventory === null) {
     return {
       group: "Local services",
       label: "Ollama",
       status: required ? "fail" : "info",
-      detail: `not reachable at ${endpoint}`,
+      detail: `not reachable or invalid response at ${endpoint}`,
       hint: required ? "start Ollama or change the sandbox inference provider" : undefined,
     };
   }
 
-  let modelCount = "unknown model count";
-  try {
-    const parsed = JSON.parse(result.stdout);
-    if (Array.isArray(parsed.models)) modelCount = `${parsed.models.length} model(s)`;
-  } catch {
-    /* keep generic detail */
-  }
   return {
     group: "Local services",
     label: "Ollama",
     status: "ok",
-    detail: `reachable at ${endpoint} (${modelCount})`,
+    detail: `reachable at ${endpoint} (${inventory.length} model(s))`,
   };
 }
 

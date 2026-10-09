@@ -1,13 +1,100 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
+import { defaultInferenceGatewayRestart } from "./inference-set-gateway-restart";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
+const nativeNvidiaReceipt = {
+  schemaVersion: 1 as const,
+  profileId: "nemoclaw-nvidia-inference-v1" as const,
+  providerName: "nemoclaw-nvidia-prod-v1" as const,
+  providerId: "11111111-2222-4333-8444-555555555555",
+};
+
 describe("runInferenceSet OpenClaw gateway restart", () => {
-  it("supervisor-restarts OpenClaw after cross-family sync despite an audit failure (#4504)", async () => {
+  it("pins restart readiness and forwards to the recorded gateway (#11764)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "other-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "route-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/route/tls");
+    const recovery: typeof import("./sandbox/process-recovery") = require("./sandbox/process-recovery");
+    const restart = vi
+      .spyOn(recovery, "restartSandboxGateway")
+      .mockResolvedValue({ ok: true, restarted: true, healthPassed: true, forwardRecovered: true });
+    await defaultInferenceGatewayRestart("alpha", "nemoclaw-9090");
+    expect(restart).toHaveBeenCalledWith("alpha", {
+      quiet: true,
+      runtimeSelection: {
+        gatewayName: "nemoclaw-9090",
+        workspace: "route-workspace",
+        localTlsDir: "/route/tls",
+      },
+    });
+  });
+
+  it("supervisor-restarts OpenClaw after a same-family config sync (#4504)", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: {
+        mode: "merge",
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            apiKey: "unused",
+            api: "openai-completions",
+            headers: {
+              "X-NemoClaw-Upstream-Provider": "nvidia-prod",
+            },
+            models: [
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                compat: { supportsStore: false },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+    });
+
+    const result = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-b", noVerify: true },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      configChanged: true,
+      inSandboxConfigSynced: true,
+      primaryModelRef: "inference/nvidia/model-b",
+    });
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
+    expect(deps.calls.log).toHaveBeenCalledWith(
+      "  Restarting the OpenClaw gateway in 'alpha' to apply the updated inference configuration...",
+    );
+    const restartOrder = deps.calls.restartSandboxGateway.mock.invocationCallOrder[0] ?? 0;
+    const pairingOrder = deps.calls.settleOpenClawPairing.mock.invocationCallOrder[0] ?? 0;
+    expect(deps.calls.setOpenClawConfigValues.mock.invocationCallOrder[0]).toBeLessThan(
+      restartOrder,
+    );
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(restartOrder).toBeLessThan(pairingOrder);
+  });
+
+  it("supervisor-restarts OpenClaw after a changed config sync (#4504)", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "openai/nvidia/model-a" } } },
       models: {
@@ -29,9 +116,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
-    });
-    deps.calls.appendAuditEntry.mockImplementationOnce(() => {
-      throw new Error("pending audit unavailable");
     });
 
     const result = await runInferenceSet(
@@ -71,7 +155,11 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         },
       },
     });
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",
@@ -81,44 +169,27 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         preferredInferenceApi: "anthropic-messages",
       }),
     ]);
-    expect(deps.getSession()).toMatchObject({
-      provider: "compatible-anthropic-endpoint",
-      model: "claude-sonnet-proxy",
-      preferredInferenceApi: "anthropic-messages",
-    });
     expect(result).toMatchObject({
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-proxy",
     });
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith({
       sandboxName: "alpha",
       gatewayName: "nemoclaw",
       openclawVersion: "",
       stateDirectory: "/sandbox/.openclaw",
     });
-    const auditReasons = deps.calls.appendAuditEntry.mock.calls.map(([entry]) =>
-      String(entry.reason),
-    );
-    expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence pending)",
-    );
-    expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence completed)",
-    );
     expect(deps.calls.log).toHaveBeenCalledWith(
       "  Inference route synced for 'alpha': anthropic/claude-sonnet-proxy",
     );
-    expect(deps.calls.log).toHaveBeenCalledWith(
-      "  Warning: could not record the post-commit inference audit entry for 'alpha'.",
-    );
     const restartOrder = deps.calls.restartSandboxGateway.mock.invocationCallOrder[0] ?? 0;
     const pairingOrder = deps.calls.settleOpenClawPairing.mock.invocationCallOrder[0] ?? 0;
-    expect(deps.calls.writeSandboxConfig.mock.invocationCallOrder[0]).toBeLessThan(restartOrder);
-    expect(deps.calls.recomputeSandboxConfigHash.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(deps.calls.setOpenClawConfigValues.mock.invocationCallOrder[0]).toBeLessThan(
       restartOrder,
     );
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(restartOrder).toBeLessThan(pairingOrder);
   });
 
@@ -129,20 +200,32 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         mode: "merge",
         providers: {
           inference: {
-            baseUrl: "https://inference.local/v1",
-            apiKey: "unused",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
             api: "openai-completions",
             headers: {
               "X-NemoClaw-Upstream-Provider": "nvidia-prod",
             },
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
+            models: [
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                compat: { supportsStore: false },
+              },
+            ],
           },
         },
       },
     };
     const deps = createDeps({
       config,
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
+      },
       session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
     });
 
@@ -179,7 +262,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         preferredInferenceApi: "anthropic-messages",
       }),
-      restartSandboxGateway: () => ({
+      restartSandboxGateway: async () => ({
         ok: false,
         failureLayer: "health timeout",
         detail: "replacement gateway did not become healthy",
@@ -196,14 +279,18 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         deps,
       ),
     ).rejects.toThrow(
-      "The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
+      "managed OpenClaw gateway restart/recovery did not complete successfully (health timeout). The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
     );
 
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
     expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledOnce();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",
@@ -211,16 +298,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
         preferredInferenceApi: "anthropic-messages",
       }),
     ]);
-    const auditReasons = deps.calls.appendAuditEntry.mock.calls.map(([entry]) =>
-      String(entry.reason),
-    );
-    expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence pending)",
-    );
-    expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (config committed; gateway restart failed: health timeout)",
-    );
-    expect(auditReasons.join("\n")).not.toContain("replacement gateway did not become healthy");
     expect(deps.calls.log.mock.calls.map(([line]) => String(line)).join("\n")).not.toContain(
       "Inference route synced",
     );
@@ -269,9 +346,13 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
 
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
     expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledOnce();
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
-    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledOnce();
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+    expect(deps.calls.setOpenClawConfigValues).toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(
+      deps.calls.updateSandbox.mock.calls
+        .filter(([, fields]) => fields.provider !== undefined)
+        .at(-1),
+    ).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-anthropic-endpoint",
@@ -280,9 +361,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     ]);
     expect(deps.calls.log.mock.calls.map(([line]) => String(line)).join("\n")).not.toContain(
       "Inference route synced",
-    );
-    expect(deps.calls.appendAuditEntry.mock.calls.map(([entry]) => String(entry.reason))).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (config committed; gateway restart completed; pairing convergence failed: approval-rejected)",
     );
   });
 
@@ -325,12 +403,6 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("pairing-operation-failed");
     expect((failure as Error).message).not.toContain("do-not-report");
-    expect(
-      deps.calls.appendAuditEntry.mock.calls.map(([entry]) => String(entry.reason)).join("\n"),
-    ).toContain("pairing convergence failed: pairing-operation-failed");
-    expect(
-      deps.calls.appendAuditEntry.mock.calls.map(([entry]) => String(entry.reason)).join("\n"),
-    ).not.toContain("do-not-report");
   });
 
   it("restarts when leaving a legacy Anthropic route without provider.api (#4504)", async () => {
@@ -364,26 +436,25 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       },
     });
 
-    await expect(
-      runInferenceSet(
+    let errorMessage = "";
+    try {
+      await runInferenceSet(
         {
           provider: "nvidia-prod",
           model: "nvidia/model-a",
           noVerify: true,
         },
         deps,
-      ),
-    ).rejects.toThrow(
-      "The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
-    );
+      );
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error);
+    }
 
-    const auditReasons = deps.calls.appendAuditEntry.mock.calls.map(([entry]) =>
-      String(entry.reason),
+    expect(errorMessage).toContain(
+      "restart/recovery did not complete successfully (restart exception). The committed route was not rolled back. Retry with 'nemoclaw alpha gateway restart'.",
     );
-    expect(auditReasons).toContain(
-      "inference set openclaw:nvidia-prod:nvidia/model-a (config committed; gateway restart failed: restart exception)",
-    );
-    expect(auditReasons.join("\n")).not.toContain("raw restart detail");
+    expect(errorMessage).not.toContain("raw restart detail must stay private");
+
     expect(deps.calls.log.mock.calls.map(([line]) => String(line)).join("\n")).not.toContain(
       "Inference route synced",
     );

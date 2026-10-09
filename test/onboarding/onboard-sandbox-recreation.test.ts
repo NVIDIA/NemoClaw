@@ -2,28 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { beforeEach, describe, it, vi } from "vitest";
+import { describe, it } from "vitest";
+import { runOnboardProcessAsync } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
 
-beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
-  vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
-});
+const ONBOARD_TEST_ENV = {
+  NEMOCLAW_SANDBOX_PREBUILD: "1",
+  NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE: "1",
+  NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
+} as const;
 
-describe("onboard helpers", () => {
+function isolatedDashboardPort(tmpDir: string): string {
+  const offset = createHash("sha256").update(tmpDir).digest().readUInt16BE(0) % 10_000;
+  return String(20_000 + offset);
+}
+
+describe.concurrent("onboard helpers", () => {
   it(
     "non-interactive exits with error when existing sandbox is not ready",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-notready-"),
@@ -43,6 +49,7 @@ describe("onboard helpers", () => {
 const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
@@ -63,7 +70,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
 	  return "";
 	};
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
@@ -89,15 +96,18 @@ const { createSandbox } = require(${onboardPath});
 
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       };
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.notEqual(result.status, 0, "expected non-zero exit for not-ready sandbox");
@@ -113,12 +123,12 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it.each(["balanced", "restricted"])(
+  it.for(["balanced", "restricted"])(
     "recreate-sandbox uses the requested %s tier without recording it",
     {
       timeout: 60_000,
     },
-    async (policyTier) => {
+    async (policyTier, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-flag-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -136,6 +146,7 @@ const { createSandbox } = require(${onboardPath});
 const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
@@ -158,7 +169,7 @@ const commands = []; let registeredSandbox = null;
 	}, { sandboxId: sourceSandboxId });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
@@ -170,7 +181,7 @@ runner.run = (command, opts = {}) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -226,16 +237,19 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_POLICY_TIER: policyTier,
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -282,12 +296,26 @@ const { createSandbox } = require(${onboardPath});
       );
     },
   );
-  it(
-    "recreate-sandbox flag backs up and restores workspace state",
+  it.for([
+    { scenario: "forced recreation", force: true, marked: false, primary: "openai/gpt-4o" },
+    {
+      scenario: "marked recreation resume",
+      force: false,
+      marked: true,
+      primary: "inference/gpt-5.4",
+    },
+    {
+      scenario: "unmarked recreation resume",
+      force: false,
+      marked: false,
+      primary: "openai/gpt-4o",
+    },
+  ])(
+    "$scenario restores native state with its recorded selection authority (#12667)",
     {
       timeout: 60_000,
     },
-    async () => {
+    async ({ force, marked, primary }, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -300,7 +328,9 @@ const { createSandbox } = require(${onboardPath});
       const sandboxStatePath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
       );
-
+      const processRecoveryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "actions", "sandbox", "process-recovery.ts"),
+      );
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
@@ -308,17 +338,38 @@ const { createSandbox } = require(${onboardPath});
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
+const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
+let nativeConfig = { agents: { defaults: { model: { primary: "openai/gpt-4o" } } }, models: { providers: {} }, custom: { retained: true } };
+let registered = null;
+const sandboxConfig = require(${JSON.stringify(path.join(repoRoot, "src/lib/sandbox/config.ts"))});
+sandboxConfig.readSandboxConfig = () => structuredClone(nativeConfig);
+sandboxConfig.setOpenClawConfigValues = (_name, updates) => {
+  for (const { dotpath, value } of updates) {
+    const keys = dotpath.split(".");
+    const leaf = keys.pop();
+    let current = nativeConfig;
+    for (const key of keys) current = current[key] ??= {};
+    current[leaf] = structuredClone(value);
+  }
+};
+processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
+  events.push({ kind: "restart", primary: nativeConfig.agents.defaults.model.primary });
+  return { ok: true };
+};
+processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -330,7 +381,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -349,21 +400,26 @@ runner.run = (command) => {
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
 	  getSandbox: registry.getSandbox,
+      registerSandbox: (entry) => { registered = entry; },
 	});
 
+let latestBackup = null;
+sandboxState.getLatestBackup = () => latestBackup;
 sandboxState.backupSandboxState = (name) => {
   events.push({ kind: "backup", name });
+  latestBackup = { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" };
   return {
     success: true,
     backedUpDirs: ["workspace", "skills"],
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" },
+    manifest: latestBackup,
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
   events.push({ kind: "restore", name, backupPath, options });
+  nativeConfig.agents.defaults.model.primary = "openai/gpt-4o";
   return {
     success: true,
     restoredDirs: ["workspace", "skills"],
@@ -396,12 +452,19 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
-	  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
-	    createFixture,
-	  ));
-  console.log(JSON.stringify({ sandboxName, events }));
+  process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force ? "1" : "0")};
+  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    createFixture,
+  );
+  // Seed the durable checkpoint left by the interrupted invocation. The resumed
+  // request carries only its existing transaction identity, never fresh authority.
+  const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+  const interrupted = sessions.loadSession();
+  if (${JSON.stringify(marked)}) interrupted.checkpoint.sandboxRecreate.reconcileOpenClawInference = true;
+  sessions.saveSession(interrupted);
+  const sandboxName = await createSandbox(...createArgs);
+  console.log(JSON.stringify({ sandboxName, events, nativeConfig, registered, sourceId: sourceSandbox.lifecycleLiveIdentityFingerprint, replacementId: createdSandbox.state.sandboxId }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -409,15 +472,18 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -435,7 +501,8 @@ const { createSandbox } = require(${onboardPath});
         cmd?: string;
         name?: string;
         backupPath?: string;
-        options?: { targetAgentType?: string; freshOpenClawImagePluginInstalls?: unknown[] };
+        options?: { targetAgentType?: string };
+        primary?: string;
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -455,7 +522,15 @@ const { createSandbox } = require(${onboardPath});
         "restore must use backup path",
       );
       assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
-      assert.equal(restoreEvent?.options?.freshOpenClawImagePluginInstalls, undefined);
+      assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
+      assert.equal(events.find((event) => event.kind === "restart")?.primary, primary);
+      assert.deepEqual(payload.nativeConfig.custom, { retained: true });
+      assert.equal(payload.registered.model, "gpt-5.4");
+      assert.equal(
+        payload.registered.lifecycleLiveIdentityFingerprint,
+        createHash("sha256").update(payload.replacementId).digest("hex"),
+      );
+      assert.notEqual(payload.registered.lifecycleLiveIdentityFingerprint, payload.sourceId);
     },
   );
 
@@ -464,7 +539,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-recreate-skip-backup-"),
@@ -479,7 +554,6 @@ const { createSandbox } = require(${onboardPath});
       const sandboxStatePath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
       );
-
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
@@ -487,6 +561,7 @@ const { createSandbox } = require(${onboardPath});
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
@@ -497,7 +572,7 @@ const events = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -509,7 +584,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -576,15 +651,18 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -613,7 +691,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-notready-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -626,6 +704,9 @@ const { createSandbox } = require(${onboardPath});
       const sandboxStatePath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
       );
+      const processRecoveryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "actions", "sandbox", "process-recovery.ts"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
@@ -634,20 +715,25 @@ const { createSandbox } = require(${onboardPath});
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
+const processRecovery = require(${processRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
+processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
+processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
+processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",
 });
 runner.run = (command) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
@@ -659,7 +745,7 @@ runner.run = (command) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -680,15 +766,18 @@ runner.run = (command) => {
 	  getSandbox: registry.getSandbox,
 	});
 
+let latestBackup = null;
+sandboxState.getLatestBackup = () => latestBackup;
 sandboxState.backupSandboxState = (name) => {
   events.push({ kind: "backup", name });
+  latestBackup = { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" };
   return {
     success: true,
     backedUpDirs: ["workspace"],
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" },
+    manifest: latestBackup,
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath) => {
@@ -741,15 +830,18 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -785,7 +877,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-interactive-reuse-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -806,6 +898,8 @@ const { createSandbox } = require(${onboardPath});
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
@@ -818,7 +912,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
@@ -848,9 +942,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
+	  if (cmd.includes("openclaw config get agents.defaults.model.primary --json")) return JSON.stringify("inference/gpt-5.4");
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
 	  return "";
 	};
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
@@ -862,11 +957,14 @@ runner.runFile = (file, args = [], opts = {}) => {
 credentials.prompt = async () => "y";
 
 childProcess.spawn = (...args) => {
+  forwardService.recordSpawn(args);
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4242;
+  child.exitCode = null;
+  child.signalCode = null;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -891,15 +989,18 @@ const { createSandbox } = require(${onboardPath});
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -928,18 +1029,76 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it(
-    "interactive mode deletes and recreates sandbox when user confirms drift recreate",
+  it.for([
+    { mode: "interactive", answer: "y", recreate: true, reconciliation: null },
+    { mode: "interactive", answer: "n", recreate: false, reconciliation: null },
+    { mode: "non-interactive", answer: "", recreate: true, reconciliation: null },
+    {
+      mode: "planned recreation",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      forced: false,
+      reconciliation: true,
+    },
+    {
+      mode: "fresh preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: true,
+      reconciliation: true,
+    },
+    {
+      mode: "legacy preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: false,
+      reconciliation: false,
+    },
+    {
+      mode: "forced preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: true,
+      forced: true,
+      reconciliation: false,
+    },
+    {
+      mode: "forced recreation",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      forced: true,
+      reconciliation: false,
+    },
+  ])(
+    "$mode drift recreation with answer '$answer' preserves confirmation and reconciliation authority (#12667)",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (
+      {
+        mode,
+        answer,
+        recreate,
+        reconciliation,
+        journalOnly = false,
+        forced = false,
+        preopened = false,
+        fresh = false,
+      },
+      context,
+    ) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-interactive-decline-"),
-      );
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-drift-"));
       const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "interactive-decline.js");
+      const scriptPath = path.join(tmpDir, "selection-drift.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
@@ -956,6 +1115,7 @@ const { createSandbox } = require(${onboardPath});
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
@@ -966,10 +1126,18 @@ const path = require("node:path");
 
 const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const sourceSandboxId = createdSandbox.state.sandboxId;
+const prompts = [];
+let reconciliationRecorded = null;
+process.on("exit", () => console.log(JSON.stringify({ commands, prompts, reconciliationRecorded, sourceSandboxId, sandboxId: createdSandbox.state.sandboxId })));
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
+  if (cmd.includes("sandbox delete") && ${journalOnly}) {
+    reconciliationRecorded = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))}).loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference === true;
+    throw new Error("fixture: stop after journal persistence before deletion");
+  }
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("sandbox download")) {
@@ -998,9 +1166,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
+	  if (cmd.includes("openclaw config get agents.defaults.model.primary --json")) return JSON.stringify("openai/gpt-4o");
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -1024,8 +1193,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
-// Mock prompt to return "y" (confirm recreate)
-credentials.prompt = async () => "y";
+credentials.prompt = async (question) => {
+  prompts.push(question);
+  return ${JSON.stringify(answer)};
+};
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
@@ -1047,10 +1218,23 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-	  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
 	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
 	    createFixture,
-	  ));
+	  );
+  if (${preopened}) {
+    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshNonForced: true } : {}) };
+  }
+  if (${journalOnly} && !${preopened}) {
+    // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.
+    createArgs[15] = { ...createArgs[15], recreate: true, recreateTransaction: undefined };
+    const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+    sessions.updateSession((session) => {
+      delete session.checkpoint.sandboxRecreate;
+      return session;
+    });
+  }
+  const sandboxName = await createSandbox(...createArgs);
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1059,22 +1243,24 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
-      delete env["NEMOCLAW_NON_INTERACTIVE"];
-      delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      env["NEMOCLAW_NON_INTERACTIVE"] = mode !== "interactive" ? "1" : undefined;
+      env["NEMOCLAW_RECREATE_SANDBOX"] = forced ? "1" : undefined;
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, journalOnly ? 1 : recreate ? 0 : 1, result.stderr);
       const payloadLine = result.stdout
         .trim()
         .split("\n")
@@ -1083,22 +1269,31 @@ const { createSandbox } = require(${onboardPath});
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
+      assert.equal(payload.reconciliationRecorded, reconciliation);
+      const completedRecreation = recreate && !journalOnly;
 
-      assert.ok(
+      assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*delete/.test(String(entry.command)),
         ),
-        "should delete existing sandbox when user confirms recreate",
+        completedRecreation,
+        "sandbox delete must match the confirmation decision",
       );
-      assert.ok(
+      assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*create/.test(String(entry.command)),
         ),
-        "should create a new sandbox when user confirms recreate",
+        completedRecreation,
+        "sandbox create must match the confirmation decision",
       );
-      assert.ok(
+      assert.equal(payload.sandboxId !== payload.sourceSandboxId, completedRecreation);
+      assert.equal(
         result.stdout.includes("requested inference selection changed"),
-        "should show drift warning before prompting",
+        mode === "interactive",
+      );
+      assert.equal(
+        payload.prompts.some((question: string) => question.includes("Recreate sandbox")),
+        mode === "interactive",
       );
     },
   );
@@ -1108,7 +1303,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-interactive-notready-"),
@@ -1131,6 +1326,7 @@ const { createSandbox } = require(${onboardPath});
 	const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+	fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
@@ -1144,7 +1340,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
 });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
@@ -1157,7 +1353,7 @@ runner.run = (command, opts = {}) => {
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  const createdIdentity = createdSandbox.capture(command);
 	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+	  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -1236,16 +1432,19 @@ const { createSandbox } = require(${onboardPath});
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);

@@ -21,11 +21,11 @@ routing:
   encoder_backend: transformers
 
 models:
-  - name: nemotron-3-nano-reasoning
-    display_name: "Nemotron 3 Nano (Reasoning)"
-    litellm_model: "openai/nvidia/nemotron-3-nano-30b-a3b"
-    cost_per_m_input_tokens: 0.05
-    cost_per_m_output_tokens: 0.20
+  - name: gpt-oss-20b-high
+    display_name: "GPT-OSS 20B High"
+    litellm_model: "openai/openai/gpt-oss-20b"
+    cost_per_m_input_tokens: 0.052
+    cost_per_m_output_tokens: 0.245
     api_base: "https://integrate.api.nvidia.com/v1"
 
   - name: nemotron-3-super

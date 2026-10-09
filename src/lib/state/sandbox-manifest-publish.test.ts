@@ -8,9 +8,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   __test,
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildMcpHandoff,
   readRebuildPolicyHandoff,
   type RebuildManifest,
+  writeRebuildMcpHandoff,
   writeRebuildPolicyHandoff,
 } from "./sandbox.js";
 
@@ -24,10 +27,6 @@ function manifest(backupPath: string): RebuildManifest {
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    failedBackupDirs: [],
-    stateFiles: [],
-    dir: "/sandbox",
     backupPath,
     blueprintDigest: "digest",
   };
@@ -122,10 +121,7 @@ describe("bounded rebuild policy handoff", () => {
     tempDirs.push(backupPath);
     const published = manifest(backupPath);
     __test.writeManifest(backupPath, published);
-    const withHandoff = writeRebuildPolicyHandoff(
-      published,
-      "version: 1\nnetwork_policies: {}\n",
-    );
+    const withHandoff = writeRebuildPolicyHandoff(published, "version: 1\nnetwork_policies: {}\n");
     const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
 
     expect(
@@ -145,5 +141,152 @@ describe("bounded rebuild policy handoff", () => {
     expect(clearRebuildPolicyHandoff(withHandoff)).toBe(true);
     expect(fs.existsSync(handoffPath)).toBe(false);
     expect(withHandoff).not.toHaveProperty("rebuildPolicyHandoff");
+  });
+
+  it.each([
+    ["permissive mode", (filePath: string) => fs.chmodSync(filePath, 0o640)],
+    ["extra hard link", (filePath: string) => fs.linkSync(filePath, `${filePath}.linked`)],
+  ] as const)("rejects a digest-matching handoff with %s", (_unsafeMetadata, makeUnsafe) => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-authority-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const policy = "version: 1\nnetwork_policies: {}\n";
+    const withHandoff = writeRebuildPolicyHandoff(published, policy);
+    const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+
+    makeUnsafe(handoffPath);
+
+    expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
+    expect(() => writeRebuildPolicyHandoff(withHandoff, policy)).toThrow(
+      "Existing rebuild policy handoff does not match its content identity",
+    );
+  });
+
+  it("rejects a credential-bearing handoff before publishing an artifact or manifest field", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-credential-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+    const originalManifest = fs.readFileSync(manifestPath, "utf8");
+
+    expect(() =>
+      writeRebuildPolicyHandoff(
+        published,
+        "version: 1\nprocess:\n  environment:\n    SERVICE_API_KEY: opaque-retained-credential\n",
+      ),
+    ).toThrow("Cannot persist a credential-bearing rebuild policy handoff");
+    expect(published).not.toHaveProperty("rebuildPolicyHandoff");
+    expect(fs.readFileSync(manifestPath, "utf8")).toBe(originalManifest);
+    expect(fs.readdirSync(backupPath).filter((file) => file.includes("policy-handoff"))).toEqual(
+      [],
+    );
+  });
+
+  it("retains a retired handoff tombstone until the owning recovery marker is removed", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-retirement-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const withHandoff = writeRebuildPolicyHandoff(published, "version: 1\nnetwork_policies: {}\n");
+    const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+
+    expect(clearRebuildPolicyHandoff(withHandoff, { retainRetirement: true })).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(withHandoff.rebuildPolicyHandoff).toMatchObject({ retired: true });
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).toMatchObject({ rebuildPolicyHandoff: { retired: true } });
+
+    expect(clearRebuildPolicyHandoff(withHandoff)).toBe(true);
+    expect(withHandoff).not.toHaveProperty("rebuildPolicyHandoff");
+  });
+});
+
+describe("bounded rebuild MCP handoff", () => {
+  const entry = {
+    server: "github",
+    agent: "openclaw",
+    adapter: "openclaw-config" as const,
+    url: "https://api.githubcopilot.com/mcp/",
+    env: ["GITHUB_TOKEN"],
+    denyTools: ["delete_*", "repo.destroy"],
+    providerName: "alpha-mcp-github",
+    providerId: "11111111-2222-4333-8444-555555555555",
+    policyName: "mcp-bridge-github",
+    source: "native" as const,
+  };
+  const runtimeSelection = {
+    gatewayName: "nemoclaw",
+    workspace: "default" as const,
+  };
+
+  it("persists exact source-derived state for retry and removes it after recovery", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-handoff-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    const withHandoff = writeRebuildMcpHandoff(published, [entry], runtimeSelection);
+    expect(readRebuildMcpHandoff(withHandoff)).toEqual({
+      entries: [entry],
+      runtimeSelection,
+    });
+    expect(clearRebuildMcpHandoff(withHandoff, { retainRetirement: true })).toBe(true);
+    expect(readRebuildMcpHandoff(withHandoff)).toBeNull();
+    expect(withHandoff.rebuildMcpHandoff).toMatchObject({ retired: true });
+    expect(clearRebuildMcpHandoff(withHandoff)).toBe(true);
+    expect(withHandoff).not.toHaveProperty("rebuildMcpHandoff");
+  });
+
+  it("persists an explicit empty MCP observation for recovery", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-mcp-handoff-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    writeRebuildMcpHandoff(published, [], runtimeSelection);
+    const persisted = __test.readManifest(backupPath);
+
+    expect(persisted).not.toBeNull();
+    expect(readRebuildMcpHandoff(persisted!)).toEqual({
+      entries: [],
+      runtimeSelection,
+    });
+  });
+
+  it("rejects fields that could persist credential material", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-invalid-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    expect(() =>
+      writeRebuildMcpHandoff(
+        published,
+        [{ ...entry, headers: { Authorization: "host-secret" } } as never],
+        runtimeSelection,
+      ),
+    ).toThrow("invalid rebuild MCP recovery handoff");
+    expect(published).not.toHaveProperty("rebuildMcpHandoff");
+  });
+
+  it.each([
+    "https://api.githubcopilot.com/mcp/?token=opaque",
+    "https://api.githubcopilot.com/mcp/#opaque",
+  ])("rejects an MCP URL with non-authoritative query or fragment state: %s", (url) => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-url-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+    const originalManifest = fs.readFileSync(manifestPath, "utf8");
+
+    expect(() => writeRebuildMcpHandoff(published, [{ ...entry, url }], runtimeSelection)).toThrow(
+      "invalid rebuild MCP recovery handoff",
+    );
+    expect(fs.readFileSync(manifestPath, "utf8")).toBe(originalManifest);
+    expect(published).not.toHaveProperty("rebuildMcpHandoff");
   });
 });

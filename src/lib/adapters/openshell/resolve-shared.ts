@@ -3,15 +3,17 @@
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 
+import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
 import {
   assertPodmanExecutableAuthority,
   capturePodmanExecutableAuthority,
+  PodmanExecutablePermissionError,
   type PodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,
 } from "../podman/executable-authority";
 import { resolveOpenshell } from "./resolve";
 
-export const HERMES_PORTABLE_OPENSHELL_VERSION = "0.0.106" as const;
+export const HERMES_PORTABLE_OPENSHELL_VERSION = HERMES_LIFECYCLE_DEFINITION.openshellVersion;
 const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const SEMVER_PATTERN = /(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/u;
@@ -51,8 +53,10 @@ export interface HermesPortableOpenShellExecutableAuthorityDeps extends PodmanEx
   readonly runVersion?: (executable: string, env: NodeJS.ProcessEnv) => VersionResult;
 }
 
-function failExecutableAuthority(message: string): never {
-  throw new Error(`Hermes portable OpenShell executable authority ${message}`);
+/** Preserve permission remedies while keeping unrelated filesystem failures opaque. */
+function failExecutableAuthority(message: string, cause?: unknown): never {
+  const detail = cause instanceof PodmanExecutablePermissionError ? `: ${cause.message}` : "";
+  throw new Error(`Hermes portable OpenShell executable authority ${message}${detail}`);
 }
 
 function runVersion(executable: string, env: NodeJS.ProcessEnv): VersionResult {
@@ -99,8 +103,8 @@ export function captureHermesPortableOpenShellExecutableAuthority(
   let executable: PodmanExecutableAuthority;
   try {
     executable = capturePodmanExecutableAuthority(executablePath, deps);
-  } catch {
-    failExecutableAuthority("could not capture a safe executable generation");
+  } catch (error) {
+    failExecutableAuthority("could not capture a safe executable generation", error);
   }
   return Object.freeze({
     executable,
@@ -123,8 +127,8 @@ export function assertHermesPortableOpenShellExecutableAuthority(
   }
   try {
     assertPodmanExecutableAuthority(expected.executable, deps);
-  } catch {
-    failExecutableAuthority("executable generation changed after reservation");
+  } catch (error) {
+    failExecutableAuthority("executable generation changed after reservation", error);
   }
   requireVersion(expected.executable.executablePath, childEnv, deps.runVersion ?? runVersion);
   return expected.executable.executablePath;
@@ -144,8 +148,8 @@ export function assertHermesPortableOpenShellExecutableFileAuthority(
   }
   try {
     assertPodmanExecutableAuthority(expected.executable, deps);
-  } catch {
-    failExecutableAuthority("executable generation changed after reservation");
+  } catch (error) {
+    failExecutableAuthority("executable generation changed after reservation", error);
   }
   return expected.executable.executablePath;
 }
@@ -188,6 +192,7 @@ export function buildOpenShellSubprocessEnv(
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
     "CURL_CA_BUNDLE",
+    "XDG_CONFIG_HOME",
   ]);
   const environment = Object.fromEntries(
     Object.entries(source).filter(
@@ -205,6 +210,20 @@ export function buildOpenShellSubprocessEnv(
     XDG_CONFIG_HOME: authority.configHome,
     XDG_RUNTIME_DIR: authority.runtimeDir,
   };
+}
+
+/** Build the allowlisted environment for OpenShell diagnostic children. */
+export function buildOpenShellDiagnosticEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = buildOpenShellSubprocessEnv(source);
+  for (const name of [
+    "OPENSHELL_GATEWAY",
+    "OPENSHELL_WORKSPACE",
+    "OPENSHELL_LOCAL_TLS_DIR",
+  ] as const) {
+    const value = source[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
 }
 
 /** Resolve OpenShell without exiting when it is unavailable. */

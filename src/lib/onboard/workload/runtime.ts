@@ -7,8 +7,10 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderManagedImageSupport,
+  type RuntimeProviderExternalImageSupport,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
+import type { PortableAgentRuntimeProviderSupport } from "./portable-agent-runtime";
 import type { SandboxWorkloadRuntimeCapabilities } from "./source";
 
 function hostOciArchitecture(nodeArchitecture: string): string {
@@ -28,6 +30,35 @@ function cloneRuntimeSupport(
   };
 }
 
+function clonePortableRuntimeSupport(
+  support: PortableAgentRuntimeProviderSupport,
+  platform: PortableAgentRuntimeProviderSupport["platforms"][number],
+): PortableAgentRuntimeProviderSupport {
+  return {
+    exactDigestReferences: support.exactDigestReferences,
+    agents: [...support.agents],
+    platforms: [platform],
+    contractVersions: [...support.contractVersions],
+    capabilityContractVersions: [...support.capabilityContractVersions],
+    tokenizedStartupCommands: support.tokenizedStartupCommands,
+    openshellSandboxCommand: support.openshellSandboxCommand,
+    openshellNonRootIdentity: support.openshellNonRootIdentity,
+    openshellWorkspaceOwnership: support.openshellWorkspaceOwnership,
+    ownerOnlyPrivateState: support.ownerOnlyPrivateState,
+  };
+}
+
+function cloneExternalImageSupport(
+  support: RuntimeProviderExternalImageSupport,
+  platform: RuntimeProviderExternalImageSupport["platforms"][number],
+): RuntimeProviderExternalImageSupport {
+  return {
+    exactDigestReferences: support.exactDigestReferences,
+    agents: [...support.agents],
+    platforms: [platform],
+  };
+}
+
 export function resolveSandboxWorkloadRuntimeCapabilities(
   plan: Pick<OpenShellComputePlan, "driverName">,
   providers: RuntimeProviderBundleRegistry = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -35,20 +66,51 @@ export function resolveSandboxWorkloadRuntimeCapabilities(
 ): SandboxWorkloadRuntimeCapabilities {
   const profile = resolveRuntimeProviderBundle(plan.driverName, providers)?.workload.profile;
   const support = profile?.support;
+  const portableSupport = profile?.portableAgentRuntimeSupport;
+  const externalSupport = profile?.externalImageSupport;
   const hostPlatform = managedImagePlatformForNodeArchitecture(nodeArchitecture);
-  const supportedHost =
+  const hostArchitectureSupported =
     hostPlatform !== null &&
+    profile?.hostArchitectures.includes(hostOciArchitecture(nodeArchitecture)) === true;
+  const managedImageSupportedHost =
+    hostArchitectureSupported &&
     support !== undefined &&
     support !== null &&
-    profile?.hostArchitectures.includes(hostOciArchitecture(nodeArchitecture)) === true &&
     support.platforms.includes(hostPlatform);
+  const portableRuntimeSupportedHost =
+    hostArchitectureSupported &&
+    portableSupport !== undefined &&
+    portableSupport !== null &&
+    portableSupport.platforms.includes(hostPlatform);
+  const externalImageSupportedHost =
+    hostArchitectureSupported &&
+    externalSupport !== undefined &&
+    externalSupport !== null &&
+    externalSupport.platforms.includes(hostPlatform);
   return {
     driverName: plan.driverName,
     managedImageSelectionPolicy: profile?.managedImageSelectionPolicy ?? "require-managed",
     legacyDockerfileBuilds: profile?.legacyDockerfileBuilds ?? false,
     managedImages:
-      support === undefined || support === null || !supportedHost
+      support === undefined ||
+      support === null ||
+      hostPlatform === null ||
+      !managedImageSupportedHost
         ? null
         : cloneRuntimeSupport(support, hostPlatform),
+    portableAgentRuntime:
+      portableSupport === undefined ||
+      portableSupport === null ||
+      hostPlatform === null ||
+      !portableRuntimeSupportedHost
+        ? null
+        : clonePortableRuntimeSupport(portableSupport, hostPlatform),
+    externalImages:
+      externalSupport === undefined ||
+      externalSupport === null ||
+      hostPlatform === null ||
+      !externalImageSupportedHost
+        ? null
+        : cloneExternalImageSupport(externalSupport, hostPlatform),
   };
 }

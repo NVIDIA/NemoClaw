@@ -29,53 +29,6 @@ config:
   dir: /sandbox/.pi/agent
   config_file: models.json
   format: json
-state_lock_plan_in_image: false
-state_dirs:
-  - path: sessions
-    shields: confidential
-  - path: prompts
-    shields: read-only
-  - path: themes
-    shields: read-only
-  - path: tools
-    backup: false
-    shields: read-only
-  - path: bin
-    backup: false
-    shields: read-only
-state_files:
-  - path: settings.json
-    restore:
-      merge: key-allowlist
-      user_keys:
-        - key: theme
-          type: string
-          max_length: 128
-        - key: hideThinkingBlock
-          type: boolean
-        - key: showCacheMissNotices
-          type: boolean
-        - key: quietStartup
-          type: boolean
-        - key: steeringMode
-          type: enum
-          values:
-            - all
-            - one-at-a-time
-        - key: followUpMode
-          type: enum
-          values:
-            - all
-            - one-at-a-time
-        - key: defaultThinkingLevel
-          type: enum
-          values:
-            - off
-            - minimal
-            - low
-            - medium
-            - high
-            - xhigh
 device_pairing: false
 inference:
   provider_type: openai_compatible

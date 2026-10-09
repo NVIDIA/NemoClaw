@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
+import { hasExplicitDeferredN1xOnboardingIntent } from "../../../readiness/onboard-admission";
+import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -35,6 +38,7 @@ export interface PreflightStateOptions<
   gpuRequested: boolean;
   noGpu: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  allowLegacyDgxStationQualification?: boolean;
   env: NodeJS.ProcessEnv;
   deps: {
     getSandbox(name: string): SandboxEntry | null;
@@ -48,15 +52,21 @@ export interface PreflightStateOptions<
     detectGpu(): Gpu;
     runPreflight(options: { optedOutGpuPassthrough?: boolean }): Promise<Gpu>;
     assessHost(): Host;
+    providerNameToOptionKey(
+      name: string | null | undefined,
+      options?: { hasNimContainer?: boolean },
+    ): string | null;
     assertOnboardHostReadiness(
       host: Host,
       gpu: Gpu,
       options: {
         explicitlyOptedOutGpuPassthrough: boolean;
         observedAt?: string;
+        collectedAt?: string;
         now?: () => Date;
-        wslDockerDesktopGpuProofPassed?: boolean;
-        allowDeferredN1xManagedVllm?: boolean;
+        containerGpuProof?: Readonly<{ providerId: string; passed: boolean }>;
+        allowDeferredN1xOnboarding?: boolean;
+        allowLegacyDgxStationQualification?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
       },
@@ -65,13 +75,11 @@ export interface PreflightStateOptions<
     assertGatewayReadiness(): Promise<void>;
     now?: () => Date;
     /**
-     * Resume backstop for #3508/#3630. Runs the same bridge+DNS fatal
-     * gate that `preflight()` does, so a cached preflight step cannot
-     * skip the new fatal checks for hosts where Docker bridge networking
-     * or container DNS is broken. Optional for back-compat with callers
-     * that haven't been updated yet.
+     * Resume backstop for #3508/#3630. Runs the selected provider's host,
+     * bridge, and DNS gate so cached preflight cannot skip live runtime
+     * readiness checks. Optional for back-compat with older callers.
      */
-    assertDockerBridgeAndContainerDnsHealthy?(host: Host): void;
+    assertRuntimeProviderHealthy?(host: Host, config: Config): void;
     resolveSandboxGpuConfig(
       gpu: Gpu,
       options: {
@@ -95,6 +103,7 @@ export interface PreflightStateOptions<
 export interface PreflightStateResult<Gpu, Config extends PreflightSandboxGpuConfig> {
   gpu: Gpu;
   sandboxGpuConfig: Config;
+  deferredN1xManagedVllmPreviewAccepted: boolean;
   resumePreflight: boolean;
   resumeHasResolvedGpuIntent: boolean;
   requestedGpuPassthrough: boolean;
@@ -109,12 +118,16 @@ function envHasSandboxGpuOverride(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_SANDBOX_GPU !== undefined || env.NEMOCLAW_SANDBOX_GPU_DEVICE !== undefined;
 }
 
-function resolvedWslDockerDesktopGpuProof(gpu: unknown): boolean | undefined {
-  if (gpu === null) return false;
+function resolvedContainerGpuProof(
+  gpu: unknown,
+): Readonly<{ providerId: string; passed: boolean }> | undefined {
   if (!gpu || typeof gpu !== "object") return undefined;
-  return (gpu as { wslDockerDesktopGpuProofPassed?: boolean }).wslDockerDesktopGpuProofPassed ===
-    true
-    ? true
+  const proof = (gpu as { containerGpuProof?: unknown }).containerGpuProof;
+  if (!proof || typeof proof !== "object") return undefined;
+  const providerId = (proof as { providerId?: unknown }).providerId;
+  const passed = (proof as { passed?: unknown }).passed;
+  return typeof providerId === "string" && typeof passed === "boolean"
+    ? { providerId, passed }
     : undefined;
 }
 
@@ -133,6 +146,7 @@ export async function handlePreflightState<
   gpuRequested,
   noGpu,
   allowDeferredN1xManagedVllm,
+  allowLegacyDgxStationQualification,
   env,
   deps,
 }: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>): Promise<
@@ -153,6 +167,21 @@ export async function handlePreflightState<
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
   const effectiveSandboxGpuDevice = sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
+  const recordedProviderAllowsDeferredN1x = isN1xOnboardingProviderKey(
+    deps.providerNameToOptionKey(session?.provider, {
+      hasNimContainer: Boolean(session?.nimContainer),
+    }),
+  );
+  // An explicit false is authoritative for rebuilds. Ordinary resume may use
+  // the current installer choice or the provider already validated and recorded.
+  const allowDeferredN1xOnboarding =
+    allowDeferredN1xManagedVllm ??
+    (recordedProviderAllowsDeferredN1x || hasExplicitDeferredN1xOnboardingIntent(env));
+  const deferredN1xManagedVllmPreviewIntent =
+    allowDeferredN1xManagedVllm !== false &&
+    (String(env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm" ||
+      (allowDeferredN1xManagedVllm === true &&
+        isN1xManagedVllmProviderModel(session?.provider, session?.model)));
 
   let gpu: Gpu;
   if (resumePreflight) {
@@ -163,12 +192,13 @@ export async function handlePreflightState<
     });
     const now = deps.now ?? (() => new Date());
     // Collect host facts, then require a live gateway result immediately
-    // before any runtime-backed probe. A successful gateway collection is
-    // younger than its reuse window, so the preceding host facts are current
-    // at the effect edge too.
+    // before any runtime-backed probe. `hostCollectedAt` closes the host
+    // collection before that gateway wait, so the wait is charged against the
+    // host reuse window while the host probes' own duration is not (#10670).
     let hostObservedAt = now().toISOString();
     let resumeHost = deps.assessHost();
     gpu = deps.detectGpuForReadiness();
+    let hostCollectedAt = now().toISOString();
     let resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
       flag: effectiveSandboxGpuFlag,
       device: effectiveSandboxGpuDevice,
@@ -178,8 +208,10 @@ export async function handlePreflightState<
     deps.assertOnboardHostReadiness(resumeHost, gpu, {
       explicitlyOptedOutGpuPassthrough: resumeSandboxGpuConfig.mode === "0",
       observedAt: hostObservedAt,
+      collectedAt: hostCollectedAt,
       now,
-      allowDeferredN1xManagedVllm,
+      allowDeferredN1xOnboarding,
+      allowLegacyDgxStationQualification,
       resuming: true,
     });
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
@@ -187,31 +219,37 @@ export async function handlePreflightState<
     // intent. Replace gateway and host facts after that effect before any
     // later runtime probe.
     if (resumeSandboxGpuConfig.mode !== "0") {
-      gpu = deps.detectGpu();
       hostObservedAt = now().toISOString();
+      gpu = deps.detectGpu();
       resumeHost = deps.assessHost();
+      hostCollectedAt = now().toISOString();
       resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
         flag: effectiveSandboxGpuFlag,
         device: effectiveSandboxGpuDevice,
         env,
       });
       await deps.assertGatewayReadiness();
-      const wslDockerDesktopGpuProofPassed = resolvedWslDockerDesktopGpuProof(gpu);
+      const containerGpuProof = resolvedContainerGpuProof(gpu);
       deps.assertOnboardHostReadiness(resumeHost, gpu, {
         explicitlyOptedOutGpuPassthrough: false,
         observedAt: hostObservedAt,
+        collectedAt: hostCollectedAt,
         now,
-        ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
-        allowDeferredN1xManagedVllm,
+        ...(containerGpuProof === undefined ? {} : { containerGpuProof }),
+        allowDeferredN1xOnboarding,
+        allowLegacyDgxStationQualification,
         resuming: true,
         presentAdvisories: false,
       });
     }
-    deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
     // Resume backstop for #3508/#3630. Cached preflight does not capture
-    // host Docker/DNS state, and a session written by an older NemoClaw
-    // may have skipped the new bridge/DNS fatal checks.
-    deps.assertDockerBridgeAndContainerDnsHealthy?.(resumeHost);
+    // live runtime/DNS state, and a session written by an older NemoClaw
+    // may have skipped the provider-owned checks.
+    if (deps.assertRuntimeProviderHealthy) {
+      deps.assertRuntimeProviderHealthy(resumeHost, resumeSandboxGpuConfig);
+    } else {
+      deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
+    }
   } else {
     await deps.startRecordedStep("preflight");
     gpu = await withPreflightTrace(() => deps.runPreflight({ optedOutGpuPassthrough: noGpu }));
@@ -234,6 +272,9 @@ export async function handlePreflightState<
   return {
     gpu,
     sandboxGpuConfig,
+    deferredN1xManagedVllmPreviewAccepted:
+      (gpu as { platform?: unknown } | null)?.platform === "n1x" &&
+      deferredN1xManagedVllmPreviewIntent,
     resumePreflight,
     resumeHasResolvedGpuIntent,
     requestedGpuPassthrough: gpuRequested,

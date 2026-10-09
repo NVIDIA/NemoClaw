@@ -73,7 +73,7 @@ export default async function summarize_nemoclaw_main_build(input: {
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   const workflow = input.workflow ?? "main.yaml";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
-  if (!/^[A-Za-z0-9_.\/-]+\.ya?ml$/.test(workflow))
+  if (!/^[A-Za-z0-9_./-]+\.ya?ml$/.test(workflow))
     throw new Error("workflow must be a YAML workflow path or filename");
   if (input.sha && !/^[0-9a-f]{40}$/.test(input.sha))
     throw new Error("sha must be a full commit SHA");

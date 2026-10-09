@@ -7,9 +7,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../src/lib/core/shell-quote";
+import { extractShellFunctionFromSource } from "./shell-function-extractor";
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function extractShellFunction(src: string, name: string): string {
+  return extractShellFunctionFromSource(src, name, "agents/hermes/start.sh");
 }
 
 export function bashPrintfQ(value: string): string {
@@ -22,10 +23,28 @@ export function bashPrintfQ(value: string): string {
   return result.stdout;
 }
 
-export function extractShellFunction(source: string, name: string): string {
-  const match = source.match(new RegExp(`${escapeRegExp(name)}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) throw new Error(`Expected shell function ${name}`);
-  return `${name}() {${match[1]}\n}`;
+export const LOCKED_HERMES_CONFIG_STAT_MOCK = [
+  "stat() {",
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
+  "    ;;",
+  "  esac",
+  '  command stat "$@"',
+  "}",
+].join("\n");
+
+export function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
+  const pidDir = path.join(procRoot, String(pid));
+  fs.mkdirSync(pidDir, { recursive: true });
+  fs.writeFileSync(path.join(pidDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
+  fs.writeFileSync(path.join(pidDir, "status"), "Name:\tfixture\nUid:\t1000\t1000\t1000\t1000\n");
 }
 
 export function runHermesBashHarness(
@@ -36,13 +55,9 @@ export function runHermesBashHarness(
   const script = path.join(tmpDir, "run.sh");
   fs.writeFileSync(
     script,
-    [
-      "#!/usr/bin/env bash",
-      "set -uo pipefail",
-      "HERMES_MCP_RECONCILE_PENDING=0",
-      "HERMES_MCP_INTEGRITY_FAILED=0",
-      ...lines,
-    ].join("\n"),
+    ["#!/usr/bin/env bash", "set -uo pipefail", "HERMES_MCP_RECONCILE_PENDING=0", ...lines].join(
+      "\n",
+    ),
     { mode: 0o700 },
   );
 
@@ -67,9 +82,6 @@ export function runHermesSandboxInitPreludeWithFakePath(
     const fakeBin = path.join(tmpDir, "bin");
     const fakeInit = path.join(tmpDir, "sandbox-init.sh");
     const fakeSupervisor = path.join(tmpDir, "gateway-supervisor.sh");
-    const fakeGatePython = path.join(tmpDir, "gate-python");
-    const fakeGateHelper = path.join(tmpDir, "runtime-state-mutation-startup-gate.py");
-    const fakeSetpriv = path.join(tmpDir, "setpriv");
     const marker = path.join(tmpDir, "dirname-called");
     const sourcePathLog = path.join(tmpDir, "source-path.log");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -87,20 +99,6 @@ export function runHermesSandboxInitPreludeWithFakePath(
       ].join("\n"),
     );
     fs.writeFileSync(fakeSupervisor, "# supervisor fixture\n");
-    fs.writeFileSync(fakeGatePython, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(fakeGateHelper, "# startup gate fixture\n");
-    fs.writeFileSync(
-      fakeSetpriv,
-      [
-        "#!/usr/bin/env bash",
-        'while [ "$#" -gt 0 ]; do',
-        '  if [ "$1" = "--" ]; then shift; break; fi',
-        "  shift",
-        "done",
-        'exec "$@"',
-      ].join("\n"),
-      { mode: 0o700 },
-    );
 
     const src = fs.readFileSync(startScript, "utf-8");
     const start = src.indexOf(
@@ -110,9 +108,6 @@ export function runHermesSandboxInitPreludeWithFakePath(
     assert(start >= 0 && end >= 0, "Hermes start.sh prelude markers not found");
     const prelude = src
       .slice(start, end)
-      .replaceAll("/opt/hermes/.venv/bin/python3", fakeGatePython)
-      .replaceAll("/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py", fakeGateHelper)
-      .replaceAll("/usr/bin/setpriv", fakeSetpriv)
       .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", envWrapper)
       .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
       .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);

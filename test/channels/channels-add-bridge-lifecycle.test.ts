@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+import * as commandTransport from "../../src/lib/adapters/sandbox/command-transport";
 //
 // Bridge-provider lifecycle on the DIRECT `channels add` path (#6120): a
 // bridge-backed channel (googlechat) declares no manifest credentials, so the
 // add path must (1) create + refresh-configure the gateway bridge provider
-// itself, (2) fail loudly when the pasted secret is missing, and (3) tear the
-// just-created provider back down when gateway registration fails midway.
+// itself, (2) exit with an error when the pasted secret is missing, and (3)
+// detach and delete the newly created provider when gateway registration fails.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -18,7 +20,6 @@ import {
   stopSandboxChannel,
 } from "../../src/lib/actions/sandbox/policy-channel";
 import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
-import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
 import * as runtime from "../../src/lib/adapters/openshell/runtime";
 import * as store from "../../src/lib/credentials/store";
 import * as gatewayRuntime from "../../src/lib/gateway-runtime-action";
@@ -44,7 +45,60 @@ const GOOGLECHAT_ENV = {
   GOOGLECHAT_AUDIENCE: "https://bot.example.com/googlechat",
   GOOGLECHAT_APP_PRINCIPAL: "123456789012345678901",
 };
+// Deliberately independent of the checked-in YAML read by production. If that
+// contract changes without the simulated gateway export changing too, the real
+// adapter comparison in this lifecycle test must fail.
+const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
+  id: "google-chat-bridge",
+  credentials: [
+    {
+      name: "access_token",
+      env_vars: ["GOOGLE_CHAT_ACCESS_TOKEN"],
+      required: true,
+      auth_style: "bearer",
+      header_name: "Authorization",
+      query_param: "",
+      refresh: {
+        strategy: "google_service_account_jwt",
+        scopes: ["https://www.googleapis.com/auth/chat.bot"],
+        material: [
+          {
+            name: "client_email",
+            description: "Service-account client email (JWT issuer)",
+            required: true,
+            secret: false,
+          },
+          {
+            name: "private_key",
+            description: "Service-account RSA private key (PEM); signs the JWT assertion",
+            required: true,
+            secret: true,
+          },
+          {
+            name: "scope",
+            description: "OAuth scope(s) to mint the token for",
+            required: false,
+            secret: false,
+          },
+        ],
+      },
+    },
+  ],
+  endpoints: [
+    {
+      host: "chat.googleapis.com",
+      port: 443,
+      protocol: "rest",
+      access: "read-write",
+      enforcement: "enforce",
+    },
+  ],
+  binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+  inference_capable: false,
+};
 const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
+const realUpsertMessagingProviders =
+  policyChannelDependencies.upsertMessagingProviders.bind(policyChannelDependencies);
 
 // Why this mock exists: the real googlechat tunnel/audience gate needs a human
 // operator (Google Cloud Console steps), so on a non-interactive test run it
@@ -84,6 +138,17 @@ let registryEntry: SandboxEntry;
 let appliedPresets: string[];
 let session: onboardSession.Session;
 let stdinIsTty: PropertyDescriptor | undefined;
+let gatewayCallCount: number;
+let bridgeRefreshWasSecure: boolean;
+let bridgeProfileRegistered: boolean;
+let bridgeProfileWasImported: boolean;
+let attachedProviders: Set<string>;
+let detachedProviders: Set<string>;
+let deletedProviders: Set<string>;
+let registeredProviders: Set<string>;
+let bridgeRefreshError: string | null;
+let bridgeRefreshStatusError: string | null;
+let providerDeleteError: string | null;
 
 function printedText(): string {
   return [...logSpy.mock.calls, ...errorSpy.mock.calls]
@@ -92,12 +157,16 @@ function printedText(): string {
 }
 
 function withoutGateway(args: readonly string[]): string[] {
-  const index = args[2] === "-g" ? 2 : args[3] === "-g" ? 3 : -1;
+  const index = [0, 2, 3].find((position) => args[position] === "-g") ?? -1;
   return index < 0 ? [...args] : [...args.slice(0, index), ...args.slice(index + 2)];
 }
 
-function openshellCalls(): string[][] {
-  return runOpenshellSpy.mock.calls.map((call) => withoutGateway(call[0] as string[]));
+function resetGatewayObservations(): void {
+  gatewayCallCount = 0;
+  bridgeRefreshWasSecure = false;
+  bridgeProfileWasImported = false;
+  detachedProviders.clear();
+  deletedProviders.clear();
 }
 
 beforeEach(() => {
@@ -135,18 +204,18 @@ beforeEach(() => {
   ]);
 
   appliedPresets = [];
-  vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
+  vi.spyOn(policies, "loadPresetForSandbox").mockResolvedValue(
     "network_policies:\n  stub:\n    egress:\n      - host: example.com\n",
   );
-  vi.spyOn(policies, "applyPreset").mockImplementation((_sandboxName, preset) => {
+  vi.spyOn(policies, "applyPreset").mockImplementation(async (_sandboxName, preset) => {
     appliedPresets = [...new Set([...appliedPresets, preset])];
     return true;
   });
-  vi.spyOn(policies, "removePreset").mockImplementation((_sandboxName, preset) => {
+  vi.spyOn(policies, "removePreset").mockImplementation(async (_sandboxName, preset) => {
     appliedPresets = appliedPresets.filter((name) => name !== preset);
     return true;
   });
-  vi.spyOn(policies, "getAppliedPresets").mockImplementation(() => [...appliedPresets]);
+  vi.spyOn(policies, "getAppliedPresets").mockImplementation(async () => [...appliedPresets]);
 
   vi.spyOn(store, "getCredential").mockImplementation((key) => process.env[key] || null);
   vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
@@ -165,8 +234,13 @@ beforeEach(() => {
   // crosses the direct channel action, generic provider upsert, and OpenShell
   // refresh boundary. Individual failure tests override the spy below.
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
+  vi.spyOn(policyChannelDependencies, "resolveConfigRuntimeSelection").mockReturnValue({
+    gatewayName: "nemoclaw",
+    workspace: "default",
+    localTlsDir: "/recorded/tls",
+  });
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
   vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
     LIVE_IDENTITY_FINGERPRINT,
@@ -185,24 +259,106 @@ beforeEach(() => {
     return command[0] === "provider" && command[1] === "refresh" && command[2] === "status";
   };
 
-  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => {
+  gatewayCallCount = 0;
+  bridgeRefreshWasSecure = false;
+  bridgeProfileRegistered = false;
+  bridgeProfileWasImported = false;
+  attachedProviders = new Set();
+  detachedProviders = new Set();
+  deletedProviders = new Set();
+  registeredProviders = new Set();
+  bridgeRefreshError = null;
+  bridgeRefreshStatusError = null;
+  providerDeleteError = null;
+  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args, options) => {
+    gatewayCallCount += 1;
     const command = withoutGateway(args);
-    const providerMissing = command[0] === "provider" && command[1] === "get";
+    const providerName = command[0] === "provider" && command[1] === "get" ? command[2] : null;
+    const providerMissing = Boolean(providerName && !registeredProviders.has(providerName));
+    const exportingProfile =
+      command[0] === "provider" && command[1] === "profile" && command.includes("export");
+    const importingProfile =
+      command[0] === "provider" && command[1] === "profile" && command.includes("import");
+    const profileMissing = exportingProfile && !bridgeProfileRegistered;
+    bridgeProfileRegistered ||= importingProfile;
+    bridgeProfileWasImported ||= importingProfile;
+    const detachedProvider =
+      command[0] === "sandbox" && command[1] === "provider" && command[2] === "detach"
+        ? command[4]
+        : null;
+    const attachedProvider =
+      command[0] === "sandbox" && command[1] === "provider" && command[2] === "attach"
+        ? command[4]
+        : null;
+    const deletedProvider =
+      command[0] === "provider" && command[1] === "delete" ? command[2] : null;
+    const createdProvider =
+      command[0] === "provider" && command[1] === "create"
+        ? command[command.indexOf("--name") + 1]
+        : null;
+    const configuringRefresh =
+      command[0] === "provider" && command[1] === "refresh" && command[2] === "configure";
+    const readingRefreshStatus = isRefreshStatus(args);
+    const refreshFailure = configuringRefresh ? bridgeRefreshError : null;
+    const refreshStatusFailure = readingRefreshStatus ? bridgeRefreshStatusError : null;
+    const attachmentFailure =
+      deletedProvider && attachedProviders.has(deletedProvider)
+        ? `provider '${deletedProvider}' is attached to sandbox(es): test-sb.`
+        : null;
+    const deleteFailure = deletedProvider ? (providerDeleteError ?? attachmentFailure) : null;
+    const commandFailure = refreshFailure ?? deleteFailure ?? "";
+    attachedProvider ? attachedProviders.add(attachedProvider) : undefined;
+    detachedProvider ? attachedProviders.delete(detachedProvider) : undefined;
+    detachedProvider ? detachedProviders.add(detachedProvider) : undefined;
+    deletedProvider && !deleteFailure ? deletedProviders.add(deletedProvider) : undefined;
+    deletedProvider && !deleteFailure ? registeredProviders.delete(deletedProvider) : undefined;
+    createdProvider ? registeredProviders.add(createdProvider) : undefined;
+    const runEnv = options?.env as Record<string, string> | undefined;
+    bridgeRefreshWasSecure = configuringRefresh
+      ? command.includes("--secret-material-env") &&
+        command.includes("private_key=NEMOCLAW_PROVIDER_REFRESH_SECRET_0") &&
+        !command.join(" ").includes("fake-test-private-key-material") &&
+        runEnv?.NEMOCLAW_PROVIDER_REFRESH_SECRET_0 === "fake-test-private-key-material"
+      : bridgeRefreshWasSecure;
+    const invalidRefresh = configuringRefresh && !bridgeRefreshWasSecure;
+    refreshStatusFailure
+      ? (() => {
+          throw new Error(refreshStatusFailure);
+        })()
+      : undefined;
     return {
       pid: 0,
       output: [null, "", ""],
-      stdout: isRefreshStatus(args) ? refreshStatusTable(command) : "",
-      stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
-      status: providerMissing ? 1 : 0,
+      stdout: readingRefreshStatus
+        ? refreshStatusTable(command)
+        : exportingProfile && !profileMissing
+          ? JSON.stringify(GOOGLECHAT_PROFILE_DOC)
+          : providerName && !providerMissing
+            ? `Name: ${providerName}\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n`
+            : "",
+      stderr: invalidRefresh
+        ? "invalid secret handoff"
+        : commandFailure
+          ? commandFailure
+          : profileMissing
+            ? "provider profile 'google-chat-bridge' not found"
+            : providerMissing
+              ? `provider '${args[args.length - 1]}' not found`
+              : "",
+      status:
+        invalidRefresh || refreshFailure || deleteFailure || profileMissing || providerMissing
+          ? 1
+          : 0,
       signal: null,
     };
   });
 
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -211,15 +367,13 @@ beforeEach(() => {
     attempted: false,
   });
 
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
-    status: 0,
-    stdout: "",
-    stderr: "",
-  });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(
+    new Error("Bridge-provider lifecycle must not execute native sandbox commands"),
+  );
 });
 
 afterEach(() => {
+  const nativeCommandCalls = vi.mocked(commandTransport.executeSandboxExecCommand).mock.calls;
   vi.restoreAllMocks();
   stdinIsTty
     ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
@@ -227,6 +381,7 @@ afterEach(() => {
   fs.rmSync(testHome, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, originalProcessEnv);
+  expect(nativeCommandCalls).toEqual([]);
 });
 
 describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
@@ -243,22 +398,14 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
         },
       ],
       "nemoclaw",
-      { bestEffort: true, requireExactBindings: true },
+      { replaceExisting: true },
+      expect.objectContaining({
+        channelName: "googlechat",
+        sandboxName: "test-sb",
+      }),
     );
-    const refreshCall = runOpenshellSpy.mock.calls.find(
-      (call) =>
-        withoutGateway(call[0] as string[])
-          .slice(0, 3)
-          .join(" ") === "provider refresh configure",
-    );
-    expect(refreshCall).toBeDefined();
-    const refreshArgs = refreshCall?.[0] as string[];
-    expect(refreshArgs).toContain("--secret-material-env");
-    expect(refreshArgs).toContain("private_key=MESSAGING_BRIDGE_SECRET_0");
-    expect(refreshArgs.join(" ")).not.toContain("fake-test-private-key-material");
-    expect(refreshCall?.[1]).toMatchObject({
-      env: { MESSAGING_BRIDGE_SECRET_0: "fake-test-private-key-material" },
-    });
+    expect(bridgeProfileWasImported).toBe(true);
+    expect(bridgeRefreshWasSecure).toBe(true);
     expect(JSON.stringify({ registryEntry, session })).not.toContain(
       "fake-test-private-key-material",
     );
@@ -277,7 +424,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(printedText()).toContain("Change queued.");
   });
 
-  it("fails loudly at add time when the bridge secret is not resolvable", async () => {
+  it("exits with an error at add time when the bridge secret is not resolvable", async () => {
     delete process.env.GOOGLECHAT_SERVICE_ACCOUNT;
 
     await expect(addSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
@@ -286,11 +433,13 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(providerSpy).not.toHaveBeenCalled();
-    expect(printedText()).toContain("GOOGLECHAT_SERVICE_ACCOUNT");
+    expect(printedText()).toContain("Missing required inputs for this channel.");
+    expect(printedText()).not.toContain("GOOGLECHAT_SERVICE_ACCOUNT");
   });
 
-  it("tears the just-created bridge provider back down when gateway registration fails", async () => {
-    providerSpy.mockImplementation(() => {
+  it("detaches and deletes the newly created bridge provider when registration fails", async () => {
+    providerSpy.mockImplementation(async (tokenDefs, gatewayName, options, context) => {
+      await realUpsertMessagingProviders(tokenDefs, gatewayName, options, context);
       throw new Error("simulated gateway failure");
     });
 
@@ -298,13 +447,49 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       code: 1,
     });
 
-    expect(printedText()).toContain("Failed to register 'googlechat' providers");
-    expect(openshellCalls()).toEqual(
-      expect.arrayContaining([
-        ["sandbox", "provider", "detach", "test-sb", "test-sb-googlechat-bridge"],
-        ["provider", "delete", "test-sb-googlechat-bridge"],
-      ]),
+    expect(printedText()).toContain("Failed to register channel providers with the gateway.");
+    expect(detachedProviders.has("test-sb-googlechat-bridge")).toBe(true);
+    expect(deletedProviders.has("test-sb-googlechat-bridge")).toBe(true);
+  });
+
+  it("reports scoped recovery when refresh cleanup leaves a bridge provider", async () => {
+    bridgeRefreshError = "refresh unavailable";
+    providerDeleteError = "gateway unavailable";
+
+    await expect(addSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
+      code: 1,
+    });
+
+    const diagnostics = printedText();
+    expect(diagnostics).toContain("test-sb-googlechat-bridge");
+    expect(diagnostics).toContain("gateway unavailable");
+    expect(diagnostics).toContain("nemoclaw test-sb channels remove googlechat");
+  });
+
+  it("reports an uncertain existing provider when refresh status inspection throws", async () => {
+    bridgeProfileRegistered = true;
+    registeredProviders.add("test-sb-googlechat-bridge");
+    bridgeRefreshStatusError = `status inspection failed: ${SA_JSON}`;
+
+    await expect(addSandboxChannel("test-sb", { channel: "googlechat" })).rejects.toMatchObject({
+      code: 1,
+    });
+
+    const diagnostics = printedText();
+    expect(diagnostics).toContain("test-sb-googlechat-bridge");
+    expect(diagnostics).toContain(
+      "OpenShell did not report whether the provider operation completed.",
     );
+    expect(diagnostics).toContain("inspect the named provider");
+    expect(diagnostics).toContain("correct the gateway failure");
+    expect(diagnostics).not.toContain(SA_JSON);
+    expect(diagnostics).not.toContain("fake-test-private-key-material");
+    expect(diagnostics).not.toContain("fake");
+    expect(deletedProviders.has("test-sb-googlechat-bridge")).toBe(false);
+    expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).not.toContain(
+      "googlechat",
+    );
+    expect(session.messagingPlan).toBeUndefined();
   });
 
   it("removes the bridge provider, policy, and durable plan through the channel action", async () => {
@@ -313,14 +498,23 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(appliedPresets).toContain("googlechat");
 
     runOpenshellSpy.mockClear();
+    resetGatewayObservations();
     await removeSandboxChannel("test-sb", { channel: "googlechat" });
 
-    expect(openshellCalls()).toEqual(
-      expect.arrayContaining([
-        ["sandbox", "provider", "detach", "test-sb", "test-sb-googlechat-bridge"],
-        ["provider", "delete", "test-sb-googlechat-bridge"],
-      ]),
+    expect(policyChannelDependencies.resolveConfigRuntimeSelection).toHaveBeenCalledWith("test-sb");
+    expect(runOpenshellSpy).toHaveBeenCalledWith(
+      expect.arrayContaining(["-g", "nemoclaw", "sandbox", "exec", "test-sb"]),
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+        }),
+      }),
     );
+    expect(detachedProviders.has("test-sb-googlechat-bridge")).toBe(true);
+    expect(deletedProviders.has("test-sb-googlechat-bridge")).toBe(true);
     expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).not.toContain(
       "googlechat",
     );
@@ -335,6 +529,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
 
     providerSpy.mockClear();
     runOpenshellSpy.mockClear();
+    resetGatewayObservations();
     vi.mocked(policies.removePreset).mockClear();
     vi.mocked(registry.updateSandbox).mockClear();
     vi.mocked(policyChannelDependencies.rebuildSandbox).mockClear();
@@ -353,7 +548,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).toContain("googlechat");
     expect(appliedPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();
-    expect(openshellCalls()).toEqual([]);
+    expect(gatewayCallCount).toBe(0);
     expect(policies.removePreset).not.toHaveBeenCalled();
     expect(registry.updateSandbox).not.toHaveBeenCalled();
     expect(policyChannelDependencies.rebuildSandbox).not.toHaveBeenCalled();
@@ -363,6 +558,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     await addSandboxChannel("test-sb", { channel: "googlechat" });
     providerSpy.mockClear();
     runOpenshellSpy.mockClear();
+    resetGatewayObservations();
     stopGooglechatWebhookTunnelSpy.mockClear();
     vi.mocked(policies.applyPreset).mockClear();
 
@@ -377,7 +573,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       ]),
     );
     expect(providerSpy).not.toHaveBeenCalled();
-    expect(openshellCalls()).toEqual([]);
+    expect(gatewayCallCount).toBe(0);
     expect(stopGooglechatWebhookTunnelSpy).not.toHaveBeenCalled();
 
     await startSandboxChannel("test-sb", { channel: "googlechat" });
@@ -394,7 +590,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(policies.applyPreset).not.toHaveBeenCalled();
     expect(appliedPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();
-    expect(openshellCalls()).toEqual([]);
+    expect(gatewayCallCount).toBe(0);
     expect(stopGooglechatWebhookTunnelSpy).not.toHaveBeenCalled();
   });
 });

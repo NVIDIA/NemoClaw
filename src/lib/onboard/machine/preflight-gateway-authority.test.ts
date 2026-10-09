@@ -107,16 +107,18 @@ describe("preflight gateway authority", () => {
         return { ok: true };
       }),
       isDockerDriverGatewayPortListener: vi.fn(() => false),
-      getGatewayReuseSnapshot: vi.fn(() => {
+      getGatewayReuseSnapshot: vi.fn(async () => {
         events.push("get reuse snapshot");
         return {
-          gatewayStatus: "",
-          gwInfo: "",
-          activeGatewayInfo: "",
+          healthy: true,
+          namedMetadata: true,
+          shouldSelect: false,
+          endpoints: [],
+          endpointBinding: "unknown" as const,
           gatewayReuseState: "healthy" as const,
         };
       }),
-      selectNamedGatewayForReuseIfNeeded: vi.fn((snapshot) => {
+      selectNamedGatewayForReuseIfNeeded: vi.fn(async (snapshot) => {
         events.push("select named gateway");
         return snapshot;
       }),
@@ -152,6 +154,7 @@ describe("preflight gateway authority", () => {
     await expect(authority.prepareGatewayAuthority()).resolves.toEqual({
       externallySupervised: false,
       gatewayReuseState: "healthy",
+      managedGatewayObservationAuthoritative: false,
     });
 
     expect(events).toEqual([
@@ -189,10 +192,12 @@ describe("preflight gateway authority", () => {
       ],
       evidence: [],
     };
-    const getGatewayReuseSnapshot = vi.fn(() => ({
-      gatewayStatus: "",
-      gwInfo: "",
-      activeGatewayInfo: "",
+    const getGatewayReuseSnapshot = vi.fn(async () => ({
+      healthy: true,
+      namedMetadata: true,
+      shouldSelect: false,
+      endpoints: [],
+      endpointBinding: "unknown" as const,
       gatewayReuseState: "healthy" as const,
     }));
     const selectNamedGatewayForReuseIfNeeded = vi.fn();
@@ -216,12 +221,113 @@ describe("preflight gateway authority", () => {
           exitProcess: process.exit,
         },
         getGatewayReuseSnapshot,
+        managedGatewayObservationAuthoritative: vi.fn(() => false),
         selectNamedGatewayForReuseIfNeeded,
         refreshDockerDriverGatewayReuseState,
       }),
     ).rejects.toThrow("exit 1");
 
     expect(checkPortAvailable).not.toHaveBeenCalled();
+    expect(getGatewayReuseSnapshot).not.toHaveBeenCalled();
+    expect(selectNamedGatewayForReuseIfNeeded).not.toHaveBeenCalled();
+    expect(refreshDockerDriverGatewayReuseState).not.toHaveBeenCalled();
+  });
+
+  it("keeps provider-owned readiness out of Docker reuse observation (#10984)", async () => {
+    const getGatewayReuseSnapshot = vi.fn(async () => ({
+      healthy: true,
+      namedMetadata: true,
+      shouldSelect: false,
+      endpoints: [],
+      endpointBinding: "unknown" as const,
+      gatewayReuseState: "healthy" as const,
+    }));
+    const selectNamedGatewayForReuseIfNeeded = vi.fn((snapshot) => snapshot);
+    const refreshDockerDriverGatewayReuseState = vi.fn();
+    const checkPortAvailable = vi.fn();
+    const readiness: GatewayReadinessProjection = {
+      observations: [
+        { id: "gateway.management.mode", state: "present", value: "nemoclaw-managed" },
+      ],
+      capabilities: [
+        { id: "gateway.authority.resolved", state: "present" },
+        { id: "gateway.attachment.valid", state: "present" },
+        { id: "gateway.reuse.ready", state: "present" },
+        { id: "gateway.version.compatible", state: "present" },
+        { id: "gateway.port.uncontested", state: "present" },
+      ],
+      findings: [],
+      evidence: [],
+    };
+
+    await expect(
+      preparePreflightGatewayAuthority({
+        collectGatewayReadiness: async () => readiness,
+        ensureOpenshell: vi.fn(),
+        persistTrustedGatewayOwner: vi.fn(),
+        gatewayPort: 8080,
+        portConflict: {
+          checkPortAvailable,
+          getGatewayPortCheckOptions: () => ({}),
+          isDockerDriverGatewayPortListener: vi.fn(),
+          exitProcess: vi.fn() as never,
+        },
+        getGatewayReuseSnapshot,
+        managedGatewayObservationAuthoritative: () => true,
+        selectNamedGatewayForReuseIfNeeded,
+        refreshDockerDriverGatewayReuseState,
+      }),
+    ).resolves.toEqual({
+      externallySupervised: false,
+      gatewayReuseState: "healthy",
+      managedGatewayObservationAuthoritative: true,
+    });
+    expect(checkPortAvailable).not.toHaveBeenCalled();
+    expect(refreshDockerDriverGatewayReuseState).not.toHaveBeenCalled();
+    expect(selectNamedGatewayForReuseIfNeeded).toHaveBeenCalledOnce();
+  });
+  it("attaches an external owner without querying managed registration metadata", async () => {
+    const getGatewayReuseSnapshot = vi.fn(async () => {
+      throw new Error("managed metadata unavailable");
+    });
+    const selectNamedGatewayForReuseIfNeeded = vi.fn();
+    const refreshDockerDriverGatewayReuseState = vi.fn();
+    const readiness: GatewayReadinessProjection = {
+      observations: [
+        { id: "gateway.management.mode", state: "present", value: "externally-supervised" },
+      ],
+      capabilities: [
+        { id: "gateway.authority.resolved", state: "present" },
+        { id: "gateway.attachment.valid", state: "present" },
+        { id: "gateway.reuse.ready", state: "present" },
+        { id: "gateway.version.compatible", state: "present" },
+        { id: "gateway.port.uncontested", state: "present" },
+      ],
+      findings: [],
+      evidence: [],
+    };
+    await expect(
+      preparePreflightGatewayAuthority({
+        collectGatewayReadiness: async () => readiness,
+        ensureOpenshell: vi.fn(),
+        persistTrustedGatewayOwner: vi.fn(),
+        gatewayPort: 8080,
+        portConflict: {
+          checkPortAvailable: vi.fn(),
+          getGatewayPortCheckOptions: () => ({}),
+          isDockerDriverGatewayPortListener: vi.fn(),
+          exitProcess: vi.fn() as never,
+        },
+        getGatewayReuseSnapshot,
+        managedGatewayObservationAuthoritative: () => false,
+        selectNamedGatewayForReuseIfNeeded,
+        refreshDockerDriverGatewayReuseState,
+      }),
+    ).resolves.toEqual({
+      externallySupervised: true,
+      gatewayReuseState: "missing",
+      managedGatewayObservationAuthoritative: false,
+    });
     expect(getGatewayReuseSnapshot).not.toHaveBeenCalled();
     expect(selectNamedGatewayForReuseIfNeeded).not.toHaveBeenCalled();
     expect(refreshDockerDriverGatewayReuseState).not.toHaveBeenCalled();

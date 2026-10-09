@@ -10,7 +10,7 @@
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 
 NVIDIA NemoClaw is an open source reference stack for running supported AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
-It provides guided onboarding, managed inference, network policy, managed integrations, snapshots, and lifecycle operations through the NemoClaw CLI and its agent-specific aliases.
+It provides guided onboarding, managed inference, network policy, managed integrations, OpenShell-backed state persistence, and lifecycle operations through the NemoClaw CLI and its agent-specific aliases.
 
 **Supported agents:**
 
@@ -74,6 +74,7 @@ NemoClaw is an alpha project, so maintainers review issues, discussions, and pul
 | Setup or usage questions | [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) or [Discord](https://discord.gg/XFpfPv9Uvx) |
 | Reproducible bugs | [GitHub Issues](https://github.com/NVIDIA/NemoClaw/issues) |
 | Feature proposals | Start with [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions), then open an issue when the scope is clear |
+| Examples | [Community Examples](https://github.com/NVIDIA/nemoclaw-community) · [Contribute an example](https://github.com/NVIDIA/nemoclaw-community/blob/main/CONTRIBUTING.md#add-a-new-example) |
 | Current priorities | [Current Priorities](#current-priorities) |
 | Contribution help | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security vulnerabilities | Use the private channels in [SECURITY.md](SECURITY.md); do not open public issues |

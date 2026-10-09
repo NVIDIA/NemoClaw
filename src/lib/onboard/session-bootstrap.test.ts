@@ -206,6 +206,48 @@ describe("prepareOnboardSession", () => {
     expect(deps.saveSession).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "preserves incomplete activation evidence with resume=%s (#11340)",
+    async (resume) => {
+      const activationEvidence = {
+        schemaVersion: 1 as const,
+        activationId: "4b5a8e18-f967-4e27-a3b2-f2cc315abe21",
+        componentId: "policy-governance",
+        lifecycleGeneration: "generation-1",
+        sandboxIdentityFingerprint: `sha256:${"b".repeat(64)}`,
+        resultClass: "ambiguous" as const,
+      };
+      const existing = createSession({
+        sessionId: "incomplete-activation",
+        externalComponentActivation: activationEvidence,
+      });
+      const { deps, getSession } = createDeps(existing);
+
+      await expect(
+        prepareOnboardSession(
+          {
+            resume,
+            fresh: !resume,
+            requestedFromDockerfile: null,
+            requestedSandboxName: "replacement",
+            cannotPrompt: true,
+            nonInteractive: true,
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({ code: "lifecycle_unsupported" });
+
+      expect(getSession()).toBe(existing);
+      expect(getSession()?.externalComponentActivation).toEqual(activationEvidence);
+      expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+      expect(deps.updateSession).not.toHaveBeenCalled();
+      expect(deps.applySessionRecovery).not.toHaveBeenCalled();
+      expect(deps.clearSession).not.toHaveBeenCalled();
+      expect(deps.createSession).not.toHaveBeenCalled();
+      expect(deps.saveSession).not.toHaveBeenCalled();
+    },
+  );
+
   it("creates a fresh session and records the resolved Dockerfile", async () => {
     const existing = createSession({ sessionId: "old-session" });
     const { deps, getSession } = createDeps(existing);
@@ -599,6 +641,36 @@ describe("prepareOnboardSession", () => {
       "  Run: nemoclaw onboard              # start a fresh onboarding session",
     );
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
+  });
+
+  it("explains how to recover when resume newly requests an external image", async () => {
+    const conflict: ResumeConfigConflict = {
+      field: "fromImage",
+      requested: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+      recorded: null,
+    };
+    const { deps } = createDeps(createSession(), {
+      getResumeConfigConflicts: vi.fn(() => [conflict]),
+    });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedFromImage: conflict.requested,
+          requestedSandboxName: null,
+          cannotPrompt: false,
+          nonInteractive: false,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Session was started without --from-image; resume without that flag or start a fresh onboarding session.",
+    );
   });
 
   it("checks requested host mounts for resume conflict without overwriting recorded state", async () => {

@@ -33,11 +33,20 @@ function runStationPreparation(body: string, extraEnv: Record<string, string> = 
 }
 
 describe("DGX Station Docker container coexistence", () => {
+  it("rejects a leading-zero vLLM port before inspecting host processes", () => {
+    const { result, output } = runStationPreparation("check_agent_and_inference_conflicts", {
+      NEMOCLAW_VLLM_PORT: "08000",
+    });
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("NEMOCLAW_VLLM_PORT must be an integer from 1024 to 65535");
+  });
+
   it("uses sudo to inspect containers during apply until Docker group access is active", () => {
     const { result, output } = runStationPreparation(
       `
 MODE='--apply'
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
+ps() { printf '%s %s %s bash bash prepare-dgx-station-host.sh --apply\n' "$EUID" "$$" "$PPID"; }
 ss() { :; }
 docker() { return 1; }
 sudo() {
@@ -62,11 +71,12 @@ capture_docker_container_baseline
     const { result, output } = runStationPreparation(
       `
 MODE='--check'
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --check\n' "$$" "$PPID"; }
+ps() { printf '%s %s %s bash bash prepare-dgx-station-host.sh --check\n' "$EUID" "$$" "$PPID"; }
 ss() { :; }
 docker() { return 1; }
 sudo() {
-  if [[ "$1" == "-n" ]]; then shift; fi
+  [[ "$1" == "-n" ]] || return 1
+  shift
   case "$*" in
     'docker ps -aq --no-trunc'|'docker ps -q --no-trunc') return 0 ;;
     *) return 1 ;;
@@ -110,7 +120,7 @@ capture_docker_container_baseline
     const { result, output } = runStationPreparation(
       `
 MODE='--apply'
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
+ps() { printf '%s %s %s bash bash prepare-dgx-station-host.sh --apply\n' "$EUID" "$$" "$PPID"; }
 ss() { :; }
 docker() { return 1; }
 sudo() { return 1; }
@@ -206,7 +216,7 @@ main --verify
 
   it("fails closed before mutation when container inventory changes after baseline capture (#7153)", () => {
     const { result, output } = runStationPreparation(`
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
+ps() { printf '%s %s %s bash bash prepare-dgx-station-host.sh --apply\n' "$EUID" "$$" "$PPID"; }
 ss() { :; }
 docker() {
   case "$*" in
@@ -288,11 +298,10 @@ finish_runtime() { DOCKER_GROUP_ADDED=1; }
 `,
       expectedGate: "REBOOT_HANDOFF_BLOCKED check=1",
     },
-  ])("blocks the $name reboot handoff when stopped containers may restart (#7153)", ({
-    setup,
-    expectedGate,
-  }) => {
-    const { result, output } = runStationPreparation(`
+  ])(
+    "blocks the $name reboot handoff when stopped containers may restart (#7153)",
+    ({ setup, expectedGate }) => {
+      const { result, output } = runStationPreparation(`
 require_command() { :; }
 acquire_sudo() { :; }
 common_preflight() { :; }
@@ -313,12 +322,13 @@ ${setup}
 run_apply
 `);
 
-    expect(result.status, output).not.toBe(0);
-    expect(result.status, output).not.toBe(10);
-    expect(output).toContain(expectedGate);
-    expect(output).not.toContain("APPLY_RESULT=REBOOT_REQUIRED");
-    expect(output).not.toContain("Run: sudo reboot");
-  });
+      expect(result.status, output).not.toBe(0);
+      expect(result.status, output).not.toBe(10);
+      expect(output).toContain(expectedGate);
+      expect(output).not.toContain("APPLY_RESULT=REBOOT_REQUIRED");
+      expect(output).not.toContain("Run: sudo reboot");
+    },
+  );
 
   it("blocks a running container at a Docker mutation boundary (#7153)", () => {
     const { result, output } = runStationPreparation(`
@@ -358,7 +368,7 @@ require_no_autorestarting_stopped_containers "restarting Docker"
 DOCKER_BASELINE_CAPTURED=1
 DOCKER_CONTAINER_BASELINE='aaaaaaaaaaaaaaaaaaaaaaaa'
 DOCKER_CONTAINER_BASELINE_TOTAL=1
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
+ps() { printf '%s %s %s bash bash prepare-dgx-station-host.sh --apply\n' "$EUID" "$$" "$PPID"; }
 ss() { :; }
 docker() {
   local running_checks

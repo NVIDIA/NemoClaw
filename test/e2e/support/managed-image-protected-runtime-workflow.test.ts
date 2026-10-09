@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import YAML from "yaml";
 
 import { validateManagedImageMultiarchWorkflow } from "../../../tools/e2e/managed-image-multiarch-workflow-boundary.mts";
@@ -12,6 +12,8 @@ import { validateManagedImageProtectedRuntimeWorkflow } from "../../../tools/e2e
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 
 type WorkflowRecord = Record<string, unknown>;
+const POLICY_BOUNDARY_SCRIPT_ERROR =
+  "managed-image-multiarch-startup shared policy boundary step must match the reviewed narrow script";
 
 function workflow(): WorkflowRecord {
   return YAML.parse(
@@ -54,11 +56,398 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
+  it.each([
+    ["Bind reviewed candidate OpenShell runtime", "if", "false"],
+    ["Bind reviewed candidate OpenShell runtime", "continue-on-error", true],
+    ["Bind reviewed candidate OpenShell runtime", "env", { CHECKOUT_SHA: "other" }],
+    ["Bind reviewed candidate OpenShell runtime", "run", "echo bypass"],
+    ["Restore trusted OpenShell sources", "if", "success()"],
+    ["Restore trusted OpenShell sources", "run", "echo bypass"],
+    ["Build trusted CLI with reviewed OpenShell runtime", "if", "false"],
+    ["Build trusted CLI with reviewed OpenShell runtime", "run", "echo bypass"],
+    ["Prepare E2E workspace", "with", {}],
+  ])("rejects OpenShell step %s with altered %s", (name, field, replacement) => {
+    const value = workflow();
+    namedStep(value, String(name))[String(field)] = replacement;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects building the CLI before projecting candidate OpenShell", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const build = namedStep(value, "Build trusted CLI with reviewed OpenShell runtime");
+    const projection = namedStep(value, "Bind reviewed candidate OpenShell runtime");
+    const index = steps.indexOf(projection);
+    job.steps = [
+      ...steps.slice(0, index),
+      build,
+      ...steps.slice(index).filter((step) => step !== build),
+    ];
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it.each([
+    ["Download reviewed OpenShell SDK archive", "with", { name: "other-run" }],
+    ["Download reviewed OpenShell SDK archive", "if", "false"],
+    [
+      "Install reviewed OpenShell SDK from trusted controller",
+      "uses",
+      "./.candidate-runtime/.github/actions/install-reviewed-openshell-sdk",
+    ],
+    ["Install reviewed OpenShell SDK from trusted controller", "if", "false"],
+    ["Install reviewed OpenShell SDK from trusted controller", "continue-on-error", true],
+  ])("rejects SDK step %s with altered %s", (name, field, replacement) => {
+    const value = workflow();
+    namedStep(value, String(name))[String(field)] = replacement;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects building the CLI before installing the projected SDK", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const build = namedStep(value, "Build trusted CLI with reviewed OpenShell runtime");
+    const install = namedStep(value, "Install reviewed OpenShell SDK from trusted controller");
+    const index = steps.indexOf(install);
+    job.steps = [
+      ...steps.slice(0, index),
+      build,
+      ...steps.slice(index).filter((step) => step !== build),
+    ];
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects missing source verification", () => {
+    const value = workflow();
+    const step = namedStep(
+      value,
+      "Run all-agent GPU, local inference, rollback, and cleanup qualification",
+    );
+    const command =
+      'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"';
+    step.run = String(step.run).replace(command, "");
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects source verification after qualification", () => {
+    const value = workflow();
+    const step = namedStep(
+      value,
+      "Run all-agent GPU, local inference, rollback, and cleanup qualification",
+    );
+    const command =
+      'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"';
+    step.run = `${String(step.run).replace(command, "")}\n${command}\n`;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects a runtime job that exceeds the 75 minute budget", () => {
+    const value = workflow();
+    runtimeJob(value)["timeout-minutes"] = 300;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must keep the 75 minute timeout",
+    );
+  });
+
+  // source-shape-contract: security -- The isolated registry must be gone before reporter-backed validations can publish passing risk evidence
+  test("cleans the protected registry before passing risk evidence", () => {
+    const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
+    const names = steps.map((step) => String(step.name));
+    const cleanup = names.indexOf("Remove isolated protected managed-image registry");
+    const cohortCleanup = names.indexOf("Remove protected managed-image cohort resources");
+    const security = names.indexOf("Validate OpenClaw managed-image security boundary");
+    const glibc = names.indexOf("Validate managed-image glibc probe lifecycle");
+    expect(cleanup).toBeLessThan(names.indexOf("Validate protected managed-image evidence"));
+    expect(cleanup).toBeLessThan(security);
+    expect(cleanup).toBeLessThan(glibc);
+    expect(cohortCleanup).toBeGreaterThan(security);
+    expect(cohortCleanup).toBeGreaterThan(glibc);
+    expect(steps[cleanup]).toMatchObject({
+      if: "always()",
+      run: expect.stringMatching(
+        /if docker container inspect[\s\S]*owner=.*docker container inspect/u,
+      ),
+    });
+    expect(steps[security]).toMatchObject({
+      run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
+    });
+    expect(steps[glibc]).toMatchObject({
+      if: "${{ !cancelled() }}",
+      run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
+    });
+    expect(steps[cohortCleanup]).toMatchObject({ if: "always()" });
+  });
+
   it("accepts the hosted build-cache handoff to the protected runtime job", () => {
     const value = workflow();
 
     expect(validateManagedImageMultiarchWorkflow(value)).toEqual([]);
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
+  });
+
+  it.each([
+    "node scripts/checks/protected-dcode-base-receipt.mts verify",
+    '"$verified" == "$reference"',
+    '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
+    '"$CANDIDATE_BASES" == false',
+    '[[ "$CANDIDATE_BASES" == false &&',
+  ])("rejects a candidate OCI base handoff without %s", (fragment) => {
+    const value = workflow();
+    const step = namedStep(value, "Resolve digest-pinned amd64 runtime base images");
+    step.run = String(step.run).replace(fragment, "REMOVED");
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it.each([
+    ["managed-image-multiarch-startup", "Resolve digest-pinned platform base images"],
+    ["managed-image-protected-runtime", "Resolve digest-pinned amd64 runtime base images"],
+  ])("rejects a disabled candidate base selector in %s", (jobId, name) => {
+    const value = workflow();
+    const step = namedJobStep(value, jobId, name);
+    (step.env as Record<string, unknown>).CANDIDATE_BASES = "false";
+    expect(validateE2eWorkflow(value)).not.toEqual([]);
+  });
+
+  it("requires cancellation cleanup for the derived Docker Engine 27 receipt daemon", () => {
+    const value = workflow();
+    const cleanup = namedMultiarchStep(value, "Remove owned Docker Engine 27 receipt daemon");
+    cleanup.if = "${{ !cancelled() }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup Docker Engine 27 receipt daemon cleanup must always run",
+    );
+  });
+
+  // source-shape-contract: security -- The direct runner imports candidate shared modules and must not use stale build output
+  it("builds the candidate shared boundary before direct managed-image contracts", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const prepare = namedMultiarchStep(value, "Prepare E2E workspace");
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
+    const direct = namedMultiarchStep(value, "Run every exact managed-image contract directly");
+
+    expect(prepare.with).toEqual({ "build-cli": "false" });
+    expect(boundary.run).toEqual(expect.stringContaining("npm run build:policy-boundary"));
+    expect(steps.indexOf(auth)).toBe(steps.indexOf(boundary) + 1);
+    expect(steps.indexOf(boundary)).toBeLessThan(steps.indexOf(direct));
+
+    job.steps = [...steps.filter((step) => step !== boundary), boundary];
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup protected build, execution, cleanup, validation, and upload steps drifted",
+    );
+  });
+
+  it("rejects Docker authentication before the candidate shared boundary build", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const auth = namedMultiarchStep(value, "Authenticate to Docker Hub");
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    job.steps = [
+      ...steps.slice(0, steps.indexOf(boundary)),
+      auth,
+      boundary,
+      ...steps.slice(steps.indexOf(boundary) + 1).filter((step) => step !== auth),
+    ];
+
+    const expected =
+      "managed-image-multiarch-startup Docker Hub auth must run immediately after the shared boundary build";
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(expected);
+    expect(validateE2eWorkflow(value)).toContain(expected);
+  }, 15_000);
+
+  it.each([
+    ["nemoclaw/dist/shared/openshell-policy-boundary.cjs", "nemoclaw/dist/shared/missing.cjs"],
+    ["nemoclaw/dist/shared/sandbox-name.cjs", "nemoclaw/dist/shared/missing.cjs"],
+  ])("rejects a shared boundary step without %s", (required, replacement) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace(required, replacement);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    ["a commented command", "# npm run build:policy-boundary"],
+    ["heredoc data", "cat <<'EOF'\nnpm run build:policy-boundary\nEOF"],
+    [
+      "data after a space-indented heredoc marker",
+      "cat <<'EOF'\n EOF\nnpm run build:policy-boundary\nEOF",
+    ],
+  ])("rejects %s in place of the shared boundary build", (_description, replacement) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace("npm run build:policy-boundary", replacement);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    "npm run build:cli",
+    "npm  run   build:cli",
+    "npm --prefix nemoclaw run build",
+    "npm   --prefix  nemoclaw  run   build",
+  ])("rejects additive full build command %s", (command) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = `${String(boundary.run)}\n${command}`;
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]]",
+    '[[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]]',
+  ])("rejects a comment-only shared boundary guard %s", (guard) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = String(boundary.run).replace(guard, `# ${guard}`);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    ["comment heredoc opener", (run: string) => `${run}\n# cat <<true\nnpm run build:cli\ntrue`],
+    ["here-string", (run: string) => `${run}\ncat <<<true\nnpm run build:cli`],
+    ["quoted heredoc text", (run: string) => `${run}\nprintf '%s\\n' '<<true'\nnpm run build:cli`],
+    [
+      "false branch",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "if false; then\n  npm run build:policy-boundary\nfi",
+        ),
+    ],
+    [
+      "errexit disabled",
+      (run: string) => run.replace("set -euo pipefail", "set +e\nset -uo pipefail"),
+    ],
+    [
+      "duplicate build command",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "npm run build:policy-boundary\nnpm run build:policy-boundary",
+        ),
+    ],
+    [
+      "numeric heredoc body",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "cat <<123\nnpm run build:policy-boundary\n123",
+        ),
+    ],
+    [
+      "escaped heredoc delimiter",
+      (run: string) =>
+        run.replace(
+          "npm run build:policy-boundary",
+          "cat <<\\\\EOF\nnpm run build:policy-boundary\nEOF",
+        ),
+    ],
+    [
+      "empty quoted heredoc delimiter",
+      (run: string) =>
+        run.replace("npm run build:policy-boundary", 'cat <<""\nnpm run build:policy-boundary\n\n'),
+    ],
+  ])("rejects the %s shell bypass", (_description, mutate) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary.run = mutate(String(boundary.run));
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(POLICY_BOUNDARY_SCRIPT_ERROR);
+  });
+
+  it.each([
+    ["if", "false"],
+    ["continue-on-error", false],
+  ])("rejects a shared boundary step-level %s override", (property, override) => {
+    const value = workflow();
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    boundary[property] = override;
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup shared policy boundary step must not set if or continue-on-error",
+    );
+  });
+
+  it("rejects duplicate shared policy boundary steps", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    (job.steps as Array<Record<string, unknown>>).push(structuredClone(boundary));
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must define exactly one 'Build shared policy boundary' step",
+    );
+  });
+
+  it("rejects an additional step outside the reviewed topology", () => {
+    const value = workflow();
+    const steps = multiarchJob(value).steps as Array<Record<string, unknown>>;
+    const boundary = namedMultiarchStep(value, "Build shared policy boundary");
+    steps.splice(steps.indexOf(boundary) + 1, 0, {
+      name: "Build full candidate plugin",
+      shell: "bash",
+      run: "npm --prefix nemoclaw run build",
+    });
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup must preserve the reviewed candidate execution window topology",
+        "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "a full CLI build appended to another step",
+      (value: WorkflowRecord) => {
+        const activation = namedMultiarchStep(value, "Validate candidate activation contract");
+        activation.run = [String(activation.run), "npm \\", "  run build:cli"].join("\n");
+      },
+    ] as const,
+    ...[
+      'npm run "build:cli"',
+      'npm run build:"cli"',
+      'npm --prefix nemoclaw run "build"',
+      "npm --prefix=nemoclaw run build",
+    ].map(
+      (command) =>
+        [
+          `an alternate full build command appended to another step: ${command}`,
+          (value: WorkflowRecord) => {
+            const activation = namedMultiarchStep(value, "Validate candidate activation contract");
+            activation.run = `${String(activation.run)}\n${command}`;
+          },
+        ] as const,
+    ),
+  ])("rejects %s", (_description, mutate) => {
+    const value = workflow();
+    mutate(value);
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
+    );
+  });
+
+  it("does not extend the candidate execution receipt past the direct consumer", () => {
+    const value = workflow();
+    const evidence = namedMultiarchStep(value, "Validate protected managed-image evidence");
+    evidence.env = { REVIEW_SCOPE_PROBE: "1" };
+
+    const errors = validateManagedImageMultiarchWorkflow(value);
+    expect(errors).not.toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window topology",
+    );
+    expect(errors).not.toContain(
+      "managed-image-multiarch-startup must preserve the reviewed candidate execution window surface",
+    );
   });
 
   // source-shape-contract: security -- Both protected jobs must execute the shared Hermes resolver from trusted workflow code
@@ -171,14 +560,26 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
-  it("does not record manual PR risk signals on main pushes", () => {
+  it("records protected risk signals on main pushes", () => {
     const value = workflow();
     const jobEnv = multiarchJob(value).env as Record<string, unknown>;
-    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha }}";
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+      "managed-image-multiarch-startup env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha || github.sha }}",
     );
+  });
+
+  // source-shape-contract: compatibility -- Main-push qualification must create the UUID consumed by reporter-backed risk evidence when workflow_dispatch inputs do not exist.
+  it("binds a correlation identity for main pushes without an input", () => {
+    const step = namedMultiarchStep(workflow(), "Bind protected E2E correlation identity");
+
+    expect(step).toMatchObject({
+      env: { REQUESTED_CORRELATION_ID: "${{ inputs.correlation_id }}" },
+      run: expect.stringMatching(
+        /if \[\[ -z "\$correlation_id" \]\][\s\S]*randomUUID[\s\S]*NEMOCLAW_E2E_CORRELATION_ID/u,
+      ),
+    });
   });
 
   it("uses github.sha for main pushes", () => {
@@ -204,11 +605,56 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(activation).toEqual({
       agents: ["openclaw", "hermes", "langchain-deepagents-code"],
-      contractVersion: 1,
+      contractVersion: 2,
       jobId: "managed-image-protected-runtime",
       platform: "linux/amd64",
       providers: ["ollama", "nim", "vllm"],
+      runtimeUser: "sandbox",
     });
+  });
+
+  it("rejects runtime contract selection drift", () => {
+    const value = workflow();
+    const activation = namedJobStep(
+      value,
+      "managed-image-protected-runtime",
+      "Validate protected runtime activation contract",
+    );
+    activation.run = String(activation.run).replace(
+      ".contractVersion == 2",
+      ".contractVersion == 3",
+    );
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime step 'Validate protected runtime activation contract' must include .contractVersion == 2",
+    );
+  });
+
+  it("rejects an unbound runtime contract output", () => {
+    const value = workflow();
+    namedJobStep(
+      value,
+      "managed-image-protected-runtime",
+      "Validate protected runtime activation contract",
+    ).id = "changed-runtime-contract";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime activation step must expose the reviewed runtime contract",
+    );
+  });
+
+  it("rejects a protected build that drops the selected runtime user", () => {
+    const value = workflow();
+    const build = namedJobStep(
+      value,
+      "managed-image-protected-runtime",
+      "Build exact all-agent protected runtime images",
+    );
+    (build.env as Record<string, unknown>).RUNTIME_USER = "root";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime protected runtime build bases must bind RUNTIME_USER to ${{ steps.runtime-contract.outputs.runtime_user }}",
+    );
   });
 
   it("rejects job-scoped NGC credentials", () => {
@@ -307,7 +753,33 @@ describe("protected managed-image runtime workflow", () => {
     runtimeJob(value).needs = ["generate-matrix"];
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup",
+      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, managed-image-multiarch-startup, and package-openshell-sdk",
+    );
+  });
+
+  it("keeps protected audit production in trusted workflow code", () => {
+    const value = workflow();
+    const audit = namedStep(
+      value,
+      "Reuse or refresh reviewed audit evidence before the offline build",
+    );
+    audit.uses = "./.candidate-runtime/.github/actions/ci-reviewed-npm-audit";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must execute the trusted reviewed npm audit action",
+    );
+  });
+
+  it("audits the selected candidate before the protected build", () => {
+    const value = workflow();
+    const audit = namedStep(
+      value,
+      "Reuse or refresh reviewed audit evidence before the offline build",
+    );
+    (audit.with as Record<string, unknown>)["target-root"] = "${{ github.workspace }}";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime audit action must bind target-root to ${{ github.workspace }}/.candidate-runtime",
     );
   });
 
@@ -371,6 +843,19 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("keeps the protected build controller in the trusted checkout", () => {
+    const value = workflow();
+    const build = namedStep(value, "Build exact all-agent protected runtime images");
+    build.run = String(build.run).replace(
+      "scripts/checks/build-protected-managed-images.sh",
+      '"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh"',
+    );
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime build controller must execute trusted workflow code",
+    );
+  });
+
   it("rejects a hosted producer that is not selected with protected runtime", () => {
     const value = workflow();
     multiarchJob(value).if =
@@ -408,6 +893,18 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       "managed-image-multiarch-startup must not resolve the DCode base from a mutable alias",
     );
+  });
+
+  it.each([
+    ["Validate OpenClaw managed-image security boundary", "run", "true"],
+    ["Validate OpenClaw managed-image security boundary", "continue-on-error", true],
+    ["Validate managed-image glibc probe lifecycle", "if", "always()"],
+    ["Validate managed-image glibc probe lifecycle", "continue-on-error", true],
+  ] as const)("rejects weakened protected consumer step %s %s", (name, key, value) => {
+    const candidate = workflow();
+    namedMultiarchStep(candidate, name)[key] = value;
+
+    expect(validateManagedImageMultiarchWorkflow(candidate)).not.toEqual([]);
   });
 
   it("requires one amd64 build-cache upload", () => {

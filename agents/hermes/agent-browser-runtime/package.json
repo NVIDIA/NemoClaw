@@ -1,0 +1,9 @@
+{
+  "name": "nemoclaw-hermes-agent-browser-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "dependencies": {
+    "agent-browser": "0.26.0"
+  }
+}

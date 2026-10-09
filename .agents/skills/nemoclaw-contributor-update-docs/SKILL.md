@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-update-docs
-description: Find user-visible changes merged to NemoClaw and update their owning documentation. Use in the post-merge documentation workflow or for direct documentation catch-up. Derive pages, commands, variants, and validation from the current checkout. Trigger keywords - update docs, docs from commits, catch up docs, docs drift.
+description: "Update NemoClaw documentation for merged behavior changes. Use for post-merge catch-up or a requested documentation drift audit."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -18,6 +18,10 @@ exact pushed `main` commit. Do not advance either boundary while authoring. For 
 documentation task, use the commit range supplied by the user or current checkout context.
 
 Release-entry completion belongs to `nemoclaw-maintainer-evening`, not this workflow.
+
+For an existing managed draft, extend its staged changes after the workflow merges them with `main`.
+Preserve previous documentation changes unless current source and tests justify a revision or removal.
+The independent reviewer checks those revisions against the previous draft commit.
 
 ## Load current authority
 

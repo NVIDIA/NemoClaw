@@ -14,10 +14,33 @@ import {
   installRebuildFlowTestHooks,
   makePreparedRecoveryManifest,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-dcode-harness";
+} from "../../../../test/helpers/rebuild-flow-generic-harness";
 
 describe("rebuildSandbox DCode recovered provider", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it.each([null, {}, { providerId: "" }])(
+    "rejects malformed native authority before any rebuild mutation (%j)",
+    async (nativeNvidiaProviderAttachment) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: {
+          ...makeDcodeSandboxEntry(),
+          provider: "nvidia-prod",
+          nativeNvidiaProviderAttachment,
+        },
+      });
+      configureDcodeSession(harness);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Malformed native NVIDIA provider attachment");
+
+      expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+      expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+      expectNoDcodeMutation(harness);
+    },
+  );
 
   it("rejects incompatible keyless provider reuse after the live DCode route proof", async () => {
     const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
@@ -72,7 +95,7 @@ describe("rebuildSandbox DCode recovered provider", () => {
       configureDcodeSession(harness);
       setGatewayProviderMetadata(
         harness,
-        "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\n",
+        "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: <none>\n",
       );
 
       await expect(

@@ -3,157 +3,19 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
-import { bindOpenAiProviderProfile, createProviderReviewDeps } from "./setup-inference";
+import {
+  createProviderReviewDeps,
+  createSetupInference,
+  type SetupInferenceDeps,
+} from "./setup-inference";
 
-describe("bindOpenAiProviderProfile", () => {
-  it("imports the profile immediately before an OpenAI provider upsert", () => {
-    const events: string[] = [];
-    const profileEvents = ["profile-export", "profile-import"];
-    const profileResults = [
-      { status: 1, stdout: "", stderr: "provider profile not found" },
-      { status: 0, stdout: "", stderr: "" },
-    ];
-    let profileIndex = 0;
-    const runOpenshell = vi.fn(() => {
-      events.push(profileEvents[profileIndex]!);
-      return profileResults[profileIndex++]!;
-    });
-    const upsertProvider = vi.fn(() => {
-      events.push("upsert");
-      return { ok: true };
-    });
-    const profiledUpsert = bindOpenAiProviderProfile(
-      upsertProvider,
-      runOpenshell,
-      vi.fn(),
-      (code): never => {
-        throw new Error(`exit ${code}`);
-      },
-    );
-
-    expect(
-      profiledUpsert(
-        "compatible-endpoint",
-        "openai",
-        "COMPATIBLE_API_KEY",
-        "https://inference.example/v1",
-        { COMPATIBLE_API_KEY: "test-secret" },
-      ),
-    ).toEqual({ ok: true });
-
-    expect(events).toEqual(["profile-export", "profile-import", "upsert"]);
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["provider", "profile", "export", "openai", "--output", "json"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: 30_000,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      2,
-      ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: 30_000,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-  });
-
-  it("does not import the OpenAI profile for another provider type", () => {
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-    const upsertProvider = vi.fn(() => ({ ok: true }));
-    const profiledUpsert = bindOpenAiProviderProfile(
-      upsertProvider,
-      runOpenshell,
-      vi.fn(),
-      (code): never => {
-        throw new Error(`exit ${code}`);
-      },
-    );
-
-    expect(
-      profiledUpsert(
-        "anthropic-prod",
-        "anthropic",
-        "ANTHROPIC_API_KEY",
-        "https://api.anthropic.com",
-        {},
-      ),
-    ).toEqual({ ok: true });
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    {
-      reason: "import failure",
-      results: [
-        { status: 1, stdout: "", stderr: "provider profile not found" },
-        { status: 1, stdout: "", stderr: "sensitive-import-output" },
-      ],
-      expected: "could not import the checked-in 'openai' inference provider profile",
-      guidance: "OpenShell is available and authorized",
-    },
-    {
-      reason: "export failure",
-      results: [{ status: 1, stdout: "sensitive-export-output", stderr: "" }],
-      expected: "could not be read for validation",
-      guidance: "OpenShell is available, authorized, and the profile is readable",
-    },
-    {
-      reason: "incompatible profile",
-      results: [
-        {
-          status: 0,
-          stdout: JSON.stringify({
-            id: "openai",
-            credentials: ["sensitive-profile-field"],
-            endpoints: [],
-            binaries: [],
-            inference_capable: true,
-          }),
-          stderr: "",
-        },
-      ],
-      expected: "does not match NemoClaw's endpointless inference contract",
-      guidance: "Remove the conflicting profile",
-    },
-  ])("fails closed with fixed guidance for $reason", ({ results, expected, guidance }) => {
-    let resultIndex = 0;
-    const runOpenshell = vi.fn(() => results[resultIndex++]!);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
-    const error = vi.fn();
-    const profiledUpsert = bindOpenAiProviderProfile(
-      upsertProvider,
-      runOpenshell,
-      error,
-      (code): never => {
-        throw new Error(`exit ${code}`);
-      },
-    );
-
-    expect(() =>
-      profiledUpsert(
-        "compatible-endpoint",
-        "openai",
-        "COMPATIBLE_API_KEY",
-        "https://inference.example/v1",
-        {},
-      ),
-    ).toThrow("exit 1");
-
-    expect(upsertProvider).not.toHaveBeenCalled();
-    const output = error.mock.calls.flat().join("\n");
-    expect(output).toContain(expected);
-    expect(output).toContain(guidance);
-    expect(output).not.toMatch(/sensitive-(?:import|export|profile)-/u);
-  });
-});
+// Reservation recovery has its own state tests; this suite injects registry writes.
+vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sandbox-lifecycle")>()),
+  releaseAbandonedRouteReservation: vi.fn(() => false),
+}));
 
 describe("createProviderReviewDeps", () => {
   it("prepares the Ollama proxy after review acceptance", async () => {
@@ -290,7 +152,7 @@ describe("createProviderReviewDeps", () => {
       },
       {
         runOpenshell: () => ({ status: 0 }),
-        upsertProvider: () => ({ ok: true }),
+        upsertProvider: async () => ({ ok: true }),
         verifyInferenceRoute: vi.fn(),
         verifyOnboardInferenceSmoke: vi.fn(),
         isNonInteractive: () => true,
@@ -303,7 +165,6 @@ describe("createProviderReviewDeps", () => {
         validateLocalProvider: () => ({ ok: true }),
         getLocalProviderBaseUrl: () => "http://host.openshell.internal:11435/v1",
         applyLocalInferenceRoute: async () => false,
-        getOllamaWarmupCommand: () => ["ollama", "run", "qwen3.5:9b"],
         run: vi.fn() as never,
         shouldFrontOllamaWithProxy: () => true,
         ensureOllamaAuthProxy,
@@ -313,6 +174,8 @@ describe("createProviderReviewDeps", () => {
         localInference: {
           validateOllamaModelWithToolsOverride: () => ({ ok: true }),
           validateSandboxFacingOllamaModel: () => ({ ok: true }),
+          runOllamaWarmup: () => {},
+          persistResolvedOllamaHost: () => () => {},
         },
         OLLAMA_PROXY_CREDENTIAL_ENV: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       },
@@ -322,5 +185,339 @@ describe("createProviderReviewDeps", () => {
     expect(getOllamaProxyToken).toHaveBeenCalledOnce();
     expect(persistAndProbeOllamaProxy).toHaveBeenCalledOnce();
     expect(ensureOllamaAuthProxy).not.toHaveBeenCalled();
+  });
+});
+
+describe("native NVIDIA onboarding", () => {
+  it("reserves the logical route with an attached-provider receipt and no shared route mutation", async () => {
+    const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
+    const getProvider = vi
+      .fn<OpenShellProviderAdapter["getProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "not found" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: "nemoclaw-nvidia-prod-v1",
+          type: "nemoclaw-nvidia-inference-v1",
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: { id: "provider-id", resourceVersion: 4 },
+        },
+      });
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>(async () => ({
+      ok: true,
+    }));
+    const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+      importProviderProfile,
+      getProvider,
+      createProvider,
+    } as unknown as OpenShellProviderAdapter;
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+    const updateSandbox = vi.fn(() => true);
+    const setNativeNvidiaProviderAuthority = vi.fn(() => true);
+    const verifyInferenceRoute = vi.fn();
+    const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "onboarding-gateway",
+      runOpenshell,
+      updateSandbox,
+      setNativeNvidiaProviderAuthority,
+      getSandbox: () => null,
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute,
+      verifyOnboardInferenceSmoke,
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        { revalidateSandboxIdentity: () => undefined },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(importProviderProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "onboarding-gateway" },
+      }),
+    );
+    expect(getProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "onboarding-gateway" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
+    expect(createProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: "onboarding-gateway" },
+        name: "nemoclaw-nvidia-prod-v1",
+        credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-credential" }],
+        config: [],
+      }),
+    );
+    expect(
+      runOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
+    ).toEqual([]);
+    expect(verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "provider-id",
+        },
+      }),
+    );
+    expect(setNativeNvidiaProviderAuthority).toHaveBeenCalledWith("onboarding-gateway", {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "provider-id",
+    });
+  });
+
+  it("removes a new provider when gateway authority persistence fails (#12562)", async () => {
+    let providerPresent = false;
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () =>
+      providerPresent
+        ? {
+            ok: true,
+            value: {
+              name: "nemoclaw-nvidia-prod-v1",
+              type: "nemoclaw-nvidia-inference-v1",
+              credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+              configKeys: [],
+              revision: { id: "provider-id", resourceVersion: 4 },
+            },
+          }
+        : {
+            ok: false,
+            error: { kind: "command", reason: "not_found", message: "not found" },
+          },
+    );
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => {
+      providerPresent = false;
+      return { ok: true };
+    });
+    const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      getProvider,
+      createProvider: vi.fn(async () => {
+        providerPresent = true;
+        return { ok: true as const };
+      }),
+      deleteProvider,
+    } as unknown as OpenShellProviderAdapter;
+    const updateSandbox = vi.fn(() => true);
+    const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "onboarding-gateway",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => null,
+      getNativeNvidiaProviderAuthority: () => undefined,
+      setNativeNvidiaProviderAuthority: () => {
+        throw new Error("state directory is read-only");
+      },
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke,
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        { revalidateSandboxIdentity: () => undefined },
+      ),
+    ).rejects.toThrow(/newly created provider was removed.*state directory is read-only/su);
+
+    expect(deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "onboarding-gateway" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+  });
+
+  it("reuses a gateway-owned provider for a fresh second sandbox", async () => {
+    const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
+    const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+      ok: true,
+      value: {
+        name: "nemoclaw-nvidia-prod-v1",
+        type: "nemoclaw-nvidia-inference-v1",
+        credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+        configKeys: [],
+        revision: { id: "provider-id", resourceVersion: 4 },
+      },
+    }));
+    const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
+    const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
+    const updateSandbox = vi.fn(() => true);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "onboarding-gateway",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => null,
+      getNativeNvidiaProviderAuthority: () => ({
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "provider-id",
+      }),
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter: {
+        ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+        importProviderProfile,
+        getProvider,
+        createProvider,
+        updateProvider,
+      } as unknown as OpenShellProviderAdapter,
+      hydrateCredentialEnv: vi.fn(() => null),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "second",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+        null,
+        [],
+        {
+          revalidateSandboxIdentity: () => undefined,
+          reuseGatewayCredentialWithoutLocalKey: true,
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(createProvider).not.toHaveBeenCalled();
+    expect(updateProvider).not.toHaveBeenCalled();
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "second",
+      expect.objectContaining({
+        nativeNvidiaProviderAttachment: expect.objectContaining({ providerId: "provider-id" }),
+      }),
+    );
+  });
+
+  it("requires recreation instead of recording a receipt for a legacy NVIDIA sandbox", async () => {
+    const providerAdapter = {
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+      importProviderProfile: vi.fn(),
+      getProvider: vi.fn(),
+      updateProvider: vi.fn(),
+    } as unknown as OpenShellProviderAdapter;
+    const updateSandbox = vi.fn(() => true);
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      updateSandbox,
+      getSandbox: () => ({ name: "alpha", provider: "nvidia-prod" }) as never,
+      upsertProvider: vi.fn(async () => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      providerAdapter,
+      hydrateCredentialEnv: vi.fn(() => "host-only-nvidia-credential"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-prod",
+        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+      ),
+    ).rejects.toThrow(/Recreate this beta sandbox.*does not migrate existing beta sandboxes/u);
+
+    expect(providerAdapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
   });
 });

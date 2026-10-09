@@ -602,29 +602,29 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
     }
   }, 60_000);
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("consumes the protected %s request or recovered claim before exact supervisor exec and drops bootstrap variables", (agent) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-trampoline-"));
-    try {
-      const request = path.join(directory, "request.json");
-      const claimDirectory = path.join(directory, ".request.json.nemoclaw-claim");
-      const claim = path.join(claimDirectory, "request");
-      const completion = path.join(directory, "completion");
-      const runtime = path.join(directory, "runtime.cjs");
-      const sandbox = path.join(directory, "sandbox");
-      const trace = path.join(directory, "trace");
-      const script = path.join(directory, "trampoline.sh");
-      const supervisor = path.join(directory, "supervisor");
-      const injection = path.join(directory, "injection");
-      const attackerFunction = path.join(directory, "attacker-function-ran");
-      fs.mkdirSync(sandbox);
-      fs.writeFileSync(runtime, "");
-      fs.writeFileSync(request, "{}\n", { mode: 0o400 });
-      const loader = hostileLoader(directory, request);
-      executable(
-        path.join(directory, "id"),
-        `#!/bin/sh
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "consumes the protected %s request or recovered claim before exact supervisor exec and drops bootstrap variables",
+    (agent) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-trampoline-"));
+      try {
+        const request = path.join(directory, "request.json");
+        const claimDirectory = path.join(directory, ".request.json.nemoclaw-claim");
+        const claim = path.join(claimDirectory, "request");
+        const completion = path.join(directory, "completion");
+        const runtime = path.join(directory, "runtime.cjs");
+        const sandbox = path.join(directory, "sandbox");
+        const trace = path.join(directory, "trace");
+        const script = path.join(directory, "trampoline.sh");
+        const supervisor = path.join(directory, "supervisor");
+        const injection = path.join(directory, "injection");
+        const attackerFunction = path.join(directory, "attacker-function-ran");
+        fs.mkdirSync(sandbox);
+        fs.writeFileSync(runtime, "");
+        fs.writeFileSync(request, "{}\n", { mode: 0o400 });
+        const loader = hostileLoader(directory, request);
+        executable(
+          path.join(directory, "id"),
+          `#!/bin/sh
 test ! -e /proc/self/fd/9
 case "$*" in
   "-u") printf '0\\n' ;;
@@ -634,18 +634,18 @@ case "$*" in
   *) exit 1 ;;
 esac
 `,
-      );
-      executable(
-        path.join(directory, "stat"),
-        "#!/bin/sh\ntest ! -e /proc/self/fd/9\nprintf '0:0:400:1\\n'\n",
-      );
-      executable(
-        path.join(directory, "rm"),
-        '#!/bin/sh\ntest ! -e /proc/self/fd/9\nexec /bin/rm "$@"\n',
-      );
-      executable(
-        path.join(directory, "node"),
-        `#!/bin/sh
+        );
+        executable(
+          path.join(directory, "stat"),
+          "#!/bin/sh\ntest ! -e /proc/self/fd/9\nprintf '0:0:400:1\\n'\n",
+        );
+        executable(
+          path.join(directory, "rm"),
+          '#!/bin/sh\ntest ! -e /proc/self/fd/9\nexec /bin/rm "$@"\n',
+        );
+        executable(
+          path.join(directory, "node"),
+          `#!/bin/sh
 test ! -e /proc/self/fd/9
 printf 'node:%s:home=%s:path=%s:lang=%s:capability=%s\\n' "$*" "$HOME" "$PATH" "$LANG" "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" >>${JSON.stringify(trace)}
 case "$*" in
@@ -659,10 +659,10 @@ case "$*" in
     ;;
 esac
 `,
-      );
-      executable(
-        supervisor,
-        `#!/bin/bash
+        );
+        executable(
+          supervisor,
+          `#!/bin/bash
 set -e
 test ! -e /proc/self/fd/9
 test ! -e "$REQUEST"
@@ -682,114 +682,116 @@ test -z "\${NEMOCLAW_MANAGED_BOOTSTRAP_RESUME+x}"
 test -z "\${NEMOCLAW_MANAGED_BOOTSTRAP_RESUME_EXECUTABLE+x}"
 printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capability=%s:bash-env=%s\\n' "$1" "$2" "$3" "\${_nemoclaw_bootstrap_identity-unset}" "\${_nemoclaw_request-unset}" "$HOME" "$PATH" "$LANG" "\${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION-unset}" "\${BASH_ENV+x}" >>"$TRACE"
 `,
-      );
-      const source = fs
-        .readFileSync(TRAMPOLINE, "utf8")
-        .replaceAll("/usr/bin/id", path.join(directory, "id"))
-        .replaceAll("/usr/bin/stat", path.join(directory, "stat"))
-        .replaceAll("/usr/bin/rm", path.join(directory, "rm"))
-        .replace(
-          '_nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"',
-          `_nemoclaw_runtime=${JSON.stringify(runtime)}`,
-        )
-        .replaceAll("/var/lib/nemoclaw-managed-bootstrap-request.json", request)
-        .replaceAll("/sandbox", sandbox)
-        .replaceAll("/usr/local/bin/node", path.join(directory, "node"));
-      fs.writeFileSync(script, source, { mode: 0o644 });
-      fs.chmodSync(script, 0o644);
-      const entrypoint = compileEntrypoint(directory, script);
-      fs.writeFileSync(
-        path.join(directory, "bash-env"),
-        `printf 'startup after validation\\n' >>${JSON.stringify(trace)}\nset +x\n`,
-      );
-      const fingerprint = "a".repeat(64);
-      const identity = "b".repeat(64);
-      const argv = [
-        "--agent",
-        agent,
-        "--profile-fingerprint",
-        fingerprint,
-        "--bootstrap-identity",
-        identity,
-        "--agent-uid",
-        "1000",
-        "--agent-gid",
-        "1000",
-        "--agent-workdir",
-        sandbox,
-        "--request-file",
-        request,
-        "--",
-        supervisor,
-        "supervise",
-        "two words",
-        `$(touch ${injection})`,
-      ];
-      const environment = {
-        REQUEST: request,
-        CLAIM: claim,
-        TRACE: trace,
-        BASH_ENV: path.join(directory, "bash-env"),
-        "BASH_FUNC_attacker%%": `() { /usr/bin/touch ${attackerFunction}; }`,
-        HOME: "/preserved-home",
-        PATH: "/preserved-path",
-        PS4: "hostile-ps4",
-        SHELLOPTS: "xtrace",
-        LANG: "zz_TEST",
-        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "preserved-capability",
-        LD_LIBRARY_PATH: directory,
-        LD_PRELOAD: loader.library,
-        DYLD_INSERT_LIBRARIES: loader.library,
-        LD_AUDIT: loader.library,
-      };
+        );
+        const source = fs
+          .readFileSync(TRAMPOLINE, "utf8")
+          .replaceAll("/usr/bin/id", path.join(directory, "id"))
+          .replaceAll("/usr/bin/stat", path.join(directory, "stat"))
+          .replaceAll("/usr/bin/rm", path.join(directory, "rm"))
+          .replace(
+            '_nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"',
+            `_nemoclaw_runtime=${JSON.stringify(runtime)}`,
+          )
+          .replaceAll("/var/lib/nemoclaw-managed-bootstrap-request.json", request)
+          .replaceAll("/sandbox", sandbox)
+          .replaceAll("/usr/local/bin/node", path.join(directory, "node"));
+        fs.writeFileSync(script, source, { mode: 0o644 });
+        fs.chmodSync(script, 0o644);
+        const entrypoint = compileEntrypoint(directory, script);
+        fs.writeFileSync(
+          path.join(directory, "bash-env"),
+          `printf 'startup after validation\\n' >>${JSON.stringify(trace)}\nset +x\n`,
+        );
+        const fingerprint = "a".repeat(64);
+        const identity = "b".repeat(64);
+        const argv = [
+          "--agent",
+          agent,
+          "--profile-fingerprint",
+          fingerprint,
+          "--bootstrap-identity",
+          identity,
+          "--agent-uid",
+          "1000",
+          "--agent-gid",
+          "1000",
+          "--agent-workdir",
+          sandbox,
+          "--request-file",
+          request,
+          "--",
+          supervisor,
+          "supervise",
+          "two words",
+          `$(touch ${injection})`,
+        ];
+        const environment = {
+          REQUEST: request,
+          CLAIM: claim,
+          TRACE: trace,
+          BASH_ENV: path.join(directory, "bash-env"),
+          "BASH_FUNC_attacker%%": `() { /usr/bin/touch ${attackerFunction}; }`,
+          HOME: "/preserved-home",
+          PATH: "/preserved-path",
+          PS4: "hostile-ps4",
+          SHELLOPTS: "xtrace",
+          LANG: "zz_TEST",
+          NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "preserved-capability",
+          LD_LIBRARY_PATH: directory,
+          LD_PRELOAD: loader.library,
+          DYLD_INSERT_LIBRARIES: loader.library,
+          LD_AUDIT: loader.library,
+        };
 
-      execFileSync(entrypoint, argv, { env: environment });
+        execFileSync(entrypoint, argv, { env: environment });
 
-      expect(fs.existsSync(request)).toBe(false);
-      expect(fs.existsSync(injection)).toBe(false);
-      expect(fs.existsSync(attackerFunction)).toBe(true);
-      expect(fs.existsSync(loader.earlyTrace)).toBe(false);
-      expect(fs.existsSync(loader.afterTrace)).toBe(true);
-      expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
-        `node:${runtime} --recover-bootstrap-claim --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
-        `node:${runtime} --apply-bootstrap-file --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
-        `node:${runtime} --verify-bootstrap-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
-        "startup after validation",
-        `supervisor:supervise|two words|$(touch ${injection}):identity=unset:request=unset:home=/preserved-home:path=/preserved-path:lang=zz_TEST:capability=preserved-capability:bash-env=x`,
-      ]);
+        expect(fs.existsSync(request)).toBe(false);
+        expect(fs.existsSync(injection)).toBe(false);
+        expect(fs.existsSync(attackerFunction)).toBe(true);
+        expect(fs.existsSync(loader.earlyTrace)).toBe(false);
+        expect(fs.existsSync(loader.afterTrace)).toBe(true);
+        expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
+          `node:${runtime} --recover-bootstrap-claim --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
+          `node:${runtime} --apply-bootstrap-file --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
+          `node:${runtime} --verify-bootstrap-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
+          "startup after validation",
+          `supervisor:supervise|two words|$(touch ${injection}):identity=unset:request=unset:home=/preserved-home:path=/preserved-path:lang=zz_TEST:capability=preserved-capability:bash-env=x`,
+        ]);
 
-      execFileSync(entrypoint, argv, { env: environment });
-      let lines = fs.readFileSync(trace, "utf8").trim().split("\n");
-      expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(2);
-      expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(1);
-      expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(2);
-      expect(lines.filter((line) => line === "startup after validation")).toHaveLength(2);
+        execFileSync(entrypoint, argv, { env: environment });
+        let lines = fs.readFileSync(trace, "utf8").trim().split("\n");
+        expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(2);
+        expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(1);
+        expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(2);
+        expect(lines.filter((line) => line === "startup after validation")).toHaveLength(2);
 
-      fs.rmSync(completion);
-      fs.mkdirSync(claimDirectory, { mode: 0o700 });
-      fs.writeFileSync(claim, "{}\n", { mode: 0o400 });
-      execFileSync(entrypoint, argv, { env: environment });
-      expect(fs.existsSync(request)).toBe(false);
-      expect(fs.existsSync(claim)).toBe(false);
-      expect(fs.existsSync(claimDirectory)).toBe(false);
-      lines = fs.readFileSync(trace, "utf8").trim().split("\n");
-      expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(3);
-      expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(2);
-      expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(3);
-      expect(lines.filter((line) => line === "startup after validation")).toHaveLength(3);
+        fs.rmSync(completion);
+        fs.mkdirSync(claimDirectory, { mode: 0o700 });
+        fs.writeFileSync(claim, "{}\n", { mode: 0o400 });
+        execFileSync(entrypoint, argv, { env: environment });
+        expect(fs.existsSync(request)).toBe(false);
+        expect(fs.existsSync(claim)).toBe(false);
+        expect(fs.existsSync(claimDirectory)).toBe(false);
+        lines = fs.readFileSync(trace, "utf8").trim().split("\n");
+        expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(3);
+        expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(2);
+        expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(3);
+        expect(lines.filter((line) => line === "startup after validation")).toHaveLength(3);
 
-      fs.writeFileSync(completion, `${agent}:${fingerprint}:${"c".repeat(64)}\n`);
-      const tamperedRestart = spawnSync(entrypoint, argv, {
-        encoding: "utf8",
-        env: environment,
-      });
-      expect(tamperedRestart.status).not.toBe(0);
-      lines = fs.readFileSync(trace, "utf8").trim().split("\n");
-      expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(2);
-      expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(3);
-      expect(lines.filter((line) => line === "startup after validation")).toHaveLength(3);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  }, 60_000);
+        fs.writeFileSync(completion, `${agent}:${fingerprint}:${"c".repeat(64)}\n`);
+        const tamperedRestart = spawnSync(entrypoint, argv, {
+          encoding: "utf8",
+          env: environment,
+        });
+        expect(tamperedRestart.status).not.toBe(0);
+        lines = fs.readFileSync(trace, "utf8").trim().split("\n");
+        expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(2);
+        expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(3);
+        expect(lines.filter((line) => line === "startup after validation")).toHaveLength(3);
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+    60_000,
+  );
 });

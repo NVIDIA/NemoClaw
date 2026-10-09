@@ -62,6 +62,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
+  doctor: [
+    {
+      group: "Troubleshooting",
+      order: 36,
+      flags: "[--json|--text]",
+    },
+  ],
   gc: [
     {
       group: "Cleanup",
@@ -234,6 +241,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 3.2,
+      description:
+        "Print the dashboard URL (not supported for the experimental Hermes portable profile)",
       flags: "[--quiet|-q]",
     },
   ],
@@ -242,7 +251,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 15,
       description: "Stop NIM + delete sandbox",
-      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]",
+      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway] [--keep-vllm]",
     },
   ],
   "sandbox:download": [
@@ -447,28 +456,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[local-mount-point]",
     },
   ],
-  "sandbox:shields:down": [
-    {
-      group: "Sandbox Management",
-      order: 25,
-      flags: "[--timeout 5m] [--reason <text>] [--policy permissive]",
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:status": [
-    {
-      group: "Sandbox Management",
-      order: 27,
-      hidden: true,
-    },
-  ],
-  "sandbox:shields:up": [
-    {
-      group: "Sandbox Management",
-      order: 26,
-      hidden: true,
-    },
-  ],
   "sandbox:skill:install": [
     {
       group: "Skills",
@@ -483,24 +470,10 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "<skill>",
     },
   ],
-  "sandbox:snapshot:create": [
+  "sandbox:skill:list": [
     {
-      group: "Sandbox Management",
-      order: 7,
-      flags: "[--name <name>]",
-    },
-  ],
-  "sandbox:snapshot:list": [
-    {
-      group: "Sandbox Management",
-      order: 8,
-    },
-  ],
-  "sandbox:snapshot:restore": [
-    {
-      group: "Sandbox Management",
-      order: 9,
-      flags: "[selector] [--to <dst>] [--force] [--yes|-y]",
+      group: "Skills",
+      order: 16.2,
     },
   ],
   "sandbox:status": [

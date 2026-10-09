@@ -6,11 +6,10 @@ import path from "node:path";
 
 export type ContainerEngineOperationScope =
   | "host-doctor"
+  | "external-image-preparation"
   | "host-local-inference"
   | "gateway-inspection"
-  | "managed-bootstrap"
   | "sandbox-lifecycle"
-  | "state-mutation"
   | "workload-cleanup";
 
 export interface ContainerEngineCommandResult {
@@ -183,6 +182,7 @@ function operationCommandEnvironment(
 
 function replacementCommandEnvironment(
   explicit: Readonly<Record<string, string>>,
+  allowedNames: ReadonlySet<string>,
 ): Readonly<Record<string, string>> {
   if (typeof explicit !== "object" || explicit === null || Array.isArray(explicit)) {
     throw new Error("Container engine command environment is invalid.");
@@ -198,7 +198,8 @@ function replacementCommandEnvironment(
       !ENVIRONMENT_NAME_PATTERN.test(name) ||
       ENGINE_ENV_NAMES.has(name) ||
       (!COMMAND_ENV_NAMES.has(name) &&
-        !COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)))
+        !COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)) &&
+        !allowedNames.has(name))
     ) {
       throw new Error("Container engine command environment name is invalid.");
     }
@@ -296,6 +297,7 @@ function defaultCapture(
     cwd: process.cwd(),
     env: environment ?? containerEngineCommandEnvironment(),
     encoding: "utf8",
+    killSignal: "SIGKILL",
     maxBuffer: MAX_OUTPUT_BYTES,
     shell: false,
     stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
@@ -362,7 +364,7 @@ export function createContainerEngineCommand(
     }),
   );
   const commandEnvironment = options.commandEnvironment
-    ? replacementCommandEnvironment(options.commandEnvironment)
+    ? replacementCommandEnvironment(options.commandEnvironment, allowedEnvironmentNames)
     : undefined;
   const capture = options.capture ?? defaultCapture;
   const run = (

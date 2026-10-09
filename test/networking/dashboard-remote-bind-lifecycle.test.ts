@@ -33,7 +33,7 @@ function remoteBindDockerfile(...postGeneratorInstructions: string[]): string {
     "ARG CHAT_UI_URL=",
     "ARG NEMOCLAW_DASHBOARD_BIND=",
     "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-    "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+    "RUN node /scripts/generate-openclaw-config.mts",
     ...postGeneratorInstructions,
   ].join("\n");
 }
@@ -70,7 +70,7 @@ describe("remote dashboard bind production lifecycle", () => {
     ],
     ["pre-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-generator"],
     ["pre-generator SHELL", 'SHELL ["/tmp/bypass-shell", "-c"]', "before-generator"],
-    ["post-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-config-hash"],
+    ["post-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-config-mode"],
     ["post-generator PYTHONPATH", "ENV PYTHONPATH=/tmp/bypass", "before-proxy-patch"],
     ["replacement HEALTHCHECK", "HEALTHCHECK CMD /tmp/bypass-healthcheck", "append"],
     ["replacement ENTRYPOINT", 'ENTRYPOINT ["/tmp/bypass-entrypoint"]', "append"],
@@ -81,17 +81,16 @@ describe("remote dashboard bind production lifecycle", () => {
     const dockerfile = path.join(directory, "Dockerfile");
     const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
     const generator =
-      "RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts";
+      "RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node /scripts/generate-openclaw-config.mts";
     const proxyPatch = 'RUN python3 -c "\\\n';
-    const configHash =
-      "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash";
+    const configMode = "RUN chmod 660 /sandbox/.openclaw/openclaw.json";
     const body =
       location === "before-generator"
         ? stockDockerfile.replace(generator, `${instruction}\n${generator}`)
         : location === "before-proxy-patch"
           ? stockDockerfile.replace(proxyPatch, `${instruction}\n${proxyPatch}`)
-          : location === "before-config-hash"
-            ? stockDockerfile.replace(configHash, `${instruction}\n${configHash}`)
+          : location === "before-config-mode"
+            ? stockDockerfile.replace(configMode, `${instruction}\n${configMode}`)
             : `${stockDockerfile}\n${instruction}\n`;
     fs.writeFileSync(dockerfile, body);
 
@@ -141,16 +140,23 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("rejects config rewrites appended to checked-in metadata validation (#6024)", () => {
+  it.each([
+    [
+      "metadata validation",
+      "    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
+    ],
+    [
+      "Tavily installation",
+      "TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive",
+    ],
+  ])("rejects config rewrites appended to checked-in %s (#6024)", (_label, instructionTail) => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-metadata-"));
     const dockerfile = path.join(directory, "Dockerfile");
     const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
-    const metadataTail =
-      "    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'";
     const mutatedDockerfile = stockDockerfile.replace(
-      metadataTail,
-      `${metadataTail} \\
+      instructionTail,
+      `${instructionTail} \\
     && printf '{}' > /sandbox/.openclaw/openclaw.json`,
     );
     fs.writeFileSync(dockerfile, mutatedDockerfile);
@@ -176,7 +182,7 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
       ].join("\n"),
     );
 
@@ -288,7 +294,7 @@ describe("remote dashboard bind production lifecycle", () => {
         "FROM scratch AS decoy",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
         "FROM scratch",
         "ARG NEMOCLAW_MODEL=",
         "ARG CHAT_UI_URL=",
@@ -318,7 +324,7 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
         "RUN printf '{}' > /sandbox/.openclaw/openclaw.json",
       ].join("\n"),
     );
@@ -337,8 +343,8 @@ describe("remote dashboard bind production lifecycle", () => {
     [
       "generator",
       remoteBindDockerfile().replace(
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts && printf '{}' > /sandbox/.openclaw/openclaw.json",
+        "RUN node /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts && printf '{}' > /sandbox/.openclaw/openclaw.json",
       ),
     ],
     [
@@ -436,9 +442,8 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
         "RUN chmod 660 /sandbox/.openclaw/openclaw.json",
-        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash",
       ].join("\n"),
     );
 
@@ -452,17 +457,32 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("allows the managed token/proxy patch and hash refresh after the remote-bind generator (#6024)", () => {
+  it("rejects the retired OpenClaw config hash after the remote-bind generator (#11764)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-managed-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-hash-"));
     const dockerfile = path.join(directory, "Dockerfile");
     fs.writeFileSync(
       dockerfile,
       remoteBindDockerfile(
-        MANAGED_PROXY_PATCH,
-        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash && chmod 660 /sandbox/.openclaw/.config-hash && chown sandbox:sandbox /sandbox/.openclaw/.config-hash",
+        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash",
       ),
     );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows the managed token/proxy patch after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-managed-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(dockerfile, remoteBindDockerfile(MANAGED_PROXY_PATCH));
 
     try {
       expect(() =>
@@ -506,8 +526,8 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
+        "RUN node /scripts/generate-openclaw-config.mts",
       ].join("\n"),
     );
 
@@ -533,8 +553,8 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
-        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
-        'RUN validation_home="$validation_root/progressive"; HOME="$validation_home" node --experimental-strip-types /scripts/generate-openclaw-config.mts',
+        "RUN node /scripts/generate-openclaw-config.mts",
+        'RUN validation_home="$validation_root/progressive"; HOME="$validation_home" node /scripts/generate-openclaw-config.mts',
       ].join("\n"),
     );
 
@@ -548,7 +568,7 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", () => {
+  it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", async () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
@@ -559,14 +579,14 @@ describe("remote dashboard bind production lifecycle", () => {
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    expect(ensureSandboxPortForward("beta")).toBe(false);
+    expect(await ensureSandboxPortForward("beta")).toBe(false);
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("not prepared for remote exposure"));
   });
 
-  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", () => {
+  it("refuses to reuse a local-only sandbox for remote exposure during onboarding (#6024)", async () => {
     const ensureDashboardForward = vi.fn();
-    expect(() =>
+    await expect(
       applyReusedSandboxDashboardState({
         sandboxName: "beta",
         chatUiUrl: "http://127.0.0.1:18789",
@@ -586,221 +606,7 @@ describe("remote dashboard bind production lifecycle", () => {
         },
         updateReusedSandboxMetadata: vi.fn(),
       }),
-    ).toThrow(/--recreate-sandbox/);
+    ).rejects.toThrow(/--recreate-sandbox/);
     expect(ensureDashboardForward).not.toHaveBeenCalled();
-  });
-
-  it("force-restarts a healthy forward on all interfaces only after preparation (#6024)", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      dashboardPort: 18789,
-      dashboardRemoteBindPrepared: true,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: "SANDBOX  BIND  PORT  PID  STATUS\nbeta  0.0.0.0  18789  12345  running",
-    });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
-
-    expect(ensureSandboxPortForward("beta")).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "beta"],
-      expect.anything(),
-    );
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-  });
-
-  it("rejects a loopback forward after requesting remote exposure (#6024)", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      dashboardPort: 18789,
-      dashboardRemoteBindPrepared: true,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: "SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running",
-    });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
-
-    expect(ensureSandboxPortForward("beta")).toBe(false);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-  });
-
-  it("does not replace another sandbox's forward during remote-bind recovery (#6024)", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      dashboardPort: 18789,
-      dashboardRemoteBindPrepared: true,
-    });
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 0,
-      output: "SANDBOX  BIND  PORT  PID  STATUS\nalpha  0.0.0.0  18789  12345  running",
-    });
-    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
-
-    expect(ensureSandboxPortForward("beta")).toBe(false);
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
-  it("forceRestart re-verifies remote-bind preparation before opening the forward (#6024)", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(registry, "getSandbox")
-      .mockReturnValueOnce({
-        name: "beta",
-        dashboardPort: 18789,
-        dashboardRemoteBindPrepared: true,
-      })
-      .mockReturnValueOnce({
-        name: "beta",
-        dashboardPort: 18789,
-        dashboardRemoteBindPrepared: true,
-      })
-      .mockReturnValue({ name: "beta", dashboardPort: 18789 });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(false);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 0, output: "" });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
-
-    expect(ensureSandboxPortForward("beta")).toBe(false);
-    expect(
-      runOpenshell.mock.calls.some(
-        ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward" && rawArgs[1] === "start",
-      ),
-    ).toBe(false);
-  });
-
-  it("restores loopback when default connect finds an all-interface forward (#6024)", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    let started = false;
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      dashboardPort: 18789,
-      dashboardRemoteBindPrepared: true,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-      status: 0,
-      output: started
-        ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running"
-        : "SANDBOX  BIND  PORT  PID  STATUS\nbeta  0.0.0.0  18789  12345  running",
-    }));
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        started ||= args[0] === "forward" && args[1] === "start";
-        return { status: 0 } as never;
-      });
-
-    expect(ensureSandboxPortForward("beta", { isWsl: false })).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "beta"],
-      expect.anything(),
-    );
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-  });
-
-  it("restores an all-interface forward for WSL without remote-bind opt-in (#6024)", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    let started = false;
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      dashboardPort: 18789,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => started);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-      status: 0,
-      output: started
-        ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  0.0.0.0  18789  12345  running"
-        : "",
-    }));
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        started ||= args[0] === "forward" && args[1] === "start";
-        return { status: 0 } as never;
-      });
-
-    expect(ensureSandboxPortForward("beta", { isWsl: true })).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
-  });
-
-  it("keeps a prepared sandbox on loopback without remote-bind opt-in (#6024)", () => {
-    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const registry = requireSource("../../src/lib/state/registry.js");
-    let started = false;
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "beta",
-      dashboardPort: 18789,
-      dashboardRemoteBindPrepared: true,
-    });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => started);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
-      status: 0,
-      output: started
-        ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running"
-        : "",
-    }));
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockImplementation((rawArgs: unknown) => {
-        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        started ||= args[0] === "forward" && args[1] === "start";
-        return { status: 0 } as never;
-      });
-
-    expect(ensureSandboxPortForward("beta", { isWsl: false })).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
   });
 });

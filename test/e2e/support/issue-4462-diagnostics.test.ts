@@ -16,7 +16,14 @@ import {
 
 describe("pairing failure evidence", () => {
   it("invokes structured auto-pair and gateway diagnostics with fixed arguments (#9844)", async () => {
-    const exec = vi.fn(async () => ({ exitCode: 0 }));
+    const exec = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        autoPair: { readable: true },
+        gateway: { readable: true },
+      }),
+    }));
 
     await captureIssue4462FailureDiagnostics({ exec } as never, {
       env: { PATH: "/usr/bin" },

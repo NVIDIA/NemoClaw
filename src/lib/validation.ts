@@ -252,23 +252,7 @@ export function classifyGatewayStartFailure(output = ""): GatewayStartFailure {
   return { kind: "unknown" };
 }
 
-export function validateNvidiaApiKeyValue(
-  key: string,
-  credentialEnv: string = "NVIDIA_INFERENCE_API_KEY",
-): string | null {
-  // The nvapi- prefix check is specific to NVIDIA keys; skip it for keys
-  // from other providers (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY) so that
-  // a valid Anthropic key is not rejected with an NVIDIA-specific error.
-  const isNvidia =
-    credentialEnv === "NVIDIA_INFERENCE_API_KEY" || credentialEnv === "NVIDIA_API_KEY";
-  if (!key) {
-    return isNvidia ? "  NVIDIA API Key is required." : "  API Key is required.";
-  }
-  if (isNvidia && !key.startsWith("nvapi-")) {
-    return "  Invalid NVIDIA API key. Must start with nvapi-";
-  }
-  return null;
-}
+export { validateNvidiaApiKeyValue } from "./credentials/api-key-validation";
 
 export function validateOpenRouterApiKeyValue(key: string): string | null {
   if (!key) {
@@ -284,39 +268,13 @@ export function isSafeModelId(value: string): boolean {
   return /^[A-Za-z0-9._:/-]+$/.test(value);
 }
 
-/**
- * Detect NVIDIA Cloud Functions "Function not found for account" errors.
- *
- * NVIDIA Build (integrate.api.nvidia.com) returns this when a model is in the
- * public catalog but is not deployed for the caller's account/org. The raw
- * body looks like:
- *
- *   {"status":404,"title":"Not Found",
- *    "detail":"Function '<uuid>': Not found for account '<account-id>'"}
- *
- * Detecting this lets the wizard surface an actionable error instead of the
- * raw NVCF body. See issue #1601.
- */
-export function isNvcfFunctionNotFoundForAccount(message: string): boolean {
-  return /Function\s+'[^']+':\s*Not found for account/i.test(String(message || ""));
-}
-
-/**
- * Build the user-facing message for an NVCF "Function not found for account"
- * failure. The model is in the catalog but cannot be invoked from this key.
- *
- * The wording deliberately starts with "Model '<id>' not found" so that
- * `classifyValidationFailure()` matches its `model.+not found` regex and
- * routes the user into the model-selection recovery path instead of
- * collapsing to the generic `unknown`/`selection` branch.
- */
-export function nvcfFunctionNotFoundMessage(model: string): string {
-  return (
-    `Model '${model}' not found — it is in the NVIDIA Build catalog but is not deployed ` +
-    "for your account. Pick a different model, or check the model card on " +
-    "https://build.nvidia.com to see if it requires org-level access."
-  );
-}
+// Re-exported so existing importers keep one validation entry point while the
+// NVIDIA Cloud Functions classification lives with the inference layer that
+// owns both of its callers.
+export {
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+} from "./inference/nvcf-model-access";
 
 /**
  * Whether the wizard should skip probing the OpenAI Responses API entirely

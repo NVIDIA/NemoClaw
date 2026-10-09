@@ -12,39 +12,21 @@ export function ubuntuRepoDocker(onboarding: string): TargetEnvironment {
   };
 }
 
-export function gpuRepoDockerCdi(onboarding: string): TargetEnvironment {
-  return { platform: "gpu-runner", install: "repo-current", runtime: "gpu-docker-cdi", onboarding };
-}
-
-export function macosRepoDocker(onboarding: string): TargetEnvironment {
-  return {
-    platform: "macos-local",
-    install: "repo-current",
-    runtime: "macos-docker-optional",
-    onboarding,
-  };
-}
-
-export function wslRepoDocker(onboarding: string): TargetEnvironment {
-  return { platform: "wsl-local", install: "repo-current", runtime: "docker-running", onboarding };
-}
-
-export function brevLaunchableRemote(onboarding: string): TargetEnvironment {
-  return {
-    platform: "brev-launchable",
-    install: "launchable",
-    runtime: "docker-running",
-    onboarding,
-  };
-}
-
-export function ubuntuRepoNoDocker(onboarding: string): TargetEnvironment {
+export function ubuntuRepoManagedRuntime(onboarding: string): TargetEnvironment {
   return {
     platform: "ubuntu-local",
     install: "repo-current",
-    runtime: "docker-missing",
+    runtime: "managed-runtime-running",
     onboarding,
   };
+}
+
+/** Managed Docker-or-Podman runtime with a post-onboard lifecycle profile. */
+export function ubuntuRepoManagedRuntimeLifecycle(
+  onboarding: string,
+  lifecycle: string,
+): TargetEnvironment {
+  return { ...ubuntuRepoManagedRuntime(onboarding), lifecycle };
 }
 
 /**

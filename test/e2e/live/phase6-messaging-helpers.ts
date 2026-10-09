@@ -3,10 +3,7 @@
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import {
-  cleanupWhenCommandAvailable,
-  cleanupWhenOpenShellAvailable,
-} from "../fixtures/cleanup-resources.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import {
   assertExitZero as expectExitZero,
   resultText,
@@ -21,14 +18,16 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { execTimeout } from "../../helpers/timeouts.ts";
 import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
 
 export { expectExitZero, REPO_ROOT, resultText };
 
 export const CLI = process.env.NEMOCLAW_CLI_BIN ?? CLI_ENTRYPOINT;
 
-export const INSTALL_TIMEOUT_MS = 45 * 60_000;
+export const INSTALL_TIMEOUT_MS = execTimeout(45 * 60_000);
 export const COMMAND_TIMEOUT_MS = 120_000;
 
 export type AgentKind = "openclaw" | "hermes";
@@ -85,14 +84,6 @@ export async function precleanSandbox(
   prefix: string,
 ): Promise<void> {
   await runSecondaryCleanup(() =>
-    host.command("node", [CLI, sandboxName, "destroy", "--yes"], {
-      artifactName: `${prefix}-nemoclaw-destroy`,
-      env,
-      redactionValues: redactions,
-      timeoutMs: 15 * 60_000,
-    }),
-  );
-  await runSecondaryCleanup(() =>
     host.command(host.openshellCommandPath, ["sandbox", "delete", sandboxName], {
       artifactName: `${prefix}-openshell-sandbox-delete`,
       env,
@@ -129,12 +120,6 @@ export function trackSandboxCleanup(
       timeoutMs: 120_000,
     }),
   );
-  cleanup.trackSandbox(host, sandboxName, {
-    artifactName: `${prefix}-nemoclaw-destroy`,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 15 * 60_000,
-  });
 }
 
 export function trackPreinstallSandboxCleanup(
@@ -163,40 +148,6 @@ export function trackPreinstallSandboxCleanup(
       },
       () => sandbox.cleanupSandbox(sandboxName, openshellOptions),
     ),
-  );
-  const nemoclawOptions = {
-    artifactName: `${prefix}-nemoclaw-destroy`,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 15 * 60_000,
-  };
-  cleanup.trackSandbox(
-    {
-      cleanupSandbox: (name: string) =>
-        cleanupWhenCommandAvailable(
-          host,
-          host.commandPath,
-          {
-            artifactName: `${prefix}-probe-nemoclaw-destroy`,
-            env,
-            redactionValues: redactions,
-            timeoutMs: 30_000,
-          },
-          () =>
-            cleanupWhenOpenShellAvailable(
-              host,
-              {
-                artifactName: `${prefix}-probe-openshell-nemoclaw-destroy`,
-                env,
-                redactionValues: redactions,
-                timeoutMs: 30_000,
-              },
-              () => host.cleanupSandbox(name, nemoclawOptions),
-            ),
-        ),
-    },
-    sandboxName,
-    nemoclawOptions,
   );
 }
 
@@ -323,13 +274,12 @@ export async function sandboxNode(
   );
 }
 
-export async function dockerInfo(
-  host: HostCliClient,
-  env: NodeJS.ProcessEnv,
-): Promise<ShellProbeResult> {
-  return host.command("docker", ["info"], {
-    artifactName: "phase6-docker-info",
-    env,
-    timeoutMs: 30_000,
+export async function requirePhase6RuntimeProvider(
+  runtimeProvider: RuntimeProviderPrerequisite,
+  scenarioLabel: string,
+): Promise<void> {
+  await runtimeProvider.requireAvailable({
+    artifactName: "phase6-runtime-provider-info",
+    scenarioLabel,
   });
 }

@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getCredentialPromptIntent, saveCredential } from "../credentials/store";
+import {
+  getCredentialPromptIntent,
+  isSecureCredentialPromptAvailable,
+  saveCredential,
+} from "../credentials/store";
 import type { ProbeRecovery } from "../validation-recovery";
 
 export interface ValidationRecoveryPromptDeps {
   isNonInteractive(): boolean;
+  isSecretPromptAvailable?(): boolean;
   prompt(question: string, options?: { secret?: boolean }): Promise<string>;
   validateNvidiaApiKeyValue(key: string, credentialEnv: string | null): string | null;
   getTransportRecoveryMessage(failure: any): string;
@@ -89,17 +94,22 @@ export function createValidationRecoveryPromptHelpers(
     }
 
     if (recovery.kind === "credential" && credentialEnv) {
+      const secretPromptAvailable =
+        deps.isSecretPromptAvailable?.() ?? isSecureCredentialPromptAvailable();
+      if (!secretPromptAvailable) {
+        console.error(
+          "  Secure credential recovery requires interactive terminal input and error output.",
+        );
+        process.exit(1);
+      }
+      console.log(`  ${label} authorization failed.`);
       console.log(
-        `  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`,
+        "  Choose retry to enter the API key securely, back to change the provider or model, or exit to stop onboarding.",
       );
-      console.log("  ⚠️  Do NOT paste your API key here — use the options below:");
       const choice = (
-        await deps.prompt(
-          "  Options: retry (re-enter key), back (change provider), exit [retry]: ",
-          {
-            secret: true,
-          },
-        )
+        await deps.prompt("  Options: retry, back, exit [retry]: ", {
+          secret: true,
+        })
       )
         .trim()
         .toLowerCase();
