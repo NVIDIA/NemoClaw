@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,7 +41,8 @@ func TestForwardStdioUsesLoopbackGuardConnection(t *testing.T) {
 			return
 		}
 		defer connection.Close()
-		request, readError := io.ReadAll(connection)
+		request := make([]byte, len("guarded request"))
+		_, readError := io.ReadFull(connection, request)
 		if readError != nil {
 			serverDone <- readError
 			return
@@ -61,6 +63,69 @@ func TestForwardStdioUsesLoopbackGuardConnection(t *testing.T) {
 	}
 	if output.String() != "guarded response" {
 		t.Fatalf("unexpected response: %q", output.String())
+	}
+}
+
+func TestStdioForwardAddressUsesDeclaredGuardPort(t *testing.T) {
+	address, err := stdioForwardAddress([]string{"--stdio-forward", "--listen-port", "9137"})
+	if err != nil || address != "127.0.0.1:9137" {
+		t.Fatalf("declared guard address = %q, %v", address, err)
+	}
+	for _, args := range [][]string{
+		{"--stdio-forward"},
+		{"--stdio-forward", "--listen-port", "0"},
+		{"--stdio-forward", "--listen-port", "65536"},
+		{"--stdio-forward", "--listen-port", "invalid"},
+		{"--stdio-forward", "--listen-port", "9137", "extra"},
+	} {
+		if _, err := stdioForwardAddress(args); err == nil {
+			t.Fatalf("accepted invalid stdio arguments: %v", args)
+		}
+	}
+}
+
+func TestForwardStdioPreservesGuardAuthentication(t *testing.T) {
+	guard, upstreamCalls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"data":[]}`)
+	}))
+	port := guard.Listener.Addr().(*net.TCPAddr).Port
+	address, err := stdioForwardAddress([]string{"--stdio-forward", "--listen-port", strconv.Itoa(port)})
+	if err != nil {
+		t.Fatalf("declared guard port: %v", err)
+	}
+	for _, scenario := range []struct {
+		name          string
+		authorization string
+		status        int
+		upstreamCalls int32
+	}{
+		{name: "valid bearer", authorization: "Bearer opaque-test-value", status: http.StatusOK, upstreamCalls: 1},
+		{name: "missing bearer", status: http.StatusUnauthorized, upstreamCalls: 1},
+		{name: "invalid bearer", authorization: "Bearer invalid", status: http.StatusUnauthorized, upstreamCalls: 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			request := "GET /v1/models HTTP/1.1\r\nHost: guard\r\nConnection: close\r\n"
+			if scenario.authorization != "" {
+				request += "Authorization: " + scenario.authorization + "\r\n"
+			}
+			request += "\r\n"
+			var output bytes.Buffer
+			if err := forwardStdio(strings.NewReader(request), &output, address); err != nil {
+				t.Fatalf("forward request: %v", err)
+			}
+			response, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(output.Bytes())), nil)
+			if err != nil {
+				t.Fatalf("parse forwarded response: %v", err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != scenario.status {
+				t.Fatalf("forwarded response status = %d", response.StatusCode)
+			}
+			if calls := upstreamCalls.Load(); calls != scenario.upstreamCalls {
+				t.Fatalf("upstream calls = %d", calls)
+			}
+		})
 	}
 }
 

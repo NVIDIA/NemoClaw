@@ -29,7 +29,6 @@ import (
 const (
 	llamaServerPath       = "/usr/local/bin/llama-server"
 	llamaServerAPIKeyPath = "/run/secrets/llama-cpp-api-key"
-	stdioForwardAddress   = "127.0.0.1:8081"
 	maximumBodyBytes      = 64 * 1024 * 1024
 	maximumHeaderBytes    = 1024 * 1024
 	maximumOutputTokens   = 1024 * 1024
@@ -49,9 +48,23 @@ func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	go func() {
 		_, copyError := io.Copy(connection, input)
 		inputDone <- copyError
-		_ = connection.(*net.TCPConn).CloseWrite()
 	}()
-	_, outputError := io.Copy(output, connection)
+	responseDone := make(chan error, 1)
+	go func() {
+		_, copyError := io.Copy(output, connection)
+		responseDone <- copyError
+	}()
+	var outputError error
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			_ = connection.Close()
+			<-responseDone
+			return errors.New("request guard request forwarding failed")
+		}
+		outputError = <-responseDone
+	case outputError = <-responseDone:
+	}
 	if outputError != nil {
 		return errors.New("request guard response forwarding failed")
 	}
@@ -65,6 +78,17 @@ func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	default:
 	}
 	return nil
+}
+
+func stdioForwardAddress(args []string) (string, error) {
+	if len(args) != 3 || args[0] != "--stdio-forward" || args[1] != "--listen-port" {
+		return "", errors.New("stdio forwarding requires --listen-port")
+	}
+	port, err := strconv.Atoi(args[2])
+	if err != nil || port < 1 || port > 65535 {
+		return "", errors.New("stdio forwarding listen port is invalid")
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
 }
 
 type guardConfig struct {
@@ -721,8 +745,13 @@ func run(config guardConfig, command []string) int {
 }
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--stdio-forward" {
-		if err := forwardStdio(os.Stdin, os.Stdout, stdioForwardAddress); err != nil {
+	if len(os.Args) > 1 && os.Args[1] == "--stdio-forward" {
+		address, err := stdioForwardAddress(os.Args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(2)
+		}
+		if err := forwardStdio(os.Stdin, os.Stdout, address); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
