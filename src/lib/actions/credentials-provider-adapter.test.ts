@@ -1032,6 +1032,9 @@ describe("credential actions use typed OpenShell provider results", () => {
         "  To rotate the credential in place, set NVIDIA_INFERENCE_API_KEY and rerun 'nemoclaw onboard --name <sandbox>'.",
       );
       expect(result.failureLines).toContain("    nemoclaw alpha destroy");
+      expect(result.failureLines.join("\n")).toMatch(
+        /Before destroying sandboxes to retry 'nemoclaw credentials reset nvidia-prod',[\s\S]*inspect the legacy 'nvidia-prod' provider with its owner and resolve any ownership conflict[\s\S]*destroy every attached sandbox/,
+      );
       expect(result.failureLines.join("\n")).not.toContain("rebuild");
       expect(result.failureLines.join("\n")).not.toContain("openshell sandbox provider detach");
     },
