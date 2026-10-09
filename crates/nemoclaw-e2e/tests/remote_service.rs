@@ -786,7 +786,8 @@ async fn refused_sandbox_changes_preserve_retained_intent(
             assert_eq!(gateway.state.lock().unwrap().effects, effects);
             let message = result["error"]["message"].as_str().unwrap();
             assert!(message.contains("reviewer"), "{result}");
-            assert!(message.contains("ordinary apply"), "{result}");
+            assert!(message.contains("apply cannot"), "{result}");
+            assert!(!message.contains("ordinary"), "{result}");
             // Only operations that can mutate resources report remaining state.
             if operation == "apply" {
                 assert_eq!(result["remainingState"], "No runtime resources changed.");

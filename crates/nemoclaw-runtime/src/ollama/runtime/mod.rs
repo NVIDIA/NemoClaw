@@ -50,7 +50,7 @@ async fn run_owned(
     let model = recipe::prepare(service, Path::new(ROOT), cancel).await?;
     if trip.is_cancelled() {
         return Err(Error::Conflict(
-            "memory protection tripped by operator; explicit apply required",
+            "memory protection tripped by operator; reapply required",
         ));
     }
     let capacity = hardware::before_start(service, cancel).await?;

@@ -94,7 +94,7 @@ Image changes require the [separate-deployment path](#choose-the-change-path); k
 
 Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.
 The CLI exits with status 1 and reports the failure in the selected [output format](reference/cli.md#output-and-failure).
-Keep state, diagnose the failure, and explicitly reapply after recovery.
+Keep state, diagnose the failure, and reapply after recovery.
 
 ## Configuration and Credentials
 
@@ -276,7 +276,7 @@ Keep the original YAML until verification succeeds.
 Changing an established gateway endpoint is rejected.
 There is no lost-state adoption, migration, pruning, or purge command.
 
-After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and explicitly reapply.
+After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and reapply.
 For records with per-resource recovery evidence, plan, apply, and destroy compare pending creations with saved OpenTofu bindings.
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent configuration can use its saved parent sandbox binding because that sandbox owns the runtime and any partial configuration effects.
