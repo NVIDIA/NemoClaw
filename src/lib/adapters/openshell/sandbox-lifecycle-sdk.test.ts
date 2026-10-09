@@ -79,8 +79,21 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(test.waitReady).not.toHaveBeenCalled();
   });
 
+  it("accepts Ready after twenty initial Error observations", async () => {
+    const test = harness();
+    const phases = ["stopped", ...Array<string>(20).fill("Error"), "Ready"];
+    test.get.mockImplementation(async () => ({
+      id: sandboxId,
+      phase: phases.shift() ?? "Error",
+    }));
+
+    await expect(test.lifecycle.startSandbox(request)).resolves.toEqual({ kind: "accepted" });
+    expect(test.waitForStartPoll).toHaveBeenCalledTimes(20);
+    expect(test.startSandbox).toHaveBeenCalledOnce();
+  });
+
   it.each([
-    { firstPhase: "Error", expectedPolls: 19 },
+    { firstPhase: "Error", expectedPolls: 20 },
     { firstPhase: "Provisioning", expectedPolls: 1 },
   ])("fails on Error after $firstPhase", async ({ firstPhase, expectedPolls }) => {
     const test = harness();

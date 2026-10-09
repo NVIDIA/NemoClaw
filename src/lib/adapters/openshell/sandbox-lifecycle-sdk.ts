@@ -3,6 +3,7 @@
 
 import { setTimeout as delay } from "node:timers/promises";
 
+import { createSandboxStartErrorGrace } from "../../domain/lifecycle/sandbox-start-error-grace";
 import { isValidName } from "../../name-validation";
 import { fingerprintOpenShellSandboxId } from "./sandbox-identity";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
@@ -54,9 +55,6 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
 }>;
 
 const DEFAULT_MUTATION_TIMEOUT_MS = 75_000;
-// Match the public start path's bounded initial Error grace. The pinned SDK's
-// waitReady rejects this restart transition before the same sandbox can recover.
-const START_INITIAL_ERROR_GRACE_POLLS = 20;
 
 function lifecycleError(
   error: unknown,
@@ -182,7 +180,7 @@ async function mutate(
         },
       };
     }
-    let remainingInitialErrorGracePolls = START_INITIAL_ERROR_GRACE_POLLS;
+    const allowInitialError = createSandboxStartErrorGrace(action === "start");
     for (;;) {
       const current = await Promise.race([
         client.sandbox.get(request.sandboxName, { signal: controller.signal }),
@@ -203,22 +201,15 @@ async function mutate(
       }
       const phase = current.phase.toLowerCase();
       if (phase === (action === "start" ? "ready" : "stopped")) break;
-      if (action === "start") {
-        if (phase === "error") {
-          remainingInitialErrorGracePolls -= 1;
-        } else {
-          remainingInitialErrorGracePolls = 0;
-        }
-        if (phase === "error" && remainingInitialErrorGracePolls <= 0) {
-          return {
-            kind: "failed",
-            error: {
-              kind: "command",
-              reason: "failed",
-              message: "OpenShell sandbox entered Error while waiting for readiness after start.",
-            },
-          };
-        }
+      if (action === "start" && !allowInitialError(phase) && phase === "error") {
+        return {
+          kind: "failed",
+          error: {
+            kind: "command",
+            reason: "failed",
+            message: "OpenShell sandbox entered Error while waiting for readiness after start.",
+          },
+        };
       }
       await Promise.race([
         action === "start"
