@@ -33,9 +33,11 @@ export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
 
 // TC-INF-11 also performs bounded preparation, restart, agent execution,
 // denial, peer isolation, DNS/redirect checks and direct HTTP verification.
-export const CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS = 80 * MINUTE_MS;
+// A third fresh onboarding and native Anthropic agent turn add another bounded
+// create, admin-scope approval, agent request, and owned-provider cleanup.
+export const CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS = 100 * MINUTE_MS;
 export const CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS =
-  2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
+  3 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
   CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS +
   ONBOARD_TEST_HEADROOM_MS;
 export const CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES =

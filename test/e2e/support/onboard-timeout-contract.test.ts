@@ -61,6 +61,7 @@ describe("onboard final-handoff timeout contract", () => {
     const denialAndRevocation = 30_000 + 90_000 + 30_000 + 90_000 + 30_000;
     const dnsAndRedirect = 3 * 60_000 + 90_000 + 90_000;
     const directHttp = 2 * 30_000 + 60_000 + 30_000 + 90_000;
+    const nativeAnthropic = adminApproval + 30_000 + 240_000 + 210_000 + 30_000;
     const selectionAndDeletion =
       60_000 + 30_000 + 30_000 + 120_000 + 30_000 + 30_000 + 210_000 + 2 * 30_000;
     const fixturePreparation = 2 * MINUTE_MS;
@@ -72,11 +73,12 @@ describe("onboard final-handoff timeout contract", () => {
         denialAndRevocation +
         dnsAndRedirect +
         directHttp +
+        nativeAnthropic +
         selectionAndDeletion +
         fixturePreparation,
     );
     expect(CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
-      2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
+      3 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
         CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS +
         testHeadroomMs,
     );

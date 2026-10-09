@@ -21,6 +21,7 @@ import {
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
+import { verifyFreshNativeAnthropicEndpoint } from "./inference-routing-native-anthropic.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { hostedInferenceCredentialReferencePattern } from "../fixtures/hosted-inference.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
@@ -836,12 +837,13 @@ test(
         "verify DNS rebinding resistance",
         "verify private redirect rejection",
         "destroy the selected sandbox and verify peer continuity",
-        "verify direct native public HTTP routing",
+        "verify direct native public HTTP and Anthropic routing",
         "verify final native provider cleanup",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+  async (fixtures) => {
+    const { artifacts, cleanup, host, progress, runtimeProvider, sandbox } = fixtures;
     progress.phase("prepare the live HTTPS endpoint");
     await requireLivePrerequisites(host, runtimeProvider);
     const model = "nemoclaw-e2e-https-pin";
@@ -892,6 +894,7 @@ test(
         "unapproved executables and detached attachments cannot authorize an upstream request",
         "selected detach/delete leaves an independently attached peer working",
         "destroy removes the owned provider and HTTPS route",
+        "fresh native Anthropic onboarding serves authenticated Messages from an agent turn",
       ],
       endpointUrl,
       model,
@@ -1339,7 +1342,7 @@ test(
       "https-pin-native-peer-after-selected-destroy",
       peerReceipt,
     );
-    progress.phase("verify direct native public HTTP routing");
+    progress.phase("verify direct native public HTTP and Anthropic routing");
     // Own one runner-local public address so this HTTP proof reaches the
     // authenticated fixture through the native profile without an adapter.
     const publicHttpAddress = "93.184.216.34";
@@ -1454,6 +1457,7 @@ test(
             request.path === "/v1/chat/completions",
         ),
     ).toBe(true);
+    await verifyFreshNativeAnthropicEndpoint(fixtures, { sandboxName, apiKey, publicHttpAddress });
     progress.phase("verify final native provider cleanup");
     await cleanupSandbox(host, sandbox, peerName, { strict: true });
     const peerProviderAfterDestroy = await sandbox.openshell(
