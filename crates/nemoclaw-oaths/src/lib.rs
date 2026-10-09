@@ -9,11 +9,11 @@
 
 use std::path::PathBuf;
 
-use ::varar::{Registry, Steps};
+use ::varar::{HandlerError, Registry, Steps};
 
 // Rust does not derive the `.steps.` infix from a module name.
-#[path = "steps/config_diagnostics.steps.rs"]
-mod config_diagnostics;
+#[path = "steps/configuration.steps.rs"]
+mod configuration;
 
 /// The state one example threads through its steps.
 #[derive(Clone, Default)]
@@ -25,7 +25,17 @@ pub struct Ctx {
 pub fn build_registry() -> Registry {
     let mut s = Steps::<Ctx>::new();
     s.param("code", r"[^`]+", |g: &[&str]| g[0].to_owned(), None);
-    config_diagnostics::register(&mut s);
+    // "no" reads better than "0" in a sentence.
+    s.param(
+        "count",
+        r"no|\d+",
+        |g: &[&str]| g[0].parse::<i64>().unwrap_or(0),
+        Some(Box::new(|n: &i64| match n {
+            0 => "no".to_owned(),
+            n => n.to_string(),
+        })),
+    );
+    configuration::register(&mut s);
     s.into_registry()
 }
 
@@ -34,11 +44,12 @@ pub fn context_value(_file: &str) -> std::rc::Rc<dyn std::any::Any> {
     std::rc::Rc::new(Ctx::default())
 }
 
-/// Resolves a path that an oath writes relative to the repository root.
+/// Reads a file that an oath names relative to the repository root.
 /// Oaths cannot link to the file: Varar ends a sentence at the dots in a
 /// relative link target.
-fn repository_path(path: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn read(path: &str) -> Result<String, HandlerError> {
+    let full = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join(path)
+        .join(path);
+    std::fs::read_to_string(full).map_err(|e| HandlerError::new(format!("cannot read {path}: {e}")))
 }

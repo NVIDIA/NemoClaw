@@ -110,8 +110,6 @@ mod model_selection;
 mod multiple_models;
 #[path = "multiple_providers.rs"]
 mod multiple_providers;
-#[path = "multiple_sandboxes.rs"]
-mod multiple_sandboxes;
 #[path = "mutation.rs"]
 mod mutation;
 #[path = "native_inference.rs"]
