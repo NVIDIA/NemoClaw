@@ -736,6 +736,9 @@ export function maybeAssertPidStable(
   beforePid && afterPid && assertStable(afterPid, beforePid);
 }
 
+// The custom switch fixture uses host.openshell.internal, which preserves the
+// host-local shared route. Hosted native custom inference has a separate live
+// consumer in bedrock-runtime-compatible-anthropic.test.ts.
 export function expectedBaseUrl(): string {
   if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) return NVIDIA_HOSTED_NATIVE_ENDPOINT;
   return RUNTIME_SWITCH_API === "anthropic-messages"

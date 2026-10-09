@@ -1098,10 +1098,13 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone) {
     try {
       await retireNativeCustomProviders({ gatewayName: cleanupGatewayName, sandboxName });
-    } catch {
+    } catch (error) {
       preparedManagedLlamaCppCleanup?.abort();
       throw new Error(
-        "Sandbox deletion was confirmed, but native custom provider cleanup could not be verified. Ownership authority and registry state are retained; retry destroy after reconciling gateway access.",
+        `Sandbox deletion was confirmed, but native custom provider cleanup could not be verified: ${redactDestroyError(error)}. ` +
+          "Ownership authority and registry state are retained. Restore gateway access if unavailable. " +
+          "Reconcile provider identity or attachment conflicts without deleting unproven resources. " +
+          "Confirm HTTPS adapter route revocation when reported, then retry destroy.",
       );
     }
   }

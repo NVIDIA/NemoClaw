@@ -101,6 +101,9 @@ function textWithoutSafeCredentialFixtures(value: string): string {
   return (
     normalizedPinoRedactFixture
       .replace(/(?:Bearer\s+)?openshell:resolve:env:[A-Za-z0-9_]+/giu, "unused")
+      .replace(/sk-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_-]+/gu, (candidate) =>
+        isSafeCredentialPlaceholder(candidate) ? "unused" : candidate,
+      )
       .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_-]+/gu, (candidate) =>
         isSafeCredentialPlaceholder(candidate) ? "unused" : candidate,
       )

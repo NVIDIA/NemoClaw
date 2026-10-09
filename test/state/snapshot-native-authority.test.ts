@@ -43,6 +43,37 @@ function writeOpenClawRegistry(sandboxName: string): void {
 }
 
 describe("complete native-home machine authority", () => {
+  it("retains Hermes issued inference references in the native archive while stripping raw keys (#12636)", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-reference-state-"));
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const configPath = path.join(nativeRoot, ".hermes", "config.yaml");
+      const reference = "sk-OPENSHELL-RESOLVE-ENV-v12_COMPATIBLE_API_KEY";
+      const config = { model: { api_key: reference }, unrelated: { api_key: "raw-host-secret" } };
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      writeOpenClawRegistry("alpha");
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+      });
+      expect(backup.success, backup.error).toBe(true);
+      sandboxState.inspectNativeSandboxState(
+        backup.manifest!.backupPath,
+        (root: string) => {
+          const restored = JSON.parse(
+            fs.readFileSync(path.join(root, ".hermes", "config.yaml"), "utf8"),
+          );
+          expect(restored.model.api_key).toBe(reference);
+          expect(restored.unrelated.api_key).not.toBe("raw-host-secret");
+        },
+        ".hermes/config.yaml",
+      );
+      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toEqual(config);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it.each([".openclaw", ".openclaw-data"])(
     "replaces the %s device identity with an explicit startup placeholder",
     (stateDirectory) => {

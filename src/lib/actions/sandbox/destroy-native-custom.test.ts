@@ -117,3 +117,26 @@ it.each([true, false])(
     ).toHaveLength(1);
   },
 );
+
+it("reports a redacted native cleanup cause and preserves authority after confirmed deletion (#12636)", async () => {
+  const { harness, retire } = await fixture();
+  retire.mockRejectedValueOnce(
+    new Error("Provider identity changed; COMPATIBLE_API_KEY=private-cleanup-credential"),
+  );
+  const failure = await harness
+    .destroySandbox("alpha", { yes: true, cleanupGateway: false })
+    .catch((error: Error) => error.message);
+  expect(failure).toContain("Provider identity changed; COMPATIBLE_API_KEY=<REDACTED>");
+  expect(failure).not.toContain("private-cleanup-credential");
+  expect(failure).toContain(
+    "Reconcile provider identity or attachment conflicts without deleting unproven resources",
+  );
+  expect(harness.events).toContain("delete");
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  expect(
+    nativeCustomDestroyAuthorityStore().listNativeCustomProviderAuthorities(
+      "nemoclaw-19080",
+      "alpha",
+    ),
+  ).toHaveLength(1);
+});

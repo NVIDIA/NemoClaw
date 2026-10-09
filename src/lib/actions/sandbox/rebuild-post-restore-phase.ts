@@ -374,6 +374,30 @@ export async function runRebuildPostRestorePhase(
         bail("OpenClaw gateway-down maintenance authority was lost during rebuild.");
         return;
       }
+      if (recreatedEntry.nativeCustomProviderAttachment) {
+        const gatewayName =
+          mcpRuntimeSelection?.gatewayName ?? getPersistedSandboxTargetGatewayName(recreatedEntry);
+        if (
+          !gatewayName ||
+          (recreatedEntry.provider !== "compatible-endpoint" &&
+            recreatedEntry.provider !== "compatible-anthropic-endpoint") ||
+          !recreatedEntry.model
+        )
+          throw new Error(
+            "Native custom restore requires its selected gateway, provider, and model.",
+          );
+        // Full-home restore contains the old supervisor's revision-bound reference.
+        // Resolve the replacement's reference while its gateway remains offline.
+        await rebuildOnboardDependencies.refreshRestoredOpenClawInference({
+          sandboxName,
+          model: recreatedEntry.model,
+          provider: recreatedEntry.provider,
+          preferredInferenceApi: recreatedEntry.preferredInferenceApi ?? null,
+          gatewayName,
+          environment: buildSandboxCommandEnvironment(mcpRuntimeSelection),
+          attachment: recreatedEntry.nativeCustomProviderAttachment,
+        });
+      }
       log("Releasing OpenClaw for one final start after all offline post-restore writes");
       const startResult = await finishUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
       log(`OpenClaw native final start: ${startResult.ok ? "verified" : startResult.stage}`);

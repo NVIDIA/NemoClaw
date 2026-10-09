@@ -69,9 +69,12 @@ export async function verifyNativeCustomStatusAttachment(input: {
   gatewayName: string;
   sandboxName: string;
   expected: NativeCustomProviderAttachment;
+  environment?: NodeJS.ProcessEnv;
 }): Promise<void> {
   await verifyNativeCustomProviderAttachment({
-    adapter: createCliOpenShellProviderAdapter(),
+    adapter: createCliOpenShellProviderAdapter(
+      input.environment ? { environment: input.environment } : {},
+    ),
     target: { kind: "named", gatewayName: input.gatewayName },
     sandboxName: input.sandboxName,
     expected: input.expected,

@@ -122,6 +122,9 @@ const SAFE_CREDENTIAL_PLACEHOLDER_PATTERNS: readonly RegExp[] = [
   /^Bearer\s+openshell:resolve:env:[A-Za-z0-9_]+$/i,
   /^xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/,
   /^xapp-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/,
+  // Hermes restores these non-secret references, then refreshes their issued
+  // identity at startup. Admit only the native custom inference namespaces.
+  /^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/,
 ];
 const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
   "unused",

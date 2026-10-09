@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "View the Selected Inference Path"
 sidebar-title: "View the Inference Path"
-description: "Inspect a sandbox-attached NVIDIA provider or the live NemoClaw-managed OpenShell inference route."
-description-agent: "Shows the selected sandbox's native NVIDIA provider path or the live shared route for another provider. Use when checking the active inference path."
+description: "Inspect a sandbox-attached native provider or the live NemoClaw-managed OpenShell inference route."
+description-agent: "Shows the selected sandbox's native NVIDIA or custom provider path, or its shared route. Use when checking the active inference path."
 keywords:
   ["nemoclaw inference get", "active inference provider", "active inference model", "compatible endpoint URL"]
 content:
@@ -12,16 +12,19 @@ content:
 ---
 
 Use the NemoClaw CLI to read the selected inference provider and model.
-When the selected sandbox has a valid native NVIDIA provider attachment, the command reports the sandbox's recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+When the selected sandbox has a valid native NVIDIA or native custom provider attachment, the command verifies that attachment without reading the shared gateway route.
+It reports the recorded provider and model.
+For native NVIDIA attachments, it adds the fixed NVIDIA endpoint.
+For native custom attachments, it displays the recorded endpoint only when its path is safe to display.
 For other providers, the command reads the live OpenShell inference route.
-For a compatible custom provider, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
+For a shared-route compatible custom provider, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
 This command reports configuration state and does not authenticate a model request.
 
 ## Read the Selected Inference Path
 
 Run the direct route command when you need the active provider, model, and applicable custom endpoint URL.
 The direct form first checks the default sandbox in the registry that `NEMOCLAW_GATEWAY_PORT` selects.
-It reports that sandbox's native NVIDIA provider path when a valid attachment exists.
+It reports that sandbox's native NVIDIA or native custom provider path when a valid attachment exists.
 Otherwise, it reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
@@ -52,7 +55,7 @@ Expected output:
 }
 ```
 
-For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` only when every matching published registry row records the live provider and model.
+For shared-route `compatible-endpoint` and `compatible-anthropic-endpoint` selections, the text output adds `Endpoint` only when every matching published registry row records the live provider and model.
 Those rows must also agree on one API family, credential identity, and canonical, credential-free, reusable HTTP(S) URL.
 The URL must use the documented root or `/v1` API-base path; NemoClaw omits other paths because an opaque segment can carry a credential.
 The JSON output adds `endpointUrl` under the same condition.
@@ -73,6 +76,9 @@ Endpoint: https://inference.example.com/v1
 ```
 
 A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the provider-and-model output.
+A valid native custom attachment adds its recorded endpoint only when the path is safe to display.
+Otherwise, text output reports that the endpoint is withheld, and JSON output returns `endpointStatus: "withheld"` with `endpointRecovery`.
+The shared-route registry conditions below do not apply to native attachments.
 Other managed providers keep the provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
@@ -103,9 +109,10 @@ $$nemoclaw <name> inference get
 ```
 
 `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
-When the named sandbox has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+When the named sandbox has a valid native NVIDIA or native custom provider attachment, the command verifies that attachment without reading the shared gateway route.
+It reports the recorded provider and model, with the fixed NVIDIA endpoint or a native custom endpoint whose path is safe to display.
 Otherwise, when that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
-For a compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
+For a shared-route compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
 The command does not search registries for other gateway ports.
 For other providers, OpenShell exposes one inference route to every sandbox registered on the same gateway.
 

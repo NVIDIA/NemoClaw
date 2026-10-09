@@ -197,6 +197,29 @@ describe("valueLooksLikeSecret", () => {
 });
 
 describe("textContainsHighConfidenceCredential", () => {
+  it.each([
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-v12_COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_ANTHROPIC_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-v12_COMPATIBLE_ANTHROPIC_API_KEY",
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(64)}_COMPATIBLE_API_KEY`,
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(64)}_COMPATIBLE_ANTHROPIC_API_KEY`,
+  ])("accepts canonical Hermes reference text %s (#12636)", (reference) => {
+    expect(textContainsHighConfidenceCredential(reference)).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${reference}-secret`)).toBe(true);
+  });
+  it.each([
+    "sk-OPENSHELL-RESOLVE-ENV-v_COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_API_KEY-raw-secret",
+    "sk-OPENSHELL-RESOLVE-ENV-v_COMPATIBLE_ANTHROPIC_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_ANTHROPIC_API_KEY-raw-secret",
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(63)}_COMPATIBLE_API_KEY`,
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(63)}_COMPATIBLE_ANTHROPIC_API_KEY`,
+    "sk-OPENSHELL-RESOLVE-ENV-UNOWNED_API_KEY",
+  ])("flags malformed Hermes reference text %s (#12636)", (value) => {
+    expect(textContainsHighConfidenceCredential(value)).toBe(true);
+  });
+
   it("does not flag generated placeholder matcher source as a Slack credential", () => {
     expect(
       textContainsHighConfidenceCredential(

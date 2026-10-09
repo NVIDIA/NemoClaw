@@ -986,7 +986,11 @@ export async function finalizeCreatedSandbox(
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
     }
-    if (openClawRestoreWindow && options.reconcileOpenClawInference && !options.customImage) {
+    if (
+      openClawRestoreWindow &&
+      ((options.reconcileOpenClawInference && !options.customImage) ||
+        preparedRegistration?.nativeCustomProviderAttachment)
+    ) {
       try {
         preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
         if (!options.gatewayName)
