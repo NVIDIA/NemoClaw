@@ -57,8 +57,9 @@ Reuse preserves native web-search settings, including when no web-search provide
 Choosing a different provider or model follows the existing recreation flow: interactive onboarding asks for confirmation, while non-interactive onboarding recreates automatically when the recorded selection is readable and differs.
 If the recorded selection is missing or unreadable, NemoClaw does not use native configuration edits as a reason to recreate the sandbox.
 
-When you start onboarding without resuming an interrupted run, a verified provider or model change also updates restored native inference configuration for managed OpenClaw sandboxes.
-NemoClaw records that selection before recreation and applies it after restoring the backup, before restarting the gateway.
+For managed OpenClaw sandboxes, NemoClaw records a verified provider or model change before recreation.
+After restoring the backup, it applies that recorded selection to native inference configuration before restarting the gateway.
+Resuming the same recreation also applies the selection when its recreation record already authorizes this update.
 It preserves unrelated native configuration.
 This update excludes forced recreation and custom images.
 It does not infer a selection change from a backup or an older recreation record.
