@@ -60,12 +60,11 @@ There is no v1 `uninstall` command or package-manager installation to reverse in
 
 Before removing a bundle, identify every deployment using it and keep a verified copy wherever its original tooling is still needed for recovery or teardown.
 Finish any operation using that bundle.
-If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first and retain its state for surviving resources.
+If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first, then either follow [Remove Retained Resources](usage.md#remove-retained-resources) for Docker engines or keep its state for the surviving resources.
 Then remove that dedicated bundle directory using your host's file manager and remove only its `bin` entry from your shell's `PATH` configuration.
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
 Do not delete deployment state, model volumes, unrelated tool installations, or shared caches as part of removing the local bundle.
-There is no supported way yet to purge retained runtime data ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
 
 ## Build Agent Images

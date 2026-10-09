@@ -253,6 +253,7 @@ Destroy removes the runtime and provider registration and retains the separate m
 Recreation using the retained credential volume reuses the key.
 A missing key after initialization or invalid key metadata stops startup and retains storage for inspection.
 Retire model data and credentials separately; removing the model volume does not erase the credential.
+To retire both with the deployment, see [Remove Retained Resources](usage.md#remove-retained-resources).
 Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
 
 ## Use External Ollama through a Managed Proxy
@@ -316,7 +317,7 @@ An explicit apply can reconcile an owned, stopped proxy after its external model
 A missing or insecure retained key stops startup; it is never regenerated beside initialized storage.
 Destroy removes the proxy and OpenShell registration and retains the credential volume; the external daemon and model remain untouched.
 Reapplying the original configuration reuses that retained key.
-Remove the retained credential volume explicitly when retiring the deployment.
+When retiring the deployment, remove the retained credential volume with [Remove Retained Resources](usage.md#remove-retained-resources).
 
 ## Tune OpenClaw's Primary Route
 
