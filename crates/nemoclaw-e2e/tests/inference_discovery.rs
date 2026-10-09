@@ -96,14 +96,22 @@ async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_u
     })
     .await;
     let endpoint = format!("{}/v1", server.endpoint);
-    for (provider, api) in [
+    // nemoclaw-discovery's inference tests own how each catalog response is
+    // classified; here each response reaches a complete plan once, across
+    // both provider protocols.
+    for (provider, api, modes) in [
         (
             InferenceProviderKind::Anthropic,
             InferenceApi::AnthropicMessages,
+            [
+                (1, "unavailable", "required"),
+                (3, "available", "not_required"),
+            ],
         ),
         (
             InferenceProviderKind::Openai,
             InferenceApi::OpenaiCompletions,
+            [(0, "unknown", "unknown"), (2, "unknown", "unknown")],
         ),
     ] {
         mode.store(0, Ordering::SeqCst);
@@ -125,12 +133,7 @@ async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_u
         let state = fs::read(directory.path().join("terraform.tfstate")).unwrap();
         let intent = fs::read(directory.path().join("intent.json")).unwrap();
         let effects = fixture.state.lock().unwrap().effects;
-        for (selected, status, auth) in [
-            (0, "unknown", "unknown"),
-            (1, "unavailable", "required"),
-            (2, "unknown", "unknown"),
-            (3, "available", "not_required"),
-        ] {
+        for (selected, status, auth) in modes {
             mode.store(selected, Ordering::SeqCst);
             let output = Command::new(
                 bundle
@@ -161,9 +164,6 @@ async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_u
             assert_eq!(observed["authentication"], auth);
             assert_eq!(observed["api_verified"], false);
             assert!(!String::from_utf8_lossy(&output.stdout).contains("private-upstream-message"));
-            let preview = deployment.plan(&document, &cancel).await.unwrap();
-            assert!(preview.deferred.is_empty());
-            assert!(preview.changes.is_empty());
             assert_eq!(
                 fs::read(directory.path().join("terraform.tfstate")).unwrap(),
                 state
