@@ -779,6 +779,7 @@ export function createSetupInference(
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
         let nativeHostedProviderAttachment: NativeHostedProviderAttachment | undefined;
+        let nativeGatewayCredentialOnly = false;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
@@ -1017,6 +1018,9 @@ export function createSetupInference(
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               ...(providerAuthority ? { expected: providerAuthority } : {}),
             });
+            // The verified provider owns this credential. A direct host smoke
+            // would send no authorization; sandbox readiness probes the attachment.
+            nativeGatewayCredentialOnly = provider !== "hermes-provider" && !credentialValue;
             const readAuthority =
               deps.getNativeHostedProviderAuthority &&
               ((name: string) => deps.getNativeHostedProviderAuthority!(name, profile.profileId));
@@ -1222,7 +1226,7 @@ export function createSetupInference(
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
             );
-          } else if (options.skipHostInferenceSmoke === true) {
+          } else if (nativeGatewayCredentialOnly || options.skipHostInferenceSmoke === true) {
             deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
           } else {
             await deps.verifyOnboardInferenceSmoke({

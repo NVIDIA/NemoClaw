@@ -396,14 +396,16 @@ describe("native NVIDIA onboarding", () => {
     expect(verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
   });
 
-  it("reuses a gateway-owned provider for a fresh second sandbox", async () => {
+  it.each(
+    NATIVE_HOSTED_PROFILES.filter((profile) => profile.logicalProvider !== "hermes-provider"),
+  )("reuses $label gateway credentials without an unauthenticated host smoke", async (profile) => {
     const importProviderProfile = vi.fn(async () => ({ ok: true as const }));
     const getProvider = vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
       ok: true,
       value: {
-        name: "nemoclaw-nvidia-prod-v1",
-        type: "nemoclaw-nvidia-inference-v1",
-        credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+        name: profile.providerName,
+        type: profile.profileId,
+        credentialKeys: [profile.credentialEnv],
         configKeys: [],
         revision: { id: "provider-id", resourceVersion: 4 },
       },
@@ -411,6 +413,9 @@ describe("native NVIDIA onboarding", () => {
     const createProvider = vi.fn<OpenShellProviderAdapter["createProvider"]>();
     const updateProvider = vi.fn<OpenShellProviderAdapter["updateProvider"]>();
     const updateSandbox = vi.fn(() => true);
+    const verifyOnboardInferenceSmoke = vi.fn(async () => {
+      throw new Error("HTTP 401: Header of type authorization was missing");
+    });
     const setupInference = createSetupInference({
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
@@ -424,13 +429,13 @@ describe("native NVIDIA onboarding", () => {
       getSandbox: () => null,
       getNativeHostedProviderAuthority: () => ({
         schemaVersion: 1,
-        profileId: "nemoclaw-nvidia-inference-v1",
-        providerName: "nemoclaw-nvidia-prod-v1",
+        profileId: profile.profileId,
+        providerName: profile.providerName,
         providerId: "provider-id",
       }),
       upsertProvider: vi.fn(async () => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
-      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
       providerAdapter: {
@@ -454,18 +459,18 @@ describe("native NVIDIA onboarding", () => {
       setupInference(
         "second",
         "nvidia/nemotron-3-super-120b-a12b",
-        "nvidia-prod",
-        "https://integrate.api.nvidia.com/v1",
-        "NVIDIA_INFERENCE_API_KEY",
+        profile.logicalProvider,
+        profile.endpoint,
+        profile.credentialEnv,
         null,
         [],
         {
           revalidateSandboxIdentity: () => undefined,
-          reuseGatewayCredentialWithoutLocalKey: true,
         },
       ),
     ).resolves.toEqual({ ok: true });
 
+    expect(verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
     expect(createProvider).not.toHaveBeenCalled();
     expect(updateProvider).not.toHaveBeenCalled();
     expect(updateSandbox).toHaveBeenCalledWith(
