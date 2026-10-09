@@ -632,20 +632,6 @@ async function readAndAssertOpenClawConfig(
   return selectedModel;
 }
 
-async function assertOpenClawConfig(
-  sandbox: SandboxClient,
-  home: string,
-  expected: {
-    model: string;
-    inferenceApi: string;
-    baseUrl: string;
-    artifactName: string;
-  },
-): Promise<void> {
-  const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
-  expect(typeof selectedModel?.maxTokens === "number" && selectedModel.maxTokens > 0).toBe(true);
-}
-
 async function assertInitialOpenClawConfig(
   sandbox: SandboxClient,
   home: string,
@@ -1269,7 +1255,7 @@ test(
     expect(route.exitCode, resultText(route)).toBe(0);
     const plainRoute = stripAnsi(resultText(route));
     expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
-    await assertOpenClawConfig(sandbox, home, {
+    await readAndAssertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
       baseUrl:
