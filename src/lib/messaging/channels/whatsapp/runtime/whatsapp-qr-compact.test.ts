@@ -7,6 +7,7 @@
 // upstream renderer; these tests pin the load-hook contract hermetically with
 // fake module objects so no real qrcode / qrcode-terminal dependency is needed.
 
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -166,6 +167,36 @@ describe("patchOpenClawQrTerminalRendererSource (#4522)", () => {
     const patched = patchOpenClawQrTerminalRendererSource(OPENCLAW_QR_RENDERER_SOURCE);
 
     expect(patchOpenClawQrTerminalRendererSource(patched)).toBe(patched);
+  });
+
+  it("patches qrcode CommonJS source loaded through the synchronous ESM hook", () => {
+    const url = "file:///tmp/node_modules/qrcode/index.js";
+    const patchModule = vi.fn((_request: string, loaded: object) => ({ ...loaded, patched: true }));
+    const load = createOpenClawQrTerminalLoadHook();
+    const result = {
+      format: "commonjs",
+      source: "module.exports = { toString() {}, create() {} };",
+    };
+    const loaded = load(url, {}, () => result);
+    const module = { exports: {} as Record<string, unknown> };
+
+    expect(loaded).not.toBe(result);
+    runInNewContext(String(loaded.source), {
+      module,
+      process: { __nemoclawWhatsappQrCompactPatchModule: patchModule },
+    });
+    expect(patchModule).toHaveBeenCalledWith(
+      url,
+      expect.objectContaining({ create: expect.any(Function) }),
+    );
+    expect(module.exports).toMatchObject({ patched: true });
+  });
+
+  it("passes non-qrcode CommonJS source through unchanged", () => {
+    const load = createOpenClawQrTerminalLoadHook();
+    const result = { format: "commonjs", source: "module.exports = {};" };
+
+    expect(load("file:///tmp/unrelated.cjs", {}, () => result)).toBe(result);
   });
 
   it("passes unrelated module source through the synchronous load hook", () => {
