@@ -47,5 +47,9 @@ pub fn definitions() -> [nemoclaw_tofu::Definition; 1] {
         ],
         &["config_json", "running"],
     )
-    .computed("running", rerun_when_stopped)]
+    .computed("running", rerun_when_stopped)
+    .validate_attribute(|attribute, value| match attribute {
+        "config_json" => crate::configuration::check(value).map_err(Into::into),
+        _ => Ok(()),
+    })]
 }

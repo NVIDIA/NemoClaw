@@ -9,6 +9,8 @@ mod artifacts;
 mod bake;
 #[path = "catalog_sources.rs"]
 mod catalog_sources;
+#[cfg(unix)]
+mod changes;
 #[path = "ci.rs"]
 mod ci;
 #[cfg(unix)]

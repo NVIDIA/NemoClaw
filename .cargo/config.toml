@@ -18,6 +18,11 @@ images = ["run", "--locked", "--quiet", "--target-dir", "target/ci-runner", "-p"
 [profile.dev]
 debug = 1
 
+# Third-party crates keep symbol names in backtraces but not line numbers. Their
+# debug data was a third of the dependency build output that CI caches.
+[profile.dev.package."*"]
+debug = false
+
 # Deployment tests verify native bundle digests on every operation.
 [profile.dev.package.sha2]
 opt-level = 3

@@ -62,7 +62,8 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 The first eight checks are required by the `v1` ruleset, including documentation validation.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
 Superseded PR runs are cancelled.
-Native and image workflows also cancel superseded pushes; their manual runs use separate concurrency groups and finish.
+The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
+Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
 Documentation and dependency pushes finish; newer pushes replace older pending runs.
 Live runs use separate concurrency groups and are not cancelled by a newer push.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
@@ -167,6 +168,12 @@ The dummy, OpenClaw, Hermes, and Pi also run shared configuration, generation, n
 Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
 Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
 The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
+
+The image workflow first runs `nemoclaw-build changes images` and skips its remaining steps when the change cannot affect the images; the `Build` checks still pass.
+A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
+[Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.
+Unclassified files, dependency or feature changes in the image build, manual runs, and failed analyses run every step.
+Commit, then run `cargo run -p nemoclaw-build --no-default-features -- changes images --base origin/v1` to see the decision and its reason.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
 
