@@ -86,14 +86,14 @@ Paths labeled SDK are relative to `crates/nemoclaw-sdk/src`; provider and runtim
 
 | Boundary and owner | Constraint |
 |---|---|
-| Provider `docker/mod.rs` and `docker/ssh.rs` | Explicit Unix sockets select local Docker or Podman API connections on Unix clients; SSH endpoints select Docker. HTTP/TLS engine URLs and environment-based discovery are unavailable. |
+| Provider `docker/mod.rs` and `docker/ssh.rs` | Explicit Unix sockets select local Docker or Podman API connections on Unix clients; SSH endpoints select Docker on every client. HTTP/TLS engine URLs and environment-based discovery are unavailable. |
 | Provider `docker/` and `managed/backend.rs` | Connection resolution must select the same endpoint for read, ensure, remove, validation, readiness, and export. |
 | Provider `provider.rs`, `services/registry.rs`, and `services/installers/ollama/backend.rs` | Ollama’s engine connection is separate from its HTTP model API. Compilation and provider execution must select the same daemon. |
 | SDK `config/` and `managed/spec.rs` | Managed gateways select one local Docker or Podman compute driver for every sandbox. Managed inference can declare independent SSH placement and publication. |
 | `nemoclaw-docker` `storage.rs` and provider `managed/gateway_storage.rs` and `managed/observation.rs` | Durable storage bindings combine daemon identity, volume identity, ownership, and generation. Podman gateway bindings use the retained owned network UUID as their namespace anchor. Docker gateway, disposable service compute, and model-cache volumes use native Docker-provider IDs. Cache recovery does not require the original daemon ID or volume creation time. |
 | Provider `openshell/transport.rs`; SDK `state/` and `bundle/` | Gateway credentials, deployment locks, state, and bundle subprocesses remain client-side. OpenShell RPC observes gateway-owned resources. |
 
-Both Unix-socket and SSH engine transports require a Unix client.
+Unix-socket engine transports require a Unix client; the SSH transport and SSH host measurements work from every client, including Windows.
 Windows deployment planning is blocked by required image discovery, including with an external OpenShell gateway.
 Unavailable or mismatched identity stops the operation.
 Managed Podman gateway bindings combine the retained network UUID with container identity, volume creation time, and signing keys; they never derive identity from a socket path or hostname.

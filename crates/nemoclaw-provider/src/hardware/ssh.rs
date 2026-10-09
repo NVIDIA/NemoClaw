@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 use super::{HostObservation, HostObserver};
-#[cfg(unix)]
 use crate::ObservationError;
 use crate::{Error, docker::Engine};
 
@@ -9,7 +8,6 @@ use crate::{Error, docker::Engine};
 /// POSIX shell, `uname`, `stat`, `head`, `docker`, and `nvidia-smi`: no
 /// interpreter and no user-supplied hooks. A marker line precedes each
 /// command's output, and the provider parses and validates it.
-#[cfg(unix)]
 const COLLECT: &str = r#"set -eu
 section() { printf '\n==nemoclaw:%s==\n' "$1"; }
 section os; uname -s
@@ -27,9 +25,7 @@ section gpu_memory; nvidia-smi --query-gpu=memory.total,memory.free --format=csv
 section processes; nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits
 "#;
 
-#[cfg(unix)]
 const MARKER: &str = "\n==nemoclaw:";
-#[cfg(unix)]
 const SECTIONS: [&str; 11] = [
     "os",
     "machine",
@@ -54,7 +50,6 @@ impl HostObserver for SshHost {
                 "SSH host observation requires an SSH engine",
             ));
         }
-        #[cfg(unix)]
         {
             use std::{process::Stdio, time::Duration};
             let script = format!("'{}'", COLLECT.replace('\'', "'\\''"));
@@ -74,15 +69,10 @@ impl HostObserver for SshHost {
             }
             decode(&result.stdout)
         }
-        #[cfg(not(unix))]
-        Err(Error::Conflict(
-            "SSH host observation requires a Unix client",
-        ))
     }
 }
 
 /// Each known section exactly once, after nothing but the first marker.
-#[cfg(unix)]
 fn sections(text: &str) -> Option<std::collections::BTreeMap<&str, &str>> {
     let mut parts = text.split(MARKER);
     if !parts.next()?.is_empty() {
@@ -98,7 +88,6 @@ fn sections(text: &str) -> Option<std::collections::BTreeMap<&str, &str>> {
     Some(found)
 }
 
-#[cfg(unix)]
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Info {
@@ -110,7 +99,6 @@ struct Info {
     docker_root_dir: String,
 }
 
-#[cfg(unix)]
 fn architecture(name: &str) -> Option<&'static str> {
     match name {
         "arm64" | "aarch64" => Some("arm64"),
@@ -119,7 +107,6 @@ fn architecture(name: &str) -> Option<&'static str> {
     }
 }
 
-#[cfg(unix)]
 fn decode(bytes: &[u8]) -> Result<HostObservation, Error> {
     let incomplete = || Error::from(ObservationError::Incomplete);
     let unsupported =
