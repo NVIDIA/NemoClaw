@@ -22,7 +22,10 @@ import {
   serializeManagedStartupRootApplyRequest,
 } from "./root-apply";
 
-import { WAIT_FOR_OPENCLAW_OWNER_LEASE } from "./openclaw-owner-lease";
+import {
+  OPENCLAW_OWNER_LEASE_EXECUTION_TIMEOUT_MS,
+  WAIT_FOR_OPENCLAW_OWNER_LEASE,
+} from "./openclaw-owner-lease";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_ID_RE = /^(?:sha256:)?[a-f0-9]{64}$/u;
@@ -402,7 +405,7 @@ export function applyProviderManagedStartupRootRequest(
               "-c",
               WAIT_FOR_OPENCLAW_OWNER_LEASE,
             ],
-            { timeoutMs: ROOT_APPLY_TIMEOUT_MS },
+            { timeoutMs: OPENCLAW_OWNER_LEASE_EXECUTION_TIMEOUT_MS },
           );
           if (lease.status !== 0 || lease.error) {
             lastFailure = "OpenClaw owner lease did not settle before managed startup";
