@@ -299,3 +299,35 @@ fn timing_reports_show_wall_time_and_where_test_time_goes() {
 
     assert!(ci::timing::Run::parse("<testsuites>").is_err());
 }
+
+#[test]
+fn budgets_name_each_step_over_its_wall_time_and_each_test_over_its_limit() {
+    let budgets = ci::timing::Budgets::parse(
+        "lifecycle:\n  wall_seconds: 10\n  test_seconds: 5\ntest:\n  wall_seconds: 60\n  test_seconds: 2\n",
+    )
+    .unwrap();
+    let run = ci::timing::Run::parse(JUNIT).unwrap();
+    let lifecycle = budgets.get("lifecycle").unwrap();
+    assert_eq!(
+        run.over(lifecycle),
+        [
+            "12.5 s wall exceeds the 10 s budget".to_owned(),
+            "nemoclaw-e2e::integration deployment::slow_scenario took 9.2 s; the limit is 5 s"
+                .to_owned(),
+        ]
+    );
+    let test = budgets.get("test").unwrap();
+    assert_eq!(
+        run.over(test),
+        [
+            "nemoclaw-e2e::integration deployment::slow_scenario took 9.2 s; the limit is 2 s"
+                .to_owned(),
+        ]
+    );
+    assert!(budgets.get("live-kind").is_none());
+    assert!(ci::timing::Budgets::parse("test:\n  wall_seconds: -1\n").is_err());
+    // The repository's budgets parse and cover the test and lifecycle steps.
+    let repository =
+        ci::timing::Budgets::parse(include_str!("../../../.config/test-budgets.yaml")).unwrap();
+    assert!(repository.get("test").is_some() && repository.get("lifecycle").is_some());
+}
