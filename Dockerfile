@@ -696,10 +696,10 @@ COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hol
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.mts /scripts/
-COPY scripts/validate-openclaw-tool-search.mts /scripts/
+COPY scripts/generate-openclaw-config.mts scripts/validate-openclaw-tool-search.mts /scripts/
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
@@ -1545,11 +1545,10 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy configuration inputs before the cached non-messaging plugin install.
-COPY scripts/generate-openclaw-config.mts /scripts/
-COPY scripts/validate-openclaw-tool-search.mts /scripts/
-COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
-COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
+# Reuse managed config inputs.
+COPY --from=openclaw-runtime-payload /scripts/ /scripts/
+COPY --from=openclaw-runtime-payload /src/ /src/
+COPY --from=openclaw-runtime-payload /usr/local/share/ /usr/local/share/
 
 RUN chmod 755 /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \

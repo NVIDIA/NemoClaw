@@ -6,8 +6,6 @@ import {
   formatGatewayRouteConflict,
   type GatewayRouteCompatibilityResult,
   isAdvisoryGatewayRouteConflict,
-  nativeInferenceProviderForSandbox,
-  normalizeNativeNvidiaProviderAttachment,
 } from "../../../inference/gateway-route-compatibility";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
@@ -99,6 +97,7 @@ import {
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
 import {
+  nativeInferenceCreateIntentFields,
   sandboxCreateInferenceSelection,
   withSandboxImageRegistrationFence,
 } from "../../sandbox-registration";
@@ -132,22 +131,6 @@ type SandboxRecreateWorkloadSkipReason = Extract<
   ReplacedSandboxWorkloadCleanupResult,
   { readonly status: "skipped" }
 >["reason"];
-
-function nativeNvidiaCreateIntentFields(
-  provider: string | null | undefined,
-  entry: SandboxEntry | null,
-): {
-  inferenceProvider: string | null;
-  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
-} {
-  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    entry?.nativeNvidiaProviderAttachment,
-  );
-  return {
-    inferenceProvider: nativeInferenceProviderForSandbox(provider),
-    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
-  };
-}
 
 const SANDBOX_RECREATE_WORKLOAD_SKIP_DIAGNOSTIC = {
   "replacement-unproven": "  Obsolete sandbox image retirement skipped: replacement-unproven",
@@ -372,6 +355,7 @@ export interface SandboxStateOptions<
       sandboxName: string;
       inferenceProvider?: string | null;
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+      nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -1880,7 +1864,7 @@ class SandboxStateFlow<
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeNvidiaCreateIntentFields(
+      ...nativeInferenceCreateIntentFields(
         this.options.provider,
         this.deps.getSandboxRegistryEntry(sandboxName),
       ),

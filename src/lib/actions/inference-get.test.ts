@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 
 import { describe, expect, it, vi } from "vitest";
+import { HOSTED_NATIVE_PROVIDERS } from "../inference/native-provider/hosted";
 import { buildHttpsPinRouteBaseUrl } from "../inference/https-pin-runtime";
 import {
   managedLlamaCppStatePaths,
@@ -1072,4 +1073,30 @@ describe("runInferenceGet", () => {
     });
     expect(deps.log).not.toHaveBeenCalled();
   });
+});
+
+describe("native hosted inference get", () => {
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "reports $logicalProvider from the selected sandbox rather than the shared route",
+    async (definition) => {
+      const deps = createDeps(configuredRoute("ollama-local", "other-sandbox-model"));
+      deps.getSandbox = () => ({
+        name: "alpha",
+        provider: definition.logicalProvider,
+        model: "selected-model",
+        nativeHostedProviderAttachment: {
+          schemaVersion: 1,
+          profileId: definition.profileId,
+          providerName: definition.providerName,
+          providerId: "owned-provider-id",
+        },
+      });
+      await expect(runInferenceGet({ sandboxName: "alpha", quiet: true }, deps)).resolves.toEqual({
+        provider: definition.logicalProvider,
+        model: "selected-model",
+        endpointUrl: definition.endpoint,
+      });
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    },
+  );
 });

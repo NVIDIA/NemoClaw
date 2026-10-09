@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
 import { setupHermesProviderInference } from "./hermes";
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
@@ -408,5 +409,107 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
       setupHermesProviderInference(makeArgs(endpointUrl), deps as never),
     ).rejects.toThrow(/private or internal/);
     expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+});
+
+describe("native Hermes Provider setup", () => {
+  const endpoint = "https://staging.nous.example/v1";
+  const definition = hostedNativeProvider("hermes-provider", endpoint)!;
+  const receipt = {
+    schemaVersion: 1 as const,
+    profileId: definition.profileId,
+    providerName: definition.providerName,
+    providerId: "native-identity",
+    endpointUrl: endpoint,
+  };
+
+  it.each(["oauth", "api-key"])(
+    "prepares %s through native registration without mutating the shared route",
+    async (method) => {
+      const prepareNativeProvider = vi.fn(async () => receipt);
+      const register = vi.fn(async (_sandbox, options) => {
+        await options.registerInferenceCredential({
+          apiKey: "host-secret",
+          credentialEnv: method === "api-key" ? "NOUS_API_KEY" : "OPENAI_API_KEY",
+          baseUrl: endpoint,
+        });
+        return {
+          auth_method: method,
+          credential_env: "OPENAI_API_KEY",
+          inference_base_url: endpoint,
+        };
+      });
+      const deps = makeDeps({
+        getNativeProviderAuthority: () => undefined,
+        prepareNativeProvider,
+        normalizeHermesAuthMethod: () => method,
+        resolveHermesNousApiKey: () => "host-secret",
+        hermesProviderAuth: {
+          isHermesProviderRegistered: vi.fn(),
+          ensureHermesProviderApiKeyCredentials: register,
+          ensureHermesProviderOAuthCredentials: register,
+        },
+      });
+      const result = await setupHermesProviderInference(
+        { ...makeArgs(null), provider: "hermes-provider" },
+        deps as never,
+      );
+      expect(result).toEqual({
+        ok: true,
+        nativeInference: { endpointUrl: endpoint, credentialEnv: "OPENAI_API_KEY" },
+      });
+      expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith("host-secret", endpoint);
+      expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+      expect(deps.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(deps.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+      expect(deps.registry.updateSandbox).toHaveBeenCalledWith("alpha", {
+        provider: "hermes-provider",
+        model: "m",
+      });
+      expect(
+        JSON.stringify([result, deps.log.mock.calls, deps.registry.updateSandbox.mock.calls]),
+      ).not.toContain("host-secret");
+    },
+  );
+
+  it("reuses exact registered authority noninteractively without another login", async () => {
+    const prepareNativeProvider = vi.fn(async () => receipt);
+    const deps = makeDeps({
+      getNativeProviderAuthority: () => receipt,
+      prepareNativeProvider,
+      isNonInteractive: () => true,
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(endpoint), provider: "hermes-provider" },
+        deps as never,
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      nativeInference: { endpointUrl: endpoint, credentialEnv: "OPENAI_API_KEY" },
+    });
+    expect(prepareNativeProvider).toHaveBeenCalledExactlyOnceWith(null, endpoint);
+    expect(deps.hermesProviderAuth.ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+    expect(deps.hermesProviderAuth.ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("does not publish success or use the shared route when native registration fails", async () => {
+    const deps = makeDeps({
+      getNativeProviderAuthority: () => receipt,
+      isNonInteractive: () => true,
+      prepareNativeProvider: async () => {
+        throw new Error("ownership collision");
+      },
+    });
+    await expect(
+      setupHermesProviderInference(
+        { ...makeArgs(null), provider: "hermes-provider" },
+        deps as never,
+      ),
+    ).rejects.toThrow("ownership collision");
+    expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
   });
 });

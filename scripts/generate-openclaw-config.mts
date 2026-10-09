@@ -27,6 +27,8 @@
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
+import { nativeHostedAgentConfig } from "../src/lib/inference/native-provider/agent-config.ts";
+
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
 
 import {
@@ -970,10 +972,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
       maxTokens,
     });
   }
+  const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey: nativeHosted?.apiKey ?? "unused",
+      ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

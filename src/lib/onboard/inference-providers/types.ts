@@ -15,13 +15,21 @@
 // so they accept whatever the orchestrator hands in without needing to
 // duplicate every helper's exact signature.
 
+import type { HermesInferenceCredentialRegistrar } from "../../hermes-provider-auth";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
 import type { OpenShellInferenceRouteMutator } from "../../adapters/openshell/inference-route";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
-export type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
+export type SetupInferenceResult =
+  | {
+      ok: true;
+      retry?: undefined;
+      nativeInference?: { endpointUrl: string; credentialEnv: string };
+    }
+  | { retry: "selection" };
 
 export type RunOpenshell = (
   args: string[],
@@ -182,12 +190,22 @@ export type LookupFn = (
 export type HermesDeps = CommonDeps &
   InferenceRouteMutationDeps & {
     lookup?: LookupFn;
+    getNativeProviderAuthority?(): NativeProviderAttachment | undefined;
+    prepareNativeProvider?(
+      apiKey: string | null,
+      endpointUrl: string,
+    ): Promise<NativeProviderAttachment>;
     hermesProviderAuth: {
       HERMES_PROVIDER_NAME: string;
       isHermesProviderRegistered(runOpenshell: any): Promise<boolean>;
       ensureHermesProviderApiKeyCredentials(
         sandboxName: string,
-        opts: { apiKey: unknown; runOpenshell: any; baseUrl?: string | undefined },
+        opts: {
+          apiKey: unknown;
+          runOpenshell: any;
+          baseUrl?: string | undefined;
+          registerInferenceCredential?: HermesInferenceCredentialRegistrar;
+        },
       ): Promise<unknown>;
       ensureHermesProviderOAuthCredentials(
         sandboxName: string,
@@ -196,6 +214,7 @@ export type HermesDeps = CommonDeps &
           runOpenshell: any;
           baseUrl?: string | undefined;
           toolGatewayPresets: string[];
+          registerInferenceCredential?: HermesInferenceCredentialRegistrar;
         },
       ): Promise<unknown>;
     };

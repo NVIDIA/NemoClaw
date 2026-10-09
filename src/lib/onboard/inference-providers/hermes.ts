@@ -4,6 +4,12 @@
 // Hermes Provider inference setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
+import {
+  hostedNativeProvider,
+  canonicalHermesNativeEndpoint,
+  usesNativeHermesEndpoint,
+} from "../../inference/native-provider/hosted";
+import type { HermesInferenceCredentialRegistrar } from "../../hermes-provider-auth";
 import { rewriteConfigUrlsWithDnsPinning } from "../../sandbox/config";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { HermesDeps, SetupInferenceResult } from "./types";
@@ -33,8 +39,16 @@ export async function setupHermesProviderInference(
   // managed/OAuth path supplies the endpoint later (using the default managed
   // inference route), so SSRF validation only applies to an explicitly-supplied
   // custom endpoint.
+  const authority = deps.getNativeProviderAuthority?.();
+  const defaultEndpoint = hostedNativeProvider("hermes-provider")!.endpoint;
+  const recordedEndpoint = authority?.endpointUrl ?? (authority ? defaultEndpoint : undefined);
+  const usesNative =
+    provider === "hermes-provider" && usesNativeHermesEndpoint(endpointUrl, authority);
+  if (usesNative && (!deps.prepareNativeProvider || !deps.getNativeProviderAuthority)) {
+    throw new Error("Native Hermes setup is missing its ownership and registration dependencies");
+  }
   let resolvedEndpointUrl = endpointUrl;
-  if (endpointUrl) {
+  if (endpointUrl && !usesNative) {
     let parsedEndpoint: URL;
     try {
       parsedEndpoint = new URL(endpointUrl);
@@ -111,7 +125,22 @@ export async function setupHermesProviderInference(
     if (isNonInteractive()) return exitProcess(1);
     return { retry: "selection" };
   }
-  const providerRegistered = await hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
+  const providerRegistered = usesNative
+    ? authority !== undefined
+    : await hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
+  if (usesNative) resolvedEndpointUrl ??= recordedEndpoint ?? defaultEndpoint;
+  let nativePrepared = false;
+  const registerInferenceCredential: HermesInferenceCredentialRegistrar | undefined = usesNative
+    ? async ({ apiKey, baseUrl }) => {
+        const receipt = await deps.prepareNativeProvider!(
+          apiKey,
+          canonicalHermesNativeEndpoint(baseUrl),
+        );
+        resolvedEndpointUrl = receipt.endpointUrl ?? defaultEndpoint;
+        nativePrepared = true;
+        return { credentialEnv: "OPENAI_API_KEY" };
+      }
+    : undefined;
   const toolGatewayProviderRegistered =
     hermesToolGateways.length === 0
       ? true
@@ -133,11 +162,13 @@ export async function setupHermesProviderInference(
           ? await hermesProviderAuth.ensureHermesProviderApiKeyCredentials(targetSandbox, {
               apiKey: resolveHermesNousApiKey(),
               runOpenshell,
+              ...(registerInferenceCredential ? { registerInferenceCredential } : {}),
               baseUrl: resolvedEndpointUrl || undefined,
             })
           : await hermesProviderAuth.ensureHermesProviderOAuthCredentials(targetSandbox, {
               allowInteractiveLogin: !isNonInteractive(),
               runOpenshell,
+              ...(registerInferenceCredential ? { registerInferenceCredential } : {}),
               baseUrl: resolvedEndpointUrl || undefined,
               toolGatewayPresets: hermesToolGateways,
             });
@@ -156,6 +187,23 @@ export async function setupHermesProviderInference(
       error("    Re-run `nemoclaw onboard --agent hermes` interactively to configure credentials.");
       return exitProcess(1);
     }
+  }
+
+  if (usesNative) {
+    if (!nativePrepared) {
+      if (shouldPrepareHermesCredentials)
+        throw new Error("Hermes login did not publish a native provider credential");
+      const receipt = await deps.prepareNativeProvider!(null, resolvedEndpointUrl!);
+      resolvedEndpointUrl = receipt.endpointUrl ?? defaultEndpoint;
+    }
+    // Gateway-held credentials are verified from the new sandbox after attachment.
+    // They are not copied back to the host for a separate credentialed smoke request.
+    if (sandboxName) registry.updateSandbox(sandboxName, { model, provider });
+    log(`  ✓ Native Hermes provider prepared: ${provider} / ${model}`);
+    return {
+      ok: true,
+      nativeInference: { endpointUrl: resolvedEndpointUrl!, credentialEnv: "OPENAI_API_KEY" },
+    };
   }
 
   const applyResult = await inferenceRouteMutator.setInferenceRoute({

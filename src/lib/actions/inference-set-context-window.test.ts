@@ -10,7 +10,7 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
-} from "./inference-set.test-support";
+} from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet context window", () => {
   const ollamaConfig = (): ConfigObject => ({

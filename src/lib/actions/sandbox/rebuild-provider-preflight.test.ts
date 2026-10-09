@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
+} from "../../inference/native-provider/hosted";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import {
@@ -396,4 +400,59 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     expect(diagnostics).toContain("The recorded endpoint identity is missing or incompatible.");
     expect(diagnostics).not.toContain("secret-canary");
   });
+});
+
+describe("hosted native rebuild provider preflight", () => {
+  it.each([
+    ...HOSTED_NATIVE_PROVIDERS,
+    hostedNativeProvider("hermes-provider", "https://staging.nous.example/v1")!,
+  ])(
+    "verifies $providerName instead of the legacy provider before deletion",
+    async (definition) => {
+      const adapter = createCliOpenShellProviderAdapter();
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-id",
+        ...("endpointUrl" in definition ? { endpointUrl: definition.endpointUrl } : {}),
+      };
+      const get = vi.spyOn(adapter, "getProvider").mockResolvedValue({
+        ok: true,
+        value: {
+          name: definition.providerName,
+          type: definition.profileId,
+          credentialKeys: [definition.credentialEnv],
+          configKeys: [],
+          credentialExpiresAtMs: {},
+          revision: { id: "owned-id", resourceVersion: 1 },
+        },
+      });
+      await expect(
+        inspectRebuildGatewayProviderRegistration(
+          definition.logicalProvider,
+          vi.fn(),
+          "Preflight",
+          undefined,
+          adapter,
+          definition.credentialEnv,
+          receipt,
+        ),
+      ).resolves.toBe("registered");
+      expect(get).toHaveBeenCalledWith(
+        expect.objectContaining({ providerName: definition.providerName }),
+      );
+      await expect(
+        inspectRebuildGatewayProviderRegistration(
+          definition.logicalProvider,
+          vi.fn(),
+          "Preflight",
+          undefined,
+          adapter,
+          definition.credentialEnv,
+          { ...receipt, providerId: "different-id" },
+        ),
+      ).resolves.toBe("indeterminate");
+    },
+  );
 });

@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import {
+  parseOpenClawJsonDocuments,
+  openClawAgentResponseRecord,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -9,9 +14,7 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   cleanupSandbox,
-  expectAnthropicMessageThroughSandbox,
   expectOnboardSuccess,
-  expectOpenAiChatThroughSandbox,
   inferenceSandboxName,
   onboardSandbox,
   rawOpenShellEnv,
@@ -213,110 +216,173 @@ test(
   },
 );
 
-test(
-  "TC-INF-02 OpenAI provider responds through inference.local",
+// Each case uses OpenClaw only; deterministic tests own the other supported agents.
+const hostedCases = [
+  {
+    id: "TC-INF-02",
+    selector: "openai",
+    provider: "openai",
+    label: "OpenAI",
+    credential: "OPENAI_API_KEY",
+    modelEnv: "NEMOCLAW_OPENAI_MODEL",
+    defaultModel: "gpt-4o-mini",
+    providerKey: "openai",
+    endpoint: "https://api.openai.com/v1",
+    placeholder: "OPENAI_API_KEY",
+  },
+  {
+    id: "TC-INF-03",
+    selector: "anthropic",
+    provider: "anthropic",
+    label: "Anthropic",
+    credential: "ANTHROPIC_API_KEY",
+    modelEnv: "NEMOCLAW_ANTHROPIC_MODEL",
+    defaultModel: "claude-sonnet-4-6",
+    providerKey: "anthropic",
+    endpoint: "https://api.anthropic.com",
+    placeholder: "ANTHROPIC_API_KEY",
+  },
+  {
+    id: "TC-INF-06",
+    selector: "gemini",
+    provider: "gemini",
+    label: "Gemini",
+    credential: "GEMINI_API_KEY",
+    modelEnv: "NEMOCLAW_GEMINI_MODEL",
+    providerKey: "inference",
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    placeholder: "GEMINI_API_KEY",
+  },
+  {
+    id: "TC-INF-07",
+    selector: "openrouter",
+    provider: "openrouter",
+    label: "OpenRouter",
+    credential: "OPENROUTER_API_KEY",
+    modelEnv: "NEMOCLAW_OPENROUTER_MODEL",
+    providerKey: "inference",
+    endpoint: "https://openrouter.ai/api/v1",
+    placeholder: "OPENROUTER_API_KEY",
+  },
+  {
+    id: "TC-INF-08",
+    selector: "hermes",
+    provider: "hermes",
+    label: "Hermes Provider",
+    credential: "NOUS_API_KEY",
+    modelEnv: "NEMOCLAW_HERMES_MODEL",
+    providerKey: "inference",
+    endpoint: "https://inference-api.nousresearch.com/v1",
+    placeholder: "OPENAI_API_KEY",
+  },
+] as const;
+
+test.for(hostedCases)(
+  "$id $label answers through its native provider",
   {
     timeout: 15 * 60_000,
     meta: {
       e2ePhases: [
-        "confirm OpenAI provider prerequisites",
-        "recreate the OpenAI sandbox",
-        "onboard the OpenAI provider",
-        "request OpenAI chat through inference.local",
+        "confirm hosted provider prerequisites",
+        "recreate the hosted sandbox",
+        "onboard the hosted provider",
+        "verify native agent configuration",
+        "request a fresh agent response",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
-    requireProviderSmokeSelected("openai", skip);
-    const apiKey = secrets.optional("OPENAI_API_KEY") ?? skipLive(skip, "OPENAI_API_KEY not set");
-    await requireLivePrerequisites(host, runtimeProvider);
-    const sandboxName = inferenceSandboxName("e2e-openai");
-    const model = process.env.NEMOCLAW_OPENAI_MODEL || "gpt-4o-mini";
-    cleanup.add(`best-effort inference-routing OpenAI cleanup for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName),
-    );
-    progress.phase("recreate the OpenAI sandbox");
-    await cleanupSandbox(host, sandbox, sandboxName);
-
-    await artifacts.target.declare({
-      id: "inference-routing-openai",
-      contract: ["OpenAI provider onboards", "sandbox inference.local routes chat to OpenAI"],
-      model,
-    });
-
-    progress.phase("onboard the OpenAI provider");
-    const onboard = await onboardSandbox(
-      artifacts,
-      sandboxName,
-      { NEMOCLAW_MODEL: model, NEMOCLAW_PROVIDER: "openai", OPENAI_API_KEY: apiKey },
-      [apiKey],
-      "tc-inf-02-onboard-openai",
-      progress,
-    );
-    expectOnboardSuccess(onboard, "TC-INF-02 OpenAI onboard");
-    cleanup.add(`strict inference-routing OpenAI cleanup for ${sandboxName}`, () =>
-      cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-    );
-    progress.phase("request OpenAI chat through inference.local");
-    await expectOpenAiChatThroughSandbox(
-      sandbox,
-      sandboxName,
-      model,
-      [apiKey],
-      "openai-inference-local-chat",
-    );
-  },
-);
-
-test(
-  "TC-INF-03 Anthropic provider responds through inference.local",
-  {
-    timeout: 15 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm Anthropic provider prerequisites",
-        "recreate the Anthropic sandbox",
-        "onboard the Anthropic provider",
-        "request Anthropic messages through inference.local",
-      ],
-    },
-  },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
-    requireProviderSmokeSelected("anthropic", skip);
+  async (
+    selected,
+    { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip },
+  ) => {
+    requireProviderSmokeSelected(selected.selector, skip);
     const apiKey =
-      secrets.optional("ANTHROPIC_API_KEY") ?? skipLive(skip, "ANTHROPIC_API_KEY not set");
+      secrets.optional(selected.credential) ?? skipLive(skip, `${selected.credential} not set`);
+    const model =
+      process.env[selected.modelEnv] ||
+      ("defaultModel" in selected ? selected.defaultModel : "") ||
+      skipLive(skip, `${selected.modelEnv} must name an available model`);
     await requireLivePrerequisites(host, runtimeProvider);
-    const sandboxName = inferenceSandboxName("e2e-anth");
-    const model = process.env.NEMOCLAW_ANTHROPIC_MODEL || "claude-sonnet-4-6";
-    cleanup.add(`best-effort inference-routing Anthropic cleanup for ${sandboxName}`, () =>
+    const sandboxName = inferenceSandboxName(`e2e-${selected.selector}`);
+    cleanup.add(`best-effort hosted inference cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName),
     );
-    progress.phase("recreate the Anthropic sandbox");
+    progress.phase("recreate the hosted sandbox");
     await cleanupSandbox(host, sandbox, sandboxName);
-
     await artifacts.target.declare({
-      id: "inference-routing-anthropic",
-      contract: [
-        "Anthropic provider onboards",
-        "sandbox inference.local routes Messages API to Anthropic",
-      ],
+      id: `inference-routing-${selected.selector}`,
       model,
+      contract: [
+        "hosted provider onboards",
+        "agent uses the native endpoint with a credential placeholder",
+        "fresh agent process answers with the selected model",
+      ],
     });
-
-    progress.phase("onboard the Anthropic provider");
+    progress.phase("onboard the hosted provider");
     const onboard = await onboardSandbox(
       artifacts,
       sandboxName,
-      { ANTHROPIC_API_KEY: apiKey, NEMOCLAW_MODEL: model, NEMOCLAW_PROVIDER: "anthropic" },
+      {
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PROVIDER: selected.provider,
+        [selected.credential]: apiKey,
+      },
       [apiKey],
-      "tc-inf-03-onboard-anthropic",
+      `${selected.id}-onboard`,
       progress,
     );
-    expectOnboardSuccess(onboard, "TC-INF-03 Anthropic onboard");
-    cleanup.add(`strict inference-routing Anthropic cleanup for ${sandboxName}`, () =>
+    expectOnboardSuccess(onboard, `${selected.id} hosted onboard`);
+    cleanup.add(`strict hosted inference cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
-    progress.phase("request Anthropic messages through inference.local");
-    await expectAnthropicMessageThroughSandbox(sandbox, sandboxName, model, [apiKey]);
+    progress.phase("verify native agent configuration");
+    const config = await sandbox.exec(
+      sandboxName,
+      ["openclaw", "config", "get", `models.providers.${selected.providerKey}`, "--json"],
+      {
+        artifactName: `${selected.id}-native-config`,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    expect(config.exitCode, resultText(config)).toBe(0);
+    expect(JSON.parse(config.stdout)).toMatchObject({
+      baseUrl: selected.endpoint,
+      apiKey: `openshell:resolve:env:${selected.placeholder}`,
+    });
+    progress.phase("request a fresh agent response");
+    const response = await sandbox.exec(
+      sandboxName,
+      [
+        "nemoclaw-start",
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        `native-${crypto.randomUUID()}`,
+        "-m",
+        "Reply with one short greeting. Do not use tools.",
+      ],
+      {
+        artifactName: `${selected.id}-native-agent`,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 180_000,
+      },
+    );
+    expect(response.exitCode, resultText(response)).toBe(0);
+    const responses = parseOpenClawJsonDocuments(response.stdout)
+      .map(openClawAgentResponseRecord)
+      .filter((value) => value !== null);
+    expect(responses.at(-1)).toMatchObject({
+      meta: { agentMeta: { provider: selected.providerKey, model } },
+    });
+    expect(parseOpenClawAgentText(response.stdout).trim()).not.toBe("");
   },
 );

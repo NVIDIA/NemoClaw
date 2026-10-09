@@ -841,7 +841,8 @@ async function rebuildSandboxUnlocked(
               runtimeSelection,
               undefined,
               resumeConfig.credentialEnv,
-              resumeConfig.nativeNvidiaProviderAttachment,
+              resumeConfig.nativeNvidiaProviderAttachment ??
+                resumeConfig.nativeHostedProviderAttachment,
             );
             if (registration !== "registered") {
               return {

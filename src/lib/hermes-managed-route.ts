@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
+
 // Hermes requires an sk-prefixed value before it sends a request. OpenShell
 // removes this non-secret sentinel and injects the route credential at egress.
 export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
   name: string;
-  api_key: typeof HERMES_PROXY_REWRITE_SENTINEL;
+  api_key: string;
   discover_models: true;
   api?: string;
   base_url?: string;
@@ -26,7 +28,7 @@ export type HermesManagedRouting = {
     default: string;
     provider: "custom";
     base_url: string;
-    api_key: typeof HERMES_PROXY_REWRITE_SENTINEL;
+    api_key: string;
     api_mode?: string;
     context_length?: number;
   };
@@ -76,6 +78,8 @@ export function applyHermesManagedRoute(
   config: Record<string, unknown>,
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
+  const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
+  const apiKey = nativeHosted?.apiKey ?? HERMES_PROXY_REWRITE_SENTINEL;
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
@@ -89,7 +93,8 @@ export function applyHermesManagedRoute(
     default: route.model,
     provider: "custom",
     base_url: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
+    ...(nativeHosted?.headers ? { default_headers: nativeHosted.headers } : {}),
   };
   if (apiMode) modelConfig.api_mode = apiMode;
   if (route.contextWindow !== null && route.contextWindow !== undefined) {
@@ -100,7 +105,8 @@ export function applyHermesManagedRoute(
   const providerConfig: Record<string, unknown> = {
     name: providerName,
     api: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
+    ...(nativeHosted?.headers ? { default_headers: nativeHosted.headers } : {}),
     default_model: route.model,
     discover_models: true,
   };
@@ -109,7 +115,8 @@ export function applyHermesManagedRoute(
   const customProvider: Record<string, unknown> = {
     name: providerName,
     base_url: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
+    ...(nativeHosted?.headers ? { default_headers: nativeHosted.headers } : {}),
     discover_models: true,
   };
   if (apiMode) customProvider.api_mode = apiMode;

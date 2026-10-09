@@ -263,6 +263,9 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     writeFixture(path.join("src", "lib", "providerless-inference.ts"));
+    for (const fileName of ["agent-config.ts", "hosted.ts", "contract.ts"]) {
+      writeFixture(path.join("src", "lib", "inference", "native-provider", fileName));
+    }
     for (const relativePath of [
       "extra-agents-validation.ts",
       path.join("core", "json-types.ts"),

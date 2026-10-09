@@ -7,6 +7,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -92,9 +93,13 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
     has_routing = any(
         key in config for key in ("model", "providers", "custom_providers", "_nemoclaw_upstream")
     )
-    if has_routing and policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
+    api_key = policy_value(config, "model.api_key") if has_routing else None
+    native_placeholder = isinstance(api_key, str) and re.fullmatch(
+        r"openshell:resolve:env:(OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY)", api_key
+    ) is not None
+    if has_routing and api_key != HERMES_PROXY_REWRITE_SENTINEL and not native_placeholder:
         raise ManagedPolicyError(
-            "managed policy model.api_key must use the OpenShell proxy rewrite sentinel"
+            "managed policy model.api_key must use an OpenShell credential placeholder or proxy rewrite sentinel"
         )
     for managed_path in managed_paths:
         policy_value(config, managed_path)

@@ -143,7 +143,9 @@ describe("Hermes managed policy", () => {
     const result = loadWithPython(malformedPolicy);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("must use the OpenShell proxy rewrite sentinel");
+    expect(result.stderr).toContain(
+      "must use an OpenShell credential placeholder or proxy rewrite sentinel",
+    );
     expect(result.stderr).not.toContain(rawCredential);
   });
 

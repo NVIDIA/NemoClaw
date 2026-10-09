@@ -4,6 +4,8 @@
 import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
+import { entry, servingProfile } from "../../../../test/helpers/native-launch-readiness.ts";
 import { loadAgent } from "../../agent/defs";
 import type {
   LaunchReadinessFence,
@@ -43,52 +45,6 @@ network_policies:
 `;
 
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
-
-function entry(agent = "openclaw"): SandboxEntry {
-  return {
-    name: SANDBOX,
-    openshellDriver: "docker",
-    openshellVersion: "0.0.99",
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    lifecycleGeneration: "generation-1",
-    lifecycleLiveIdentityFingerprint: FINGERPRINT,
-    agent,
-    agentVersion: "1.0.0",
-    nemoclawVersion: "2.0.0",
-    imageTag: "example@sha256:immutable",
-    provider: null,
-    model: null,
-    endpointUrl: null,
-    credentialEnv: null,
-    preferredInferenceApi: null,
-    compatibleEndpointReasoning: null,
-    compatibleEndpointReasoningEffort: null,
-    nimContainer: null,
-  };
-}
-
-function servingProfile(): NonNullable<SandboxEntry["servingProfileProvenance"]> {
-  return {
-    schemaVersion: 1,
-    catalogDigest: `sha256:${"d".repeat(64)}`,
-    preset: {
-      id: "local-gpu",
-      digest: `sha256:${"e".repeat(64)}`,
-      displayName: "Local GPU",
-      supportState: "supported",
-    },
-    recipe: {
-      id: "vllm-local",
-      digest: `sha256:${"f".repeat(64)}`,
-      backend: "vllm",
-    },
-    model: { id: "model-a", revision: "revision-a" },
-    runtimeImage: "example.com/runtime@sha256:immutable",
-    estimatedImageDownloadBytes: 1_000,
-    estimatedModelDownloadBytes: 2_000,
-  };
-}
 
 function fence(): LaunchReadinessFence {
   return {
@@ -966,6 +922,58 @@ describe("launch readiness validation", () => {
       fence: { epochId: EPOCH },
     });
   });
+
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "qualifies $logicalProvider without reading the shared inference route",
+    async (definition) => {
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-native-provider",
+      };
+      sandbox = {
+        ...entry(),
+        provider: definition.logicalProvider,
+        model: "selected-model",
+        preferredInferenceApi: definition.api,
+        nativeHostedProviderAttachment: receipt,
+      };
+      const currentDeps = deps();
+      currentDeps.verifyNativeHostedAttachment = vi.fn(async () => undefined);
+      currentDeps.inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
+      await createAcceptedLease(currentDeps);
+      externalEvents = [];
+      expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({
+        kind: "accepted",
+      });
+      expect(externalEvents).not.toContain("inference-get");
+      expect(currentDeps.verifyNativeHostedAttachment).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        expected: receipt,
+      });
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: definition.logicalProvider,
+          model: "selected-model",
+          nativeProvider: true,
+        }),
+      );
+      const projection = buildLaunchReadinessRegistryProjection(sandbox, loadAgent("openclaw"));
+      expect(launchReadinessDigest(projection)).not.toBe(
+        launchReadinessDigest(
+          buildLaunchReadinessRegistryProjection(
+            {
+              ...sandbox,
+              nativeHostedProviderAttachment: { ...receipt, providerId: "changed-provider" },
+            },
+            loadAgent("openclaw"),
+          ),
+        ),
+      );
+    },
+  );
 
   it("uses terminal-agent smoke health for a supported non-OpenClaw runtime", async () => {
     sandbox = {

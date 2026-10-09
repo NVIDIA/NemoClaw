@@ -25,6 +25,32 @@ onboard-probes.ts         onboarding-time inference validation probes
 
 Longer term, pure inference decisions should move under `src/lib/domain/inference/**`, and HTTP/process boundaries should move under `src/lib/adapters/**`.
 
+## Native hosted inference
+
+`native-nvidia` retains the NVIDIA contract. `native-provider` extends that lifecycle for the existing
+OpenAI, Anthropic, Gemini OpenAI-compatible, OpenRouter, and Hermes Provider selections.
+Profiles belong in `managed-inference/provider-profiles`. Each profile restricts endpoint paths,
+credentials, and executable access. A matching name alone does not establish ownership.
+
+Gateway ownership records survive provider switches. Each sandbox records its selected provider's
+profile, name, and immutable identity. Onboarding and inference selection verify the attachment;
+status, health, restart, and rebuild use the recorded selection. Failed native requests do not fall
+back to the shared route. Providers outside this slice retain their existing routing behavior.
+
+Hermes login can return an inference endpoint. Bind that endpoint to a distinct profile and provider
+identity after URL and public-address validation. Keep earlier endpoint ownership records for other
+sandboxes. Explicit user-supplied endpoints retain their existing workflow.
+
+OpenShell retains real credentials. Generated agent configuration contains placeholders only.
+OpenRouter requests retain `HTTP-Referer` and `X-OpenRouter-Title` through agent configuration.
+Credential reset verifies durable identity, refuses providers recorded by sandboxes, and confirms
+absence before clearing ownership. A logical reset preserves a separate legacy resource and reports
+the conflict. Selecting the native resource by name does not authorize deleting the legacy resource.
+
+Deterministic tests belong with lifecycle, registry, onboarding, agent configuration, and command
+owners. Live provider requests belong with the existing inference-routing and agent-switch E2E
+owners. Local tests do not establish real-provider qualification.
+
 ## Ollama export observations
 
 V1alpha1 configuration export currently refuses attached Ollama before publication.

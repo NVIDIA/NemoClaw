@@ -238,6 +238,7 @@ function createDoctorHarness(
     isStale: true,
   });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
+  vi.spyOn(tunnelServices, "migrateLegacyCloudflaredState").mockImplementation(() => undefined);
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
   const executeSandboxCommandForVerificationSpy = vi
     .spyOn(sandboxVerificationExec, "executeSandboxCommandForVerification")
@@ -628,6 +629,45 @@ describe("runSandboxDoctor flow", () => {
       );
     },
   );
+
+  it("uses hosted attachment authority and never reads the shared gateway route", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "owned-id",
+    };
+    const harness = createDoctorHarness("openai-api", {
+      registryOverrides: { nativeHostedProviderAttachment: receipt },
+    });
+    const health = requireDist("./inference-route-health.js");
+    const invocation = requireDist("./inference-invocation-probe.js");
+    const verify = vi
+      .spyOn(health, "verifyNativeHostedStatusAttachment")
+      .mockResolvedValue(undefined);
+    const probe = vi
+      .spyOn(invocation, "probeSandboxInferenceInvocation")
+      .mockResolvedValue({ ok: true });
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-19080",
+      expected: receipt,
+    });
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeProvider: true, provider: "openai-api" }),
+      {},
+      95_000,
+    );
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native hosted)", status: "ok" }),
+    );
+  });
 
   it("uses the recorded native NVIDIA attachment instead of an unrelated shared route", async () => {
     const receipt = {

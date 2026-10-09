@@ -1,6 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxEntry } from "../../state/registry/types";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import {
+  fixedNativeProvider,
+  fixedNativeProviderForAttachment,
+} from "../../inference/native-provider/fixed";
+import { nativeProviderLifecycle } from "../../inference/native-provider";
+import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
@@ -11,7 +20,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
 import {
-  isNativeNvidiaProvider,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
@@ -54,6 +62,36 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
     return;
   }
   await verifyNativeNvidiaProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
+export type VerifyNativeHostedStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeProviderAttachment;
+}) => Promise<void>;
+
+export async function verifyNativeHostedStatusAttachment(input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeProviderAttachment;
+  verify?: VerifyNativeHostedStatusAttachment;
+}): Promise<void> {
+  if (input.verify) {
+    await input.verify({
+      gatewayName: input.gatewayName,
+      sandboxName: input.sandboxName,
+      expected: input.expected,
+    });
+    return;
+  }
+  await nativeProviderLifecycle(
+    fixedNativeProviderForAttachment(input.expected),
+  ).verifyNativeProviderAttachment({
     adapter: createCliOpenShellProviderAdapter(),
     target: { kind: "named", gatewayName: input.gatewayName },
     sandboxName: input.sandboxName,
@@ -335,6 +373,10 @@ function buildInvokedRouteHealth(
 export type SandboxInferenceRouteHealthContext = {
   provider: string | null;
   nativeNvidia?: boolean;
+  nativeProvider?: boolean;
+  nativeEndpointUrl?: string;
+  model?: string | null;
+  preferredInferenceApi?: string | null;
 };
 
 // A models route that answers but is credential-gated (401/403) stays
@@ -367,11 +409,19 @@ export function buildSandboxInferenceRouteHealth(
   invocation: SandboxInferenceInvocationResult | null,
   context: SandboxInferenceRouteHealthContext,
 ): ProviderHealthStatus {
-  if (context.nativeNvidia && isNativeNvidiaProvider(context.provider)) {
+  const definition = fixedNativeProvider(context.provider);
+  if ((context.nativeProvider || context.nativeNvidia) && definition) {
     const endpoint =
       invocation && !invocation.ok && invocation.endpoint
         ? invocation.endpoint
-        : `${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions`;
+        : resolveSandboxInferenceInvocationEndpoint({
+            sandboxName: "",
+            provider: definition.logicalProvider,
+            model: context.model ?? "",
+            preferredInferenceApi: context.preferredInferenceApi ?? null,
+            nativeProvider: true,
+            nativeEndpointUrl: context.nativeEndpointUrl,
+          });
     const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
     const nativeHealth: ProviderHealthStatus = invocation?.ok
       ? {
@@ -379,7 +429,7 @@ export function buildSandboxInferenceRouteHealth(
           probed: true,
           providerLabel: "Inference route",
           endpoint,
-          detail: "The attached OpenShell provider served a native NVIDIA inference request.",
+          detail: `The attached OpenShell provider served a native ${definition.label} inference request.`,
         }
       : {
           ok: false,
@@ -387,8 +437,8 @@ export function buildSandboxInferenceRouteHealth(
           providerLabel: "Inference route",
           endpoint,
           detail: invocation
-            ? `The native NVIDIA route did not serve an inference request: ${invocation.detail}.`
-            : "Could not probe the native NVIDIA route from inside the sandbox. Recreate legacy beta sandboxes before using this route.",
+            ? `The native ${definition.label} route did not serve an inference request: ${invocation.detail}.`
+            : `Could not probe the native ${definition.label} route from inside the sandbox. Recreate legacy beta sandboxes before using this route.`,
           failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
         };
     return diagnostics.length > 0 ? { ...nativeHealth, subprobes: diagnostics } : nativeHealth;
@@ -466,4 +516,21 @@ export async function runSandboxInferenceInvocationProbe(
       endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
+}
+
+export function readNativeStatusSelection(entry: SandboxEntry | null | undefined) {
+  let attachment: NativeProviderAttachment | undefined;
+  let failure: string | null = null;
+  try {
+    attachment = entry ? recordedNativeProviderAttachment(entry) : undefined;
+  } catch {
+    failure = "Recorded native provider ownership is invalid; no inference request was sent.";
+  }
+  const definition = hostedNativeProvider(entry?.provider, attachment?.endpointUrl);
+  return {
+    attachment,
+    failure,
+    label: definition?.label ?? "NVIDIA",
+    endpoint: definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  };
 }

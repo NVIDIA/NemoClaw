@@ -120,6 +120,7 @@ RUN set -eu; \
     [ "$installed_version" = "${PI_VERSION}" ]
 
 COPY agents/pi/generate-config.ts /opt/nemoclaw-pi/generate-config.ts
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/pi/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold

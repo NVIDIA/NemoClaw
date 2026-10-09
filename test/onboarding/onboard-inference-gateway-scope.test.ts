@@ -8,6 +8,7 @@ import {
   createDirectCommandRouter,
   createDirectSetupInferenceHarnessFactory,
   withProcessEnv,
+  runProductionSetupInferenceCredentialBoundary,
 } from "../support/setup-inference-test-harness.js";
 
 const testHome = await vi.hoisted(async () => {
@@ -38,34 +39,21 @@ function expectCommandsTargetOnly(commands: Array<{ command: string }>): void {
 }
 
 describe("onboarding inference gateway scope", () => {
-  it("targets a non-default gateway for provider creation, route apply, and verification", async () => {
-    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
-      });
-
-      await expect(
-        harness.setupInference(
-          "test-box",
-          "gpt-test",
-          "openai-api",
-          "https://api.openai.com/v1",
-          "OPENAI_API_KEY",
-          null,
-          [],
-          { gatewayName: GATEWAY },
-        ),
-      ).resolves.toEqual({ ok: true });
-
-      expect(harness.commands.map(({ command }) => command)).toEqual([
-        `provider get -g ${GATEWAY} openai-api`,
-        `provider create -g ${GATEWAY} --name openai-api --type openai --credential OPENAI_API_KEY --config OPENAI_BASE_URL=https://api.openai.com/v1`,
-        `inference set -g ${GATEWAY} --no-verify --provider openai-api --model gpt-test`,
-      ]);
-      expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(GATEWAY, "openai-api", "gpt-test");
-      expectCommandsTargetOnly(harness.commands);
+  it("creates native hosted access only on the selected non-default gateway (#12589)", () => {
+    const { commands, credentialEvidence } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "OPENAI_API_KEY",
+      credentialValue: "sk-TEST-NOT-A-REAL-VALUE",
+      endpointUrl: "https://api.openai.com/v1",
+      model: "gpt-test",
+      provider: "openai-api",
+      gatewayName: GATEWAY,
     });
+    expect(credentialEvidence.providerCommand.argv.join(" ")).toContain(
+      "provider create -g " + GATEWAY,
+    );
+    expect(credentialEvidence.argvContainingSecret).toEqual([]);
+    expect(commands.some(({ argv }) => argv[0] === "inference" && argv[1] === "set")).toBe(false);
+    expectCommandsTargetOnly(commands.map(({ argv }) => ({ command: argv.join(" ") })));
   });
 
   it("registers loopback compatible endpoints through the gateway alias but keeps host smoke local (#5744)", async () => {

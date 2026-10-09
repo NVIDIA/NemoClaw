@@ -87,6 +87,8 @@ import {
 import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   usesNativeNvidiaProvider,
+  usesNativeHostedProvider,
+  verifyNativeHostedAttachmentAfterCreate,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
   verifyNativeNvidiaAttachmentAfterCreate,
 } from "./provider-publication";
@@ -403,10 +405,13 @@ export function selectRebuildCreatePolicy(
     requiredNetworkPolicyKeys: [
       ...requiredNetworkPolicyKeys,
       ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
+      ...(usesNativeHostedProvider(inferenceProvider) ? ["native_hosted_inference"] : []),
     ],
     removedNetworkPolicyKeys: [
       ...removedNetworkPolicyKeys,
-      ...(inferenceProvider !== null && !usesNativeNvidiaProvider(inferenceProvider)
+      ...(inferenceProvider !== null &&
+      !usesNativeNvidiaProvider(inferenceProvider) &&
+      !usesNativeHostedProvider(inferenceProvider)
         ? ["native_nvidia_inference"]
         : []),
     ],
@@ -1425,6 +1430,7 @@ export function createProviderEffectBoundary(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly expectedNativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   readonly preparationInput: ProviderPreparationInput;
   readonly preparationDeps: ProviderPreparationDeps;
   readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
@@ -1443,18 +1449,29 @@ export function createProviderEffectBoundary(input: {
       input.preparationInput,
       input.preparationDeps,
     );
-  const attachAndVerifyNativeNvidiaProvider = async (
+  const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
-    if (!usesNativeNvidiaProvider(input.preparationInput.inferenceProvider)) return;
+    if (
+      !usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) &&
+      !usesNativeHostedProvider(input.preparationInput.inferenceProvider)
+    )
+      return;
     context.revalidateSandboxIdentity(
-      `attaching and verifying native NVIDIA provider for sandbox '${input.sandboxName}'`,
+      `attaching and verifying native ${usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ? "NVIDIA" : "inference"} provider for sandbox '${input.sandboxName}'`,
     );
     await verifyNativeNvidiaAttachmentAfterCreate({
       sandboxName: input.sandboxName,
       gatewayName: input.gatewayName,
       inferenceProvider: input.preparationInput.inferenceProvider,
       expected: input.expectedNativeNvidiaProviderAttachment,
+      deps: input.preparationDeps,
+    });
+    await verifyNativeHostedAttachmentAfterCreate({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      inferenceProvider: input.preparationInput.inferenceProvider,
+      expected: input.expectedNativeHostedProviderAttachment,
       deps: input.preparationDeps,
     });
   };
@@ -1465,9 +1482,11 @@ export function createProviderEffectBoundary(input: {
         input.revalidateSandboxIdentityBeforeCreate();
         await publish();
       },
-      runAfterVerifiedCreate: usesNativeNvidiaProvider(input.preparationInput.inferenceProvider)
-        ? attachAndVerifyNativeNvidiaProvider
-        : undefined,
+      runAfterVerifiedCreate:
+        usesNativeNvidiaProvider(input.preparationInput.inferenceProvider) ||
+        usesNativeHostedProvider(input.preparationInput.inferenceProvider)
+          ? attachAndVerifyNativeInferenceProvider
+          : undefined,
     };
   }
   return {
@@ -1488,7 +1507,7 @@ export function createProviderEffectBoundary(input: {
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
       );
       await publish();
-      await attachAndVerifyNativeNvidiaProvider(context);
+      await attachAndVerifyNativeInferenceProvider(context);
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );
@@ -2044,6 +2063,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           provider,
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
+          nativeProvider: Boolean(
+            resolvedCreateIntent.nativeHostedProviderAttachment ||
+            resolvedCreateIntent.nativeNvidiaProviderAttachment,
+          ),
           startupProfile: {
             chatUiUrl,
             effectiveDashboardPort: effectivePort,
@@ -3587,6 +3610,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxName,
       gatewayName: GATEWAY_NAME,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
+      expectedNativeHostedProviderAttachment: resolvedCreateIntent.nativeHostedProviderAttachment,
       preparationInput: providerPreparationInput,
       preparationDeps: providerPreparationDeps,
       runVerifiedSandboxCreateEffects,

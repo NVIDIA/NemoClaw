@@ -14,7 +14,7 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
+import { baseSession, createDeps, HERMES_TARGET } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet Hermes routing", () => {
   beforeEach(() => {
@@ -112,6 +112,7 @@ describe("runInferenceSet Hermes routing", () => {
       contextWindow: 128_000,
     });
 
+    vi.spyOn(deps.providerAdapter, "attachProvider");
     const result = await runInferenceSet(
       {
         provider: "hermes-provider",
@@ -122,25 +123,12 @@ describe("runInferenceSet Hermes routing", () => {
       deps,
     );
 
-    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--no-verify",
-        "--provider",
-        "hermes-provider",
-        "--model",
-        "openai/gpt-5.4-mini",
-      ],
-      {
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
-        maxBuffer: 1024 * 1024,
-        timeout: 30_000,
-      },
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.providerAdapter.attachProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "hermes",
+        providerName: "nemoclaw-hermes-provider-v1",
+      }),
     );
     expect(config).toEqual({
       _nemoclaw_upstream: {
@@ -151,23 +139,23 @@ describe("runInferenceSet Hermes routing", () => {
       custom_providers: [
         {
           name: "hermes-provider",
-          base_url: "https://inference.local/v1",
-          api_key: HERMES_PROXY_REWRITE_SENTINEL,
+          base_url: "https://inference-api.nousresearch.com/v1",
+          api_key: "openshell:resolve:env:OPENAI_API_KEY",
           discover_models: true,
         },
       ],
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
-        base_url: "https://inference.local/v1",
-        api_key: HERMES_PROXY_REWRITE_SENTINEL,
+        base_url: "https://inference-api.nousresearch.com/v1",
+        api_key: "openshell:resolve:env:OPENAI_API_KEY",
         context_length: 128_000,
       },
       providers: {
         "hermes-provider": {
           name: "hermes-provider",
-          api: "https://inference.local/v1",
-          api_key: HERMES_PROXY_REWRITE_SENTINEL,
+          api: "https://inference-api.nousresearch.com/v1",
+          api_key: "openshell:resolve:env:OPENAI_API_KEY",
           default_model: "openai/gpt-5.4-mini",
           discover_models: true,
         },

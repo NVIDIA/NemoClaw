@@ -17,6 +17,8 @@ import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provi
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type SandboxStartDeps, startSandbox } from "./start";
+import { resolveSandboxInferenceInvocationEndpoint } from "./inference-invocation-probe";
+import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -749,4 +751,133 @@ describe("startSandbox native lifecycle", () => {
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(delayInferenceInvocationProbe).not.toHaveBeenCalled();
   });
+});
+
+const restartProviders = [
+  ...HOSTED_NATIVE_PROVIDERS,
+  {
+    logicalProvider: "nvidia-prod",
+    profileId: "nemoclaw-nvidia-inference-v1",
+    providerName: "nemoclaw-nvidia-prod-v1",
+    endpoint: "https://integrate.api.nvidia.com/v1",
+    api: "openai-completions",
+  },
+] as const;
+
+describe("startSandbox persisted native inference selection", () => {
+  it.each(restartProviders)(
+    "restarts $logicalProvider using its attached native endpoint",
+    async (definition) => {
+      const endpoints: string[] = [];
+      const probeInferenceInvocation = vi.fn<
+        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+      >(async (input) => {
+        endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+        return { ok: true };
+      });
+      const h = harness({ probeInferenceInvocation });
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-provider-id",
+      };
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          stopped: true,
+          provider: definition.logicalProvider,
+          model: "fixture-model",
+          preferredInferenceApi: definition.api,
+          ...(definition.logicalProvider === "nvidia-prod"
+            ? {
+                nativeNvidiaProviderAttachment: {
+                  ...receipt,
+                  profileId: "nemoclaw-nvidia-inference-v1",
+                  providerName: "nemoclaw-nvidia-prod-v1",
+                },
+              }
+            : { nativeHostedProviderAttachment: receipt }),
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      const suffix = definition.api === "anthropic-messages" ? "/v1/messages" : "/chat/completions";
+      expect(endpoints).toEqual([definition.endpoint.replace(/\/+$/, "") + suffix]);
+      expect(h.updateSandbox).toHaveBeenCalledWith(
+        "my-sandbox",
+        expect.objectContaining({ stopped: false }),
+      );
+    },
+  );
+
+  it.each(restartProviders)(
+    "retains the legacy shared route for $logicalProvider without native authority",
+    async (definition) => {
+      const endpoints: string[] = [];
+      const h = harness({
+        probeInferenceInvocation: async (input) => {
+          endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+          return { ok: true };
+        },
+      });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          provider: definition.logicalProvider,
+          model: "fixture-model",
+          preferredInferenceApi: definition.api,
+        }),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+      expect(endpoints).toEqual([
+        "https://inference.local/v1/" +
+          (definition.api === "anthropic-messages" ? "messages" : "chat/completions"),
+      ]);
+    },
+  );
+
+  it.each([
+    {
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "",
+      },
+    },
+    {
+      nativeHostedProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-gemini-inference-v1",
+        providerName: "nemoclaw-gemini-api-v1",
+        providerId: "wrong-selection",
+      },
+    },
+    {
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        profileId: "nemoclaw-nvidia-inference-v1",
+        providerName: "nemoclaw-nvidia-prod-v1",
+        providerId: "wrong-selection",
+      },
+    },
+  ])(
+    "refuses invalid or mismatched persisted authority without probing [case %#]",
+    async (attachment) => {
+      const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+      const h = harness({ probeInferenceInvocation });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          stopped: true,
+          provider: "openai-api",
+          model: "fixture-model",
+          ...attachment,
+        } as Partial<SandboxEntry>),
+      );
+      await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+      expect(probeInferenceInvocation).not.toHaveBeenCalled();
+      expect(h.updateSandbox).not.toHaveBeenCalledWith(
+        "my-sandbox",
+        expect.objectContaining({ stopped: false }),
+      );
+    },
+  );
 });

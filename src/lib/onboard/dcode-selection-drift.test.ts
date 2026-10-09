@@ -116,6 +116,7 @@ describe("live DCode selection drift", () => {
     const output = identity({
       Provider: "openrouter",
       Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+      Endpoint: "https://openrouter.ai/api/v1",
     });
 
     expect(

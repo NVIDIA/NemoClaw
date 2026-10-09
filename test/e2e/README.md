@@ -2086,3 +2086,24 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 ## DGX Station Express
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
+
+### Fixed hosted provider qualification
+
+`live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
+Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
+`NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE`; `all` selects all five.
+Use an approved disposable environment and credentials from its approved source.
+These tests are outside the credential-free `inference-routing` PR lane.
+A skipped provider is missing qualification evidence.
+
+Each case onboards OpenClaw, checks its native endpoint and credential placeholder, and starts a fresh
+agent process with the selected model. This covers runtime configuration, OpenShell injection, and the
+remote inference boundary. Deterministic tests own protocol/header construction, ownership collisions,
+sandbox isolation, restart, and failed-operation recovery.
+
+Provide `NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, and `NEMOCLAW_HERMES_MODEL` for those cases.
+OpenAI and Anthropic retain their existing defaults and model overrides.
+The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
+Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
+The existing cleanup helper destroys each test sandbox. Use a disposable gateway because provider
+credentials can remain stored after sandbox removal.
