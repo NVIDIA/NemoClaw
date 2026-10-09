@@ -132,6 +132,31 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(test.startSandbox).toHaveBeenCalledOnce();
   });
 
+  it.each(
+    ["Failed", "CrashLoopBackOff", "ImagePullBackOff", "Unknown", "Evicted"].flatMap((phase) => [
+      phase,
+      phase.toLowerCase(),
+    ]),
+  )("fails immediately when start reports %s", async (phase) => {
+    const test = harness();
+    test.get
+      .mockResolvedValueOnce({ id: sandboxId, phase: "stopped" })
+      .mockResolvedValue({ id: sandboxId, phase });
+    test.waitForStartPoll.mockImplementation(() => new Promise(() => undefined));
+
+    await expect(test.lifecycle.startSandbox({ ...request, timeoutMs: 50 })).resolves.toEqual({
+      kind: "failed",
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: `OpenShell sandbox entered ${phase} while waiting for readiness after start.`,
+      },
+    });
+    expect(test.waitForStartPoll).not.toHaveBeenCalled();
+    expect(test.get).toHaveBeenCalledTimes(2);
+    expect(test.startSandbox).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["rpc", "14", "transport"],
     ["auth", undefined, "authentication"],

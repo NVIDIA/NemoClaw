@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { createSandboxStartErrorGrace } from "../../domain/lifecycle/sandbox-start-error-grace";
 import { isValidName } from "../../name-validation";
+import { isTerminalSandboxPhase } from "../../state/gateway";
 import { fingerprintOpenShellSandboxId } from "./sandbox-identity";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";
 
@@ -201,13 +202,13 @@ async function mutate(
       }
       const phase = current.phase.toLowerCase();
       if (phase === (action === "start" ? "ready" : "stopped")) break;
-      if (action === "start" && !allowInitialError(phase) && phase === "error") {
+      if (action === "start" && !allowInitialError(phase) && isTerminalSandboxPhase(phase)) {
         return {
           kind: "failed",
           error: {
             kind: "command",
             reason: "failed",
-            message: "OpenShell sandbox entered Error while waiting for readiness after start.",
+            message: `OpenShell sandbox entered ${current.phase} while waiting for readiness after start.`,
           },
         };
       }
