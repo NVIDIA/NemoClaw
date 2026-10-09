@@ -3,8 +3,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "../../lib/actions/sandbox/mcp-bridge/usage";
-
 const mocks = vi.hoisted(() => ({
   dispatchMcpBridgeCommand: vi.fn().mockResolvedValue(undefined),
   moduleLoaded: vi.fn(),
@@ -48,7 +46,9 @@ describe("sandbox MCP oclif command", () => {
   });
 
   it("lists update in the static usage", () => {
-    expect(SandboxMcpCommand.usage).toEqual([`<name> ${MCP_BRIDGE_SUBCOMMANDS_USAGE} [args...]`]);
+    expect(SandboxMcpCommand.usage).toEqual([
+      "<name> <add|update|list|status|restart|remove|migrate> [args...]",
+    ]);
   });
 
   it("lists update in the missing-sandbox error", async () => {
@@ -57,7 +57,7 @@ describe("sandbox MCP oclif command", () => {
     await SandboxMcpCommand.run([], rootDir);
 
     expect(errorSpy).toHaveBeenCalledWith(
-      `Usage: nemoclaw <sandbox> mcp ${MCP_BRIDGE_SUBCOMMANDS_USAGE} [args...]`,
+      "Usage: nemoclaw <sandbox> mcp <add|update|list|status|restart|remove|migrate> [args...]",
     );
     errorSpy.mockRestore();
   });
