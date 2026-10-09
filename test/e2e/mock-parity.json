@@ -181,7 +181,9 @@
         "test/e2e/live/inference-routing-helpers.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
-        "test/e2e/fixtures/admin-approval-connect.sh"
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/live/inference-routing-native-anthropic.ts",
+        "test/e2e/fixtures/fake-anthropic-compatible.ts"
       ],
       "fast": [
         "test/e2e/support/https-pin-compatible-server.test.ts",
@@ -194,7 +196,9 @@
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
-        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/fake-anthropic-compatible.test.ts",
+        "src/lib/onboard/native-compatible-endpoint-smoke.test.ts"
       ]
     },
     {

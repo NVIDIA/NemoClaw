@@ -47,6 +47,30 @@ it("requires Anthropic authentication and serves the selected model as JSON and 
       "message_stop",
     ]);
     expect(events[2].delta).toEqual({ type: "text_delta", text: "PONG" });
+    const toolResponse = await fetch(`${server.endpointUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey },
+      body: JSON.stringify({
+        model: "fixture-model",
+        stream: true,
+        tool_choice: { type: "tool", name: "emit_ok" },
+      }),
+    });
+    expect(toolResponse.status).toBe(200);
+    const toolEvents = (await toolResponse.text())
+      .trim()
+      .split("\n\n")
+      .map((entry) => JSON.parse(entry.split("\ndata: ")[1]!));
+    expect(toolEvents[1].content_block).toMatchObject({
+      type: "tool_use",
+      name: "emit_ok",
+      input: {},
+    });
+    expect(toolEvents[2].delta).toEqual({
+      type: "input_json_delta",
+      partial_json: '{"value":"OK"}',
+    });
+    expect(toolEvents[4].delta.stop_reason).toBe("tool_use");
     expect((await request(false, apiKey, "wrong-model")).status).toBe(400);
     expect(server.requests().slice(0, 2)).toEqual([
       { path: "/v1/messages", model: "fixture-model", authenticated: true, stream: false },

@@ -14,6 +14,10 @@ import {
   prepareNativeCustomProfile,
   customAttachmentFromPrepared,
 } from "../../inference/native-custom";
+import {
+  listNativeCustomProviderAuthorities,
+  setNativeCustomProviderAuthority,
+} from "../../state/registry/native-custom-provider-authority";
 
 let temporaryHome: string;
 let originalGateway: string | undefined;
@@ -35,7 +39,7 @@ afterEach(() => {
   fs.rmSync(temporaryHome, { recursive: true, force: true });
 });
 
-async function fixture() {
+async function fixture(attached = true) {
   const prepared = await prepareNativeCustomProfile({
     sandboxName: "alpha",
     provider: "compatible-endpoint",
@@ -51,31 +55,39 @@ async function fixture() {
   const harness = createDestroyHarness({
     registryEntryOverrides: {
       provider: "compatible-endpoint",
-      nativeCustomProviderAttachment: receipt,
+      nativeCustomProviderAttachment: attached ? receipt : undefined,
     },
   });
+  setNativeCustomProviderAuthority("nemoclaw-19080", receipt);
   const retire = spyOnNativeCustomDestroyCleanup(async () => {
     harness.events.push("native-cleanup");
   });
   return { harness, retire };
 }
 
-it("retires native custom providers only after confirmed sandbox deletion (#12636)", async () => {
-  const { harness, retire } = await fixture();
-  await harness.destroySandbox("alpha", { yes: true, cleanupGateway: false });
-  expect(retire).toHaveBeenCalledWith({ gatewayName: "nemoclaw-19080", sandboxName: "alpha" });
-  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("native-cleanup"));
-  expect(retire.mock.invocationCallOrder[0]).toBeLessThan(
-    harness.removeSandboxSpy.mock.invocationCallOrder[0]!,
-  );
-});
+it.each([true, false])(
+  "retires owned native providers after confirmed deletion with attachment %s (#12636)",
+  async (attached) => {
+    const { harness, retire } = await fixture(attached);
+    await harness.destroySandbox("alpha", { yes: true, cleanupGateway: false });
+    expect(retire).toHaveBeenCalledWith({ gatewayName: "nemoclaw-19080", sandboxName: "alpha" });
+    expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("native-cleanup"));
+    expect(retire.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.removeSandboxSpy.mock.invocationCallOrder[0]!,
+    );
+  },
+);
 
-it("retains the registry recovery record when post-delete native cleanup is unverified (#12636)", async () => {
-  const { harness, retire } = await fixture();
-  retire.mockRejectedValueOnce(new Error("private SDK diagnostic"));
-  await expect(
-    harness.destroySandbox("alpha", { yes: true, cleanupGateway: false }),
-  ).rejects.toThrow("native custom provider cleanup could not be verified");
-  expect(harness.events).toContain("delete");
-  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-});
+it.each([true, false])(
+  "retains recovery authority when native cleanup fails with attachment %s (#12636)",
+  async (attached) => {
+    const { harness, retire } = await fixture(attached);
+    retire.mockRejectedValueOnce(new Error("private SDK diagnostic"));
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: false }),
+    ).rejects.toThrow("native custom provider cleanup could not be verified");
+    expect(harness.events).toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(listNativeCustomProviderAuthorities("nemoclaw-19080", "alpha")).toHaveLength(1);
+  },
+);

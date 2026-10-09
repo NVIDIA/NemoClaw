@@ -20,15 +20,18 @@ export async function startFakeAnthropicCompatibleServer(options: {
     const authenticated = request.headers["x-api-key"] === options.apiKey;
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    let payload: { model?: string; stream?: boolean } = {};
+    let payload: { model?: string; stream?: boolean; toolName?: string } = {};
     try {
       const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
         throw new Error("invalid request");
       const record = parsed as Record<string, unknown>;
+      const choice = record.tool_choice as { type?: unknown; name?: unknown } | undefined;
       payload = {
         model: typeof record.model === "string" ? record.model : undefined,
         stream: record.stream === true,
+        toolName:
+          choice?.type === "tool" && typeof choice.name === "string" ? choice.name : undefined,
       };
     } catch {
       response.writeHead(400).end();
@@ -66,13 +69,17 @@ export async function startFakeAnthropicCompatibleServer(options: {
       });
       return;
     }
+    const contentBlock = payload.toolName
+      ? { type: "tool_use", id: "toolu_fixture", name: payload.toolName, input: { value: "OK" } }
+      : { type: "text", text: "PONG" };
+    const stopReason = payload.toolName ? "tool_use" : "end_turn";
     const message = {
       id: "msg_native_fixture",
       type: "message",
       role: "assistant",
       model: options.model,
-      content: [{ type: "text", text: "PONG" }],
-      stop_reason: "end_turn",
+      content: [contentBlock],
+      stop_reason: stopReason,
       stop_sequence: null,
       usage: { input_tokens: 1, output_tokens: 1 },
     };
@@ -96,18 +103,30 @@ export async function startFakeAnthropicCompatibleServer(options: {
       ],
       [
         "content_block_start",
-        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        {
+          type: "content_block_start",
+          index: 0,
+          content_block: payload.toolName
+            ? { ...contentBlock, input: {} }
+            : { type: "text", text: "" },
+        },
       ],
       [
         "content_block_delta",
-        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "PONG" } },
+        {
+          type: "content_block_delta",
+          index: 0,
+          delta: payload.toolName
+            ? { type: "input_json_delta", partial_json: JSON.stringify({ value: "OK" }) }
+            : { type: "text_delta", text: "PONG" },
+        },
       ],
       ["content_block_stop", { type: "content_block_stop", index: 0 }],
       [
         "message_delta",
         {
           type: "message_delta",
-          delta: { stop_reason: "end_turn", stop_sequence: null },
+          delta: { stop_reason: stopReason, stop_sequence: null },
           usage: { output_tokens: 1 },
         },
       ],
