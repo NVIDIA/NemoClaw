@@ -18,7 +18,10 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { nativeCompatibleEndpointIdentity } from "../../inference/native-compatible/endpoint";
 import { nativeBedrockIdentity } from "../../inference/native-bedrock/contract";
-import { buildSandboxInferenceInvocationCommand } from "./inference-invocation-probe";
+import {
+  probeSandboxInferenceInvocation,
+  type SandboxInferenceInvocationDeps,
+} from "./inference-invocation-probe";
 import { type SandboxStartDeps, startSandbox } from "./start";
 
 afterEach(() => {
@@ -31,6 +34,24 @@ function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
     lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("sandbox-alpha")!,
     ...values,
   };
+}
+
+function controlledInferenceProbe(api = "openai-completions") {
+  const execute = vi.fn<NonNullable<SandboxInferenceInvocationDeps["execute"]>>(async () => ({
+    status: 0,
+    stdout:
+      "200\n" +
+      JSON.stringify(
+        api === "anthropic-messages"
+          ? { content: [{ type: "text", text: "OK" }] }
+          : { choices: [{ message: { content: "OK" } }] },
+      ),
+    stderr: "",
+  }));
+  const probeInferenceInvocation = vi.fn<NonNullable<SandboxStartDeps["probeInferenceInvocation"]>>(
+    (input, deps, timeout) => probeSandboxInferenceInvocation(input, { ...deps, execute }, timeout),
+  );
+  return { execute, probeInferenceInvocation };
 }
 
 function harness(overrides: Partial<SandboxStartDeps> = {}) {
@@ -368,9 +389,7 @@ describe("startSandbox native lifecycle", () => {
         api,
         addresses: identity.addresses!,
       };
-      const probeInferenceInvocation = vi.fn<
-        NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
-      >(async () => ({ ok: true }));
+      const { execute, probeInferenceInvocation } = controlledInferenceProbe(api);
       const h = harness({ probeInferenceInvocation });
       h.getSandbox.mockReturnValue(
         sandbox({
@@ -386,7 +405,7 @@ describe("startSandbox native lifecycle", () => {
       await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
       const input = vi.mocked(probeInferenceInvocation).mock.calls[0]?.[0];
       expect(input).toMatchObject({ nativeCompatibleProviderAttachment: receipt });
-      const command = buildSandboxInferenceInvocationCommand(input!);
+      const command = execute.mock.calls[0]?.[1];
       expect(command).toContain(
         api === "anthropic-messages"
           ? "https://models.example/v1/messages"
@@ -410,9 +429,7 @@ describe("startSandbox native lifecycle", () => {
       ...nativeBedrockIdentity(binding),
       providerId: "owned",
     };
-    const probeInferenceInvocation = vi.fn<
-      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
-    >(async () => ({ ok: true }));
+    const { execute, probeInferenceInvocation } = controlledInferenceProbe();
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -430,7 +447,7 @@ describe("startSandbox native lifecycle", () => {
       nativeBedrockProviderAttachment: receipt,
       preferredInferenceApi: "openai-completions",
     });
-    const command = buildSandboxInferenceInvocationCommand(input!);
+    const command = execute.mock.calls[0]?.[1];
     expect(command).toContain("http://host.openshell.internal:11436/v1/chat/completions");
     expect(command).not.toContain("inference.local");
   });
@@ -472,9 +489,7 @@ describe("startSandbox native lifecycle", () => {
   );
 
   it("preserves the recorded native NVIDIA route on start", async () => {
-    const probeInferenceInvocation = vi.fn<
-      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
-    >(async () => ({ ok: true }));
+    const { execute, probeInferenceInvocation } = controlledInferenceProbe();
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -490,9 +505,7 @@ describe("startSandbox native lifecycle", () => {
       }),
     );
     await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
-    const command = buildSandboxInferenceInvocationCommand(
-      probeInferenceInvocation.mock.calls[0]![0],
-    );
+    const command = execute.mock.calls[0]?.[1];
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
     expect(command).not.toContain("inference.local");
   });
