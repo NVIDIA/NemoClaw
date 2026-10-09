@@ -1,5 +1,5 @@
 import { normalizeGatewayNativeHostedAuthorities } from "./native-nvidia-provider-authority-state";
-import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted";
+import { normalizeNativeHostedProviderAttachment } from "../../inference/native-hosted/contract";
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 

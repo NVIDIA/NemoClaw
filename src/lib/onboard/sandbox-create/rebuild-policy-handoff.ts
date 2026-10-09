@@ -9,6 +9,7 @@ import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
 } from "../../adapters/openshell/policy-boundary";
+import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../../inference/native-nvidia/contract";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
@@ -314,6 +315,7 @@ export function mergeReplacementPolicyAccess(
 
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
+  readonly inferenceProvider?: string | null;
   readonly sandboxName?: string;
   readonly livePolicyPath: string;
   readonly livePolicySource?: string;
@@ -330,8 +332,19 @@ export function materializeRebuildPolicyHandoff(input: {
   const merged = mergeReplacementPolicyAccess(
     liveSource,
     replacementSource,
-    input.requiredNetworkPolicyKeys,
-    input.removedNetworkPolicyKeys,
+    [
+      ...(input.requiredNetworkPolicyKeys ?? []),
+      ...(input.inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER
+        ? ["native_nvidia_inference"]
+        : []),
+    ],
+    [
+      ...(input.removedNetworkPolicyKeys ?? []),
+      ...(input.inferenceProvider != null &&
+      input.inferenceProvider !== NVIDIA_HOSTED_NATIVE_PROVIDER
+        ? ["native_nvidia_inference"]
+        : []),
+    ],
     input.requiredNetworkPolicySources,
     input.sandboxName,
   );

@@ -401,16 +401,9 @@ export function selectRebuildCreatePolicy(
     livePolicyPath: policySourcePath,
     ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
-    requiredNetworkPolicyKeys: [
-      ...requiredNetworkPolicyKeys,
-      ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
-    ],
-    removedNetworkPolicyKeys: [
-      ...removedNetworkPolicyKeys,
-      ...(inferenceProvider !== null && !usesNativeNvidiaProvider(inferenceProvider)
-        ? ["native_nvidia_inference"]
-        : []),
-    ],
+    requiredNetworkPolicyKeys,
+    removedNetworkPolicyKeys,
+    inferenceProvider,
     requiredNetworkPolicySources,
     authorizedCredentialBindingProviders,
   });

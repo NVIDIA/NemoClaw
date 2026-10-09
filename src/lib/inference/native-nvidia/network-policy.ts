@@ -8,15 +8,17 @@ import YAML from "yaml";
 import { parseCheckedInProviderProfileContract } from "../../adapters/openshell/provider-profile";
 import { parseOpenShellPolicy } from "../../adapters/openshell/policy-boundary";
 import { NVIDIA_HOSTED_NATIVE_PROFILE_ID } from "./contract";
-import { nativeNvidiaProviderProfilePath } from "./index";
+import { nativeHostedProviderProfilePath, nativeHostedProfile } from "../native-hosted";
 
 const NATIVE_NVIDIA_INFERENCE_POLICY_KEY = "native_nvidia_inference";
 
 /** Keep native access scoped to the same checked-in profile that owns its credential. */
 export function buildNativeNvidiaSandboxPolicy(basePolicy: string): string {
   const parsed = { ...parseOpenShellPolicy(basePolicy).policy };
+  const nativeProfile = nativeHostedProfile("nvidia-prod");
+  if (!nativeProfile) throw new Error("Native NVIDIA provider profile is unavailable.");
   const profile = parseCheckedInProviderProfileContract(
-    fs.readFileSync(nativeNvidiaProviderProfilePath(), "utf8"),
+    fs.readFileSync(nativeHostedProviderProfilePath(nativeProfile), "utf8"),
   );
   if (
     !profile ||

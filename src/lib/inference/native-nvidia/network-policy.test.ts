@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import { buildNativeNvidiaSandboxPolicy } from "./network-policy";
-import { nativeNvidiaProviderProfilePath } from "./index";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -35,7 +34,15 @@ describe("native NVIDIA static policy preparation", () => {
     { condition: "another profile ID", override: { id: "other-profile" } },
     { condition: "inference capability is disabled", override: { inference_capable: false } },
   ])("rejects the parsed profile when $condition (#12822)", ({ override }) => {
-    const profile = YAML.parse(fs.readFileSync(nativeNvidiaProviderProfilePath(), "utf8"));
+    const profile = YAML.parse(
+      fs.readFileSync(
+        new URL(
+          "../../../../managed-inference/provider-profiles/nemoclaw-nvidia-inference-v1.yaml",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
     vi.spyOn(fs, "readFileSync").mockReturnValue(YAML.stringify({ ...profile, ...override }));
     expect(() => buildNativeNvidiaSandboxPolicy("version: 1\n")).toThrow(
       "checked-in provider profile is invalid",
