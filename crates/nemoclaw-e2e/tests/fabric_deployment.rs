@@ -171,6 +171,20 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 .iter()
                 .any(|arg| arg == "invoke" || arg == "--message"))
     );
+    // Model changes and the refusal of adapter, image, and observed changes do
+    // not depend on the harness. OpenClaw covers them, and Pi its route roles;
+    // every other harness only proves it applies, reapplies, and exports.
+    if !matches!(harness, "nvidia.fabric.openclaw" | "nvidia.fabric.pi") {
+        deployment.destroy(&cancel).await.unwrap();
+        assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+        assert!(fixture.state.lock().unwrap().providers.is_empty());
+        assert_eq!(
+            *unexpected.lock().unwrap(),
+            Vec::<String>::new(),
+            "only the model catalog may be requested"
+        );
+        return;
+    }
     if harness != "nvidia.fabric.pi" {
         let mut changed_model = document.clone();
         changed_model.spec.sandboxes[0]
