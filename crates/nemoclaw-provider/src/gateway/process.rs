@@ -29,7 +29,7 @@ impl Failure {
                 format!("gateway container {name}: {error}; resources retained")
             }
             Self::Stopped { status, exit_code } => format!(
-                "gateway container {name} is {status}, exit code {}; inspect `docker logs {name}` on its configured engine, correct the failure, and explicitly reapply; resources retained",
+                "gateway container {name} is {status}, exit code {}; inspect `docker logs {name}` on its configured engine, correct the failure, and reapply; resources retained",
                 exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())
             ),
         }

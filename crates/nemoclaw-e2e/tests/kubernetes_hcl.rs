@@ -68,7 +68,7 @@ resource "nemoclaw_kubernetes_gateway" "platform" {{
 }
 
 #[test]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; no cluster"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; no cluster"]
 fn kubernetes_resources_plan_from_typed_settings_and_reject_invalid_ones() {
     let valid = workspace(&platform("agents", None));
     let run =

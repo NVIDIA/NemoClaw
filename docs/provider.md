@@ -219,11 +219,11 @@ The provider owns observation and update/replacement behavior; OpenTofu owns act
 The SDK checks deployment scope and recovery constraints without imposing a second blanket ban on OpenShell changes.
 For reconstructible resources, OpenTofu and the provider own confirmed absence, physical identity, and replacement cleanup; the SDK does not require a second drift history to report those actions during apply or teardown.
 
-| Resource | Ordinary reconciliation | Protection |
+| Resource | Reconciliation | Protection |
 |---|---|---|
 | Provider profile and registration | Update supported fields, replace immutable configuration, remove unused declarations, and recreate after confirmed absence | Verify ownership and established identity before mutation; preserve bindings on failed observation |
 | Fabric runtime configuration | Apply the public Fabric document and reconcile its resource lifecycle | Verify the parent sandbox identity; a changed configuration can restart its runtime and lose native session state |
-| Sandbox | Create and observe the declared sandbox | Refuse ordinary deletion, replacement, or recreation of a missing binding because deletion loses native files and history |
+| Sandbox | Create and observe the declared sandbox | During apply, refuse deletion, replacement, or recreation of a missing binding because deletion loses agent files and history |
 | Workspace | Create, observe, and retain | Refuse replacement, deletion, or automatic recreation of a missing binding |
 
 OpenShell refuses deletion of profiles referenced by registrations and registrations attached to sandboxes.
@@ -232,7 +232,7 @@ The graph orders registration deletion before profile deletion when both change.
 Standalone HCL must declare the matching configuration and dependency on its profile.
 Recreating an absent profile with unchanged configuration does not itself replace its registration.
 The SDK creates registrations only for definitions selected by sandboxes; unused YAML definitions have no resource lifecycle.
-The standalone provider supports ordinary registration removal and replacement, while removing a last selection in SDK YAML also changes the protected sandbox specification.
+The standalone provider supports registration removal and replacement, while removing a last selection in SDK YAML also changes the protected sandbox specification.
 Replacing a registration still attached to a protected sandbox is not a supported shortcut around sandbox lifecycle rules.
 Endpoint and policy changes that also change a sandbox's launch specification remain protected; see [change paths](usage.md#choose-the-change-path).
 
@@ -368,7 +368,7 @@ The data source reports the observed `gateway_version`, driver names and aliases
 Compatibility requires the pinned OpenShell version and exactly one initialized driver matching every required name.
 OpenTofu lifecycle conditions name each failed requirement with its required and observed values.
 SDK discovery observations use the same description as their `reason`.
-Missing metadata, authentication failures, and transport failures stop ordinary planning without changing runtime resources.
+Missing metadata, authentication failures, and transport failures stop planning without changing runtime resources.
 Each API read is bounded to 30 seconds.
 
 The optional `wait_timeout_seconds` accepts zero to 300 seconds; omission or zero means one bounded API read.
@@ -541,7 +541,7 @@ The pinned bridge's explicit unsupported response is retained in `health_json`; 
 The graph must enforce `ready` with a lifecycle postcondition: a data-source observation alone does not reject an unsuccessful result.
 Failed postconditions retain observations and resource bindings for recovery.
 The SDK reads these values through OpenTofu JSON and includes the unsupported bridge response in successful apply results.
-Failures preserve ordinary execution or observation errors without an unverified health payload.
+Failures preserve execution or observation errors without an unverified health payload.
 SDK-generated graphs defer health until apply; export and teardown omit the observation.
 Standalone configurations with known inputs may read during planning unless the trigger defers them.
 Existing sandbox resource refresh still verifies configuration.
@@ -566,7 +566,7 @@ A missing service container may be recreated during explicit apply.
 Missing or substituted bound credentials and gateway storage remain errors.
 A missing model-cache volume may be recreated; its original creation time and daemon ID are not application identity.
 The generated graph retains caches with `prevent_destroy`; SDK teardown keeps those volume resources declared.
-OpenTofu cannot enforce `prevent_destroy` after its resource declaration is removed, so the SDK still rejects ordinary removal of retained cache declarations.
+OpenTofu cannot enforce `prevent_destroy` after its resource declaration is removed, so apply still rejects removing a retained cache declaration.
 The gateway bridge serves OpenShell sandboxes and remains part of the retained storage namespace; the Docker gateway process uses host networking.
 Gateway initialization consumes the provider-acquired image before the process is created.
 Podman initialization retains its existing image acquisition path.

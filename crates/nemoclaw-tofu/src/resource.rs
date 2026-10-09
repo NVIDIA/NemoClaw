@@ -407,7 +407,7 @@ impl Resource for ResourceAdapter {
             && let Some(running) = prior.get("running")
         {
             // Teardown retains incomplete platform storage without retrying its
-            // installation. Ordinary apply still reconciles running:false.
+            // installation. Apply still reconciles running:false.
             state.insert("running".into(), running.clone());
         }
         if self.definition.refuse_replacement && !replacements.is_empty() {

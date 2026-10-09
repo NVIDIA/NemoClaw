@@ -196,7 +196,7 @@ Use an immutable image reference available to the sandbox compute daemon.
 Deployment identity and ownership checks protect retained sandboxes, provider registrations, and storage.
 
 The runtime host validates public Fabric configuration before starting a runtime.
-Ordinary apply calls configure after OpenTofu establishes the required dependencies.
+Apply calls configure after OpenTofu establishes the required dependencies.
 Configure preserves an unchanged runtime or stops it before starting the replacement; prepare is a separate explicit operation.
 OpenTofu retains desired configuration; the host remembers only its active configuration in memory and waits for apply after a host restart.
 Unchanged configuration does not request inference or restart the runtime.

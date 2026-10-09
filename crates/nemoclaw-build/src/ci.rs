@@ -23,6 +23,8 @@ pub enum Step {
     Schema,
     Bundle,
     Lifecycle,
+    /// Package built lifecycle tests and their inputs for another runner; opt-in.
+    Archive,
     /// Docker live tests; opt-in, never part of the default run.
     LiveDocker,
     /// Kubernetes live tests on a temporary kind cluster; opt-in.
@@ -51,6 +53,7 @@ impl Step {
             Step::Schema => "schema",
             Step::Bundle => "bundle",
             Step::Lifecycle => "lifecycle",
+            Step::Archive => "archive",
             Step::LiveDocker => "live-docker",
             Step::LiveKind => "live-kind",
         }
@@ -59,7 +62,7 @@ impl Step {
     pub fn parse(name: &str) -> Option<Step> {
         Step::ALL
             .into_iter()
-            .chain([Step::LiveDocker, Step::LiveKind])
+            .chain([Step::Archive, Step::LiveDocker, Step::LiveKind])
             .find(|step| step.name() == name)
     }
 
@@ -90,6 +93,15 @@ impl Step {
                 "live-docker",
                 "--run-ignored",
                 "only",
+            ]],
+            Step::Archive => &[&[
+                "nextest",
+                "archive",
+                "--locked",
+                "--workspace",
+                "--all-targets",
+                "--archive-file",
+                ".build/ci/lifecycle.tar.zst",
             ]],
             Step::Fmt => &[&["fmt", "--check"]],
             Step::Clippy => &[&[

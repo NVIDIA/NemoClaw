@@ -93,9 +93,12 @@ impl Experiment {
 }
 
 #[test]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
 fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
-    let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
+    let e = Experiment::new(
+        std::env::var("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture")
+            .expect("Cargo sets the fixture executable path"),
+    );
     e.hardware_config(true);
     let result = e.run(&["validate", "-json"]);
     assert!(!result.status.success());
@@ -153,9 +156,12 @@ fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
 }
 
 #[test]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
 fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and_absence() {
-    let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
+    let e = Experiment::new(
+        std::env::var("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture")
+            .expect("Cargo sets the fixture executable path"),
+    );
     e.success(&["apply", "-auto-approve", "-input=false"]);
     let original = e.state();
     assert_eq!(
@@ -196,9 +202,12 @@ fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and
 }
 
 #[test]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
 fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
-    let e = Experiment::new(env!("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture"));
+    let e = Experiment::new(
+        std::env::var("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture")
+            .expect("Cargo sets the fixture executable path"),
+    );
     e.mode("create-error");
     let output = e.run(&["apply", "-auto-approve", "-input=false"]);
     assert!(!output.status.success());
@@ -210,7 +219,7 @@ fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn production_provider_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {
     use nemoclaw_sdk::{compile, config::Document};
     use std::sync::{Arc, Mutex};

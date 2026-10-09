@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A deterministic `ssh` for E2E tests: isolated Docker engine state and fixed
+//! A simulated `ssh` for E2E tests: isolated Docker engine state and fixed
 //! host measurements, kept in the directory named by `NEMOCLAW_TEST_REMOTE`.
 //!
 //! Tests install this executable as `bin/ssh` on `PATH`. Each invocation

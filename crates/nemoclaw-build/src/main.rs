@@ -62,14 +62,35 @@ enum Action {
     /// install the pinned Protocol Buffers compiler before anything needs it.
     Ci {
         /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
-        /// or live-docker, which runs only when named.
+        /// archive, live-docker, and live-kind run only when named.
         step: Option<String>,
+        /// Nextest partition for an explicitly selected lifecycle run (for example hash:1/2).
+        #[arg(long)]
+        partition: Option<String>,
+        /// Run lifecycle tests from a nextest archive instead of compiling them.
+        #[arg(long)]
+        archive_file: Option<PathBuf>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
         #[command(subcommand)]
         action: ImageAction,
     },
+    /// Print whether changes from a base revision to HEAD can affect a CI workflow.
+    ///
+    /// Writes `WORKFLOW=true` or `WORKFLOW=false` to standard output and the reason to
+    /// standard error. A failed analysis prints `true`, so the workflow runs.
+    Changes {
+        workflow: ChangedWorkflow,
+        /// Base revision, such as the pull request base commit.
+        #[arg(long)]
+        base: String,
+    },
+}
+#[derive(Clone, clap::ValueEnum)]
+enum ChangedWorkflow {
+    /// `CI / Images`.
+    Images,
 }
 #[cfg(feature = "sdk")]
 #[derive(Subcommand)]
@@ -446,9 +467,27 @@ async fn main() -> Result<()> {
         }
         .map_err(Into::into);
     }
+    if let Action::Changes { workflow, base } = &cli.command {
+        let ChangedWorkflow::Images = workflow;
+        let decision = nemoclaw_build::changes::images(Path::new("."), base);
+        eprintln!("{}", decision.reason);
+        println!("images={}", decision.run);
+        return Ok(());
+    }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;
-    if let Action::Ci { step } = cli.command {
-        return run_ci::run_steps(&pins, step.as_deref()).await;
+    if let Action::Ci {
+        step,
+        partition,
+        archive_file,
+    } = cli.command
+    {
+        return run_ci::run_steps(
+            &pins,
+            step.as_deref(),
+            partition.as_deref(),
+            archive_file.as_deref(),
+        )
+        .await;
     }
     let version = cargo().arg("--version").output()?;
     if !version.status.success()
@@ -461,8 +500,8 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
-        Action::Ci { .. } | Action::Images { .. } => {
-            unreachable!("CI and image commands returned before build tool checks")
+        Action::Ci { .. } | Action::Images { .. } | Action::Changes { .. } => {
+            unreachable!("CI, image, and change commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]
         Action::Bundle { platform } => {

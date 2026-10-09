@@ -11,7 +11,7 @@ use std::{
 };
 use tonic::{Request, Response, Status, body::Body};
 
-/// Optional real image execution behind the deterministic gateway protocol.
+/// Optional real image execution behind the simulated gateway protocol.
 /// Resource discovery remains simulated; command bytes and exit status are not.
 pub trait SandboxExecution: Send + Sync {
     fn create(

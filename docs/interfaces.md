@@ -79,7 +79,7 @@ Select `linux/amd64` on an AMD64 builder.
 Follow the [image build](build.md#build-agent-images), including image availability on the sandbox compute daemon.
 Replace the dashboard example's image digest, deployment UID, endpoint, and model values, then use the [desired-state workflow](usage.md).
 Changes to public Fabric configuration reconcile through the owned agent-configuration resource and restart the runtime inside its existing sandbox.
-Image or sandbox policy changes retain the ordinary replacement protections.
+Image or sandbox policy changes retain the replacement protections.
 
 ## Connect through OpenShell
 

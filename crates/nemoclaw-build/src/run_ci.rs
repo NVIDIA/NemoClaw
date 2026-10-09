@@ -13,6 +13,8 @@ mod live_kind;
 
 const TOOLS: &str = ".tools";
 
+mod archive;
+
 /// The host's bundle platform, matching the SDK's detection without needing it.
 fn host_platform() -> Result<String> {
     let os = match std::env::consts::OS {
@@ -153,7 +155,13 @@ fn export_to_github(tools: &Tools<'_>) -> Result<()> {
 }
 
 /// Run one step with the pinned tools, without inheriting stdin.
-fn run_step(tools: &Tools<'_>, platform: &str, step: Step) -> Result<()> {
+fn run_step(
+    tools: &Tools<'_>,
+    platform: &str,
+    step: Step,
+    partition: Option<&str>,
+    archive_file: Option<&Path>,
+) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
     let configure = |command: &mut Command| {
@@ -182,12 +190,44 @@ fn run_step(tools: &Tools<'_>, platform: &str, step: Step) -> Result<()> {
         }
         _ => {}
     }
+    if step == Step::Archive {
+        fs::create_dir_all(".build/ci")?;
+    }
+    let archive_filter = if step == Step::Archive {
+        Some(archive::selected_binaries(&configure)?)
+    } else {
+        None
+    };
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     for args in step.cargo_args() {
         let mut command = cargo();
         configure(&mut command);
-        command.args(*args);
+        if let Some(archive) = archive_file {
+            fs::create_dir_all(".build/ci/extracted")?;
+            command
+                .args([
+                    "nextest",
+                    "run",
+                    "--profile",
+                    "lifecycle",
+                    "--run-ignored",
+                    "only",
+                ])
+                .arg("--archive-file")
+                .arg(archive)
+                .arg("--workspace-remap")
+                .arg(std::env::current_dir()?)
+                .args(["--extract-to", ".build/ci/extracted", "--extract-overwrite"]);
+        } else {
+            command.args(*args);
+        }
+        if let Some(filter) = &archive_filter {
+            command.args(["--filterset", filter]);
+        }
         if step == Step::Lifecycle {
+            if let Some(partition) = partition {
+                command.args(["--partition", partition]);
+            }
             command
                 .env("NEMOCLAW_TEST_BUNDLE", &bundle)
                 .env(
@@ -203,10 +243,21 @@ fn run_step(tools: &Tools<'_>, platform: &str, step: Step) -> Result<()> {
         }
         run(&mut command)?;
     }
+    if step == Step::Archive {
+        archive::package_inputs(tools, platform)?;
+    }
     Ok(())
 }
 
-pub(super) async fn run_steps(pins: &Pins, selected: Option<&str>) -> Result<()> {
+pub(super) async fn run_steps(
+    pins: &Pins,
+    selected: Option<&str>,
+    partition: Option<&str>,
+    archive_file: Option<&Path>,
+) -> Result<()> {
+    if (partition.is_some() || archive_file.is_some()) && selected != Some("lifecycle") {
+        return Err("--partition and --archive-file require ci lifecycle".into());
+    }
     let tools = Tools {
         pins,
         protobuf: &pins.protobuf,
@@ -247,7 +298,7 @@ pub(super) async fn run_steps(pins: &Pins, selected: Option<&str>) -> Result<()>
             };
             live_kind::run_live_kind(tools.pins, &platform, &configure).await
         } else {
-            run_step(&tools, &platform, step)
+            run_step(&tools, &platform, step, partition, archive_file)
         };
         let elapsed = begun.elapsed().as_secs();
         if let Err(error) = result {

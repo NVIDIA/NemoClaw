@@ -145,6 +145,8 @@ pub struct Deployment {
     secrets: Arc<dyn Secrets>,
     progress: Arc<dyn Fn(Progress) + Send + Sync>,
     operation_environment: BTreeMap<String, String>,
+    /// Shared by clones, so a deployment hashes an unchanged bundle once.
+    bundle: Arc<crate::bundle::VerifiedBundle>,
 }
 impl Deployment {
     pub fn new(state_directory: &Path, bundle_directory: &Path) -> Self {
@@ -154,6 +156,7 @@ impl Deployment {
             secrets: Arc::new(EnvironmentSecrets),
             progress: Arc::new(|_| {}),
             operation_environment: BTreeMap::new(),
+            bundle: Arc::default(),
         }
     }
     pub fn with_secrets(mut self, secrets: Arc<dyn Secrets>) -> Self {
@@ -227,7 +230,7 @@ impl Deployment {
         let bundle = self.report_timing(
             "bundle.verify",
             started,
-            Bundle::open(&self.bundle_directory),
+            self.bundle.open(&self.bundle_directory),
         )?;
         let state = std::path::absolute(&self.state_directory)
             .map_err(|_| Error::State("cannot resolve state directory"))?;

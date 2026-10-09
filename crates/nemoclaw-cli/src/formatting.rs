@@ -1081,7 +1081,9 @@ mod tests {
             action: "remove",
         };
         let text = render_error(&error, OutputFormat::Text, &context);
-        assert!(text.contains("ordinary apply cannot remove sandbox 'reviewer'"));
+        // One apply mode exists; the message must not imply a stronger one.
+        assert!(text.contains("apply cannot remove sandbox 'reviewer'"));
+        assert!(!text.contains("ordinary"), "{text}");
         assert!(text.contains("No runtime resources changed."));
         assert!(text.contains("fresh UID and state directory"));
         assert!(!text.contains("Changes may already have been made"));

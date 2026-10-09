@@ -48,7 +48,7 @@ Keep the same state directory and matching bundle for every operation on a deplo
 Plan observes without mutating runtime resources; apply computes and checks its own plan.
 Unsupported replacement, changed ownership, and incomplete observations stop operations.
 
-Export captures configuration, not native agent data.
+Export captures configuration, not agent data.
 Before changing or retiring a deployment, read [recovery](usage.md#updates-and-recovery) and [destroy behavior](usage.md#destroy): sandbox files and conversation history are deleted on destroy.
 Use the [documentation index](README.md) to find other tasks.
 

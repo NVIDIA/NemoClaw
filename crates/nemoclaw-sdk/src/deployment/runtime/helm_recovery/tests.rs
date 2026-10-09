@@ -326,7 +326,7 @@ impl Fixture {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
 async fn outage_and_permission_failures_before_planning_preserve_release_and_retry() {
     let fixture = Fixture::create().await;
     let initial = fixture.objects();
@@ -367,19 +367,19 @@ async fn outage_and_permission_failures_before_planning_preserve_release_and_ret
 }
 
 #[tokio::test]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
 async fn permission_failure_after_saved_plan_restores_release_binding_and_retry() {
     after_plan_failure(Fault::Forbidden).await;
 }
 
 #[tokio::test]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
 async fn api_outage_after_saved_plan_restores_release_binding_and_retry() {
     after_plan_failure(Fault::Offline).await;
 }
 
 #[tokio::test]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
 async fn cancellation_after_successful_apply_retains_a_resumable_destroy_checkpoint() {
     let mut fixture = Fixture::create().await;
     let cancel = CancellationToken::new();
@@ -430,7 +430,7 @@ async fn cancellation_after_successful_apply_retains_a_resumable_destroy_checkpo
 }
 
 #[tokio::test]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated Kubernetes API fixture"]
 async fn an_interrupted_destroy_recovers_on_retry_without_mutating_during_preview() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = Fixture::create().await;

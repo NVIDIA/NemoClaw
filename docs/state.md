@@ -27,27 +27,27 @@ Keep the whole directory after failure; deleting state does not establish that i
 The local lock does not exclude other clients of the same gateway.
 State records carry a format version; the SDK rejects a different version without rewriting the directory or adopting its resources.
 
-## Native Agent Files
+## Agent Files
 
 These paths are inside the sandbox, not the client's deployment state directory.
 Use authenticated [native access](interfaces.md) for the selected deployment.
 
-| Native data | Location and lifetime |
+| Agent data | Location and lifetime |
 |---|---|
-| OpenClaw configuration and native state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
+| OpenClaw configuration and state | `/sandbox/.openclaw`; includes `openclaw.json` and, when a dashboard is declared, `interface-token` |
 | Declared OpenClaw agent’s working files | `/sandbox/workspaces/<agent-name>` |
-| Hermes service mode API/native state | `/sandbox/.hermes`; includes the API `interface-token` |
+| Hermes service mode API and agent state | `/sandbox/.hermes`; includes the API `interface-token` |
 | Hermes service mode dashboard and browser-chat state | `/sandbox/.hermes/profiles/dashboard-home`; separate from the API conversation |
 | Hermes Relay traces | `/sandbox/artifacts/relay`; per-session event/trajectory files; deleted with the sandbox |
-| Hermes session mode native home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
+| Hermes session mode home | `.fabric/hermes/runtimes/<runtime-id>` under the configured Fabric artifact root; distinct from the local Hermes API/dashboard homes |
 | Pi conversation | Held in the running Pi process; switching declared choices preserves it, while applying configuration changes or restarting the runtime loses it |
 
 The [OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/tree/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw) and [interface guide](interfaces.md) define these locations.
-Native state can survive a process restart while its files remain; deleting the sandbox deletes its files.
+Agent state can survive a process restart while its files remain; deleting the sandbox deletes its files.
 Each declared agent runs in its own OpenShell sandbox; workspace directories do not further isolate processes within that sandbox.
 File locations for the other harnesses are tracked in [#12639](https://github.com/NVIDIA/NemoClaw/issues/12639).
 
-## Configuration Export and Native Data
+## Configuration Export and Agent Data
 
 Export produces checked desired-state YAML with credential references.
 It does not copy agent files, histories, native settings, or model weights.

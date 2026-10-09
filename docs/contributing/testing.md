@@ -11,12 +11,12 @@ cargo ci
 
 The command needs the pinned Rust toolchain and a C linker.
 It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
-It then runs formatting, Clippy, the workspace tests and doctests, the schema check, a native bundle build, and the bundle lifecycle tests, stopping at the first failure.
+It then runs formatting, Clippy, the workspace tests and doctests, the schema check, a bundle build, and the bundle lifecycle tests, stopping at the first failure.
 A warm run on Linux ARM64 takes about ten minutes, mostly in the workspace and lifecycle tests.
 
 Run one step with `cargo ci STEP`, for example `cargo ci lifecycle`.
 The steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and `lifecycle`; every step first checks the pinned tools.
-Each workflow step calls the same command, so the local result matches the platform's CI job.
+CI uses the same steps; Unix lifecycle workers execute the built tests from an archive instead of compiling them again.
 It does not run the image, documentation, or dependency workflows, or another platform's job.
 
 On Linux with a local Docker engine that uses the [containerd image store](../build.md), `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
@@ -31,7 +31,7 @@ On native Linux with Docker Buildx and the [containerd image store](../build.md#
 Run `cargo ci build` and `cargo ci bundle` first.
 The step downloads the pinned kind executable by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
 It builds an agent image from this checkout (Pi on ARM64, OpenClaw on AMD64), exports its metadata bundle, and loads the image into the cluster by digest.
-It then runs three live tests and both chart-render tests in the `live-kind` nextest profile with the verified native bundle; no Helm CLI is required.
+It then runs three live tests and both chart-render tests in the `live-kind` nextest profile with the verified bundle; no Helm CLI is required.
 The render tests check that Kubernetes keeps the chart's gateway UID and OpenShift uses the observed namespace UID and group while retaining `runAsNonRoot`.
 The gateway test runs OpenTofu and its Helm provider with an empty `PATH`, installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
 It removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.
@@ -62,22 +62,55 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 The first eight checks are required by the `v1` ruleset, including documentation validation.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
 Superseded PR runs are cancelled.
-Running branch pushes finish; newer pushes replace older pending runs.
-Live runs use separate concurrency groups.
+The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
+Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
+Documentation and dependency pushes finish; newer pushes replace older pending runs.
+Live runs use separate concurrency groups and are not cancelled by a newer push.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Test Runner
 
-All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
+Every `CI / Native` platform uses cargo-nextest 0.9.144 for both the `ci` and `lifecycle` profiles.
 `cargo ci tools` installs its prebuilt executable after checksum verification; installation cannot fall back to compiling it.
-`cargo ci test` runs the ordinary tests with the `ci` profile and then the doctests.
+`cargo ci test` runs tests not marked `#[ignore]` with the `ci` profile, then the doctests.
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
-CI retains the same workspace and target selection across both runs so Cargo can reuse the compiled tests.
-Lifecycle timing artifacts contain per-test durations for comparing scheduling changes.
+CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
+On Linux and macOS, each platform builds once, then runs two nextest hash partitions on separate runners with four test slots each.
+Each platform starts its workers after its own build; it does not wait for other platforms to finish building.
+Windows runs its smaller lifecycle suite in the build job without archive transfer.
+The existing `Test / PLATFORM` required checks succeed only when that platform's build and lifecycle jobs succeed.
+Lifecycle timing artifacts contain per-test durations, with the Unix partition in each artifact name.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.
+
+### Run a Lifecycle Partition
+
+Plain `cargo ci` still runs the complete local suite.
+After `cargo ci build` and `cargo ci bundle`, select one partition explicitly:
+
+```sh
+cargo ci lifecycle --partition hash:1/2
+cargo ci lifecycle --partition hash:2/2
+```
+
+To reproduce the Unix archive handoff, run `cargo ci archive` after building.
+It writes `.build/ci/lifecycle.tar.zst` and `.build/ci/lifecycle-inputs.tar`.
+The first contains only binaries selected by the lifecycle profile and their nextest metadata; the second preserves the bundle, pinned tools, `nemoclaw-build` executable, provider helpers, and their executable permissions.
+Copy both archives into `.build/ci` in a separate checkout of the same revision on the same operating system and architecture, then run:
+
+```sh
+tar -xf .build/ci/lifecycle-inputs.tar
+.build/ci/nemoclaw-build ci lifecycle --archive-file .build/ci/lifecycle.tar.zst --partition hash:1/2
+```
+
+The worker remaps test working directories to this checkout and extracts nextest files into `.build/ci/extracted`.
+Repeating the command overwrites that extraction directory's archived files.
+The worker does not compile; it writes JUnit timings under `target/nextest/lifecycle`.
+Both options require an explicitly selected `lifecycle` step, so they cannot silently narrow plain `cargo ci`.
+CI retains the input archives for one day; rerunning a failed shard uses its producer's artifact, even from an earlier attempt.
+After the artifact expires, rerun the complete workflow to rebuild it.
 
 ## Dependency Policy
 
@@ -135,6 +168,12 @@ The dummy, OpenClaw, Hermes, and Pi also run shared configuration, generation, n
 Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
 Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
 The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
+
+The image workflow first runs `nemoclaw-build changes images` and skips its remaining steps when the change cannot affect the images; the `Build` checks still pass.
+A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
+[Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.
+Unclassified files, dependency or feature changes in the image build, manual runs, and failed analyses run every step.
+Commit, then run `cargo run -p nemoclaw-build --no-default-features -- changes images --base origin/v1` to see the decision and its reason.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
 
@@ -161,6 +200,10 @@ Only `v1` writes Rust dependency caches; PRs restore the base branch cache and s
 This avoids spending PR time saving caches scoped to individual pull requests.
 
 Dependency caches are keyed by platform and the Rust toolchain, manifests, lockfile, and build environment, rather than each source commit.
+Native, Docker, and Kind jobs share each platform's dependency cache instead of adding their job names to its key.
+Only the native build job writes that shared cache; Docker and Kind jobs restore it without uploading duplicate copies.
+Documentation and Brev retain separate cache prefixes.
+The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 The checksum-addressed OpenTofu archives in `.build/downloads` use a separate cache keyed by platform and `versions.json`.
 Source-only changes reuse that archive cache without uploading it again.

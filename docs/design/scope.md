@@ -32,7 +32,7 @@ Backward compatibility with earlier schemas, SDK APIs, or state formats is not r
 - Verify ownership, generation, and durable identity before modifying gateway storage, credentials, Podman gateway processes, or OpenShell resources.
 - Let the Docker provider reconcile disposable containers, service networks, and reproducible caches during explicit apply without requiring stable physical IDs.
 - Let OpenTofu reconcile reconstructible OpenShell profiles, registrations, and Fabric configuration through provider lifecycle contracts.
-- Protect sandbox replacement and missing bindings: ordinary apply must not discard files or conversation history that lack separate retained storage.
+- Protect sandbox replacement and missing bindings: apply must not discard files or conversation history that lack separate retained storage.
 - Only confirmed absence may remove a resource from state; authentication, transport, extension, query, and incomplete-observation failures must stop planning and preserve bindings.
 - Retain storage on destroy by default, and persistent data and provider state after readiness failure; recovery need not reuse the same container.
 - Missing or substituted bound credential storage must stop planning before compute changes; keep credentials in separate durable volumes.
@@ -61,5 +61,5 @@ Verify certificate trust in both directions independently of plaintext protocol 
 Use behavioral tests for ownership, observation failures, drift, replacement, partial creation, recovery, unchanged apply, export/reapply, and destroy.
 Exercise SDK apply, CLI export, SDK unchanged apply, and CLI destroy against the same state.
 Qualify the provider against pinned OpenTofu and use an explicitly verified bundle for deployment tests.
-Separate deterministic tests from opt-in live qualification; record a live run's revision, platform, and environment in its CI results or the commit that relies on it.
+Keep tests that need live resources opt-in; record a live run's revision, platform, and environment in its CI results or the commit that relies on it.
 Compilation alone does not qualify migration or platforms.

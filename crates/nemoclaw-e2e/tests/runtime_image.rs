@@ -62,7 +62,7 @@ output "observation" {{
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn authored_runtime_image_check_reads_labels_and_rejects_an_incompatible_image() {
     let image = Arc::new(Mutex::new(json!({
         "Id": "sha256:runtime", "Os": "linux", "Architecture": "arm64",

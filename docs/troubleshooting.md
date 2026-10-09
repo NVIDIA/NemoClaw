@@ -48,7 +48,7 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
-| After a malformed OpenClaw request: `runtime_unavailable`, bridge `runtime_state: unknown`, then `observation is incomplete` | Ordinary apply cannot recover the unknown runtime, including through configuration edits; review the [reported failure and whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of all sandbox files and history |
+| After a malformed OpenClaw request: `runtime_unavailable`, bridge `runtime_state: unknown`, then `observation is incomplete` | Apply cannot recover the unknown runtime, including through configuration edits; review the [reported failure and whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of all sandbox files and history |
 
 For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
 NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.
@@ -83,7 +83,7 @@ The readiness diagnostic omits raw engine errors and log contents because they m
 A running but unreachable gateway reports a transport failure; check its endpoint and engine access before retrying.
 
 Keep the YAML, matching bundle, and state directory.
-After correcting the image or configuration problem, explicitly reapply using the retained state; Docker may replace disposable gateway compute while NemoClaw verifies its retained storage and keys.
+After correcting the image or configuration problem, reapply using the retained state; Docker may replace disposable gateway compute while NemoClaw verifies its retained storage and keys.
 If retiring the deployment, preview and [destroy](usage.md#destroy) it with the same state directory.
 Gateway readiness is omitted during teardown, so failed bootstrap with saved bindings can be cleaned up before a successful reapply.
 If OpenShell resources were already created, their refresh and deletion still require a reachable gateway; restore it before destroying them.
@@ -115,7 +115,7 @@ For example, a network endpoint ambiguity can report conflicting `allowed_ips` m
 Credential-bearing provider creation and update requests, status reads, and exec failures retain category-only diagnostics.
 This rejection reporting applies to Docker, Podman, and cluster gateways.
 Use the OpenShell inspection and log collection procedure below before cleanup.
-If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); ordinary apply protects the existing sandbox from replacement.
+If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); apply protects the existing sandbox from replacement.
 A failed first apply can be [destroyed](usage.md#destroy) when the retained state accounts for its resource identities.
 An unresolved creation without a saved identity still requires its original pending intent; a validation rejection alone does not retire that guard.
 

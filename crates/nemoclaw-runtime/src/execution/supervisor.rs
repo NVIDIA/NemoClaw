@@ -33,8 +33,8 @@ pub(crate) async fn supervise(
     let result = loop {
         tokio::select! {
             ()=cancel.cancelled()=>break Err(Error::Conflict("runtime stopped by operator; persistent data retained")),
-            ()=monitors.trip.cancelled()=>break Err(Error::Conflict("memory protection tripped by operator; explicit apply required")),
-            _=child.wait()=>break Err(Error::Conflict("managed service process exited; inspect retained logs and explicitly reapply")),
+            ()=monitors.trip.cancelled()=>break Err(Error::Conflict("memory protection tripped by operator; reapply required")),
+            _=child.wait()=>break Err(Error::Conflict("managed service process exited; inspect retained logs and reapply")),
             Some(true)=monitors.ready.recv()=>{
                 ready=true;
                 if let Err(error)=(monitors.report)("ready","managed service readiness confirmed",child.id().unwrap_or(0)) {break Err(error);}
@@ -43,9 +43,9 @@ pub(crate) async fn supervise(
             sample=monitors.samples.recv()=>{
                 match sample {
                     Some(Ok(memory)) if !watch.sample(memory.available,memory.free)=>{},
-                    Some(Ok(memory))=>break Err(Error::Protection(format!("host memory pressure stopped the managed service: available={} free={}; explicit apply required", memory.available, memory.free))),
-                    Some(Err(error))=>break Err(Error::Protection(format!("memory observation failed: {error}; managed service stopped; explicit apply required"))),
-                    None=>break Err(Error::Conflict("memory sample stream closed; managed service stopped; explicit apply required")),
+                    Some(Ok(memory))=>break Err(Error::Protection(format!("host memory pressure stopped the managed service: available={} free={}; reapply required", memory.available, memory.free))),
+                    Some(Err(error))=>break Err(Error::Protection(format!("memory observation failed: {error}; managed service stopped; reapply required"))),
+                    None=>break Err(Error::Conflict("memory sample stream closed; managed service stopped; reapply required")),
                 }
             }
         }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Deterministic managed-service protocol with real agent image execution.
+//! Simulated managed-service protocol with real agent image execution.
 //! GPU admission and weight loading remain runtime qualification responsibilities.
 use super::support::Scenario;
 use nemoclaw_sdk::config::Document;

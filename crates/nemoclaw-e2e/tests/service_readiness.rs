@@ -8,13 +8,13 @@ use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
 async fn standalone_readiness_defers_to_apply_rechecks_unchanged_services_and_allows_destroy() {
     standalone_readiness(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
 async fn standalone_proxy_readiness_rechecks_identity_and_credentials_without_sdk_or_gateway() {
     standalone_readiness(true).await;
 }
@@ -27,7 +27,8 @@ async fn standalone_readiness(proxy: bool) {
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
     std::os::unix::fs::symlink(
-        env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
+        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
+            .expect("Cargo sets the fixture executable path"),
         root.join("bin/ssh"),
     )
     .unwrap();

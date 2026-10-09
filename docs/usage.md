@@ -94,7 +94,7 @@ Image changes require the [separate-deployment path](#choose-the-change-path); k
 
 Unexpected health reports, transport failures, and malformed responses fail apply and retain resources.
 The CLI exits with status 1 and reports the failure in the selected [output format](reference/cli.md#output-and-failure).
-Keep state, diagnose the failure, and explicitly reapply after recovery.
+Keep state, diagnose the failure, and reapply after recovery.
 
 ## Configuration and Credentials
 
@@ -211,7 +211,7 @@ Reordering declarations is not an update.
 Each sandbox receives only its selected inference provider policies, while shared definitions reuse one provider registration.
 Sandbox-local definitions are visible only to their enclosing sandbox.
 Sandboxes can select distinct Brave credential references; shared references reuse one registration.
-Ordinary apply still refuses sandbox removal or replacement because its files and history are not separately retained; destroy operates on the whole deployment.
+Apply still refuses sandbox removal or replacement because its files and history are not separately retained; destroy operates on the whole deployment.
 Use separate deployments when you need independent teardown.
 
 ### Choose the Change Path
@@ -220,12 +220,12 @@ Use separate deployments when you need independent teardown.
 |---|---|
 | Models, settings, or public Fabric configuration within the selected adapter | After successful runtime observation, reconciles the owned agent-configuration resource and restarts the runtime inside the existing sandbox when its image, provider attachments, and policy remain unchanged; in-memory conversations can be lost |
 | External inference endpoint, provider implementation, or authenticated/anonymous mode | Changes a selected provider's profile and registration; changes to an existing sandbox's launch specification still require a separate deployment |
-| Harness adapter, sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; ordinary apply refuses replacement; use a separate deployment with a fresh UID and state |
+| Harness adapter, sandbox image, agent identity, or provider attachments | Changes the immutable sandbox specification; apply refuses replacement; use a separate deployment with a fresh UID and state |
 | Sandbox network policy | Changes the sandbox specification; follow [policy change constraints](sandbox-network.md) and use a separate deployment when replacement is required |
 | Managed inference or proxy image or serving specification | Docker-provider reconciliation may replace the container while retaining its independently bound storage; review the plan and [model constraints](models.md) |
 | Deployment UID, established gateway endpoint, or bound credential/gateway engine | Cannot retarget the existing state; create a separate deployment |
 | Remove an unused inference provider definition | Changes the desired document only; the SDK creates registrations for selected definitions, so unused definitions have no resources to delete |
-| Remove a sandbox, retained storage, or a protected gateway binding | Ordinary apply refuses removal; assess a separate deployment and explicit retirement of the original |
+| Remove a sandbox, retained storage, or a protected gateway binding | Apply refuses removal; assess a separate deployment and explicit retirement of the original |
 | Change a credential value behind the same environment reference | Unchanged apply does not detect rotation; see [credential lifecycle](security.md#credentials-and-authentication) |
 
 Configuration edits do not recover a runtime whose bridge snapshot reports `runtime_state: unknown`.
@@ -243,8 +243,8 @@ Export and destroy can still use the retained configuration without reapplying t
 
 The [provider lifecycle contract](provider.md#openshell-resource-lifecycles) distinguishes reconstructible registrations and configuration from protected sandbox data and durable identity.
 OpenShell refuses deletion of a registration still attached to a sandbox or a profile still referenced by a registration.
-Ordinary apply can recreate a missing registration after confirmed absence, while preserving the sandbox's identity and files.
-Disposable Docker compute uses ordinary provider reconciliation within the declared deployment graph.
+Apply can recreate a missing registration after confirmed absence, while preserving the sandbox's identity and files.
+Disposable Docker compute uses provider reconciliation within the declared deployment graph.
 A model change does not migrate conversations or guarantee that the new model supports the old model's tools, context, or reasoning settings.
 
 ### Verify an Unchanged Reapply
@@ -279,7 +279,7 @@ Keep the original YAML until verification succeeds.
 Changing an established gateway endpoint is rejected.
 There is no lost-state adoption, migration, pruning, or purge command.
 
-After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and explicitly reapply.
+After an interrupted apply, keep the original YAML and entire state directory, including `runtime/`, and reapply.
 For records with per-resource recovery evidence, plan, apply, and destroy compare pending creations with saved OpenTofu bindings.
 A saved ID with matching name, workspace, owner, and generation removes that resource from the pending-creation guard; live provider observations and plan checks still verify its identity before mutation.
 A failed agent configuration can use its saved parent sandbox binding because that sandbox owns the runtime and any partial configuration effects.
@@ -288,9 +288,9 @@ With the current bundle and bridge image, configuration failures report a fixed 
 A failed restart retains the sandbox and its files.
 When Fabric cannot confirm that startup left no processes, the bridge reports `unknown` and refuses another lifecycle change; this protocol does not provide recovery for that state.
 An `unknown` runtime state does not establish that the old process stopped.
-An invocation failure can also leave the runtime `unknown`; ordinary apply cannot reach configuration reconciliation while that observation remains incomplete.
+An invocation failure can also leave the runtime `unknown`; apply cannot reach configuration reconciliation while that observation remains incomplete.
 For the operator-reported OpenClaw failure, see [workload replacement](#replace-workloads-after-an-unusable-openclaw-runtime).
-A sandbox in `Error` can still block ordinary apply, but its saved identity permits [explicit teardown](#destroy) without a successful reapply.
+A sandbox in `Error` can still block apply, but its saved identity permits [teardown](#destroy) without a successful reapply.
 Changing a rejected sandbox policy or image does not authorize replacement; follow the [change constraints](#choose-the-change-path).
 
 If the error still reports an unfinished creation, preserve that resource's original configuration while correcting unrelated settings.

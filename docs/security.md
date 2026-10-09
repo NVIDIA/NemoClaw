@@ -10,7 +10,7 @@ Parser acceptance and protocol fixtures do not establish security qualification 
 
 OpenShell enforces the declared sandbox policy; Fabric runs the native agent within that sandbox.
 Use [sandbox policy](sandbox-network.md) for filesystem, process, egress, and proxy configuration.
-An explicit policy replaces the preset, and ordinary apply rejects policy changes that require sandbox replacement.
+An explicit policy replaces the preset, and apply rejects policy changes that require sandbox replacement.
 
 The isolated preset uses Landlock `best_effort`; unavailable restrictions are not enforced.
 Each declared agent has its own OpenShell sandbox; tool grants do not further isolate processes or files within that sandbox.
@@ -32,7 +32,7 @@ A threat model, host-specific security qualification and hardening profiles are 
 Before granting access, identify the destination, executing binary, files, and credentials the task needs.
 Use [explicit network policy](sandbox-network.md#choose-a-policy) for an allowed destination; selecting an HTTP proxy alone does not grant egress.
 An explicit policy replaces the entire preset, so retain the intended filesystem and process settings too.
-Use a fresh deployment for policy or launch changes that ordinary apply refuses to replace.
+Use a fresh deployment for policy or launch changes that apply refuses to replace.
 
 ## Credentials and Authentication
 
