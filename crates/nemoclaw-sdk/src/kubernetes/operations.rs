@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Kubernetes preparation and observation around the native Helm release.
+//! Kubernetes preparation and observation around the Helm release.
 //!
 //! Storage and authentication are prepared before Helm installs the release.
 //! Gateway observation records its StatefulSet identity after installation.

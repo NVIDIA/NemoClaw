@@ -78,7 +78,7 @@ A timed step reports when it returns, including cooperative cancellation; droppi
 |---|---|---|
 | `plan(&document, &cancel)` | `OperationResult` with changes, deferred prerequisites, and unverified checks | Observes and previews the desired deployment |
 | `apply(&document, &cancel)` | `OperationResult` after checked planning/readiness | Can create/change resources, download models, and check readiness without generation |
-| `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up native data |
+| `export(&cancel)` | Observed `Document`; call `yaml()` to serialize it | Checks retained intent and observations; does not back up agent data |
 | `plan_destroy(&cancel)` | `OperationResult` from retained state | Previews owned workload removal and retained resources |
 | `destroy(&cancel)` | `OperationResult` from retained state | Deletes sandbox files/history under the [retention rules](state.md) |
 
@@ -124,7 +124,7 @@ Optional `harness.settings` carries a JSON object, including nested values, to F
 Optional `harness.config` adds public Fabric fields such as workflow, MCP and telemetry.
 It cannot replace deployment-owned identities, models, workspace paths or artifact paths.
 Model `overrides.settings` likewise passes native settings through without interpretation.
-These fields contain ordinary configuration and credential references, not inline secrets.
+These fields contain configuration and credential references, not inline secrets.
 Fabric owns their schemas, validation and native mapping.
 
 The runtime passes the canonical public configuration directly to Fabric's public planner and startup API.

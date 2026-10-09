@@ -81,7 +81,7 @@ The readiness diagnostic omits raw engine errors and log contents because they m
 A running but unreachable gateway reports a transport failure; check its endpoint and engine access before retrying.
 
 Keep the YAML, matching bundle, and state directory.
-After correcting the image or configuration problem, explicitly reapply using the retained state; Docker may replace disposable gateway compute while NemoClaw verifies its retained storage and keys.
+After correcting the image or configuration problem, reapply using the retained state; Docker may replace disposable gateway compute while NemoClaw verifies its retained storage and keys.
 If retiring the deployment, preview and [destroy](usage.md#destroy) it with the same state directory.
 Gateway readiness is omitted during teardown, so failed bootstrap with saved bindings can be cleaned up before a successful reapply.
 If OpenShell resources were already created, their refresh and deletion still require a reachable gateway; restore it before destroying them.
@@ -109,7 +109,7 @@ These explanations are fixed text, not the gateway's condition message.
 Error, completed, stopped, and deleting phases fail immediately and retain resources.
 The SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
 Use the OpenShell inspection and log collection procedure below before cleanup.
-If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); ordinary apply protects the existing sandbox from replacement.
+If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); apply protects the existing sandbox from replacement.
 A failed first apply can be [destroyed](usage.md#destroy) with its retained state before a successful reapply.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.

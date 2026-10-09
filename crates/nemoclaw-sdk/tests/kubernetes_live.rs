@@ -481,7 +481,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
 /// and destroy then removes everything but the gateway's storage.
 ///
 /// `cargo ci live-kind` also provides:
-/// - `NEMOCLAW_TEST_BUNDLE`: the native bundle
+/// - `NEMOCLAW_TEST_BUNDLE`: the verified bundle
 /// - `NEMOCLAW_TEST_AGENT_IMAGE`: the agent image by digest, loaded into kind
 /// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
 /// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle

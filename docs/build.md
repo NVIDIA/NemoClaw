@@ -280,7 +280,7 @@ A matching label establishes the declared runtime contract, not successful model
 
 For a runtime-spec mismatch, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
 Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to the newly printed digest.
-Keep the deployment state and reapply; existing model and credential storage remain subject to their ordinary retention and identity checks.
+Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.
 The runtime also reports its expected specification version and declared field location for invalid input, without echoing configuration values or user-defined map keys.
 

@@ -16,7 +16,7 @@ use std::{
 };
 
 // These opt-in tests qualify deployment lifecycle and explicit invocation transport.
-// Adapter-owned input/output meaning and native inference quality belong to Fabric.
+// Adapter-owned input/output meaning and model response quality belong to Fabric.
 fn successful_invocation(response: &[u8]) -> bool {
     serde_json::from_slice::<Value>(response).is_ok_and(|value| {
         value["status"] == "succeeded" && value["error"].is_null() && value.get("output").is_some()
@@ -131,7 +131,7 @@ async fn runtime_id(client: &OpenShell, binding: &Row) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_LIVE_FABRIC_CONFIG, NEMOCLAW_LIVE_FABRIC_STATE, NEMOCLAW_LIVE_FABRIC_INPUT, NEMOCLAW_TEST_BUNDLE; creates and destroys only that owned deployment"]
+#[ignore = "requires NEMOCLAW_LIVE_FABRIC_CONFIG, NEMOCLAW_LIVE_FABRIC_STATE, NEMOCLAW_LIVE_FABRIC_INPUT, NEMOCLAW_TEST_BUNDLE; creates and destroys only that owned deployment"]
 async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
     let explicit = |name| {
         let path = PathBuf::from(std::env::var_os(name).expect(name));
@@ -232,7 +232,7 @@ fn apply_exit_test_requires_independent_inference() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_UPGRADE_CONFIG, fresh NEMOCLAW_UPGRADE_STATE, NEMOCLAW_UPGRADE_INPUT, and NEMOCLAW_TEST_BUNDLE; real independent inference and owned deployment"]
+#[ignore = "requires NEMOCLAW_UPGRADE_CONFIG, fresh NEMOCLAW_UPGRADE_STATE, NEMOCLAW_UPGRADE_INPUT, and NEMOCLAW_TEST_BUNDLE; real independent inference and owned deployment"]
 async fn dependency_upgrade_survives_apply_process_exit() {
     let explicit = |name| {
         let path = PathBuf::from(std::env::var_os(name).expect(name));

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
 #[test]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
 fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_state() {
     let tofu =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));

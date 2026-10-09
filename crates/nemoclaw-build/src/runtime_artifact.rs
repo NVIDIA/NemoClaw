@@ -29,7 +29,7 @@ pub enum RuntimeArtifactError {
     InvalidInputPath,
     #[error("artifact source requires HTTPS and SHA-256")]
     InvalidDownload,
-    #[error("runtime images require a native Linux build host matching the artifact platform")]
+    #[error("runtime images require a Linux build host matching the artifact platform")]
     IncompatibleHost,
 }
 impl RuntimeArtifact {

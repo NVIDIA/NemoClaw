@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 // Deployment planning requires image discovery, whose engine transports are Unix-only.
-// Windows retains deterministic bridge tests and an explicit unsupported-engine regression.
+// Windows retains bridge tests that need no engine transport and an unsupported-engine regression.
 #![cfg(unix)]
 
 use nemoclaw_e2e::{
@@ -11,7 +11,7 @@ use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -107,7 +107,7 @@ async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn missing_selected_provider_reconciles_without_sandbox_changes() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -154,7 +154,7 @@ async fn missing_selected_provider_reconciles_without_sandbox_changes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependencies() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -201,7 +201,7 @@ async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependen
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -225,7 +225,7 @@ async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -291,7 +291,7 @@ async fn gateway_change_between_plan_and_apply_preserves_resources_and_allows_te
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_and_recovers() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -371,7 +371,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
     lifecycle(include_str!(
         "../../nemoclaw-sdk/tests/fixtures/config/local.yaml"
@@ -380,20 +380,20 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn explicit_network_sdk_apply_cli_export_reapply_and_destroy_preserve_intent() {
     lifecycle(include_str!("../../../examples/explicit-policy.yaml")).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn inference_settings_sdk_apply_export_reapply_and_drift() {
     lifecycle(include_str!("../../../examples/inference-tuning.yaml")).await;
     lifecycle(include_str!("../../../examples/hermes-auth.yaml")).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
@@ -411,7 +411,7 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn tool_disclosure_cli_export_reapply_and_drift() {
     // Disclosure modes are opaque native settings; agent_tools in the SDK owns
     // both modes, so one deployment covers their drift detection.
@@ -433,7 +433,7 @@ async fn tool_disclosure_cli_export_reapply_and_drift() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn execution_settings_cli_export_reapply_and_drift() {
     // Heartbeats are opaque native settings, and execution_settings in the SDK
     // owns the timeout projection, so one deployment covers both.
@@ -452,7 +452,7 @@ async fn execution_settings_cli_export_reapply_and_drift() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn observability_cli_export_reapply_and_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
@@ -470,19 +470,19 @@ async fn observability_cli_export_reapply_and_drift() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() {
     lifecycle(include_str!("../../../examples/openclaw-dashboard.yaml")).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn hermes_interfaces_sdk_export_reapply_and_drift() {
     lifecycle(include_str!("../../../examples/hermes-interfaces.yaml")).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn web_search_cli_export_reapply_and_destroy() {
     // Every definition scope compiles to the same targets (web_search in the
     // SDK), so each provider deploys once, in a different scope.
@@ -505,7 +505,7 @@ async fn web_search_cli_export_reapply_and_destroy() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope() {
     for (input, inline_route) in [
         (
@@ -542,7 +542,7 @@ async fn lifecycle(input: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
     lifecycle_with_rejected_annotations(
         include_str!("../../../examples/explicit-policy.yaml"),
@@ -964,7 +964,7 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn readiness_and_observation_failures_retain_bindings_and_recover_without_recreation() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -1066,7 +1066,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_reference() {
     struct Credential;
     impl nemoclaw_sdk::Secrets for Credential {
@@ -1118,7 +1118,7 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn apply_preserves_bindings_without_generating_inference() {
     struct Secret;
     impl nemoclaw_sdk::Secrets for Secret {
@@ -1184,7 +1184,7 @@ async fn apply_preserves_bindings_without_generating_inference() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; exercises a slow graceful sandbox stop"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; exercises a slow graceful sandbox stop"]
 async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -1210,7 +1210,7 @@ async fn destroy_waits_for_graceful_sandbox_stop_without_retrying() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -1348,7 +1348,7 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -1456,7 +1456,7 @@ async fn mixed_sandboxes_reorder_add_recover_export_and_destroy_independently() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn successful_apply_checkpoints_mutations_before_reading_health() {
     use nemoclaw_sdk::{Progress, StepOutcome};
     use std::sync::{Arc, Mutex};
@@ -1524,7 +1524,7 @@ async fn successful_apply_checkpoints_mutations_before_reading_health() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapply() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     for sandbox_error in [true, false] {
@@ -1599,7 +1599,7 @@ async fn failed_first_apply_can_destroy_bound_resources_without_successful_reapp
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn failed_first_configuration_accepts_corrected_intent_without_recreating_sandbox() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -1645,7 +1645,7 @@ async fn failed_first_configuration_accepts_corrected_intent_without_recreating_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_credentials() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -1781,7 +1781,7 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway rejection fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway rejection fixture"]
 async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy() {
     use openshell_core::proto::{
         ConfigurationAdmissionState, SandboxConfigurationAdmission, SandboxPhase,
@@ -1895,7 +1895,7 @@ async fn rejected_policy_fails_promptly_with_context_and_allows_recovery_or_dest
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn pi_start_failure_names_the_sandbox_in_cli_text_and_json_and_allows_destroy() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     for format in ["text", "json"] {
@@ -1977,7 +1977,7 @@ async fn pi_start_failure_names_the_sandbox_in_cli_text_and_json_and_allows_dest
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     for (format, reason, guidance) in [
@@ -2077,7 +2077,7 @@ async fn sandbox_startup_failure_names_reason_and_guidance_and_allows_destroy() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn scoped_provider_labels_and_stopped_runtime_plans_preserve_authored_identity() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();

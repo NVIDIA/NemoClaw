@@ -77,7 +77,7 @@ impl Drop for OwnedResources {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE and NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE/_REPLACEMENT_IMAGE; creates only uniquely owned Docker resources"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE and NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE/_REPLACEMENT_IMAGE; creates only uniquely owned Docker resources"]
 async fn sdk_docker_proxy_lifecycle_preserves_readiness_and_storage_guards() {
     let image = std::env::var("NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE").unwrap();
     let replacement_image = std::env::var("NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE").unwrap();

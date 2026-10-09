@@ -35,7 +35,7 @@ nemoclaw apply --state-dir .local/remote examples/spark/remote-vllm.yaml
 Apply creates retained model storage and provider-managed inference compute on the SSH target, waits for application readiness, then configures the sandbox's OpenShell route.
 Plan reads provider resource state without collecting host capacity or model inventories.
 Hardware, startup memory, and preparation failures are reported by the runtime during apply.
-Bound credentials cannot move to another engine through ordinary apply.
+Bound credentials cannot move to another engine through apply.
 Cache and compute use native Docker-provider reconciliation; a cross-host transfer is not qualified, so use a fresh deployment and state for another host.
 
 Failed observations stop the operation; confirmed missing service compute can be recreated during explicit apply.

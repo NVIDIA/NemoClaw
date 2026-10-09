@@ -28,7 +28,7 @@ fn definitions(registrations: &[String]) -> Vec<&str> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated API fixture, no live inference"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated API fixture, no live inference"]
 async fn provider_union_export_reapply_drift_and_destroy_remain_scoped_to_each_sandbox() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let fixture = Fixture::start().await;
