@@ -403,6 +403,36 @@ describe("runSessionsPassthrough", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("--limit"));
   });
 
+  it.each([
+    { verb: undefined, extraArgs: [] },
+    { verb: "list" as const, extraArgs: [] },
+    { verb: "list" as const, extraArgs: ["--json"] },
+  ])("rejects Deep Code session listing with options %j (#12917)", async (options) => {
+    getSandboxMock.mockReturnValue({ agent: "langchain-deepagents-code" });
+    runBufferedMock.mockResolvedValueOnce(
+      completedBufferedCommand("", "openclaw: command not found", 127),
+    );
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: string | number | null,
+    ) => {
+      throw new Error(`process.exit:${code}`);
+    }) as never);
+
+    try {
+      await expect(runSessionsPassthrough("deep-code", options)).rejects.toThrow("process.exit:1");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "  Session listing is not supported for sandbox 'deep-code' with the 'langchain-deepagents-code' agent.",
+    );
+    expect(runBufferedMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+    expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+
   it("routes the bare command to `hermes sessions list` and skips warm-up filtering (#6247)", async () => {
     getSandboxMock.mockReturnValue({ agent: "hermes" });
 
