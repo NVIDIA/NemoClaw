@@ -304,20 +304,6 @@ export function discoverOllamaModelOwnership(
   return { ok: true, activeSandboxNames, activePeers, gatewayChecks };
 }
 
-export function exclusivelyHeldOllamaModel(
-  sandbox: OllamaModelHolder,
-  peers: readonly OllamaModelHolder[],
-  selectedHost: OllamaHostRoute | null = null,
-): string | null {
-  const decision = decideOllamaModelOwnership(
-    sandbox,
-    peers,
-    new Set(peers.map((peer) => peer.name)),
-    selectedHost,
-  );
-  return decision.kind === "exclusive" ? decision.model : null;
-}
-
 /**
  * The Ollama model a re-onboard just superseded, or null when nothing is safe
  * to release (#9110).
@@ -353,20 +339,4 @@ export function supersededOllamaModelWithActivePeers(
     ollamaModelRefsMatch(ownership.model, nextModel)
     ? null
     : ownership.model;
-}
-
-export function supersededOllamaModel(
-  previous: OllamaModelHolder | null,
-  next: OllamaModelRoute,
-  peers: readonly OllamaModelHolder[],
-  selectedHost: OllamaHostRoute | null = null,
-): string | null {
-  if (!previous || !isLocalOllamaRouteOwner(previous, selectedHost)) return null;
-  const nextModel = next.model?.trim();
-  if (!nextModel) return null;
-  const held = exclusivelyHeldOllamaModel(previous, peers, selectedHost);
-  if (!held) return null;
-  return isLocalOllamaRouteOwner(next, selectedHost) && ollamaModelRefsMatch(held, nextModel)
-    ? null
-    : held;
 }
