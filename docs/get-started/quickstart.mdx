@@ -282,6 +282,7 @@ Use these details when your first-run path needs more control.
     It retires the running gateway before replacing OpenShell only when that version is outside the supported range; an unknown installed version or an invalid or missing range stops the update without retiring the gateway, while any retirement failure stops the update with the sandbox backups preserved.
     After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` before generic host admission.
     Confirmed recovery rebuilds stale sandboxes and restores validated backups for registered sandboxes that are not Ready.
+    Recovery also includes confirmed pre-fingerprint OpenClaw sandboxes that report Ready when their live agent-version probe fails.
     The installer skips generic onboarding when no Station reconciliation remains necessary.
     Required Station reconciliation still passes through host preflight.
     If recovery exits 0 but the installer cannot inspect its output, it reports unconfirmed recovery and skips generic onboarding.
