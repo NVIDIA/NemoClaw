@@ -20,7 +20,8 @@ pub type Replaces = fn(field: &str, prior: &State, proposed: &State) -> bool;
 pub type ValidateSpec = fn(kind: &str, encoded: &str) -> Result<(), nemoclaw_backend::Error>;
 
 /// Checks one known input attribute, explaining a rejection without echoing the value.
-pub type ValidateAttribute = fn(attribute: &str, value: &str) -> Result<(), &'static str>;
+pub type ValidateAttribute =
+    fn(attribute: &str, value: &str) -> Result<(), std::borrow::Cow<'static, str>>;
 
 /// Generates a value for an omitted identity attribute when a resource is created.
 pub type Generate = fn() -> Result<String, nemoclaw_backend::Error>;
