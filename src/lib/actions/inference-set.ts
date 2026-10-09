@@ -1123,7 +1123,7 @@ async function applyInferenceRouteSelection(input: {
   deps: InferenceSetDeps;
 }): Promise<boolean> {
   if (input.nativeNvidia) {
-    input.deps.log(`  Using attached native NVIDIA provider: ${input.provider} / ${input.model}`);
+    input.deps.log(`  Using attached native provider: ${input.provider} / ${input.model}`);
     return false;
   }
   input.deps.log(`  Setting OpenShell inference route: ${input.provider} / ${input.model}`);
