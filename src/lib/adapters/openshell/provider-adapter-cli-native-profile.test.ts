@@ -7,11 +7,7 @@ import { selectedOpenShellGateway } from "./sandbox-observer";
 
 describe("native provider profile metadata bounds", () => {
   it.each([
-    [
-      `nemoclaw-compatible-${"a".repeat(64)}-v1`,
-      true,
-      { value: { type: `nemoclaw-compatible-${"a".repeat(64)}-v1` } },
-    ],
+    [`nc-compat-${"a".repeat(50)}-v1`, true, { value: { type: `nc-compat-${"a".repeat(50)}-v1` } }],
     ["a".repeat(128), true, { value: { type: "a".repeat(128) } }],
     ["a".repeat(129), false, { error: { kind: "schema" } }],
     ["invalid/profile", false, { error: { kind: "schema" } }],

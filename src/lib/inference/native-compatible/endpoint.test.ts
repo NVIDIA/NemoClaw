@@ -22,6 +22,17 @@ describe("native compatible endpoint preparation", () => {
     expect(completions.addresses).toEqual(["93.184.216.34"]);
   });
 
+  it("fits OpenShell's 64-byte provider type boundary", async () => {
+    const profile = await prepareNativeCompatibleEndpoint({
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-completions",
+      lookup,
+    });
+    expect(Buffer.byteLength(profile.profileId)).toBeLessThanOrEqual(64);
+    expect(profile.profileId).toMatch(/^nc-compat-[a-z0-9]{50}-v1$/u);
+    expect(profile.providerName).toBe(profile.profileId);
+  });
+
   it("preserves the Anthropic base path and native API", async () => {
     const result = await prepareNativeCompatibleEndpoint({
       endpointUrl: "https://api.example.com/custom/v1/messages",

@@ -191,7 +191,7 @@ const setupInference = createSetupInference({
           (command) =>
             hasTokenSequence(command, ["provider", "create"]) &&
             hasTokenSequence(command, ["-g", "nemoclaw"]) &&
-            /--name nemoclaw-compatible-[a-f0-9]{64}-v1/.test(command),
+            /--name nc-compat-[a-z0-9]{50}-v1/.test(command),
         );
         const inferenceSetIndex = commands.findIndex(
           (command) =>

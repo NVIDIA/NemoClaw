@@ -56,6 +56,13 @@ function fixture() {
   return { profile, adapter, getProvider, createProvider, updateProvider, importProviderProfile };
 }
 describe("native Bedrock adapter profile", () => {
+  it("fits OpenShell's 64-byte provider type boundary", () => {
+    const profile = prepareNativeBedrockProfile(binding);
+    expect(Buffer.byteLength(profile.profileId)).toBeLessThanOrEqual(64);
+    expect(profile.profileId).toMatch(/^nc-bedrock-[a-z0-9]{50}-v1$/u);
+    expect(profile.providerName).toBe(profile.profileId);
+  });
+
   it("grants only the fixed adapter REST surface and issued adapter token", () => {
     const profile = prepareNativeBedrockProfile(binding);
     expect(parseCheckedInProviderProfileContract(JSON.stringify(profile.document))).not.toBeNull();

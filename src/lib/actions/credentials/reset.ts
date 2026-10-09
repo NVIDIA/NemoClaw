@@ -153,7 +153,10 @@ export async function runCredentialsResetAction(
   const key = input.provider;
   const nativeNvidiaProvider =
     key === NVIDIA_HOSTED_LOGICAL_PROVIDER || key === NVIDIA_HOSTED_NATIVE_PROVIDER;
-  const nativeCompatibleProvider = /^nemoclaw-compatible-[a-f0-9]{64}-v1$/.test(key);
+  const nativeCompatibleProvider =
+    /^(?:nc-compat-[a-z0-9]{50}|nemoclaw-compatible-[a-f0-9]{64})-v1$/.test(key);
+  const nativeBedrockProvider =
+    /^(?:nc-bedrock-[a-z0-9]{50}|nemoclaw-bedrock-[a-f0-9]{64})-v1$/.test(key);
   const providerName = nativeNvidiaProvider ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
   const publicKey = nativeNvidiaProvider ? NVIDIA_HOSTED_LOGICAL_PROVIDER : key;
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
@@ -197,7 +200,6 @@ export async function runCredentialsResetAction(
       }
       if (blockers.sandboxes.length > 0) return nativeNvidiaResetBlockedResult(blockers.sandboxes);
     }
-    const nativeBedrockProvider = /^nemoclaw-bedrock-[a-f0-9]{64}-v1$/.test(key);
     if (
       (nativeCompatibleProvider || nativeBedrockProvider) &&
       hasOtherNativeProviderReference({
@@ -212,7 +214,7 @@ export async function runCredentialsResetAction(
         "  Native provider is referenced by a sandbox or pending onboarding; ownership was retained.",
       ]);
     const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-    if (/^nemoclaw-bedrock-[a-f0-9]{64}-v1$/.test(key)) {
+    if (nativeBedrockProvider) {
       const authority = (
         deps.getNativeBedrockProviderAuthority ?? getNativeBedrockProviderAuthority
       )(target.gatewayName, key);
@@ -338,9 +340,7 @@ export async function runCredentialsResetAction(
     }
     return ok(outcome.lines);
   };
-  return nativeNvidiaProvider ||
-    nativeCompatibleProvider ||
-    /^nemoclaw-bedrock-[a-f0-9]{64}-v1$/.test(key)
+  return nativeNvidiaProvider || nativeCompatibleProvider || nativeBedrockProvider
     ? (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
         target.gatewayName,
         performReset,

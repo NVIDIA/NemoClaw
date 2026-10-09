@@ -138,7 +138,7 @@ export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
 export function usesNativeCompatibleProvider(inferenceProvider: string | null): boolean {
   return (
     typeof inferenceProvider === "string" &&
-    /^nemoclaw-compatible-[0-9a-f]{64}-v1$/u.test(inferenceProvider)
+    /^(?:nc-compat-[a-z0-9]{50}|nemoclaw-compatible-[0-9a-f]{64})-v1$/u.test(inferenceProvider)
   );
 }
 
@@ -315,7 +315,10 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
 }
 
 export function usesNativeBedrockProvider(value: string | null): boolean {
-  return typeof value === "string" && /^nemoclaw-bedrock-[0-9a-f]{64}-v1$/u.test(value);
+  return (
+    typeof value === "string" &&
+    /^(?:nc-bedrock-[a-z0-9]{50}|nemoclaw-bedrock-[0-9a-f]{64})-v1$/u.test(value)
+  );
 }
 export async function verifyNativeBedrockAttachmentAfterCreate(input: {
   sandboxName: string;

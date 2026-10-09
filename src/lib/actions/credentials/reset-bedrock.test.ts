@@ -128,3 +128,26 @@ describe("Bedrock credential reset ownership", () => {
     expect(f.clearAuthority).not.toHaveBeenCalled();
   });
 });
+
+describe("Native provider identifier reset ownership", () => {
+  it.each([
+    `nc-compat-${"a".repeat(50)}-v1`,
+    `nc-bedrock-${"a".repeat(50)}-v1`,
+    `nemoclaw-compatible-${"a".repeat(64)}-v1`,
+    `nemoclaw-bedrock-${"a".repeat(64)}-v1`,
+  ])("refuses native reset without ownership for %s", async (provider) => {
+    const remove = vi.fn<OpenShellProviderAdapter["deleteProvider"]>();
+    const result = await runCredentialsResetAction(
+      { provider, confirmed: true },
+      {
+        providerAdapter: { deleteProvider: remove } as unknown as OpenShellProviderAdapter,
+        listSandboxes: () => ({ sandboxes: [] }),
+        getNativeCompatibleProviderAuthority: () => undefined,
+        getNativeBedrockProviderAuthority: () => undefined,
+        withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(remove).not.toHaveBeenCalled();
+  });
+});

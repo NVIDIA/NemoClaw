@@ -44,12 +44,14 @@ export function nativeCompatibleEndpointIdentity(input: {
   const identity = createHash("sha256")
     .update(JSON.stringify(addresses ? [endpoint, api, addresses] : [endpoint, api]))
     .digest("hex");
+  // Preserve all 256 digest bits while fitting OpenShell's 64-byte profile type limit.
+  const encodedIdentity = BigInt(`0x${identity}`).toString(36).padStart(50, "0");
   return {
     endpoint,
     api,
     ...(addresses ? { addresses } : {}),
-    profileId: `nemoclaw-compatible-${identity}-v1`,
-    providerName: `nemoclaw-compatible-${identity}-v1`,
+    profileId: `nc-compat-${encodedIdentity}-v1`,
+    providerName: `nc-compat-${encodedIdentity}-v1`,
   } as const;
 }
 

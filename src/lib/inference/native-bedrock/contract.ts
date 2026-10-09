@@ -43,9 +43,11 @@ export function nativeBedrockIdentity(binding: NativeBedrockBinding) {
       ]),
     )
     .digest("hex");
+  // Preserve all 256 digest bits while fitting OpenShell's 64-byte profile type limit.
+  const encodedIdentity = BigInt(`0x${digest}`).toString(36).padStart(50, "0");
   return {
-    profileId: `nemoclaw-bedrock-${digest}-v1`,
-    providerName: `nemoclaw-bedrock-${digest}-v1`,
+    profileId: `nc-bedrock-${encodedIdentity}-v1`,
+    providerName: `nc-bedrock-${encodedIdentity}-v1`,
   };
 }
 

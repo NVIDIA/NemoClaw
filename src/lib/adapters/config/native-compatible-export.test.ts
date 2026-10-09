@@ -21,13 +21,13 @@ describe("native compatible export evidence", () => {
     [
       "attachment",
       (x: Snapshot) => {
-        x.sandbox.providerNames = ["nemoclaw-compatible-different-v1"];
+        x.sandbox.providerNames = ["nc-compat-different-v1"];
       },
     ],
     [
       "profile",
       (x: Snapshot) => {
-        x.inference.endpointEvidence.source.profileId = "nemoclaw-compatible-different-v1";
+        x.inference.endpointEvidence.source.profileId = "nc-compat-different-v1";
       },
     ],
     [
