@@ -274,16 +274,11 @@ async function runRuntimeIdentityE2EScenario(
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
   await cleanupSandbox(host, sandbox, sandboxName);
-  const inference = await startFakeOpenAiCompatibleServer({
+  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
+  const inference = await startFakeHttpsCompatibleServer({
     apiKey: inferenceKey,
     chatContent: "PONG",
-    host: "0.0.0.0",
     model,
-    port: 0,
-    progress,
-    publicHost: "localhost",
-    requireAuth: true,
-    requireAuthModels: true,
   });
   cleanup.add("close runtime identity inference prerequisite", async () => {
     try {
@@ -292,13 +287,24 @@ async function runRuntimeIdentityE2EScenario(
       await inference.close();
     }
   });
+  // Arbitrary loopback ports are intentionally not rewritten by onboarding.
+  // Use a public prerequisite route while preserving the shared inference path.
+  const inferenceTunnel = await startPublicMcpHttpsTunnel({
+    cloudflaredBin,
+    cleanup,
+    label: "runtime identity inference prerequisite",
+    progress,
+    readinessPath: "/v1/models",
+    readinessStatus: 401,
+    server: inference,
+  });
   progress.phase("onboard a real OpenShell sandbox");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
     {
       COMPATIBLE_API_KEY: inferenceKey,
-      NEMOCLAW_ENDPOINT_URL: inference.baseUrl,
+      NEMOCLAW_ENDPOINT_URL: `${inferenceTunnel.origin}/v1`,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
@@ -372,7 +378,6 @@ async function runRuntimeIdentityE2EScenario(
       await oauth.close();
     }
   });
-  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
   const tunnel = await startPublicMcpHttpsTunnel({
     cloudflaredBin,
     cleanup,
@@ -938,18 +943,24 @@ test(
       endpointUrl,
       model,
     });
-    // Onboarding's own SSRF preflight (assertEndpointResolvesPublic) only
-    // rejects private/internal addresses; it does not fail closed on
-    // DNS-backed HTTPS the way the HTTPS Pin Runtime adapter's call site does,
-    // and onboarding never wires that adapter itself (only
-    // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
-    // the `inference set --endpoint-url` path). Onboard with a disposable
-    // plain-HTTP placeholder on an ephemeral port so it retains the managed
-    // compatible-endpoint route, then switch to the DNS-backed HTTPS
-    // endpoint through `inference set --endpoint-url`, the actual #6141 call
-    // site this test exercises.
-    // Advertise localhost so onboarding exercises its host-bridge rewrite, but
-    // listen beyond host loopback so the resulting sandbox route can reach it.
+    // A distinct public onboarding endpoint keeps inference set on the pinning
+    // path: reusing the exact onboarded URL intentionally bypasses that adapter.
+    const onboarding = await startFakeHttpsCompatibleServer({
+      apiKey,
+      chatContent: "placeholder",
+      model,
+    });
+    cleanup.add("close https-pin onboarding endpoint", () => onboarding.close());
+    const onboardingTunnel = await startPublicMcpHttpsTunnel({
+      cloudflaredBin,
+      cleanup,
+      label: "https-pin onboarding prerequisite",
+      progress,
+      readinessPath: "/v1/models",
+      readinessStatus: 401,
+      server: onboarding,
+    });
+    // Keep a separate private target to witness that redirects are never followed.
     const placeholder = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "placeholder",
@@ -968,7 +979,7 @@ test(
       sandboxName,
       {
         COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_ENDPOINT_URL: placeholder.baseUrl,
+        NEMOCLAW_ENDPOINT_URL: `${onboardingTunnel.origin}/v1`,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PREFERRED_API: "openai-completions",
         NEMOCLAW_PROVIDER: "custom",
