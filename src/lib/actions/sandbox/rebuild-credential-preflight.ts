@@ -160,7 +160,7 @@ export async function preflightRebuildHostCredential(
   console.error(
     `  ${RD}Rebuild preflight failed:${R} the host inference credential could not be validated.`,
   );
-  console.error(`  Check ${target.credentialEnv} and the recorded endpoint, then retry rebuild.`);
+  console.error("  Check the host inference credential and recorded endpoint, then retry rebuild.");
   console.error("  Sandbox is untouched — no data was lost.");
   bail("Host inference credential validation failed");
   return false;
