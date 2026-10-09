@@ -74,23 +74,23 @@ clear_managed_inference_credentials() {
     printf '%s\n' '[SECURITY] Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.' >&2
     return 1
   fi
-  if [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" == *%* ]] && ! is_managed_inference_route; then
-    # Decode an encoded host in a child without either provider credential.
-    local encoded_host_status=0
+  if ! is_managed_inference_route; then
+    # Parse noncanonical routes in a child without either provider credential.
+    local parsed_host_status=0
     env -i PATH="$PATH" NEMOCLAW_INFERENCE_BASE_URL="${NEMOCLAW_INFERENCE_BASE_URL:-}" node -e '
       try {
         const url = new URL(process.env.NEMOCLAW_INFERENCE_BASE_URL);
         if (url.protocol === "https:" && url.hostname === "integrate.api.nvidia.com" &&
             url.port === "") process.exit(42);
       } catch {}
-    ' || encoded_host_status=$?
-    if [ "$encoded_host_status" -eq 42 ]; then
+    ' || parsed_host_status=$?
+    if [ "$parsed_host_status" -eq 42 ]; then
       unset NVIDIA_API_KEY NVIDIA_INFERENCE_API_KEY
       printf '%s\n' '[SECURITY] Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.' >&2
       return 1
     fi
-    if [ "$encoded_host_status" -ne 0 ]; then
-      return "$encoded_host_status"
+    if [ "$parsed_host_status" -ne 0 ]; then
+      return "$parsed_host_status"
     fi
   fi
   if is_managed_inference_route; then

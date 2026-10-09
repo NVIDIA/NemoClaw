@@ -120,7 +120,6 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
             raise ManagedPolicyError("managed policy model.base_url is invalid") from None
         if (
             not native_nvidia
-            and "%" in (url.hostname or "")
             and url.scheme.lower() == "https"
             and unquote(url.hostname or "").lower() == "integrate.api.nvidia.com"
             and url.port in (None, 443)

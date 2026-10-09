@@ -14,6 +14,7 @@ export const INVALID_NATIVE_NVIDIA_URLS = [
   "https://integrate.api.nvidia.com/x/../v1",
   "https://integrate.api.nvidia.com/%2e/v1",
   "https://%69ntegrate.api.nvidia.com/v1",
+  "https://user@integrate.api.nvidia.com/v1",
   "https://integrate.api.nvidia.com/V1",
   "https://integrate.api.nvidia.com//v1",
   "https://integrate.api.nvidia.com/v1?",
