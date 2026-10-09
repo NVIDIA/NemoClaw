@@ -746,6 +746,20 @@ function readSecretAnswer(question: string, maskCap?: number): Promise<string> {
           return;
         }
 
+        // Raw mode suppresses the terminal's own end-of-file handling, so the
+        // masked reader has to recognise Ctrl-D itself or the key does
+        // nothing here while it cancels every other prompt (#12169). readline
+        // ends only on an empty line and ignores the key once an answer is
+        // typed; a half-entered secret keeps that behaviour rather than
+        // discarding the characters the user already masked.
+        if (ch === "\u0004") {
+          if (answer.length === 0) {
+            onInputClosed();
+            return;
+          }
+          continue;
+        }
+
         if (ch.charCodeAt(0) === 0x17) {
           wordDeleteBackward();
           continue;
