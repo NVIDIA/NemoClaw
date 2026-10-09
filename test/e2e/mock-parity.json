@@ -832,6 +832,7 @@
       ],
       "fast": [
         "src/lib/actions/inference-get.test.ts",
+        "src/lib/actions/inference-set-patch-openclaw.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
