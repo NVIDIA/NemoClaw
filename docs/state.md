@@ -95,11 +95,12 @@ Their names start with the deployment's workspace, `WS` below: `nc-` followed by
 | `plan --destroy` entry | Docker objects |
 |---|---|
 | `gateway storage` | Volume `WS-gateway-data`, network `WS-network`, and exited container `WS-gateway-initialize` |
+| `OpenShell workspace` on a managed gateway | Volume `WS-gateway-data`, shared with `gateway storage` |
 | `model cache/NAME` | Volume `WS-inference-NAME-data` for vLLM, or `WS-ollama-NAME-data` for Ollama |
 | `inference credentials/NAME` | Volume `WS-inference-NAME-auth` |
 | `proxy credentials/NAME` | Volume `WS-ollama-proxy-NAME-auth` |
 
-The `OpenShell workspace` entry of an external gateway stays on that gateway.
+On an external gateway, the `OpenShell workspace` entry stays on that gateway.
 
 ## Recovery and Transfer
 

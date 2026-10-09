@@ -392,7 +392,7 @@ Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` mu
 The commands select objects by UID alone, so confirm that no other deployment, including one copied from the same example, uses this `metadata.uid`.
 Run the commands with Docker access to each engine the deployment selects: the managed gateway's `spec.gateway.engine`, each service's `placement.engine`, and each Ollama proxy's `engine`.
 For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
-From any directory, set the engine socket and the UID, then list the deployment's objects:
+From any directory, set `deployment_engine` to one of those engines and `deployment_uid` to the UID, then list the deployment's objects:
 
 ```sh
 deployment_engine=unix:///var/run/docker.sock
@@ -403,8 +403,7 @@ docker --host "$deployment_engine" volume ls --filter "$owner_label" --format '{
 docker --host "$deployment_engine" network ls --filter "$owner_label" --format '{{.Name}}'
 ```
 
-Replace the socket when your selected daemon uses another path.
-Continue only if each listed name belongs to one of those entries in [retained Docker objects](state.md#find-retained-docker-objects) and no listed container is running.
+Continue only if each listed name matches a `Retained resources:` entry in the [retained Docker objects](state.md#find-retained-docker-objects) table and no listed container is running.
 Then remove them:
 
 ```sh
@@ -415,9 +414,10 @@ docker --host "$deployment_engine" network ls --quiet --filter "$owner_label" | 
 
 Rerun the list commands to confirm they print nothing; the removal is safe to repeat.
 If a volume or network remains, Docker's error identifies the container still using it; keep the state directory until you resolve that.
-Repeat on each engine until the objects of every entry are gone.
-Keep the state directory if an entry is not in that table or none of its objects were listed: this procedure does not cover it, or an engine or the UID is wrong.
-Otherwise, remove the `.local/deployment` directory.
+Repeat on each engine.
+If an entry is not in the table, this procedure does not cover it; keep the state directory.
+If no engine had objects for an entry, check the engines and the UID, and keep the state directory until you find them.
+When every entry's objects are gone, remove the `.local/deployment` directory.
 To deploy again, use a fresh `metadata.uid` and a new state directory; apply refuses a state directory whose gateway storage or credentials were removed.
 
 The [live Docker suite](contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.

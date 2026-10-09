@@ -200,7 +200,7 @@ docker --host "$model_engine" inspect "$model_container" --format '{{.Id}} {{jso
 
 Replace the socket when your selected daemon uses another path, and use the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace) and the service name in the container name.
 Confirm the `nemoclaw.nvidia.com/uid` label matches your YAML before collecting its output.
-This name/label check helps select diagnostics; outside [Remove Retained Resources](usage.md#remove-retained-resources), it does not authorize manual mutation or adoption of persistent data.
+This name/label check helps select diagnostics; it does not authorize manual mutation or adoption of persistent data.
 
 ```sh
 diagnostic_dir=$(mktemp -d)
