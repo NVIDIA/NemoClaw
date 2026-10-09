@@ -99,9 +99,7 @@ impl JourneyWizard {
             self.review_lines()
         };
         if self.started
-            && let Ok(resolution) = self
-                .state
-                .resolve_with_observations(&self.capabilities, &self.observations)
+            && let Ok(resolution) = self.resolution()
             && !resolution.information().is_empty()
         {
             let mut information = resolution
@@ -225,10 +223,7 @@ impl JourneyWizard {
             )),
             Line::from(""),
         ];
-        match self
-            .state
-            .resolve_with_observations(&self.capabilities, &self.observations)
-        {
+        match self.resolution() {
             Ok(resolution) => {
                 if let Some(document) = resolution.materialized_document() {
                     if let Ok(yaml) = document.yaml() {

@@ -33,6 +33,7 @@ pulldown-cmark-to-cmark = { workspace = true, optional = true }
 url.workspace = true
 determinator.workspace = true
 guppy.workspace = true
+quick-junit.workspace = true
 [build-dependencies]
 sha2.workspace = true
 [lints]

@@ -154,14 +154,18 @@ pub(crate) async fn run(
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if wizard.input.is_empty() && !wizard.selection_changed && !wizard.custom_answer {
                 let document = wizard
-                    .state
+                    .state()
                     .resolve(&wizard.capabilities)
                     .ok()
                     .and_then(|resolution| resolution.assessment().document().cloned());
                 if let (true, Some(document)) = (discover, document) {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
-                        observe_target(&document, wizard.state.current_route(), &discovery_cancel),
+                        observe_target(
+                            &document,
+                            wizard.state().current_route(),
+                            &discovery_cancel,
+                        ),
                         cancel,
                         &discovery_cancel,
                         &mut queued_events,
@@ -195,14 +199,18 @@ pub(crate) async fn run(
                     && matches!(wizard.question(), Ok(None))
                     && discover
                     && let Some(document) = wizard
-                        .state
+                        .state()
                         .resolve(&wizard.capabilities)
                         .ok()
                         .and_then(|resolution| resolution.materialized_document().cloned())
                 {
                     let discovery_cancel = cancel.child_token();
                     let observed = wait_for_discovery(
-                        observe_target(&document, wizard.state.current_route(), &discovery_cancel),
+                        observe_target(
+                            &document,
+                            wizard.state().current_route(),
+                            &discovery_cancel,
+                        ),
                         cancel,
                         &discovery_cancel,
                         &mut queued_events,
@@ -302,7 +310,7 @@ pub(super) fn local_engine_probe(wizard: &JourneyWizard) -> Vec<DiscoveryQuery> 
         .cloned()
         .map(DiscoveryQuery::Engine)
         .collect();
-    wizard.observations.missing(&queries)
+    wizard.observations().missing(&queries)
 }
 
 /// The model catalog of the route being asked about, once the journey is at its
@@ -313,11 +321,12 @@ pub(super) fn model_catalog_probe(wizard: &JourneyWizard) -> Option<DiscoveryQue
     }) {
         return None;
     }
-    let resolution = wizard.state.resolve(&wizard.capabilities).ok()?;
+    let resolution = wizard.state().resolve(&wizard.capabilities).ok()?;
     let document = resolution.assessment().document()?;
-    let request = inference_request_for_document(document, wizard.state.current_route()).ok()??;
+    let request =
+        inference_request_for_document(document, wizard.state().current_route()).ok()??;
     let query = DiscoveryQuery::Inference(request);
-    (!wizard.observations.contains(&query)).then_some(query)
+    (!wizard.observations().contains(&query)).then_some(query)
 }
 
 /// Ask the target with `read` and keep what it says. `false` means the user
