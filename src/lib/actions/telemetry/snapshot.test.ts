@@ -160,9 +160,11 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
   });
   const responses: Record<string, Record<string, string>> = {
     first: {
-      uname: "Linux",
-      openclaw: JSON.stringify([{ id: "main", isDefault: true }]),
-      cat: JSON.stringify({
+      [JSON.stringify(["uname", "-s"])]: "Linux",
+      [JSON.stringify(["openclaw", "agents", "list", "--json"])]: JSON.stringify([
+        { id: "main", isDefault: true },
+      ]),
+      [JSON.stringify(["cat", "/sandbox/.openclaw/openclaw.json"])]: JSON.stringify({
         agents: {
           defaults: { model: "openai/gpt-4o" },
           entries: { main: { default: true } },
@@ -171,14 +173,17 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       }),
     },
     selected: {
-      uname: "Linux",
-      openclaw: JSON.stringify([{ id: "main", isDefault: true }]),
-      cat: config,
+      [JSON.stringify(["uname", "-s"])]: "Linux",
+      [JSON.stringify(["openclaw", "agents", "list", "--json"])]: JSON.stringify([
+        { id: "main", isDefault: true },
+      ]),
+      [JSON.stringify(["cat", "/sandbox/.openclaw/openclaw.json"])]: config,
     },
   };
   const read = vi.fn(
     async ({ sandboxName, command }: { sandboxName: string; command: readonly string[] }) => {
-      return responses[sandboxName]?.[command[0] ?? ""] ?? "";
+      const response = responses[sandboxName]?.[JSON.stringify(command)];
+      return response ?? Promise.reject(new Error("Unexpected sandbox command"));
     },
   );
   mocks.createReader.mockReturnValue({
@@ -215,6 +220,7 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
     deadlineAt: Date.now() + 10_000,
   });
   expect(read).toHaveBeenCalled();
+  expect(read).toHaveBeenCalledTimes(6);
   expect(event.parameters).toMatchObject({
     publishedEnvironmentCount: 2,
     configuredRuntimeCount: 2,
