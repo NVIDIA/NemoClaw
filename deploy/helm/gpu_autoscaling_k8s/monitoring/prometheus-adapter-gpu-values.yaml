@@ -24,9 +24,10 @@ rules:
       name:
         matches: "^(.*)$"
         as: "gpu_utilization_percent"
-      # Peak in 90s: a DCGM 0 scrape between OpenClaw chats must not publish
-      # HPA average 0% while nvidia-smi still shows busy GPUs. avg_over_time
-      # 45s still dropped to 0% and stalled 1→8.
+      # Peak in 90s during climb: a DCGM 0 scrape must not publish HPA 0%
+      # while nvidia-smi still shows busy GPUs. 30s stalled 1→8 at 6–7.
+      # client.sh shortens this to 15s after the 60s sit-at-8 hold so 8→1
+      # can start. Pause scale-down during the climb so a new 0% GPU cannot bounce.
       metricsQuery: 'avg(max_over_time(<<.Series>>{<<.LabelMatchers>>}[90s])) by (<<.GroupBy>>)'
 
     # metrics-proxy /metrics rolling avg latency (idle-expires when traffic stops).

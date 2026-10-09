@@ -164,6 +164,9 @@ if ! hpa_common_ensure_metrics_proxy_ready "${NAMESPACE}" "${RELEASE}" "${CHART_
   exit 1
 fi
 
+IFS=$'\t' read -r auth_password auth_htpasswd < <(
+  hpa_common_ingress_basic_auth_credentials "${NAMESPACE}" "${RELEASE}"
+)
 HPA_HELM_ARGS=(
   upgrade --install "${RELEASE}" "${CHART_DIR}"
   --namespace "${NAMESPACE}"
@@ -183,6 +186,8 @@ HPA_HELM_ARGS=(
   --set "ingress.gateway.enabled=$(hpa_common_envoy_lb_helm_value)"
   --set "ingress.gateway.serviceType=${INGRESS_SERVICE_TYPE:-ClusterIP}"
   --set "ingress.gateway.className=${INGRESS_CLASS:-eg}"
+  --set "ingress.auth.password=${auth_password}"
+  --set-string "ingress.auth.htpasswd=${auth_htpasswd}"
 )
 hpa_common_append_target_node_helm_sets HPA_HELM_ARGS
 hpa_common_append_servicemonitor_release_helm_set HPA_HELM_ARGS
@@ -243,13 +248,13 @@ cleanup() {
   fi
   if [[ "${HPA_TEST_BEHAVIOR_APPLIED}" -eq 1 ]]; then
     hpa_common_log "Restoring the configured HPA scale behavior..."
-    helm "${HPA_RESTORE_HELM_ARGS[@]}" >/dev/null \
+    helm "${HPA_RESTORE_HELM_ARGS[@]}" --force-conflicts >/dev/null \
       || echo "Warning: could not restore configured HPA behavior; rerun ./scripts/install-hpa.sh" >&2
   fi
 }
 trap cleanup EXIT
 
-helm "${HPA_HELM_ARGS[@]}" >/dev/null
+helm "${HPA_HELM_ARGS[@]}" --force-conflicts >/dev/null
 hpa_common_wait_for_envoy_dataplane_on_target_node "${NAMESPACE}" "${DEPLOYMENT}" 180
 
 IFS=$'\t' read -r DEPLOYED_INFERENCE_SECRET DEPLOYED_INFERENCE_SECRET_KEY < <(

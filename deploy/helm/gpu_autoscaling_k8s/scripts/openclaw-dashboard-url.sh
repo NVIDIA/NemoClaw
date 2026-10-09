@@ -2,15 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Print the OpenClaw Control UI URL (IP + port + #token=).
-# Same value as `nemoclaw <sandbox> dashboard-url`. Run on the DGX.
+# Print the OpenClaw Control UI URL (IP + port). Run on the DGX.
 # Does not republish or restart (restart rotates the token).
+# The gateway token stays on this host and is not printed.
 #
 #   ./scripts/openclaw-dashboard-url.sh              # user 0 → :18789
 #   E2E_USER=1 ./scripts/openclaw-dashboard-url.sh    # user 1 → :18790
 #   E2E_USER=2 ./scripts/openclaw-dashboard-url.sh    # user 2 → :18791
-#
-# Treat the printed URL like a password.
 
 set -euo pipefail
 
@@ -28,15 +26,9 @@ if ! [[ "${USER_ID}" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-name="$(printf '%s%04d' "${SANDBOX_PREFIX}" "${USER_ID}")"
 port=$((18789 + USER_ID))
 host="$(remote_http_advertise_host)"
-token="$(remote_http_openclaw_token "${name}")" || {
-  echo "ERROR: could not read gateway.auth.token from ${name}" >&2
-  echo "Is the sandbox Running? kubectl -n ${OPENSHELL_NAMESPACE} get pod ${name}" >&2
-  exit 1
-}
 
-echo "http://${host}:${port}/#token=${token}"
-echo "Treat this URL like a password. Leave the dashboard Password field empty." >&2
-echo "?session= in the address bar after Connect is the chat thread, not this token." >&2
+echo "http://${host}:${port}/u/0"
+echo "Leave the dashboard Password field empty. The gateway token stays on this host." >&2
+echo "?session= in the address bar after Connect is the chat thread, not a gateway token." >&2

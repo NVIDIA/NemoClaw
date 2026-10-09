@@ -154,6 +154,10 @@ spec:
       name: {{ $openShellRouteName }}
   loadBalancer:
     type: LeastRequest
+  # One HTTP connection per OpenClaw sandbox otherwise stays on the first
+  # GPU. New HPA pods then sit at 0% and the average cannot climb to 8.
+  circuitBreaker:
+    maxRequestsPerConnection: 1
   timeout:
     http:
       connectionIdleTimeout: {{ .Values.ingress.gateway.connectionIdleTimeout | default "60s" | quote }}
@@ -203,6 +207,8 @@ spec:
       name: {{ $routeName }}
   loadBalancer:
     type: LeastRequest
+  circuitBreaker:
+    maxRequestsPerConnection: 1
   timeout:
     http:
       connectionIdleTimeout: {{ .Values.ingress.gateway.connectionIdleTimeout | default "60s" | quote }}

@@ -147,10 +147,15 @@ agentscaling_common_main() {
   esac
   "${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" "${cmd}"
   case "${cmd}" in
-    stop | cleanup | layout | refresh-inference) ;;
+    stop | cleanup)
+      agent_common_stop_hpa_timeline "$(agent_common_e2e_output_dir openclaw)"
+      ;;
+    layout | refresh-inference) ;;
     *)
       hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${MAX_REPLICAS}" \
         || agentscaling_common_fail "HPA is not 1 current replica after sandbox bringup; leftover load would scale before client.sh"
+      agent_common_stop_hpa_timeline "$(agent_common_e2e_output_dir openclaw)"
+      agent_common_start_hpa_timeline "$(agent_common_e2e_output_dir openclaw)" 1
       ;;
   esac
 }

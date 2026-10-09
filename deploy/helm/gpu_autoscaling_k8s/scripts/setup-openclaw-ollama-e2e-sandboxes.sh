@@ -451,8 +451,10 @@ start_agents() {
     pending+=("${name}")
   done
   wait_names_healthy "${pending[@]}" || fail "parallel agent start timed out; logs in ${STATE_DIR}"
-  wait_inference_local_parallel "${names[@]}" \
-    || fail "Envoy inference check failed after parallel agent start"
+  if [[ "${SKIP_WAIT_INFERENCE_LOCAL:-0}" != "1" ]]; then
+    wait_inference_local_parallel "${names[@]}" \
+      || fail "Envoy inference check failed after parallel agent start"
+  fi
   echo "Ready: ${count}/${count} OpenClaw agents in $((SECONDS - started_at))s (parallel)."
   remote_http_publish_openclaw "${count}" "${SANDBOX_PREFIX}" \
     "${CHART_DIR}/e2e-results/openclaw-ollama/remote-endpoints.json" \

@@ -4,6 +4,7 @@
 #
 # Run on the DGX after agentscaling_* (OpenShell connected).
 # Publishes one host port per OpenClaw sandbox so a laptop can use HTTP.
+# Public ports bind 0.0.0.0 unless E2E_PUBLISH_BIND is set.
 # Does not wait for clients.
 #
 #   E2E_USERS=5 ./scripts/publish-openclaw-remote-http.sh

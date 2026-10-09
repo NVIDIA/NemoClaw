@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Laptop HTTP helper. Each /u/N opens only that user's UI. No user list."""
+"""Remote HTTP helper. Each /u/N opens only that user's UI. No user list.
+
+/clients never returns tokens, passwords, or API keys.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +14,57 @@ import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
+
+_SECRET_KEYS = {
+    "token",
+    "api_key",
+    "apikey",
+    "api_server_key",
+    "password",
+    "authorization",
+    "secret",
+    "htpasswd",
+}
+
+
+def publish_bind() -> str:
+    raw = (os.environ.get("E2E_PUBLISH_BIND") or "127.0.0.1").strip()
+    if raw in {"127.0.0.1", "0.0.0.0"}:
+        return raw
+    parts = raw.split(".")
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        return raw
+    return "127.0.0.1"
+
+
+def _secret_key(name: str) -> bool:
+    lowered = name.lower()
+    if lowered in _SECRET_KEYS:
+        return True
+    return "token" in lowered or "password" in lowered or "secret" in lowered or "apikey" in lowered
+
+
+def _strip_secret_url(value: str) -> str:
+    if "#token=" in value or "token=" in value:
+        parts = urlsplit(value)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return value
+
+
+def redact_secrets(value: object) -> object:
+    if isinstance(value, dict):
+        out: dict[str, object] = {}
+        for key, item in value.items():
+            if _secret_key(str(key)):
+                continue
+            out[str(key)] = redact_secrets(item)
+        return out
+    if isinstance(value, list):
+        return [redact_secrets(item) for item in value]
+    if isinstance(value, str):
+        return _strip_secret_url(value)
+    return value
 
 
 def _users(path: Path) -> list[dict]:
@@ -27,7 +80,12 @@ def _dashboard(path: Path, idx: int) -> str:
     row = users[idx]
     if not isinstance(row, dict):
         return ""
-    return str(row.get("dashboard_url") or "").strip()
+    return _strip_secret_url(str(row.get("dashboard_url") or "").strip())
+
+
+def public_clients_bytes(path: Path) -> bytes:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return json.dumps(redact_secrets(data)).encode()
 
 
 def main() -> int:
@@ -36,12 +94,17 @@ def main() -> int:
         return 2
     path = Path(sys.argv[1])
     port = int(sys.argv[2])
+    bind = publish_bind()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             route = urlparse(self.path).path.rstrip("/") or "/"
             if route == "/clients":
-                body = path.read_bytes()
+                try:
+                    body = public_clients_bytes(path)
+                except (OSError, json.JSONDecodeError):
+                    self.send_error(500, "clients unavailable")
+                    return
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -107,7 +170,7 @@ def main() -> int:
         def log_message(self, fmt: str, *args: object) -> None:
             return
 
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    ThreadingHTTPServer((bind, port), Handler).serve_forever()
     return 0
 
 

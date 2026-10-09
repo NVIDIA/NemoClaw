@@ -23,6 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=hpa-common.sh
 source "${SCRIPT_DIR}/hpa-common.sh"
+# shellcheck source=agent-common.sh
+source "${SCRIPT_DIR}/agent-common.sh"
 # shellcheck source=remote-http-clients.sh
 source "${SCRIPT_DIR}/remote-http-clients.sh"
 hpa_common_load_local_env "${CHART_DIR}"
@@ -42,6 +44,9 @@ else
 fi
 
 echo "Uninstalling e2e agents and sandboxes (GPU inference stays for later pairings)"
+agent_common_stop_hpa_timeline "${CHART_DIR}/e2e-results/openclaw-ollama"
+agent_common_stop_hpa_timeline "${CHART_DIR}/e2e-results/hermes"
+agent_common_stop_hpa_timeline "${CHART_DIR}/e2e-results/deepagents"
 if command -v openshell >/dev/null 2>&1; then
   remote_http_stop_e2e_forwards || true
 fi

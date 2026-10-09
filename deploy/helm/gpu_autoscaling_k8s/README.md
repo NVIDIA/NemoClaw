@@ -24,7 +24,7 @@ Kubernetes HPA scales those inference pods using a Pods **`AverageValue`** metri
 
 ## Deployment Architecture
 
-HPA scales to **N** inference pods (1 GPU each). The load balancer is **Envoy** (LeastRequest). Sandboxes reach GPUs at `https://inference.local`. Set install `MAX_REPLICAS` to the GPUs you intend to use (**N**). Load-test with the matching script in [Simple HPA only test (optional)](#simple-hpa-only-test-optional).
+HPA scales to **N** inference pods (1 GPU each). The load balancer is **Envoy** (LeastRequest). Sandboxes reach GPUs at `https://inference.local`. Set install `MAX_REPLICAS` to the GPUs you intend to use (**N**). Load-test with the matching script in [Simple HPA-only test (optional)](#simple-hpa-only-test-optional).
 
 Each GPU pod is **2/2 Ready** when healthy: inference (`ollama` / `vllm` / `nim`) + `metrics-proxy` (auth, `/v1`, health, `/metrics`). Metrics-proxy, HPA, and the Envoy load balancer stay the same. Official pairings: [6a OpenClaw + Ollama](#6a-openclaw--ollama), [6b Hermes + vLLM](#6b-hermes--vllm), [6c Deep Agents + NIM](#6c-deep-agents-code--nim).
 
@@ -50,7 +50,7 @@ HPA (GPU util >40% or latency >3000 ms)
 
 The chart generates a local inference API key (Bearer on `/v1`). OpenShell injects it for the sandbox. It is not an Ollama pull key, OpenAI key, or `NVIDIA_API_KEY`.
 
-`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. The gauge averages samples from the last 30s so HPA can leave 8 GPUs while chats continue. After 60s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
+`latency_avg` is metrics-proxy **chat/completions duration** on that pod (in-pod fetch until the full response, including streams). It excludes client→Envoy time. The gauge averages samples from the last 30s so HPA can leave 8 GPUs while chats continue. After 15s with no samples the gauge resets to 0 so HPA can scale down. `get-hpa.sh` prints milliseconds (`46514/3000` = 46514 ms / 3000 ms).
 
 ## Prerequisites
 
@@ -99,7 +99,8 @@ Skip this if `kubectl get gatewayclass eg` succeeds. The e2e scripts update the 
 
 ```bash
 # MicroK8s GPU addon: DCGM_NAMESPACE=gpu-operator-resources
-DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 ALLOW_INSECURE_HTTP=1 \
+# Helm GPU Operator: DCGM_NAMESPACE=gpu-operator
+DCGM_NAMESPACE=gpu-operator-resources MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 ALLOW_INSECURE_HTTP=1 \
   ./scripts/install-hpa.sh
 kubectl get gatewayclass eg
 ```
@@ -152,8 +153,9 @@ Validation is on DGX 8× H100 (80 GB) on-prem. The DGX H100 demo uses 5 end user
 #### 6a. OpenClaw + Ollama
 
 - `AGENT_SANDBOX_CPU` **1**, `AGENT_SANDBOX_MEMORY` **8Gi** (1Gi, 2Gi, and 4Gi OOM-kill OpenClaw before `:18789` binds)
-- inflight **1** per sandbox (one agent per sandbox)
-- Same `client.sh` for both HPA metrics. GPU util does not take `MAX_TOKENS` (built-in **16384**, applied on the live OpenClaw gateway). It uses **two in-flight chats** on the one OpenClaw per sandbox so 1→8 can clear 7 H100s. Latency uses `MAX_TOKENS=64 ./scripts/client.sh` and inflight **1**. After 8 GPUs the client holds **60s**, then stops. Client stop kills leftover in-sandbox helpers, drops in-flight OpenClaw completions, and restarts an idle gateway so GPUs do not keep scaling with no client. The client does not copy a load helper into the sandbox.
+- One OpenClaw agent per sandbox (one sandbox per user)
+- inflight = concurrent chats per user on that one agent. GPU util uses **3**. Latency uses **1**.
+- Same `client.sh` for both HPA metrics. GPU util does not take `MAX_TOKENS` (built-in **4096**, applied on the live OpenClaw gateway). Latency uses `MAX_TOKENS=64 ./scripts/client.sh`. After 8 GPUs the client holds **60s**, then stops. Client stop kills leftover in-sandbox helpers, drops in-flight OpenClaw completions, and restarts an idle gateway so GPUs do not keep scaling with no client. The client does not copy a load helper into the sandbox.
 
 Agent sandboxes can run on a **different CPU node** with more memory. Keep GPU inference on the H100 node. See [FAQ](#agents-and-sandboxes-run-on-cpu--what-limits-how-many-i-can-run).
 
@@ -174,7 +176,7 @@ E2E test: OpenClaw + Ollama
             1 GPU  →  demand rises  →  8 GPUs  →  idle  →  1 GPU
 ```
 
-**GPU util** HPA metric `gpu_utilization_percent`, target 40%. Provision keeps **current** GPUs at **1** replica (`maxReplicas=8`). `client.sh` sends chats; users → sandboxes → Envoy → Ollama. GPU util does not take `MAX_TOKENS` (built-in **16384**, pinned on the live gateway). One OpenClaw per sandbox; **two in-flight chats** (five inflight-1 chats stall at 7 GPUs). The client disables HPA scale-down during the climb so a new 0% GPU cannot bounce the replica count, holds 60s at 8, then resumes scale-down. Client stop kills leftover `e2e-openclaw-load` helpers, drops in-flight OpenClaw completions, and restarts an idle gateway. It does not copy a load helper into the sandbox. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. 
+**GPU util** HPA metric `gpu_utilization_percent`, target 40%. Provision keeps **current** GPUs at **1** replica (`maxReplicas=8`). `client.sh` sends chats; users → sandboxes → Envoy → Ollama. GPU util does not take `MAX_TOKENS` (built-in **4096**, pinned on the live gateway). One OpenClaw per sandbox; **three concurrent chats per user** (five inflight-1 chats stall at 7 GPUs; four chats hung the gateway). The client disables HPA scale-down during the climb so a new 0% GPU cannot bounce the replica count, holds 60s at 8, then resumes scale-down. Client stop kills leftover `e2e-openclaw-load` helpers, drops in-flight OpenClaw completions, and restarts an idle gateway. It does not copy a load helper into the sandbox. kubectl TARGETS like `67500m/40` means **67.5%/40%**. Watch percentages with `get-hpa.sh`. 
 
 ```bash
 cd deploy/helm/gpu_autoscaling_k8s
@@ -260,7 +262,7 @@ export VLLM_IMAGE_PULL_SECRET=ngc-registry
 # export VLLM_HF_TOKEN_SECRET=hf-token   # only if you set HF_TOKEN
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. GPU util does not take `MAX_TOKENS` (built-in **1024**). Override on the latency client only: `MAX_TOKENS=64 ./scripts/client_hermes.sh`. 
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. This DGX demo uses `E2E_USERS=5`, inflight **1** concurrent chat per user, and **4Gi** sandboxes. GPU util does not take `MAX_TOKENS` (built-in **1024**). Override on the latency client only: `MAX_TOKENS=64 ./scripts/client_hermes.sh`. 
 
 ```text
 E2E test: Hermes + vLLM
@@ -358,7 +360,7 @@ export NIM_IMAGE_PULL_SECRET=ngc-registry
 export NIM_NGC_API_KEY_SECRET=nim-ngc-key
 ```
 
-After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1**, and **4Gi** sandboxes. GPU util does not take `MAX_TOKENS` (built-in **2048**). Override on the latency client only: `MAX_TOKENS=64 ./scripts/client_deepagents.sh`.
+After steps 1–5 (`openshell status` Connected, `gatewayclass eg` present). **One OpenShell gateway** for all sandboxes. Clients use `dcode -n` (no per-sandbox Deep Agents listener). This DGX demo uses `E2E_USERS=5`, inflight **1** concurrent chat per user, and **4Gi** sandboxes. GPU util does not take `MAX_TOKENS` (built-in **2048**). Override on the latency client only: `MAX_TOKENS=64 ./scripts/client_deepagents.sh`.
 
 ```text
 E2E test: Deep Agents Code + NIM
@@ -547,7 +549,7 @@ kubectl get --raw \
 
 Other Prometheus → Adapter metrics: extend `monitoring/prometheus-adapter-gpu-values.yaml` and `nemoclaw-gpu.hpaMetric`.
 
-## Simple HPA only test (optional)
+## Simple HPA-only test (optional)
 
 This is the **OpenClaw + Ollama** HPA-only path (same defaults as Quick start 6a: `INFERENCE_RUNTIME=ollama`, `INFERENCE_MODEL=llama3.2:3b`). It only checks that Kubernetes HPA can change GPU pod count from synthetic inference load (`files/load-generator.ts`). It does **not** create OpenClaw sandboxes and does **not** use `client.sh`.
 The HPA-only test has been verified on DGX 8xH100 on-prem `maxReplicas=8`, and [Brev AWS](https://brev.nvidia.com) **4× L40S** (48 GB), `MAX_REPLICAS=4`.
@@ -557,7 +559,9 @@ If you already ran Quick start 4 or the OpenClaw + Ollama e2e (`agentscaling_gpu
 If you did **not** run e2e, install Prometheus, Envoy, and the GPU chart + HPA first (default Ollama / `llama3.2:3b`):
 
 ```bash
-DCGM_NAMESPACE=gpu-operator MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 ALLOW_INSECURE_HTTP=1 \
+# MicroK8s GPU addon: DCGM_NAMESPACE=gpu-operator-resources
+# Helm GPU Operator: DCGM_NAMESPACE=gpu-operator
+DCGM_NAMESPACE=gpu-operator-resources MAX_REPLICAS=8 ENABLE_ENVOY_LB=1 ALLOW_INSECURE_HTTP=1 \
   ./scripts/install-hpa.sh
 ```
 
@@ -606,9 +610,11 @@ A non-empty answer plus the final `OK:` line is a pass. Wording varies; small mo
 
 
 
-**Remote UI test** (from any browser). After [6a](#6a-openclaw--ollama) has the five sandboxes up, open these URLs on the browser. Each user is a **different host port**. You do not type a token. Leave Password empty.
+**Remote UI test** (from any browser). After [6a](#6a-openclaw--ollama) has the five sandboxes up, open these URLs from any remote machine that can reach the DGX. Each user is a **different host port**. You do not type a token. Leave Password empty.
 
-| User | Open this in the browser on your laptop |
+Remote publish binds `0.0.0.0` so any remote machine can reach `dgx-ip:18789`. Restrict that bind to a trusted network. Set `E2E_PUBLISH_BIND=127.0.0.1` on the DGX to keep the ports on the DGX only. Published HTTP does not return gateway tokens. `/u/0` redirects to `/` with no `#token=`.
+
+| User | Open this in a browser on the remote machine |
 |------|-----------------------------------------|
 | 0    | `http://dgx-ip:18789/u/0`               |
 | 1    | `http://dgx-ip:18790/u/0`               |
@@ -623,7 +629,7 @@ Remote laptop UI
 
 ### Hermes simple test
 
-This is the pairing check for Hermes. It is a oneshot through the in-sandbox
+This is the pairing check for Hermes. It is a one-shot through the in-sandbox
 `hermes` binary and on-prem `https://inference.local`. It does **not** open a
 browser, does **not** use `nemohermes launch`, and does **not** need the Hermes
 gateway on `:8642`.
@@ -768,9 +774,9 @@ Shared Prometheus, Adapter, the Envoy load balancer, and Agent Sandbox CRDs are 
 
 ## FAQ
 
-### Can I run the client from my laptop?
+### Can I run the client from another machine?
 
-Yes. Terminal C is a **remote terminal such as your laptop** (`E2E_CLIENT_HOST=dgx-ip` plus `client.sh` / `client_hermes.sh` / `client_deepagents.sh`). A simpler option is the same script from the same DGX in another terminal. The OpenClaw remote laptop UI is [OpenClaw simple test](#openclaw-simple-test). End users do not log into the DGX.
+Yes. Terminal C is any remote machine that can reach the DGX (`E2E_CLIENT_HOST=dgx-ip` plus `client.sh` / `client_hermes.sh` / `client_deepagents.sh`). A simpler option is the same script from the same DGX in another terminal. The OpenClaw remote UI is [OpenClaw simple test](#openclaw-simple-test). End users do not log into the DGX. Published HTTP does not return gateway tokens or API keys.
 
 ### Agents and sandboxes run on CPU — what limits how many I can run?
 
@@ -792,7 +798,7 @@ See the [NVIDIA Grace CPU Superchip](https://www.nvidia.com/en-us/data-center/gr
 
 ### How is LLM latency calculated for HPA?
 
-The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. `nemoclaw_llm_latency_avg_milliseconds` averages samples from the last 30s (no 128-sample cap). Clients keep sending chats for `DURATION_SEC`. After 60s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
+The **metrics-proxy** times the in-pod `chat/completions` fetch until the full response (including streams). That duration is **not** client→Envoy time. `nemoclaw_llm_latency_avg_milliseconds` averages samples from the last 30s (no 128-sample cap). Clients keep sending chats for `DURATION_SEC`. After 15s with no samples the gauge resets to 0 so HPA can scale down. Prometheus scrapes `/metrics`; the adapter exposes the same name; HPA uses Pods `AverageValue` **3000** (milliseconds). `kubectl get hpa` TARGETS like `46514/3000` means 46514 ms vs 3000 ms. GPU-util TARGETS like `20666m/40` are a different metric (`gpu_utilization_percent`). Kubernetes still applies the default **10%** tolerance (`3188/3000` does not scale); see [Kubernetes HPA metrics](#kubernetes-hpa-metrics).
 
 ### What port numbers are used?
 

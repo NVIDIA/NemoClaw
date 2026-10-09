@@ -47,6 +47,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 import e2e_latency_load_ramp as latency_ramp
+import e2e_timeline as timeline
 
 FALLBACK_RE = re.compile(
     r"EMBEDDED FALLBACK|\[agent/embedded\]|fallbackFrom[\": ]+gateway|transport[\": ]+embedded",
@@ -88,7 +89,7 @@ def load_endpoints(path: Path) -> list[dict[str, object]]:
 
 
 def users_from_http_host(host: str, users: int, discovery_port: int) -> list[dict[str, object]]:
-    """Resolve M agents at host:18789+i. Auth is fetched over HTTP; not a user file."""
+    """Resolve M agents at host:18789+i. Discovery never includes gateway tokens."""
     url = f"http://{host}:{discovery_port}/clients"
     try:
         with urllib.request.urlopen(url, timeout=8) as resp:
@@ -564,8 +565,8 @@ async def simulate_user_http(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     if not HELPER_PATH.is_file():
         return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": f"missing {HELPER_PATH}"}
-    if not host or port < 1 or not token:
-        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": "endpoint missing host/port/token"}
+    if not host or port < 1:
+        return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 1, "error": "endpoint missing host/port"}
     await stagger_user_start(user_id, stop_event)
     if stop_event.is_set():
         return {"user_id": user_id, "sandbox": sandbox, "ok": 0, "err": 0, "chats_ok": 0, "chats_err": 0}
@@ -721,6 +722,7 @@ async def run_test(args: argparse.Namespace) -> int:
     ramp_enabled = os.environ.get("E2E_LATENCY_RAMP") != "0"
     ramp_path = Path(os.environ.get("E2E_LATENCY_RAMP_FILE") or str(output_dir / "latency-ramp.json"))
     last_ramp_tokens: object = "unset"
+    last_ramp_inflight: object = "unset"
     if ramp_enabled:
         os.environ["E2E_LATENCY_RAMP"] = "1"
         os.environ["E2E_LATENCY_RAMP_FILE"] = str(ramp_path)
@@ -731,13 +733,14 @@ async def run_test(args: argparse.Namespace) -> int:
         os.environ["E2E_USER_STAGGER_SEC"] = os.environ.get("E2E_USER_STAGGER_SEC") or "0"
         latency_ramp.write_scale_load(start_load, ramp_path)
         last_ramp_tokens = start_tokens
+        last_ramp_inflight = int(start_load.get("inflight") or 1)
         print(
-            f"[load] max_tokens={start_tokens}; stop after hold at {args.target_pods} GPUs",
+            f"[load] max_tokens={start_tokens} inflight={last_ramp_inflight}; stop after hold at {args.target_pods} GPUs",
             flush=True,
         )
 
     async def poll_hpa() -> None:
-        nonlocal max_replicas, reached_target, last_ramp_tokens
+        nonlocal max_replicas, reached_target, last_ramp_tokens, last_ramp_inflight
         at_max_since: float | None = None
         hold_announced = False
         while not stop_load.is_set():
@@ -767,14 +770,22 @@ async def run_test(args: argparse.Namespace) -> int:
                 stop_now, at_max_since = latency_ramp.should_stop_after_hold(
                     bool(load.get("stop")), args.hold_sec, at_max_since, time.monotonic()
                 )
+                live_inflight = int(load.get("inflight") or 1)
                 if stop_now:
                     last_ramp_tokens = tokens
+                    last_ramp_inflight = live_inflight
                     latency_ramp.write_scale_load(load, ramp_path)
                     stop_load.set()
-                elif tokens is not None and tokens != last_ramp_tokens:
+                elif tokens is not None and (
+                    tokens != last_ramp_tokens or live_inflight != last_ramp_inflight
+                ):
                     last_ramp_tokens = tokens
+                    last_ramp_inflight = live_inflight
                     latency_ramp.write_scale_load(load, ramp_path)
-                    print(f"[load] max_tokens={tokens}", flush=True)
+                    print(
+                        f"[load] max_tokens={tokens} inflight={live_inflight}",
+                        flush=True,
+                    )
                 elif bool(load.get("stop")) and not hold_announced:
                     hold_announced = True
                     print(
@@ -787,6 +798,29 @@ async def run_test(args: argparse.Namespace) -> int:
                 continue
 
     poll_task = None if skip_hpa else asyncio.create_task(poll_hpa())
+    client_log = output_dir / "client-timeline.jsonl"
+    client_log.write_text("")
+
+    def write_client_tick() -> None:
+        rows = []
+        for i in range(args.users):
+            log = logs_dir / f"{sandbox_name(args.prefix, i)}.log"
+            ok, err, tok = parse_load_counts(log) if log.is_file() else (0, 0, 0)
+            rows.append({"user": i, "ok": ok, "err": err, "tokens": tok})
+        pinned = last_ramp_tokens if isinstance(last_ramp_tokens, int) else None
+        if pinned is None:
+            try:
+                pinned = int(os.environ.get("MAX_TOKENS") or 0)
+            except ValueError:
+                pinned = 0
+        timeline.write_client(
+            client_log,
+            max_tokens=pinned,
+            inflight=args.inflight_per_user,
+            users=rows,
+        )
+
+    timeline_task = asyncio.create_task(timeline.tick_until(stop_load, write_client_tick))
     user_tasks = [
         asyncio.create_task(
             simulate_user_http(
@@ -829,6 +863,7 @@ async def run_test(args: argparse.Namespace) -> int:
     results = normalized
     if poll_task is not None:
         await poll_task
+    await timeline_task
 
     scale_down_ok = False
     if skip_hpa:
@@ -912,13 +947,13 @@ def main() -> int:
         "--inflight-per-user",
         type=int,
         default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "1")),
-        help="Max concurrent chats per sandbox. Default 1; inflight 2 OOMed dgx-19.",
+        help="Max concurrent chats per user on the one agent in that sandbox.",
     )
     parser.add_argument(
         "--inflight-start",
         type=int,
         default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "1")),
-        help="Bootstrap concurrent chats per sandbox before ramping",
+        help="Bootstrap concurrent chats per user before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
     parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "60")))

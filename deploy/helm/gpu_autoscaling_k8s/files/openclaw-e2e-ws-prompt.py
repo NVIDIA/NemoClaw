@@ -406,13 +406,31 @@ def run_load(prompt: str, timeout: float, token: str) -> int:
     last = time.monotonic()
     last_log = last
     current = start_n
+
+    def ramp_inflight() -> int:
+        ramp = _read_latency_ramp()
+        if ramp is None or ramp.get("stop"):
+            return 0
+        raw = ramp.get("inflight")
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return 0
+        return n if n >= 1 else 0
+
     while time.monotonic() < deadline and not stop.is_set():
         now = time.monotonic()
-        if now - last >= interval and current < max_n:
+        want = current
+        ramp_n = ramp_inflight()
+        if ramp_n > want:
+            want = ramp_n
+        elif now - last >= interval and current < max_n:
             add = max(1, int(current * factor))
-            current = min(max_n, current + add)
-            spawn_upto(current)
+            want = min(max_n, current + add)
             last = now
+        if want > current:
+            current = want
+            spawn_upto(current)
             print(f"[load] escalate inflight={current} ok={ok} err={err} tokens={tokens}", flush=True)
         if now - last_log >= 15:
             print(f"[load] inflight={current} ok={ok} err={err} tokens={tokens}", flush=True)

@@ -61,13 +61,17 @@ if [[ -n "${E2E_CLIENT_HOST}" ]]; then
   echo "Client HTTP: ${E2E_USERS} end users → ${E2E_CLIENT_HOST}:8642 … $((8642 + E2E_USERS - 1))/v1"
   echo "UI (sandbox 0): http://${E2E_CLIENT_HOST}:18789/"
   agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}"
+  mkdir -p "${E2E_OUTPUT_DIR}"
+  agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0
   python3 - "${E2E_CLIENT_HOST}" "${E2E_USERS}" "${DURATION_SEC}" "${E2E_PROMPT_TIMEOUT_SEC}" "${MAX_TOKENS}" "${TARGET_PODS}" "${SCRIPT_DIR}" <<'PY'
-import json, os, sys, time, urllib.error, urllib.request
+import json, os, sys, threading, time, urllib.error, urllib.request
+from pathlib import Path
 host, users, duration, timeout, max_tokens, target = (
     sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
 )
 sys.path.insert(0, sys.argv[7])
 import e2e_latency_load_ramp as ramp
+import e2e_timeline as timeline
 discovery = int(os.environ.get("E2E_DISCOVERY_PORT", "18788"))
 deadline = time.monotonic() + duration
 failed = 0
@@ -102,6 +106,11 @@ def hpa_status():
     except Exception:
         return 0, 0, ""
 
+def user_token(uid):
+    specific = (os.environ.get(f"E2E_HERMES_API_KEY_{uid}") or "").strip()
+    if specific:
+        return specific
+    return (os.environ.get("E2E_HERMES_API_KEY") or os.environ.get("API_SERVER_KEY") or "").strip()
 current, desired, metric = hpa_status()
 use_ramp = os.environ.get("E2E_LATENCY_RAMP") != "0"
 last = "unset"
@@ -120,55 +129,99 @@ prompts = ramp.prompt_for_tokens(max_tokens, "hermes") if use_ramp else (
 
 ok = err = 0
 turn = 0
+ok_by = [0] * users
+err_by = [0] * users
+tok_by = [0] * users
+client_log = Path(os.environ.get("E2E_OUTPUT_DIR") or ".") / "client-timeline.jsonl"
+client_log.parent.mkdir(parents=True, exist_ok=True)
+client_log.write_text("")
+stop_tl = threading.Event()
+
+def write_ticks():
+    while not stop_tl.is_set():
+        if stop_tl.wait(timeline.seconds_until_next_tick()):
+            break
+        try:
+            timeline.write_client(
+                client_log,
+                max_tokens=max_tokens,
+                inflight=1,
+                users=[
+                    {"user": i, "ok": ok_by[i], "err": err_by[i], "tokens": tok_by[i]}
+                    for i in range(users)
+                ],
+            )
+        except Exception:
+            continue
+
 try:
     hold_sec = float(os.environ.get("MAX_REPLICAS_HOLD_SEC") or "60")
 except ValueError:
     hold_sec = 60.0
 at_max_since = None
 hold_announced = False
-while time.monotonic() < deadline:
-    current, desired, metric = hpa_status()
-    if use_ramp:
-        load = ramp.scale_load(
-            metric, ramp.effective_replicas(current, desired), target=target
-        )
-        tokens = ramp.load_tokens(load)
-        stop_now, at_max_since = ramp.should_stop_after_hold(
-            bool(load.get("stop")), hold_sec, at_max_since, time.monotonic()
-        )
-        if stop_now:
-            break
-        if tokens is not None and tokens != last:
-            last = tokens
-            max_tokens = tokens
-            prompts = ramp.prompt_for_tokens(max_tokens, "hermes")
-            print(f"[load] max_tokens={tokens}", flush=True)
-        elif bool(load.get("stop")) and not hold_announced:
-            hold_announced = True
-            print(f"[load] {target} GPUs — hold {hold_sec:.0f}s then stop", flush=True)
-    for i in range(users):
-        if time.monotonic() >= deadline:
-            break
-        prompt = prompts[turn % len(prompts)]
-        turn += 1
-        req = urllib.request.Request(
-            f"http://{host}:{8642 + i}/v1/chat/completions",
-            data=json.dumps({
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "stream": False,
-            }).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                json.loads(resp.read().decode())
-            ok += 1
-            print(f"[user {i}] ok={ok} err={err}", flush=True)
-        except Exception as exc:
-            err += 1
-            print(f"[user {i}] {exc}", flush=True)
+tick_thread = threading.Thread(target=write_ticks, daemon=True)
+tick_thread.start()
+try:
+    while time.monotonic() < deadline:
+        current, desired, metric = hpa_status()
+        if use_ramp:
+            load = ramp.scale_load(
+                metric, ramp.effective_replicas(current, desired), target=target
+            )
+            tokens = ramp.load_tokens(load)
+            stop_now, at_max_since = ramp.should_stop_after_hold(
+                bool(load.get("stop")), hold_sec, at_max_since, time.monotonic()
+            )
+            if stop_now:
+                break
+            if tokens is not None and tokens != last:
+                last = tokens
+                max_tokens = tokens
+                prompts = ramp.prompt_for_tokens(max_tokens, "hermes")
+                print(f"[load] max_tokens={tokens}", flush=True)
+            elif bool(load.get("stop")) and not hold_announced:
+                hold_announced = True
+                print(f"[load] {target} GPUs — hold {hold_sec:.0f}s then stop", flush=True)
+        for i in range(users):
+            if time.monotonic() >= deadline:
+                break
+            prompt = prompts[turn % len(prompts)]
+            turn += 1
+            headers = {"Content-Type": "application/json"}
+            token = user_token(i)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            req = urllib.request.Request(
+                f"http://{host}:{8642 + i}/v1/chat/completions",
+                data=json.dumps({
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                }).encode(),
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    body = json.loads(resp.read().decode())
+                ntok = 0
+                usage = body.get("usage") if isinstance(body, dict) else None
+                if isinstance(usage, dict):
+                    try:
+                        ntok = int(usage.get("completion_tokens") or usage.get("total_tokens") or 0)
+                    except (TypeError, ValueError):
+                        ntok = 0
+                ok += 1
+                ok_by[i] += 1
+                tok_by[i] += ntok
+                print(f"[user {i}] ok={ok} err={err}", flush=True)
+            except Exception as exc:
+                err += 1
+                err_by[i] += 1
+                print(f"[user {i}] {exc}", flush=True)
+finally:
+    stop_tl.set()
 print(f"[load] done ok={ok} err={err}", flush=True)
 raise SystemExit(0 if ok else 1)
 PY
@@ -225,6 +278,7 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
 done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
+agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
 hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${TARGET_PODS:-8}" \
   || fail "HPA is not 1 current replica; leftover load would scale before chats start"

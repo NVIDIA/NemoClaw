@@ -65,7 +65,7 @@ hpa_common_require_live_runtime "${NAMESPACE}" "${HPA_NAME}" "${INFERENCE_RUNTIM
   || fail "client_deepagents.sh will not send chats until GPU pods are ${INFERENCE_RUNTIME}. Re-run agentscaling_deepagents_* with INFERENCE_RUNTIME=${INFERENCE_RUNTIME}."
 
 export E2E_CLIENT_QUIET_HPA=1
-agent_common_print_laptop_client_usage "client_deepagents.sh"
+echo "Run from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/client_deepagents.sh"
 echo "Client: ${E2E_USERS} end users → ${E2E_USERS} OpenShell sandboxes (1:1 dcode -n)."
 agent_common_print_load_banner "${DURATION_SEC}" "${MAX_REPLICAS_HOLD_SEC}"
 missing=0
@@ -103,6 +103,7 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
 done
 
 mkdir -p "${E2E_OUTPUT_DIR}"
+agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
 hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${TARGET_PODS:-8}" \
   || fail "HPA is not 1 current replica; leftover load would scale before chats start"

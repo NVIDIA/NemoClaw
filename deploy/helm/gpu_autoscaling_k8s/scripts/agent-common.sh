@@ -20,14 +20,14 @@ agent_common_validate() {
 # ../README.md#how-clients-work-6a--6b--6c
 agent_common_print_laptop_client_usage() {
   local script_name="${1:?client script}"
-  echo "Default — remote terminal such as your laptop: E2E_CLIENT_HOST=dgx-ip E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
+  echo "Default — any remote machine: E2E_CLIENT_HOST=dgx-ip E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
   echo "simpler option — from the same DGX in another terminal: E2E_USERS=${E2E_USERS:-5} ./scripts/${script_name}"
 }
 
 # Same client for both HPA metrics. GPU util does not take MAX_TOKENS
-# (OpenClaw 16384, Hermes 1024, Deep Agents 2048). Latency uses MAX_TOKENS
-# (default 64). OpenClaw GPU util uses two in-flight chats on the one
-# agent per sandbox so 1→8 can clear 7 H100s; latency stays inflight 1.
+# (OpenClaw 4096, Hermes 1024, Deep Agents 2048). Latency uses MAX_TOKENS
+# (default 64). OpenClaw GPU util uses three in-flight chats on the one
+# agent per sandbox so 1→8 stays above the HPA target; latency stays inflight 1.
 # The client holds ~60s at 8 GPUs, then stops.
 agent_common_hpa_metric() {
   local metric="${HPA_METRIC:-}"
@@ -35,6 +35,19 @@ agent_common_hpa_metric() {
     metric="$(kubectl get hpa "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
       -n "${NAMESPACE:-nemoclaw-gpu}" \
       -o jsonpath='{.spec.metrics[0].pods.metric.name}' 2>/dev/null || true)"
+  fi
+  if [[ -z "${metric}" && -n "${E2E_CLIENT_HOST:-}" ]] && command -v python3 >/dev/null 2>&1; then
+    metric="$(python3 -c '
+import json, sys, urllib.request
+host, port = sys.argv[1], sys.argv[2]
+try:
+    with urllib.request.urlopen("http://%s:%s/hpa" % (host, port), timeout=3) as resp:
+        data = json.loads(resp.read().decode())
+    if isinstance(data, dict):
+        print(str(data.get("metric") or ""))
+except Exception:
+    pass
+' "${E2E_CLIENT_HOST}" "${E2E_DISCOVERY_PORT:-18788}" 2>/dev/null || true)"
   fi
   printf '%s\n' "${metric}"
 }
@@ -48,9 +61,20 @@ agent_common_resolve_max_tokens() {
     *latency*)
       raw="${MAX_TOKENS:-${E2E_LATENCY_TOKEN_START:-64}}"
       ;;
+    "")
+      if [[ -n "${MAX_TOKENS:-}" ]]; then
+        raw="${MAX_TOKENS}"
+      else
+        case "${agent}" in
+          openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-4096}" ;;
+          deepagents) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
+          *) raw="${E2E_GPUUTIL_TOKEN_START:-1024}" ;;
+        esac
+      fi
+      ;;
     *)
       case "${agent}" in
-        openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-16384}" ;;
+        openclaw) raw="${E2E_GPUUTIL_TOKEN_START:-4096}" ;;
         deepagents) raw="${E2E_GPUUTIL_TOKEN_START:-2048}" ;;
         *) raw="${E2E_GPUUTIL_TOKEN_START:-1024}" ;;
       esac
@@ -74,30 +98,33 @@ agent_common_export_client_tokens() {
   MAX_TOKENS="$(agent_common_resolve_max_tokens "${agent}")"
   export MAX_TOKENS
   case "${metric}" in
-    *latency*) ;;
+    *latency* | "") ;;
     *) export E2E_GPUUTIL_TOKEN_START="${MAX_TOKENS}" ;;
   esac
 }
 
-# One agent per sandbox. OpenClaw GPU util needs two in-flight chats:
-# five inflight-1 chats stall at 7 GPUs (~40%/40). Do not copy extra
-# helpers into the sandbox to finish 7→8.
+# One agent per sandbox. OpenClaw GPU util needs three in-flight chats:
+# five inflight-1 chats stall at 7 GPUs (~40%/40). Four chats hung the
+# gateway. Do not copy extra helpers into the sandbox to finish 7→8.
 agent_common_export_client_inflight() {
   local agent="${1:-openclaw}"
   local metric
   metric="$(agent_common_hpa_metric)"
   case "${metric}" in
     *latency*)
-      export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
-      export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
+      export E2E_INFLIGHT_START_PER_USER=1
+      export E2E_INFLIGHT_PER_USER=1
       ;;
     *)
       if [[ "${agent}" == "openclaw" ]]; then
-        export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-2}"
-        export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-2}"
+        local gpu_n="${E2E_GPUUTIL_INFLIGHT_MAX:-3}"
+        export E2E_INFLIGHT_START_PER_USER="${gpu_n}"
+        export E2E_INFLIGHT_PER_USER="${gpu_n}"
+        export E2E_GPUUTIL_INFLIGHT_MAX="${gpu_n}"
+        export E2E_PROMPT_TIMEOUT_SEC="${E2E_PROMPT_TIMEOUT_SEC:-120}"
       else
-        export E2E_INFLIGHT_START_PER_USER="${E2E_INFLIGHT_START_PER_USER:-1}"
-        export E2E_INFLIGHT_PER_USER="${E2E_INFLIGHT_PER_USER:-1}"
+        export E2E_INFLIGHT_START_PER_USER=1
+        export E2E_INFLIGHT_PER_USER=1
       fi
       ;;
   esac
@@ -122,6 +149,58 @@ agent_common_fail_openshell_for_client() {
   echo "ERROR: $*. From a laptop use HTTP, not SSH:" >&2
   echo "  E2E_CLIENT_HOST=dgx-ip E2E_USERS=${E2E_USERS:-5} ./scripts/client.sh" >&2
   exit 1
+}
+
+# Silent 2s UTC JSONL animation logs. Client writes client-timeline.jsonl.
+# Provision writes hpa-timeline.jsonl. Join both files on the ts column.
+agent_common_e2e_output_dir() {
+  local agent="${1:-openclaw}"
+  case "${agent}" in
+    hermes) printf '%s' "${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/hermes}" ;;
+    deepagents) printf '%s' "${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/deepagents}" ;;
+    *) printf '%s' "${E2E_OUTPUT_DIR:-${CHART_DIR}/e2e-results/openclaw-ollama}" ;;
+  esac
+}
+
+agent_common_stop_hpa_timeline() {
+  local dir="${1:?output dir}"
+  local pidfile="${dir}/hpa-timeline.pid"
+  local pid=""
+  if [[ -f "${pidfile}" ]]; then
+    pid="$(cat "${pidfile}" 2>/dev/null || true)"
+    rm -f "${pidfile}"
+  fi
+  if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+    kill "${pid}" >/dev/null 2>&1 || true
+  fi
+}
+
+agent_common_start_hpa_timeline() {
+  local dir="${1:?output dir}"
+  local truncate="${2:-0}"
+  local here pidfile pid
+  local -a extra=()
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  command -v kubectl >/dev/null 2>&1 || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  mkdir -p "${dir}"
+  pidfile="${dir}/hpa-timeline.pid"
+  if [[ -f "${pidfile}" ]]; then
+    pid="$(cat "${pidfile}" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+      return 0
+    fi
+    rm -f "${pidfile}"
+  fi
+  if [[ "${truncate}" == "1" ]]; then
+    extra+=(--truncate)
+  fi
+  nohup python3 "${here}/e2e-hpa-timeline.py" \
+    --output "${dir}/hpa-timeline.jsonl" \
+    --namespace "${NAMESPACE:-nemoclaw-gpu}" \
+    --hpa-name "${HPA_NAME:-nemoclaw-gpu-metrics-proxy}" \
+    "${extra[@]}" >/dev/null 2>&1 &
+  echo $! >"${pidfile}"
 }
 
 # Local-runtime ids this recipe's Helm chart can render (ollama | vllm | nim).
@@ -248,8 +327,8 @@ agent_common_require_sandbox_image_for_agent() {
 agent_common_example_pairings() {
   printf '%s\t%s\t%s\n' \
     openclaw ollama llama3.2:3b \
-    hermes nim nvidia/nemotron-3-nano \
-    deepagents vllm nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
+    hermes vllm nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8 \
+    deepagents nim nvidia/nemotron-3-nano
 }
 
 # Optional pairing-test script for that agent's documented example pairing.
@@ -565,9 +644,8 @@ except subprocess.TimeoutExpired:
     pass  # File pin already landed; SIGHUP reload still applies it.
 ' >/dev/null
   # File watch is off (gateway.reload=off). Hermes applies max_tokens live via
-  # `hermes config set`. Ask OpenClaw to reload with SIGHUP. Do not SIGTERM
-  # `openclaw gateway run`: nemoclaw-start waits on that PID and would exit,
-  # leaving :18789 down.
+  # `hermes config set`. SIGHUP is not enough for OpenClaw: client.sh stops
+  # and starts the gateway after every pin so the new max_tokens is live.
   agent_common_reload_openclaw_gateway "${sandbox_name}"
 }
 

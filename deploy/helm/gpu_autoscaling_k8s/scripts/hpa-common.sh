@@ -1757,13 +1757,10 @@ hpa_common_gpu_helm_upgrade() {
         --set "autoscaling.targetGPUUtilizationPercentage=${gpu_target}"
         --set "autoscaling.targetLatencyMilliseconds=${HPA_TARGET_LATENCY_MS:-5000}"
       )
-      # GPU util: a new 0% GPU must not scale back 3→2→1 during the climb.
-      # Latency keeps the chart 60s window so 8→1 stays short.
-      case "${HPA_METRIC:-gpu_utilization}" in
-        gpu | gpu_utilization)
-          helm_args+=(--set autoscaling.behavior.scaleDown.stabilizationWindowSeconds=120)
-          ;;
-      esac
+      # GPU util and latency both use the chart 60s scale-down window so
+      # 8→1 is about two minutes after the 60s sit-at-8 hold. The client
+      # pauses scale-down during the GPU-util climb so a new 0% GPU cannot
+      # bounce 3→2.
       ;;
     0)
       helm_args+=(
@@ -2069,6 +2066,55 @@ hpa_common_resume_hpa_scale_down() {
   kubectl patch hpa "${hpa}" -n "${ns}" --type=json \
     -p '[{"op":"remove","path":"/spec/behavior/scaleDown/selectPolicy"}]' \
     >/dev/null 2>&1 || true
+}
+
+# DCGM peak window in Prometheus Adapter. 90s during GPU-util climb; 15s after
+# the client stops so 8→1 can start instead of sitting on a sticky peak.
+# Exit 2 from the editor means the query already matches: do not restart
+# prometheus-adapter, or 1→8 waits on a metrics blackout.
+hpa_common_set_dcgm_peak_window() {
+  local secs="${1:?seconds}"
+  local ns="${MONITORING_NS:-monitoring}"
+  local rc=0
+  python3 - "${ns}" "${secs}" <<'PY' || rc=$?
+import json, subprocess, sys
+ns, secs = sys.argv[1], sys.argv[2]
+query = (
+    "avg(max_over_time(<<.Series>>{<<.LabelMatchers>>}["
+    + secs
+    + "s])) by (<<.GroupBy>>)"
+)
+raw = subprocess.check_output(["kubectl", "get", "cm", "prometheus-adapter", "-n", ns, "-o", "json"])
+cm = json.loads(raw)
+data = cm.get("data") or {}
+key = "config.yaml" if "config.yaml" in data else "config.yml"
+text = data[key]
+marker = "max_over_time(<<.Series>>{<<.LabelMatchers>>}"
+idx = text.find(marker)
+if idx < 0:
+    idx = text.find("max_over_time(")
+if idx < 0:
+    sys.exit(1)
+line_start = text.rfind("\n", 0, idx) + 1
+line_end = text.find("\n", idx)
+if line_end < 0:
+    line_end = len(text)
+prefix = text[line_start:idx]
+indent = prefix.split("metricsQuery:", 1)[0] if "metricsQuery:" in prefix else prefix
+new_line = f"{indent}metricsQuery: {query}"
+old_line = text[line_start:line_end]
+if old_line.strip() == new_line.strip():
+    sys.exit(2)
+cm["data"][key] = text[:line_start] + new_line + text[line_end:]
+subprocess.run(["kubectl", "apply", "-f", "-"], input=json.dumps(cm).encode(), check=True, stdout=subprocess.DEVNULL)
+PY
+  if ((rc == 2)); then
+    return 0
+  fi
+  if ((rc != 0)); then
+    return "${rc}"
+  fi
+  kubectl rollout restart "deploy/prometheus-adapter" -n "${ns}" >/dev/null
 }
 
 # Let generators stop sending and finish in-flight chats instead of deleting the

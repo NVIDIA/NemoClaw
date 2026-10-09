@@ -155,7 +155,7 @@ remote_http_start_forward() {
   local target_port="${2:?target}"
   local local_port="${3:?local}"
   local log="${4:?log}"
-  local bind="${5:-0.0.0.0}"
+  local bind="${5:-${E2E_PUBLISH_BIND:-127.0.0.1}}"
   remote_http_stop_port "${local_port}"
   mkdir -p "$(dirname "${log}")"
   nohup openshell forward service "${name}" \
@@ -173,23 +173,33 @@ remote_http_stop_ui_shortcut() {
     kill "$(cat "${pidfile}")" >/dev/null 2>&1 || true
     rm -f "${pidfile}"
   fi
+  rm -f "${pidfile%.pid}.token"
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${port}/tcp" >/dev/null 2>&1 || true
   fi
 }
 
-# Public :18789+i — GET /u/0 adds #token=; other paths go to OpenClaw.
+# Public :18789+i — GET /u/0 redirects to / with no token. The gateway
+# token stays in a 0600 file on this host and is injected on the backend hop.
 remote_http_start_ui_shortcut() {
   local public_port="${1:?public}"
   local backend_port="${2:?backend}"
   local token="${3:?token}"
   local log="${4:?log}"
-  local script pidfile
+  local script pidfile token_file
   script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/files/e2e-openclaw-ui-shortcut.py"
   pidfile="${log}.pid"
+  token_file="${log}.token"
   remote_http_stop_ui_shortcut "${pidfile}" "${public_port}"
   mkdir -p "$(dirname "${log}")"
-  nohup python3 "${script}" "${public_port}" 127.0.0.1 "${backend_port}" "${token}" \
+  local old_umask
+  old_umask="$(umask)"
+  umask 077
+  printf '%s' "${token}" >"${token_file}"
+  umask "${old_umask}"
+  chmod 600 "${token_file}"
+  nohup env E2E_OPENCLAW_GATEWAY_TOKEN_FILE="${token_file}" \
+    python3 "${script}" "${public_port}" 127.0.0.1 "${backend_port}" \
     >>"${log}" 2>&1 &
   echo $! >"${pidfile}"
 }
@@ -359,7 +369,10 @@ remote_http_restart_openclaw() {
   return 1
 }
 
-# OpenClaw: one Control UI per user (own host port + token). CLI uses the same ports.
+# OpenClaw: one Control UI per user (own host port). CLI uses the same ports.
+# This publish path is the remote-host opt-in, so public ports bind 0.0.0.0
+# unless E2E_PUBLISH_BIND is set. Inner OpenClaw forwards stay on 127.0.0.1.
+# Published HTTP does not include gateway tokens.
 remote_http_publish_openclaw() {
   local count="${1:?count}"
   local prefix="${2:?prefix}"
@@ -367,6 +380,7 @@ remote_http_publish_openclaw() {
   local host port name token i
   local -a users_json=()
   local restart_ui=0
+  export E2E_PUBLISH_BIND="${E2E_PUBLISH_BIND:-0.0.0.0}"
   remote_http_load_optional_secrets
   host="$(remote_http_advertise_host)"
   for ((i = 0; i < count; i += 1)); do
@@ -419,10 +433,9 @@ print(json.dumps({
   "cli_url": sys.argv[4],
   "ws_host": sys.argv[5],
   "ws_port": int(sys.argv[6]),
-  "token": sys.argv[7],
 }))
 ' "${i}" "${name}" "http://${host}:${port}/u/0" \
-      "http://${host}:${port}" "${host}" "${port}" "${token}")")
+      "http://${host}:${port}" "${host}" "${port}")")
   done
   mkdir -p "$(dirname "${out}")"
   python3 -c '
@@ -440,14 +453,14 @@ remote_http_publish_hermes() {
   local count="${1:?count}"
   local prefix="${2:?prefix}"
   local out="${3:?json}"
-  local host dash_port api_port name token i
+  local host dash_port api_port name i
   local -a users_json=()
+  export E2E_PUBLISH_BIND="${E2E_PUBLISH_BIND:-0.0.0.0}"
   host="$(remote_http_advertise_host)"
   for ((i = 0; i < count; i += 1)); do
     name="$(printf '%s%04d' "${prefix}" "${i}")"
     dash_port=$((18789 + i))
     api_port=$((8642 + i))
-    token="$(remote_http_hermes_token "${name}")" || token=""
     remote_http_start_forward "${name}" 18789 "${dash_port}" \
       "${out%.json}-ui-${name}.log"
     remote_http_start_forward "${name}" 8642 "${api_port}" \
@@ -466,10 +479,9 @@ print(json.dumps({
   "api_url": sys.argv[4],
   "host": sys.argv[5],
   "api_port": int(sys.argv[6]),
-  "token": sys.argv[7],
 }))
 ' "${i}" "${name}" "http://${host}:${dash_port}/" \
-      "http://${host}:${api_port}/v1" "${host}" "${api_port}" "${token}")")
+      "http://${host}:${api_port}/v1" "${host}" "${api_port}")")
   done
   mkdir -p "$(dirname "${out}")"
   python3 -c '

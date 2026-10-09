@@ -149,10 +149,15 @@ agentscaling_hermes_common_main() {
   esac
   "${SCRIPT_DIR}/setup-hermes-vllm-e2e-sandboxes.sh" "${cmd}"
   case "${cmd}" in
-    stop | cleanup | layout | refresh-inference) ;;
+    stop | cleanup)
+      agent_common_stop_hpa_timeline "$(agent_common_e2e_output_dir hermes)"
+      ;;
+    layout | refresh-inference) ;;
     *)
       hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${MAX_REPLICAS}" \
         || agentscaling_hermes_common_fail "HPA is not 1 current replica after sandbox bringup; leftover load would scale before client_hermes.sh"
+      agent_common_stop_hpa_timeline "$(agent_common_e2e_output_dir hermes)"
+      agent_common_start_hpa_timeline "$(agent_common_e2e_output_dir hermes)" 1
       ;;
   esac
 }

@@ -42,6 +42,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 import e2e_latency_load_ramp as latency_ramp
+import e2e_timeline as timeline
 
 RAMP_STATE: dict[str, object] = {"enabled": False, "tokens": 2048, "stop": False}
 
@@ -321,6 +322,7 @@ async def simulate_user(
             )
             last_log = now
         log_handle.flush()
+        timeline.note_user(user_id, ok, err, tokens)
         pause = _chat_pause_sec()
         if pause > 0 and not stop_event.is_set():
             try:
@@ -451,6 +453,20 @@ async def run_test(args: argparse.Namespace) -> int:
                 continue
 
     poll_task = asyncio.create_task(poll_hpa())
+    timeline.reset_counts()
+    client_log = output_dir / "client-timeline.jsonl"
+    client_log.write_text("")
+
+    def write_client_tick() -> None:
+        pinned = last_ramp_tokens if isinstance(last_ramp_tokens, int) else int(RAMP_STATE.get("tokens") or 0)
+        timeline.write_client(
+            client_log,
+            max_tokens=pinned,
+            inflight=args.inflight_per_user,
+            users=timeline.rows_for_users(args.users),
+        )
+
+    timeline_task = asyncio.create_task(timeline.tick_until(stop_load, write_client_tick))
     user_tasks = [
         asyncio.create_task(
             simulate_user(
@@ -490,6 +506,7 @@ async def run_test(args: argparse.Namespace) -> int:
             normalized.append({"error": str(item), "ok": 0, "err": 1})
     results = normalized
     await poll_task
+    await timeline_task
 
     scale_down_ok = False
     for _ in range(args.scale_down_wait_loops):
@@ -559,13 +576,13 @@ def main() -> int:
         "--inflight-per-user",
         type=int,
         default=int(os.environ.get("E2E_INFLIGHT_PER_USER", "1")),
-        help="Max concurrent dcode -n prompts per sandbox. Default 1; inflight 2 OOMed dgx-19.",
+        help="Max concurrent chats per user on the one agent in that sandbox.",
     )
     parser.add_argument(
         "--inflight-start",
         type=int,
         default=int(os.environ.get("E2E_INFLIGHT_START_PER_USER", "1")),
-        help="Bootstrap concurrent dcode -n prompts per sandbox before ramping",
+        help="Bootstrap concurrent chats per user before ramping",
     )
     parser.add_argument("--target-pods", type=int, default=int(os.environ.get("TARGET_PODS", "8")))
     parser.add_argument("--hold-sec", type=float, default=float(os.environ.get("MAX_REPLICAS_HOLD_SEC", "60")))

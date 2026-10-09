@@ -335,14 +335,14 @@ autoscaling:
           periodSeconds: 10
       selectPolicy: Max
     scaleDown:
-      # One pod per step (N→…→1). 60s window keeps max replicas visible for ~1–2 min
-      # after latency drops; 15s period so 8→1 is about two minutes, not ~3.5.
+      # One pod per step (N→…→1). 60s window keeps max replicas visible for ~1 min
+      # after the metric drops; 10s period so 8→1 is about two minutes.
       # Avoid Percent policies with selectPolicy Max — e.g. 50% jumps 4→2.
       stabilizationWindowSeconds: 60
       policies:
         - type: Pods
           value: 1
-          periodSeconds: 15
+          periodSeconds: 10
       selectPolicy: Max
 
 metrics:
@@ -354,7 +354,7 @@ metrics:
   # Clear latency_avg after this idle period so latency HPA can scale down.
   # Does not cancel in-flight inference. Clients keep sending chats.
   # The HPA gauge averages samples in llmLatencyWindowMs (no 128-sample cap).
-  llmLatencyIdleExpireMs: 60000
+  llmLatencyIdleExpireMs: 15000
   # Drop older samples so HPA follows current latency at 8 GPUs while chats continue.
   llmLatencyWindowMs: 30000
   serviceMonitor:

@@ -265,7 +265,7 @@ if not isinstance(recipe_rules, list):
 
 merged = []
 seen = set()
-for rule in existing_rules + recipe_rules:
+for rule in recipe_rules + existing_rules:
     as_name = rule_as(rule)
     if as_name:
         if as_name in seen:

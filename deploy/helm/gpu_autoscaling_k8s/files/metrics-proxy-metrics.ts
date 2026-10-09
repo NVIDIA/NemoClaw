@@ -48,7 +48,10 @@ function pruneHpaSamples(nowMs = nowMsProvider()) {
     }
   }
   if (LLM_LATENCY_WINDOW_MS > 0) {
-    hpaSamples = hpaSamples.filter((sample) => nowMs - sample.atMs <= LLM_LATENCY_WINDOW_MS);
+    // Age samples from the newest completion, not wall-clock now, so a slow
+    // in-flight reply cannot empty the gauge before idle expire applies.
+    const newestMs = lastLlmSampleAtMs || nowMs;
+    hpaSamples = hpaSamples.filter((sample) => newestMs - sample.atMs <= LLM_LATENCY_WINDOW_MS);
   }
 }
 

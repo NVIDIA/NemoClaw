@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Same client.sh load for both HPA metrics.
 
-GPU util does not take MAX_TOKENS (OpenClaw built-in 16384). Latency uses
-MAX_TOKENS (default 64). OpenClaw GPU util uses two in-flight chats so 1→8
-can clear 7 H100s. Tokens stay at that pin until 8 GPUs; the client then
-holds and stops. A failed HPA poll (0/0) is treated as 1 GPU, never as 8.
+GPU util does not take MAX_TOKENS (OpenClaw built-in 4096). Latency uses
+MAX_TOKENS (default 64). OpenClaw GPU util uses three in-flight chats so 1→8
+can keep new 0% GPUs from diluting the HPA average. Four chats hung the
+gateway; 16384-token chats left inflight slots stuck while GPUs went idle.
+Tokens stay at that pin until 8 GPUs; the client then holds and stops. A
+failed HPA poll (0/0) is treated as 1 GPU, never as 8.
 """
 
 from __future__ import annotations
@@ -17,7 +19,8 @@ from pathlib import Path
 
 DEFAULT_START = 64
 SHORT_PROMPT_AT = 128
-DEFAULT_GPUUTIL_TOKENS = 16384
+DEFAULT_GPUUTIL_TOKENS = 4096
+DEFAULT_GPUUTIL_INFLIGHT = 3
 DEFAULT_TARGET = 8
 DEFAULT_HOLD_SEC = 60.0
 GPUUTIL_INFLIGHT_2_AT = 1
@@ -85,12 +88,12 @@ def latency_tokens_for_replicas(
 
 def gpuutil_inflight_for_replicas(replicas: int) -> int:
     """Concurrent chats per user on the one agent in that sandbox."""
-    inflight_max = env_int("E2E_GPUUTIL_INFLIGHT_MAX", 2)
+    inflight_max = env_int("E2E_GPUUTIL_INFLIGHT_MAX", DEFAULT_GPUUTIL_INFLIGHT)
     if inflight_max < 1:
         inflight_max = 1
     two_at = env_int("E2E_GPUUTIL_INFLIGHT_2_AT", GPUUTIL_INFLIGHT_2_AT)
-    if replicas >= two_at and inflight_max >= 2:
-        return min(2, inflight_max)
+    if replicas >= two_at:
+        return inflight_max
     return 1
 
 

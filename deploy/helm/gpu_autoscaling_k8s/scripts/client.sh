@@ -20,7 +20,7 @@
 # Both paths send chat.send from this client to published :18789+i.
 # They do not copy a load helper into the sandbox.
 # Same client for both HPA metrics. GPU util does not take MAX_TOKENS
-# (built-in 16384) and uses two in-flight chats on the one OpenClaw per
+# (built-in 4096) and uses three in-flight chats on the one OpenClaw per
 # sandbox. Latency: MAX_TOKENS=64 ./scripts/client.sh (inflight 1).
 
 set -euo pipefail
@@ -90,9 +90,10 @@ if failed:
     raise SystemExit("client will not send chat until every http://dgx-ip:18789+i/health answers")
 print(f"UI (one port per user): http://{host}:18789/u/0 … :{18789 + users - 1}/u/0")
 PY
-  mkdir -p "${E2E_OUTPUT_DIR}"
-  cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
-  exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
+mkdir -p "${E2E_OUTPUT_DIR}"
+agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0
+cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
+exec python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
     --users "${E2E_USERS}" \
     --prefix "${SANDBOX_PREFIX}" \
     --output "${E2E_OUTPUT_DIR}" \
@@ -156,11 +157,20 @@ for ((i = 0; i < E2E_USERS; i += 1)); do
   agent_common_pin_openclaw_max_tokens "${name}" \
     || fail "could not pin max_tokens on sandbox ${i}"
 done
-echo "Waiting for :18789 after gateway reload"
+# gateway.reload=off: SIGHUP does not apply max_tokens. Restart the process
+# so 4096 is live before chats start. A file-only pin left the previous
+# latency 64-token gateway running and GPU util stayed bursty.
+echo "Restarting OpenClaw so max_tokens=${MAX_TOKENS} is live"
+"${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" stop \
+  || fail "could not stop OpenClaw after max_tokens pin"
+SKIP_WAIT_INFERENCE_LOCAL=1 "${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" start \
+  || fail "could not restart OpenClaw after max_tokens pin"
+echo "Waiting for :18789 after OpenClaw restart"
 agent_common_wait_published_openclaw_health "${E2E_USERS}" \
   || fail "OpenClaw did not come back on :18789 after max_tokens pin"
 
 mkdir -p "${E2E_OUTPUT_DIR}"
+agent_common_start_hpa_timeline "${E2E_OUTPUT_DIR}" 0
 cd "${CHART_DIR}" || fail "cannot cd to ${CHART_DIR}"
 hpa_common_hold_hpa_until_client "${NAMESPACE}" "${HPA_NAME}" "${HPA_NAME}" "${TARGET_PODS:-8}" \
   || fail "HPA is not 1 current replica; leftover load would scale before chats start"
@@ -170,10 +180,35 @@ hpa_common_arm_hpa_for_client "${NAMESPACE}" "${HPA_NAME}" "${TARGET_PODS:-8}"
 _hpa_metric="$(agent_common_hpa_metric)"
 case "${_hpa_metric}" in
   *gpu_utilization* | gpu)
+    hpa_common_set_dcgm_peak_window 90 || true
     hpa_common_pause_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}"
-    trap 'hpa_common_resume_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}"' EXIT
     ;;
 esac
+_client_load_started=0
+_client_finish() {
+  hpa_common_resume_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}" || true
+  case "${_hpa_metric:-}" in
+    *gpu_utilization* | gpu)
+      hpa_common_set_dcgm_peak_window 15 || true
+      ;;
+  esac
+  if [[ "${_client_load_started}" != "1" ]]; then
+    return 0
+  fi
+  # Drop leftover OpenClaw→Ollama work. Closing the client WS does not
+  # abort stream=false completions. Do not pin maxReplicas=1: HPA must
+  # walk 8→1 in about two minutes after the 60s sit-at-8 hold.
+  echo "Restarting idle OpenClaw so leftover chats cannot keep GPUs busy"
+  # Stop first: start reuses a healthy gateway and would leave Ollama running.
+  # Skip inference.local pings so this restart does not generate GPU load.
+  "${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" stop \
+    || echo "WARNING: could not stop OpenClaw after load" >&2
+  SKIP_WAIT_INFERENCE_LOCAL=1 "${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" start \
+    || echo "WARNING: could not restart OpenClaw after load; leftover chats may keep GPUs busy" >&2
+}
+trap '_client_finish' EXIT
+_client_load_started=1
+load_rc=0
 python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --users "${E2E_USERS}" \
   --prefix "${SANDBOX_PREFIX}" \
@@ -187,30 +222,5 @@ python3 "${SCRIPT_DIR}/e2e-openclaw-ollama-load-test.py" \
   --hpa-name "${HPA_NAME}" \
   --scale-down-wait-loops 0 \
   --host 127.0.0.1 \
-  --chat-only
-# Drop leftover OpenClaw→Ollama work, then bring :18789 back idle.
-# Closing the client WS does not abort stream=false completions.
-# Pin HPA at 1 before start: OpenClaw inference probes would otherwise
-# scale GPUs with no client.
-echo "Restarting idle OpenClaw so leftover chats cannot keep GPUs busy"
-hpa_common_resume_hpa_scale_down "${NAMESPACE}" "${HPA_NAME}"
-"${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" stop \
-  || true
-kubectl patch hpa "${HPA_NAME}" -n "${NAMESPACE}" --type merge --field-manager=helm \
-  -p '{"spec":{"minReplicas":1,"maxReplicas":1}}' >/dev/null || true
-kubectl scale "deploy/${HPA_NAME}" -n "${NAMESPACE}" --replicas=1 >/dev/null 2>&1 || true
-"${SCRIPT_DIR}/setup-openclaw-ollama-e2e-sandboxes.sh" start \
-  || echo "WARNING: could not restart OpenClaw after load; leftover chats may keep GPUs busy" >&2
-# Wait until DCGM peak window is idle before maxReplicas=8. OpenClaw start
-# probes inference.local; a sticky 90s peak would scale with no client.
-idle_wait=0
-while ((idle_wait < 100)); do
-  tgt="$(kubectl get hpa "${HPA_NAME}" -n "${NAMESPACE}" -o jsonpath='{.status.currentMetrics[0].pods.current.averageValue}' 2>/dev/null || true)"
-  case "${tgt}" in
-    "" | 0 | 0% | 0m) break ;;
-  esac
-  sleep 5
-  idle_wait=$((idle_wait + 5))
-done
-kubectl patch hpa "${HPA_NAME}" -n "${NAMESPACE}" --type merge --field-manager=helm \
-  -p "{\"spec\":{\"minReplicas\":1,\"maxReplicas\":${TARGET_PODS:-8}}}" >/dev/null || true
+  --chat-only || load_rc=$?
+exit "${load_rc}"

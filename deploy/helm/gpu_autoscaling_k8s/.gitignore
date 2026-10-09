@@ -10,4 +10,10 @@ secrets.env
 .tools-openshell/
 
 # Multi-user sandbox e2e output (HPA CSV, per-sandbox saturator logs).
+# Animation JSONL (client-timeline.jsonl, hpa-timeline.jsonl) stays on the
+# DGX. Do not commit or upload it.
 e2e-results/
+client-timeline.jsonl
+hpa-timeline.jsonl
+hpa-timeline.pid
+*.token
