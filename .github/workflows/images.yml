@@ -6,14 +6,6 @@ on:
     branches: [v1]
   push:
     branches: [v1]
-    paths:
-      - image/**
-      - crates/nemoclaw-ollama-proxy/**
-      - Cargo.lock
-      - docker-bake.hcl
-      - .dockerignore
-      - ruff.toml
-      - .github/workflows/images.yml
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,22 +33,51 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The second commit is a pull request merge commit's base.
+          fetch-depth: 2
+      # Required checks still report when the image steps are skipped. See
+      # docs/contributing/testing.md for what the decision considers.
+      - name: Decide whether this change can affect the images
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            push) base=$BEFORE ;;
+            *) base= ;;
+          esac
+          # A manual run or a new branch has no base; run everything.
+          if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ]; then
+            echo images=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # If the base cannot be fetched, the analysis fails and prints images=true.
+          git fetch --no-tags --depth=1 origin "$base" || true
+          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+            changes images --base "$base" >> "$GITHUB_OUTPUT"
       - name: Validate image selection and Dockerfile instructions
+        if: steps.changes.outputs.images == 'true'
         run: |
           cargo test --locked -p nemoclaw-build --no-default-features --target-dir target/ci-runner --test integration bake::
           docker buildx bake --check dummy agents ollama-proxy
       # cargo images builds the tool without the SDK, so the image job needs no protoc.
       - name: Build and qualify the reference contract image
+        if: steps.changes.outputs.images == 'true'
         run: |
           cargo images build --platform "$AGENT_PLATFORM" dummy
           cargo images qualify nc-fabric:dummy --lifecycle dummy --require-ready
       - name: Check packaging and generic Fabric lifecycle
+        if: steps.changes.outputs.images == 'true'
         run: docker buildx bake check
       - name: Build local images with installed Fabric metadata
+        if: steps.changes.outputs.images == 'true'
         run: |
           cargo images build --platform "$AGENT_PLATFORM" agents
           docker buildx bake ollama-proxy --load
       - name: Verify installed discovery and retained source hashes
+        if: steps.changes.outputs.images == 'true'
         run: |
           docker buildx bake --print agents | jq -er '.target | to_entries[] | [.key, .value.tags[0]] | @tsv' > .build-image-list
           test -s .build-image-list
@@ -72,6 +93,7 @@ jobs:
               --entrypoint /opt/fabric/bin/python "$image" -B /test.py
           done < .build-image-list
       - name: Check native reconfiguration and security
+        if: steps.changes.outputs.images == 'true'
         run: |
           native() {
             image=$1 script=$2

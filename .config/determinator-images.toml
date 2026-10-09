@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Which changed files can affect `CI / Images`, read by `nemoclaw-build changes images`.
+# A file inside a crate marks that crate changed; the command then checks whether the
+# image build (nemoclaw-build without default features, and the Ollama proxy) uses it.
+# Any other file outside a crate runs the image checks unless a rule below ignores it.
+# Rules apply in order, before determinator's defaults. Keep them aligned with the
+# .dockerignore allowlist and with files the image commands read at runtime.
+
+# A workspace package under examples/: map it to its package, not the ignore rule below.
+[[path-rule]]
+globs = ["examples/onboarding-tui/**"]
+mark-changed = []
+post-rule = "skip-rules"
+
+# Image build inputs outside crates. determinator ignores .dockerignore and LICENSE by
+# default and recognizes only a toolchain file named rust-toolchain.
+[[path-rule]]
+globs = [
+    "image/**",
+    "docker-bake.hcl",
+    ".dockerignore",
+    "ruff.toml",
+    "LICENSE",
+    "rust-toolchain.toml",
+    ".github/workflows/images.yml",
+]
+mark-changed = "all"
+
+# Outside the image build context, and not read by the image commands or checks.
+[[path-rule]]
+globs = [
+    "docs/**",
+    "fern/**",
+    "examples/**",
+    "runtimes/**",
+    "schemas/**",
+    "tools/**",
+    ".github/**",
+    ".config/**",
+    ".agents/**",
+    ".claude/**",
+    "deny.toml",
+    ".pre-commit-config.yaml",
+    "AGENTS.md",
+    "WRITING.md",
+]
+mark-changed = []
