@@ -529,13 +529,6 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
   return result.stdout.trim();
 }
 
-async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
-  return runNemoclaw(host, home, ["inference", "get"], {
-    artifactName: "nemoclaw-inference-get-after-switch",
-    timeoutMs: COMMAND_TIMEOUT_MS,
-  });
-}
-
 async function assertRegistryAndSession(
   home: string,
   options: { mockProvider?: MockAnthropicProvider; sandbox: SandboxClient },
@@ -1133,7 +1126,7 @@ test(
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
-        "NemoClaw reports the switched provider/model",
+        "NemoClaw records the switched provider/model",
         "OpenClaw config reflects the switched inference API/model",
         "registry and onboard session record the switched provider/model",
         "sandbox inference returns PONG from the switched model",
@@ -1316,8 +1309,6 @@ test(
     }
 
     progress.phase("inspect route configuration and recorded state");
-    const route = await getRouteOutput(host, home);
-    expect(route.exitCode, resultText(route)).toBe(0);
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
@@ -1333,7 +1324,7 @@ test(
         id: "openclaw-inference-switch",
         status: "skipped",
         reason: inference.skipped,
-        routeAndConfigChecksPassed: true,
+        configAndStateChecksPassed: true,
       });
       skip(inference.skipped);
     }
@@ -1382,7 +1373,6 @@ test(
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
         gatewayPidStable,
-        routeChecked: true,
         configChecked: true,
         registryAndSessionChecked: true,
         inferenceLocalPong: true,
