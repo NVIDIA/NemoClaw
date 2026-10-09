@@ -296,10 +296,8 @@ export async function upgradeSandboxes(
   const sandboxes = registry
     .listSandboxes()
     .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox));
-  const { recordTarget, recordUntargeted, verifyTarget, finish } = createUpgradeTelemetry(
-    sandboxes,
-    resolveSandboxGatewayName,
-  );
+  const { recordTarget, recordUntargeted, recordCheckedTargets, verifyTarget, finish } =
+    createUpgradeTelemetry(sandboxes, resolveSandboxGatewayName);
 
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
@@ -616,12 +614,7 @@ export async function upgradeSandboxes(
     // #10211: reached only when stale, unknown, a prepared recovery, or a
     // rejected recovery was found — never the "all up to date" case above.
     // `--check` is read-only, so scripts gate on the exit code.
-    for (const sandbox of sandboxes)
-      recordTarget(
-        sandbox.name,
-        "checked",
-        orphanNames.has(sandbox.name) ? "unavailable" : "unchanged",
-      );
+    recordCheckedTargets(orphanNames);
     setTelemetryOutcome("checked", "unchanged");
     await finishTelemetryOperation(1);
     process.exit(1);
@@ -716,7 +709,7 @@ export async function upgradeSandboxes(
       }
       rebuilt++;
       recoveredNames.add(sandbox.name);
-      if (!verifyTarget(sandbox.name)) unverified++;
+      unverified += Number(!verifyTarget(sandbox.name));
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       const verb = manifest ? "recover" : "rebuild";

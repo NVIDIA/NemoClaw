@@ -76,6 +76,14 @@ export function createUpgradeTelemetry(
         recordTarget(sandbox.name, check ? "checked" : "no_change", "unchanged");
       }
     },
+    recordCheckedTargets(unavailable: ReadonlySet<string>): void {
+      for (const sandbox of sandboxes)
+        recordTarget(
+          sandbox.name,
+          "checked",
+          unavailable.has(sandbox.name) ? "unavailable" : "unchanged",
+        );
+    },
     verifyTarget(sandboxName: string): boolean {
       if (!isTelemetryOperationActive()) return true;
       const binding = getTargetBinding(sandboxName);
