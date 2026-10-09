@@ -81,8 +81,9 @@ const SANDBOX_NAMESPACE_LABEL: &str = "openshell.ai/sandbox-namespace";
 /// Selects the OpenShell sandbox objects of a deployment's managed gateway,
 /// named after its workspace.
 fn sandbox_filter(uid: &str) -> String {
-    let workspace = &nemoclaw_build::hex(&Sha256::digest(uid.as_bytes()))[..16];
-    format!("label={SANDBOX_NAMESPACE_LABEL}=nc-{workspace}-gateway")
+    let digest = nemoclaw_build::hex(&Sha256::digest(uid.as_bytes()));
+    let workspace = format!("nc-{}", &digest[..16]);
+    format!("label={SANDBOX_NAMESPACE_LABEL}={workspace}-gateway")
 }
 
 /// Object kinds in removal order: Docker refuses to remove a volume or
@@ -125,24 +126,25 @@ fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> 
     };
     let mut problems = Vec::new();
     for uid in uids {
-        let filters = [sandbox_filter(uid), format!("label={UID_LABEL}={uid}")];
+        let sandbox = sandbox_filter(uid);
+        let owner = format!("label={UID_LABEL}={uid}");
         for (kind, ls, _) in RETAINED {
             problems.extend(
-                list(ls, &filters[0])
+                list(ls, &sandbox)
                     .unwrap_or_default()
                     .into_iter()
                     .map(|id| format!("{kind} {id} left in the sandbox namespace")),
             );
         }
         for (_, ls, rm) in RETAINED {
-            for filter in &filters {
+            for filter in [&sandbox, &owner] {
                 for id in list(ls, filter).unwrap_or_default() {
                     let _ = docker().args(rm).arg(&id).stdout(Stdio::null()).status();
                 }
             }
         }
         for (kind, ls, _) in RETAINED {
-            for filter in &filters {
+            for filter in [&sandbox, &owner] {
                 match list(ls, filter) {
                     Some(ids) => problems.extend(
                         ids.into_iter()
@@ -414,7 +416,7 @@ esac
 
     #[cfg(feature = "sdk")]
     #[test]
-    fn the_sandbox_namespace_is_the_managed_gateway_name() {
+    fn the_sandbox_filter_uses_the_sdk_workspace() {
         let uid = live::uuid().unwrap();
         let document = live::gateway_document(&GatewayInputs {
             name: "live-gateway",
