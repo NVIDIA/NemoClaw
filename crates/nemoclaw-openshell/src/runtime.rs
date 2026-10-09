@@ -7,7 +7,9 @@ use crate::policy::{ExplicitPolicy, PolicyBinary, PolicyRule};
 use nemoclaw_backend::ObservationError;
 use openshell_sdk::raw::proto;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub type ClusterGrants = BTreeMap<String, Vec<String>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,8 +97,56 @@ pub struct RuntimeBinding {
 pub struct PolicyInput {
     pub explicit: Option<ExplicitPolicy>,
     pub managed: BTreeMap<String, PolicyRule>,
+    /// Managed rule names whose exact addresses must come from verified Services.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub cluster_grants: BTreeSet<String>,
 }
 impl RuntimeBinding {
+    /// Resolve only marked Service rules; all other authored policy bytes stay intact.
+    pub fn granted_policy(
+        &self,
+        input: &PolicyInput,
+        grants: &ClusterGrants,
+    ) -> Result<proto::SandboxPolicy, ObservationError> {
+        if input.cluster_grants.len() != grants.len() {
+            return Err(ObservationError::BindingMismatch);
+        }
+        let mut policy = self.policy(input)?;
+        for name in &input.cluster_grants {
+            let addresses = grants.get(name).ok_or(ObservationError::BindingMismatch)?;
+            if addresses.is_empty()
+                || addresses.len() > 2
+                || addresses.iter().collect::<BTreeSet<_>>().len() != addresses.len()
+            {
+                return Err(ObservationError::BindingMismatch);
+            }
+            for address in addresses {
+                let (host, prefix) = address
+                    .split_once('/')
+                    .ok_or(ObservationError::BindingMismatch)?;
+                let ip: std::net::IpAddr = host
+                    .parse()
+                    .map_err(|_| ObservationError::BindingMismatch)?;
+                if prefix != if ip.is_ipv4() { "32" } else { "128" }
+                    || !crate::profile::service_address_allowed(&ip)
+                {
+                    return Err(ObservationError::BindingMismatch);
+                }
+            }
+            if !input.managed.contains_key(name) {
+                return Err(ObservationError::BindingMismatch);
+            }
+            let rule = policy
+                .network_policies
+                .get_mut(name)
+                .ok_or(ObservationError::BindingMismatch)?;
+            if rule.endpoints.len() != 1 || !rule.endpoints[0].allowed_ips.is_empty() {
+                return Err(ObservationError::BindingMismatch);
+            }
+            rule.endpoints[0].allowed_ips.clone_from(addresses);
+        }
+        Ok(policy)
+    }
     pub fn from_json(encoded: &str) -> Result<Self, ObservationError> {
         let binding: Self =
             serde_json::from_str(encoded).map_err(|_| ObservationError::Incomplete)?;

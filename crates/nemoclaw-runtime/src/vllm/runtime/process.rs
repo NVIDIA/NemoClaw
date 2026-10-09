@@ -98,20 +98,16 @@ mod tests {
         let bin = root.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let python = bin.join("python3");
-        // A disposable executable stands in for Python/vLLM and verifies the
-        // process boundary. The readiness fixture independently checks HTTP.
+        // The existing interpreter accepts the production -m argument and
+        // reads the module-named fixture from the child's working directory.
+        // No newly written fixture is executed; inherited writable descriptors
+        // cannot prevent this child from starting.
+        std::os::unix::fs::symlink("/bin/sh", &python).unwrap();
         std::fs::write(
-            &python,
-            "#!/bin/sh\ntest \"$VLLM_API_KEY\" = \"$(/bin/cat \"$TEST_KEY_FILE\")\"\n",
+            root.path().join("vllm.entrypoints.openai.api_server"),
+            "[ \"$1\" = --model ] && [ \"$2\" = \"$TEST_MODEL_DIRECTORY\" ] || exit 1\ntest \"$VLLM_API_KEY\" = \"$(/bin/cat \"$TEST_KEY_FILE\")\"\n",
         )
         .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = std::fs::metadata(&python).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(&python, permissions).unwrap();
-        }
         let prepared = PreparedModel {
             model: root.path().join("model"),
             environment: [
@@ -119,6 +115,10 @@ mod tests {
                 (
                     "TEST_KEY_FILE".into(),
                     root.path().join("inference-key").into_os_string(),
+                ),
+                (
+                    "TEST_MODEL_DIRECTORY".into(),
+                    root.path().join("model").into_os_string(),
                 ),
             ]
             .into(),
@@ -131,6 +131,7 @@ mod tests {
             Some(key.clone()),
         )
         .unwrap();
+        command.command_mut().current_dir(root.path());
         assert!(command.spawn().unwrap().wait().await.unwrap().success());
         assert!(readiness.url.ends_with("/v1/models"));
         let expected = format!("Bearer {key}");

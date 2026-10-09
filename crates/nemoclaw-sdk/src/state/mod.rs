@@ -141,6 +141,7 @@ impl Record {
             && self.runtime_pending
             && self.document.spec.gateway.as_kubernetes().is_some()
             && self.digest != document.digest()
+            && !self.revises_only_model_workloads(document)?
         {
             return Err(Error::Conflict(
                 "unfinished Kubernetes platform apply requires its original configuration and state for recovery",
@@ -160,6 +161,21 @@ impl Record {
             ));
         }
         Ok(())
+    }
+    fn revises_only_model_workloads(&self, document: &Document) -> Result<bool, Error> {
+        let prerequisites = |document: &Document| -> Result<Vec<crate::compile::Target>, Error> {
+            Ok(
+                crate::compile::runtime_targets(document, &self.generations)?
+                    .into_iter()
+                    .filter(|target| target.kind != crate::kubernetes::services::SERVICE_KIND)
+                    .collect(),
+            )
+        };
+        // A failed model rollout may revise disposable compute, but must not
+        // change platform ownership, retained storage, or pending OpenShell intent.
+        Ok(prerequisites(&self.document)? == prerequisites(document)?
+            && crate::compile::targets(&self.document, &self.generations)?
+                == crate::compile::targets(document, &self.generations)?)
     }
     pub fn validate_bound_sandboxes(
         &self,
@@ -433,6 +449,14 @@ impl StateBinding {
 pub(crate) struct Store {
     pub directory: PathBuf,
     _lock: File,
+}
+impl Drop for Store {
+    fn drop(&mut self) {
+        // A concurrently spawned child can retain the shared open file
+        // description until exec. Closing our descriptor alone would then
+        // leave the deployment locked after this operation has finished.
+        let _ = self._lock.unlock();
+    }
 }
 impl Store {
     pub fn open(directory: &Path) -> Result<Self, Error> {

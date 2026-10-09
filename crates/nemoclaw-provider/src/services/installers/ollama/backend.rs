@@ -20,7 +20,7 @@ impl ProxyBackend {
 }
 fn diagnostic(error: &Error) -> ObservationError {
     match error {
-        Error::Observation(error) => *error,
+        Error::Observation(error) => error.clone(),
         Error::State(message) | Error::Conflict(message) => ObservationError::Backend(message),
         Error::PartialRuntime => {
             ObservationError::Backend("Ollama proxy is absent but owned persistent storage remains")

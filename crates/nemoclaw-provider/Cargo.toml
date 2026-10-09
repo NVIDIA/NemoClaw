@@ -13,6 +13,7 @@ name = "integration"
 path = "tests/main.rs"
 
 [dependencies]
+fabric-provider = { path = "../fabric-provider" }
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
@@ -48,7 +49,6 @@ tonic.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
-fabric-provider = { path = "../fabric-provider" }
 prost.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
@@ -62,3 +62,11 @@ workspace = true
 [[bin]]
 name = "terraform-provider-nemoclaw"
 path = "src/main.rs"
+
+[[bin]]
+name = "terraform-provider-nemoclaw-openshell"
+path = "src/openshell_main.rs"
+
+[[bin]]
+name = "terraform-provider-nemoclaw-fabric"
+path = "src/fabric_main.rs"

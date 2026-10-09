@@ -146,10 +146,108 @@ pub fn remote_error(status: &tonic::Status) -> ObservationError {
     }
 }
 
+/// Opt in only for gateway operations whose requests contain no credentials.
+pub fn remote_rejection(operation: &'static str, status: &tonic::Status) -> ObservationError {
+    if !matches!(
+        operation,
+        "CreateWorkspace" | "CreateSandbox" | "DeleteProvider" | "DeleteProviderProfile"
+    ) {
+        return remote_error(status);
+    }
+    let code = match status.code() {
+        tonic::Code::FailedPrecondition => "FailedPrecondition",
+        tonic::Code::InvalidArgument => "InvalidArgument",
+        tonic::Code::AlreadyExists => "AlreadyExists",
+        tonic::Code::OutOfRange => "OutOfRange",
+        tonic::Code::ResourceExhausted => "ResourceExhausted",
+        _ => return remote_error(status),
+    };
+    ObservationError::Rejected {
+        operation,
+        code,
+        detail: ObservationError::sanitized_detail(status.message()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tonic::service::Interceptor;
+
+    #[test]
+    fn live_endpoint_ambiguity_keeps_its_conflict_kind() {
+        let detail = "network endpoint ambiguity validation failed: network policies 'nemoclaw-inference-qwen-example' endpoint[0] (nc-0123456789abcdef-model-0123456789abcdef.agents.svc.cluster.local:18888/v1/**) and '_provider_qwen_example' endpoint[0] (nc-0123456789abcdef-model-0123456789abcdef.agents.svc.cluster.local:18888/v1/**) overlap on port(s) 18888 with conflicting metadata: allowed_ips=[] vs [\"10.96.189.228/32\"]";
+        let error = remote_rejection("CreateSandbox", &tonic::Status::failed_precondition(detail));
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting metadata: allowed_ips=[]")
+        );
+        assert!(error.to_string().contains("CreateSandbox"));
+    }
+
+    #[test]
+    fn definitive_rejections_keep_bounded_gateway_text_and_other_statuses_stay_fixed() {
+        for operation in [
+            "CreateWorkspace",
+            "CreateSandbox",
+            "DeleteProvider",
+            "DeleteProviderProfile",
+        ] {
+            for code in [
+                tonic::Code::FailedPrecondition,
+                tonic::Code::InvalidArgument,
+                tonic::Code::AlreadyExists,
+                tonic::Code::OutOfRange,
+                tonic::Code::ResourceExhausted,
+            ] {
+                let status = tonic::Status::new(
+                    code,
+                    format!("validation failed\n{}", "detail ".repeat(300)),
+                );
+                let error = remote_rejection(operation, &status);
+                let ObservationError::Rejected { detail, .. } = error else {
+                    panic!("missing operation rejection");
+                };
+                assert!(detail.len() <= 1024);
+                assert!(detail.bytes().all(|byte| (b' '..=b'~').contains(&byte)));
+            }
+        }
+        for operation in [
+            "CreateProvider",
+            "UpdateProvider",
+            "GetSandbox",
+            "ExecSandbox",
+            "ImportProviderProfiles",
+        ] {
+            let status = tonic::Status::failed_precondition("credential-sentinel");
+            assert_eq!(
+                remote_rejection(operation, &status),
+                ObservationError::Query
+            );
+        }
+        for code in [
+            tonic::Code::Unknown,
+            tonic::Code::Internal,
+            tonic::Code::Unauthenticated,
+            tonic::Code::PermissionDenied,
+            tonic::Code::Unavailable,
+            tonic::Code::DeadlineExceeded,
+            tonic::Code::Cancelled,
+            tonic::Code::NotFound,
+        ] {
+            let status = tonic::Status::new(code, "credential-sentinel");
+            assert_eq!(
+                remote_rejection("CreateSandbox", &status),
+                remote_error(&status)
+            );
+            assert!(
+                !remote_rejection("CreateSandbox", &status)
+                    .to_string()
+                    .contains("credential-sentinel")
+            );
+        }
+    }
 
     #[test]
     fn authentication_keeps_the_bearer_sensitive_and_requests_bounded() {

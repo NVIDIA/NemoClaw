@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(test)]
+mod context_warnings;
+#[cfg(test)]
 mod tests;
 
 mod apply;
@@ -36,6 +38,10 @@ pub use timing::StepOutcome;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Progress {
+    /// An authored deployment condition that requires operator attention.
+    Warning {
+        message: String,
+    },
     /// A mutating OpenTofu subprocess has launched. Emitted synchronously once
     /// per launch, before child output; this does not prove any change completed.
     MutationStarted,
@@ -256,6 +262,99 @@ impl Deployment {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
+        for (name, service) in &document.spec.services {
+            let unauthenticated = match service {
+                crate::services::ServiceDefinition::Ollama(service) => service.kubernetes.is_some(),
+                crate::services::ServiceDefinition::Vllm(service) => {
+                    service.kubernetes.is_some() && service.authentication.is_none()
+                }
+                crate::services::ServiceDefinition::OllamaProxy(_) => false,
+            };
+            if unauthenticated {
+                (self.progress)(Progress::Warning {
+                    message: format!(
+                        "Cluster service {name} has no bearer authentication; access depends on NetworkPolicy enforcement, which the Kubernetes API cannot verify. Verify that the network plugin enforces the supervisor-only policy."
+                    ),
+                });
+            }
+        }
+        for sandbox in &document.spec.sandboxes {
+            if document.sandbox_harness(sandbox)?.kind.as_str() != "nvidia.fabric.openclaw" {
+                continue;
+            }
+            let inference = document.scoped_inference(sandbox)?;
+            for route in &inference.inference.routes {
+                let provider = document.route_provider(route, &inference)?;
+                let crate::config::InferenceTarget::Service { name } =
+                    provider.definition.target()?
+                else {
+                    continue;
+                };
+                let context = match document.spec.services.get(name) {
+                    Some(crate::services::ServiceDefinition::Vllm(service)) => {
+                        service.serving.context_tokens
+                    }
+                    Some(crate::services::ServiceDefinition::Ollama(service)) => {
+                        service.serving.context_tokens
+                    }
+                    _ => continue,
+                };
+                let metadata = route
+                    .overrides
+                    .settings
+                    .as_ref()
+                    .and_then(|settings| settings.get("model_metadata"));
+                // The pinned OpenClaw adapter overlays model_metadata on its
+                // defaults, including maxTokens. Invalid explicit values are
+                // passed through, so they cannot be treated as omitted here.
+                let positive_integer = |field, default| match metadata {
+                    None => Some(default),
+                    Some(Value::Object(metadata)) => match metadata.get(field) {
+                        None => Some(default),
+                        Some(value) => value.as_u64().filter(|value| *value > 0),
+                    },
+                    Some(_) => None,
+                };
+                let route_context = positive_integer("contextWindow", 32768);
+                if let Some(route_context) = route_context
+                    && i128::from(route_context) > i128::from(context)
+                {
+                    (self.progress)(Progress::Warning {
+                        message: format!(
+                            "OpenClaw sandbox {} route {} advertises contextWindow={route_context}, exceeding managed service {name} serving.contextTokens={context}; longer conversations can exceed the server limit. Set overrides.settings.model_metadata.contextWindow to {context} or less, or increase the service context and size model/GPU memory accordingly.",
+                            sandbox.name, route.name
+                        ),
+                    });
+                }
+                let (Some(route_context), Some(reply_tokens)) = (
+                    route_context,
+                    positive_integer(
+                        "maxTokens",
+                        u64::from(route.overrides.tuning.max_tokens.unwrap_or(4096)),
+                    ),
+                ) else {
+                    (self.progress)(Progress::Warning {
+                        message: format!(
+                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context}, but cannot assess its context budget: settings.model_metadata must be an object with positive integer contextWindow and maxTokens when present.",
+                            sandbox.name, route.name
+                        ),
+                    });
+                    continue;
+                };
+                let effective_context = i128::from(context).min(i128::from(route_context));
+                // A measured initial OpenClaw prompt used 19,947 tokens; this is
+                // an advisory budget, not a universal adapter requirement.
+                let required_context = 20_000 + i128::from(reply_tokens);
+                if effective_context < required_context {
+                    (self.progress)(Progress::Warning {
+                        message: format!(
+                            "OpenClaw sandbox {} route {} uses managed service {name} with serving.contextTokens={context} and settings.model_metadata.contextWindow={route_context}; allow at least {required_context} tokens for an initial prompt of about 20,000 tokens plus {reply_tokens} reply tokens. Consider 32768 or more as needed, align both limits, and size model/GPU memory for that context.",
+                            sandbox.name, route.name
+                        ),
+                    });
+                }
+            }
+        }
         let (bundle, store) = self.open()?;
         let prior = store.load()?;
         let fresh = prior.is_none();
@@ -295,7 +394,7 @@ impl Deployment {
         };
         record.reconcile_pending_creations(&bindings);
         record.validate_pending_intent(&document)?;
-        record.validate_bound_sandboxes(&document, &bindings)?;
+        runtime::validate_bound_sandboxes(&record, &document, &bindings)?;
         let connection = Some(DeploymentConnection {
             gateway_endpoint: document.spec.gateway.endpoint().into(),
             workspace: document.workspace(),

@@ -6,6 +6,7 @@
 pub use nemoclaw_tofu::*;
 
 mod capacity;
+pub mod cluster_services;
 mod discovery;
 mod gateway;
 pub mod hardware;

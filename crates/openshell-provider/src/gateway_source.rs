@@ -348,7 +348,7 @@ mod wait_tests {
             assert_eq!(
                 observe_with_wait::<(), _>(Duration::from_secs(2), || {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    std::future::ready(Err(error))
+                    std::future::ready(Err(error.clone()))
                 })
                 .await
                 .unwrap_err(),

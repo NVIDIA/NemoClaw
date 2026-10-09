@@ -27,6 +27,16 @@ pub struct OpenShellProvider {
     destroying: Arc<AtomicBool>,
 }
 
+impl OpenShellProvider {
+    /// Serve resources using the deployment's managed service identity checks.
+    pub fn with_services(services: Arc<dyn crate::Services>) -> Self {
+        Self {
+            client: Arc::new(GatewayClient::with_services(services)),
+            destroying: Arc::default(),
+        }
+    }
+}
+
 #[async_trait]
 impl Provider for OpenShellProvider {
     type Config<'a> = GatewayConfig;

@@ -67,7 +67,6 @@ impl TofuWorkspace {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn stages_only_the_selected_provider_and_cleans_only_its_workspace() {
@@ -77,12 +76,11 @@ mod tests {
             let provider = sources.path().join(selected);
             let script = format!("#!/bin/sh\nprintf '%s' '{selected}'\n");
             fs::write(&provider, &script).unwrap();
-            fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
             let workspace = TofuWorkspace::new("/bin/sh", &provider);
             let staged = workspace.path().join(nemoclaw_sdk::bundle::executable(
                 "terraform-provider-nemoclaw",
             ));
-            let output = Command::new(&staged).output().unwrap();
+            let output = Command::new("/bin/sh").arg(&staged).output().unwrap();
             assert!(output.status.success());
             assert_eq!(output.stdout, selected.as_bytes());
             assert_eq!(fs::read_to_string(&provider).unwrap(), script);

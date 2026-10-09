@@ -25,7 +25,7 @@
 pub mod fabric_capabilities;
 pub use nemoclaw_fabric::catalog as fabric_catalog;
 pub mod fabric_config;
-pub use nemoclaw_fabric::image_metadata;
+pub mod image_metadata;
 pub mod image_runtime;
 pub mod json_schema;
 

@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 /// Managed GPU Ollama service with an immutable runtime and model snapshot.
 pub struct ManagedOllama {
+    /// Cluster capacity and scheduling. Requires the managed Kubernetes or OpenShift gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "crate::services::KubernetesService")]
+    #[schemars(extend("x-nemoclaw-required" = "With a managed Kubernetes or OpenShift gateway"))]
+    pub kubernetes: Option<crate::services::KubernetesService>,
     /// Optional IPC and shared-memory settings for the runtime container.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "ServiceContainer")]

@@ -117,7 +117,7 @@ fn configured_specification(kind: &str, row: &Row) -> Result<Spec, Error> {
 }
 fn diagnostic(error: &Error) -> ObservationError {
     match error {
-        Error::Observation(error) => *error,
+        Error::Observation(error) => error.clone(),
         Error::State(message) | Error::Conflict(message) => ObservationError::Backend(message),
         Error::PartialRuntime => ObservationError::Backend(
             "managed container is absent but owned persistent resources remain",

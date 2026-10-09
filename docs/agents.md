@@ -52,7 +52,27 @@ No request walkthrough has been rehearsed yet ([#12642](https://github.com/NVIDI
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-Native gateway configuration and request semantics belong to the OpenClaw adapter.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/24f068c895e5cbc30286bc743498be4e5014d658/adapters/python/openclaw/src/nemo_fabric_adapters/openclaw/adapter.py) accepts an object with exactly `agent` and `message` for an explicit native-agent request.
+A request can incur inference charges and affect retained conversation history.
+
+**A malformed request can leave the runtime unusable.**
+With the current pinned OpenClaw adapter, an operator reported later invocations failing with `runtime_unavailable`, a bridge `runtime_state` of `unknown`, and subsequent deployment operations failing with `observation is incomplete`.
+Ordinary apply cannot recover while the runtime observation is `unknown`, even after a configuration edit; the operator recovered by replacing the sandbox.
+The [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime) destroys all of the deployment's sandboxes, including their files and conversation history, while retaining managed model and credential storage.
+The affected input cases and recovery inside the existing sandbox remain unqualified ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
+
+With a configured runtime, run this from any directory inside the target sandbox when its YAML `agent.name` is `assistant` and its native OpenClaw agent is the default `main`:
+
+```sh
+fabric-agent invoke --agent assistant --input - <<'JSON'
+{"agent":"main","message":"Reply with exactly READY."}
+JSON
+```
+
+The command's `--agent` selects the deployment's YAML `agent.name`; the JSON `agent` selects OpenClaw's native agent, set by `harness.settings.agent_name` and defaulting to `main`.
+The bridge passes this JSON unchanged to OpenClaw; `{"text":"..."}` is not this adapter's request format.
+On success, inspect `result.fabric_result.status` and `result.fabric_result.output.response`; a successful command does not establish general model compatibility.
+Host-side invocation tooling also remains follow-up work ([#12642](https://github.com/NVIDIA/NemoClaw/issues/12642)).
 For browser access, see [agent interfaces](interfaces.md#openclaw-dashboard).
 
 ## Native Controls at Initialization
@@ -165,7 +185,7 @@ Fabric's Pi adapter owns that metadata's schema and mapping.
 The SDK forwards the selected provider API as a public model extension and preserves each named route plus the `default` role.
 
 Model and settings updates reconcile a reconstructible agent-configuration resource for every adapter.
-When sandbox identity, provider attachments, image, and policy remain unchanged, the runtime restarts inside the existing sandbox.
+When sandbox identity, provider attachments, image, and policy remain unchanged and runtime observation succeeds, the runtime restarts inside the existing sandbox.
 In-memory conversations can be lost; retained native files remain subject to the adapter's lifecycle.
 Changing sandbox resources can still require a separate deployment under the normal replacement protections.
 

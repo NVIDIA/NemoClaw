@@ -88,6 +88,16 @@ const KUBERNETES_AUTH_FIELDS: [&str; 13] = [
 pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
         ResourceSchema {
+            kind: crate::kubernetes::services::STORAGE_KIND,
+            fields: &["spec", "running"],
+            mutable: &["running"],
+        },
+        ResourceSchema {
+            kind: crate::kubernetes::services::SERVICE_KIND,
+            fields: &["spec", "running"],
+            mutable: &["spec", "running"],
+        },
+        ResourceSchema {
             kind: crate::kubernetes::STORAGE_KIND,
             fields: &KUBERNETES_FIELDS,
             mutable: &["running"],
@@ -140,10 +150,13 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
             installers::ollama::STORAGE_KIND
                 | installers::vllm::STORAGE_KIND
                 | crate::kubernetes::STORAGE_KIND
+                | crate::kubernetes::services::STORAGE_KIND
         ),
         runtime_process: matches!(
             kind,
-            installers::ollama::SERVICE_KIND | installers::vllm::SERVICE_KIND
+            installers::ollama::SERVICE_KIND
+                | installers::vllm::SERVICE_KIND
+                | crate::kubernetes::services::SERVICE_KIND
         ),
     }
 }
@@ -151,6 +164,7 @@ pub fn resource_behavior(kind: &str) -> ResourceBehavior {
 pub(crate) fn resource_label(kind: &str) -> Option<&'static str> {
     match kind {
         installers::vllm::SERVICE_KIND => Some("inference service"),
+        crate::kubernetes::services::SERVICE_KIND => Some("cluster inference service"),
         installers::ollama::SERVICE_KIND => Some("Ollama service"),
         "ollama_proxy" => Some("Ollama proxy"),
         _ => None,
@@ -180,6 +194,13 @@ pub(crate) fn constrain_schema(
 }
 
 impl ServiceDefinition {
+    pub(crate) fn kubernetes(&self) -> Option<&super::KubernetesService> {
+        match self {
+            Self::Vllm(service) => service.kubernetes.as_ref(),
+            Self::Ollama(service) => service.kubernetes.as_ref(),
+            Self::OllamaProxy(_) => None,
+        }
+    }
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
@@ -197,6 +218,42 @@ impl ServiceDefinition {
 
     fn validate_installation(&self, document: &Document) -> Result<(), ConfigError> {
         let gateway = &document.spec.gateway;
+        if let Some(settings) = self.kubernetes() {
+            crate::config::validation::require(
+                gateway.as_kubernetes().is_some(),
+                "cluster model services require a managed Kubernetes gateway",
+            )?;
+            let (placement, container, runtime) = match self {
+                Self::Vllm(service) => (
+                    service.published_placement()?,
+                    &service.container,
+                    nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(service.runtime.clone())),
+                ),
+                Self::Ollama(service) => (
+                    service.published_placement()?,
+                    &service.container,
+                    nemoclaw_runtime::RuntimeSpec::Ollama(Box::new(service.runtime.clone())),
+                ),
+                Self::OllamaProxy(_) => unreachable!(),
+            };
+            settings.validate_runtime(
+                &runtime,
+                container
+                    .as_ref()
+                    .map_or(8, |container| container.shared_memory_gi_b),
+            )?;
+            return crate::config::validation::require(
+                placement.is_none()
+                    && container.as_ref().is_none_or(|container| {
+                        container.ipc != installers::vllm::ServiceIpc::Host
+                    }),
+                "cluster model services exclude Docker placement, publication, and host IPC",
+            );
+        }
+        crate::config::validation::require(
+            !gateway.runtime().provider.is_kubernetes(),
+            "cluster model services require explicit Kubernetes settings",
+        )?;
         let local_docker = gateway.as_managed().is_some_and(|gateway| {
             gateway.engine.starts_with("unix:///")
                 && crate::config::validate_engine_endpoint(&gateway.engine).is_ok()
@@ -223,6 +280,9 @@ impl ServiceDefinition {
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
+        if self.kubernetes().is_some() {
+            return Ok(None);
+        }
         let (placement, port) = match self {
             Self::Ollama(service) => (service.published_placement()?, service.serving.port),
             Self::Vllm(service) => (service.published_placement()?, service.serving.port),
@@ -245,6 +305,9 @@ impl Installer for ServiceDefinition {
         name: &str,
         generations: &Generations,
     ) -> Result<InstallPlan, crate::Error> {
+        if self.kubernetes().is_some() {
+            return super::cluster::install(self, document, name, generations);
+        }
         match self {
             Self::Ollama(service) => service.install(document, name, generations),
             Self::OllamaProxy(service) => service.install(document, name, generations),
@@ -258,6 +321,9 @@ impl Installer for ServiceDefinition {
         name: &str,
         generations: &Generations,
     ) -> Result<RemovePlan, crate::Error> {
+        if self.kubernetes().is_some() {
+            return Ok(super::cluster::remove(name));
+        }
         match self {
             Self::Ollama(service) => service.remove(document, name, generations),
             Self::OllamaProxy(service) => service.remove(document, name, generations),
@@ -269,6 +335,20 @@ impl Installer for ServiceDefinition {
 impl ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
+            ServiceDefinition::Ollama(service) if service.kubernetes.is_some() => {
+                ResolvedInference {
+                    endpoint: super::cluster::endpoint(document, name, service.serving.port)?,
+                    served_model: service.model.name.clone(),
+                    requires_authentication: false,
+                    resource_dependencies: Vec::new(),
+                }
+            }
+            ServiceDefinition::Vllm(service) if service.kubernetes.is_some() => ResolvedInference {
+                endpoint: super::cluster::endpoint(document, name, service.serving.port)?,
+                served_model: service.served_model().into(),
+                requires_authentication: service.authentication.is_some(),
+                resource_dependencies: Vec::new(),
+            },
             ServiceDefinition::Ollama(service) => ResolvedInference {
                 endpoint: super::placement::ResolvedPlacement::resolve(
                     service.published_placement()?,
@@ -314,7 +394,9 @@ impl ServiceDefinition {
             ),
             ServiceDefinition::OllamaProxy(service) => service.validate(provider, model),
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
-                sandbox_runtime == ComputeDriver::Docker || service.placement.is_some(),
+                sandbox_runtime == ComputeDriver::Docker
+                    || service.placement.is_some()
+                    || service.kubernetes.is_some(),
                 "vLLM service requires compatible sandbox placement",
             ),
         }
@@ -331,6 +413,18 @@ impl ServiceDefinition {
             ServiceDefinition::OllamaProxy(service) => service
                 .credential_source(document, name, generations)
                 .map(Some),
+            ServiceDefinition::Vllm(service) if service.kubernetes.is_some() => {
+                if service.authentication.is_none() {
+                    return Ok(None);
+                }
+                let spec = super::cluster::spec(self, document, name, generations)?;
+                Ok(Some(super::authentication::source_json(
+                    &super::authentication::Source::ClusterService {
+                        endpoint: spec.endpoint(),
+                        storage: Box::new(spec.storage()),
+                    },
+                )?))
+            }
             ServiceDefinition::Vllm(service) => {
                 service.credential_source(document, name, generations)
             }
@@ -351,6 +445,7 @@ pub(crate) fn discovery_engines(document: &Document) -> Result<BTreeSet<String>,
         .spec
         .services
         .values()
+        .filter(|service| service.kubernetes().is_none())
         .map(|service| {
             if let Some(allocation) = service.allocation(&document.spec.gateway)? {
                 return Ok(allocation.engine);
@@ -535,6 +630,23 @@ pub(crate) fn credential_source_json(
     definition
         .credential_source(document, name, generations)
         .map_err(|_| ConfigError::new("invalid managed credential source"))
+}
+
+pub(crate) fn cluster_source_json(
+    document: &Document,
+    provider: &InferenceProvider,
+    generations: &Generations,
+) -> Result<Option<String>, ConfigError> {
+    let Some((name, definition)) = definition(document, provider)? else {
+        return Ok(None);
+    };
+    if definition.kubernetes().is_none() {
+        return Ok(None);
+    }
+    super::cluster::spec(definition, document, name, generations)
+        .and_then(|spec| spec.storage().encode())
+        .map(Some)
+        .map_err(|_| ConfigError::new("invalid cluster endpoint provenance"))
 }
 
 pub(crate) fn generation_kinds(document: &Document) -> Result<Vec<&'static str>, ConfigError> {

@@ -14,6 +14,7 @@ pub mod gateway;
 pub mod issuer;
 pub mod operations;
 pub mod receipt;
+pub mod services;
 pub mod storage;
 
 use crate::{Error, ObservationError, config::ManagedGateway};

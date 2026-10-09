@@ -76,9 +76,9 @@ There is no current purge command.
 | Deployment provider profiles and registrations, including declared Brave integration resources | Removed; upstream keys are not revoked |
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Retained and tracked; does not preserve the deleted sandbox's files |
-| Managed vLLM/Ollama process containers and service-owned networks | Removed; model storage remains tracked |
-| Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
-| Managed vLLM credentials | Separate tracked credential volume retained |
+| Managed vLLM/Ollama compute and service-owned networks | Docker containers/networks or cluster Pods/Services/NetworkPolicies/ConfigMaps removed; model storage remains tracked |
+| Managed model downloads and prepared data | Docker volumes or cluster model PVCs retained by default; missing Docker caches may be reconstructed separately from credentials, while cluster PVC bindings must remain intact |
+| Managed vLLM credentials | Separate tracked Docker credential volume or cluster credential PVC retained |
 | Managed Ollama proxy | Container removed; tracked credential volume retained |
 | Managed gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |
 | Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |

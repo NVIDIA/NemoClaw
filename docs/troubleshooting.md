@@ -40,13 +40,15 @@ Do not attach environment dumps, TLS private keys, interface tokens, or the enti
 | `state is bound to a different deployment UID or gateway` | Restore the original UID and gateway endpoint; a new target needs separate state and resources |
 | `unfinished apply has different intent` | Reapply the exact YAML from the unfinished operation before trying another configuration |
 | Deployment lock error | Check for another operation using the same state directory; a lock failure does not authorize state deletion |
-| Authentication, transport, or incomplete-observation error | Restore access to the selected service; failed observation does not establish absence or authorize recreation |
+| Authentication, transport, or incomplete-observation error | Restore access to the selected service; failed observation does not establish absence or authorize recreation. For a persistently unknown OpenClaw runtime after an invocation failure, follow the [replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime) |
 | Ownership, generation, or durable identity mismatch | Inspect the selected gateway/engine and retained deployment identity; do not adopt or replace a different resource |
 | Plan would remove or replace a resource | Check [update constraints](usage.md#updates-and-recovery) and the relevant configuration guide before choosing a new deployment |
+| Managed cluster model update rejected at full namespace quota | Follow [quota recovery](kubernetes.md#recover-a-quota-rejection-during-a-model-update); replacement admission needs temporary headroom while the existing workload remains |
 | Interrupted apply | Resolve the cause and reapply the original YAML with its retained state |
 | Unfinished destroy | Resume destroy with the same state; other operations refuse unfinished teardown |
 | `adapter/<id> compatibility rejected` | Read the named sandbox and canonical field; for `models.<role>.max_tokens`, remove that route's `overrides.maxTokens` or choose an adapter that accepts it, then plan again |
 | Public Fabric configuration mismatch or native startup rejection | Follow [agent interface diagnosis](interfaces.md#diagnose-failures); retained public configuration checks do not audit native files or tokens |
+| After a malformed OpenClaw request: `runtime_unavailable`, bridge `runtime_state: unknown`, then `observation is incomplete` | Apply cannot recover the unknown runtime, including through configuration edits; review the [reported failure and whole-deployment replacement procedure](usage.md#replace-workloads-after-an-unusable-openclaw-runtime), including loss of all sandbox files and history |
 
 For proxy policies, the pinned OpenShell supervisor can add read-only `/var/log` access to the loaded policy.
 NemoClaw accepts that runtime addition while preserving the authored policy; other loaded-policy differences still fail observation.
@@ -107,12 +109,26 @@ Recognized reasons are `ControlSupervisorExited`, `ContainerExited`, `IdentityRe
 `ControlSupervisorStartFailed` means the control supervisor could not start; inspect the sandbox policy and attached providers.
 These explanations are fixed text, not the gateway's condition message.
 Error, completed, stopped, and deleting phases fail immediately and retain resources.
-The SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
+For sandbox status conditions, the SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
+Synchronous OpenShell validation rejections for workspace creation, sandbox creation, and provider or provider-profile deletion preserve a sanitized printable-ASCII detail of at most 1024 characters.
+For example, a network endpoint ambiguity can report conflicting `allowed_ips` metadata, identifying a policy/profile address-grant disagreement.
+Credential-bearing provider creation and update requests, status reads, and exec failures retain category-only diagnostics.
+This rejection reporting applies to Docker, Podman, and cluster gateways.
 Use the OpenShell inspection and log collection procedure below before cleanup.
 If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); apply protects the existing sandbox from replacement.
-A failed first apply can be [destroyed](usage.md#destroy) with its retained state before a successful reapply.
+A failed first apply can be [destroyed](usage.md#destroy) when the retained state accounts for its resource identities.
+An unresolved creation without a saved identity still requires its original pending intent; a validation rejection alone does not retire that guard.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.
+
+For a managed cluster model, readiness reports recognized Pod or container stop reasons and the exit code when available.
+Pod reasons such as eviction take precedence over a container's generic `Error`; permanent `ErrImageNeverPull` and `InvalidImageName` failures report that the runtime cannot start, since there may be no process logs.
+Transient status-read failures retry for up to 30 seconds; a temporary `CreateContainerConfigError` does not by itself trigger an immediate stop.
+Runtime-status freshness compares the Pod's start and update timestamps, without comparing them with the CLI host clock.
+The model Pod uses `FallbackToLogsOnError`, which can copy a raw log tail into Kubernetes Pod status.
+NemoClaw displays only the final runtime `stopped:` detail, bounded to 1024 printable-ASCII characters with credential and token-like content redacted.
+Raw Pod status and logs remain separate diagnostic sources; restrict their access and redact them before sharing.
+See [cluster model recovery](kubernetes.md#run-a-managed-model-service) and [timeout budgets](inference.md#understand-timeout-budgets) before changing the configuration.
 
 ## Inspect an OpenShell Sandbox Failure
 

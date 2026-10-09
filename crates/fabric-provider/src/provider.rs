@@ -71,6 +71,16 @@ pub struct FabricProvider {
     destroying: Arc<AtomicBool>,
 }
 
+impl FabricProvider {
+    /// Observe sandbox parents with the deployment's managed service checks.
+    pub fn with_services(services: Arc<dyn openshell_provider::Services>) -> Self {
+        Self {
+            client: Arc::new(GatewayClient::with_services(services)),
+            destroying: Arc::default(),
+        }
+    }
+}
+
 #[async_trait]
 impl Provider for FabricProvider {
     type Config<'a> = GatewayConfig;

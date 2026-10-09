@@ -246,7 +246,7 @@ fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
     // provider reports drift. Compare JSON semantically, without harness dispatch.
     let inputs = nemoclaw_openshell::structured_inputs(&target.kind);
     for (field, expected) in &target.values {
-        if field.ends_with("_json") {
+        if field.ends_with("_json") || field == "cluster_source" {
             // Typed OpenShell inputs return to the JSON their rows carry; the
             // authored JSON takes the same path, which omits absent values.
             let (expected, observed) = match inputs.iter().find(|input| input.field == field) {
@@ -583,6 +583,27 @@ mod tests {
         };
         validate_projection(&target, &json!({"name":"expected-proxy"})).unwrap();
         assert!(validate_projection(&target, &json!({"name":"renamed-proxy"})).is_err());
+    }
+
+    #[test]
+    fn export_rejects_cluster_endpoint_provenance_drift() {
+        let target = Target {
+            address: "openshell_provider_profile.inference_qwen".into(),
+            kind: "provider_profile".into(),
+            values: Row::from([
+                (
+                    "cluster_source".into(),
+                    r#"{"name":"owned-service","generation":"bound"}"#.into(),
+                ),
+                ("binaries_json".into(), r#"["/usr/bin/python3"]"#.into()),
+            ]),
+        };
+        let mut observed = serde_json::to_value(&target.values).unwrap();
+        observed.as_object_mut().unwrap().remove("binaries_json");
+        observed["binaries"] = json!(["/usr/bin/python3"]);
+        validate_projection(&target, &observed).unwrap();
+        observed["cluster_source"] = json!(r#"{"name":"another-service","generation":"bound"}"#);
+        assert!(validate_projection(&target, &observed).is_err());
     }
 
     #[tokio::test]

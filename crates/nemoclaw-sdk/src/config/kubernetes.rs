@@ -16,7 +16,7 @@ pub struct ManagedKubernetes {
         regex(pattern = r"^[^\x00-\x20\x7f]+$(?![\s\S])")
     )]
     pub context: String,
-    /// Namespace for this deployment's gateway and generated development authentication resources.
+    /// Namespace for this deployment's gateway, cluster model services, and generated development authentication resources.
     #[schemars(
         length(min = 1, max = 63),
         regex(pattern = r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\s\S])")

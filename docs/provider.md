@@ -7,7 +7,7 @@ The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm Ope
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
 Fabric configures the Fabric host in each agent sandbox and waits for its runtime, through the same gateway.
-Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages Podman gateway processes, Kubernetes gateway prerequisites, initialization, retained gateway bridges, and durable data bindings.
+Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages Podman gateway processes, Kubernetes gateway prerequisites and model services, initialization, retained gateway bridges, and durable data bindings.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
@@ -38,6 +38,7 @@ The generated graphs manage these objects and observations:
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
 | NemoClaw provider | Kubernetes namespace and encryption key (`nemoclaw_kubernetes_storage`), development issuer (`nemoclaw_kubernetes_auth`), and gateway readiness (`nemoclaw_kubernetes_gateway`) |
+| NemoClaw provider | Kubernetes vLLM/Ollama workloads and readiness (`nemoclaw_kubernetes_service`), with retained model and optional separate credential PVCs (`nemoclaw_kubernetes_service_storage`) |
 | NemoClaw provider data source | Engine capabilities, managed runtime-image compatibility, managed gateway readiness, and vLLM/Ollama service or proxy readiness |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
@@ -72,7 +73,9 @@ None of them exposes ephemeral resources or provider functions.
 | `openshell_gateway` data source | [Gateway version and compute drivers](#gateway-capabilities) |
 
 The `openshell` provider takes the gateway `endpoint`, the `credential_env` variable holding its bearer credential, the `tls_ca_env`, `tls_certificate_env`, and `tls_key_env` variables naming mutual TLS files, and `destroy`, which permits deleting sandboxes during explicit teardown.
-When a registration names a managed vLLM or Ollama proxy credential, the provider reads the key from the owning container during apply, so the key never enters OpenTofu state.
+The bundled OpenShell provider includes NemoClaw's managed-service identity and credential checks.
+During apply, it reads Docker vLLM and Ollama proxy keys from their owning containers, and authenticated cluster vLLM keys through the verified model Pod from its separate credential PVC.
+The key never enters OpenTofu state.
 
 Inputs are typed:
 
@@ -119,10 +122,11 @@ resource "openshell_sandbox" "assistant" {
 
 The `fabric` provider takes the same gateway settings as the `openshell` provider, and `destroy`, which permits removing agent configurations during explicit teardown.
 It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_capabilities` instead reads the container engine named on it.
+The bundled Fabric provider includes NemoClaw's managed-service checks when it verifies a configuration's parent sandbox.
 
 ### NemoClaw Resources
 
-The `nemoclaw` provider's only setting is `destroy`, which permits deleting gateways and proxies during explicit teardown.
+The `nemoclaw` provider's only setting is `destroy`, which permits deleting gateways, cluster model workloads, and proxies during explicit teardown.
 Each resource names the engine or cluster it uses.
 
 | Resource | Manages |
@@ -132,12 +136,17 @@ Each resource names the engine or cluster it uses.
 | `nemoclaw_kubernetes_storage` | Kubernetes namespace and encryption key |
 | `nemoclaw_kubernetes_auth` | Kubernetes development token issuer and OpenShift chart overrides |
 | `nemoclaw_kubernetes_gateway` | Kubernetes gateway StatefulSet identity and readiness |
+| `nemoclaw_kubernetes_service` | Managed vLLM/Ollama Pod, ConfigMap, Service, NetworkPolicy, and runtime readiness |
+| `nemoclaw_kubernetes_service_storage` | Retained model PVC and, for authenticated vLLM, a separate credential PVC |
 | `nemoclaw_inference_storage` | vLLM credential storage |
 | `nemoclaw_ollama_service_storage` | Managed Ollama model storage |
 | `nemoclaw_ollama_proxy_storage` | Ollama proxy credential storage |
 | `nemoclaw_ollama_external_model` | Upstream Ollama model digest |
 
-Generated graphs place vLLM and Ollama model caches in `docker_volume` resources and do not declare `nemoclaw_ollama_service_storage`.
+Generated Docker graphs place vLLM and Ollama model caches in `docker_volume` resources and do not declare `nemoclaw_ollama_service_storage`.
+Managed Kubernetes and OpenShift services use the two cluster resources above, each with an SDK-compiled `spec` and computed `running` status.
+Their resource postconditions enforce runtime readiness; they do not use the Docker container-based `nemoclaw_service_readiness` data source.
+See [managed cluster inference](kubernetes.md#run-a-managed-model-service) for namespace ownership, credential isolation, and retention.
 
 `nemoclaw_inference_storage` and `nemoclaw_ollama_service_storage` take `name` and `engine`, and optionally `owner` and `generation`.
 The provider creates a local volume with that name on that engine and labels it with the owner and generation.

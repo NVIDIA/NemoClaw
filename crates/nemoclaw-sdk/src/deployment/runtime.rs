@@ -12,6 +12,47 @@ const GATEWAY_STORAGE: &str = "nemoclaw_gateway_storage.runtime";
 const KUBERNETES_STORAGE: &str = "nemoclaw_kubernetes_storage.runtime";
 const KUBERNETES_AUTH: &str = "nemoclaw_kubernetes_auth.runtime";
 
+pub(super) fn validate_bound_sandboxes(
+    record: &Record,
+    document: &Document,
+    bindings: &BTreeMap<String, StateBinding>,
+) -> Result<(), Error> {
+    let error = match record.validate_bound_sandboxes(document, bindings) {
+        Err(error @ Error::SandboxChangeRefused { .. }) => error,
+        result => return result,
+    };
+    let Error::SandboxChangeRefused { sandbox, .. } = &error else {
+        unreachable!()
+    };
+    let prior = record.document.sandbox(sandbox)?;
+    // These bindings come from the main OpenShell state. Runtime resources
+    // live in a separate store, so compare retained and proposed intent here;
+    // runtime reconciliation still owns live binding and identity checks.
+    let previous = compile::runtime_targets(&record.document, &record.generations)?;
+    let targets = compile::runtime_targets(document, &record.generations)?;
+    for route in &record.document.sandbox_inference(prior)?.routes {
+        let provider = record.document.sandbox_route_provider(prior, route)?;
+        let Some(name) = provider.service_ref.as_deref() else {
+            continue;
+        };
+        let address = format!("nemoclaw_kubernetes_service.{name}");
+        let (Some(previous), Some(target)) = (
+            previous.iter().find(|target| target.address == address),
+            targets.iter().find(|target| target.address == address),
+        ) else {
+            continue;
+        };
+        let bound = crate::kubernetes::services::Spec::decode(&previous.values["spec"])?;
+        let want = crate::kubernetes::services::Spec::decode(&target.values["spec"])?;
+        if bound.storage() == want.storage() && bound.port() != want.port() {
+            return Err(crate::ObservationError::Backend(
+                "changing the model serving port requires whole-deployment destroy and apply; destroy deletes sandbox files and conversation history but retains model and credential PVCs",
+            ).into());
+        }
+    }
+    Err(error)
+}
+
 fn kubernetes_binding(
     target: &Target,
     bindings: &BTreeMap<String, StateBinding>,
@@ -19,6 +60,24 @@ fn kubernetes_binding(
     let Some(binding) = bindings.get(&target.address) else {
         return Ok(());
     };
+    if matches!(
+        target.kind.as_str(),
+        crate::kubernetes::services::SERVICE_KIND | crate::kubernetes::services::STORAGE_KIND
+    ) {
+        let model_storage = target.address.replace(
+            "nemoclaw_kubernetes_service.",
+            "nemoclaw_kubernetes_service_storage.",
+        );
+        if !bindings.contains_key(KUBERNETES_STORAGE)
+            || (target.kind == crate::kubernetes::services::SERVICE_KIND
+                && (!bindings.contains_key(&model_storage)
+                    || !bindings.contains_key("nemoclaw_kubernetes_gateway.runtime")))
+        {
+            return Err(Error::Conflict(
+                "cluster inference requires its independent storage and gateway bindings",
+            ));
+        }
+    }
     let helm = crate::kubernetes::gateway::ADDRESS;
     let prerequisites: &[&str] = match target.kind.as_str() {
         crate::kubernetes::AUTH_KIND => &[KUBERNETES_STORAGE],
@@ -68,6 +127,21 @@ fn bound_spec(kind: &str, want: &Spec, binding: Option<&StateBinding>) -> Result
     }
     Ok(old)
 }
+fn bound_cluster_spec(
+    want: &crate::kubernetes::services::Spec,
+    binding: Option<&StateBinding>,
+) -> Result<crate::kubernetes::services::Spec, Error> {
+    let Some(binding) = binding else {
+        return Ok(want.clone());
+    };
+    let old = crate::kubernetes::services::Spec::decode(&binding.spec)?;
+    if old.storage() != want.storage() {
+        return Err(Error::Conflict(
+            "cluster inference storage identity differs from retained intent",
+        ));
+    }
+    Ok(old)
+}
 struct RuntimeValidation {
     expected: BTreeMap<String, Row>,
     gateway_running: bool,
@@ -86,6 +160,14 @@ fn runtime_bindings(
     }
     for target in targets {
         kubernetes_binding(target, bindings)?;
+        if target.kind == crate::kubernetes::services::SERVICE_KIND {
+            let want = crate::kubernetes::services::Spec::decode(&target.values["spec"])?;
+            expected.get_mut(&target.address).unwrap().insert(
+                "spec".into(),
+                bound_cluster_spec(&want, bindings.get(&target.address))?.encode()?,
+            );
+            continue;
+        }
         if target.address == crate::kubernetes::gateway::ADDRESS {
             continue;
         }
@@ -171,6 +253,7 @@ impl Deployment {
         apply: bool,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool, Vec<String>, DiscoveryReport), Error> {
+        crate::image_metadata::verify_cluster_runtime_images(document, self.secrets.as_ref())?;
         if !document.has_runtime() {
             let directory = store.directory.join("runtime");
             if directory.exists()

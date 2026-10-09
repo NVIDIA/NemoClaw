@@ -86,6 +86,7 @@ The current tests establish configuration, compilation, API attachment, and drif
 | NemoClaw should run Ollama on a declared NVIDIA GPU | Declare a service with `kind: ollama`, hardware requirements, a pinned runtime image, a model name and digest, memory, and serving settings | [Managed Ollama](#run-managed-ollama) |
 | Ollama and its model already run locally and must remain external | Declare a service with `kind: ollamaProxy` to manage an authenticated proxy for one installed model digest | [Proxy configuration](#use-external-ollama-through-a-managed-proxy) |
 | NemoClaw should download and serve a pinned public model with vLLM | Declare a service with `kind: vllm`, the runtime image, repository revision, capacity, and serving settings; see [managed models](models.md) | [Generic vLLM](../examples/spark/vllm.yaml) |
+| NemoClaw should run vLLM or Ollama beside a managed Kubernetes or OpenShift gateway | Add the service's `kubernetes` settings; follow [managed cluster inference](kubernetes.md#run-a-managed-model-service) | [Cluster vLLM](../examples/kubernetes/local-vllm.yaml), [cluster Ollama](../examples/kubernetes/local-ollama.yaml) |
 | The Docker daemon running a managed service is reached through SSH | Set `placement.engine` to the SSH endpoint, then declare the private network and `publication` endpoint on the named service; follow [remote service](remote-service.md) | [Remote vLLM](../examples/spark/remote-vllm.yaml) |
 | The model requires preparation tools or runtime patches | Package reviewed tools in an immutable image and declare an [inline recipe](recipes.md) | [Inline Qwen3.8 recipe](../examples/spark/spark-inline.yaml) |
 
@@ -144,6 +145,7 @@ Model and native settings changes restart the runtime inside the existing sandbo
 ## Run Managed Ollama
 
 Declare `kind: ollama` under `spec.services` to run Ollama through the same package-independent installer contract as vLLM.
+The host procedure below uses Docker; for Kubernetes or OpenShift, follow [managed cluster inference](kubernetes.md#run-a-managed-model-service).
 The [GPU example](../examples/managed-ollama-gpu.yaml) selects DGX Spark and a pinned public Qwen3 model.
 Before applying, choose a fresh deployment UID and state directory, a current agent image, and a hardware profile matching the inference host.
 The inference host needs Linux, Docker with NVIDIA container GPU access, one observable NVIDIA GPU, and enough host/GPU memory and disk for the declared budget.
@@ -182,7 +184,7 @@ services:
       name: qwen3:0.6b
       digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
     serving:
-      contextTokens: 8192
+      contextTokens: 32768
       maxSequences: 1
     memory:
       gpuMemoryGiB: 16
@@ -194,6 +196,7 @@ inferenceProviders:
 ```
 
 Set the route's `overrides.model` to the same `model.name`.
+For OpenClaw, also set `overrides.settings.model_metadata.contextWindow` to `32768`, as in both managed Ollama examples; see [context budgeting](#tune-openclaws-primary-route).
 The model digest is the SHA-256 of the registry manifest, not the GPU runtime image or an individual weight blob.
 For a different public library model, obtain and inspect its registry manifest and license before pinning its digest.
 The resolver accepts exactly one model layer plus optional template, license, parameters, and system layers.
@@ -231,7 +234,7 @@ Verified cached snapshots can be reused without querying a subsequently changed 
 There is no automatic migration or adoption of storage from the older `ollama` resource form; use a fresh deployment and retain the old bundle/state for its teardown.
 
 Configuration, registry download, startup protocol, memory checks, and removal behavior are covered by fixtures.
-Live image builds, GPU inference, tools and agent replies with this adapter have not been tested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
+Live image builds, GPU inference, tools and agent replies through this Docker procedure still need qualification ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
 ## Authenticate a Managed vLLM Service
 
@@ -253,7 +256,8 @@ Destroy removes the runtime and provider registration and retains the separate m
 Recreation using the retained credential volume reuses the key.
 A missing key after initialization or invalid key metadata stops startup and retains storage for inspection.
 Retire model data and credentials separately; removing the model volume does not erase the credential.
-Changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
+For Docker services, changing an existing service to enable authentication follows the normal runtime replacement rules; YAML does not reconfigure a running server in place.
+For [managed cluster services](kubernetes.md#run-a-managed-model-service), the authentication mode is fixed with the retained storage.
 
 ## Use External Ollama through a Managed Proxy
 
@@ -339,6 +343,22 @@ The selected adapter's model schema and implementation own the meanings, accepte
 These settings do not resize a managed inference server; configure that service's limits separately.
 The SDK does not infer native support from an adapter name or from accepting the YAML structure.
 
+The managed Ollama examples and [cluster examples](kubernetes.md#run-a-managed-model-service) set both the service's `serving.contextTokens` and the route's `overrides.settings.model_metadata.contextWindow` to `32768`.
+The [operator-reported prompt](design/cluster-inference-compatibility.md#openclaw-context-budget) used 19,947 tokens in one setup, before allowing space for a reply.
+Keep the two limits aligned and size the model, KV cache, and GPU memory for the selected context.
+
+For an OpenClaw route to managed vLLM or Ollama, plan and apply compare the smaller of the service context and the effective route context window with `20000` plus the effective reply allowance, on Docker as well as Kubernetes.
+At the pinned adapter revision, omitted route context defaults to `32768`; `overrides.settings.model_metadata.contextWindow` replaces that default.
+The reply allowance defaults to `4096`; `overrides.maxTokens` replaces that default, and `overrides.settings.model_metadata.maxTokens` takes precedence over both.
+A smaller available context produces a budget warning; explicit token metadata that cannot be assessed instead produces a warning without substituting defaults.
+The `20000`-token prompt allowance is an estimate from the report; longer prompts and conversations need more.
+Plan and apply also warn whenever the effective route context window exceeds the managed service's `serving.contextTokens`, even when the initial prompt and reply allowance fit.
+For example, a service context of `24576` with the default route window of `32768` can permit longer conversations to exceed the server limit.
+Set `overrides.settings.model_metadata.contextWindow` no higher than the service context, or increase the service context and size memory for it.
+This mismatch warning can appear alongside the budget warning, or alongside the cannot-assess warning when the route window is valid but the reply allowance is not.
+The advisories appear in text output and the JSON result's `warnings` field; they neither reject the configuration nor measure the current prompt or available memory.
+These budgets do not qualify a model, GPU, or deployment path.
+
 Pi's native model metadata likewise belongs in `overrides.settings.model_metadata`; see the [Pi example](../examples/fabric-pi.yaml).
 Nested null values remain intact in opaque native settings.
 ## Authenticate Hermes through the Provider
@@ -409,13 +429,19 @@ Choose the budget for the phase that failed; extending an agent turn does not ex
 | Phase | Current budget and setting |
 |---|---|
 | Fabric runtime request | `harness.execution.timeoutSeconds` maps to public Fabric `runtime.timeout_seconds`; omitted values use Fabric defaults |
-| Managed service loading | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
-| Managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
+| Managed backend loading and readiness after preparation | `spec.services.<name>.serving.startupTimeoutSeconds`; omitted or zero selects 1,800 seconds; explicit values 60–3,600 |
+| Docker-managed service readiness from the SDK, including model preparation | Fixed 9-hour wait; expiration leaves the owned container and data in place |
+| Managed cluster service readiness, including scheduling, image pull, download, and preparation | Fixed 9-hour wait; expiration leaves the owned Pod and PVCs in place; an unchanged apply resumes waiting |
 | Each packaged recipe preparation or verification execution | Fixed 8-hour limit; staged data remains after failure |
 | Managed gateway readiness | Fixed 90-second wait |
 | Sandbox/agent readiness | Fixed 300-second wait |
 
 These are phase limits, not a promised total duration for apply.
+For both managed backends, the runtime starts its `startupTimeoutSeconds` deadline after preparation, when supervising the launched backend's loading and readiness.
+Scheduling, image pulls, model downloads, and recipe preparation are outside that deadline; the separate cluster readiness wait still includes them.
+Cluster readiness retries transient transport, query, or incomplete-status observations for at most 30 seconds of consecutive failures, resetting that allowance after a successful observation.
+Authentication, permission, ownership, permanent image-start failures, and reported runtime stops fail immediately.
+Model Pod termination allows 60 seconds of grace, and the provider waits up to another 30 seconds for API deletion to complete.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
 Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/fabric-provider/src/configuration.rs), [agent readiness](../crates/fabric-provider/src/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.

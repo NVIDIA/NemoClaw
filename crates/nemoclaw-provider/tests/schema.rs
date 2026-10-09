@@ -43,6 +43,8 @@ fn production_provider_serves_platform_resources_but_not_openshell_objects() {
         "kubernetes_storage",
         "kubernetes_auth",
         "kubernetes_gateway",
+        "kubernetes_service_storage",
+        "kubernetes_service",
     ] {
         assert!(resources.contains_key(name), "{name}");
     }
@@ -105,6 +107,8 @@ fn registered_resources_compute_only_owned_observations_and_require_model_digest
                     | "kubernetes_storage"
                     | "kubernetes_auth"
                     | "kubernetes_gateway"
+                    | "kubernetes_service_storage"
+                    | "kubernetes_service"
             ),
             "{kind}"
         );

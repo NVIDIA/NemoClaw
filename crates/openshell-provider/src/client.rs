@@ -3,7 +3,7 @@
 //! The gateway client a provider configuration establishes, and the backend
 //! that reconciles OpenShell objects through it.
 
-use crate::{EnvironmentSecrets, OpenShell};
+use crate::{DockerServices, EnvironmentSecrets, OpenShell, Services};
 use async_trait::async_trait;
 use nemoclaw_backend::{Backend, Error, Mutation, ObservationError, Row};
 use serde::{Deserialize, Serialize};
@@ -97,8 +97,13 @@ enum State {
 }
 
 /// The gateway client of the current provider configuration.
-#[derive(Default)]
-pub struct GatewayClient(RwLock<State>);
+pub struct GatewayClient(RwLock<State>, Arc<dyn Services>);
+
+impl Default for GatewayClient {
+    fn default() -> Self {
+        Self::with_services(Arc::new(DockerServices))
+    }
+}
 
 /// Gateway connection inputs of a provider configuration.
 pub struct GatewaySettings<'a> {
@@ -177,6 +182,11 @@ impl GatewaySettings<'_> {
 }
 
 impl GatewayClient {
+    /// Use the deployment's managed service checks for each configured client.
+    pub fn with_services(services: Arc<dyn Services>) -> Self {
+        Self(RwLock::new(State::default()), services)
+    }
+
     pub fn client(&self) -> Result<OpenShell, ObservationError> {
         match &*self.0.read().map_err(|_| ObservationError::Query)? {
             State::Ready(client) => Ok(client.clone()),
@@ -207,8 +217,12 @@ impl GatewayClient {
     }
     /// Connect lazily to `connection`.
     pub fn connect(&self, connection: &nemoclaw_openshell::Connection) -> Result<(), String> {
-        let client = OpenShell::connect(connection, Arc::new(EnvironmentSecrets))
-            .map_err(|error| error.to_string())?;
+        let client = OpenShell::connect_with_services(
+            connection,
+            Arc::new(EnvironmentSecrets),
+            self.1.clone(),
+        )
+        .map_err(|error| error.to_string())?;
         self.set(State::Ready(client)).map_err(str::to_owned)
     }
 }

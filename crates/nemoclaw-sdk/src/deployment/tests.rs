@@ -479,7 +479,6 @@ fn credential_references_cannot_override_helm_or_kubernetes_controls() {
 #[cfg(unix)]
 #[tokio::test]
 async fn schema_commands_do_not_require_inference_credentials() {
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Default)]
@@ -501,17 +500,21 @@ async fn schema_commands_do_not_require_inference_credentials() {
         },
     };
     fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
-    fs::write(
-        bundle.tofu(),
-        b"#!/bin/sh\n[ \"$TF_IN_AUTOMATION\" = 1 ] && [ \"$TF_INPUT\" = 0 ] && [ \"$CHECKPOINT_DISABLE\" = 1 ] && [ \"$TF_CLI_CONFIG_FILE\" = \"$PWD/providers.tfrc\" ] || exit 1\nprintf '{}\\n'\n",
-    )
-    .unwrap();
-    fs::set_permissions(bundle.tofu(), fs::Permissions::from_mode(0o700)).unwrap();
+    // Execute an existing interpreter so inherited writable fixture descriptors
+    // cannot make a newly written script fail to launch with ETXTBSY.
+    std::os::unix::fs::symlink("/bin/sh", bundle.tofu()).unwrap();
     let state_directory = tempfile::tempdir().unwrap();
     // macOS temporary paths may traverse /var -> /private/var; the shell's PWD
     // uses the physical directory when checking the fixture's environment.
     let state_path = state_directory.path().canonicalize().unwrap();
     let store = Store::open(&state_path).unwrap();
+    for operation in ["init", "show"] {
+        fs::write(
+            state_path.join(operation),
+            b"#!/bin/sh\n[ \"$TF_IN_AUTOMATION\" = 1 ] && [ \"$TF_INPUT\" = 0 ] && [ \"$CHECKPOINT_DISABLE\" = 1 ] && [ \"$TF_CLI_CONFIG_FILE\" = \"$PWD/providers.tfrc\" ] || exit 1\nprintf '{}\\n'\n",
+        )
+        .unwrap();
+    }
     let secrets = Arc::new(Unavailable::default());
     let deployment =
         Deployment::new(&state_path, bundle_directory.path()).with_secrets(secrets.clone());

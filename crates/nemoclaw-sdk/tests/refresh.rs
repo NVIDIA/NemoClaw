@@ -50,7 +50,7 @@ fn observation_failures_stop_refresh_without_consuming_prior_state() {
     ] {
         let prior = prior();
         let saved = prior.clone();
-        assert_eq!(refresh(&prior, Err(error)), Err(error));
+        assert_eq!(refresh(&prior, Err(error.clone())), Err(error));
         assert_eq!(prior, saved);
     }
 }

@@ -27,7 +27,7 @@ spec:
         name: qwen3:0.6b
         digest: 7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
       serving:
-        contextTokens: 8192
+        contextTokens: 32768
         maxSequences: 1
       memory:
         gpuMemoryGiB: 16
@@ -55,4 +55,4 @@ spec:
                 maxTokens: 2048
                 settings:
                   model_metadata:
-                    contextWindow: 8192
+                    contextWindow: 32768

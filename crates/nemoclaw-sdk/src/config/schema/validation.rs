@@ -343,6 +343,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     ]);
     defs["AgentExecution"]["minProperties"] = json!(1);
     crate::services::constrain_schema(defs, normalized);
+    crate::services::cluster_config::constrain(defs);
 
     root["allOf"] = json!([{
         "if": {"not": at("spec/gateway/runtime/provider", json!({"const":"podman"}), true)},
@@ -371,15 +372,22 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     at("spec/gateway/management", json!({"const":"external"}), true),
                     at("spec/gateway", json!({"required":["management","kubernetes"], "properties":{"management":{"const":"managed"}}}), true)
                 ]},
-                at("spec/services", json!({"maxProperties":0}), false)
+                {"if": at("spec/gateway/management", json!({"const":"managed"}), true),
+                 "then": at("spec/services", json!({"additionalProperties": {
+                    "required": ["kubernetes"],
+                    "properties": {"kind": {"enum": ["vllm", "ollama"]}},
+                    "allOf": [forbid(&["placement", "publication"]), at("container/ipc", json!({"const":"private"}), false)]
+                 }}), false),
+                 "else": at("spec/services", json!({"maxProperties":0}), false)}
             ],
-            "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
-        }
+            "x-nemoclaw-error": "cluster model services require a managed Kubernetes target, explicit service kubernetes settings, and private IPC without Docker placement or publication"
+        },
+        "else": at("spec/services", json!({"additionalProperties": forbid(&["kubernetes"])}), false)
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks endpoint transport and address policy, managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and development authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields are excluded; gateway.runtime.provider is kubernetes or openshift. Managed vLLM and Ollama services require explicit kubernetes capacity, storage, and scheduling settings; Docker placement, publication, and host IPC are excluded. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the packaged Fabric runtime and NemoClaw bridge directories; parent and read-write grants count. This parser check does not inspect images, resolve symlinks, or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

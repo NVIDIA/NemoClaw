@@ -8,6 +8,169 @@ use nemoclaw_provider::openshell::{EnvironmentSecrets, OpenShell};
 use nemoclaw_sdk::{backend::Backend, compile::Generations, config::Document};
 use std::sync::Arc;
 
+async fn rejection_fixture() -> (Fixture, OpenShell, Vec<nemoclaw_sdk::compile::Target>) {
+    struct Keys;
+    impl nemoclaw_sdk::Secrets for Keys {
+        fn resolve(&self, _: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            Ok("fixture-private-api-key".into())
+        }
+    }
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    document.spec.inference_providers[0].endpoint = "https://models.example/v1".into();
+    document.spec.inference_providers[0].credential =
+        Some(serde_json::from_value(serde_json::json!({"env":"FIRST_KEY"})).unwrap());
+    let client = OpenShell::connect(&document.spec.gateway.connection(), Arc::new(Keys)).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), format!("{key}-generation")))
+        .into();
+    let targets = targets(&document, &generations)
+        .unwrap()
+        .into_iter()
+        .filter(|target| target.kind != "agent_configuration")
+        .collect();
+    (fixture, client, targets)
+}
+
+#[tokio::test]
+async fn gateway_validation_rejections_preserve_details_for_credential_free_mutations() {
+    const DETAIL: &str = "network endpoint ambiguity validation failed: network policies 'nemoclaw-inference-qwen' endpoint[0] (model.namespace.svc.cluster.local:18888/v1/**) and '_provider_qwen' endpoint[0] (model.namespace.svc.cluster.local:18888/v1/**) overlap on port(s) 18888 with conflicting metadata: allowed_ips=[] vs [\"10.96.189.228/32\"]";
+    for (rpc, kind, creating) in [
+        ("CreateWorkspace", "workspace", true),
+        ("CreateSandbox", "sandbox", true),
+        ("DeleteProvider", "provider", false),
+        ("DeleteProviderProfile", "provider_profile", false),
+    ] {
+        let (fixture, client, targets) = rejection_fixture().await;
+        let mut bindings = std::collections::BTreeMap::new();
+        for target in &targets {
+            if creating && target.kind == kind {
+                break;
+            }
+            let result = client.ensure(&target.kind, &target.values).await;
+            assert!(
+                result.error().is_none(),
+                "{}: {:?}",
+                target.kind,
+                result.error()
+            );
+            bindings.insert(target.kind.clone(), result.into_parts().0.unwrap());
+        }
+        let effects = fixture.state.lock().unwrap().effects;
+        fixture.state.lock().unwrap().reject_rpc =
+            Some((rpc, tonic::Code::FailedPrecondition, DETAIL.into()));
+        let error = if creating {
+            client
+                .ensure(
+                    kind,
+                    &targets
+                        .iter()
+                        .find(|target| target.kind == kind)
+                        .unwrap()
+                        .values,
+                )
+                .await
+                .error()
+                .unwrap()
+        } else {
+            client
+                .remove(kind, &bindings[kind], true)
+                .await
+                .unwrap_err()
+        };
+        let nemoclaw_sdk::ObservationError::Rejected {
+            operation,
+            code,
+            detail,
+        } = error
+        else {
+            panic!("missing {rpc} rejection detail: {error}");
+        };
+        assert_eq!(operation, rpc);
+        assert_eq!(code, "FailedPrecondition");
+        assert_eq!(detail.as_ref(), DETAIL);
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.rejected_rpcs, [rpc]);
+        assert_eq!(state.effects, effects);
+    }
+}
+
+#[tokio::test]
+async fn credential_requests_reads_and_exec_keep_backend_rejection_text_private() {
+    for rpc in [
+        "CreateProvider",
+        "UpdateProvider",
+        "GetSandbox",
+        "ExecSandbox",
+    ] {
+        let (fixture, client, targets) = rejection_fixture().await;
+        let mut bindings = std::collections::BTreeMap::new();
+        for target in &targets {
+            if rpc == "CreateProvider" && target.kind == "provider" {
+                break;
+            }
+            let result = client.ensure(&target.kind, &target.values).await;
+            assert!(
+                result.error().is_none(),
+                "{}: {:?}",
+                target.kind,
+                result.error()
+            );
+            bindings.insert(target.kind.clone(), result.into_parts().0.unwrap());
+        }
+        fixture.state.lock().unwrap().reject_rpc = Some((
+            rpc,
+            tonic::Code::FailedPrecondition,
+            "PRIVATE_SENTINEL".into(),
+        ));
+        let error = match rpc {
+            "CreateProvider" => client
+                .ensure(
+                    "provider",
+                    &targets
+                        .iter()
+                        .find(|target| target.kind == "provider")
+                        .unwrap()
+                        .values,
+                )
+                .await
+                .error()
+                .unwrap(),
+            "UpdateProvider" => {
+                let mut provider = bindings["provider"].clone();
+                provider.insert("credential_env".into(), "SECOND_KEY".into());
+                client.ensure("provider", &provider).await.error().unwrap()
+            }
+            "GetSandbox" => client
+                .read("sandbox", &bindings["sandbox"], false)
+                .await
+                .unwrap_err(),
+            _ => {
+                let error = client
+                    .exec_bound(
+                        &bindings["sandbox"],
+                        vec!["true".into()],
+                        Default::default(),
+                        5,
+                    )
+                    .await
+                    .unwrap_err();
+                let nemoclaw_sdk::Error::Observation(error) = error else {
+                    panic!("unexpected exec error: {error}");
+                };
+                error
+            }
+        };
+        assert_eq!(error, nemoclaw_sdk::ObservationError::Query, "{rpc}");
+        assert!(!error.to_string().contains("PRIVATE_SENTINEL"));
+        assert_eq!(fixture.state.lock().unwrap().rejected_rpcs, [rpc]);
+    }
+}
+
 #[tokio::test]
 async fn sandbox_teardown_requires_owned_identity_but_not_its_previous_configuration() {
     let fixture = Fixture::start().await;

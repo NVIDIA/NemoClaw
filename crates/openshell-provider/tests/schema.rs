@@ -24,7 +24,7 @@ fn provider_serves_openshell_objects_under_their_resource_names() {
     let profile = resources["provider_profile"]
         .schema(&mut diagnostics)
         .unwrap();
-    for name in ["endpoint", "authenticated"] {
+    for name in ["endpoint", "authenticated", "cluster_source"] {
         assert!(
             matches!(
                 profile.block.attributes[name].constraint,

@@ -302,15 +302,7 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
     let version = nemoclaw_build::BUILDER_SOURCE_VERSION.to_owned();
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     let target = target(platform)?;
-    build(
-        &[
-            "nemoclaw-cli",
-            "nemoclaw-provider",
-            "openshell-provider",
-            "fabric-provider",
-        ],
-        target,
-    )?;
+    build(&["nemoclaw-cli", "nemoclaw-provider"], target)?;
     nemoclaw_build::verify_source_version(&version, &sources()?)?;
     fs::create_dir_all("dist")?;
     let temporary = tempfile::tempdir_in("dist")?;
@@ -347,11 +339,11 @@ async fn bundle(pins: &Pins, platform: &str) -> Result<()> {
             format!("{provider}/terraform-provider-nemoclaw_v{version}{extension}"),
         ),
         (
-            format!("terraform-provider-openshell{extension}"),
+            format!("terraform-provider-nemoclaw-openshell{extension}"),
             format!("{openshell}/terraform-provider-openshell_v{version}{extension}"),
         ),
         (
-            format!("terraform-provider-fabric{extension}"),
+            format!("terraform-provider-nemoclaw-fabric{extension}"),
             format!("{fabric}/terraform-provider-fabric_v{version}{extension}"),
         ),
     ] {

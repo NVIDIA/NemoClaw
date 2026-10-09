@@ -50,6 +50,65 @@ pub fn definition(
     kind: InferenceProviderKind,
     authenticated: bool,
 ) -> Result<proto::ProviderProfile, ObservationError> {
+    nemoclaw_backend::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
+    let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
+    let allowed_ips = url
+        .host_str()
+        .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+        .into_iter()
+        .collect::<Vec<_>>();
+    profile(name, endpoint, kind, authenticated, &allowed_ips)
+}
+
+/// Build a profile for a caller-verified cluster service endpoint.
+/// Empty addresses defer destination grants until the provider observes the Service.
+pub fn cluster_definition(
+    name: &str,
+    endpoint: &str,
+    kind: InferenceProviderKind,
+    authenticated: bool,
+    addresses: &[std::net::IpAddr],
+) -> Result<proto::ProviderProfile, ObservationError> {
+    let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
+    if url.scheme() != "http"
+        || !url
+            .host_str()
+            .is_some_and(|host| host.ends_with(".svc.cluster.local"))
+        || url.port().is_none_or(|port| port == 0)
+        || url.path() != "/v1"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || addresses
+            .iter()
+            .any(|address| !service_address_allowed(address))
+    {
+        return Err(ObservationError::BindingMismatch);
+    }
+    profile(name, endpoint, kind, authenticated, addresses)
+}
+
+/// Accept a unicast Service address, excluding local and mapped destinations.
+pub fn service_address_allowed(address: &std::net::IpAddr) -> bool {
+    !address.is_unspecified()
+        && !address.is_loopback()
+        && !address.is_multicast()
+        && match address {
+            std::net::IpAddr::V4(ip) => !ip.is_link_local() && !ip.is_broadcast(),
+            std::net::IpAddr::V6(ip) => {
+                !ip.is_unicast_link_local() && ip.to_ipv4_mapped().is_none()
+            }
+        }
+}
+
+fn profile(
+    name: &str,
+    endpoint: &str,
+    kind: InferenceProviderKind,
+    authenticated: bool,
+    addresses: &[std::net::IpAddr],
+) -> Result<proto::ProviderProfile, ObservationError> {
     if name.is_empty()
         || name.len() > 40
         || !name.as_bytes()[0].is_ascii_lowercase()
@@ -59,7 +118,6 @@ pub fn definition(
     {
         return Err(ObservationError::Query);
     }
-    nemoclaw_backend::validate_endpoint(endpoint, false).map_err(|_| ObservationError::Query)?;
     let url = url::Url::parse(endpoint).map_err(|_| ObservationError::Query)?;
     if url.query().is_some()
         || url.fragment().is_some()
@@ -77,11 +135,9 @@ pub fn definition(
     let path = format!("{}/**", url.path().trim_end_matches('/'));
     // Private addresses require an explicit destination-validation grant. Grant
     // only the selected literal address, never a whole private network.
-    let allowed_ips: Vec<String> = host
-        .parse::<std::net::IpAddr>()
-        .ok()
+    let allowed_ips: Vec<String> = addresses
+        .iter()
         .map(|ip| format!("{ip}/{}", if ip.is_ipv4() { 32 } else { 128 }))
-        .into_iter()
         .collect();
     let policy = openshell_policy::parse_sandbox_policy(
         &serde_json::json!({

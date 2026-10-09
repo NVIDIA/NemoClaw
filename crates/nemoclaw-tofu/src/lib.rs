@@ -51,6 +51,9 @@ pub struct Definition {
     /// Optional inputs whose omission on update selects the empty default
     /// instead of carrying the prior value forward.
     pub reset_when_omitted: Vec<&'static str>,
+    /// Inputs whose observations must preserve the recorded value, including
+    /// the empty default of an omitted optional input.
+    pub bound_fields: Vec<&'static str>,
     /// Attributes the backend observes, with their update planning rule.
     pub computed: Vec<(&'static str, PlanComputed)>,
     /// Optional inputs the provider generates on create when omitted, then
@@ -78,6 +81,7 @@ impl Definition {
             mutable: mutable.to_vec(),
             optional: Vec::new(),
             reset_when_omitted: Vec::new(),
+            bound_fields: Vec::new(),
             computed: Vec::new(),
             generated: Vec::new(),
             protection: Protection::None,
@@ -96,6 +100,10 @@ impl Definition {
     }
     pub fn reset_when_omitted(mut self, fields: &[&'static str]) -> Self {
         self.reset_when_omitted.extend_from_slice(fields);
+        self
+    }
+    pub fn bound_fields(mut self, fields: &[&'static str]) -> Self {
+        self.bound_fields.extend_from_slice(fields);
         self
     }
     pub fn computed(mut self, name: &'static str, plan: PlanComputed) -> Self {

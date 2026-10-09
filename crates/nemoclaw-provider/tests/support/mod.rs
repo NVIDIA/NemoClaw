@@ -45,4 +45,7 @@ pub fn definition(
         .reset_when_omitted
         .retain(|field| fields.contains(field));
     definition
+        .bound_fields
+        .retain(|field| fields.contains(field));
+    definition
 }
