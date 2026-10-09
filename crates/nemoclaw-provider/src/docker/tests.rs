@@ -48,23 +48,21 @@ fn engine_endpoint_syntax_can_be_validated_without_opening_a_transport() {
     assert!(crate::config::validate_engine_endpoint("tcp://host:2375").is_err());
 }
 
+/// Windows reaches SSH engines; local socket engines exist only on Unix.
 #[test]
 #[cfg(windows)]
-fn windows_image_discovery_rejects_unsupported_engine_transports() {
-    for (endpoint, diagnostic) in [
-        (
-            "unix:///var/run/docker.sock",
-            "local container-engine connections are unsupported on this platform",
-        ),
-        (
-            "ssh://operator@gpu-box:2222",
-            "SSH container-engine connections are unsupported on this platform",
-        ),
-    ] {
-        crate::config::validate_engine_endpoint(endpoint).unwrap();
-        let error = Engine::connect(endpoint)
-            .err()
-            .expect("no supported Windows engine transport");
-        assert!(error.to_string().contains(diagnostic), "{error}");
-    }
+fn windows_reaches_ssh_engines_and_rejects_local_sockets() {
+    let local = "unix:///var/run/docker.sock";
+    crate::config::validate_engine_endpoint(local).unwrap();
+    let error = Engine::connect(local)
+        .err()
+        .expect("a local socket engine on Windows");
+    assert!(
+        error
+            .to_string()
+            .contains("local container-engine connections are unsupported on this platform"),
+        "{error}"
+    );
+    // Connecting opens no transport; requests run ssh.
+    Engine::connect("ssh://operator@gpu-box:2222").unwrap();
 }
