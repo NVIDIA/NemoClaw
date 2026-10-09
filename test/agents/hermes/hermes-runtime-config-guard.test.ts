@@ -690,6 +690,69 @@ with tempfile.TemporaryDirectory() as tmp:
   });
 
   it.each([
+    { outcome: "writes", extra: "", accepted: true },
+    { outcome: "rejects", extra: "OTHER_SECRET=raw-candidate-secret\n", accepted: false },
+  ])("$outcome refreshed provider bytes after stdin validation (#12510)", ({ extra, accepted }) => {
+    const original = `# café\nMSTEAMS_APP_PASSWORD=openshell:resolve:env:MSTEAMS_APP_PASSWORD\n${extra}`;
+    const candidate = `# café\nMSTEAMS_APP_PASSWORD=openshell:resolve:env:v2_MSTEAMS_APP_PASSWORD\n${extra}`;
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+import os
+from pathlib import Path
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmp:
+    home = Path(tmp)
+    env_path = home / ".env"
+    config_path = home / "config.yaml"
+    hash_path = home / ".config-hash"
+    received_path = home / "validator.stdin"
+    validator_path = home / "validator.py"
+    boundary_path = Path(sys.argv[1]).with_name("validate-env-secret-boundary.py")
+    original = ${JSON.stringify(original)}
+    env_path.write_bytes(original.encode("utf-8"))
+    config_path.write_text("model: {}\\n", encoding="utf-8")
+    guard._write_hash(str(hash_path), guard._hash_text(str(config_path), str(env_path))[0])
+    before_hash = hash_path.read_bytes()
+    before_stat = env_path.stat()
+    validator_path.write_text("\\n".join([
+        "import pathlib, subprocess, sys",
+        "assert sys.argv[1:] == ['env-text']",
+        "candidate = sys.stdin.buffer.read()",
+        f"pathlib.Path({str(received_path)!r}).write_bytes(candidate)",
+        f"raise SystemExit(subprocess.run([sys.executable, {str(boundary_path)!r}, 'env-text'], input=candidate, check=False).returncode)",
+    ]), encoding="utf-8")
+    os.environ["MSTEAMS_APP_PASSWORD"] = "openshell:resolve:env:v2_MSTEAMS_APP_PASSWORD"
+    error = ""
+    try:
+        guard.provider_placeholders(tmp, str(hash_path), "compat", None, str(validator_path))
+    except guard.UnsafePathError as exc:
+        error = str(exc)
+    after_stat = env_path.stat()
+    guard._verify_strict_hash(tmp, str(hash_path))
+    print(json.dumps({
+        "received": received_path.read_bytes().decode("utf-8"),
+        "env_text": env_path.read_text(encoding="utf-8"),
+        "env_unchanged": (before_stat.st_ino, before_stat.st_mtime_ns, before_stat.st_size)
+            == (after_stat.st_ino, after_stat.st_mtime_ns, after_stat.st_size),
+        "hash_changed": hash_path.read_bytes() != before_hash,
+        "error": error,
+    }))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    const proof = JSON.parse(result.stdout);
+    expect(proof.received).toBe(candidate);
+    expect(proof.env_text).toBe(accepted ? candidate : original);
+    expect(proof.env_unchanged).toBe(!accepted);
+    expect(proof.hash_changed).toBe(accepted);
+    expect(proof.error).toBe(
+      accepted ? "" : "Hermes provider placeholder refresh would violate the secret boundary",
+    );
+    expect(result.stderr).not.toContain("raw-candidate-secret");
+  });
+
+  it.each([
     ["wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
     ["teams", "MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
   ] as const)(
@@ -766,6 +829,71 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes startup readiness lease", () => {
+  it.each([
+    ["openshell", true],
+    ["direct-nonroot", true],
+    ["direct-root", false],
+    ["foreign-supervisor", false],
+    ["nonroot-supervisor", false],
+    ["root-workload", false],
+    ["duplicate-workload", false],
+    ["root-marker", false],
+    ["symlink-marker", false],
+    ["ready-marker", false],
+    ["marker-race", false],
+  ] as const)("attests private mutable topology from procfs: %s", (scenario, expected) => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json, os, pathlib, tempfile, types
+scenario = ${JSON.stringify(scenario)}
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    proc = root / "proc"
+    proc.mkdir()
+    guard.PROC_ROOT = str(proc)
+    guard.HERMES_ROOT_LIFECYCLE_MARKER = str(root / "root-marker")
+    guard.HERMES_STARTUP_READY_FILE = str(root / "ready-marker")
+    guard.pwd.getpwnam = lambda _name: types.SimpleNamespace(pw_uid=1000)
+
+    def process(pid, parent, uid, argv):
+        directory = proc / str(pid)
+        directory.mkdir()
+        fields = ["S", str(parent)] + ["0"] * 17 + [str(100 + pid)]
+        (directory / "stat").write_text(f"{pid} (fixture) " + " ".join(fields))
+        (directory / "status").write_text(f"Uid:\\t{uid}\\t{uid}\\t{uid}\\t{uid}\\nNSpid:\\t{pid}\\n")
+        (directory / "cmdline").write_bytes(argv)
+
+    if scenario.startswith("direct-"):
+        process(1, 0, 1000 if scenario == "direct-nonroot" else 0, b"/usr/bin/bash\\0/usr/local/bin/nemoclaw-start\\0")
+    else:
+        supervisor = b"/usr/bin/foreign\\0" if scenario == "foreign-supervisor" else b"/opt/openshell/bin/openshell-sandbox\\0"
+        process(1, 0, 1000 if scenario == "nonroot-supervisor" else 0, supervisor)
+        process(20, 1, 0 if scenario == "root-workload" else 1000, b"/usr/bin/bash\\0/usr/local/bin/nemoclaw-start\\0")
+        if scenario == "duplicate-workload":
+            process(21, 1, 1000, b"/usr/bin/bash\\0/usr/local/bin/nemoclaw-start\\0")
+    if scenario == "root-marker":
+        (root / "root-marker").write_text("root-separated\\n")
+    if scenario == "symlink-marker":
+        (root / "root-marker").symlink_to(root / "absent")
+    if scenario == "ready-marker":
+        (root / "ready-marker").write_text("stale")
+    if scenario == "marker-race":
+        original = guard._openshell_supervised_nonroot_start_is_live
+        def race(*args):
+            result = original(*args)
+            (root / "root-marker").write_text("root-separated\\n")
+            return result
+        guard._openshell_supervised_nonroot_start_is_live = race
+    try:
+        guard.inspect_private_mutable_topology()
+        allowed = True
+    except (guard.UnsafePathError, OSError):
+        allowed = False
+    print(json.dumps({"allowed": allowed}))
+`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ allowed: expected });
+  });
+
   it("rejects a supervisor argv polluted with the appended startup command (#6110)", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
