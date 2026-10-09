@@ -745,6 +745,11 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("hermes-gpu-startup");
   });
 
+  it("selects OpenClaw rebuild when its restoration helper changes", () => {
+    const targets = catalogueTargetsForChangedFiles(["test/e2e/live/openclaw-restoration.ts"]);
+    expect(targets.map((target) => target.id)).toContain("rebuild-openclaw");
+  });
+
   it("selects both stopped-recovery consumers when the shared proof changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},

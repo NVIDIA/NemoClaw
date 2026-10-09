@@ -10,6 +10,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
+import { restorationScript } from "./openclaw-restoration.ts";
 import { proveStoppedDockerAgentRecovery } from "./openclaw-stopped-recovery.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
@@ -155,9 +156,7 @@ test(
       await waitForNativeOpenClaw(sandbox, env, redactions, artifactPrefix);
       const read = await sandbox.execShell(
         SANDBOX_NAME,
-        trustedSandboxShellScript(
-          'set -eu; marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
-        ),
+        trustedSandboxShellScript(restorationScript()),
         {
           artifactName: `${artifactPrefix}-read-marker`,
           env,

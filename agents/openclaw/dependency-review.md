@@ -102,3 +102,9 @@ WeChat retains its separately reviewed 2.4.9 plugin and Zod 4.4.3 graph.
 Its offline install uses a disposable copy of the dedicated WeChat cache.
 Official channel installs use a separate copy of the messaging cache, which also contains Zod 4.5.4.
 Both copies are removed after success or failure; neither install can write to a trusted cache.
+
+The pinned 2026.9.5 CLI proxy signal handler can exit before the gateway releases its native owner lease.
+`scripts/lib/patch-openclaw-container-restart.mts` keeps gateway shutdown with the native gateway lifecycle while retaining the proxy cleanup barrier and process-exit cleanup.
+Ordinary CLI invocations retain their signal handlers and exit statuses.
+The patch rejects unexpected source shapes and applies only to 2026.9.5; remove it when a reviewed upstream version gives gateway shutdown sole ownership of process exit.
+`test/agents/openclaw/openclaw-proxy-shutdown-patch.test.ts` covers both signal paths, cleanup, patch drift, and installed-package auditing.
