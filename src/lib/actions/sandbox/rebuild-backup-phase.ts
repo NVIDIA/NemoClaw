@@ -83,7 +83,18 @@ export interface RebuildBackupPhaseResult {
 }
 
 export async function releaseRebuildSourceOpenClawWindow(window: OpenClawPostRestoreDoctorWindow) {
-  const finished = await finishOpenClawBackupQuiesce(window);
+  let finished: Awaited<ReturnType<typeof finishOpenClawBackupQuiesce>>;
+  try {
+    finished = await finishOpenClawBackupQuiesce(window);
+  } catch (error) {
+    // A rejecting release must not bypass the abort fallback or strand the
+    // caller's own bail path (#12914 review): report it as a failed release.
+    finished = {
+      ok: false,
+      stage: "release",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
   if (!finished.ok) {
     const aborted = await abortOpenClawPostRestoreDoctor(window);
     const state = aborted.ok
