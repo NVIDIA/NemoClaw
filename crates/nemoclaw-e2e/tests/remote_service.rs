@@ -80,22 +80,22 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
     output.stdout
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure() {
     lifecycle("nvidia.fabric.openclaw", false, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
 async fn managed_hermes_model_lifecycle_preserves_data_without_generation() {
     lifecycle("nvidia.fabric.hermes", false, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
 async fn managed_bearer_credentials_survive_export_reapply_and_destroy() {
     lifecycle("nvidia.fabric.hermes", true, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn managed_pi_model_lifecycle_preserves_data_without_generation() {
     lifecycle("nvidia.fabric.pi", false, "vllm", false, false).await;
 }
@@ -106,7 +106,7 @@ async fn remote_ollama_lifecycle_preserves_data_and_stops_on_observation_failure
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; protocol-only partial deployment fixtures"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; protocol-only partial deployment fixtures"]
 async fn partial_runtime_destroy_retains_storage_without_creating_network() {
     lifecycle("nvidia.fabric.openclaw", false, "vllm", true, false).await;
 }
@@ -118,12 +118,12 @@ async fn partial_ollama_destroy_retains_storage_without_creating_network() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
 async fn unverified_vllm_images_are_checked_after_pull_before_storage() {
     lifecycle("nvidia.fabric.openclaw", false, "vllm", false, true).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker fixtures"]
 async fn unverified_ollama_images_are_checked_after_pull_before_storage() {
     lifecycle("nvidia.fabric.openclaw", false, "ollama", false, true).await;
 }

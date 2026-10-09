@@ -123,7 +123,7 @@ provider "docker" {{
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 async fn authored_vllm_container_takes_its_runtime_contract_from_typed_settings() {
     let engine = engine().await;
     let workspace = Workspace::new(
@@ -175,7 +175,7 @@ async fn authored_vllm_container_takes_its_runtime_contract_from_typed_settings(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 async fn vllm_runtime_rejects_unknown_and_invalid_settings_at_their_attributes() {
     let engine = engine().await;
     for (runtime, expected) in [
@@ -226,7 +226,7 @@ fn planned_contract(workspace: &Workspace, variable: &str) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 async fn authored_ollama_containers_take_their_contracts_from_typed_settings() {
     let engine = engine().await;
     let digest = "7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435";
@@ -273,7 +273,7 @@ async fn authored_ollama_containers_take_their_contracts_from_typed_settings() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 async fn authored_docker_gateway_takes_its_launch_from_typed_settings() {
     let engine = engine().await;
     let workspace = Workspace::with(

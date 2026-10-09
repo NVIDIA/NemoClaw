@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 // Deployment planning requires image discovery, whose engine transports are Unix-only.
-// Windows retains deterministic bridge tests and an explicit unsupported-engine regression.
+// Windows retains bridge tests that need no engine transport and an unsupported-engine regression.
 #![cfg(unix)]
 use nemoclaw_sdk::config::InferenceProviderKind;
 
@@ -16,7 +16,7 @@ use std::{
 macro_rules! harness_test {
     ($name:ident, $harness:literal) => {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+        #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
         async fn $name() {
             harness_reconciles_configuration_and_protects_sandbox_identity($harness).await;
         }
@@ -428,7 +428,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn missing_runtime_declaration_stops_planning_without_recreation() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
@@ -478,7 +478,7 @@ async fn missing_runtime_declaration_stops_planning_without_recreation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn failed_configuration_reports_safe_runtime_state_and_recovers_without_recreation() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();

@@ -109,7 +109,7 @@ These explanations are fixed text, not the gateway's condition message.
 Error, completed, stopped, and deleting phases fail immediately and retain resources.
 The SDK excludes unrecognized reasons and raw backend condition messages because they may contain credentials.
 Use the OpenShell inspection and log collection procedure below before cleanup.
-If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); ordinary apply protects the existing sandbox from replacement.
+If startup requires a different image or policy, follow the [sandbox change procedure](usage.md#choose-the-change-path); apply protects the existing sandbox from replacement.
 A failed first apply can be [destroyed](usage.md#destroy) with its retained state before a successful reapply.
 
 The current CLI has no `doctor`, `status`, or diagnostic-bundle command.

@@ -416,7 +416,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "uses the verified native bundle named by NEMOCLAW_TEST_BUNDLE"]
+    #[ignore = "uses the verified bundle named by NEMOCLAW_TEST_BUNDLE"]
     async fn runtime_export_declares_the_native_helm_provider_inputs() {
         struct Kubeconfig(String);
         impl Secrets for Kubeconfig {

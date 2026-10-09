@@ -4,7 +4,7 @@ use nemoclaw_provider::docker::Engine;
 use nemoclaw_sdk::managed::Spec;
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE and NEMOCLAW_TEST_RUNTIME_ENGINE; reads existing owned runtimes only"]
+#[ignore = "requires NEMOCLAW_TEST_RUNTIME_STATE and NEMOCLAW_TEST_RUNTIME_ENGINE; reads existing owned runtimes only"]
 async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
     let path = std::path::PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),
@@ -62,7 +62,7 @@ async fn existing_spark_runtime_bindings_are_observed_without_mutations() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE; reads retained owned storage only"]
+#[ignore = "requires NEMOCLAW_TEST_RUNTIME_STATE; reads retained owned storage only"]
 async fn retained_inference_credentials_preserve_their_reference_binding() {
     let path = std::path::PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),
@@ -96,7 +96,7 @@ async fn retained_inference_credentials_preserve_their_reference_binding() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_STATE; reads retained owned gateway storage only"]
+#[ignore = "requires NEMOCLAW_TEST_RUNTIME_STATE; reads retained owned gateway storage only"]
 async fn retained_gateway_storage_preserves_its_reference_binding() {
     let path = std::path::PathBuf::from(
         std::env::var_os("NEMOCLAW_TEST_RUNTIME_STATE").expect("explicit state file"),

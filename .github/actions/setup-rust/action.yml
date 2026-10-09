@@ -4,7 +4,7 @@ name: Set up Rust
 description: Install pinned protoc and cargo-nextest, and restore third-party Rust artifacts.
 inputs:
   platform:
-    description: Native bundle platform.
+    description: Bundle platform.
     required: true
   cache-prefix:
     description: Separate dependency caches for distinct build jobs.

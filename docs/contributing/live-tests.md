@@ -44,7 +44,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 The render test also rejects an unavailable chart digest.
 
 To run only the gateway test, use an owned disposable cluster with Agent Sandbox installed and exactly one default StorageClass.
-Supply its explicit kubeconfig and context, and a verified immutable bundle built from the checkout:
+Supply the cluster's kubeconfig and context, and a verified immutable bundle built from the checkout:
 
 ```sh
 NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
@@ -58,7 +58,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
 The test runs the compiled runtime and teardown graphs through the bundled OpenTofu and providers.
 Each OpenTofu process has an empty `PATH` and an isolated home, so a host Helm executable cannot satisfy the test.
 The test creates a fresh namespace, installs the gateway, requires an unchanged plan, verifies authenticated `GetGatewayInfo`, and rejects a forged token.
-It removes and reinstalls the native Helm release, then removes it again, checking that the namespace, encryption key, and PVC identities survive both removals.
+It removes and reinstalls the Helm release, then removes it again, checking that the namespace, encryption key, and PVC identities survive both removals.
 It creates no agent sandbox and requests no inference.
 
 The test prints the path to its private temporary state directory and retains it after success or failure.
@@ -90,7 +90,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/candidate-bundle \
     fabric_live::dependency_upgrade_survives_apply_process_exit -- --ignored --test-threads=1
 ```
 
-The test waits for the real apply CLI to exit, then explicitly invokes the hosted Fabric runtime through OpenShell.
+The test waits for the apply CLI to exit, then invokes the hosted Fabric runtime through OpenShell.
 It requires a successful Fabric result without assuming an adapter-specific output shape or qualifying response quality.
 It checks export/reapply and stable resource/runtime identities before destroying its owned workloads and registrations.
 It retains the workspace and persistent storage; failures retain state and resources for diagnosis and explicit cleanup.
@@ -98,7 +98,7 @@ CLI failures appear in the test output.
 It never starts inference or substitutes another agent process through exec.
 
 If this test fails, passing lower-level fixture tests does not establish compatibility.
-Run it explicitly for candidate dependency upgrades, outside the default build; ordinary CI retains the fast descriptor, reference, and protocol tests.
+Run it explicitly for candidate dependency upgrades, outside the default build; `CI / Native` retains the fast descriptor, reference, and protocol tests.
 
 ## Retained Storage Observations
 
@@ -171,7 +171,7 @@ The VM must be AMD64, expose a working Docker daemon with Buildx and a Landlock 
 The test refuses a host with a detected NemoClaw or OpenShell deployment.
 It uses the hosted NVIDIA OpenClaw fixture as the initial v1 configuration, replacing only its deployment UID and agent-image digest for the owned run.
 
-The test proves that plan leaves the Docker inventory unchanged, waits for the real apply CLI process to exit, and then requires an exact agent reply through the hosted runtime.
+The test proves that plan leaves the Docker inventory unchanged, waits for the apply CLI process to exit, and then requires an exact agent reply through the hosted runtime.
 It checks unchanged apply, export/reapply, stable resource and Fabric runtime identities, denied undeclared egress, and preservation of an owned workspace file.
 Destroy must remove the provider, profile, sandbox, and managed gateway while retaining the documented workspace and gateway storage.
 The workflow uploads a sanitized Boolean proof and verifies that the Brev VM is absent before completing.
@@ -239,7 +239,7 @@ Only inside the test, the comparison replaces the single-entry list with `agent`
 Only the authored v1 document drives deployment.
 To refresh a fixture, run the public v0 `nemoclaw config export` against a representative deployment, check the output for credential values, copy the redacted bytes without reshaping them, and update `v1.yaml` in the same change.
 
-Run the deterministic comparisons without Docker or a credential:
+Run the comparisons without Docker or a credential:
 
 ```sh
 cargo test -p nemoclaw-e2e --test integration hosted_parity::

@@ -16,7 +16,7 @@ use std::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
     let tofu =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
@@ -96,7 +96,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabilities() {
     use nemoclaw_sdk::{compile::compile, config::Document};
     let tofu =

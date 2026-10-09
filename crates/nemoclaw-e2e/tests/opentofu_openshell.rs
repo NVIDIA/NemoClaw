@@ -17,7 +17,7 @@ use std::{fs, path::PathBuf, process::Output};
 // Compiled deployment planning requires a currently Unix-only image engine.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER"]
 async fn production_provider_applies_refreshes_and_destroys_the_reference_graph() {
     let fixture = Fixture::start().await;
     let tofu = PathBuf::from(
@@ -278,7 +278,7 @@ async fn gateway_capability_observations_preserve_metadata_and_fail_closed_witho
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER"]
 async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     let fixture = Fixture::start().await;
     fixture.state.lock().unwrap().fail_read = Some(("gateway", tonic::Code::Unavailable));
