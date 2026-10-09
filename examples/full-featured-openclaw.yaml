@@ -73,7 +73,7 @@ spec:
     endpoint: http://127.0.0.1:17695
     engine: unix:///var/run/docker.sock
     image:
-      ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2
+      ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6
     networkCIDR: 172.30.121.0/24
   services:
     nemotron:
