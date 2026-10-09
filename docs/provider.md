@@ -518,7 +518,8 @@ See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and
 ## Sandbox Completion
 
 The OpenShell graph uses `fabric_sandbox_readiness` after sandbox creation and any runtime configuration resource.
-Its required `sandbox` map carries the sandbox resource's binding and configuration; the provider checks startup and configuration before requesting the packaged bridge's health response.
+It requires the sandbox's `workspace`, `name`, `id`, `owner`, `generation`, `agent_name`, `agent_runtime`, and `runtime_json`, and the agent configuration's `config_json`.
+The provider checks that the sandbox still has that identity and agent runtime, waits for startup, and confirms the host applied that configuration before requesting the packaged bridge's health response.
 It does not invoke an agent or model.
 The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
 

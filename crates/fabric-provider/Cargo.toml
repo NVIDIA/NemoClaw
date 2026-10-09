@@ -26,6 +26,7 @@ regex.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_path_to_error = "0.1"
 tf-provider.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
