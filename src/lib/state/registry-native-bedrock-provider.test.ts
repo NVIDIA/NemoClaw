@@ -18,6 +18,7 @@ it("retains generation authority across a provider switch, denies replacement an
   vi.resetModules();
   try {
     const registry = await import("./registry");
+    const authority = await import("./registry/native-bedrock-provider-authority");
     const binding = {
       endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
       region: "us-east-1",
@@ -31,7 +32,7 @@ it("retains generation authority across a provider switch, denies replacement an
       schemaVersion: 1 as const,
       providerId: "owned-id",
     };
-    registry.setNativeBedrockProviderAuthority("gateway", {
+    authority.setNativeBedrockProviderAuthority("gateway", {
       ...receipt,
       token: "never-persist",
       credentialHash: "never-persist",
@@ -66,9 +67,9 @@ it("retains generation authority across a provider switch, denies replacement an
       gatewayPort: 8080,
     });
     expect(registry.getSandbox("alpha")?.nativeBedrockProviderAttachment).toEqual(receipt);
-    expect(() => registry.setNativeBedrockProviderAuthority("other", receipt)).toThrow("invalid");
+    expect(() => authority.setNativeBedrockProviderAuthority("other", receipt)).toThrow("invalid");
     expect(() =>
-      registry.setNativeBedrockProviderAuthority("gateway", {
+      authority.setNativeBedrockProviderAuthority("gateway", {
         ...receipt,
         providerId: "replacement",
       }),

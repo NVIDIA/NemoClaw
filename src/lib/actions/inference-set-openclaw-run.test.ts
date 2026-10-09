@@ -3,12 +3,47 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
-import type { OpenClawConfigUpdate } from "../sandbox/config";
+import { setDotpath, type OpenClawConfigUpdate } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw routing", () => {
+  it("persists inactive native credential cleanup without changing unrelated providers", async () => {
+    const persistedConfig: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/old-model" } } },
+      models: {
+        providers: {
+          inference: { api: "openai-completions", models: [{ id: "nvidia/old-model" }] },
+          "inactive.compatible": { apiKey: "${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}", models: [] },
+          inactiveBedrock: { apiKey: "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN}", models: [] },
+          inactiveNvidia: { apiKey: "${NVIDIA_INFERENCE_API_KEY}", models: [] },
+          custom: { apiKey: "user-managed-credential", baseUrl: "https://custom.example/v1" },
+        },
+      },
+    };
+    const deps = createDeps({ config: structuredClone(persistedConfig), session: baseSession() });
+    deps.calls.setOpenClawConfigValues.mockImplementation(
+      (_name: string, updates: readonly OpenClawConfigUpdate[]) => {
+        const providerUpdate = updates.find((update) => update.dotpath === "models.providers")!;
+        setDotpath(persistedConfig, providerUpdate.dotpath, structuredClone(providerUpdate.value));
+      },
+    );
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true },
+      deps,
+    );
+
+    expect((persistedConfig.models as ConfigObject).providers).toMatchObject({
+      inference: { apiKey: "${NVIDIA_INFERENCE_API_KEY}" },
+      "inactive.compatible": { apiKey: "unused", models: [] },
+      inactiveBedrock: { apiKey: "unused", models: [] },
+      inactiveNvidia: { apiKey: "unused", models: [] },
+      custom: { apiKey: "user-managed-credential", baseUrl: "https://custom.example/v1" },
+    });
+  });
+
   it("requires recreation instead of silently migrating a legacy NVIDIA sandbox", async () => {
     const deps = createDeps({
       config: {},

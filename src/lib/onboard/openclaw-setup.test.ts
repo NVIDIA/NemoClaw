@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  patchOpenClawInferenceConfig,
+  writeOpenClawInferenceConfigNatively,
+} from "../actions/inference-set";
+import { setDotpath } from "../sandbox/config";
+import type { ConfigObject } from "../security/credential-filter";
 
 const configMocks = vi.hoisted(() => ({
   readSandboxConfig: vi.fn(),
@@ -286,6 +292,44 @@ describe("OpenClaw sandbox setup", () => {
 });
 
 describe("initial OpenClaw inference route", () => {
+  it("persists inactive native credential cleanup during initialization", async () => {
+    const persisted: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/old" } } },
+      models: {
+        providers: {
+          inference: { models: [{ id: "old" }] },
+          "inactive.compatible": { apiKey: "${NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY}" },
+          custom: { apiKey: "user-managed-credential" },
+        },
+      },
+    };
+    const initialize = createInitialOpenclawInferenceRoute({
+      readOpenclawConfig: () => structuredClone(persisted),
+      patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+      writeOpenclawInferenceConfigNatively: (sandbox, config, route, gateway, cleanup) =>
+        writeOpenClawInferenceConfigNatively(
+          sandbox,
+          config,
+          route,
+          (_name, updates, selectedGateway) => {
+            expect(selectedGateway).toBe("selected-gateway");
+            const providerUpdate = updates.find((update) => update.dotpath === "models.providers")!;
+            setDotpath(persisted, providerUpdate.dotpath, structuredClone(providerUpdate.value));
+          },
+          gateway,
+          cleanup,
+        ),
+      restartNativeGateway: async () => ({ ok: true }),
+    });
+    await initialize("spark-box", "nvidia/new", "nvidia-prod", null, "selected-gateway");
+    expect(persisted.models).toMatchObject({
+      providers: {
+        "inactive.compatible": { apiKey: "unused" },
+        custom: { apiKey: "user-managed-credential" },
+      },
+    });
+  });
+
   it("applies the selected route natively before a confirmed gateway restart (#12033)", async () => {
     const order: string[] = [];
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");

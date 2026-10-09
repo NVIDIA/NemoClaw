@@ -759,7 +759,11 @@ export function patchOpenClawInferenceConfig(
   inheritPrimaryReplyBudget = true,
   nativeCompatibleReceipt?: NativeCompatibleProviderAttachment,
   nativeBedrockReceipt?: NativeBedrockProviderAttachment,
-): { changed: boolean; route: SandboxInferenceConfig } {
+): {
+  changed: boolean;
+  route: SandboxInferenceConfig;
+  inactiveProviderCredentialsChanged: boolean;
+} {
   const before = JSON.stringify(config);
   const route = nativeBedrockReceipt
     ? getNativeBedrockSandboxInferenceConfig({
@@ -787,6 +791,7 @@ export function patchOpenClawInferenceConfig(
   const models = ensureObject(config, "models");
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
+  let inactiveProviderCredentialsChanged = false;
   for (const [key, value] of Object.entries(providers)) {
     if (!isConfigObject(value)) continue;
     const saved = value;
@@ -799,6 +804,7 @@ export function patchOpenClawInferenceConfig(
       ].includes(String(saved.apiKey))
     ) {
       saved.apiKey = "unused";
+      inactiveProviderCredentialsChanged = true;
     }
   }
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
@@ -813,7 +819,7 @@ export function patchOpenClawInferenceConfig(
     reasoningEffort,
   );
 
-  return { changed: before !== JSON.stringify(config), route };
+  return { changed: before !== JSON.stringify(config), route, inactiveProviderCredentialsChanged };
 }
 
 export function writeOpenClawInferenceConfigNatively(
@@ -822,6 +828,7 @@ export function writeOpenClawInferenceConfigNatively(
   route: SandboxInferenceConfig,
   writeValues: InferenceSetDeps["setOpenClawConfigValues"],
   gatewayName?: string,
+  inactiveProviderCredentialsChanged = false,
 ): void {
   const agents = config.agents;
   const models = config.models;
@@ -847,7 +854,9 @@ export function writeOpenClawInferenceConfigNatively(
   if (selectedAgentUpdate) updates.push(selectedAgentUpdate);
   updates.push(
     { dotpath: "models.mode", value: "merge" },
-    { dotpath: `models.providers.${route.providerKey}`, value: providerConfig },
+    inactiveProviderCredentialsChanged
+      ? { dotpath: "models.providers", value: providers }
+      : { dotpath: `models.providers.${route.providerKey}`, value: providerConfig },
   );
   writeValues(sandboxName, updates, gatewayName);
 }
@@ -2279,7 +2288,11 @@ async function runInferenceSetWithoutHostLock(
       deps,
     });
 
-    let patched: { changed: boolean; route: SandboxInferenceConfig };
+    let patched: {
+      changed: boolean;
+      route: SandboxInferenceConfig;
+      inactiveProviderCredentialsChanged?: boolean;
+    };
     if (agentName === "hermes") {
       const contextWindow = resolveHermesContextWindowForSwitch(provider, model, deps);
       patched = patchHermesInferenceConfig(
@@ -2334,6 +2347,7 @@ async function runInferenceSetWithoutHostLock(
           patched.route,
           deps.setOpenClawConfigValues,
           preparedRoute.gatewayName,
+          patched.inactiveProviderCredentialsChanged,
         );
         inSandboxConfigSynced = true;
       } else {

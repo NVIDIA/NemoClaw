@@ -24,12 +24,13 @@ export interface InitialOpenclawInferenceRouteDeps {
     upstreamProviderMarker: string,
     reasoningEffort: ReasoningEffortRequest,
     inheritPrimaryReplyBudget: false,
-  ): { route: SandboxInferenceConfig };
+  ): { route: SandboxInferenceConfig; inactiveProviderCredentialsChanged?: boolean };
   writeOpenclawInferenceConfigNatively(
     sandboxName: string,
     config: ConfigObject,
     route: SandboxInferenceConfig,
     gatewayName: string,
+    inactiveProviderCredentialsChanged?: boolean,
   ): void;
   restartNativeGateway(
     sandboxName: string,
@@ -80,7 +81,13 @@ export function createInitialOpenclawInferenceRoute(
     revalidateSandboxIdentity?.(
       `apply native OpenClaw inference route in sandbox '${sandboxName}'`,
     );
-    deps.writeOpenclawInferenceConfigNatively(sandboxName, config, patched.route, gatewayName);
+    deps.writeOpenclawInferenceConfigNatively(
+      sandboxName,
+      config,
+      patched.route,
+      gatewayName,
+      patched.inactiveProviderCredentialsChanged,
+    );
 
     revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
     const restart = await deps.restartNativeGateway(sandboxName, gatewayName);
@@ -103,7 +110,13 @@ export const initializeOpenclawInferenceRoute = createInitialOpenclawInferenceRo
   },
   patchOpenclawInferenceConfig: (...args) =>
     initialOpenclawInferenceRouteRuntime.loadInferenceSet().patchOpenClawInferenceConfig(...args),
-  writeOpenclawInferenceConfigNatively: (sandboxName, config, route, gatewayName) => {
+  writeOpenclawInferenceConfigNatively: (
+    sandboxName,
+    config,
+    route,
+    gatewayName,
+    inactiveProviderCredentialsChanged,
+  ) => {
     const inferenceSet = initialOpenclawInferenceRouteRuntime.loadInferenceSet();
     inferenceSet.writeOpenClawInferenceConfigNatively(
       sandboxName,
@@ -111,6 +124,7 @@ export const initializeOpenclawInferenceRoute = createInitialOpenclawInferenceRo
       route,
       initialOpenclawInferenceRouteRuntime.loadSandboxConfig().setOpenClawConfigValues,
       gatewayName,
+      inactiveProviderCredentialsChanged,
     );
   },
   restartNativeGateway: (sandboxName, gatewayName) =>

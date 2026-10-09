@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { applyNativeBedrockProviderAuthority } from "./registry/persistence";
-
 import { requireMatchingNativeBedrockAttachment } from "../inference/selection";
 
 import {
@@ -1107,12 +1105,3 @@ export function setChannelDisabled(name: string, channel: string, disabled: bool
 export { getNativeCompatibleProviderAuthority } from "./registry/persistence";
 
 export { getNativeBedrockProviderAuthority } from "./registry/persistence";
-export function setNativeBedrockProviderAuthority(
-  gatewayName: string,
-  receipt: import("../inference/native-bedrock/contract").NativeBedrockProviderAttachment,
-): void {
-  withLock(() => {
-    const state = load();
-    if (applyNativeBedrockProviderAuthority(state, gatewayName, receipt)) save(state);
-  });
-}
