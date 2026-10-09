@@ -63,6 +63,19 @@ impl Step {
             .find(|step| step.name() == name)
     }
 
+    /// The nextest profile and the JUnit report a test step writes under
+    /// `target/nextest`.
+    #[must_use]
+    pub fn junit(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Step::Test => Some(("ci", "test.xml")),
+            Step::Lifecycle => Some(("lifecycle", "lifecycle.xml")),
+            Step::LiveDocker => Some(("live-docker", "live-docker.xml")),
+            Step::LiveKind => Some(("live-kind", "live-kind.xml")),
+            _ => None,
+        }
+    }
+
     /// Cargo arguments for this step. Tools, schema, and bundle run in-process
     /// or through the built tool and have none.
     pub fn cargo_args(self) -> &'static [&'static [&'static str]] {
@@ -132,6 +145,7 @@ impl Step {
 }
 
 pub mod live;
+pub mod timing;
 
 /// The nextest release target for a bundle platform.
 pub fn nextest_target(platform: &str) -> Result<&'static str, String> {

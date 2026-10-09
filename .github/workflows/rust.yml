@@ -58,6 +58,14 @@ jobs:
         run: cargo ci bundle
       - name: Execute real OpenTofu and SDK/CLI lifecycle
         run: cargo ci lifecycle
+      - name: Upload deterministic test timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: target/nextest/ci/test.xml
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload lifecycle timings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

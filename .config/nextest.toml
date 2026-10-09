@@ -9,6 +9,11 @@ retries = 0
 test-threads = 8
 slow-timeout = { period = "30s", terminate-after = 10 }
 
+# Each test step writes a JUnit report that `cargo ci` summarizes into where
+# its time went.
+[profile.ci.junit]
+path = "test.xml"
+
 [profile.lifecycle]
 inherits = "ci"
 test-threads = 4

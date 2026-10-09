@@ -74,7 +74,8 @@ All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the exp
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
 CI retains the same workspace and target selection across both runs so Cargo can reuse the compiled tests.
-Lifecycle timing artifacts contain per-test durations for comparing scheduling changes.
+After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests.
+In GitHub Actions, the report is added to the job summary, and the JUnit reports with per-test durations are uploaded as the `test-` and `lifecycle-` artifacts.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.

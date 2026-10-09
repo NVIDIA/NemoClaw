@@ -239,3 +239,58 @@ fn nextest_archive_installs_only_its_single_executable() {
         assert!(ci::install_nextest(&archive, &directory.path().join("other"), false).is_err());
     }
 }
+
+const JUNIT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="4" failures="1" errors="0" uuid="u" timestamp="2026-10-09T00:20:53.957+00:00" time="12.500">
+    <testsuite name="nemoclaw-e2e::integration" tests="3" disabled="0" errors="0" failures="1">
+        <testcase name="deployment::slow_scenario" classname="nemoclaw-e2e::integration" timestamp="t" time="9.250">
+        </testcase>
+        <testcase name="deployment::quick &amp; &quot;quoted&quot;" classname="nemoclaw-e2e::integration" timestamp="t" time="0.750">
+            <failure type="test failure">failed</failure>
+        </testcase>
+        <testcase name="service_storage::applies" classname="nemoclaw-e2e::integration" timestamp="t" time="2.000"/>
+    </testsuite>
+    <testsuite name="nemoclaw-sdk" tests="1" disabled="0" errors="0" failures="0">
+        <testcase name="state::reads" classname="nemoclaw-sdk" timestamp="t" time="0.500"/>
+    </testsuite>
+</testsuites>
+"#;
+
+#[test]
+fn timing_reports_show_wall_time_and_where_test_time_goes() {
+    let run = ci::timing::Run::parse(JUNIT).unwrap();
+    assert_eq!(run.wall_seconds, 12.5);
+    assert_eq!(run.tests.len(), 4);
+    assert_eq!(run.tests[1].name, r#"deployment::quick & "quoted""#);
+    assert!(run.tests[1].failed);
+
+    let report = run.report("lifecycle", 2);
+    // The headline names the profile, its test count, wall time, and summed time.
+    assert!(
+        report.contains("lifecycle: 4 tests, 12.5 s wall, 12.5 s summed"),
+        "{report}"
+    );
+    // Groups are a binary and a test module, slowest first.
+    let groups = report.find("| nemoclaw-e2e::integration | deployment | 2 | 10.0 s | 9.2 s |");
+    let storage =
+        report.find("| nemoclaw-e2e::integration | service_storage | 1 | 2.0 s | 2.0 s |");
+    assert!(
+        groups.is_some() && storage.is_some() && groups < storage,
+        "{report}"
+    );
+    // Only the slowest tests are listed, slowest first.
+    assert!(
+        report.contains("| 9.2 s | nemoclaw-e2e::integration deployment::slow_scenario |"),
+        "{report}"
+    );
+    assert!(
+        report.contains("| 2.0 s | nemoclaw-e2e::integration service_storage::applies |"),
+        "{report}"
+    );
+    assert!(
+        !report.contains("| 0.5 s | nemoclaw-sdk state::reads |"),
+        "{report}"
+    );
+
+    assert!(ci::timing::Run::parse("<testsuites>").is_err());
+}

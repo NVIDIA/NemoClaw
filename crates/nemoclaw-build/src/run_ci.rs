@@ -206,6 +206,45 @@ fn run_step(tools: &Tools<'_>, platform: &str, step: Step) -> Result<()> {
     Ok(())
 }
 
+/// Report where a test step spent its time, from the JUnit report it wrote
+/// after `begun`, and add the report to the GitHub job summary.
+fn report_timing(step: Step, begun: Instant) {
+    let Some((profile, file)) = step.junit() else {
+        return;
+    };
+    let path = Path::new("target").join("nextest").join(profile).join(file);
+    let started = std::time::SystemTime::now() - begun.elapsed();
+    // A report from an earlier run would misstate this one.
+    let fresh = std::fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|modified| modified >= started);
+    if !fresh {
+        return;
+    }
+    let report = match std::fs::read_to_string(&path)
+        .map_err(|error| error.to_string())
+        .and_then(|xml| ci::timing::Run::parse(&xml))
+    {
+        Ok(run) => run.report(step.name(), 15),
+        Err(error) => {
+            eprintln!("cannot read test timings from {}: {error}", path.display());
+            return;
+        }
+    };
+    eprintln!("{report}");
+    if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+        use std::io::Write;
+        let appended = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(summary)
+            .and_then(|mut file| writeln!(file, "{report}"));
+        if let Err(error) = appended {
+            eprintln!("cannot write the job summary: {error}");
+        }
+    }
+}
+
 pub(super) async fn run_steps(pins: &Pins, selected: Option<&str>) -> Result<()> {
     let tools = Tools {
         pins,
@@ -250,6 +289,7 @@ pub(super) async fn run_steps(pins: &Pins, selected: Option<&str>) -> Result<()>
             run_step(&tools, &platform, step)
         };
         let elapsed = begun.elapsed().as_secs();
+        report_timing(step, begun);
         if let Err(error) = result {
             eprintln!("FAILED {} after {elapsed}s: {error}", step.name());
             eprintln!("Rerun it with: cargo ci {}", step.name());
