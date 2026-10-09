@@ -7,7 +7,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter } from "../../src/lib/adapters/openshell/provider-adapter-cli";
 import { selectedOpenShellGateway } from "../../src/lib/adapters/openshell/sandbox-observer";
-import { runAuthorityBoundProviderCleanup } from "../../src/lib/onboard/sandbox-create/orchestration";
 import {
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
@@ -137,30 +136,7 @@ describe("fresh onboarding absence warnings (#12740)", () => {
     ).resolves.toMatchObject({ ok: false, error: { kind: "command", reason: "failed" } });
   });
 
-  it("tolerates absence only under verified and repeatedly revalidated authority", async () => {
-    const revalidateSandboxIdentity = vi.fn();
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const runOpenshell = vi.fn(() => runResult(1, missingSandboxDiagnostic));
-
-    await runAuthorityBoundProviderCleanup({
-      sandboxName: "alpha",
-      observeSandbox: () => ({ state: "missing", liveIdentityFingerprint: null }),
-      revalidateSandboxIdentity,
-      runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
-      runOpenshell,
-      redact: (value) => value,
-      tolerateMissingSandbox: true,
-    });
-
-    expect(warning).not.toHaveBeenCalled();
-    expect(runOpenshell).toHaveBeenCalledTimes(SANDBOX_PROVIDER_SUFFIXES.length);
-    expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(
-      SANDBOX_PROVIDER_SUFFIXES.length * 2 + 1,
-    );
-    warning.mockRestore();
-  });
-
-  it("retains absence warnings when cleanup lacks verified-absence authorization", async () => {
+  it("does not suppress exact sandbox absence when cleanup was actually attempted", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const runOpenshell = vi.fn(() => runResult(1, missingSandboxDiagnostic));
 
@@ -170,7 +146,7 @@ describe("fresh onboarding absence warnings (#12740)", () => {
     warning.mockRestore();
   });
 
-  it("retains genuine provider detach failures despite absence tolerance", async () => {
+  it("retains genuine provider detach failures", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const runOpenshell = vi.fn((args: string[]) =>
       args.at(-1) === "alpha-telegram-bridge"
@@ -178,15 +154,7 @@ describe("fresh onboarding absence warnings (#12740)", () => {
         : runResult(0, ""),
     );
 
-    await runAuthorityBoundProviderCleanup({
-      sandboxName: "alpha",
-      observeSandbox: () => ({ state: "missing", liveIdentityFingerprint: null }),
-      revalidateSandboxIdentity: vi.fn(),
-      runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
-      runOpenshell,
-      redact: (value) => value,
-      tolerateMissingSandbox: true,
-    });
+    await runSandboxProviderPreDeleteCleanup("alpha", { runOpenshell });
 
     expect(warning).toHaveBeenCalledOnce();
     expect(warning).toHaveBeenCalledWith(

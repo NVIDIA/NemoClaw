@@ -46,8 +46,6 @@ export type DetachSandboxProvidersDeps = {
   runOpenshell?: SandboxProviderRunOpenshell;
   providerAdapter?: OpenShellProviderAdapter;
   revalidateSandboxIdentity?: (operation: string) => void;
-  /** Ignore an exact missing-sandbox result only after the caller proves absence. */
-  tolerateMissingSandbox?: boolean;
 };
 
 export type DeleteProviderWithRecoveryDeps = DetachSandboxProvidersDeps & {
@@ -136,14 +134,6 @@ export async function detachSandboxProviders(
     }
     const output = result.error.message;
     if (result.error.kind === "command" && result.error.reason === "not_found") continue;
-    if (
-      deps.tolerateMissingSandbox &&
-      deps.revalidateSandboxIdentity &&
-      result.error.kind === "command" &&
-      result.error.reason === "sandbox_not_found"
-    ) {
-      continue;
-    }
     failures.push({ name, output: output.trim() });
   }
   return { detached, failures };
@@ -158,7 +148,6 @@ export async function runSandboxProviderPreDeleteCleanup(
     providerAdapter: deps.providerAdapter,
     runOpenshell: deps.runOpenshell,
     revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
-    tolerateMissingSandbox: deps.tolerateMissingSandbox,
   });
   if (result.failures.length === 0) return result;
   const warn = deps.warn ?? ((message: string) => console.warn(message));

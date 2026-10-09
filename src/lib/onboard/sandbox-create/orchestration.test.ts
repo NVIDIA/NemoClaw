@@ -25,6 +25,7 @@ import {
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
   runAuthorityBoundProviderCleanup,
+  shouldInspectExistingSandbox,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
   runWithPostCreateRecovery,
@@ -500,6 +501,28 @@ describe("retained create recovery persistence", () => {
       expect(recordRecovery).toHaveBeenCalledTimes(2);
     },
   );
+});
+
+describe("existing sandbox inspection selection (#12740)", () => {
+  it("skips provider cleanup inspection when the sandbox is absent", () => {
+    expect(
+      shouldInspectExistingSandbox({
+        liveExists: false,
+        portableLifecycle: false,
+        resumingVerifiedCreate: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("inspects an existing non-portable sandbox", () => {
+    expect(
+      shouldInspectExistingSandbox({
+        liveExists: true,
+        portableLifecycle: false,
+        resumingVerifiedCreate: false,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("APF create policy selection", () => {
