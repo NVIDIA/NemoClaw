@@ -286,6 +286,10 @@ Broader binary access would let unrelated sandbox processes send data to Tavily 
 
 NemoClaw operation telemetry is currently available only for QA runs.
 A valid `NEMOCLAW_TELEMETRY_TEST_LABEL` selects NVIDIA's fixed TEST receiver for the installer and supported CLI commands.
+Use `qa-<label>:<client>:attempt-<number>`, for example, `qa-telemetry:client:attempt-1`.
+`<label>` allows 1 to 32 lowercase letters, digits, or hyphens; `<client>` allows 1 to 40.
+Each segment must start with a letter or digit, and the attempt number must be 1 to 999 without a leading zero.
+A missing or invalid value disables telemetry for that run.
 Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
 It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
 NemoClaw attempts to send one record when a covered operation finishes.
