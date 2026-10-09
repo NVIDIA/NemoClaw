@@ -138,7 +138,7 @@ Full-schema error classification cannot prove every incomplete conditional insta
 Unsupported structure remains a deferred or unresolved frontier.
 Native model questions currently need the SDK's complete Fabric projection, so they can appear after the SDK document becomes valid.
 Successful materialization covers the resolver's supported surface; Fabric's planner retains ownership of complete native compatibility.
-Without a configured target prerequisite, unknown target compatibility permits ordinary authoring; an observed conflict blocks `ready_document()`.
+Without a configured target prerequisite, unknown target compatibility permits authoring; an observed conflict blocks `ready_document()`.
 An SDK document or a ready authoring result does not establish successful deployment or working inference.
 
 ## Observations and Consumer Responsibilities

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Deterministic protocol fixtures shared by SDK and bundle lifecycle tests.
+//! Protocol fixtures shared by SDK and bundle lifecycle tests.
 pub mod hcl;
 pub mod image_runtime;
 pub mod openshell;

@@ -40,9 +40,10 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ matrix.platform }}
+          save-cache: "false"
       - name: Build test executables
         run: cargo ci build
-      - name: Build and verify native bundle
+      - name: Build and verify bundle
         run: cargo ci bundle
       # The agent image's metadata bundle is read from an OCI index, which
       # Docker writes only with its containerd image store.

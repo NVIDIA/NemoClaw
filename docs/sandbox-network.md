@@ -109,7 +109,7 @@ OpenShell v0.1.2 applies GPU filesystem additions inside the workload without wr
 This removes the upstream cause of suspected GPU false drift; live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.
 
-Policy changes require sandbox replacement, which ordinary apply rejects.
+Policy changes require sandbox replacement, which apply rejects.
 External OpenShell policy edits conflict with the declared policy and stop export; they do not bypass that rejection.
 Back up sandbox files and conversation history before using the explicit [destroy and recreate procedure](usage.md#destroy).
 Destroy deletes those sandbox files; retained workspace and model storage follow the existing lifecycle rules.
@@ -121,12 +121,12 @@ If OpenShell reports configuration admission as rejected, apply stops its startu
 This check applies while the sandbox is starting and before agent configuration or health requests.
 Known gateway diagnostics identify policy, attached-provider, or middleware repair; unrecognized text becomes a fixed configuration-repair message.
 The error does not include raw supervisor parser output.
-A sandbox that has not reported rejection still follows the ordinary startup wait.
+A sandbox that has not reported rejection still follows the startup wait.
 
 Preserve the state directory: failed apply retains created resource bindings.
 If the problem is an attached-provider or credential configuration that can be repaired without replacing the sandbox, correct it and reapply using the retained state.
 Apply can deliver that repair; completion still requires OpenShell to accept the configuration.
-If the authored sandbox policy must change, use the [destroy and recreate procedure](usage.md#destroy); ordinary apply still refuses policy replacement.
+If the authored sandbox policy must change, use the [destroy and recreate procedure](usage.md#destroy); apply still refuses policy replacement.
 Destroy remains available after the failed first apply and does not require successful admission or readiness.
 
 Local fixture tests exercise creation, rejection, drift detection, and export/reapply behavior.

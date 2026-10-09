@@ -100,9 +100,7 @@ pub async fn wait_service_ready(
                     .await?
                     .ok_or(Error::State("proxy runtime is absent"))?;
                 if !running {
-                    return Err(Error::State(
-                        "proxy runtime is not running; explicitly reapply",
-                    ));
+                    return Err(Error::State("proxy runtime is not running; reapply"));
                 }
                 if timeout.is_zero() {
                     super::authentication::read_key(&engine, container_id).await?;
@@ -123,7 +121,7 @@ pub async fn wait_service_ready(
                 .ok_or(Error::State("service runtime is unobservable"))?;
             if !running {
                 return Err(Error::State(
-                    "service stopped during readiness; inspect logs and explicitly reapply",
+                    "service stopped during readiness; inspect logs and reapply",
                 ));
             }
             let started_at = started_at.ok_or(crate::ObservationError::Incomplete)?;
@@ -137,7 +135,7 @@ pub async fn wait_service_ready(
                 }
                 "stopped" => {
                     return Err(Error::State(
-                        "service protection stopped the runtime; explicit reapply is required",
+                        "service protection stopped the runtime; reapply is required",
                     ));
                 }
                 _ if timeout.is_zero() => return Err(Error::State("service is not ready")),

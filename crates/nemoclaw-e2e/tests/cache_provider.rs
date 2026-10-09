@@ -180,7 +180,7 @@ fn uuid() -> String {
 }
 
 #[test]
-#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE, NEMOCLAW_TEST_CACHE_ENGINE and NEMOCLAW_TEST_CACHE_IMAGE; owns isolated Docker resources"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE, NEMOCLAW_TEST_CACHE_ENGINE and NEMOCLAW_TEST_CACHE_IMAGE; owns isolated Docker resources"]
 fn standalone_hcl_recovers_cache_and_guards_credentials_without_sdk_orchestration() {
     let bundle = PathBuf::from(std::env::var("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle"));
     let manifest = nemoclaw_sdk::bundle::Bundle::open(&bundle)

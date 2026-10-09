@@ -9,7 +9,7 @@ use std::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated HTTP fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated HTTP fixture"]
 async fn provider_model_catalog_reads_are_read_only_and_keep_api_qualification_unknown() {
     let tofu =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
@@ -66,7 +66,7 @@ async fn provider_model_catalog_reads_are_read_only_and_keep_api_qualification_u
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE; isolated HTTP and gateway fixtures"]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated HTTP and gateway fixtures"]
 async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_uncertainty() {
     use nemoclaw_sdk::{
         CancellationToken, Deployment,

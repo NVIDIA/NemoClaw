@@ -56,7 +56,7 @@ fn service(directory: &Path) -> (Spec, String) {
     (spec, bindings(directory)[&target.address].clone())
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicit NEMOCLAW_LIVE_MODEL_CONFIG, NEMOCLAW_LIVE_MODEL_STATE, NEMOCLAW_TEST_BUNDLE; owns and destroys this experiment only"]
+#[ignore = "requires NEMOCLAW_LIVE_MODEL_CONFIG, NEMOCLAW_LIVE_MODEL_STATE, NEMOCLAW_TEST_BUNDLE; owns and destroys this experiment only"]
 async fn selected_model_apply_export_and_watchdog_recovery_preserve_data_and_identity() {
     exercise(true).await;
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Owned deterministic Ollama inventory and OpenAI inference endpoint.
+//! Owned simulated Ollama inventory and OpenAI inference endpoint.
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
 #[test]
-#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
 fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_state() {
     let tofu =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
@@ -20,7 +20,8 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
     std::os::unix::fs::symlink(
-        env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
+        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
+            .expect("Cargo sets the fixture executable path"),
         root.join("bin/ssh"),
     )
     .unwrap();

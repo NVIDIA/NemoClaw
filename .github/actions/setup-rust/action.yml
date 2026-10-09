@@ -4,11 +4,14 @@ name: Set up Rust
 description: Install pinned protoc and cargo-nextest, and restore third-party Rust artifacts.
 inputs:
   platform:
-    description: Native bundle platform.
+    description: Bundle platform.
     required: true
   cache-prefix:
     description: Separate dependency caches for distinct build jobs.
     default: native-deps-v2
+  save-cache:
+    description: Write Rust dependencies on v1; live jobs only restore the native cache.
+    default: "true"
 runs:
   using: composite
   steps:
@@ -24,14 +27,15 @@ runs:
         # The action hashes manifests, Cargo.lock, rust-toolchain.toml and
         # .cargo/config.toml itself, and restores an older cache for this
         # platform when they change. Hashing files here would block that.
-        key: ${{ inputs.platform }}
+        # Replace the job-specific key so native and live jobs share dependencies.
+        shared-key: ${{ inputs.platform }}
         add-rust-environment-hash-key: "true"
         workspaces: . -> target
         cache-targets: "true"
         cache-all-crates: "false"
         cache-workspace-crates: "false"
         cache-bin: "false"
-        save-if: ${{ github.ref == 'refs/heads/v1' }}
+        save-if: ${{ github.ref == 'refs/heads/v1' && inputs.save-cache == 'true' }}
     # After the cache restore, so the runner compiles from cached dependencies.
     # It exports PROTOC and the nextest directory for later workflow steps.
     - name: Install pinned build tools

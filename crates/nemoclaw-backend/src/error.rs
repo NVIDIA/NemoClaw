@@ -14,7 +14,7 @@ pub enum Error {
     #[error("{0}")]
     Conflict(&'static str),
     #[error(
-        "ordinary apply cannot {action} sandbox '{sandbox}'; its files and conversation history are not separately retained"
+        "apply cannot {action} sandbox '{sandbox}'; its files and conversation history are not separately retained"
     )]
     SandboxChangeRefused {
         sandbox: String,

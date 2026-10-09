@@ -10,59 +10,45 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ci-native-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-native-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
+  linux_arm64:
+    uses: ./.github/workflows/native-platform.yml
+    with:
+      runner: ubuntu-24.04-arm
+      platform: linux_arm64
+  linux_amd64:
+    uses: ./.github/workflows/native-platform.yml
+    with:
+      runner: ubuntu-24.04
+      platform: linux_amd64
+  darwin_arm64:
+    uses: ./.github/workflows/native-platform.yml
+    with:
+      runner: macos-15
+      platform: darwin_arm64
+  windows_amd64:
+    uses: ./.github/workflows/native-platform.yml
+    with:
+      runner: windows-2025
+      platform: windows_amd64
+      shard-lifecycle: false
+  # Keep the v1 ruleset's check names. A skipped, cancelled, or failed platform
+  # must never become a successful required check. Each platform's shards start
+  # after its own build, not after the slowest member of a global build matrix.
   native:
     name: Test / ${{ matrix.platform }}
+    if: always()
+    needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04-arm
-            platform: linux_arm64
-          - runner: ubuntu-24.04
-            platform: linux_amd64
-          - runner: macos-15
-            platform: darwin_arm64
-          # Intel macOS CI is temporarily disabled because of slow builds.
-          - runner: windows-2025
-            platform: windows_amd64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    env:
-      TEST_PLATFORM: ${{ matrix.platform }}
-      CARGO_INCREMENTAL: "0"
+        platform: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-        with:
-          platform: ${{ matrix.platform }}
-      # Each step runs through `cargo ci`, so `cargo ci` locally runs the same checks.
-      - name: Check formatting
-        run: cargo ci fmt
-      - name: Lint Rust
-        run: cargo ci clippy
-      - name: Build test executables
-        run: cargo ci build
-      - name: Run deterministic tests
-        run: cargo ci test
-      - name: Check generated configuration schema and reference
-        run: cargo ci schema
-      - name: Build and verify native bundle
-        run: cargo ci bundle
-      - name: Execute real OpenTofu and SDK/CLI lifecycle
-        run: cargo ci lifecycle
-      - name: Upload lifecycle timings
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lifecycle-${{ matrix.platform }}-${{ github.run_attempt }}
-          path: target/nextest/lifecycle/lifecycle.xml
-          if-no-files-found: ignore
-          retention-days: 14
+      - name: Require all checks for this platform
+        env:
+          RESULT: ${{ needs[matrix.platform].result }}
+        run: test "$RESULT" = success

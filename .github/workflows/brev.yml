@@ -40,7 +40,7 @@ jobs:
         with:
           platform: linux_amd64
           cache-prefix: brev-deps-v1
-      - name: Build native bundle
+      - name: Build bundle
         run: cargo run --locked -p nemoclaw-build -- bundle --platform linux_amd64
       - name: Build live test executable
         run: |

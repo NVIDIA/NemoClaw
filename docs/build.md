@@ -26,6 +26,7 @@ cargo run -p nemoclaw-build -- bundle
 The builder downloads and verifies the pinned OpenTofu, Docker provider, and Helm provider archives, builds the CLI and the NemoClaw, OpenShell, and Fabric providers with the lockfile, and writes `dist/<platform>`.
 The manifest records each shipped file's hash, including the unchanged upstream licenses.
 The SDK verifies the bundle before use.
+A `Deployment` hashes the bundle on its first operation and again only when the manifest or a file it lists is written, replaced, or removed.
 Managed Kubernetes deployment uses the bundled Helm provider and requires no host Helm CLI.
 
 Each bundle includes `schemas/nemoclaw-v1alpha1.schema.json`, generated from its SDK contract and covered by the manifest hash.
@@ -280,7 +281,7 @@ A matching label establishes the declared runtime contract, not successful model
 
 For a runtime-spec mismatch, rebuild the selected artifact from the bundle's source revision using the matching vLLM platform/recipe command above or the [managed Ollama build instructions](inference.md#run-managed-ollama).
 Load the rebuilt image on the execution daemon and update `spec.services.<name>.image` to the newly printed digest.
-Keep the deployment state and reapply; existing model and credential storage remain subject to their ordinary retention and identity checks.
+Keep the deployment state and reapply; existing model and credential storage remain subject to their retention and identity checks.
 Destroy omits image compatibility gates so a mismatched image alone does not prevent cleanup.
 The runtime also reports its expected specification version and declared field location for invalid input, without echoing configuration values or user-defined map keys.
 
