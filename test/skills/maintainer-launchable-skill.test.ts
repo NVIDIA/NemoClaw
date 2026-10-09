@@ -34,14 +34,12 @@ describe("staging Launchable maintainer guidance", () => {
       "require a maintainer-approved waiver tied to the candidate commit SHA and selected automated Launchable run ID",
     );
     expect(launchable).toContain(
-      "rotate or revoke the inference API key in the issuing NVIDIA service after the run",
+      "rotate or revoke the inference API key in the issuing NVIDIA service after the authorized run or bounded validation session",
     );
     expect(launchable).toContain(
       "record its approver, candidate commit SHA, selected automated Launchable run ID, and the accepted period of later API-key access",
     );
-    expect(launchable).toContain(
-      "obtain explicit maintainer approval immediately before starting the credential-bearing process",
-    );
+    expect(launchable).toContain("Obtain explicit authorization before its first exposure.");
     expect(launchable).toContain("reject a candidate from a fork pull request");
     expect(launchable).toContain("require the repository to be `NVIDIA/NemoClaw`");
     expect(launchable).toContain("Environment access: passed / failed / not run");

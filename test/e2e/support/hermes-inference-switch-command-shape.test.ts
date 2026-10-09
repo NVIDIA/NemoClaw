@@ -93,7 +93,9 @@ describe("Hermes inference switch command shape", () => {
     const command = sandboxInferenceCommand('{"model":"nvidia/test"}');
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
-    expect(command).toContain("Authorization: Bearer nemoclaw-openshell-provider");
+    expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
+    expect(command).toContain(' -H "$AUTH_HEADER"');
+    expect(command).not.toContain("nemoclaw-openshell-provider");
     expect(command).not.toContain("inference.local");
   });
 
