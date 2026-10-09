@@ -96,17 +96,23 @@ describe("sandbox start readiness", () => {
     expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(3);
   });
 
-  it("waits through the next OpenShell health reconciliation after a slow restart (#9485)", async () => {
-    const harness = createConnectHarness({
-      listOutputs: [...Array.from({ length: 11 }, () => "alpha Error"), "alpha Ready"],
-    });
+  it.each([11, 20])(
+    "waits through %s initial Error observations after a slow restart (#9485)",
+    async (errorObservations) => {
+      const harness = createConnectHarness({
+        listOutputs: [
+          ...Array.from({ length: errorObservations }, () => "alpha Error"),
+          "alpha Ready",
+        ],
+      });
 
-    await expect(
-      harness.waitForSandboxReadyOrExit("alpha", { allowInitialErrorAfterStart: true }),
-    ).resolves.toBeUndefined();
+      await expect(
+        harness.waitForSandboxReadyOrExit("alpha", { allowInitialErrorAfterStart: true }),
+      ).resolves.toBeUndefined();
 
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(12);
-  });
+      expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(errorObservations + 1);
+    },
+  );
 
   it("fails after the stopped sandbox Error phase remains terminal (#9753)", async () => {
     const harness = createConnectHarness({

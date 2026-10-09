@@ -266,6 +266,7 @@ test(
         "validate double-onboard lifecycle prerequisites",
         "onboard first sandbox",
         "re-onboard same sandbox on existing gateway",
+        "recreate OpenClaw sandbox after a model change",
         "onboard sibling sandbox with isolated dashboard",
         "stop sibling sandbox without disturbing the first forward",
         "replace sandbox after stale registry refusal",
@@ -449,6 +450,7 @@ test(
       hermesApiForwardOwned = apiListenerAfterReuse.valid;
       expect(hermesApiForwardOwned, apiListenerAfterReuse.output).toBe(true);
     } else {
+      progress.phase("recreate OpenClaw sandbox after a model change");
       const changedModel = "changed-model";
       const changed = await runOnboard(
         host,
