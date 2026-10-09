@@ -2578,7 +2578,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (
         beginRecreateDeleteAfterPolicyPreflight({
           capturePolicySource: captureRebuildPolicySource,
-          beginDelete: recreateRuntime.beginDelete,
+          beginDelete: () =>
+            recreateRuntime.beginDelete(reconcileOpenClawInference ? true : undefined),
         }) === "source"
       ) {
         await runAuthorityBoundProviderCleanup({

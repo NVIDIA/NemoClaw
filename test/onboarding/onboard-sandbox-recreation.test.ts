@@ -993,6 +993,34 @@ const { createSandbox } = require(${onboardPath});
       reconciliation: true,
     },
     {
+      mode: "fresh preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: true,
+      reconciliation: true,
+    },
+    {
+      mode: "legacy preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: false,
+      reconciliation: false,
+    },
+    {
+      mode: "forced preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: true,
+      forced: true,
+      reconciliation: false,
+    },
+    {
       mode: "forced recreation",
       answer: "",
       recreate: true,
@@ -1006,7 +1034,16 @@ const { createSandbox } = require(${onboardPath});
       timeout: 60_000,
     },
     async (
-      { mode, answer, recreate, reconciliation, journalOnly = false, forced = false },
+      {
+        mode,
+        answer,
+        recreate,
+        reconciliation,
+        journalOnly = false,
+        forced = false,
+        preopened = false,
+        fresh = false,
+      },
       context,
     ) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
@@ -1136,7 +1173,10 @@ const { createSandbox } = require(${onboardPath});
 	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
 	    createFixture,
 	  );
-  if (${journalOnly}) {
+  if (${preopened}) {
+    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshNonForced: true } : {}) };
+  }
+  if (${journalOnly} && !${preopened}) {
     // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.
     createArgs[15] = { ...createArgs[15], recreate: true, recreateTransaction: undefined };
     const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
