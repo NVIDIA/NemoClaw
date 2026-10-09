@@ -80,7 +80,8 @@ clear_managed_inference_credentials() {
     env -i PATH="$PATH" NEMOCLAW_INFERENCE_BASE_URL="${NEMOCLAW_INFERENCE_BASE_URL:-}" node -e '
       try {
         const url = new URL(process.env.NEMOCLAW_INFERENCE_BASE_URL);
-        if (url.protocol === "https:" && url.hostname === "integrate.api.nvidia.com" &&
+        if (url.protocol === "https:" &&
+            url.hostname.replace(/\.$/, "") === "integrate.api.nvidia.com" &&
             url.port === "") process.exit(42);
       } catch {}
     ' || parsed_host_status=$?

@@ -27,7 +27,7 @@ export function managedInferenceApiKey<T extends string>(
   }
   if (
     parsed.protocol === "https:" &&
-    parsed.hostname === "integrate.api.nvidia.com" &&
+    parsed.hostname.replace(/\.$/u, "") === "integrate.api.nvidia.com" &&
     parsed.port === ""
   ) {
     throw new Error("Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.");
