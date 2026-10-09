@@ -2191,7 +2191,13 @@ Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANT
 `NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, or `NEMOCLAW_HERMES_MODEL` to an approved model.
 Missing credentials or models fail before onboarding. A selected test that skips cannot produce passing evidence.
 The existing controller binds artifacts to the tested source revision and trusted workflow revision.
-A manual PR run requires the existing controller credential approval; adding a target does not grant that approval.
+For a manual same-repository PR run, GitHub workflow-dispatch permission authorizes the operator.
+The controller verifies the open PR, repository, candidate commit, base commit, and workflow revision before credential forwarding.
+Review the complete candidate diff and approve the selected credential source before dispatch.
+Candidate-controlled host processes can read or copy the selected provider key while the test runs.
+The sandbox isolation check does not attest isolation from those host processes.
+Job cleanup and artifact redaction do not revoke the key or erase a copy made by candidate code.
+Rotate or revoke the key in its issuing provider to remove later access.
 Hermes API-key evidence does not qualify interactive OAuth login.
 
 Hermes OAuth remains a live qualification gap for Slice 2 (#12589). Its supported login uses an

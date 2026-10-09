@@ -18,7 +18,10 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type SandboxStartDeps, startSandbox } from "./start";
 import { resolveSandboxInferenceInvocationEndpoint } from "./inference-invocation-probe";
-import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
+} from "../../inference/native-provider/hosted";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -765,6 +768,84 @@ const restartProviders = [
 ] as const;
 
 describe("startSandbox persisted native inference selection", () => {
+  const hermesEndpoint = "https://authenticated.nous.example/api/v1";
+  const hermesDefinition = hostedNativeProvider("hermes-provider", hermesEndpoint)!;
+  const hermesAttachment = {
+    schemaVersion: 1 as const,
+    profileId: hermesDefinition.profileId,
+    providerName: hermesDefinition.providerName,
+    providerId: "authenticated-hermes-provider-id",
+    endpointUrl: hermesEndpoint,
+    allowedIps: ["8.8.8.8"],
+  };
+
+  it("restarts Hermes through its persisted authenticated endpoint", async () => {
+    const endpoints: string[] = [];
+    const probeInferenceInvocation = vi.fn<
+      NonNullable<SandboxStartDeps["probeInferenceInvocation"]>
+    >(async (input) => {
+      endpoints.push(resolveSandboxInferenceInvocationEndpoint(input));
+      return { ok: true };
+    });
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "authenticated-model",
+        preferredInferenceApi: "openai-completions",
+        nativeHostedProviderAttachment: hermesAttachment,
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+    expect(probeInferenceInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "authenticated-model",
+        nativeProvider: true,
+        nativeEndpointUrl: hermesEndpoint,
+      }),
+      {},
+      expect.any(Number),
+    );
+    expect(endpoints).toEqual(["https://authenticated.nous.example/api/v1/chat/completions"]);
+    expect(h.updateSandbox).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ stopped: false }),
+    );
+  });
+
+  it.each([
+    { name: "unsafe endpoint", patch: { endpointUrl: "http://authenticated.nous.example/api/v1" } },
+    {
+      name: "different endpoint identity",
+      patch: { endpointUrl: "https://different.nous.example/api/v1" },
+    },
+    { name: "missing address pins", patch: { allowedIps: [] } },
+    { name: "private address pin", patch: { allowedIps: ["127.0.0.1"] } },
+  ])("refuses Hermes restart with $name before inference", async ({ patch }) => {
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        stopped: true,
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "authenticated-model",
+        nativeHostedProviderAttachment: { ...hermesAttachment, ...patch },
+      }),
+    );
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 1 });
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
+    expect(h.updateSandbox).not.toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ stopped: false }),
+    );
+  });
+
   it.each(restartProviders)(
     "restarts $logicalProvider using its attached native endpoint",
     async (definition) => {
