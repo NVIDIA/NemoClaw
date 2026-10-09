@@ -76,6 +76,7 @@ import {
 import {
   checkRebuildGatewayCredentialReuseOrBail,
   inspectRebuildGatewayProviderRegistration,
+  validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
@@ -831,6 +832,19 @@ async function rebuildSandboxUnlocked(
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
           stoppedSource?.assertCurrent();
+          const hostCredential = resumeConfig.credentialEnv
+            ? hydrateCredentialEnv(resumeConfig.credentialEnv)
+            : null;
+          if (
+            hostCredential &&
+            !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
+          ) {
+            return {
+              ok: false,
+              message:
+                "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+            };
+          }
           if (
             !resumeConfig.nativeHostedProviderAttachment &&
             !resumeConfig.nativeNvidiaProviderAttachment

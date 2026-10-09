@@ -49,6 +49,12 @@ export const messagingHostForwardLifecycle = requireDist("./messaging-host-forwa
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
 export const nim = requireDist("../../inference/nim.js");
 export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
+export const managedWorkloadRebuild = requireDist(
+  "../../onboard/workload/rebuild.js",
+) as typeof import("../../src/lib/onboard/workload/rebuild");
+export const rebuildBackupPhase = requireDist(
+  "./rebuild-backup-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-backup-phase");
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
@@ -83,6 +89,7 @@ export const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-p
 export const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 export const snapshotBackup = requireDist("./snapshot/backup-authority.js");
 export const rebuildInference = requireDist("./inference-invocation-probe.js");
+export const rebuildProviderPreflight = requireDist("./rebuild-provider-preflight.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");

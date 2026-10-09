@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { makeFakeCurlScript } from "../../../src/lib/inference/onboard-probes-curl-harness";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -148,6 +149,16 @@ function createConflictFixture() {
   const forwardListMarker = path.join(tmpDir, "forward-list-called");
   const sandboxDeleteMarker = path.join(tmpDir, "sandbox-delete-called");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
+
+  // Credential validation must succeed before this fixture reaches messaging conflicts.
+  fs.writeFileSync(
+    path.join(tmpDir, "curl"),
+    makeFakeCurlScript(`
+printf '%s' '{"choices":[{"message":{"role":"assistant","content":"OK"}}]}' > "$outfile"
+printf '200'
+`),
+    { mode: 0o755 },
+  );
 
   const sandboxEntry = (name: string) => ({
     name,

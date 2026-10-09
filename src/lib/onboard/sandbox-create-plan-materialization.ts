@@ -367,7 +367,6 @@ export async function materializeSandboxCreatePlan({
   skipProviderEffects = false,
   messagingTokenDefs,
   messagingConfig,
-  runProviderPreDeleteCleanup,
   upsertMessagingProviders,
   getHermesToolGatewayProviderName,
   discloseInitialSandboxPolicy,
@@ -423,7 +422,6 @@ export async function materializeSandboxCreatePlan({
   const activateProviderEffects = async (
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<readonly string[]> => {
-    await runProviderPreDeleteCleanup(revalidateSandboxIdentity);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
         ...(await upsertMessagingProviders(enabledMessagingTokenDefs, {
