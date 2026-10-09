@@ -20,6 +20,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
 } from "./docker-driver-gateway-config";
 import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "./docker-driver-gateway-runtime-marker";
+import { readGatewayProcEntry } from "./gateway/process-proc-entry";
 import {
   externallySupervisedHostGatewayProcessOwnershipFailure,
   stopHostGatewayProcesses,
@@ -171,6 +172,37 @@ describe.runIf(process.platform === "linux")("gateway identity after leader exit
     ] as unknown as ReturnType<typeof fs.readdirSync>);
     expect(stopScoped(f).stopped).toEqual([pid]);
     expect(f.kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
+  });
+
+  it("bounds sibling identity reads and preserves ownership evidence when the bound is exceeded", () => {
+    const f = fixture();
+    f.files.set(`${proc}/environ`, "");
+    const emptyTids = Array.from({ length: 70 }, (_, index) => String(tid + index + 1));
+    emptyTids.forEach((emptyTid) => f.files.set(`${proc}/task/${emptyTid}/environ`, ""));
+    vi.mocked(fs.readdirSync).mockReturnValue([
+      String(pid),
+      ...emptyTids.slice(0, 10),
+      String(tid),
+      ...emptyTids.slice(10),
+    ] as unknown as ReturnType<typeof fs.readdirSync>);
+    expect(readGatewayProcEntry(pid, "environ")).toBe(f.files.get(`${task}/environ`));
+
+    vi.mocked(fs.readdirSync).mockReturnValue([
+      String(pid),
+      ...emptyTids,
+      String(tid),
+    ] as unknown as ReturnType<typeof fs.readdirSync>);
+    vi.mocked(fs.readFileSync).mockClear();
+    expect(readGatewayProcEntry(pid, "environ")).toBeNull();
+    expect(
+      vi
+        .mocked(fs.readFileSync)
+        .mock.calls.filter(
+          ([file]) => String(file).startsWith(`${proc}/task/`) && String(file).endsWith("/environ"),
+        ),
+    ).toHaveLength(64);
+    expect(stopScoped(f).ownershipFailures).toHaveLength(1);
+    expect(f.kill).not.toHaveBeenCalled();
   });
 
   it("keeps an empty environment for a non-zombie leader", () => {

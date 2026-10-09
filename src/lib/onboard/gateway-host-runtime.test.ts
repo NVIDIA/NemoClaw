@@ -511,6 +511,49 @@ describe("gateway host runtime attachment probe", () => {
     expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({ ok: true });
   });
 
+  it("attaches to a supervised listener with a zombie leader only through its live sibling", async () => {
+    declareExternalSupervision();
+    const proc = `/proc/${SYSTEMD_GATEWAY_PID}`;
+    const sibling = `${proc}/task/${SYSTEMD_GATEWAY_PID + 1}`;
+    vi.mocked(fs.readFileSync).mockImplementation((file) =>
+      String(file) === `${proc}/status`
+        ? ("State:\tZ (zombie)\n" as never)
+        : (JSON.stringify(DECLARATION) as never),
+    );
+    const readdir = fs.readdirSync;
+    vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) =>
+      String(directory) === `${proc}/task`
+        ? ([String(SYSTEMD_GATEWAY_PID), String(SYSTEMD_GATEWAY_PID + 1)] as unknown as ReturnType<
+            typeof fs.readdirSync
+          >)
+        : readdir(directory, options),
+    );
+    const realpath = fs.realpathSync.native;
+    const absentLeaderExe = new Map([[`${proc}/exe`, `${proc}/missing-executable`]]);
+    vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
+      String(file) === `${sibling}/exe`
+        ? SYSTEMD_GATEWAY_EXEC
+        : realpath(absentLeaderExe.get(String(file)) ?? file, options),
+    );
+
+    const runtime = createGatewayHostRuntime(createDeps({ readProcExe: undefined }));
+    const owner = runtime.getGatewayOwner();
+    const probe = await runtime.probeGatewayAttachment(owner);
+    expect(probe.listenerExecPath).toBe(SYSTEMD_GATEWAY_EXEC);
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({ ok: true });
+
+    const foreign = createGatewayHostRuntime(
+      createDeps({
+        readProcExe: undefined,
+        readProcCgroup: () => "0::/system.slice/foreign.service\n",
+      }),
+    );
+    const foreignOwner = foreign.getGatewayOwner();
+    expect(
+      evaluateGatewayAttachment(foreignOwner, await foreign.probeGatewayAttachment(foreignOwner)),
+    ).toMatchObject({ ok: false, code: "identity_mismatch" });
+  });
+
   it("rejects a same-binary listener outside the declared unit's cgroup (#6576)", async () => {
     declareExternalSupervision();
     // Same executable, answering health, supervisor active — but the PID lives

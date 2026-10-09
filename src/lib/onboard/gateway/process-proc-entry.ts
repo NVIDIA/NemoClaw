@@ -4,6 +4,8 @@
 import fs from "node:fs";
 
 type GatewayProcEntry = "cmdline" | "environ" | "exe";
+// Recovery must fail closed instead of making unbounded synchronous proc reads.
+const MAX_ZOMBIE_SIBLING_PROBES = 64;
 
 function readEntry(directory: string, entry: GatewayProcEntry): string | null {
   try {
@@ -30,13 +32,18 @@ export function readGatewayProcEntry(pid: number, entry: GatewayProcEntry): stri
     }
     // A thread beneath this task directory belongs to this PID's thread group.
     // Never use an unrelated /proc/<tid> or saved PID marker as identity evidence.
+    let scanned = 0;
     for (const tid of fs.readdirSync(`${root}/task`)) {
-      if (!/^[1-9]\d*$/.test(tid) || tid === String(pid)) continue;
+      if (tid === String(pid)) continue;
+      if (scanned >= MAX_ZOMBIE_SIBLING_PROBES) return null;
+      scanned += 1;
+      if (!/^[1-9]\d*$/.test(tid)) continue;
       const threadValue = readEntry(`${root}/task/${tid}`, entry);
       if (threadValue !== null && (entry === "exe" || threadValue.trim() !== "")) {
         return threadValue;
       }
     }
+    if (scanned >= MAX_ZOMBIE_SIBLING_PROBES) return null;
   } catch {
     // A vanished or unreadable thread group cannot establish process identity.
   }
