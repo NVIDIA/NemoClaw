@@ -4057,7 +4057,7 @@ const { setupNim } = require(${onboardPath});
     }
   });
 
-  it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {
+  it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for host-local compatible-endpoint setup (#2403)", () => {
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-compatible-endpoint-timeout-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
@@ -4094,7 +4094,7 @@ ${onboardChildRuntimeSource}
 process.env.COMPATIBLE_API_KEY = "test-key";
 const { setupInference } = require(${onboardPath});
 (async () => {
-  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://public-server.example:11434/v1", "COMPATIBLE_API_KEY", null, [], { preferredInferenceApi: "openai-completions", endpointPinnedAddresses: ["93.184.216.34"] });
+  await setupInference(null, "qwen3.6:35b", "compatible-endpoint", "http://host.openshell.internal:11434/v1", "COMPATIBLE_API_KEY", null, [], { preferredInferenceApi: "openai-completions" });
   process.exit(0);
 })().catch((err) => { console.error(err); process.exit(1); });
 `;
