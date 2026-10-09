@@ -107,4 +107,4 @@ The pinned 2026.9.5 CLI proxy signal handler can exit before the gateway release
 `scripts/lib/patch-openclaw-container-restart.mts` keeps gateway shutdown with the native gateway lifecycle while retaining the proxy cleanup barrier and process-exit cleanup.
 Ordinary CLI invocations retain their signal handlers and exit statuses.
 The patch rejects unexpected source shapes and applies only to 2026.9.5; remove it when a reviewed upstream version gives gateway shutdown sole ownership of process exit.
-`test/agents/openclaw/openclaw-proxy-shutdown-patch.test.ts` covers both signal paths, cleanup, patch drift, and installed-package auditing.
+`test/agents/openclaw/openclaw-container-restart-patch.test.ts` covers both signal paths, cleanup, patch drift, and installed-package auditing.
