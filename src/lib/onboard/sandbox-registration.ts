@@ -461,3 +461,26 @@ export function registerPreparedCreatedSandbox(
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
 }
+
+/** Refuse mismatched native authority before the setup caller changes agent configuration. */
+export function validateSelectedNativeOpenclawAttachment(
+  value: SandboxEntry["nativeCustomProviderAttachment"],
+  sandboxName: string,
+  provider: string,
+  preferredInferenceApi: string | null,
+): SandboxEntry["nativeCustomProviderAttachment"] {
+  if (value === undefined) return undefined;
+  const attachment = normalizeNativeCustomProviderAttachment(value, sandboxName);
+  if (
+    !attachment ||
+    attachment.api !== preferredInferenceApi ||
+    (attachment.credentialEnv === "COMPATIBLE_API_KEY"
+      ? provider !== "compatible-endpoint"
+      : provider !== "compatible-anthropic-endpoint")
+  ) {
+    throw new Error(
+      "OpenClaw setup requires native custom authority matching the selected sandbox and inference route.",
+    );
+  }
+  return attachment;
+}

@@ -3178,6 +3178,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             step,
             sandboxCommandExecutor: sandboxExec,
             gatewayName: GATEWAY_NAME!,
+            nativeCustomProviderAttachment: registry.getSandbox(finalFlowContext.sandboxName)
+              ?.nativeCustomProviderAttachment,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,

@@ -173,12 +173,14 @@ graph TB
 
     SHARED_INFER["Shared-route inference provider<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
     NVIDIA_INFER["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
+    CUSTOM_INFER["Custom hosted endpoint<br/><small>Admitted API and endpoint or host adapter</small>"]:::external
 
     CLI -->|"openshell CLI<br/>(orchestrates)"| GW
     GW -->|"creates/recreates<br/>Docker-driver sandbox"| SANDBOX
     SANDBOX -->|"shared-route requests<br/><small>inference.local · placeholder credentials</small>"| GW
     GW -->|"shared-route egress<br/>credential injected at L7 proxy"| SHARED_INFER
     SANDBOX -->|"attached NVIDIA provider<br/><small>restricted egress · placeholder rewritten</small>"| NVIDIA_INFER
+    SANDBOX -->|"attached custom provider<br/><small>restricted egress · credential reference rewritten</small>"| CUSTOM_INFER
 
     class HOST host
     class DOCKER docker
@@ -196,11 +198,13 @@ Layering from top to bottom:
 | Sandbox container | Docker container | Runs the selected supported agent runtime and NemoClaw integration under Landlock + seccomp + netns. |
 | OpenShell L7 proxy | Gateway process | Intercepts shared-route agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
 | OpenShell attached NVIDIA provider | Provider profile attached to the sandbox | Restricts NVIDIA Endpoints egress by host, method, path, and binary, then rewrites the placeholder credential at the egress boundary. |
+| OpenShell attached custom provider | Endpoint-specific provider profile attached to the sandbox | Restricts the admitted endpoint, API paths, addresses, and agent binary, then resolves the credential reference at egress. Existing host adapters retain their transport and authentication responsibilities. |
 
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider and placeholder system.
 Shared routes use the gateway L7 proxy to substitute the real value at egress.
 NVIDIA Endpoints uses the sandbox-attached provider profile to enforce the restricted request and replace its placeholder at egress.
+Fresh custom hosted selections likewise use their recorded sandbox-attached provider identity and admitted endpoint/API contract, including a host adapter where required.
 The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model.
 It is not a runtime component.
 

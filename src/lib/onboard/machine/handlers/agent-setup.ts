@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
-import { initializeOpenclawInferenceRoute as initializeDefaultOpenclawInferenceRoute } from "../../openclaw/initial-inference-route";
+import {
+  initializeOpenclawInferenceRoute as initializeDefaultOpenclawInferenceRoute,
+  type NativeCustomProviderAttachment,
+} from "../../openclaw/initial-inference-route";
+import { validateSelectedNativeOpenclawAttachment } from "../../sandbox-registration";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface AgentSetupStateOptions<Agent> {
@@ -29,7 +33,10 @@ export interface AgentSetupStateOptions<Agent> {
       session: Session | null,
       context: unknown,
     ): Promise<void>;
-    agentSetupContext(): { gatewayName: string };
+    agentSetupContext(): {
+      gatewayName: string;
+      nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
+    };
     ensureAgentDashboardForward(sandboxName: string, agent: Agent | null): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
@@ -59,6 +66,7 @@ export interface AgentSetupStateOptions<Agent> {
       initializeNativeInferenceRoute?: boolean,
       gatewayName?: string,
       settleOpenclawPairingBeforeRestart?: () => Promise<boolean>,
+      nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
@@ -74,6 +82,7 @@ export interface AgentSetupStateOptions<Agent> {
       preferredInferenceApi: string | null,
       gatewayName: string,
       revalidateSandboxIdentity?: (operation: string) => void,
+      nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -102,6 +111,14 @@ export async function handleAgentSetupState<Agent>({
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
   const agentSetupContext = deps.agentSetupContext();
+  const nativeCustomProviderAttachment = agent
+    ? undefined
+    : validateSelectedNativeOpenclawAttachment(
+        agentSetupContext.nativeCustomProviderAttachment,
+        sandboxName,
+        provider,
+        preferredInferenceApi,
+      );
   const initializeOpenclawInferenceRoute = async (): Promise<void> => {
     if (!initializeNativeInferenceRoute) return;
     if (
@@ -112,14 +129,18 @@ export async function handleAgentSetupState<Agent>({
         `External-image OpenClaw pairing did not settle after configuration for sandbox '${sandboxName}'.`,
       );
     }
-    await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
+    const initialize =
+      deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute;
+    const args = [
       sandboxName,
       model,
       provider,
       preferredInferenceApi,
       agentSetupContext.gatewayName,
       revalidateSandboxIdentity,
-    );
+    ] as const;
+    if (nativeCustomProviderAttachment) await initialize(...args, nativeCustomProviderAttachment);
+    else await initialize(...args);
   };
 
   if (agent) {
@@ -204,7 +225,7 @@ export async function handleAgentSetupState<Agent>({
       );
     }
     revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);
-    await deps.setupOpenclaw(
+    const setupArgs = [
       sandboxName,
       model,
       provider,
@@ -215,7 +236,10 @@ export async function handleAgentSetupState<Agent>({
       settleOpenclawStartupBeforeConfiguration
         ? () => deps.settleStartedOpenclawGatewayForConfiguration(sandboxName)
         : undefined,
-    );
+    ] as const;
+    if (nativeCustomProviderAttachment)
+      await deps.setupOpenclaw(...setupArgs, nativeCustomProviderAttachment);
+    else await deps.setupOpenclaw(...setupArgs);
     revalidateSandboxIdentity?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",

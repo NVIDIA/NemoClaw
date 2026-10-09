@@ -178,47 +178,65 @@ describe("OpenClaw sandbox setup", () => {
     expect(restartNativeGateway).not.toHaveBeenCalled();
   });
 
-  it("initializes a fresh custom-image route before reporting setup success (#12033)", async () => {
-    const order: string[] = [];
-    const initializeOpenclawInferenceRoute = vi.fn(async () => {
-      order.push("initialize");
-    });
-    const settleOpenclawPairingBeforeRestart = vi.fn(async () => {
-      order.push("pair");
-      return true;
-    });
-    const setup = createOpenclawSetup({
-      step: vi.fn(),
-      agentProductName: () => "OpenClaw",
-      configureOpenclawSandbox: vi.fn(async () => {
-        order.push("configure");
-      }),
-      initializeOpenclawInferenceRoute,
-      restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
-      shouldRestartNativeGateway: () => false,
-    });
+  it.each([false, true])(
+    "initializes a fresh custom-image route with native authority=%s (#12033)",
+    async (native) => {
+      const prepared = await prepareNativeCustomProfile({
+        sandboxName: "spark-box",
+        provider: "compatible-endpoint",
+        endpointUrl: "https://models.example.com/v1",
+        api: "openai-completions",
+        lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+      });
+      const attachment = customAttachmentFromPrepared(prepared, {
+        schemaVersion: 1,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "native-id",
+      });
+      const order: string[] = [];
+      const initializeOpenclawInferenceRoute = vi.fn(async () => {
+        order.push("initialize");
+      });
+      const settleOpenclawPairingBeforeRestart = vi.fn(async () => {
+        order.push("pair");
+        return true;
+      });
+      const setup = createOpenclawSetup({
+        step: vi.fn(),
+        agentProductName: () => "OpenClaw",
+        configureOpenclawSandbox: vi.fn(async () => {
+          order.push("configure");
+        }),
+        initializeOpenclawInferenceRoute,
+        restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
+        shouldRestartNativeGateway: () => false,
+      });
 
-    await setup(
-      "spark-box",
-      "selected/model",
-      "compatible-endpoint",
-      undefined,
-      "openai-completions",
-      true,
-      "nemoclaw-19090",
-      settleOpenclawPairingBeforeRestart,
-    );
+      await setup(
+        "spark-box",
+        "selected/model",
+        "compatible-endpoint",
+        undefined,
+        "openai-completions",
+        true,
+        "nemoclaw-19090",
+        settleOpenclawPairingBeforeRestart,
+        ...(native ? ([attachment] as const) : []),
+      );
 
-    expect(order).toEqual(["configure", "pair", "initialize"]);
-    expect(initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
-      "spark-box",
-      "selected/model",
-      "compatible-endpoint",
-      "openai-completions",
-      "nemoclaw-19090",
-      undefined,
-    );
-  });
+      expect(order).toEqual(["configure", "pair", "initialize"]);
+      expect(initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+        "spark-box",
+        "selected/model",
+        "compatible-endpoint",
+        "openai-completions",
+        "nemoclaw-19090",
+        undefined,
+        ...(native ? ([attachment] as const) : []),
+      );
+    },
+  );
 
   it("withholds the custom-image restart when post-config pairing does not settle (#11932)", async () => {
     const initializeOpenclawInferenceRoute = vi.fn(async () => undefined);

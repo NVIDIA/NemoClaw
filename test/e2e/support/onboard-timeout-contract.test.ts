@@ -9,6 +9,7 @@ import {
   CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
   CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS,
   CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
+  INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
   CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
   DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
@@ -36,7 +37,11 @@ import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../reg
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
-const affectedTargetIds = ["inference-routing", "onboard-resume"] as const;
+const affectedTargetIds = [
+  "inference-routing",
+  "inference-routing-custom-hosted",
+  "onboard-resume",
+] as const;
 const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
@@ -160,7 +165,7 @@ describe("onboard final-handoff timeout contract", () => {
 
   it.each([
     [
-      "inference-routing",
+      "inference-routing-custom-hosted",
       CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
       CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
     ],
@@ -175,7 +180,29 @@ describe("onboard final-handoff timeout contract", () => {
     },
   );
 
-  it("selects both affected targets when the shared timeout contract changes", () => {
+  it("bounds every retained routing case and final cleanup in its catalogue job", () => {
+    const selectedTestDeadlines =
+      2 * 5 * MINUTE_MS + 3 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS;
+    expect(catalogueTarget("inference-routing").timeoutMinutes).toBe(
+      INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
+    );
+    expect(INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      selectedTestDeadlines + DEFAULT_CLEANUP_TIMEOUT_MS + workflowFinalizationHeadroomMs,
+    );
+    expect(CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS +
+        DEFAULT_CLEANUP_TIMEOUT_MS +
+        workflowFinalizationHeadroomMs,
+    );
+    expect(
+      Math.max(
+        INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
+        CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
+      ),
+    ).toBeLessThanOrEqual(360);
+  });
+
+  it("selects all affected targets when the shared timeout contract changes", () => {
     expect(
       catalogueTargetsForChangedFiles([timeoutContractPath])
         .map((target) => target.id)

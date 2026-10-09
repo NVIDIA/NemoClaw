@@ -3,6 +3,7 @@
 
 import type { SandboxInferenceConfig } from "../../inference/config";
 import type { NativeCustomProviderAttachment } from "../../inference/native-custom";
+export type { NativeCustomProviderAttachment } from "../../inference/native-custom";
 import { resolveNativeCustomCredentialReference } from "../../inference/native-custom/credential-reference";
 import type { ReasoningEffortRequest } from "../../inference/selection";
 import type { ConfigObject } from "../../security/credential-filter";

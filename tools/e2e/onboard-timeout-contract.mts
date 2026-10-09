@@ -43,6 +43,13 @@ export const CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS =
 export const CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES =
   (CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
 
+// The retained inference-routing file executes two five-minute negative cases,
+// two runtime-identity cases and one compatible-route case. TC-INF-11 has its
+// own target so each serial job contains all selected tests and cleanup.
+export const INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES =
+  (2 * 5 * MINUTE_MS + 3 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) /
+  MINUTE_MS;
+
 // The typed DCode target runs onboarding, its invalid-credential lifecycle,
 // state validation, and the ordered cloud checks. Those checks can consume 96
 // minutes of command deadlines before automatic config export; retain the same

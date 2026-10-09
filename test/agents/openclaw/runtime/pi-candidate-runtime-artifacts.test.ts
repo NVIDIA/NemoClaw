@@ -137,6 +137,51 @@ describe("Pi managed model catalog generation", () => {
     expect(config.providers.openshell.apiKey).toBe("nemoclaw-managed-inference");
   });
 
+  it("routes a native compatible model with an environment credential reference", () => {
+    const secret = "native-pi-fixture-secret-must-not-be-written";
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "native-model",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://models.example.com/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      COMPATIBLE_API_KEY: secret,
+    });
+    try {
+      expect(status, stderr).toBe(0);
+      const configPath = path.join(home, ".pi", "agent", "models.json");
+      const text = fs.readFileSync(configPath, "utf8");
+      expect(text).not.toContain(secret);
+      expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+      const config = JSON.parse(text);
+      expect(config.defaultModel).toBe("native-model");
+      expect(config.providers.openshell).toMatchObject({
+        baseUrl: "https://models.example.com/v1",
+        api: "openai-completions",
+        apiKey: "$COMPATIBLE_API_KEY",
+        models: [{ id: "native-model" }],
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses native Anthropic selection before writing a Pi catalog", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "native-anthropic-model",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://models.example.com",
+      NEMOCLAW_INFERENCE_API: "anthropic-messages",
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-anthropic-endpoint",
+      COMPATIBLE_ANTHROPIC_API_KEY: "native-anthropic-fixture-secret",
+    });
+    try {
+      expect(status).not.toBe(0);
+      expect(stderr).toContain("NEMOCLAW_INFERENCE_API must be openai-completions for Pi.");
+      expect(fs.existsSync(path.join(home, ".pi", "agent", "models.json"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a model name that is empty after trimming", () => {
     const { status, stderr } = generate({
       NEMOCLAW_MODEL: "   ",

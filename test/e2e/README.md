@@ -1782,7 +1782,7 @@ a custom, copied, or no-op adapter.
 
 ## Native custom hosted inference
 
-The existing `inference-routing` target's TC-INF-11 onboards its public HTTPS fixture
+The `inference-routing-custom-hosted` target's TC-INF-11 onboards its public HTTPS fixture
 with a sandbox-specific native provider. It verifies a fresh OpenClaw turn after stop/start,
 selected `inference get` and status, DNS pinning, redirect rejection, executable denial,
 detach/reattach, and provider/route deletion. A second native sandbox proves that selected

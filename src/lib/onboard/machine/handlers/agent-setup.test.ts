@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import { handleAgentSetupState, type AgentSetupStateOptions } from "./agent-setup";
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../../../inference/native-custom";
 
 type Agent = { name: string; displayName: string };
 
@@ -83,6 +87,99 @@ function baseOptions(
 }
 
 describe("handleAgentSetupState", () => {
+  async function nativeAttachment() {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "my-assistant",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://models.example.com/v1",
+      api: "openai-completions",
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    return customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "native-provider-id",
+    });
+  }
+
+  it.each([false, true])(
+    "carries native authority into managed setup with resume=%s",
+    async (resume) => {
+      const attachment = await nativeAttachment();
+      const { deps, calls } = createDeps({
+        agentSetupContext: () => ({
+          gatewayName: "nemoclaw-19090",
+          nativeCustomProviderAttachment: attachment,
+        }),
+      });
+      calls.openclawReady.mockResolvedValue(resume);
+      await handleAgentSetupState({
+        ...baseOptions(deps),
+        provider: "compatible-endpoint",
+        resume,
+        managedOpenclawStartup: true,
+        initializeNativeInferenceRoute: true,
+      });
+      expect(calls.initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+        "my-assistant",
+        "model",
+        "compatible-endpoint",
+        "openai-completions",
+        "nemoclaw-19090",
+        undefined,
+        attachment,
+      );
+    },
+  );
+
+  it("passes native authority to the custom-image setup owner", async () => {
+    const attachment = await nativeAttachment();
+    const { deps, calls } = createDeps({
+      agentSetupContext: () => ({
+        gatewayName: "nemoclaw-19090",
+        nativeCustomProviderAttachment: attachment,
+      }),
+    });
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      provider: "compatible-endpoint",
+      initializeNativeInferenceRoute: true,
+    });
+    expect(calls.setupOpenclaw).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "model",
+      "compatible-endpoint",
+      undefined,
+      "openai-completions",
+      true,
+      "nemoclaw-19090",
+      undefined,
+      attachment,
+    );
+  });
+
+  it("refuses foreign native authority before configuring OpenClaw", async () => {
+    const attachment = await nativeAttachment();
+    const { deps, calls } = createDeps({
+      agentSetupContext: () => ({
+        gatewayName: "nemoclaw-19090",
+        nativeCustomProviderAttachment: { ...attachment, sandboxName: "foreign" },
+      }),
+    });
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        provider: "compatible-endpoint",
+        managedOpenclawStartup: true,
+        initializeNativeInferenceRoute: true,
+      }),
+    ).rejects.toThrow("matching the selected sandbox");
+    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
+    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
+  });
+
   it("delegates non-OpenClaw agent setup and skips openclaw", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes", displayName: "Hermes" };
