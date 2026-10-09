@@ -1152,7 +1152,8 @@ test(
     });
 
     const useMockBaseline =
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
+      (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
