@@ -133,9 +133,14 @@ export function writeInstallerGeneratedAcpShim(
 }
 
 /** Build isolated npm-package-shaped fixtures for installer shim contract tests. */
-export function createManagedSourceNemoClawAcp(home: string, prefix: string): string {
+export function createManagedSourceNemoClawAcp(
+  home: string,
+  prefix: string,
+  packageJsonSymlinkTarget?: string,
+): string {
   const sourceRoot = path.join(home, ".nemoclaw", "source");
   const packageRoot = sourceRoot;
+  const packageJson = path.join(packageRoot, "package.json");
   const acpEntry = path.join(packageRoot, "dist", "lib", "acp", "main.js");
   const linkedPackage = path.join(prefix, "lib", "node_modules", "nemoclaw");
   const binEntry = path.join(prefix, "bin", "nemoclaw-acp");
@@ -143,13 +148,18 @@ export function createManagedSourceNemoClawAcp(home: string, prefix: string): st
   fs.mkdirSync(path.dirname(linkedPackage), { recursive: true });
   fs.mkdirSync(path.dirname(binEntry), { recursive: true });
   fs.writeFileSync(
-    path.join(packageRoot, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "nemoclaw",
       version: "0.0.131",
       bin: { "nemoclaw-acp": "./dist/lib/acp/main.js" },
     }),
   );
+  if (packageJsonSymlinkTarget !== undefined) {
+    fs.copyFileSync(packageJson, packageJsonSymlinkTarget);
+    fs.unlinkSync(packageJson);
+    fs.symlinkSync(packageJsonSymlinkTarget, packageJson);
+  }
   runFixtureGit(["-c", "core.hooksPath=/dev/null", "-C", packageRoot, "init", "--quiet"]);
   runFixtureGit(["-C", packageRoot, "add", "package.json"]);
   runFixtureGit([

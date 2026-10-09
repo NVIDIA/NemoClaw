@@ -146,7 +146,7 @@ ensure_cli_shim "nemoclaw-acp"`,
           "acp",
           "main.js",
         ),
-        `require("node:fs").writeFileSync(${JSON.stringify(sentinel)}, "executed");`,
+        `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(sentinel)}, "executed");\n`,
       );
       writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
       const originalContents = fs.readFileSync(scenario.shimPath);
@@ -187,14 +187,36 @@ ensure_cli_shim "nemoclaw-acp"`,
     },
   );
 
-  it.skipIf(process.platform === "win32").each(["package.json", "dist/build-identity.json"])(
-    "rejects symlinked managed-source %s metadata",
-    (metadata) => {
-      const scenario = createScenario(`symlinked-source-${metadata.replaceAll("/", "-")}`);
+  it.skipIf(process.platform === "win32")(
+    "rejects a committed symlinked managed-source package.json",
+    () => {
+      const scenario = createScenario("symlinked-source-package");
+      const externalPath = path.join(scenario.tmp, "external-package.json");
+      const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix, externalPath);
+      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+      const originalContents = fs.readFileSync(scenario.shimPath);
+
+      expectRejectedUnchanged(
+        runInstallerFunction(scenario, {}, "preflight_nemoclaw_acp_shim"),
+        scenario,
+        originalContents,
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a symlinked managed-source build identity",
+    () => {
+      const scenario = createScenario("symlinked-source-identity");
       const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix);
-      const sourceRoot = path.join(scenario.tmp, ".nemoclaw", "source");
-      const metadataPath = path.join(sourceRoot, metadata);
-      const externalPath = path.join(scenario.tmp, `external-${path.basename(metadata)}`);
+      const metadataPath = path.join(
+        scenario.tmp,
+        ".nemoclaw",
+        "source",
+        "dist",
+        "build-identity.json",
+      );
+      const externalPath = path.join(scenario.tmp, "external-build-identity.json");
       fs.copyFileSync(metadataPath, externalPath);
       fs.unlinkSync(metadataPath);
       fs.symlinkSync(externalPath, metadataPath);
