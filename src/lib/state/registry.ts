@@ -28,7 +28,7 @@ import {
   requireSandboxHostLocalInferenceProvenance,
 } from "./registry/host-local-inference";
 import { withLock } from "./registry/lock";
-import { load, save, applyNativeCompatibleProviderAuthority } from "./registry/persistence";
+import { load, save } from "./registry/persistence";
 import {
   isCurrentSandboxInferenceRouteReservation,
   isCurrentPendingSandboxCreateReservation,
@@ -1105,16 +1105,6 @@ export function setChannelDisabled(name: string, channel: string, disabled: bool
 }
 
 export { getNativeCompatibleProviderAuthority } from "./registry/persistence";
-
-export function setNativeCompatibleProviderAuthority(
-  gatewayName: string,
-  receipt: import("../inference/native-compatible/contract").NativeCompatibleProviderAttachment,
-): void {
-  withLock(() => {
-    const state = load();
-    if (applyNativeCompatibleProviderAuthority(state, gatewayName, receipt)) save(state);
-  });
-}
 
 export { getNativeBedrockProviderAuthority } from "./registry/persistence";
 export function setNativeBedrockProviderAuthority(

@@ -267,7 +267,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   getNativeBedrockProviderAuthority?: typeof getNativeBedrockProviderAuthority;
   setNativeBedrockProviderAuthority?: typeof setNativeBedrockProviderAuthority;
   getNativeCompatibleProviderAuthority?: typeof import("../state/registry").getNativeCompatibleProviderAuthority;
-  setNativeCompatibleProviderAuthority?: typeof import("../state/registry").setNativeCompatibleProviderAuthority;
+  setNativeCompatibleProviderAuthority?: typeof import("../state/registry/native-compatible-provider-authority").setNativeCompatibleProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;

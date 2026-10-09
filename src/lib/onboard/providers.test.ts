@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { nativeCompatibleEndpointIdentity } from "../inference/native-compatible/endpoint";
 
 type RunResult = {
   error?: unknown;
@@ -731,4 +736,46 @@ describe("onboard provider helpers", () => {
       "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
     ]);
   });
+});
+
+it("persists compatible onboarding authority through the production dependency factory", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-authority-"));
+  const identity = nativeCompatibleEndpointIdentity({
+    endpointUrl: "https://models.example/v1",
+    api: "openai-completions",
+    addresses: ["93.184.216.34"],
+  });
+  const receipt = {
+    schemaVersion: 1,
+    profileId: identity.profileId,
+    providerName: identity.providerName,
+    providerId: "owned-provider",
+    endpointUrl: identity.endpoint,
+    api: identity.api,
+    addresses: identity.addresses,
+  };
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--require",
+        require.resolve("tsx/cjs"),
+        "-e",
+        `const { setupInferenceProviderDeps } = require(${JSON.stringify(path.join(import.meta.dirname, "providers.ts"))});
+       const deps = setupInferenceProviderDeps(() => { throw new Error("Unexpected provider command"); });
+       const receipt = ${JSON.stringify(receipt)};
+       deps.setNativeCompatibleProviderAuthority("test-gateway", receipt);
+       process.stdout.write(JSON.stringify(deps.getNativeCompatibleProviderAuthority("test-gateway", receipt.profileId)));`,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 15_000,
+        env: { HOME: home, NODE_OPTIONS: "", PATH: process.env.PATH },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(receipt);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

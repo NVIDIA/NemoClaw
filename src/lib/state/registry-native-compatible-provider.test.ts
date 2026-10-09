@@ -18,6 +18,7 @@ it("retains endpoint ownership after switching the sandbox away from compatible 
   vi.resetModules();
   try {
     const registry = await import("./registry");
+    const authority = await import("./registry/native-compatible-provider-authority");
     const identity = nativeCompatibleEndpointIdentity({
       addresses: ["93.184.216.34"],
       endpointUrl: "https://api.example.com/v1",
@@ -32,7 +33,7 @@ it("retains endpoint ownership after switching the sandbox away from compatible 
       endpointUrl: identity.endpoint,
       api: identity.api,
     };
-    registry.setNativeCompatibleProviderAuthority("gateway", receipt);
+    authority.setNativeCompatibleProviderAuthority("gateway", receipt);
     registry.registerSandbox({
       name: "alpha",
       provider: "compatible-endpoint",
@@ -44,7 +45,6 @@ it("retains endpoint ownership after switching the sandbox away from compatible 
       gatewayPort: 8080,
     });
     expect(registry.getSandbox("alpha")?.nativeCompatibleProviderAttachment).toEqual(receipt);
-    const authority = await import("./registry/native-compatible-provider-authority");
     expect(() =>
       authority.clearNativeCompatibleProviderAuthority("gateway", {
         ...receipt,
@@ -57,7 +57,7 @@ it("retains endpoint ownership after switching the sandbox away from compatible 
     expect(
       registry.getNativeCompatibleProviderAuthority("gateway", receipt.profileId),
     ).toBeUndefined();
-    registry.setNativeCompatibleProviderAuthority("gateway", receipt);
+    authority.setNativeCompatibleProviderAuthority("gateway", receipt);
     registry.updateSandbox("alpha", { nativeCompatibleProviderAttachment: receipt });
     expect(registry.updateSandbox("alpha", { provider: "nvidia-prod", endpointUrl: null })).toBe(
       true,
@@ -70,7 +70,7 @@ it("retains endpoint ownership after switching the sandbox away from compatible 
       registry.getNativeCompatibleProviderAuthority("other-gateway", identity.profileId),
     ).toBeUndefined();
     expect(() =>
-      registry.setNativeCompatibleProviderAuthority("gateway", {
+      authority.setNativeCompatibleProviderAuthority("gateway", {
         ...receipt,
         providerId: "replacement",
       }),
@@ -144,6 +144,7 @@ it.each([
     vi.resetModules();
     try {
       const registry = await import("./registry");
+      const authority = await import("./registry/native-compatible-provider-authority");
       const persistence = await import("./registry/persistence");
       const identity = nativeCompatibleEndpointIdentity({
         addresses: ["93.184.216.34"],
@@ -159,7 +160,7 @@ it.each([
         endpointUrl: identity.endpoint,
         api: identity.api,
       };
-      registry.setNativeCompatibleProviderAuthority("gateway", receipt);
+      authority.setNativeCompatibleProviderAuthority("gateway", receipt);
       registry.registerSandbox({
         name: "alpha",
         provider: "compatible-endpoint",

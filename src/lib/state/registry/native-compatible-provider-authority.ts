@@ -4,7 +4,7 @@
 import type { NativeCompatibleProviderAttachment } from "../../inference/native-compatible/contract";
 import { readNativeCompatibleProviderAuthority } from "./native-compatible-provider-authority-state";
 import { withLock } from "./lock";
-import { load, save } from "./persistence";
+import { load, save, applyNativeCompatibleProviderAuthority } from "./persistence";
 
 /** Forget only the confirmed removed identity, including sandbox-local receipts. */
 export function clearNativeCompatibleProviderAuthority(
@@ -36,3 +36,13 @@ export function clearNativeCompatibleProviderAuthority(
 }
 
 export { getNativeCompatibleProviderAuthority } from "./persistence";
+
+export function setNativeCompatibleProviderAuthority(
+  gatewayName: string,
+  receipt: NativeCompatibleProviderAttachment,
+): void {
+  withLock(() => {
+    const state = load();
+    if (applyNativeCompatibleProviderAuthority(state, gatewayName, receipt)) save(state);
+  });
+}

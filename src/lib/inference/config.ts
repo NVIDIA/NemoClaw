@@ -22,7 +22,10 @@ import {
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "./native-compatible/endpoint";
 export { getCompatibleAnthropicOpenAiSurfaceBaseUrl };
 export { retireNativeCompatibleProvider } from "./native-compatible/retire";
-export { clearNativeCompatibleProviderAuthority } from "../state/registry/native-compatible-provider-authority";
+export {
+  clearNativeCompatibleProviderAuthority,
+  setNativeCompatibleProviderAuthority,
+} from "../state/registry/native-compatible-provider-authority";
 import {
   requireMatchingNativeCompatibleAttachment,
   type NativeCompatibleProviderAttachment,

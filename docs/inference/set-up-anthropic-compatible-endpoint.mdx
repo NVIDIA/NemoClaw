@@ -68,7 +68,7 @@ Refer to [Onboarding rejects an Anthropic-compatible tool call](../../reference/
 Hermes uses the endpoint's OpenAI Chat Completions frontend for this provider.
 For hosted endpoints other than AWS Bedrock, NemoClaw validates `/v1/chat/completions` and configures the endpoint's `/v1` base URL through the attached provider.
 Host-local endpoints retain the managed frontend at `https://inference.local/v1`.
-For endpoints other than AWS Bedrock, the route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+Onboarding reads `COMPATIBLE_ANTHROPIC_API_KEY` from the host. For hosted endpoints other than AWS Bedrock, agent configuration uses the issued `NEMOCLAW_COMPATIBLE_INFERENCE_API_KEY` reference supplied through the attached provider. Host-local routes retain their existing credential binding.
 For AWS Bedrock, OpenShell supplies the adapter token; AWS credential discovery stays in the host adapter.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 

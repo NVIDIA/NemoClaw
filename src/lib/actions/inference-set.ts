@@ -14,7 +14,10 @@ import {
 } from "../inference/config";
 import { getNativeCompatibleSandboxInferenceConfig } from "../inference/config";
 import { retireNativeCompatibleProvider } from "../inference/config";
-import { clearNativeCompatibleProviderAuthority } from "../inference/config";
+import {
+  clearNativeCompatibleProviderAuthority,
+  setNativeCompatibleProviderAuthority,
+} from "../inference/config";
 import { captureResolvedOpenshellAsync, getOpenshellBinary } from "../adapters/openshell/runtime";
 import type {
   OpenShellInferenceRouteObservation,
@@ -210,7 +213,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps, NativeBed
   getNativeNvidiaProviderAuthority?: typeof registry.getNativeNvidiaProviderAuthority;
   resolveNativeCompatibleEndpointHost?: import("../security/trusted-private-endpoint").EndpointDnsLookupFn;
   getNativeCompatibleProviderAuthority?: typeof registry.getNativeCompatibleProviderAuthority;
-  setNativeCompatibleProviderAuthority?: typeof registry.setNativeCompatibleProviderAuthority;
+  setNativeCompatibleProviderAuthority?: typeof setNativeCompatibleProviderAuthority;
   clearNativeCompatibleProviderAuthority?: typeof clearNativeCompatibleProviderAuthority;
   setNativeNvidiaProviderAuthority: typeof registry.setNativeNvidiaProviderAuthority;
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
@@ -347,7 +350,7 @@ function defaultDeps(): InferenceSetDeps {
     listSandboxes: registry.listSandboxes,
     getNativeNvidiaProviderAuthority: registry.getNativeNvidiaProviderAuthority,
     getNativeCompatibleProviderAuthority: registry.getNativeCompatibleProviderAuthority,
-    setNativeCompatibleProviderAuthority: registry.setNativeCompatibleProviderAuthority,
+    setNativeCompatibleProviderAuthority: setNativeCompatibleProviderAuthority,
     clearNativeCompatibleProviderAuthority,
     setNativeNvidiaProviderAuthority: registry.setNativeNvidiaProviderAuthority,
     updateSandbox: registry.updateSandbox,
@@ -1419,9 +1422,10 @@ async function prepareNativeCompatibleSelection(input: {
           deps.getNativeCompatibleProviderAuthority ?? registry.getNativeCompatibleProviderAuthority
         )(gatewayName, profileId),
       write: (receipt) =>
-        (
-          deps.setNativeCompatibleProviderAuthority ?? registry.setNativeCompatibleProviderAuthority
-        )(gatewayName, receipt),
+        (deps.setNativeCompatibleProviderAuthority ?? setNativeCompatibleProviderAuthority)(
+          gatewayName,
+          receipt,
+        ),
     },
   });
 
