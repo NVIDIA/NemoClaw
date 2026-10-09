@@ -260,6 +260,14 @@ The command reads the registry and current OpenShell state without changing the 
 It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent.
 If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
+<AgentOnly variant="openclaw">
+
+Gemini config export stops with an unsupported-provider error because V1 cannot consume the Gemini document.
+The command writes no YAML and does not create or replace an output file, including with `--force`.
+Continue using the existing Gemini sandbox until V1 support is available.
+
+</AgentOnly>
+
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies that the recorded NemoClaw-owned provider attachment matches the live provider, least-privilege profile, and fixed native endpoint.
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
@@ -454,7 +462,15 @@ The flag selects managed vLLM and managed llama.cpp profiles. A managed llama.cp
 $$nemoclaw onboard --profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
 ```
 
-If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature. The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation. When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root. Otherwise, onboarding stops before it records a route that the profile does not declare. After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
+If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
+The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+
+When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
+Otherwise, onboarding stops before it records a route that the profile does not declare.
+Reusing a running vLLM server does not record the requested profile's provenance.
+
+For a sandbox created with a managed vLLM or llama.cpp installation, human status shows the profile, recipe, and catalog digest.
+JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
 #### `--host-mount`
 
@@ -3775,7 +3791,9 @@ $$nemoclaw credentials reset nvidia-prod
 
 ### `$$nemoclaw gc`
 
-Remove orphaned sandbox Docker images from the host. Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository. The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain. This command lists images from both repositories, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
+Remove orphaned sandbox Docker images from the host. Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository. The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain. Docker images are shared across gateways on the host. This command lists images from both repositories, checks every validated host gateway registry, and removes only images that no registered sandbox uses. It checks the registries again after confirmation, so images registered while the prompt was open remain protected.
+
+If the command cannot safely read a gateway registry, it stops before deletion. Correct the reported gateway-state problem, then rerun `$$nemoclaw gc --dry-run` before removing images.
 
 ```bash
 $$nemoclaw gc [--dry-run] [--yes|-y|--force]

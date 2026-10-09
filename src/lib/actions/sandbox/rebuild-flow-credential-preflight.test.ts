@@ -9,7 +9,10 @@ import {
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
-import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import {
+  makePreparedRecoveryManifest,
+  nativeProviderRebuildScenario,
+} from "./rebuild-flow-test-fixtures";
 
 type Harness = ReturnType<typeof createRebuildFlowHarness>;
 
@@ -72,6 +75,13 @@ function providerRuntime(
   };
 }
 
+function createNativeProviderRebuildHarness(replaced: boolean) {
+  const { overrides, reads, providerName } = nativeProviderRebuildScenario(replaced);
+  const harness = createRebuildFlowHarness(overrides);
+  configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+  return { harness, reads, providerName };
+}
+
 function diagnostics(harness: Harness): string {
   return harness.errorSpy.mock.calls.flat().map(String).join("\n");
 }
@@ -98,6 +108,27 @@ function makeStagedHermesMessagingPlan() {
 
 describe("rebuildSandbox flow: credential preflight", () => {
   installRebuildFlowTestHooks();
+
+  it("rebuilds with the recorded native provider and no host key", async () => {
+    const { harness, reads, providerName } = createNativeProviderRebuildHarness(false);
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(reads)).toEqual(new Set([providerName]));
+  });
+
+  it("preserves the sandbox when native provider ownership changes during backup", async () => {
+    const { harness } = createNativeProviderRebuildHarness(true);
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("is indeterminate before sandbox deletion");
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
 
   it.each(["saved-provider-key", null])(
     "preserves the sandbox when credentials expire during backup with host key %s (#10394)",

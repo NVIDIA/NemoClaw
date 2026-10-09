@@ -35,7 +35,7 @@ export LANGCHAIN_TRACING_V2=false
 export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
-export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider
+unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 unset PYTHONHOME PYTHONPATH
 
@@ -444,6 +444,11 @@ is_openshell_env_placeholder_for_name() {
   local value="$2"
   local canonical revision_prefix stable_prefix generation_suffix versioned revision stable handle
 
+  if [ "$name" = "NEMOCLAW_ATTACHED_PROVIDER_API_KEY" ]; then
+    [ "$value" = "${NVIDIA_INFERENCE_API_KEY:-}" ] || return 1
+    name=NVIDIA_INFERENCE_API_KEY
+  fi
+
   # OPENSHELL_TLS_KEY is supervisor infrastructure, not a provider credential.
   # Never let a provider placeholder bypass that supervisor-only boundary.
   [ "$name" != "OPENSHELL_TLS_KEY" ] || return 1
@@ -678,6 +683,13 @@ assert_no_codex_auth_credentials() {
     refuse_auth_store_credentials "$auth_file"
   fi
 }
+
+# Restored native config.toml files can still reference the old environment key.
+# Keep that consumer on the current supervisor placeholder, never a fixed token.
+# Remove this alias when supported restored configs no longer use the old key.
+if is_openshell_env_placeholder_for_name NVIDIA_INFERENCE_API_KEY "${NVIDIA_INFERENCE_API_KEY:-}"; then
+  export NEMOCLAW_ATTACHED_PROVIDER_API_KEY="$NVIDIA_INFERENCE_API_KEY"
+fi
 
 assert_no_secret_runtime_env
 assert_no_secret_env_file
