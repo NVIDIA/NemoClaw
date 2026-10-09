@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
@@ -389,7 +388,7 @@ export function ordinaryOpenClawPairingIncompleteMessage(
 ): string {
   const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
   if (reason === "startup-timeout" || reason === "startup-gateway-exited") {
-    return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Inspect /sandbox/.openclaw/logs/gateway-persistent.log. Run \`nemoclaw ${name} gateway restart\`. After the restart succeeds, resume onboarding.`;
+    return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Read the startup log with \`nemoclaw ${name} exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log\`. Correct the reported error, then run \`nemoclaw ${name} gateway restart\`. After the restart succeeds, resume onboarding.`;
   }
   return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
 }
@@ -438,9 +437,7 @@ export const finalizationHandlerDeps = {
   ): Promise<boolean | null> {
     return await finalizationHandlerRuntime
       .loadProcessRecovery()
-      .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName, {
-        defaultTimeoutSeconds: OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS / 1_000,
-      });
+      .waitForStartedNativeGatewayProcess(name, "openclaw", gatewayName);
   },
   async settleStartedOpenclawGatewayForConfiguration(name: string): Promise<boolean> {
     const pairing = await settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
@@ -462,7 +459,6 @@ export const finalizationHandlerDeps = {
         name,
         "openclaw",
         target.gatewayName,
-        { defaultTimeoutSeconds: OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS / 1_000 },
       );
       if (startup === false) {
         console.error(

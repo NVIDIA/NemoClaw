@@ -564,7 +564,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       });
       expect(scope.deps.runWarmup).not.toHaveBeenCalled();
       expect(ordinaryOpenClawPairingIncompleteMessage("alpha", state)).toContain(
-        "gateway-persistent.log",
+        "nemoclaw alpha exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log",
       );
       expect(ordinaryOpenClawPairingIncompleteMessage("alpha", state)).toContain(
         "nemoclaw alpha gateway restart",
@@ -910,7 +910,6 @@ describe("finalization process-recovery refusal propagation", () => {
       "alpha",
       "openclaw",
       "nemoclaw",
-      { defaultTimeoutSeconds: 330 },
     );
   });
 

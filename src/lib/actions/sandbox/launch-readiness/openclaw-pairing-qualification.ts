@@ -45,8 +45,7 @@ export const OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS = 3_000;
 // existing 60-second device-list window (#9817) before declaring pairing absent.
 // Canonical state remains the only success authority; already-settled devices
 // return immediately without spending either window.
-export const OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS = 330_000;
-export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS + 60_000;
+export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 330_000 + 60_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
 export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
 // Reserve the bounded request producer and watcher-observation windows. The

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -23,6 +25,7 @@ import {
   PODMAN_SANDBOX_WORKSPACE_LABEL,
 } from "../runtime-provider/podman-lifecycle";
 import { encodeManagedStartupProfile } from "./profile";
+import { WAIT_FOR_OPENCLAW_OWNER_LEASE } from "./openclaw-owner-lease";
 import {
   applyProviderManagedStartupRootRequest,
   finalizeProviderManagedStartupSharedState,
@@ -34,6 +37,141 @@ const CONTAINER_ID = "a".repeat(64);
 const IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const SANDBOX_ID = "sandbox-podman-managed";
 const SANDBOX_NAME = "managed-podman";
+
+// Execute the shipped observer unchanged. Only the container account/root and
+// clock are substituted; SQLite queries and descriptor checks run against files.
+const OWNER_LEASE_FIXTURE = String.raw`
+import contextlib, json, os, pathlib, pwd, re, socket, sqlite3, sys, tempfile
+from unittest.mock import patch
+
+request = json.load(sys.stdin)
+fixture = request["fixture"]
+account = pwd.getpwuid(os.getuid())
+epoch = 1700000000
+clock = [0]
+sleeps = []
+real_open = os.open
+real_connect = sqlite3.connect
+
+def sleep(seconds):
+    assert 0 < seconds <= 1
+    assert clock[0] < 301, "observer exceeded its bounded deadline"
+    sleeps.append(seconds)
+    clock[0] += seconds
+
+with tempfile.TemporaryDirectory(prefix="nemoclaw-owner-lease-") as root:
+    state = pathlib.Path(root, "sandbox/.openclaw/state")
+    state.mkdir(parents=True)
+    database_path = state / "openclaw.sqlite"
+    if fixture.get("database", True):
+        with real_connect(database_path) as db:
+            if fixture.get("table", True):
+                db.execute("CREATE TABLE state_leases (scope TEXT, lease_key TEXT, expires_at INTEGER, payload_json TEXT)")
+                # Other scopes and lease keys must not block the gateway owner.
+                unrelated = json.dumps({"owner": {"host": socket.gethostname() + "-foreign"}})
+                db.executemany("INSERT INTO state_leases VALUES (?, ?, ?, ?)", [
+                    ("unrelated", "global", epoch * 1000 + 600000, unrelated),
+                    ("gateway-owner", "other", epoch * 1000 + 600000, unrelated),
+                ])
+                row = fixture.get("row")
+                if row is not None:
+                    offset = row["expiry"]
+                    expiry = epoch * 1000 + offset if type(offset) is int else offset
+                    host = socket.gethostname() if row["host"] == "local" else socket.gethostname() + "-foreign"
+                    payload = row.get("payload", json.dumps({"owner": {"host": host}}))
+                    db.execute("INSERT INTO state_leases VALUES ('gateway-owner', 'global', ?, ?)", (expiry, payload))
+        db.close()
+    before = database_path.read_bytes() if database_path.exists() else None
+
+    def open_root(path, *args, **kwargs):
+        return real_open(root if path == "/" else path, *args, **kwargs)
+
+    def connect_descriptor(reference, *args, **kwargs):
+        # Darwin lacks /proc. Preserve the opened-directory identity and real
+        # read-only SQLite connection; Linux executes the native descriptor URI.
+        match = re.fullmatch(r"file:/proc/self/fd/(\d+)/openclaw.sqlite\?mode=ro", reference)
+        assert match is not None and kwargs.get("uri") is True
+        opened = os.fstat(int(match.group(1)))
+        actual = state.stat()
+        assert (opened.st_dev, opened.st_ino) == (actual.st_dev, actual.st_ino)
+        return real_connect(database_path.as_uri() + "?mode=ro", *args, **kwargs)
+
+    error = None
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(patch("pwd.getpwnam", return_value=account))
+        stack.enter_context(patch("os.open", side_effect=open_root))
+        stack.enter_context(patch("time.monotonic", side_effect=lambda: clock[0]))
+        stack.enter_context(patch("time.time", side_effect=lambda: epoch + clock[0]))
+        stack.enter_context(patch("time.sleep", side_effect=sleep))
+        if sys.platform == "darwin":
+            stack.enter_context(patch("sqlite3.connect", side_effect=connect_descriptor))
+        try:
+            exec(compile(request["source"], "openclaw-owner-lease", "exec"), {})
+        except Exception as failure:
+            error = str(failure)
+    after = database_path.read_bytes() if database_path.exists() else None
+    print(json.dumps({"elapsedSeconds": clock[0], "sleptSeconds": sum(sleeps), "databaseUnchanged": before == after, "error": error}))
+sys.exit(1 if error is not None else 0)
+`;
+
+describe("native OpenClaw owner lease observation", () => {
+  it.each([
+    { name: "missing database", fixture: { database: false }, elapsed: 0, error: null },
+    { name: "missing lease table", fixture: { table: false }, elapsed: 0, error: null },
+    { name: "absent global owner", fixture: {}, elapsed: 0, error: null },
+    {
+      name: "local owner",
+      fixture: { row: { host: "local", expiry: 600_000 } },
+      elapsed: 0,
+      error: null,
+    },
+    {
+      name: "expired foreign owner",
+      fixture: { row: { host: "foreign", expiry: -1 } },
+      elapsed: 0,
+      error: null,
+    },
+    {
+      name: "foreign owner that expires during observation",
+      fixture: { row: { host: "foreign", expiry: 2_000 } },
+      elapsed: 2,
+      error: null,
+    },
+    {
+      name: "foreign owner active beyond the native deadline",
+      fixture: { row: { host: "foreign", expiry: 600_000 } },
+      elapsed: 300,
+      error: "OpenClaw owner lease remained active through its native expiry window",
+    },
+    {
+      name: "foreign owner with an invalid expiry",
+      fixture: { row: { host: "foreign", expiry: "unbounded" } },
+      elapsed: 0,
+      error: "OpenClaw owner lease has no bounded expiry",
+    },
+    {
+      name: "owner without a host identity",
+      fixture: { row: { host: "foreign", expiry: 600_000, payload: '{"owner":{}}' } },
+      elapsed: 0,
+      error: "OpenClaw owner lease has no host identity",
+    },
+  ])("preserves the database when observing $name", ({ fixture, elapsed, error }) => {
+    const result = spawnSync("python3", ["-I", "-c", OWNER_LEASE_FIXTURE], {
+      input: JSON.stringify({ fixture, source: WAIT_FOR_OPENCLAW_OWNER_LEASE }),
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 32 * 1_024,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(error === null ? 0 : 1);
+    const observation = JSON.parse(result.stdout);
+    expect(observation.elapsedSeconds).toBe(elapsed);
+    expect(observation.sleptSeconds).toBe(elapsed);
+    expect(observation.error).toBe(error);
+    expect(observation.databaseUnchanged).toBe(true);
+  });
+});
 
 function createDockerRootApplyFixture(
   resolveTarget: (input: { readonly timeoutMs?: number }) => { resourceHandle: string },

@@ -31,7 +31,6 @@ import {
 import { isTransientInferenceInvocationFailure } from "./inference-route-health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
-import { OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS } from "./launch-readiness/openclaw-pairing-qualification";
 import {
   isSandboxGatewayRunningForStatus,
   waitForStartedNativeGatewayProcess as observeStartedNativeGatewayProcess,
@@ -112,7 +111,6 @@ async function waitForStartedNativeGatewayProcess(
     nativeAgent,
     getPersistedSandboxTargetGatewayName(sandbox),
     {
-      defaultTimeoutSeconds: OPENCLAW_NATIVE_STARTUP_TIMEOUT_MS / 1_000,
       environment: deps.environment,
       probe: deps.probeGatewayProcess,
       delay: deps.delayGatewayProcessProbe,

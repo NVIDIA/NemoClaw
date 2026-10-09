@@ -1638,7 +1638,7 @@ export async function waitForStartedNativeGatewayProcess(
   const deadline =
     now() +
     resolveGatewayRecoveryWaitSeconds(
-      options.defaultTimeoutSeconds,
+      options.defaultTimeoutSeconds ?? 330,
       options.environment ?? process.env,
     ) *
       1_000;

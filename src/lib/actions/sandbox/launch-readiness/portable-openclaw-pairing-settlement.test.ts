@@ -429,10 +429,10 @@ describe("Portable OpenClaw pairing settlement", () => {
       expect(scope.runProducer).not.toHaveBeenCalled();
       expect(scope.runApproval).not.toHaveBeenCalled();
       expect(portableOpenClawPairingIncompleteMessage("alpha", state)).toContain(
-        "gateway-persistent.log",
+        "nemoclaw 'alpha' exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log",
       );
       expect(portableOpenClawPairingIncompleteMessage("alpha", state)).toContain(
-        "nemoclaw alpha gateway restart",
+        "nemoclaw 'alpha' gateway restart",
       );
     },
   );

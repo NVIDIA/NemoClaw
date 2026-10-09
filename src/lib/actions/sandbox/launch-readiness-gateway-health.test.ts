@@ -25,14 +25,13 @@ describe("launch-readiness gateway health scope", () => {
     ["becomes ready during cold startup", 32_000, true, 32_000],
     ["never becomes ready", Infinity, false, 330_000],
   ] as const)(
-    "honors the onboarding startup window when OpenClaw %s",
+    "uses the native startup default when OpenClaw %s",
     async (_label, readyAt, expected, elapsed) => {
       let clock = 0;
       const probe = vi.fn(async () => clock >= readyAt);
       await expect(
         waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
           environment: {},
-          defaultTimeoutSeconds: 330,
           now: () => clock,
           delay: async (milliseconds) => {
             clock += milliseconds;
@@ -75,7 +74,6 @@ describe("launch-readiness gateway health scope", () => {
       await expect(
         waitForStartedNativeGatewayProcess("alpha", "openclaw", "nemoclaw-19080", {
           environment: { NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "3" },
-          defaultTimeoutSeconds: 330,
           now: () => clock,
           delay: async (ms) => {
             clock += ms;

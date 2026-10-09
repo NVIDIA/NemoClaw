@@ -76,7 +76,13 @@ Review the [Prerequisites](prerequisites) before you begin.
     Onboarding reports whether settlement failed because of an unavailable pairing, failed warm-up, missing request, persistent pending request, stopped watcher, policy rejection, approval timeout, or approval failure.
     The failure message omits device identifiers, request identifiers, public keys, tokens, and child command output.
     If this bounded readiness check does not settle, NemoClaw keeps onboarding resumable.
-    If the native gateway times out during startup or exits before pairing, inspect `/sandbox/.openclaw/logs/gateway-persistent.log` inside the sandbox.
+    If the native gateway times out during startup or exits before pairing, read its persistent startup log from the host:
+
+    ```bash
+    nemoclaw my-assistant exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log
+    ```
+
+    This command uses the running OpenShell sandbox and does not require a healthy OpenClaw gateway or completed onboarding.
     Correct the reported startup error, then run `nemoclaw my-assistant gateway restart` from the host.
     After the restart succeeds, run `nemoclaw onboard --resume`.
     For other readiness failures, resume onboarding after you correct the reported condition.

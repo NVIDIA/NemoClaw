@@ -1321,7 +1321,7 @@ export function portableOpenClawPairingIncompleteMessage(
       reason === "startup-timeout"
         ? "the native gateway startup deadline expired"
         : "the native gateway exited";
-    return `Portable onboarding for '${sandboxName}' is incomplete because ${cause} before pairing could start. Inspect /sandbox/.openclaw/logs/gateway-persistent.log. Run \`nemoclaw ${sandboxName} gateway restart\`. After the restart succeeds, resume onboarding.`;
+    return `Portable onboarding for '${sandboxName}' is incomplete because ${cause} before pairing could start. Read the startup log with \`nemoclaw ${shellQuote(sandboxName)} exec -- tail -n 100 /sandbox/.openclaw/logs/gateway-persistent.log\`. Correct the reported error, then run \`nemoclaw ${shellQuote(sandboxName)} gateway restart\`. After the restart succeeds, resume onboarding.`;
   }
   const cause =
     reason === "portable-policy-incomplete"
