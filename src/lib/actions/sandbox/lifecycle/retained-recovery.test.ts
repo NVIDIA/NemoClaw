@@ -513,6 +513,7 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
 
   it("finishes on retry after recovery record retirement fails (#12260)", async () => {
     const h = await setup();
+    const { hasIdentityFreeRetainedRecovery } = await import("../../../registry-recovery-action");
     const rename = fs.renameSync;
     const failure = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
       String(destination) === h.session.RETAINED_SANDBOX_RECOVERY_FILE
@@ -525,9 +526,22 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.registry.getSandbox("alpha")).toBeNull();
     expect(h.session.loadSession()?.cancellationRecovery).toBeNull();
     expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([h.record]);
+    expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(true);
     failure.mockRestore();
 
     expect(h.run()).toBe(true);
     expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(false);
+  });
+
+  it("does not admit destroy from recovery retained in another gateway root (#12260)", async () => {
+    const h = await setup(19260);
+    const before = h.snapshot();
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8080");
+    vi.resetModules();
+    const { hasIdentityFreeRetainedRecovery } = await import("../../../registry-recovery-action");
+
+    expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(false);
+    expect(h.snapshot()).toEqual(before);
   });
 });

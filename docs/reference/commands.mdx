@@ -546,7 +546,18 @@ The record must match the owning gateway.
 That gateway must confirm sandbox absence, and Docker must confirm that no matching containers or managed state volumes remain.
 An existing reservation must belong to the matching recovery-only onboarding session.
 Conflicting state, recorded sandbox-scoped providers, or additional resource ownership in the reservation keep recovery blocked.
+
+Run this recovery command with the gateway port used by the failed onboarding attempt.
+For example, if onboarding used port `19260`:
+
+```bash
+NEMOCLAW_GATEWAY_PORT=19260 $$nemoclaw <sandbox-name> destroy --yes
+```
+
+This selects the existing state root for that gateway.
 On success, `destroy` clears the matching local recovery metadata and releases the sandbox name without removing runtime resources.
+If a local metadata write fails, resolve the reported write error.
+Then rerun the same command with that port, even if the reservation was removed.
 
 A record that matches immutable registry generation, gateway, and create-attempt evidence can instead use the existing residual-cleanup path.
 That path clears the record only after the owning gateway reports absence and verified residual cleanup succeeds.

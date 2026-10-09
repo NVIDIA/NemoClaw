@@ -142,6 +142,8 @@ An existing reservation must match its recovery-only session; a retry after rese
 This path requires an owned gateway runtime marker and preserves runtime resources.
 When legacy Shields state exists, its retirement must succeed before registry and recovery metadata are removed.
 A retirement failure keeps recovery metadata available for retry.
+The public CLI admits an identity-free destroy retry from the selected root's retained record even after reservation retirement.
+The lifecycle owner still validates recovery authority and absence before any metadata retirement.
 Conflicting state, recorded sandbox-scoped providers, or additional resource ownership in the reservation keeps recovery blocked.
 `actions/sandbox/lifecycle/retained-recovery.test.ts` covers these transitions, including interrupted metadata retirement.
 
