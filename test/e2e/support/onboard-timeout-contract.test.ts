@@ -15,6 +15,8 @@ import {
   liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
+  ONBOARD_RESUME_HERMES_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
@@ -33,7 +35,7 @@ import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../reg
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
-const affectedTargetIds = ["inference-routing", "onboard-resume"] as const;
+const affectedTargetIds = ["inference-routing", "onboard-resume", "onboard-resume-hermes"] as const;
 const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
@@ -83,11 +85,14 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
-  it("encloses the reviewed onboard-resume command budget", () => {
-    expect(ONBOARD_RESUME_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+  it("encloses the reviewed OpenClaw and Hermes onboard-resume command budgets", () => {
+    expect(ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
       2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
         4 * ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS +
         testHeadroomMs,
+    );
+    expect(ONBOARD_RESUME_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS + ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
   });
 
@@ -105,6 +110,8 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeExpectedRefusalTargetMinutes: dcodeExpectedRefusalTimeout.targetTimeoutMinutes,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTargetMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+      onboardResumeHermesTestMinutes: ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS / MINUTE_MS,
+      onboardResumeHermesTargetMinutes: ONBOARD_RESUME_HERMES_TARGET_TIMEOUT_MINUTES,
       dcodeTypedTargetTestMinutes: DCODE_TYPED_TARGET_TEST_TIMEOUT_MS / MINUTE_MS,
       dcodeTypedTargetMinutes: DCODE_TYPED_TARGET_TIMEOUT_MINUTES,
     }).toEqual({
@@ -118,8 +125,10 @@ describe("onboard final-handoff timeout contract", () => {
       dcodeLifecycleMinutes: 20,
       dcodeExpectedRefusalTestMinutes: 132,
       dcodeExpectedRefusalTargetMinutes: 152,
-      onboardResumeTestMinutes: 150,
-      onboardResumeTargetMinutes: 170,
+      onboardResumeTestMinutes: 190,
+      onboardResumeTargetMinutes: 210,
+      onboardResumeHermesTestMinutes: 150,
+      onboardResumeHermesTargetMinutes: 170,
       dcodeTypedTargetTestMinutes: 130,
       dcodeTypedTargetMinutes: 150,
     });
@@ -132,6 +141,11 @@ describe("onboard final-handoff timeout contract", () => {
       ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
+    [
+      "onboard-resume-hermes",
+      ONBOARD_RESUME_HERMES_TEST_TIMEOUT_MS,
+      ONBOARD_RESUME_HERMES_TARGET_TIMEOUT_MINUTES,
+    ],
   ] as const)(
     "reserves at least 20 minutes of catalogue-job headroom after the %s test timeout",
     (targetId, testTimeoutMs, targetTimeoutMinutes) => {
@@ -148,6 +162,14 @@ describe("onboard final-handoff timeout contract", () => {
         .map((target) => target.id)
         .sort(),
     ).toEqual([...affectedTargetIds].sort());
+  });
+
+  it("selects live selection-drift evidence for its production lifecycle owner", () => {
+    const selected = catalogueTargetsForChangedFiles([
+      "src/lib/onboard/machine/handlers/sandbox.ts",
+      "src/lib/onboard/selection-drift.ts",
+    ]).map((target) => target.id);
+    expect(selected).toContain("onboard-resume");
   });
 
   it("reserves job headroom after the ordered Deep Agents target plan", () => {

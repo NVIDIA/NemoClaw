@@ -67,17 +67,23 @@ export function findSelectionConfigPath(dir: string): string | null {
   if (!dir || !fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       const found = findSelectionConfigPath(fullPath);
       if (found) return found;
       continue;
     }
-    if (entry.name === "config.json") {
+    if (entry.isFile() && entry.name === "config.json") {
       return fullPath;
     }
   }
   return null;
+}
+
+function isContainedBy(directory: string, candidate: string): boolean {
+  const relative = path.relative(directory, candidate);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 export function readSandboxSelectionConfig(
@@ -101,7 +107,12 @@ export function readSandboxSelectionConfig(
     if (result.status !== 0) return null;
     const configPath = findSelectionConfigPath(tmpDir);
     if (!configPath) return null;
-    const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const configStat = fs.lstatSync(configPath);
+    if (!configStat.isFile() || configStat.isSymbolicLink()) return null;
+    const tmpDirRealPath = fs.realpathSync(tmpDir);
+    const configRealPath = fs.realpathSync(configPath);
+    if (!isContainedBy(tmpDirRealPath, configRealPath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(configRealPath, "utf-8")) as Record<string, unknown>;
     const provider = normalizeSelectionComponent(parsed.provider);
     const model = normalizeSelectionComponent(parsed.model);
     return provider && model ? { provider, model } : null;

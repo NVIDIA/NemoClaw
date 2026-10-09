@@ -20,6 +20,7 @@ import {
 } from "./gateway-runtime.mts";
 import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "./full-e2e-timeout-contract.mts";
 import {
+  ONBOARD_RESUME_HERMES_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
@@ -736,7 +737,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       profile: "standard",
       hostPreparation: "hermes-swap",
       testFile: `test/e2e/live/${scenario}.test.ts`,
-      timeoutMinutes: scenario === "double-onboard" ? 90 : ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+      timeoutMinutes:
+        scenario === "double-onboard" ? 90 : ONBOARD_RESUME_HERMES_TARGET_TIMEOUT_MINUTES,
       installMode: "credential-free",
       restoreCli: true,
       exposeCliBin: true,
@@ -747,6 +749,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
         "src/lib/onboard/dashboard-runtime.ts",
         "src/lib/onboard/agent-dashboard-forward.ts",
         "src/lib/onboard/sandbox-reuse.ts",
+        ...(scenario === "onboard-resume" ? ["tools/e2e/onboard-timeout-contract.mts"] : []),
       ],
       environment: {
         ...nonInteractive,
@@ -1139,6 +1142,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "src/lib/onboard.ts",
+      "src/lib/onboard/machine/handlers/sandbox-resume.ts",
+      "src/lib/onboard/machine/handlers/sandbox.ts",
+      "src/lib/onboard/selection-drift.ts",
       "test/helpers/openshell-gateway-start-output.ts",
       "tools/e2e/onboard-timeout-contract.mts",
     ],
