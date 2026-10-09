@@ -321,7 +321,8 @@ ENV HOME=/sandbox \
     OPENAI_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL}
 
 WORKDIR /sandbox
-RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "999:999:/sandbox"
+RUN sandbox_identity="$(node -e 'const { uid, gid } = require("/usr/local/share/nemoclaw/deep-agents-code-runtime-identity.json"); if (!Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(gid) || gid < 1) process.exit(1); process.stdout.write(uid + ":" + gid)')" \
+    && test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "${sandbox_identity}:/sandbox"
 # hadolint ignore=DL3066
 USER sandbox
 

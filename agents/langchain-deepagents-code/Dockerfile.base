@@ -276,8 +276,13 @@ RUN test -x /usr/bin/setpriv \
     && /usr/bin/setpriv --version \
     && ! command -v gosu
 
-RUN groupadd -r -g 999 sandbox \
-    && useradd -r -u 999 -g sandbox -d /sandbox -s /bin/bash sandbox \
+COPY src/lib/agent/deep-agents-code-runtime-identity.json /usr/local/share/nemoclaw/deep-agents-code-runtime-identity.json
+
+RUN sandbox_identity="$(node -e 'const { uid, gid } = require("/usr/local/share/nemoclaw/deep-agents-code-runtime-identity.json"); if (!Number.isSafeInteger(uid) || uid < 1 || !Number.isSafeInteger(gid) || gid < 1) process.exit(1); process.stdout.write(uid + ":" + gid)')" \
+    && sandbox_uid="${sandbox_identity%%:*}" \
+    && sandbox_gid="${sandbox_identity#*:}" \
+    && groupadd -r -g "$sandbox_gid" sandbox \
+    && useradd -r -l -u "$sandbox_uid" -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -a -G sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
@@ -290,8 +295,8 @@ RUN groupadd -r -g 999 sandbox \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \
     && chmod 770 /sandbox/.deepagents/.state \
-    && test "$(id -u sandbox):$(id -g sandbox)" = "999:999" \
-    && test "$(getent passwd sandbox)" = "sandbox:x:999:999::/sandbox:/bin/bash"
+    && test "$(id -u sandbox):$(id -g sandbox)" = "$sandbox_identity" \
+    && test "$(getent passwd sandbox)" = "sandbox:x:${sandbox_uid}:${sandbox_gid}::/sandbox:/bin/bash"
 
 # Pre-create shell init files for the sandbox user. OpenShell/NemoClaw writes
 # /tmp/nemoclaw-proxy-env.sh at startup so interactive sessions and dcode share
