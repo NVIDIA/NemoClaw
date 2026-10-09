@@ -61,7 +61,7 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
-Superseded PR runs are cancelled.
+Superseded PR runs are cancelled, and their `Test / PLATFORM` checks report as cancelled rather than failed.
 The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
 Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
 Documentation and dependency pushes finish; newer pushes replace older pending runs.

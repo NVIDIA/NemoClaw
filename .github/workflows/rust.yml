@@ -42,7 +42,10 @@ jobs:
   # after its own build, not after the slowest member of a global build matrix.
   native:
     name: Test / ${{ matrix.platform }}
-    if: always()
+    # Unlike always(), this reports a cancelled run's gates as cancelled, not failed;
+    # neither counts as a passing required check. Without a condition, a failed
+    # platform would skip the gate, and GitHub counts a skipped check as passing.
+    if: ${{ !cancelled() }}
     needs: [linux_arm64, linux_amd64, darwin_arm64, windows_amd64]
     strategy:
       fail-fast: false
