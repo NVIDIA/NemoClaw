@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildFullE2eInferenceRequest,
+  buildFullE2eSandboxInferenceCommand,
   FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES,
   type FullE2eInferenceAttemptInput,
   fullE2eInferenceProbeEvidence,
@@ -28,6 +33,61 @@ function completion(content: string, finishReason = "stop"): string {
 }
 
 describe("full E2E sandbox inference probe", () => {
+  it("uses the sandbox's native NVIDIA handle and preserves the request as data", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "full-e2e-native-probe-"));
+    try {
+      fs.writeFileSync(path.join(directory, "curl"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', {
+        mode: 0o700,
+      });
+      const body = JSON.stringify({ prompt: 'literal $(exit 99) "quote"' });
+      const [command, ...args] = buildFullE2eSandboxInferenceCommand(body, "nvidia-prod");
+      const handle = "openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY";
+      const env = { PATH: `${directory}:/usr/bin:/bin`, NVIDIA_INFERENCE_API_KEY: handle };
+      const result = execFileSync(command, args, { env, encoding: "utf8" });
+      expect(result.split("\n")).toEqual([
+        "-fsS",
+        "--max-time",
+        "90",
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        `Authorization: Bearer ${handle}`,
+        "--data-raw",
+        body,
+        "",
+      ]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["", "nvapi-raw-key", "$(exit 99)"])(
+    "rejects the invalid native credential %j before invoking curl",
+    (invalid) => {
+      const [, ...args] = buildFullE2eSandboxInferenceCommand("{}", "nvidia-prod");
+      const denied = spawnSync("/bin/bash", args, {
+        env: { PATH: "/nonexistent", NVIDIA_INFERENCE_API_KEY: invalid },
+        encoding: "utf8",
+      });
+      expect(denied.status).toBe(2);
+      expect(denied.stdout).toBe("");
+    },
+  );
+
+  it("retains the credential-free local probe for a compatible provider", () => {
+    expect(buildFullE2eSandboxInferenceCommand("{}", "compatible-endpoint")).toEqual([
+      "curl",
+      "-fsS",
+      "--max-time",
+      "90",
+      "https://inference.local/v1/chat/completions",
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      "{}",
+    ]);
+  });
   it("uses deterministic sampling and the requested reply budget for Nemotron", () => {
     expect(JSON.parse(buildFullE2eInferenceRequest("nvidia/nvidia/nemotron-3-ultra", 512))).toEqual(
       {
