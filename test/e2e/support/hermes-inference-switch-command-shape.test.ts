@@ -154,6 +154,7 @@ describe("Hermes inference switch command shape", () => {
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
     expect(command).toContain("NVIDIA_INFERENCE_API_KEY");
     expect(command).toContain('"$AUTH_HEADER"');
+    expect(command).not.toContain("nemoclaw-openshell-provider");
     expect(command).not.toContain("inference.local");
   });
 
