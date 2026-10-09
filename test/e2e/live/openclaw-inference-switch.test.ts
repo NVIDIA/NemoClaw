@@ -615,9 +615,24 @@ async function readAndAssertOpenClawConfig(
     nativeNvidia?: boolean;
   },
 ): Promise<OpenClawModelConfig | undefined> {
+  // Check the exact credential reference before artifact redaction masks apiKey values.
+  // Emit only classifications, never a configured credential or environment value.
   const configResult = await sandbox.exec(
     SANDBOX_NAME,
-    ["cat", "/sandbox/.openclaw/openclaw.json"],
+    [
+      "node",
+      "-e",
+      [
+        "const fs = require('node:fs');",
+        "const config = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));",
+        "for (const provider of Object.values(config.models?.providers ?? {})) {",
+        "  const value = provider.apiKey;",
+        "  provider.apiKey = value === '${NVIDIA_INFERENCE_API_KEY}' ? 'native' : value === 'unused' ? 'unused' : 'invalid';",
+        "}",
+        "console.log(JSON.stringify(config));",
+      ].join("\n"),
+      "/sandbox/.openclaw/openclaw.json",
+    ],
     {
       artifactName: expected.artifactName,
       env: commandEnv(home),
@@ -634,7 +649,7 @@ async function readAndAssertOpenClawConfig(
 
   expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
   expect(provider?.baseUrl).toBe(expected.baseUrl);
-  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "${NVIDIA_INFERENCE_API_KEY}" : "unused");
+  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "native" : "unused");
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;

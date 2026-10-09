@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { redactString } from "../fixtures/redaction.ts";
 import { afterEach, expect, it, vi } from "vitest";
 import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -87,6 +91,28 @@ it("requests structured route output instead of aligned terminal columns", async
   });
 });
 
+function sandboxForOpenClawConfig(config: object) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "switch-config-probe-"));
+  disposables.push(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  return {
+    exec: vi.fn(async (_sandboxName: string, argv: string[]) => ({
+      exitCode: 0,
+      stdout: redactString(
+        execFileSync(
+          argv[0]!,
+          argv
+            .slice(1)
+            .map((arg) => (arg === "/sandbox/.openclaw/openclaw.json" ? configPath : arg)),
+          { encoding: "utf8" },
+        ),
+      ),
+      stderr: "",
+    })),
+  };
+}
+
 it.each([
   [
     "nvidia-prod",
@@ -106,9 +132,7 @@ it.each([
     const { assertOpenClawConfig } = await import("../live/openclaw-inference-switch.test.ts");
     const config = {};
     patchOpenClawInferenceConfig(config, provider, model, inferenceApi);
-    const sandbox = {
-      exec: vi.fn(async () => ({ exitCode: 0, stdout: JSON.stringify(config), stderr: "" })),
-    };
+    const sandbox = sandboxForOpenClawConfig(config);
     await assertOpenClawConfig(sandbox as never, "/tmp/switch-test-home", {
       model,
       inferenceApi,
@@ -169,3 +193,23 @@ it("keeps explicit Hermes Anthropic metadata independent of the native baseline"
     preferredInferenceApi: "openai-completions",
   });
 });
+
+it.each(["unused", "nvapi-fixture-secret", "native", "${OTHER_API_KEY}", null])(
+  "rejects an incorrect native OpenClaw credential value after redaction: %s",
+  async (value) => {
+    const { assertOpenClawConfig } = await import("../live/openclaw-inference-switch.test.ts");
+    const model = "nvidia/nemotron-3-super-120b-a12b";
+    const config: any = {};
+    patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
+    config.models.providers.inference.apiKey = value;
+    await expect(
+      assertOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+        model,
+        inferenceApi: "openai-completions",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        artifactName: "invalid-native-credential",
+        nativeNvidia: true,
+      }),
+    ).rejects.toThrow();
+  },
+);
