@@ -89,3 +89,42 @@ it("protects raw and JSON-escaped secrets on direct runtime probes", async () =>
     redactionValues: [secret, JSON.stringify(secret).slice(1, -1)],
   });
 });
+
+it("does not copy a retained startup log after successful exec", async () => {
+  const client = { ...runtime(), hostInvocation: vi.fn() };
+  client.command.mockResolvedValue({ exitCode: 0 });
+  const host = { command: vi.fn().mockResolvedValue({ exitCode: 0 }) };
+  await captureOpenClawContainerFailure(client, "sandbox", "resume", options, [], host);
+  expect(client.hostInvocation).not.toHaveBeenCalled();
+  expect(host.command).not.toHaveBeenCalled();
+});
+
+it("reads a retained startup log through the selected runtime after exec fails", async () => {
+  const client = {
+    ...runtime(),
+    hostInvocation: vi.fn((args: readonly string[]) => ({
+      command: "podman" as const,
+      args: ["--url", "unix:///fixture/socket", ...args],
+    })),
+  };
+  client.command.mockResolvedValue({ exitCode: 1 });
+  const host = { command: vi.fn().mockResolvedValue({ exitCode: 0 }) };
+  await captureOpenClawContainerFailure(client, "sandbox", "resume", options, [], host);
+  expect(client.hostInvocation).toHaveBeenCalledWith(["cp", `${ID}:/tmp/nemoclaw-start.log`, "-"]);
+  expect(host.command).toHaveBeenCalledWith(
+    "bash",
+    expect.arrayContaining([
+      "pipefail",
+      "podman",
+      "--url",
+      "unix:///fixture/socket",
+      `${ID}:/tmp/nemoclaw-start.log`,
+      "-",
+    ]),
+    {
+      ...options,
+      captureLimitBytes: 128 * 1024,
+      artifactName: "resume-failure-stopped-startup-log",
+    },
+  );
+});

@@ -618,6 +618,7 @@ async function installCurrentNemoclawUpgrade(
               env: currentEnv,
               redactionValues,
               runtime,
+              host,
             }),
           ),
           bash(host, `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} doctor`, {

@@ -966,6 +966,7 @@ test(
       env: buildAvailabilityProbeEnv(),
       redactionValues: [apiKey],
       runtime: runtimeProvider,
+      host,
     });
     expect(
       inferenceSet.exitCode,

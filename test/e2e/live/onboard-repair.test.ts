@@ -314,6 +314,7 @@ test(
       env: repairEnv,
       redactionValues: [EXTRA_PROVIDER_TOKEN, "dummy"],
       runtime: runtimeProvider,
+      host,
     });
     expect(repair.exitCode, resultText(repair)).toBe(0);
     expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
