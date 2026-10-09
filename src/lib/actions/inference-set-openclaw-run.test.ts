@@ -621,7 +621,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       expect(providerUpdate?.value).toEqual({
         api: "openai-completions",
         baseUrl: "https://integrate.api.nvidia.com/v1",
-        apiKey: "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         headers: { "X-NemoClaw-Upstream-Provider": "nvidia-prod" },
         models: alreadyExists ? [otherModel, selectedModel] : [selectedModel, otherModel],
       });

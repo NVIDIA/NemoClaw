@@ -23,7 +23,7 @@ describe("patchOpenClawInferenceConfig", () => {
         providers: {
           inference: {
             baseUrl: "https://integrate.api.nvidia.com/v1",
-            apiKey: "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
           },
         },
       },
@@ -105,7 +105,7 @@ describe("patchOpenClawInferenceConfig", () => {
       providers: {
         inference: {
           baseUrl: "https://integrate.api.nvidia.com/v1",
-          apiKey: "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+          apiKey: "${NVIDIA_INFERENCE_API_KEY}",
           api: "openai-completions",
           models: [
             {
@@ -175,7 +175,7 @@ describe("patchOpenClawInferenceConfig", () => {
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
         baseUrl: "https://integrate.api.nvidia.com/v1",
-        apiKey: "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         api: "openai-completions",
         models: [
           {
@@ -231,7 +231,7 @@ describe("patchOpenClawInferenceConfig", () => {
         providers: {
           inference: {
             baseUrl: "https://integrate.api.nvidia.com/v1",
-            apiKey: "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
             api: "openai-completions",
             models: [
               {

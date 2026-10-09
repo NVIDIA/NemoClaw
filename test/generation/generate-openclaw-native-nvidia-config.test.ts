@@ -14,9 +14,7 @@ it.each(["https://integrate.api.nvidia.com/v1", "HTTPS://INTEGRATE.API.NVIDIA.CO
       NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
       NEMOCLAW_INFERENCE_BASE_URL: baseUrl,
     });
-    expect(config.models.providers.inference.apiKey).toBe(
-      "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
-    );
+    expect(config.models.providers.inference.apiKey).toBe("${NVIDIA_INFERENCE_API_KEY}");
   },
 );
 

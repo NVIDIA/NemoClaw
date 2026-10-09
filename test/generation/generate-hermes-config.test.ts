@@ -66,7 +66,7 @@ it("uses a resolvable credential in every native NVIDIA inference configuration"
     NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
     NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
   });
-  const placeholder = "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY";
+  const placeholder = "${NVIDIA_INFERENCE_API_KEY}";
   expect(config.model.api_key).toBe(placeholder);
   expect(config.providers["nvidia-prod"].api_key).toBe(placeholder);
   expect(config.custom_providers[0].api_key).toBe(placeholder);

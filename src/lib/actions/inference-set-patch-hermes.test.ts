@@ -11,7 +11,7 @@ describe("patchHermesInferenceConfig", () => {
     const config: ConfigObject = {};
     patchHermesInferenceConfig(config, "vllm-local", "local-model");
     patchHermesInferenceConfig(config, "nvidia-prod", "nvidia/test-model");
-    const placeholder = "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY";
+    const placeholder = "${NVIDIA_INFERENCE_API_KEY}";
     expect(config).toMatchObject({
       model: { api_key: placeholder },
       providers: { "nvidia-prod": { api_key: placeholder } },
@@ -165,7 +165,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://integrate.api.nvidia.com/v1",
-      api_key: "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+      api_key: "${NVIDIA_INFERENCE_API_KEY}",
     });
   });
 

@@ -57,9 +57,9 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# OpenShell owns managed inference authentication. Clear its credential aliases
-# after entrypoint overrides are normalized, before setup can launch children.
-# Direct inference routes retain their credentials.
+# OpenShell owns managed inference authentication. Keep only its scoped,
+# non-secret runtime handle after entrypoint overrides are normalized; clear raw
+# credentials before setup can launch children. Direct routes retain credentials.
 is_managed_inference_route() {
   # Match URL scheme and host case without spawning a credential-bearing child.
   [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Ff][Ee][Rr][Ee][Nn][Cc][Ee]\.[Ll][Oo][Cc][Aa][Ll](:443)?(/.*)?$ ]] \
@@ -68,7 +68,10 @@ is_managed_inference_route() {
 
 clear_managed_inference_credentials() {
   if is_managed_inference_route; then
-    unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+    unset NVIDIA_API_KEY
+    if ! [[ "${NVIDIA_INFERENCE_API_KEY:-}" =~ ^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$ ]]; then
+      unset NVIDIA_INFERENCE_API_KEY
+    fi
   fi
 }
 clear_managed_inference_credentials

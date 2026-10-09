@@ -88,6 +88,7 @@ function runStartupCredentialBoundary(
   kind: "non-root" | "root",
   route = "managed",
   failCleanup = false,
+  credentialValue = managedEnv.NVIDIA_INFERENCE_API_KEY,
 ) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-startup-"));
   homes.push(home);
@@ -132,6 +133,10 @@ function runStartupCredentialBoundary(
       HOME: home,
       AUTH_TEST_COMMAND: command,
       ...managedEnv,
+      NVIDIA_INFERENCE_API_KEY: credentialValue,
+      ...(route === "native"
+        ? { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" }
+        : {}),
       ...(route === "direct" ? { NEMOCLAW_INFERENCE_BASE_URL: "https://direct.example/v1" } : {}),
     },
     encoding: "utf-8",
@@ -197,6 +202,37 @@ describe("OpenClaw auth-profile boundary", () => {
       "custom:manual": custom,
     });
     expect(fixture.stdout.trim()).toBe("unset\nunset");
+  });
+
+  it.each([
+    "primary-secret",
+    "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+    "openshell:resolve:env:v1_OTHER_API_KEY",
+    "openshell:resolve:env:s123_NVIDIA_INFERENCE_API_KEY",
+    "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY trailing",
+  ])("removes an unscoped or invalid native inference credential: %s", (value) => {
+    const fixture = runBashAuthFixture({
+      ...managedEnv,
+      NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1",
+      NVIDIA_INFERENCE_API_KEY: value,
+    });
+    expect(fixture.status, fixture.stderr).toBe(0);
+    expect(fixture.stdout.trim()).toBe("unset\nunset");
+  });
+
+  it.each([
+    ["root", "v42"],
+    ["non-root", "v42"],
+    ["root", `s${"a".repeat(64)}`],
+    ["non-root", `s${"a".repeat(64)}`],
+  ] as const)("preserves the scoped %s runtime handle %s for command children", (kind, scope) => {
+    const reference = `openshell:resolve:env:${scope}_NVIDIA_INFERENCE_API_KEY`;
+    const result = runStartupCredentialBoundary(kind, "native", false, reference);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(
+      [`${reference}\nunset`, `${reference}\nunset`, "command", `${reference}\nunset`].join("\n"),
+    );
   });
 
   it.each([

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// The native provider rewrites references to its host-held credential. The
-// inference.local route instead replaces the client's authorization header.
-export const NVIDIA_INFERENCE_PLACEHOLDER = "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY";
+// Both agents expand this reference from the supervisor-issued, scoped
+// OpenShell handle at config load. A static resolver alias has no provider
+// identity and is rejected by the endpoint-bound native provider.
+export const NVIDIA_INFERENCE_PLACEHOLDER = "${NVIDIA_INFERENCE_API_KEY}";
 
 export function managedInferenceApiKey<T extends string>(
   baseUrl: string,
