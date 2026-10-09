@@ -11,11 +11,7 @@ import {
 import { loadAgentsManifest } from "../../../onboard/agents-manifest";
 import { isOpenclawAgent } from "../../../onboard/openclaw-otel-policy-presets";
 import * as registry from "../../../state/registry";
-import {
-  finishTelemetryOperation,
-  isTelemetryOperationActive,
-  recordTelemetryTarget,
-} from "../../telemetry/operation";
+import { isTelemetryOperationActive, recordTelemetryTarget } from "../../telemetry/operation";
 
 import {
   createCliOpenShellSandboxCommandExecutor,
@@ -449,7 +445,6 @@ export async function runAgentsApply(
       `  agents apply is OpenClaw-specific; sandbox "${options.sandboxName}" runs ${sandboxAgent}. Manage agents through the in-sandbox CLI for that runtime.`,
     );
     record("failed", "unchanged");
-    await finishTelemetryOperation();
     exit(1);
   }
 
@@ -460,7 +455,6 @@ export async function runAgentsApply(
     const reason = err instanceof Error ? err.message : String(err);
     log(`  Manifest rejected before mutation: ${reason}`);
     record("failed", "unchanged");
-    await finishTelemetryOperation();
     exit(1);
   }
   const currentList = await listAgents(options.sandboxName);
@@ -506,13 +500,11 @@ export async function runAgentsApply(
   if (!options.yes && options.nonInteractive) {
     log("  Pass --yes to apply roster changes in non-interactive mode.");
     record("skipped", "unchanged");
-    await finishTelemetryOperation();
     exit(1);
   }
   if (!options.yes && !options.nonInteractive) {
     log("  Pass --yes to confirm the roster changes above.");
     record("skipped", "unchanged");
-    await finishTelemetryOperation();
     exit(2);
   }
 

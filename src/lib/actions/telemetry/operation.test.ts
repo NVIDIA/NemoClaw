@@ -13,6 +13,7 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 
 import { telemetryRuntime, TEST_TELEMETRY_ENDPOINT } from "../../adapters/telemetry/http";
+import { runAgentsApply } from "../sandbox/agents/apply";
 import {
   beginInstallerTelemetry,
   finishInstallerTelemetry,
@@ -63,6 +64,37 @@ it("hands one terminal CLI operation to the delivery child (#12859)", async () =
   });
   expect(input.context.targets).toHaveLength(1);
   expect(input.config).toEqual({ endpoint: TEST_TELEMETRY_ENDPOINT, localReceiver: false });
+});
+
+it("waits for the command boundary after an agent apply refusal (#12859)", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-agents-"));
+  const manifestPath = path.join(home, "invalid-agents.yaml");
+  fs.writeFileSync(manifestPath, 'agents:\n  - id: "--help"\n');
+  try {
+    await expect(
+      withTelemetryOperation("agents_apply", () =>
+        runAgentsApply(
+          { sandboxName: "selected", manifestPath, yes: true },
+          {
+            ensureLive: async () => undefined,
+            getSandboxAgent: () => "openclaw",
+            log: () => {},
+            exit: (code: number): never => {
+              expect(spawnSync).not.toHaveBeenCalled();
+              throw new Error(`exit:${code}`);
+            },
+          },
+        ),
+      ),
+    ).rejects.toThrow("exit:1");
+    expect(deliveryInput().context).toMatchObject({
+      operation: "agents_apply",
+      outcome: "failed",
+      state: "unchanged",
+    });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 it("hands an installer failure to the delivery child (#12859)", async () => {
