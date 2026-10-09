@@ -13,6 +13,7 @@ import { compareDottedVersions } from "../../src/lib/domain/maintenance/upgrade.
 import {
   buildLlamaCppRequestGuardDockerArgv,
   consumeDockerLoopbackPublishAuthority,
+  type DockerLoopbackPublishAuthority,
   qualifyDockerLoopbackPublishAuthority,
   type VerifiedLocalModelArtifact,
 } from "../../src/lib/inference/llama-cpp/host-local-runtime.ts";
@@ -111,18 +112,6 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function requiredString(value: unknown, name: string, pattern: RegExp): string {
   if (typeof value !== "string" || !pattern.test(value)) {
-    throw new Error(`invalid ${name}`);
-  }
-  return value;
-}
-
-function requiredInteger(value: unknown, name: string, minimum: number, maximum: number): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < minimum ||
-    value > maximum
-  ) {
     throw new Error(`invalid ${name}`);
   }
   return value;
