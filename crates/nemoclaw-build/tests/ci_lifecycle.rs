@@ -112,11 +112,15 @@ fn archived_lifecycle_uses_the_checkout_without_building_again() {
     let args = fixture.arguments();
     assert!(args.contains("--archive-file\ntests.tar.zst\n"), "{args}");
     assert!(fixture.0.path().join(".build/ci/extracted").is_dir());
-    assert!(
-        args.contains(&format!(
-            "--workspace-remap\n{}\n",
-            fixture.0.path().display()
-        )),
+    let workspace_remap = args
+        .lines()
+        .skip_while(|arg| *arg != "--workspace-remap")
+        .nth(1)
+        .expect("--workspace-remap needs a checkout path");
+    // macOS temporary paths can use /var while current_dir resolves /private/var.
+    assert_eq!(
+        fs::canonicalize(workspace_remap).unwrap(),
+        fixture.0.path().canonicalize().unwrap(),
         "{args}"
     );
     assert!(
