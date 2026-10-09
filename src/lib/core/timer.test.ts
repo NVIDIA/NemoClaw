@@ -17,7 +17,10 @@ describe("parseTimerDelayMs", () => {
     expect(parseTimerDelayMs("Infinity")).toBeUndefined();
   });
 
-  it.each([undefined, "", "0", "-5", "abc", "NaN"])("returns undefined for %j", (raw) => {
-    expect(parseTimerDelayMs(raw)).toBeUndefined();
-  });
+  it.each([undefined, "", "0", "-5", "abc", "NaN", "0.5", "1.5"])(
+    "returns undefined for %j",
+    (raw) => {
+      expect(parseTimerDelayMs(raw)).toBeUndefined();
+    },
+  );
 });
