@@ -4,6 +4,9 @@
 import { isAbsolute, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { createBuiltInChannelManifestRegistry } from "../../messaging/channels/built-ins";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
@@ -42,6 +45,8 @@ export interface ManagedWorkloadCloneSnapshot {
 }
 
 export interface ManagedWorkloadCloneRegistryFields {
+  readonly nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  readonly nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
   readonly provider: SandboxEntry["provider"];
   readonly model: SandboxEntry["model"];
   readonly endpointUrl: SandboxEntry["endpointUrl"];
@@ -178,9 +183,18 @@ function registryFields(
       : hermesDashboard?.mode === "loopback-forwarded"
         ? hermesDashboard.publicPort
         : undefined;
+  const nativeAttachment = recordedNativeProviderAttachment(source);
   return {
-    // Snapshot peers retain the source gateway route. The isolated Hermes
-    // provider owns only the destination sandbox's rotating runtime key.
+    ...(source.nativeNvidiaProviderAttachment === undefined
+      ? {}
+      : {
+          nativeNvidiaProviderAttachment: normalizeNativeNvidiaProviderAttachment(nativeAttachment),
+        }),
+    ...(source.nativeHostedProviderAttachment === undefined
+      ? {}
+      : { nativeHostedProviderAttachment: nativeAttachment }),
+    // Retain the selected inference authority for destination publication.
+    // Hermes tool credentials remain destination-scoped.
     provider:
       hermesInferenceProvider === undefined ? profile.inference.upstreamProvider : source.provider,
     model: profile.inference.model,

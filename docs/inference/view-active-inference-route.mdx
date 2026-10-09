@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "View the Selected Inference Path"
 sidebar-title: "View the Inference Path"
-description: "Inspect a sandbox-attached NVIDIA provider or the live NemoClaw-managed OpenShell inference route."
-description-agent: "Shows the selected sandbox's native NVIDIA provider path or the live shared route for another provider. Use when checking the active inference path."
+description: "Inspect a sandbox-attached native provider or the live NemoClaw-managed OpenShell inference route."
+description-agent: "Shows the selected sandbox's native provider path or the live shared route for a legacy provider. Use when checking the active inference path."
 keywords:
   ["nemoclaw inference get", "active inference provider", "active inference model", "compatible endpoint URL"]
 content:
@@ -12,16 +12,18 @@ content:
 ---
 
 Use the NemoClaw CLI to read the selected inference provider and model.
-When the selected sandbox has a valid native NVIDIA provider attachment, the command reports the sandbox's recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
-For other providers, the command reads the live OpenShell inference route.
+When the selected sandbox has a valid native NVIDIA or hosted provider attachment, the command reports the sandbox's recorded provider, model, and native endpoint without reading the shared gateway route.
+For providers that still use the shared route, the command reads the live OpenShell inference route.
 For a compatible custom provider, the command also reports its persisted endpoint URL when the registry provider and model match the live route.
+Native hosted providers are OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider.
+An invalid recorded native attachment produces an error instead of falling back to the shared route.
 This command reports configuration state and does not authenticate a model request.
 
 ## Read the Selected Inference Path
 
 Run the direct route command when you need the active provider, model, and applicable custom endpoint URL.
 The direct form first checks the default sandbox in the registry that `NEMOCLAW_GATEWAY_PORT` selects.
-It reports that sandbox's native NVIDIA provider path when a valid attachment exists.
+It reports that sandbox's native provider path when a valid attachment exists.
 Otherwise, it reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
@@ -72,7 +74,7 @@ Endpoint: https://inference.example.com/v1
 }
 ```
 
-A valid native NVIDIA attachment adds the fixed NVIDIA endpoint to the provider-and-model output.
+A valid native NVIDIA or hosted attachment adds the native endpoint to the provider-and-model output.
 Other managed providers keep the provider-and-model output.
 Unpublished sandbox rows do not participate in endpoint selection.
 Equivalent stored URL forms, such as a trailing slash difference, count as the same endpoint identity.
@@ -103,11 +105,11 @@ $$nemoclaw <name> inference get
 ```
 
 `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
-When the named sandbox has a valid native NVIDIA provider attachment, the command reports its recorded provider, model, and fixed NVIDIA endpoint without reading the shared gateway route.
+When the named sandbox has a valid native NVIDIA or hosted provider attachment, the command reports its recorded provider, model, and native endpoint without reading the shared gateway route.
 Otherwise, when that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
 For a compatible custom provider, the command reports an endpoint only when every eligible published row on the resolved gateway matches the live route and records the same safe, reusable endpoint.
 The command does not search registries for other gateway ports.
-For other providers, OpenShell exposes one inference route to every sandbox registered on the same gateway.
+For providers that still use the shared route, OpenShell exposes one inference route to every sandbox registered on the same gateway.
 
 ## Include Sandbox Health
 

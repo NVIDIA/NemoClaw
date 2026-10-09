@@ -409,10 +409,11 @@ export function selectRebuildCreatePolicy(
     ],
     removedNetworkPolicyKeys: [
       ...removedNetworkPolicyKeys,
-      ...(inferenceProvider !== null &&
-      !usesNativeNvidiaProvider(inferenceProvider) &&
-      !usesNativeHostedProvider(inferenceProvider)
+      ...(inferenceProvider !== null && !usesNativeNvidiaProvider(inferenceProvider)
         ? ["native_nvidia_inference"]
+        : []),
+      ...(inferenceProvider !== null && !usesNativeHostedProvider(inferenceProvider)
+        ? ["native_hosted_inference"]
         : []),
     ],
     requiredNetworkPolicySources,
