@@ -261,6 +261,39 @@ describe("stopHostGatewayProcesses", () => {
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
+  it("preserves scoped runtime evidence when a successful thread scan is empty", () => {
+    const pid = 9999885;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-empty-scan-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    const markerFile = path.join(stateDir, "runtime.json");
+    fs.writeFileSync(pidFile, `${pid}\n`);
+    fs.writeFileSync(markerFile, "{}\n");
+    const { run } = makeRun(new Map([[psStatusKey(pid), ok("")]]));
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>(() => true);
+
+    try {
+      const result = stopHostGatewayProcesses(
+        { run, kill, env: {}, isPortFree: () => true },
+        {
+          openShellGatewayName: "nemoclaw-9123",
+          openShellGatewayPort: 9123,
+          scopedGatewayStop: true,
+          stateDir,
+        },
+      );
+
+      expect(result.ownershipFailures).toContain(
+        `PID ${pid}: recorded process status cannot be proven`,
+      );
+      expect(result.skippedDeadPids).toEqual([]);
+      expect(kill).not.toHaveBeenCalled();
+      expect(fs.existsSync(pidFile)).toBe(true);
+      expect(fs.existsSync(markerFile)).toBe(true);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses pgrep fallback when the Docker-driver gateway PID file is missing", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([

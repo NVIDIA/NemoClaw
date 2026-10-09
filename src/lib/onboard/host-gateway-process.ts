@@ -188,6 +188,7 @@ function hostGatewayProcessStatus(
     return result.stdout.trim() === "" && result.stderr.trim() === "" ? "exited" : "unknown";
   }
   if (result.status !== 0) return "unknown";
+  if (result.stdout.trim() === "") return "unknown";
   const states = result.stdout
     .trim()
     .split(/\r?\n/)
