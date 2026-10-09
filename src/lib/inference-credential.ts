@@ -10,22 +10,14 @@ export function managedInferenceApiKey<T extends string>(
   baseUrl: string,
   fallback: T,
 ): T | typeof NVIDIA_INFERENCE_PLACEHOLDER {
-  try {
-    const url = new URL(baseUrl);
-    if (
-      url.protocol === "https:" &&
-      url.hostname === "integrate.api.nvidia.com" &&
-      url.port === "" &&
-      (url.pathname === "/v1" || url.pathname === "/v1/") &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash
-    ) {
-      return NVIDIA_INFERENCE_PLACEHOLDER;
-    }
-  } catch {
-    // URL validation belongs to the route owner.
+  // Match the unnormalized URL, as startup and the Hermes policy reader do.
+  // URL parsing would silently accept empty ports, dot segments and encoded hosts.
+  const route = baseUrl.replace(/^[^/]+:\/\/[^/]+/u, (authority) => authority.toLowerCase());
+  if (/^https:\/\/integrate\.api\.nvidia\.com(?::0*443)?\/v1\/?(?![\s\S])/u.test(route)) {
+    return NVIDIA_INFERENCE_PLACEHOLDER;
+  }
+  if (/^https:\/\/integrate\.api\.nvidia\.com(?::(?:0*443)?)?(?:[/?#]|(?![\s\S]))/u.test(route)) {
+    throw new Error("Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.");
   }
   return fallback;
 }

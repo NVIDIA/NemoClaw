@@ -67,6 +67,13 @@ is_managed_inference_route() {
 }
 
 clear_managed_inference_credentials() {
+  # Refuse ambiguous native URLs before setup or a command can inherit secrets.
+  if [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Tt][Ee][Gg][Rr][Aa][Tt][Ee]\.[Aa][Pp][Ii]\.[Nn][Vv][Ii][Dd][Ii][Aa]\.[Cc][Oo][Mm](:0*443|:)?([/?#]|$) ]] \
+    && ! is_managed_inference_route; then
+    unset NVIDIA_API_KEY NVIDIA_INFERENCE_API_KEY
+    printf '%s\n' '[SECURITY] Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.' >&2
+    return 1
+  fi
   if is_managed_inference_route; then
     unset NVIDIA_API_KEY
     if ! [[ "${NVIDIA_INFERENCE_API_KEY:-}" =~ ^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$ ]]; then
