@@ -61,34 +61,24 @@ export function buildCancelRollbackMessage(
   return [
     "",
     `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}'.`,
+    ...(sandboxIdentityFingerprint
+      ? [
+          `  Run '${cliName()} ${sandboxName} destroy' to verify and remove the retained sandbox and clear the matching recovery record.`,
+        ]
+      : [
+          "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
+          "  Inspect the owning gateway. Destroy can clear the recovery record only after OpenShell confirms the sandbox absent.",
+          "  Do not delete the sandbox by mutable sandbox name.",
+        ]),
+    "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
     ...(recoveryContext
       ? [
           `  Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${recoveryContext.createAttemptNonce}`,
         ]
       : []),
     ...(sandboxIdentityFingerprint
-      ? [
-          `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
-          "  Preserve this fingerprint as retained recovery evidence; it does not authorize deletion by mutable name.",
-        ]
-      : [
-          "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
-          "  NemoClaw cannot verify this sandbox identity or authorize its removal without a recorded fingerprint.",
-        ]),
-    "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
-    "  Do not delete the sandbox by mutable sandbox name.",
-    "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
-    ...(sandboxIdentityFingerprint
-      ? [
-          `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record.`,
-          recoveryContext
-            ? "  If it is still live or presence is unknown, destroy refuses deletion. Inspect the owning gateway for diagnosis only; do not delete by mutable name."
-            : "  If it is still live or presence is unknown, preserve the displayed fingerprint; destroy refuses deletion and preserves the recovery record.",
-        ]
-      : [
-          `  Run '${cliName()} ${sandboxName} destroy'. It can clear the recovery record only after OpenShell confirms the sandbox absent and residual cleanup succeeds.`,
-          "  If the sandbox is present or presence is unknown, preserve the recovery record and do not delete by mutable name.",
-        ]),
+      ? [`  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`]
+      : []),
   ];
 }
 

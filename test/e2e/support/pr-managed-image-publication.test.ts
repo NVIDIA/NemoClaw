@@ -241,6 +241,68 @@ afterEach(() => {
 });
 
 describe("exact PR managed-image publication", () => {
+  // Exercise the real trusted path policy, not a test-only dependency registry.
+  // Changing candidate pins/locks must select candidate artifacts without an
+  // accompanying workflow edit, and must never silently use main's cohort.
+  const dependencyInputs = [
+    "Dockerfile",
+    "Dockerfile.base",
+    "agents/openclaw/openclaw-runtime/package-lock.json",
+    "agents/hermes/Dockerfile",
+    "agents/hermes/Dockerfile.base",
+    "agents/langchain-deepagents-code/requirements.lock",
+    "agents/langchain-deepagents-code/Dockerfile.base",
+    "agents/pi/pi-runtime/package-lock.json",
+    "nemoclaw/package-lock.json",
+    "tools/mcp-tool-discovery-runtime/package-lock.json",
+    "scripts/install-openshell.sh",
+    "nemoclaw-blueprint/blueprint.yaml",
+  ];
+  const trustedWorkflowSource = fs.readFileSync(
+    new URL("../../../.github/workflows/base-image.yaml", import.meta.url),
+    "utf8",
+  );
+
+  it.each(dependencyInputs)(
+    "uses exact candidate artifacts when only %s changes",
+    async (changedPath) => {
+      const input = { ...resolverInput(), workflowSource: trustedWorkflowSource };
+      const download = vi.fn(downloadContract);
+      await expect(
+        resolvePrManagedImageCatalog(
+          input,
+          candidateRequest({ changedPath, imageChanged: true }),
+          download,
+        ),
+      ).resolves.toBe("candidate-catalog");
+      expect(download.mock.calls.map(([identity]) => identity.name)).toEqual(
+        SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => `managed-pr-contract-${RUN_ID}-${agent}`),
+      );
+    },
+  );
+
+  it.each(dependencyInputs)(
+    "does not fall back to main when %s changes without successful candidate images",
+    async (changedPath) => {
+      const input = { ...resolverInput(), workflowSource: trustedWorkflowSource };
+      const download = vi.fn(downloadContract);
+      await expect(
+        resolvePrManagedImageCatalog(
+          input,
+          candidateRequest({
+            changedPath,
+            imageChanged: true,
+            run: workflowRun({ conclusion: "failure" }),
+          }),
+          download,
+        ),
+      ).rejects.toThrow(
+        `managed-image workflow for candidate ${CANDIDATE_SHA} must complete successfully`,
+      );
+      expect(download).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps unchanged PRs on the authenticated base-history cohort", async () => {
     const input = resolverInput();
     const download = vi.fn(downloadContract);

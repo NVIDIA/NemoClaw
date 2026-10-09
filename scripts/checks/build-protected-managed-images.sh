@@ -103,9 +103,18 @@ esac
 target_arch="${platform#linux/}"
 npm_target_os="linux"
 npm_target_libc="glibc"
-[[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
-[[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+[[ "$openclaw_base" == candidate ||
+  "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$openclaw_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$hermes_base" == candidate ||
+  "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$hermes_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/hermes@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$dcode_base" == candidate ||
+  "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ||
+  (-n "$cache_from" && "$dcode_base" =~ ^localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code@sha256:[a-f0-9]{64}$) ]] || usage
+[[ "$dcode_base" != candidate || -z "$cache_from" ]] || usage
+[[ "$openclaw_base" != candidate || -z "$cache_from" ]] || usage
+[[ "$hermes_base" != candidate || -z "$cache_from" ]] || usage
 prepared_identity="$revision $platform $openclaw_base $hermes_base $dcode_base"
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
@@ -239,6 +248,72 @@ restore_worktree() {
 trap restore_worktree EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# A PR dependency upgrade needs its own base; a published main base cannot
+# satisfy the candidate's no-deps profile. Keep this build on the CPU runner
+# and bind the exported OCI bytes to the exact source, platform and run.
+prepare_candidate_base() {
+  local agent="$1" dockerfile="$2" cache_name="$3"
+  prepared_base="$4"
+  prepared_base_layout=""
+  local receipt_helper="$controller_root/scripts/checks/protected-dcode-base-receipt.mts"
+  if [[ "$prepared_base" == candidate ]]; then
+    [[ "$(git -C "$source_root" rev-parse --verify HEAD)" == "$revision" ]] || {
+      echo "ERROR: candidate base checkout does not match its revision" >&2
+      exit 1
+    }
+    git -C "$source_root" diff --quiet HEAD -- || {
+      echo "ERROR: candidate base checkout has tracked modifications" >&2
+      exit 1
+    }
+    prepared_base_layout="${cache_to:-$work_dir}/${cache_name}-base"
+    local base_receipt="${cache_to:-$work_dir}/${cache_name}-base-receipt.json"
+    local base_tag="localhost:5000/nemoclaw-managed-protected-base/${agent}:${revision}"
+    docker buildx build \
+      --file "$source_root/$dockerfile" \
+      --platform "$platform" \
+      --provenance=false --sbom=false \
+      --label "org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw" \
+      --label "org.opencontainers.image.revision=${revision}" \
+      --label "io.nvidia.nemoclaw.agent=${agent}" \
+      --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}" \
+      --output "type=image,name=${base_tag},push=true,oci-mediatypes=true" \
+      --output "type=oci,dest=${prepared_base_layout},tar=false" \
+      "$source_root"
+    prepared_base="$(CHECKOUT_SHA="$revision" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT="$cohort" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM="$platform" \
+      node "$receipt_helper" write "$prepared_base_layout" "$base_receipt" "$agent")"
+    # Prove the pushed manifest and the offline artifact have the same identity.
+    docker buildx imagetools inspect "$prepared_base" --raw >"$work_dir/${cache_name}-candidate-base.raw"
+    [[ "sha256:$(sha256sum "$work_dir/${cache_name}-candidate-base.raw" | awk '{print $1}')" == "${prepared_base##*@}" ]] || {
+      echo "ERROR: candidate base registry and OCI artifact digests differ" >&2
+      exit 1
+    }
+  elif [[ "$prepared_base" == localhost:5000/* ]]; then
+    prepared_base_layout="$cache_from/${cache_name}-base"
+    local verified_base
+    verified_base="$(CHECKOUT_SHA="$revision" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT="$cohort" \
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM="$platform" \
+      node "$receipt_helper" verify "$prepared_base_layout" "$cache_from/${cache_name}-base-receipt.json" "$agent")"
+    [[ "$verified_base" == "$prepared_base" ]] || {
+      echo "ERROR: candidate base artifact does not match the prepared base reference" >&2
+      exit 1
+    }
+  fi
+}
+
+prepare_candidate_base openclaw Dockerfile.base openclaw "$openclaw_base"
+openclaw_base="$prepared_base"
+openclaw_base_layout="$prepared_base_layout"
+prepare_candidate_base hermes agents/hermes/Dockerfile.base hermes "$hermes_base"
+hermes_base="$prepared_base"
+hermes_base_layout="$prepared_base_layout"
+prepare_candidate_base langchain-deepagents-code agents/langchain-deepagents-code/Dockerfile.base dcode "$dcode_base"
+dcode_base="$prepared_base"
+dcode_base_layout="$prepared_base_layout"
+prepared_identity="$revision $platform $openclaw_base $hermes_base $dcode_base"
 
 audit_receipt=""
 audit_raw_report=""
@@ -476,13 +551,24 @@ build_agent() {
   fi
 
   local base_digest="${base_reference##*@}"
-  docker buildx imagetools inspect "$base_reference" --raw >"$exact_base_raw"
-  local actual_base
-  actual_base="sha256:$(sha256sum "$exact_base_raw" | awk '{print $1}')"
-  [[ "$actual_base" == "$base_digest" ]] || {
-    echo "ERROR: ${agent} exact base bytes do not match its descriptor" >&2
-    exit 1
-  }
+  local base_layout=""
+  case "$agent" in
+    openclaw) base_layout="$openclaw_base_layout" ;;
+    hermes) base_layout="$hermes_base_layout" ;;
+    langchain-deepagents-code) base_layout="$dcode_base_layout" ;;
+  esac
+  if [[ -n "$base_layout" ]]; then
+    # The verified local OCI input survives deletion of the CPU job's registry.
+    cache_args+=(--build-context "$base_reference=oci-layout://${base_layout}@${base_digest}")
+  else
+    docker buildx imagetools inspect "$base_reference" --raw >"$exact_base_raw"
+    local actual_base
+    actual_base="sha256:$(sha256sum "$exact_base_raw" | awk '{print $1}')"
+    [[ "$actual_base" == "$base_digest" ]] || {
+      echo "ERROR: ${agent} exact base bytes do not match its descriptor" >&2
+      exit 1
+    }
+  fi
 
   scripts/check-production-build-args.sh \
     -f "$dockerfile_path" \

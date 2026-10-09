@@ -214,8 +214,13 @@ export type CleanupSandboxServicesDeps = {
     sandboxName: string;
     channelStopTransport?: RuntimeProviderChannelStopTransport;
     cleanupOllamaModels?: boolean;
+    stopCloudflared?: boolean;
     unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
+  migrateLegacyCloudflaredState?: (
+    opts: { sandboxName: string; gatewayPort?: number },
+    deps?: { recoverySandboxName?: string },
+  ) => boolean;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
   clearPendingOllamaModelCleanup?: (
@@ -287,9 +292,11 @@ export async function cleanupSandboxServices(
   {
     stopHostServices = false,
     channelStopTransport,
+    gatewayPort,
   }: {
     stopHostServices?: boolean;
     channelStopTransport?: RuntimeProviderChannelStopTransport;
+    gatewayPort?: number;
   } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): Promise<void> {
@@ -309,6 +316,7 @@ export async function cleanupSandboxServices(
       sandboxName: string;
       channelStopTransport?: RuntimeProviderChannelStopTransport;
       cleanupOllamaModels?: boolean;
+      stopCloudflared?: boolean;
       unloadOllamaModels?: () => OllamaUnloadResult | void;
     }) => {
       const services = require("../../tunnel/services") as {
@@ -316,6 +324,7 @@ export async function cleanupSandboxServices(
           sandboxName: string;
           channelStopTransport?: RuntimeProviderChannelStopTransport;
           cleanupOllamaModels?: boolean;
+          stopCloudflared?: boolean;
           unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
       };
@@ -374,6 +383,20 @@ export async function cleanupSandboxServices(
       return runtime.runOpenshell(args, opts);
     });
   const rmSync = deps.rmSync ?? fs.rmSync;
+  const migrateLegacyCloudflaredState =
+    deps.migrateLegacyCloudflaredState ??
+    ((
+      opts: { sandboxName: string; gatewayPort?: number },
+      migrationDeps?: { recoverySandboxName?: string },
+    ) => {
+      const services = require("../../tunnel/services") as {
+        migrateLegacyCloudflaredState: (
+          options: { sandboxName: string; gatewayPort?: number },
+          deps?: { recoverySandboxName?: string },
+        ) => boolean;
+      };
+      return services.migrateLegacyCloudflaredState(opts, migrationDeps);
+    });
   const stopGooglechatWebhookTunnel =
     deps.stopGooglechatWebhookTunnel ??
     ((name: string) => {
@@ -397,6 +420,10 @@ export async function cleanupSandboxServices(
     });
 
   const googlechatServicesPidDir = googlechatWebhookTunnelPidDir(servicesPidDir);
+  migrateLegacyCloudflaredState(
+    { sandboxName: validatedSandboxName, gatewayPort },
+    { recoverySandboxName: validatedSandboxName },
+  );
   try {
     stopGooglechatWebhookTunnel(validatedSandboxName);
   } catch (error) {
@@ -415,8 +442,8 @@ export async function cleanupSandboxServices(
   let ollamaCleanup: OllamaUnloadResult | void = undefined;
   if (stopHostServices) {
     // `stopAll()` owns the host-wide unload when this sandbox has an Ollama
-    // route or retained cleanup work. Don't probe an unrelated daemon for a
-    // sandbox with no Ollama ownership, and don't double-call cleanup here.
+    // route or retained cleanup work. The dashboard tunnel has independent
+    // host lifetime and must survive every sandbox destroy (#11628).
     try {
       ollamaCleanup = withOllamaModelOwnershipLock(() => {
         const sandbox = getSandbox(validatedSandboxName);
@@ -429,6 +456,7 @@ export async function cleanupSandboxServices(
           sandboxName: validatedSandboxName,
           ...(channelStopTransport ? { channelStopTransport } : {}),
           cleanupOllamaModels,
+          stopCloudflared: false,
           unloadOllamaModels: () => unloadOllamaModels(),
         });
       });
@@ -869,23 +897,17 @@ async function destroySandboxUnlocked(
       `Refusing to destroy sandbox '${sandboxName}': gateway authority changed during preflight.`,
     );
   }
-  if (retainedRecoveryAuthority && sandboxPresence !== "absent") {
-    // OpenShell has no atomic delete-by-identity primitive: it exposes no
-    // way to bind a mutable-name delete to the retained record's immutable
-    // sandbox id/resource version. Even a fresh identity read immediately
-    // before the delete command cannot close the window where another
-    // OpenShell client removes the retained sandbox and creates a
-    // replacement under the same name between that read and OpenShell
-    // processing the delete (#10863). Automatic deletion of a live retained
-    // sandbox is therefore always fail-closed. Inspection cannot authorize a
-    // later mutable-name delete, so the recovery record remains unresolved
-    // until OpenShell can prove absence through the owning gateway.
+  if (
+    retainedRecoveryAuthority &&
+    sandboxPresence !== "absent" &&
+    (sandboxPresence !== "present" || !retainedSandboxIdentityFingerprint)
+  ) {
     const presenceDetail =
       sandboxPresence === "present"
         ? "OpenShell reports a sandbox present under this name."
         : "OpenShell could not determine whether a sandbox is present under this name.";
     console.error(
-      `  Refusing to delete retained sandbox '${sandboxName}': ${presenceDetail} NemoClaw cannot bind a mutable-name delete to the retained record (create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}') without an atomic OpenShell delete-by-identity primitive. No sandbox resources were removed. Preserve the recovery record. Inspect 'openshell sandbox list -g ${retainedRecoveryAuthority.gatewayName} -o json' for diagnosis only; do not run mutable-name deletion. Recovery remains blocked until the owning gateway reports the sandbox absent. Then rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile verified residual resources and the recovery record.`,
+      `  Refusing to delete retained sandbox '${sandboxName}': ${presenceDetail} Its live identity cannot be verified. Inspect 'openshell sandbox list -g ${retainedRecoveryAuthority.gatewayName} -o json'. Preserve the recovery record; no sandbox resources were removed. Create-attempt label: '${retainedRecoveryAuthority.createAttemptNonce}'.`,
     );
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(1);
@@ -1117,6 +1139,10 @@ async function destroySandboxUnlocked(
     await cleanupSandboxServices(
       sandboxName,
       {
+        gatewayPort:
+          registeredSandbox === null
+            ? (retainedRecoveryAuthority?.gatewayPort ?? registryAuthority.gatewayPort)
+            : registryAuthority.gatewayPort,
         stopHostServices: shouldStopHostServices,
         ...(destroyChannelStopTransport
           ? { channelStopTransport: destroyChannelStopTransport }

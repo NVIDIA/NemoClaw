@@ -691,6 +691,7 @@ export function probeRemoteProviderHealth(
       `${BUILD_ENDPOINT_URL}/chat/completions`,
       options,
       true,
+      resolveProbeReplyTokens(provider, config.model),
     );
   }
 

@@ -22,7 +22,6 @@ import stat
 import struct
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 
 import yaml
@@ -739,9 +738,46 @@ def _startup_ready_marker_absent() -> bool:
     return False
 
 
+def inspect_private_mutable_topology() -> None:
+    """Attest the same-UID runtime that may keep its Hermes home private."""
+    def require_markerless_runtime() -> None:
+        try:
+            os.stat(HERMES_ROOT_LIFECYCLE_MARKER, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise UnsafePathError("private Hermes root has a root lifecycle marker")
+        if not _startup_ready_marker_absent():
+            raise UnsafePathError("private Hermes root has a startup readiness marker")
+
+    require_markerless_runtime()
+    try:
+        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+    except KeyError as exc:
+        raise UnsafePathError("sandbox account lookup failed") from exc
+    if sandbox_uid == 0:
+        raise UnsafePathError("private Hermes root requires a non-root sandbox identity")
+    if _pid1_is_nemoclaw_start():
+        before = _process_start_time(1)
+        allowed = (
+            before is not None
+            and _process_effective_uid(1) == sandbox_uid
+            and _pid1_is_nemoclaw_start()
+            and _process_effective_uid(1) == sandbox_uid
+            and _process_start_time(1) == before
+        )
+    else:
+        allowed = _openshell_supervised_nonroot_start_is_live(0, sandbox_uid)
+    if not allowed:
+        raise UnsafePathError("private Hermes root lacks an attested same-UID runtime")
+    require_markerless_runtime()
+
+
 
 
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
+    if action == "inspect-private-mutable-topology":
+        return
     installed_current = os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD
     try:
         sandbox_uid = pwd.getpwnam("sandbox").pw_uid
@@ -2973,35 +3009,21 @@ def _validate_env_text_with_boundary(
         raise UnsafePathError(
             "Hermes provider placeholder refresh requires the secret-boundary validator"
         )
-    fd, temp_path = tempfile.mkstemp(prefix="hermes-env-boundary-", text=True)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = -1
-            handle.write(text)
-        try:
-            result = subprocess.run(
-                [sys.executable, boundary_validator_path, "env-file", temp_path],
-                check=False,
-                timeout=BOUNDARY_VALIDATOR_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise UnsafePathError("Hermes secret-boundary validator timed out") from exc
-        except OSError as exc:
-            raise UnsafePathError(
-                f"Hermes secret-boundary validator failed: {exc}"
-            ) from exc
-        if result.returncode != 0:
-            raise UnsafePathError(
-                "Hermes provider placeholder refresh would violate the secret boundary"
-            )
-    finally:
-        if fd != -1:
-            os.close(fd)
-        try:
-            os.unlink(temp_path)
-        except FileNotFoundError:
-            # Temp file may already be removed; cleanup should remain best-effort.
-            pass
+        result = subprocess.run(
+            [sys.executable, boundary_validator_path, "env-text"],
+            input=text.encode("utf-8"),
+            check=False,
+            timeout=BOUNDARY_VALIDATOR_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise UnsafePathError("Hermes secret-boundary validator timed out") from exc
+    except OSError as exc:
+        raise UnsafePathError(f"Hermes secret-boundary validator failed: {exc}") from exc
+    if result.returncode != 0:
+        raise UnsafePathError(
+            "Hermes provider placeholder refresh would violate the secret boundary"
+        )
 
 
 def _runtime_plan_replacements_and_provider_keys(
@@ -3271,6 +3293,7 @@ def main() -> int:
             "inspect-mutation-owner",
             "write-config",
             "recover-prestate-lock",
+            "inspect-private-mutable-topology",
         ),
     )
     parser.add_argument("--hermes-dir", required=True)
@@ -3300,7 +3323,10 @@ def main() -> int:
         if args.mcp_transition != "preserve" and args.action != "refresh-hashes":
             raise UnsafePathError("--mcp-transition requires refresh-hashes")
         _validate_action_readiness(args.action, args.startup_owner)
-        if args.action == "ensure-api-key":
+        if args.action == "inspect-private-mutable-topology":
+            inspect_private_mutable_topology()
+            print("same-uid-nonroot")
+        elif args.action == "ensure-api-key":
             if not args.hash_file:
                 raise UnsafePathError("ensure-api-key requires --hash-file")
             ensure_api_key(args.hermes_dir, args.hash_file, args.mode)

@@ -10,6 +10,7 @@ import {
   type OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import * as registry from "../../../state/registry";
 import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
@@ -26,14 +27,17 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 vi.mocked(detectMessagingChannelsFromEnv).mockReturnValue([]);
 
-function defaultCreateFingerprint(builtFingerprint = "my-assistant"): string {
+function defaultCreateFingerprint(
+  builtFingerprint = "my-assistant",
+  sandboxGpuSettings: object = { sandboxGpuEnabled: false, mode: "0" },
+): string {
   return [
     builtFingerprint,
     "provider",
     "model",
     "openai-completions",
     "",
-    JSON.stringify({ sandboxGpuEnabled: false, mode: "0" }),
+    JSON.stringify(sandboxGpuSettings),
     "",
   ].join("|");
 }
@@ -61,6 +65,26 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
     sandboxRecreate: null,
     ...overrides,
   };
+}
+
+function checkpointWithLegacyGpuProof(): OnboardCheckpoint {
+  return crashedCheckpoint({
+    effectGroups: {
+      sandbox_create: {
+        completedAt: "2026-01-01T00:00:00.000Z",
+        fingerprint: defaultCreateFingerprint("my-assistant", {
+          sandboxGpuEnabled: true,
+          mode: "auto",
+          sandboxGpuProof: {
+            status: "failed",
+            cudaVerified: false,
+            at: "2026-01-01T00:00:00.000Z",
+            detail: "probe output: {}|",
+          },
+        }),
+      },
+    },
+  });
 }
 
 type StubbedRunOpenshellResult = { status: number; stdout: string; stderr: string };
@@ -292,6 +316,38 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.recordSkip).toHaveBeenCalled();
   });
 
+  it("reuses a surviving sandbox when the recorded create receipt contains a GPU proof with the field separator", async () => {
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+    const session = sessionWithCheckpoint(checkpointWithLegacyGpuProof());
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "auto" },
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.recordSkip).toHaveBeenCalled();
+  });
+
+  it("rejects reuse when the recorded create receipt contains the GPU proof and the sandbox GPU mode changed", async () => {
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+    const session = sessionWithCheckpoint(checkpointWithLegacyGpuProof());
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "1" },
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
+  });
+
   it("recreates only under the recorded durable identity when the sandbox is gone", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing" });
     const session = sessionWithCheckpoint(crashedCheckpoint());
@@ -327,14 +383,35 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("OPENAI_API_KEY");
   });
 
-  it("does not engage the crash-recovery path for a normal fresh create (no checkpoint receipt)", async () => {
-    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing" });
-    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+  it.each([
+    { state: "missing", fresh: false, provider: "provider", model: "model" },
+    { state: "ready", fresh: true, provider: "provider", model: "changed-model" },
+    { state: "ready", fresh: false, provider: "provider", model: "changed-model" },
+    { state: "ready", fresh: true, provider: "changed-provider", model: "model" },
+    { state: "ready", fresh: false, provider: "provider", model: "model" },
+  ])(
+    "checks selection through create for $state sandbox with fresh=$fresh and $provider/$model (#12667)",
+    async ({ state, fresh, provider, model }) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+      const session =
+        state === "missing"
+          ? createSession({ sessionId: "sess-1", agent: "openclaw" })
+          : sessionWithCheckpoint(crashedCheckpoint({ effectGroups: {} }));
+      const { deps, calls } = createDeps({ getSandboxReuseState: () => state }, session);
 
-    await handleSandboxState({ ...baseOptions(deps, session), resume: false });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: false,
+        fresh,
+        sandboxName: "my-assistant",
+        provider,
+        model,
+      });
 
-    expect(calls.createSandbox).toHaveBeenCalled();
-  });
+      expect(calls.createSandbox.mock.calls[0]?.slice(1, 3)).toEqual([model, provider]);
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+    },
+  );
 
   it("reuses a live sandbox even when the create receipt was lost in the crash window (#7022)", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });

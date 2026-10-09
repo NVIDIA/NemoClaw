@@ -7,6 +7,8 @@ import { TextDecoder } from "node:util";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
+import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../inference/native-nvidia/contract";
+import { buildNativeNvidiaSandboxPolicy } from "../inference/native-nvidia/network-policy";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 import * as policies from "../policy";
@@ -321,6 +323,7 @@ function createPolicyTempCleanup(policyPath: string, expectedPrefix: string): ()
 }
 
 type InitialPolicyOptions = {
+  inferenceProvider?: string | null;
   directGpu?: boolean;
   dockerGpuPatch?: boolean;
   hostGpuAvailable?: boolean;
@@ -495,6 +498,9 @@ function resolveInitialSandboxCreatePolicy(
     }
   };
   try {
+    if (options.inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER) {
+      adoptPolicy(buildNativeNvidiaSandboxPolicy(basePolicy), "nemoclaw-native-inference-policy");
+    }
     // Fail closed: the OpenClaw OTEL preset is added at create time only when the
     // selected policy tier is known and is not Restricted. When the tier is null
     // (interactive flow that selects later) the preset is deferred to the

@@ -348,8 +348,8 @@ describe("bounded direct execution proof process ownership", () => {
         try {
           processState = fs.readFileSync(statPath, "utf8").split(" ")[2];
         } catch (error) {
-          // The descendant may already have been reaped when /proc is read.
-          expect(error).toHaveProperty("code", "ENOENT");
+          // A reaped descendant can disappear before open or during the procfs read.
+          expect(["ENOENT", "ESRCH"]).toContain((error as NodeJS.ErrnoException).code);
         }
 
         expect(result.error).toBeUndefined();
@@ -358,7 +358,8 @@ describe("bounded direct execution proof process ownership", () => {
           { status: 137, signal: null },
           { status: null, signal: "SIGKILL" },
         ]).toContainEqual({ status: result.status, signal: result.signal });
-        expect(["", "Z"]).toContain(processState);
+        // Linux can expose EXIT_DEAD (X) briefly before removing the task from /proc.
+        expect(["", "Z", "X"]).toContain(processState);
       } finally {
         try {
           process.kill(descendantPid, "SIGKILL");

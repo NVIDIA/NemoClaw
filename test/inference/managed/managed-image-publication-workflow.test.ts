@@ -775,9 +775,12 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/actions/sandbox/**",
+        "src/lib/adapters/container-engine.ts",
         "src/lib/onboard/**",
         "src/lib/adapters/openshell/**",
+        "src/lib/adapters/podman/**",
         ...approvalFixturePaths,
+        "test/e2e/fixtures/docker-build-guard.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
@@ -880,13 +883,18 @@ describe("complete managed-image publication workflow", () => {
       path.join(fakeBin, "docker"),
       `#!/bin/bash
 set -euo pipefail
-if [ "\${1:-} \${2:-} \${3:-}" != "buildx imagetools inspect" ]; then
-  exit 90
-fi
-if [[ "\${4:-}" == *":latest" ]]; then
-  cat "$ALIAS_RAW"
+if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools inspect" ]; then
+  if [[ "\${4:-}" == *":latest" ]]; then
+    cat "$ALIAS_RAW"
+  else
+    cat "$EXACT_RAW"
+  fi
+elif [ "$*" = "pull --platform linux/amd64 $EXACT_REFERENCE" ]; then
+  exit 0
+elif [ "$*" = "image inspect $EXACT_REFERENCE" ]; then
+  printf '[{"Config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}]' "$CANDIDATE_SHA"
 else
-  cat "$EXACT_RAW"
+  exit 90
 fi
 `,
       { mode: 0o755 },
@@ -907,10 +915,12 @@ fi
           }).stdout.trim(),
           DISPLAY_NAME: "OpenClaw",
           EXACT_RAW: exactRaw,
+          EXACT_REFERENCE: `ghcr.io/nvidia/nemoclaw/sandbox-base@${digest}`,
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          PLATFORM: "linux/amd64",
           RUNNER_TEMP: temporaryRoot,
         },
       });

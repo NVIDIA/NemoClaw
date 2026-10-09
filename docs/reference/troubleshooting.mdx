@@ -354,9 +354,56 @@ Fix the host firewall, VPN, or DNS policy so the host can resolve the provider e
 
 ### Port already in use
 
-The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8080`. If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port. If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
+The NemoClaw dashboard uses port `18789` by default, and the gateway uses port `8080`.
+For a new sandbox, onboarding scans dashboard ports `18789` through `18799` and uses the next port verified available.
+It skips occupied candidates and candidates whose OpenShell forward ownership cannot be verified.
+If no candidate is available, the error lists the blocked ports and their observed states or registered owners.
+The list includes a blocked preferred dashboard port outside the default range.
+For occupied dashboard ports, free a sandbox or use `--control-ui-port` with a verified available port outside the range.
 
-NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`, so it rejects every port in that range as a dashboard port for any agent. When all ports in the API range are occupied, the error lists the owner for each port. Destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+NemoClaw allocates each Hermes sandbox an OpenAI-compatible API port from `8642` through `8652`.
+It rejects every port in that range as a dashboard port for any agent.
+Hermes API allocation also skips unverified candidates and requires a port verified available.
+For occupied API ports, destroy a listed Hermes sandbox or stop a listed non-OpenShell listener, then rerun onboarding.
+
+For all-unverified or mixed failures, inspect ownership before changing a blocked port.
+For mixed failures, also apply the occupied-port remedies above to ports with known owners.
+A different verified available dashboard port can avoid blocked candidates, but changing the port does not repair ownership verification.
+Repeated onboarding and resume keep registered ports; they stop if ownership of a registered port cannot be verified.
+
+1. Preserve the onboarding error, including each affected port and its observed state.
+   Run the following read-only diagnostics on the same host and as the same user who ran onboarding.
+   Use the gateway name and endpoint selected for that onboarding run:
+
+   ```bash
+   openshell forward list --gateway <gateway-name> --gateway-endpoint <gateway-endpoint>
+   ```
+
+   If onboarding selected an explicit workspace, add `--workspace <workspace>` with that same name.
+   The listing covers legacy and user-managed forwards; it does not establish ownership of receipt-owned ForwardTcp services.
+
+2. Inspect each affected host port, including a preferred port outside the default range:
+
+   ```bash
+   lsof -nP -iTCP:<port> -sTCP:LISTEN
+   ```
+
+   A listener listing or empty output alone does not prove OpenShell ownership.
+   NemoClaw also checks the listener's process identity and whether that identity remains stable.
+   Do not stop a process or delete forwarding state whose owner you cannot verify.
+
+3. If a diagnostic reports missing tooling or a permission error, ask the host administrator to correct that reported problem.
+   After correcting the problem, rerun onboarding and check whether it still reports unverified ownership.
+
+4. If ownership remains unverified, collect the command output, affected ports, onboarding error, and installed versions for a NemoClaw maintainer:
+
+   ```bash
+   $$nemoclaw --version
+   openshell --version
+   ```
+
+   Remove credentials and other sensitive values before sharing the diagnostics.
+   Preserve unknown listeners and forwarding state while the maintainer investigates.
 
 On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts. For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build. If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources. NemoClaw releases the reservation immediately before its receipt-owned ForwardTcp service starts. If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
 
@@ -422,13 +469,13 @@ Refer to [Environment Variables](commands#environment-variables) for the full li
 
 ### Running multiple sandboxes simultaneously
 
-Each sandbox requires its own dashboard port. If you onboard a second sandbox without overriding the port, onboarding uses the next free port in the `18789` to `18799` range. `onboard` checks `openshell forward list` before starting a new forward, so a second onboard cannot silently take over the first sandbox's port.
+Each sandbox requires its own dashboard port. If you onboard a second sandbox without overriding the port, onboarding uses the next verified available port in the `18789` to `18799` range. `onboard` checks `openshell forward list` before starting a new forward, so a second onboard cannot silently take over the first sandbox's port.
 
 Assign a distinct port only when you want a specific value:
 
 ```bash
-$$nemoclaw onboard                                                   # first sandbox uses default 18789
-$$nemoclaw onboard                                                   # second sandbox uses the next free port
+$$nemoclaw onboard                                                   # first sandbox uses 18789 when verified available
+$$nemoclaw onboard                                                   # second sandbox uses the next verified available port
 $$nemoclaw onboard --control-ui-port 19000                          # explicit port override
 ```
 
@@ -909,7 +956,7 @@ podman --url 'unix://<qualified-current-user-socket>' run --rm --device nvidia.c
 
 A diagnostic result includes one successful CUDA sample invocation and one `NEMOCLAW_GPU_DEVICE=<uuid>, <index>, <name>, <total>, <free>` row for every provider-visible GPU. For Podman, replace `<qualified-current-user-socket>` with the exact socket accepted by [Podman preflight](#podman); do not omit `--url`, because a bare command can select another rootful, remote, or named connection. Manual output does not qualify onboarding. Only the proof that NemoClaw runs through its provider-bound authority validates the row structure, binds every workload to its stable GPU UUID, and supplies the capacity evidence used for model selection.
 
-The run is bounded to 3 minutes by default. Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive integer number of milliseconds to change that bound; values above 15 minutes are capped at 15 minutes. A passing workload with confirmed container reconciliation lets onboarding treat the detected GPU as eligible for GPU passthrough during that run. On Windows-on-Arm, only the documented N1x WSL path can use this proof for platform qualification; other GPU routes remain unsupported. A failed, interrupted, or timed-out workload leaves the GPU unproven and does not enable GPU passthrough. After every completed capture, NemoClaw immediately reconciles the proof container by its exact name and ownership label. After an interrupted capture, it continues that exact check for up to 15 seconds. If the resource appears, NemoClaw removes only its immutable container ID. If an interrupted capture remains absent through that deadline, or removal fails after any capture, NemoClaw invalidates the proof, reports unresolved cleanup, and names the exact resource to verify or remove before retrying. The names-only unified-memory fallback does not run this workload and rejects denylisted names. WSL uses Docker Desktop by default; a qualification-backed rootless Podman provider can run the same proof for WSL-local Ollama.
+The run is bounded to 3 minutes by default. Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive integer number of milliseconds to change that bound; values above 15 minutes are capped at 15 minutes. A passing workload with confirmed container reconciliation lets onboarding treat the detected GPU as eligible for GPU passthrough during that run. On Windows-on-Arm, only the documented N1x and Station GB300 WSL paths can use this proof for platform qualification; other GPU routes remain unsupported. A failed, interrupted, or timed-out workload leaves the GPU unproven and does not enable GPU passthrough. After every completed capture, NemoClaw immediately reconciles the proof container by its exact name and ownership label. After an interrupted capture, it continues that exact check for up to 15 seconds. If the resource appears, NemoClaw removes only its immutable container ID. If an interrupted capture remains absent through that deadline, or removal fails after any capture, NemoClaw invalidates the proof, reports unresolved cleanup, and names the exact resource to verify or remove before retrying. The names-only unified-memory fallback does not run this workload and rejects denylisted names. WSL uses Docker Desktop by default; a qualification-backed rootless Podman provider can run the same proof for WSL-local Ollama.
 
 When GPU detection rejects the `nvidia-smi` report, preflight prints the failed check under the `Local NIM unavailable — no GPU detected` line, for example an absent `/proc/driver/nvidia` interface or a failed bounded CUDA proof. If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
@@ -1995,7 +2042,7 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends an inference request over the same route, so it reflects the route the agent uses. When that request returns a transient gateway status, `status` repeats both probes up to three total attempts before it reports a failure. It prints the HTTP status, next attempt, and two-second delay to stderr before each retry; the configured timeout envelope for three complete probe pairs and two delays is about 124 seconds. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, it verifies the recorded sandbox attachment and sends the request directly to `https://integrate.api.nvidia.com/v1/chat/completions`; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while NVIDIA Endpoints retries only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. If a local-backend diagnostic fails, start the backend. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. Docker Desktop on Windows Subsystem for Linux (WSL) reaches host loopback directly, so its auth-proxy diagnostic is non-authoritative. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration, then rerun onboarding.
 
@@ -2034,7 +2081,7 @@ This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`. It covers the
 
 <AgentOnly variant="openclaw,hermes">
 
-For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal. Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`. NemoClaw keeps waiting only when OpenShell returns its exact `sandbox is not ready` response. A missing or malformed ID, or another command failure, stops the wait and preserves the sandbox. Inspect the gateway, then run `$$nemoclaw <sandbox-name> destroy` to check whether authoritative absence permits cleanup. Do not retry same-name onboarding while the retained sandbox exists.
+For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal. Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`. NemoClaw keeps waiting when OpenShell returns its exact `sandbox is not ready` response or a completed nonzero executable probe returns no output. A missing or malformed ID, an executable probe with a nonempty terminal diagnostic, or another probe failure stops the wait and preserves the sandbox. Inspect the gateway, then run `$$nemoclaw <sandbox-name> destroy` to check whether authoritative absence permits cleanup. Do not retry same-name onboarding while the retained sandbox exists.
 
 </AgentOnly>
 
@@ -2053,7 +2100,7 @@ $$nemoclaw onboard
 
 The variable accepts seconds and applies to the readiness wait only. When the ordinary create deadline expires, NemoClaw preserves the partially created sandbox because OpenShell deletion targets its mutable name. Same-name onboarding remains blocked while that sandbox exists. Run `$$nemoclaw <sandbox-name> destroy` to check retained recovery. Do not delete the sandbox by mutable name.
 
-The failure path also differs when NemoClaw recreates an OpenShell-managed Docker runtime immediately before this wait. NemoClaw pins the exact OpenShell sandbox ID before recreation. Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the exact ID and successful command execution. It retries only OpenShell's exact `sandbox is not ready` response. If the deadline expires, the ID changes, or another probe fails, NemoClaw preserves diagnostics and attempts to restore the pre-recreation Docker container. If restoration fails, NemoClaw reports that the sandbox and container state is uncertain. NemoClaw does not start dashboard or other host forwarding, and it does not delete a sandbox by its mutable name. It leaves the sandbox in place for inspection and recovery.
+The failure path also differs when NemoClaw recreates an OpenShell-managed Docker runtime immediately before this wait. NemoClaw pins the exact OpenShell sandbox ID before recreation. Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the exact ID and successful command execution. It retries OpenShell's exact `sandbox is not ready` response and completed nonzero executable probes that return no output. If the deadline expires, the ID changes, a probe returns a nonempty terminal diagnostic, or another probe fails, NemoClaw preserves diagnostics and attempts to restore the pre-recreation Docker container. If restoration fails, NemoClaw reports that the sandbox and container state is uncertain. NemoClaw does not start dashboard or other host forwarding, and it does not delete a sandbox by its mutable name. It leaves the sandbox in place for inspection and recovery.
 
 If readiness still fails after the extended budget, inspect the gateway and sandbox status:
 
@@ -2276,6 +2323,8 @@ These are build failures; the post-rebuild startup warnings apply only after the
 
 If the diagnostic says `Original Undici bundle restored after interruption; retry the operation`, rerun the original onboarding or rebuild command.
 The build remains failed until the dependency patch and verification complete successfully.
+
+If the diagnostic says an OpenClaw dependency could not be replaced and the previous package was preserved, rerun the original onboarding or rebuild command. Its managed plugin-install phase restores the previous package before retrying the replacement. If the diagnostic says the dependency was replaced but recovery-directory cleanup failed, the replacement is already active; rerun the original onboarding or rebuild command so its managed plugin-install phase can reconcile the leftover recovery state. These retries use the managed, pinned package flow and do not require deleting files by hand.
 
 For other failures, report the diagnostic, plugin name and NemoClaw version to a maintainer.
 NemoClaw manages the package pins and build cache; do not edit them or bypass plugin verification to continue.
@@ -2977,7 +3026,8 @@ It accepts Podman's standard rootless layout: a `0660` current-user socket in a 
 It rejects a world-writable socket, a group-writable socket without a private current-user directory in its path, and a path component writable by another user or group.
 If `lsof` is unavailable, install it through the host's package-management policy and retry; NemoClaw does not install it.
 Do not redirect it with `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or a named Podman connection; restore the current user's reported socket authority and retry with the explicit selector.
-Native Podman supports stock managed-image onboarding only. Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
+Native Podman supports stock managed-image onboarding and digest-pinned OpenClaw or Hermes images through `--from-image`.
+Use the Docker provider for an explicit `--from <Dockerfile>` or a read-only host mount.
 
 <AgentOnly variant="hermes">
 
@@ -3115,7 +3165,7 @@ openshell forward list                       # shows the host bind for each forw
 curl -sf http://127.0.0.1:8642/health        # confirms the relayed endpoint answers
 ```
 
-If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing. Recovery targets each sandbox's own ports. A second Hermes sandbox on the same host receives the next free API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging. A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`. A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action. To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`. Set `<N>` to a free port from `8642` through `8652`. Onboarding rejects a value outside that range. It also rejects an in-range value that another sandbox or host listener already holds. A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
+If `openshell forward list` does not show the sandbox's API port, run `nemohermes <name> connect --probe-only` (or `nemohermes <name> recover`) to ask the recovery path to re-establish every manifest-declared agent forward port that has gone missing. Recovery targets each sandbox's own ports. A second Hermes sandbox on the same host receives the next verified available API port, so check which sandbox owns each row before assuming a missing `8642` row belongs to the sandbox you are debugging. A Hermes sandbox onboarded before the API port became per-sandbox carries no allocated port and keeps `8642`. A Hermes sandbox created after that change receives its own port during onboarding, so a second sandbox needs no further action. To move a sandbox that predates the change onto its own port, set `NEMOCLAW_HERMES_API_PORT=<N>` and rerun onboarding with `--recreate-sandbox`. Set `<N>` to a free port from `8642` through `8652`. Onboarding rejects a value outside that range. It also rejects an in-range value that another sandbox or host listener already holds. A recreate keeps the sandbox's registry entry, so `--recreate-sandbox` without the variable keeps the recorded port.
 
 ### Install reports `Could not restore the Hermes forward`
 

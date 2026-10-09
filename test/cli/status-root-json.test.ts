@@ -17,7 +17,9 @@ describe("CLI root status JSON", () => {
     // Hexadecimal names cannot contain the credential markers checked below.
     const sandboxName = `a-${process.pid.toString(16)}-${Date.now().toString(16).slice(-8)}`;
     const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
+    const tunnelStateDir = path.join(home, ".nemoclaw", "state", "tunnel");
     fs.rmSync(serviceDir, { recursive: true, force: true });
+    fs.rmSync(tunnelStateDir, { recursive: true, force: true });
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -160,6 +162,7 @@ describe("CLI root status JSON", () => {
       expect(r.out).not.toContain("private-gateway-state");
     } finally {
       fs.rmSync(serviceDir, { recursive: true, force: true });
+      fs.rmSync(tunnelStateDir, { recursive: true, force: true });
     }
   });
 
