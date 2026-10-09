@@ -136,6 +136,7 @@ function parseEntry(
     throw new Error("protected managed-image contract entry is not the exact agent digest");
   }
   const basePrefix = `${BASE_REPOSITORIES[entry.agent as ShippedManagedImageAgent]}@`;
+  const candidateBasePrefix = `localhost:5000/nemoclaw-managed-protected-base/${entry.agent}@`;
   if (
     typeof entry.baseReference !== "string" ||
     (!(
@@ -143,10 +144,8 @@ function parseEntry(
       DIGEST_PATTERN.test(entry.baseReference.slice(basePrefix.length))
     ) &&
       !(
-        entry.agent === "langchain-deepagents-code" &&
-        /^localhost:5000\/nemoclaw-managed-protected-base\/langchain-deepagents-code@sha256:[a-f0-9]{64}$/u.test(
-          entry.baseReference,
-        )
+        entry.baseReference.startsWith(candidateBasePrefix) &&
+        DIGEST_PATTERN.test(entry.baseReference.slice(candidateBasePrefix.length))
       ))
   ) {
     throw new Error("protected managed-image contract entry has an invalid base reference");

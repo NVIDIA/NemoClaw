@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   inspectProtectedDcodeBase,
   verifyProtectedDcodeBaseReceipt,
@@ -20,7 +20,10 @@ afterEach(() => {
     fs.rmSync(directory, { recursive: true, force: true });
 });
 
-function fixture(platform: ProtectedDcodeBaseIdentity["platform"] = "linux/amd64") {
+function fixture(
+  platform: ProtectedDcodeBaseIdentity["platform"] = "linux/amd64",
+  agent: "openclaw" | "hermes" | "langchain-deepagents-code" = "langchain-deepagents-code",
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "protected-dcode-base-"));
   directories.push(root);
   const layout = path.join(root, "base");
@@ -48,7 +51,7 @@ function fixture(platform: ProtectedDcodeBaseIdentity["platform"] = "linux/amd64
           "org.opencontainers.image.revision": expected.sourceRevision,
           "org.opencontainers.image.source": "https://github.com/NVIDIA/NemoClaw",
           "io.nvidia.nemoclaw.managed-image.cohort": expected.cohort,
-          "io.nvidia.nemoclaw.agent": "langchain-deepagents-code",
+          "io.nvidia.nemoclaw.agent": agent,
         },
       },
     },
@@ -78,7 +81,7 @@ function fixture(platform: ProtectedDcodeBaseIdentity["platform"] = "linux/amd64
     JSON.stringify({ imageLayoutVersion: "1.0.0" }),
   );
   const receiptPath = path.join(root, "receipt.json");
-  const receipt = inspectProtectedDcodeBase(layout, expected);
+  const receipt = inspectProtectedDcodeBase(layout, expected, agent);
   fs.writeFileSync(receiptPath, JSON.stringify(receipt));
   return {
     layout,
@@ -95,6 +98,37 @@ function fixture(platform: ProtectedDcodeBaseIdentity["platform"] = "linux/amd64
 }
 
 describe("protected DCode base artifact handoff", () => {
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "binds %s to its OCI artifact",
+    (agent) => {
+      const f = fixture("linux/amd64", agent);
+      expect(verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, f.expected, agent)).toEqual(
+        f.receipt,
+      );
+    },
+  );
+
+  it.each([
+    ["openclaw", "hermes"],
+    ["openclaw", "langchain-deepagents-code"],
+    ["hermes", "openclaw"],
+    ["hermes", "langchain-deepagents-code"],
+    ["langchain-deepagents-code", "openclaw"],
+    ["langchain-deepagents-code", "hermes"],
+  ] as const)("rejects %s OCI bytes when %s is required", (agent, other) => {
+    const f = fixture("linux/amd64", agent);
+    expect(() =>
+      verifyProtectedDcodeBaseReceipt(f.layout, f.receiptPath, f.expected, other),
+    ).toThrow(/config/);
+  });
+
+  it("rejects an unsupported agent before reading the layout", () => {
+    const f = fixture();
+    expect(() =>
+      inspectProtectedDcodeBase("/missing", f.expected, "../other" as "openclaw"),
+    ).toThrow(/not supported/);
+  });
+
   it("writes receipts once and refuses to overwrite existing evidence", () => {
     const f = fixture();
     const receiptPath = path.join(f.root, "cli-receipt.json");
@@ -220,6 +254,31 @@ describe("protected DCode base artifact handoff", () => {
       layers: [{ ...f.layer, urls: ["https://example.invalid/layer"] }],
     });
     expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/external content/);
+  });
+
+  it("does not accept a manifest swapped after its bytes are verified", () => {
+    const f = fixture();
+    const manifestPath = path.join(f.layout, "blobs/sha256", f.descriptor.digest.slice(7));
+    const layerPath = path.join(f.layout, "blobs/sha256", f.layer.digest.slice(7));
+    const manifestInode = fs.statSync(manifestPath).ino;
+    const originalClose = fs.closeSync.bind(fs);
+    let swapped = false;
+    const close = vi.spyOn(fs, "closeSync");
+    close.mockImplementationOnce(originalClose).mockImplementationOnce(originalClose);
+    close.mockImplementationOnce((fd) => {
+      expect(fs.fstatSync(fd).ino).toBe(manifestInode);
+      originalClose(fd);
+      fs.renameSync(manifestPath, path.join(f.root, "original-manifest"));
+      fs.writeFileSync(manifestPath, JSON.stringify({ ...f.manifest, layers: [] }));
+      fs.truncateSync(layerPath, 1);
+      swapped = true;
+    });
+    try {
+      expect(() => inspectProtectedDcodeBase(f.layout, f.expected)).toThrow(/blob size/);
+      expect(swapped).toBe(true);
+    } finally {
+      close.mockRestore();
+    }
   });
 
   it("rejects symlinked receipt and blob directories", () => {

@@ -46,13 +46,6 @@ export type DetachSandboxProvidersDeps = {
   runOpenshell?: SandboxProviderRunOpenshell;
   providerAdapter?: OpenShellProviderAdapter;
   revalidateSandboxIdentity?: (operation: string) => void;
-  /**
-   * Treat OpenShell `sandbox not found` outputs as success-equivalent. Used
-   * by the resume-after-prune call site where the sandbox is expected to be
-   * gone — the call exists only to clear any stale gateway-side attachment
-   * record, so a missing-sandbox response means there is nothing to clean.
-   */
-  tolerateMissingSandbox?: boolean;
 };
 
 export type DeleteProviderWithRecoveryDeps = DetachSandboxProvidersDeps & {
@@ -113,7 +106,6 @@ function identityRedact(input: string): string {
 /**
  * Detach owned messaging and search providers before sandbox removal.
  * Return failures to the lifecycle owner; it decides whether cleanup can continue.
- * Missing sandboxes are tolerated only by the explicit resume-after-prune caller.
  */
 export async function detachSandboxProviders(
   sandboxName: string,
@@ -142,13 +134,6 @@ export async function detachSandboxProviders(
     }
     const output = result.error.message;
     if (result.error.kind === "command" && result.error.reason === "not_found") continue;
-    if (
-      deps.tolerateMissingSandbox &&
-      result.error.kind === "command" &&
-      result.error.reason === "sandbox_not_found"
-    ) {
-      continue;
-    }
     failures.push({ name, output: output.trim() });
   }
   return { detached, failures };
@@ -163,7 +148,6 @@ export async function runSandboxProviderPreDeleteCleanup(
     providerAdapter: deps.providerAdapter,
     runOpenshell: deps.runOpenshell,
     revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
-    tolerateMissingSandbox: deps.tolerateMissingSandbox,
   });
   if (result.failures.length === 0) return result;
   const warn = deps.warn ?? ((message: string) => console.warn(message));

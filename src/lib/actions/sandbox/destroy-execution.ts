@@ -480,6 +480,8 @@ export async function executeSandboxDestroy({
       runtimeProviders,
     );
     const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
+    const expectedSandboxIdentityFingerprint =
+      pendingCreateIdentity?.sandboxIdentityFingerprint ?? expectedContainerIdentityFingerprint;
     const expectedContainerProof: DestroyContainerIdentityProof = expectedRuntimeProviderIdentity
       ? {
           identities: undefined,
@@ -499,12 +501,15 @@ export async function executeSandboxDestroy({
       if (verdict.status === "recovery") return { identities: verdict.identities };
       return null;
     };
-    const inspectPendingCreateVerificationContinuity = (): IdentityContinuity => {
-      if (!pendingCreateIdentity) return { status: "match" };
+    const inspectSandboxIdentityContinuity = (): IdentityContinuity => {
+      if (!expectedSandboxIdentityFingerprint) return { status: "match" };
+      const subject = pendingCreateIdentity
+        ? "Pending create sandbox identity"
+        : "Retained sandbox identity";
       if (!getSandbox) {
         return {
           status: "probe-failed",
-          subject: "Pending create sandbox identity",
+          subject,
           detail: "an exact registry reader is unavailable",
         };
       }
@@ -515,8 +520,10 @@ export async function executeSandboxDestroy({
         }
         if (
           sandboxConfirmedAbsent &&
-          expectedContainerIdentities !== undefined &&
-          expectedContainerIdentityFingerprint === pendingCreateIdentity.sandboxIdentityFingerprint
+          (!pendingCreateIdentity ||
+            (expectedContainerIdentities !== undefined &&
+              expectedContainerIdentityFingerprint ===
+                pendingCreateIdentity.sandboxIdentityFingerprint))
         ) {
           return isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
             ? { status: "match" }
@@ -527,30 +534,30 @@ export async function executeSandboxDestroy({
           inspectOpenShellSandboxIdentityFingerprint;
         const liveFingerprint = inspectIdentity({
           sandboxName,
-          gatewayName: pendingCreateIdentity.gatewayName,
+          gatewayName: pendingCreateIdentity?.gatewayName ?? deleteGatewayName,
           ...(destroyRuntimeSelection ? { runtimeSelection: destroyRuntimeSelection } : {}),
         });
         if (
-          liveFingerprint !== pendingCreateIdentity.sandboxIdentityFingerprint ||
+          liveFingerprint !== expectedSandboxIdentityFingerprint ||
           !isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
         ) {
           return {
             status: "changed",
-            subject: "Pending create sandbox identity",
+            subject,
           };
         }
         return { status: "match" };
       } catch (error) {
         return {
           status: "probe-failed",
-          subject: "Pending create sandbox identity",
+          subject,
           detail: redactDestroyError(error),
         };
       }
     };
     const inspectIdentityContinuity = (): IdentityContinuity => {
-      const pendingContinuity = inspectPendingCreateVerificationContinuity();
-      if (pendingContinuity.status !== "match") return pendingContinuity;
+      const sandboxContinuity = inspectSandboxIdentityContinuity();
+      if (sandboxContinuity.status !== "match") return sandboxContinuity;
       if (portableContainerAuthority) {
         try {
           portableContainerAuthority.revalidate();

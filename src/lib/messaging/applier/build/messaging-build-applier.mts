@@ -798,7 +798,7 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
     const installCache = install.runtimeLock
       ? requireWritableRuntimeInstallCache(install.runtimeLock, env)
       : undefined;
-    const installEnv = {
+    const installEnv: Env = {
       ...env,
       NPM_CONFIG_IGNORE_SCRIPTS: "true",
       npm_config_ignore_scripts: "true",
@@ -820,7 +820,7 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
       // The verified archive warms the cache before the exact npm install.
       // Third-party plugins retain their reviewed local archive installation.
       const installTarget = officialPluginId ? install.spec : `npm-pack:${packed.archivePath}`;
-      const commandEnv = officialPluginId
+      const commandEnv: Env = officialPluginId
         ? { ...installEnv, NPM_CONFIG_OFFLINE: "true", npm_config_offline: "true" }
         : installEnv;
       runCommand(
@@ -848,10 +848,19 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
           officialPluginId,
           inspection,
         );
-        const home = sanitizeOptionalString(env.HOME) || homedir();
-        const stateRoot = (
-          sanitizeOptionalString(env.OPENCLAW_STATE_DIR) || join(home, ".openclaw")
-        ).replace(/^~(?=$|[/\\])/, () => home);
+        const homeValue = (value: string | undefined) =>
+          value?.trim() && value.trim() !== "undefined" && value.trim() !== "null"
+            ? value.trim()
+            : undefined;
+        const osHome = homeValue(env.HOME) ?? homeValue(env.USERPROFILE) ?? homedir();
+        const expand = (value: string, home: string) =>
+          resolve(value.trim().replace(/^~(?=$|[\\/])/, () => home));
+        const home = expand(homeValue(env.OPENCLAW_HOME) ?? osHome, osHome);
+        const stateRoot = env.OPENCLAW_STATE_DIR?.trim()
+          ? expand(env.OPENCLAW_STATE_DIR, home)
+          : env.OPENCLAW_CONFIG_PATH?.trim()
+            ? dirname(expand(env.OPENCLAW_CONFIG_PATH, home))
+            : join(home, ".openclaw");
         try {
           remediateInstalledOfficialOpenClawPlugin({
             archivePath: packed.archivePath,

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PROTECTED_MANAGED_IMAGE_AGENTS } from "./protected-managed-image-contract.ts";
 
 export const PROTECTED_DCODE_BASE_REPOSITORY =
   "localhost:5000/nemoclaw-managed-protected-base/langchain-deepagents-code";
@@ -92,9 +93,20 @@ function descriptor(value: unknown, types: ReadonlySet<string>) {
   return { digest: entry.digest, size: Number(entry.size) };
 }
 
-function verifyBlob(layout: string, entry: { digest: string; size: number }): string {
+function verifyBlob(layout: string, entry: { digest: string; size: number }, collect: true): Buffer;
+function verifyBlob(layout: string, entry: { digest: string; size: number }, collect?: false): void;
+function verifyBlob(
+  layout: string,
+  entry: { digest: string; size: number },
+  collect = false,
+): Buffer | void {
+  if (collect && entry.size > 8 * 1024 * 1024) {
+    throw new Error("protected DCode base metadata is too large");
+  }
   const filename = path.join(layout, "blobs", "sha256", entry.digest.slice(7));
   const fd = regularFile(filename);
+  const chunks: Buffer[] = [];
+  let total = 0;
   try {
     if (fs.fstatSync(fd).size !== entry.size) {
       throw new Error("protected DCode base blob size does not match its descriptor");
@@ -102,22 +114,38 @@ function verifyBlob(layout: string, entry: { digest: string; size: number }): st
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(1024 * 1024);
     let count: number;
-    while ((count = fs.readSync(fd, buffer)) !== 0) hash.update(buffer.subarray(0, count));
+    while ((count = fs.readSync(fd, buffer)) !== 0) {
+      const bytes = buffer.subarray(0, count);
+      hash.update(bytes);
+      if (collect) chunks.push(Buffer.from(bytes));
+      total += count;
+    }
+    if (total !== entry.size) {
+      throw new Error("protected DCode base blob size does not match its descriptor");
+    }
     if (`sha256:${hash.digest("hex")}` !== entry.digest) {
       throw new Error("protected DCode base blob digest does not match its descriptor");
     }
   } finally {
     fs.closeSync(fd);
   }
-  return filename;
+  if (collect) return Buffer.concat(chunks, total);
+}
+
+function verifiedJsonBlob(layout: string, entry: { digest: string; size: number }) {
+  return record(JSON.parse(verifyBlob(layout, entry, true).toString("utf8")));
 }
 
 /** Verify all OCI content before the protected runner accepts an offline base. */
 export function inspectProtectedDcodeBase(
   layout: string,
   expected: ProtectedDcodeBaseIdentity,
+  agent: (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number] = "langchain-deepagents-code",
 ): ProtectedDcodeBaseReceipt {
   validateIdentity(expected);
+  if (!PROTECTED_MANAGED_IMAGE_AGENTS.includes(agent)) {
+    throw new Error("protected base agent is not supported");
+  }
   for (const directory of [layout, path.join(layout, "blobs"), path.join(layout, "blobs/sha256")]) {
     if (!fs.lstatSync(directory).isDirectory()) {
       throw new Error("protected DCode base layout directories must not be symlinks");
@@ -135,7 +163,7 @@ export function inspectProtectedDcodeBase(
     throw new Error("protected DCode base must contain one OCI image manifest");
   }
   const manifestDescriptor = descriptor(index.manifests[0], new Set([MANIFEST]));
-  const manifest = readJson(verifyBlob(layout, manifestDescriptor));
+  const manifest = verifiedJsonBlob(layout, manifestDescriptor);
   if (
     manifest.schemaVersion !== 2 ||
     manifest.mediaType !== MANIFEST ||
@@ -144,7 +172,7 @@ export function inspectProtectedDcodeBase(
     throw new Error("protected DCode base image manifest is invalid");
   }
   const configDescriptor = descriptor(manifest.config, new Set([CONFIG]));
-  const config = readJson(verifyBlob(layout, configDescriptor));
+  const config = verifiedJsonBlob(layout, configDescriptor);
   for (const layer of manifest.layers) verifyBlob(layout, descriptor(layer, LAYERS));
   const labels = record(record(config.config).Labels);
   if (
@@ -152,7 +180,7 @@ export function inspectProtectedDcodeBase(
     labels["org.opencontainers.image.revision"] !== expected.sourceRevision ||
     labels["org.opencontainers.image.source"] !== "https://github.com/NVIDIA/NemoClaw" ||
     labels["io.nvidia.nemoclaw.managed-image.cohort"] !== expected.cohort ||
-    labels["io.nvidia.nemoclaw.agent"] !== "langchain-deepagents-code"
+    labels["io.nvidia.nemoclaw.agent"] !== agent
   ) {
     throw new Error(
       "protected DCode base config does not match the selected source, run or platform",
@@ -163,7 +191,7 @@ export function inspectProtectedDcodeBase(
     ...expected,
     digest: manifestDescriptor.digest,
     imageId: configDescriptor.digest,
-    reference: `${PROTECTED_DCODE_BASE_REPOSITORY}@${manifestDescriptor.digest}`,
+    reference: `localhost:5000/nemoclaw-managed-protected-base/${agent}@${manifestDescriptor.digest}`,
   };
 }
 
@@ -171,9 +199,10 @@ export function verifyProtectedDcodeBaseReceipt(
   layout: string,
   receiptPath: string,
   expected: ProtectedDcodeBaseIdentity,
+  agent: (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number] = "langchain-deepagents-code",
 ): ProtectedDcodeBaseReceipt {
   const receipt = readJson(receiptPath);
-  const actual = inspectProtectedDcodeBase(layout, expected);
+  const actual = inspectProtectedDcodeBase(layout, expected, agent);
   const keys = Object.keys(actual) as (keyof ProtectedDcodeBaseReceipt)[];
   if (
     Object.keys(receipt).length !== keys.length ||
@@ -187,10 +216,11 @@ export function verifyProtectedDcodeBaseReceipt(
 }
 
 function main(): void {
-  const [command, layout, receiptPath, ...extra] = process.argv.slice(2);
+  const [command, layout, receiptPath, agent = "langchain-deepagents-code", ...extra] =
+    process.argv.slice(2);
   if (!["write", "verify"].includes(command) || !layout || !receiptPath || extra.length) {
     throw new Error(
-      "usage: protected-dcode-base-receipt.mts <write|verify> <OCI layout> <receipt>",
+      "usage: protected-dcode-base-receipt.mts <write|verify> <OCI layout> <receipt> [agent]",
     );
   }
   const expected: ProtectedDcodeBaseIdentity = {
@@ -202,10 +232,22 @@ function main(): void {
   };
   const receipt =
     command === "write"
-      ? inspectProtectedDcodeBase(layout, expected)
-      : verifyProtectedDcodeBaseReceipt(layout, receiptPath, expected);
+      ? inspectProtectedDcodeBase(
+          layout,
+          expected,
+          agent as (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number],
+        )
+      : verifyProtectedDcodeBaseReceipt(
+          layout,
+          receiptPath,
+          expected,
+          agent as (typeof PROTECTED_MANAGED_IMAGE_AGENTS)[number],
+        );
   if (command === "write") {
-    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
   }
   process.stdout.write(`${receipt.reference}\n`);
 }

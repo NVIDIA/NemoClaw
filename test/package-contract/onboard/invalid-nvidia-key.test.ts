@@ -56,9 +56,11 @@ require.cache[onboardPath] = {
   exports: {
     onboard: async () => {
       resolveNonInteractiveBuildCredential({
-        provider: "nvidia-prod",
         helpUrl: "https://build.nvidia.com/settings/api-keys",
-        recoveredFromSandbox: false,
+        recovery: { recoveredFromSandbox: false },
+        getSandbox: () => {
+          throw new Error("invalid-key validation queried the registry");
+        },
         providerExistsInGateway: () => {
           throw new Error("invalid-key validation queried the gateway");
         },

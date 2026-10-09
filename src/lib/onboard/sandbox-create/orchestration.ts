@@ -380,6 +380,7 @@ export function selectRebuildCreatePolicy(
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
   policySource?: string,
+  inferenceProvider: string | null = null,
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -399,8 +400,16 @@ export function selectRebuildCreatePolicy(
     livePolicyPath: policySourcePath,
     ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
-    requiredNetworkPolicyKeys,
-    removedNetworkPolicyKeys,
+    requiredNetworkPolicyKeys: [
+      ...requiredNetworkPolicyKeys,
+      ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
+    ],
+    removedNetworkPolicyKeys: [
+      ...removedNetworkPolicyKeys,
+      ...(inferenceProvider !== null && !usesNativeNvidiaProvider(inferenceProvider)
+        ? ["native_nvidia_inference"]
+        : []),
+    ],
     requiredNetworkPolicySources,
     authorizedCredentialBindingProviders,
   });
@@ -1494,42 +1503,18 @@ export function createProviderEffectBoundary(input: {
   };
 }
 
-type SandboxProviderCleanupAuthority =
-  | {
-      readonly revalidateSandboxIdentity: (operation: string) => void;
-    }
-  | {
-      readonly observeSandbox: () => ReturnType<
-        SandboxCreateOrchestrationRuntime["getSandboxRecreateObservation"]
-      >;
-      readonly revalidateSandboxIdentity: (operation: string) => void;
-    };
-
-export async function runAuthorityBoundProviderCleanup(
-  input: {
-    readonly sandboxName: string;
-    readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
-    readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
-    readonly redact: SandboxCreateOrchestrationRuntime["redact"];
-    readonly tolerateMissingSandbox?: boolean;
-  } & SandboxProviderCleanupAuthority,
-): Promise<void> {
-  const revalidateSandboxIdentity =
-    "observeSandbox" in input
-      ? (operation: string): void => {
-          if (input.observeSandbox().state !== "missing") {
-            throw new Error(
-              `Cannot clean up providers for sandbox '${input.sandboxName}': a sandbox with that name appeared after absence was verified while ${operation}.`,
-            );
-          }
-          input.revalidateSandboxIdentity(operation);
-        }
-      : input.revalidateSandboxIdentity;
+export async function runAuthorityBoundProviderCleanup(input: {
+  readonly sandboxName: string;
+  readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
+  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+  readonly redact: SandboxCreateOrchestrationRuntime["redact"];
+  readonly revalidateSandboxIdentity: (operation: string) => void;
+}): Promise<void> {
+  const { revalidateSandboxIdentity } = input;
   revalidateSandboxIdentity(`cleaning up providers for sandbox '${input.sandboxName}'`);
   await input.runProviderPreDeleteCleanup(input.sandboxName, {
     runOpenshell: input.runOpenshell,
     redact: input.redact,
-    ...(input.tolerateMissingSandbox ? { tolerateMissingSandbox: true } : {}),
     revalidateSandboxIdentity,
   });
 }
@@ -2729,25 +2714,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   )
                 ).messagingTokenDefs;
               },
-              runProviderPreDeleteCleanup: async (verifiedIdentityRevalidation) => {
-                await runAuthorityBoundProviderCleanup({
-                  sandboxName,
-                  runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
-                  runOpenshell,
-                  redact,
-                  tolerateMissingSandbox: true,
-                  ...(verifiedIdentityRevalidation
-                    ? {
-                        revalidateSandboxIdentity: verifiedIdentityRevalidation,
-                      }
-                    : {
-                        observeSandbox: () =>
-                          getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
-                        revalidateSandboxIdentity: (operation: string) =>
-                          revalidateSandboxIdentity(false, operation),
-                      }),
-                });
-              },
               upsertMessagingProviders: (tokenDefs, options) =>
                 applyMessagingProviders(tokenDefs, {
                   ...options,
@@ -2862,6 +2828,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           sandboxName,
           rebuildPolicyProviderAuthority,
           rebuildPolicySource?.document,
+          resolvedCreateIntent.inferenceProvider,
         )
       : materializedInitialSandboxPolicy;
     const createRequestPlan = selectRebuildCreateRequestPlan({

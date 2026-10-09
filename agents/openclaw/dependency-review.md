@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# OpenClaw MCP Runtime Dependency Review
+# OpenClaw Runtime Dependency Review
 
 This file records the reviewed `mcporter` baseline installed in the OpenClaw sandbox image.
 Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever `MCPORTER_VERSION`, its integrity value, a manifest override, or the locked graph changes in `Dockerfile.base` or `Dockerfile`.
@@ -30,6 +30,16 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 The reviewed audit wrapper reports lower-severity production findings and blocks unaccepted high or critical advisories. The default `ci/npm-audit-exceptions.json` registry is empty. Any future exception must match one advisory, graph, package, installed version, and severity; identify an owner and NemoClaw tracking issue; state a decision, rationale, and expiry no more than 30 days away; and include compensating controls for temporary risk acceptance. Missing, malformed, expired, overlong, mismatched, or unused exceptions fail closed. The repository-wide audit also rejects exceptions for unknown graph IDs. Registry signature verification remains a separate control.
 
+## Managed messaging proxy address remediation
+
+- Advisory: [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h) affects `proxy-addr@2.0.7`; `2.0.8` contains the reviewed fix.
+- Ordinary graph: `agents/openclaw/managed-image-messaging-runtime/package.json` overrides non-bundled `proxy-addr` resolutions to exact `2.0.8`. Its lock records npm integrity `sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==`, the unchanged `forwarded@0.2.0` and `ipaddr.js@1.9.1` dependencies, the MIT license, and the existing Node.js engine floor.
+- Bundled Slack graph: the reviewed registry archive `@openclaw/slack@2026.9.2` bundles `@slack/bolt@5.0.0`, `express@5.2.1`, and `proxy-addr@2.0.7`. NemoClaw retains the exact official registry install and verifies OpenClaw's trusted provenance record before replacing only that nested package with the reviewed `proxy-addr@2.0.8` archive. The replacement fails closed if the Slack, Bolt, Express, vulnerable package, or replacement package contract differs from the reviewed identities.
+- Audit boundary: the reviewed archive audit applies the same replacement before materializing the aggregate production graph, then pins the complete remediated archive tree digest. The registry archive remains immutable evidence; vulnerable bundled bytes do not survive in the final installed Slack extension.
+- Lifecycle suppression: both the managed graph install and the replacement package retrieval keep lifecycle scripts disabled. The replacement package declares no lifecycle script.
+- Removal condition: remove the Slack-specific rewrite only after the reviewed Slack archive bundles `proxy-addr@2.0.8` or newer. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the replacement is unnecessary.
+- Regression evidence: `test/agents/openclaw/openclaw-npm-remediation.test.ts` guards the exact source and replacement contracts; `test/runtime/messaging/messaging-build-applier-integrity.test.ts` proves the installed official plugin is patched only after provenance verification; `test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts` guards the ordinary graph; and `test/agents/openclaw/openclaw-dependency-review.test.ts` keeps the audit and runtime remediation wiring present.
+
 ## WeChat plugin runtime graph
 
 - Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.4.3`.
@@ -55,7 +65,7 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 ## Source-of-Truth Boundary
 
-- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.7`, resolves `hono` to any version other than exact `4.12.34`, resolves `ip-address` to any version other than exact `10.3.1`, or resolves `@modelcontextprotocol/sdk` to any version other than exact `1.31.0`.
+- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.7`, resolves `hono` to any version other than exact `4.12.34`, resolves `ip-address` to any version other than exact `10.3.1`, resolves `@modelcontextprotocol/sdk` to any version other than exact `1.31.0`, or leaves any final managed-messaging `proxy-addr` installation at a version other than exact `2.0.8`.
 - `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, empty-by-default audit exception registry, and review record.
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so the required `reviewed-npm-audit` CI check materializes the exact locked production graph and verifies its registry signatures.
 - `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, and lifecycle suppression.

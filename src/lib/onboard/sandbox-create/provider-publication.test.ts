@@ -27,6 +27,9 @@ function typedProviderAdapter(
   overrides: Partial<OpenShellProviderAdapter> = {},
 ): OpenShellProviderAdapter {
   const adapter: OpenShellProviderAdapter = {
+    ensureProviderPolicyComposition: vi
+      .fn<OpenShellProviderAdapter["ensureProviderPolicyComposition"]>()
+      .mockResolvedValue({ ok: true, value: undefined }),
     listProviders: vi.fn(async () => ({ ok: true as const, value: { names: [] } })),
     createProvider: vi.fn(async () => ({ ok: true as const })),
     getProvider: vi.fn(async (request) => ({

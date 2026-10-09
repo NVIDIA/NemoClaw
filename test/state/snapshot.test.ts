@@ -674,6 +674,7 @@ describe("complete native home persistence", () => {
       const expected = new Map([
         ["unknown.txt", "undeclared"],
         ["workspace/project.txt", "workspace"],
+        ["work/user-data.txt", "credential-rotation-workspace"],
         [".openclaw/openclaw.json", '{"native":true}'],
         [".local/share/packages/tool.txt", "package"],
         [".openclaw/plugins/custom/index.js", "plugin"],

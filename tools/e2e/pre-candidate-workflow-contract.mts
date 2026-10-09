@@ -75,9 +75,16 @@ export const PRE_CANDIDATE_STEP_ENV: Readonly<Record<string, Readonly<Record<str
       "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}",
   },
   "Stage immutable native Podman E2E toolchains": {},
+  "Resolve reviewed candidate OpenShell version": {
+    CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
+    CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+    GITHUB_TOKEN: "${{ github.token }}",
+  },
 };
 
 export const PRE_CANDIDATE_STEP_CONDITIONS: Readonly<Record<string, string | undefined>> = {
+  "Resolve reviewed candidate OpenShell version":
+    "${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') }}",
   "Authenticate manual PR dispatch":
     "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
   "Record trusted E2E dispatch receipt": "${{ github.event_name == 'workflow_dispatch' }}",
