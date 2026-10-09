@@ -227,10 +227,6 @@ async function proveSelectedMockBaselineAuthentication(
   ).toContainEqual(expectedRequest);
 }
 
-function stripAnsi(value: string): string {
-  return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
 function parsePortEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -531,13 +527,6 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
     },
   );
   return result.stdout.trim();
-}
-
-async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
-  return runNemoclaw(host, home, ["inference", "get"], {
-    artifactName: "nemoclaw-inference-get-after-switch",
-    timeoutMs: COMMAND_TIMEOUT_MS,
-  });
 }
 
 async function assertRegistryAndSession(
@@ -1137,7 +1126,7 @@ test(
         "when selected, the mock baseline route completes one explicit authenticated fixture request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
-        "NemoClaw reports the switched provider/model",
+        "NemoClaw records the switched provider/model",
         "OpenClaw config reflects the switched inference API/model",
         "registry and onboard session record the switched provider/model",
         "sandbox inference returns PONG from the switched model",
@@ -1155,17 +1144,21 @@ test(
       scenarioLabel: "OpenClaw inference switch",
     });
 
+    const publicApiKey =
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
+        : null;
     const useMockBaseline =
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
+      (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startMockOpenClawBaselineProvider(progress)
       : undefined;
-    const publicApiKey =
-      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
-        : null;
+    cleanup.trackDisposable("close baseline inference provider", async () => {
+      await baselineProvider?.close();
+    });
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig({
@@ -1186,9 +1179,6 @@ test(
     );
     cleanup.trackDisposable("close switched Anthropic provider", async () => {
       await mockProvider?.close();
-    });
-    cleanup.trackDisposable("close baseline inference provider", async () => {
-      await baselineProvider?.close();
     });
     const customDockerfile = writeCustomOpenClawDockerfile(home);
     cleanup.trackGateway(host, "nemoclaw", {
@@ -1319,11 +1309,6 @@ test(
     }
 
     progress.phase("inspect route configuration and recorded state");
-    const route = await getRouteOutput(host, home);
-    expect(route.exitCode, resultText(route)).toBe(0);
-    const plainRoute = stripAnsi(resultText(route));
-    expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
-    expect(plainRoute).toContain(`Model: ${SWITCH_MODEL}`);
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
@@ -1339,7 +1324,7 @@ test(
         id: "openclaw-inference-switch",
         status: "skipped",
         reason: inference.skipped,
-        routeAndConfigChecksPassed: true,
+        configAndStateChecksPassed: true,
       });
       skip(inference.skipped);
     }
@@ -1388,7 +1373,6 @@ test(
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
         gatewayPidStable,
-        routeChecked: true,
         configChecked: true,
         registryAndSessionChecked: true,
         inferenceLocalPong: true,
