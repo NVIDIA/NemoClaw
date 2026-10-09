@@ -225,7 +225,10 @@ describe("OpenShell supervisor manifest trust", () => {
   });
 
   it("accepts the prospective same-thread-group executable runtime (#12614)", () => {
-    const result = runParser({ transformSupervisor: selectThreadGroupExecutableRuntime });
+    const result = runParser({
+      transformSupervisor: selectThreadGroupExecutableRuntime,
+      allowUnchangedSupervisor: true,
+    });
     expect(result.status, result.stderr).toBe(0);
   });
 

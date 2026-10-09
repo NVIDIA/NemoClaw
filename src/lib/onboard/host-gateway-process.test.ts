@@ -21,6 +21,10 @@ import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "./docker-drive
 
 const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
 
+function psStatusKey(pid: number): string {
+  return `ps -p ${pid} -o stat=${process.platform === "linux" ? " -L" : ""}`;
+}
+
 interface RunArgs {
   args: string[];
   command: string;
@@ -63,7 +67,7 @@ function psResponses(
   },
 ): [string, RunResult | ((args: string[]) => RunResult)][] {
   return [
-    [`ps -p ${pid} -o stat=`, () => (opts.exited.has(pid) ? notFound() : ok("S\n"))],
+    [psStatusKey(pid), () => (opts.exited.has(pid) ? notFound() : ok("S\n"))],
     [`ps -p ${pid} -o user=`, ok(`${opts.owner ?? "tester"}\n`)],
     [
       `ps -p ${pid} -o args=`,
@@ -147,7 +151,7 @@ describe("host gateway cleanup boundaries", () => {
       fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), "4242\n", { mode: 0o600 });
       const { run } = makeRun(
         new Map([
-          ["ps -p 4242 -o stat=", notFound()],
+          [psStatusKey(4242), notFound()],
           [PGREP_KEY, notFound()],
         ]),
       );
@@ -175,7 +179,7 @@ describe("host gateway cleanup boundaries", () => {
       const { run } = makeRun(
         new Map([
           [PGREP_KEY, ok(`${pid}\n`)],
-          [`ps -p ${pid} -o stat=`, ok("S\n")],
+          [psStatusKey(pid), ok("S\n")],
           [`ps -p ${pid} -o uid=`, notFound()],
           [`ps -p ${pid} -o args=`, ok("openshell-gateway[nemoclaw=nemoclaw-9123;port=9123]\n")],
         ]),
@@ -244,7 +248,7 @@ describe("stopHostGatewayProcesses", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-zombie-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
     fs.writeFileSync(pidFile, "9999886\n");
-    const { run } = makeRun(new Map([["ps -p 9999886 -o stat=", ok("Z\n")]]));
+    const { run } = makeRun(new Map([[psStatusKey(9999886), ok("Z\n")]]));
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>(() => true);
 
     const result = stopHostGatewayProcesses(
@@ -289,7 +293,7 @@ describe("stopHostGatewayProcesses", () => {
       [`ps -p ${pid} -o user=`, ok("tester\n")],
       [`ps -p ${pid} -o args=`, ok("/home/test/.local/bin/openshell-gateway --port 8080\n")],
       [
-        `ps -p ${pid} -o stat=`,
+        psStatusKey(pid),
         () => {
           pidChecks += 1;
           return pidChecks >= 3 ? notFound() : ok("S\n");
@@ -621,7 +625,7 @@ describe("stopHostGatewayProcesses", () => {
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       [PGREP_KEY, ok("9999456\n")],
       ...(psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
-        key === "ps -p 9999123 -o stat=" ? [key, notFound()] : [key, value],
+        key === psStatusKey(9999123) ? [key, notFound()] : [key, value],
       ) as [string, RunResult | ((args: string[]) => RunResult)][]),
       ...psResponses(9999456, { exited }),
     ]);
