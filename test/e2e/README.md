@@ -1428,9 +1428,11 @@ artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
 The preinstalled suite resolves its gateway name and port from the external
-gateway declaration before registering cleanup. It removes its sandbox but
-does not remove the platform gateway registration or service. Source-install
-runs retain their test-owned gateway cleanup.
+gateway declaration before registering cleanup. It removes its first sandbox
+with `--no-cleanup-gateway`, confirms the exact platform registration remains,
+and runs fresh same-agent onboarding plus inference through that retained
+registration. Final cleanup preserves the external registration and service.
+Source-install runs retain their test-owned gateway cleanup.
 The Launchable controller enables `NEMOCLAW_E2E_COMMAND_EVIDENCE=1` to retain
 completed command records in `full-e2e.log`. Each `NEMOCLAW_E2E_COMMAND` JSON
 line contains redacted argv, UTC start and finish timestamps, duration, exit

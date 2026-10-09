@@ -142,25 +142,16 @@ export function printMcpRebuildRetryCommand(
   const dcodeAutoApprovalArg = dcodeAutoApproval?.requestedExplicitly
     ? ` --dcode-auto-approval ${dcodeAutoApproval.mode}`
     : "";
-  if (entries.length > 0) {
-    const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
-    console.error(
-      `    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
-    );
-    console.error(
-      `       This will recreate sandbox '${sandboxName}' and restore its MCP bridges.`,
-    );
-    return;
-  }
   const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
-  // The recreate fault can land after the sandbox was deleted but before create
-  // recorded its name, leaving the resumable onboard session with no name to
-  // resume. Carry --name so this printed command works as written instead of
-  // failing with "no sandbox name was recorded. Re-run with --name".
+  // Recovery must re-enter rebuild so it loads the retained backup and the
+  // original target fingerprint. Generic onboard resume owns a different
+  // transaction and does not accept rebuild-only options such as DCode approval.
   console.error(
-    `    2. Run: ${CLI_NAME} onboard --resume --name ${sandboxName}${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
+    `    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
   );
-  console.error(`       This will recreate sandbox '${sandboxName}'.`);
+  console.error(
+    `       This will recreate sandbox '${sandboxName}'${entries.length > 0 ? " and restore its MCP bridges" : ""}.`,
+  );
 }
 
 export async function restoreMcpAfterRebuild(
