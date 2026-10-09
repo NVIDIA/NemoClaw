@@ -12,8 +12,9 @@ It also strengthens credential checks, preserves gateway-scoped tunnels during s
   NemoClaw validates the local image identity and retains shared images that it does not own.
   Related change: [PR #12538](https://github.com/NVIDIA/NemoClaw/pull/12538).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
-- NVIDIA Endpoints uses a sandbox-attached OpenShell provider instead of the shared `inference.local` route.
-  OpenClaw and Hermes can switch that attachment in place; Deep Agents Code uses rebuild.
+- New and recreated NVIDIA Endpoints sandboxes use a sandbox-attached OpenShell provider instead of the shared `inference.local` route.
+  Sandboxes created earlier keep the shared route until you recreate them.
+  OpenClaw and Hermes can then switch that attachment in place; Deep Agents Code uses rebuild.
   Follow-up repairs restore native sandbox requests and use the supervisor-issued credential handle for OpenClaw and Hermes.
   Related changes: [PR #12562](https://github.com/NVIDIA/NemoClaw/pull/12562), [PR #12826](https://github.com/NVIDIA/NemoClaw/pull/12826), and [PR #12895](https://github.com/NVIDIA/NemoClaw/pull/12895).
   Refer to [Use NVIDIA Endpoints](/user-guide/openclaw/inference/hosted-inference/use-nvidia-endpoints).
@@ -59,8 +60,7 @@ It also strengthens credential checks, preserves gateway-scoped tunnels during s
   Inference switching reports the gateway restart failure category, and non-GPU startup failures use the selected operation's recovery guidance.
   Related changes: [PR #12759](https://github.com/NVIDIA/NemoClaw/pull/12759), [PR #12705](https://github.com/NVIDIA/NemoClaw/pull/12705), and [PR #12796](https://github.com/NVIDIA/NemoClaw/pull/12796).
 - `nemoclaw config export` rejects unsupported Gemini configuration instead of producing an unusable export.
-  Portable `dashboard-url` guidance uses the saved sandbox registry state.
-  Related changes: [PR #12551](https://github.com/NVIDIA/NemoClaw/pull/12551) and [PR #12770](https://github.com/NVIDIA/NemoClaw/pull/12770).
+  Related change: [PR #12551](https://github.com/NVIDIA/NemoClaw/pull/12551).
 - Sandbox image cleanup protects images used by sibling gateways.
   Fresh onboarding no longer detaches providers before the sandbox exists, avoiding misleading `sandbox not found` warnings.
   Related changes: [PR #12608](https://github.com/NVIDIA/NemoClaw/pull/12608) and [PR #12835](https://github.com/NVIDIA/NemoClaw/pull/12835).
