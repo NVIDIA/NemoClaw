@@ -620,6 +620,7 @@ async function readAndAssertOpenClawConfig(
     inferenceApi: string;
     artifactName: string;
     nativeNvidia?: boolean;
+    nativeCustomEndpoint?: string;
   },
 ): Promise<OpenClawModelConfig | undefined> {
   const configResult = await sandbox.exec(
@@ -641,13 +642,20 @@ async function readAndAssertOpenClawConfig(
 
   expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
   expect(provider?.baseUrl).toBe(
-    expected.nativeNvidia
-      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-      : expected.inferenceApi === "anthropic-messages"
-        ? "https://inference.local"
-        : "https://inference.local/v1",
+    expected.nativeCustomEndpoint ??
+      (expected.nativeNvidia
+        ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+        : expected.inferenceApi === "anthropic-messages"
+          ? "https://inference.local"
+          : "https://inference.local/v1"),
   );
-  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "${NVIDIA_INFERENCE_API_KEY}" : "unused");
+  expect(provider?.apiKey).toMatch(
+    expected.nativeCustomEndpoint
+      ? /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_COMPATIBLE_API_KEY$/u
+      : expected.nativeNvidia
+        ? /^\$\{NVIDIA_INFERENCE_API_KEY\}$/u
+        : /^unused$/u,
+  );
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
@@ -661,6 +669,7 @@ async function assertOpenClawConfig(
     inferenceApi: string;
     artifactName: string;
     nativeNvidia?: boolean;
+    nativeCustomEndpoint?: string;
   },
 ): Promise<void> {
   const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
@@ -679,6 +688,7 @@ async function assertInitialOpenClawConfig(
     inferenceApi: string;
     artifactName: string;
     nativeNvidia?: boolean;
+    nativeCustomEndpoint?: string;
   },
 ): Promise<void> {
   const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
@@ -980,6 +990,7 @@ async function runInitialRouteLifecycle(options: {
   home: string;
   host: HostCliClient;
   model: string;
+  nativeCustomEndpoint?: string;
   progress: Pick<TestProgress, "phase">;
   redactionValues: string[];
   sandbox: SandboxClient;
@@ -989,6 +1000,7 @@ async function runInitialRouteLifecycle(options: {
       model: options.model,
       inferenceApi: "openai-completions",
       artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
+      nativeCustomEndpoint: options.nativeCustomEndpoint,
     });
     await checkOpenClawGatewayInference(
       options.host,
@@ -1267,6 +1279,7 @@ test(
       home,
       host,
       model: baseline.model,
+      nativeCustomEndpoint: baselineProvider ? undefined : baseline.endpointUrl,
       progress,
       redactionValues,
       sandbox,

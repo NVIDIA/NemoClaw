@@ -28,8 +28,19 @@ export async function resolveNativeCustomCredentialReference(
     throw new Error("Invalid native custom credential scope.");
   const script = `printf '%s' "\${${input.credentialEnv}}"`;
   const result = await capture(
-    ["sandbox", "exec", "-g", input.gatewayName, input.sandboxName, "--", "sh", "-lc", script],
-    { ignoreError: true, timeout: 15_000 },
+    [
+      "sandbox",
+      "exec",
+      "-g",
+      input.gatewayName,
+      "--name",
+      input.sandboxName,
+      "--",
+      "sh",
+      "-lc",
+      script,
+    ],
+    { ignoreError: true, includeStreams: true, timeout: 15_000 },
   );
   const value = (result.stdout ?? "").trim();
   if (result.status !== 0 || !isNativeCustomCredentialReference(value, input.credentialEnv))

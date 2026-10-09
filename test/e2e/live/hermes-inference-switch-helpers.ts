@@ -755,8 +755,14 @@ export function expectedApiMode(): string | undefined {
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
 
-export function apiKeyShapeCommand(): string[] {
-  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+export const NVIDIA_API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("\\$\\{NVIDIA_INFERENCE_API_KEY\\}"|'\\$\\{NVIDIA_INFERENCE_API_KEY\\}'|\\$\\{NVIDIA_INFERENCE_API_KEY\\})[[:space:]]*$`;
+
+export function apiKeyShapeCommand(provider: string = SWITCH_PROVIDER): string[] {
+  const pattern =
+    provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NVIDIA_API_KEY_SHAPE_PATTERN
+      : API_KEY_SHAPE_PATTERN;
+  return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {

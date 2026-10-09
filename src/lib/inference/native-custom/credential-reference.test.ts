@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it, vi } from "vitest";
+import { captureOpenshellCommandAsync } from "../../adapters/openshell/command-execution";
 import { resolveNativeCustomCredentialReference } from "./credential-reference";
 
 const scope = {
@@ -11,12 +12,17 @@ const scope = {
 };
 
 it("reads only the selected sandbox issued credential reference through its named gateway (#12636)", async () => {
-  const capture = vi.fn(async () => ({
-    status: 0,
-    stdout: "openshell:resolve:env:v12_COMPATIBLE_API_KEY",
-    output: "",
-    stderr: "",
-  }));
+  const capture = vi.fn<NonNullable<Parameters<typeof resolveNativeCustomCredentialReference>[1]>>(
+    (_args, options) =>
+      captureOpenshellCommandAsync(
+        process.execPath,
+        [
+          "-e",
+          "process.stdout.write('openshell:resolve:env:v12_COMPATIBLE_API_KEY'); process.stderr.write('diagnostic-only');",
+        ],
+        options,
+      ),
+  );
   expect(await resolveNativeCustomCredentialReference(scope, capture)).toBe(
     "openshell:resolve:env:v12_COMPATIBLE_API_KEY",
   );
@@ -26,13 +32,14 @@ it("reads only the selected sandbox issued credential reference through its name
       "exec",
       "-g",
       "nemoclaw",
+      "--name",
       "alpha",
       "--",
       "sh",
       "-lc",
       "printf '%s' \"${COMPATIBLE_API_KEY}\"",
     ],
-    { ignoreError: true, timeout: 15000 },
+    { ignoreError: true, includeStreams: true, timeout: 15000 },
   );
 });
 
