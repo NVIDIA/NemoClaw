@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import {
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+} from "../../inference/native-nvidia";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
@@ -17,6 +22,13 @@ const exactGatewayProvider: GatewayProviderMetadata = {
   name: "compatible-endpoint",
   type: "openai",
   credentialKeys: ["COMPATIBLE_API_KEY"],
+  configKeys: ["OPENAI_BASE_URL"],
+};
+
+const noAuthGatewayProvider: GatewayProviderMetadata = {
+  name: "compatible-endpoint",
+  type: "openai",
+  credentialKeys: ["NEMOCLAW_OLLAMA_PROXY_TOKEN"],
   configKeys: ["OPENAI_BASE_URL"],
 };
 
@@ -90,6 +102,59 @@ describe("canRecreateMissingRebuildGatewayProvider", () => {
 });
 
 describe("inspectRebuildGatewayProviderRegistration", () => {
+  it.each([
+    ["exact native binding", {}, "registered"],
+    ["replaced provider", { revision: { id: "foreign", resourceVersion: 2 } }, "indeterminate"],
+    ["wrong profile", { type: "openai" }, "indeterminate"],
+    [
+      "extra credential",
+      { credentialKeys: ["NVIDIA_INFERENCE_API_KEY", "OTHER"] },
+      "indeterminate",
+    ],
+    ["mutable endpoint", { configKeys: ["OPENAI_BASE_URL"] }, "indeterminate"],
+    ["expired credential", { credentialExpiresAtMs: { NVIDIA_INFERENCE_API_KEY: 1 } }, "expired"],
+  ] as const)(
+    "checks %s against the recorded native identity",
+    async (_label, changes, expected) => {
+      const adapter = createCliOpenShellProviderAdapter();
+      const get = vi.spyOn(adapter, "getProvider").mockResolvedValue({
+        ok: true,
+        value: {
+          name: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          credentialExpiresAtMs: {},
+          revision: { id: "recorded-id", resourceVersion: 1 },
+          ...changes,
+        },
+      });
+      const receipt = {
+        schemaVersion: 1,
+        providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+        profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        providerId: "recorded-id",
+      } as const;
+      await expect(
+        inspectRebuildGatewayProviderRegistration(
+          "nvidia-prod",
+          vi.fn(),
+          "Before deletion",
+          undefined,
+          adapter,
+          "NVIDIA_INFERENCE_API_KEY",
+          receipt,
+        ),
+      ).resolves.toBe(expected);
+      expect(get).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+          includeCredentialExpirations: true,
+        }),
+      );
+    },
+  );
+
   it("pins the delete-edge lookup to the frozen target under hostile ambient selectors (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
@@ -138,6 +203,31 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => exactGatewayProvider,
         readRecordedProviderEndpoints: () => [],
       }),
+    ).resolves.toBe(true);
+  });
+
+  it("accepts the loopback no-auth proxy identity recorded by onboarding", async () => {
+    const noAuthConfig = config({
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      endpointUrl: "http://localhost:11434/v1",
+      registryInferenceRoute: {
+        ...config().registryInferenceRoute!,
+        endpointUrl: "http://localhost:11434/v1",
+      },
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        noAuthConfig,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => noAuthGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
     ).resolves.toBe(true);
   });
 
@@ -252,7 +342,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
   });
 
   it("rejects spoofed gateway bindings", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const spoofedProvider = {
       ...exactGatewayProvider,
       credentialKeys: ["ATTACKER_KEY"],
@@ -262,7 +352,11 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => spoofedProvider,
         readRecordedProviderEndpoints: () => [],
       }),
-    ).rejects.toThrow("no compatible non-secret identity");
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).not.toContain("compatible-endpoint");
+    expect(diagnostics).not.toContain("COMPATIBLE_API_KEY");
+    expect(diagnostics).not.toContain("ATTACKER_KEY");
   });
 
   it("rejects a custom endpoint recorded by another sandbox", async () => {
@@ -274,7 +368,32 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readGatewayProviderMetadata: async () => exactGatewayProvider,
         readRecordedProviderEndpoints,
       }),
-    ).rejects.toThrow("recovered endpoint identity is missing or incompatible");
+    ).rejects.toThrow("Unsafe gateway credential reuse");
     expect(readRecordedProviderEndpoints).toHaveBeenCalledWith("compatible-endpoint", "alpha");
+  });
+
+  it("reports the rejected recovery condition without endpoint details", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const mismatchedEndpoint = config({
+      endpointUrl: "https://secret-canary.example.test/v1",
+    });
+
+    await expect(
+      checkRebuildGatewayCredentialReuseOrBail(
+        "alpha",
+        mismatchedEndpoint,
+        false,
+        vi.fn(),
+        throwingBail,
+        {
+          readGatewayProviderMetadata: async () => exactGatewayProvider,
+          readRecordedProviderEndpoints: () => [],
+        },
+      ),
+    ).rejects.toThrow("Unsafe gateway credential reuse");
+
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("The recorded endpoint identity is missing or incompatible.");
+    expect(diagnostics).not.toContain("secret-canary");
   });
 });

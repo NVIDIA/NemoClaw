@@ -301,6 +301,9 @@ describe("llama.cpp image PR workflow", () => {
       "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
     );
     expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.authentication"] == "managed-bearer-v1"',
+    );
+    expect(validate.run).toContain(
       'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',
     );
     expect(validate.run).toContain(
@@ -677,9 +680,14 @@ describe("llama.cpp image PR workflow", () => {
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.uses)
       .filter((uses): uses is string => uses !== undefined);
-    actions.forEach((action) => {
-      expect(action).toMatch(fullShaAction);
-    });
+    expect(actions.filter((action) => action.startsWith("./"))).toEqual([
+      "./.github/actions/setup-reviewed-npm",
+    ]);
+    actions
+      .filter((action) => !action.startsWith("./"))
+      .forEach((action) => {
+        expect(action).toMatch(fullShaAction);
+      });
 
     expect(buildStep.with?.platforms).toBe("${{ matrix.platform }}");
     expect(buildStep.with?.provenance).toBe(false);

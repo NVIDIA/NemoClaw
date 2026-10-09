@@ -32,21 +32,19 @@ const mocks = vi.hoisted(() => {
     buildVersionedUninstallUrl: vi.fn(
       (version: string) => `https://example.test/${version}/uninstall.sh`,
     ),
-    fetchGatewayAuthTokenFromSandbox: vi.fn(() => "token"),
+    fetchGatewayAuthTokenFromSandbox: vi.fn(async () => "token"),
     getVersion: vi.fn(() => "1.2.3"),
     captureOpenshellCommand: vi.fn(() => ({ status: 0, output: "alpha\n" })),
-    listSandboxes: vi.fn(() => ({ sandboxes: [] })),
+    getSandbox: vi.fn(() => ({ dashboardPort: 18_791 })),
+    listSandboxes: vi.fn(() => ({ sandboxes: [], defaultSandbox: "resolved-sandbox" })),
+    createOpenShellDebugDiagnostics: vi.fn(() => ({ collect: vi.fn() })),
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
     runDebugCommandWithOptions: vi.fn(),
-    runDashboardUrlCommand: vi.fn(() => undefined),
-    runGatewayTokenCommand: vi.fn(() => undefined),
+    runDashboardUrlCommand: vi.fn(async () => undefined),
+    runGatewayTokenCommand: vi.fn(async () => undefined),
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
-    resolveDefaultSandboxName: vi.fn((listSandboxes: () => unknown) => {
-      listSandboxes();
-      return "resolved-sandbox";
-    }),
     assertHermesPortableCommandUnavailable: vi.fn(),
     withMcpLifecycleLock: vi.fn(async (_sandboxName: string, operation: () => unknown) =>
       operation(),
@@ -63,7 +61,10 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("node:child_process", () => ({ spawnSync: mocks.spawnSync }));
-vi.mock("../lib/diagnostics/debug", () => ({ runDebug: vi.fn() }));
+vi.mock("../lib/diagnostics/debug", () => ({
+  createOpenShellDebugDiagnostics: mocks.createOpenShellDebugDiagnostics,
+  runDebug: vi.fn(),
+}));
 vi.mock("../lib/diagnostics/debug-command", () => ({
   runDebugCommandWithOptions: mocks.runDebugCommandWithOptions,
 }));
@@ -82,15 +83,18 @@ vi.mock("../lib/actions/global", () => ({
 vi.mock("../lib/adapters/openshell/client", () => ({
   captureOpenshellCommand: mocks.captureOpenshellCommand,
 }));
-vi.mock("../lib/state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
+vi.mock("../lib/state/registry", () => ({
+  getSandbox: mocks.getSandbox,
+  listSandboxes: mocks.listSandboxes,
+}));
 vi.mock("../lib/adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
 vi.mock("../lib/tunnel/services", () => ({
   showStatus: mocks.showStatus,
   startAll: mocks.startAll,
   stopAll: mocks.stopAll,
 }));
-vi.mock("../lib/tunnel/service-command", () => ({
-  resolveDefaultSandboxName: mocks.resolveDefaultSandboxName,
+vi.mock("../lib/tunnel/service-command", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/tunnel/service-command")>()),
   runStartCommand: mocks.runStartCommand,
   runStopCommand: mocks.runStopCommand,
 }));
@@ -305,7 +309,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   });
 
   it("rejects schema-5 gateway-token before fetching or printing credentials (#9203)", async () => {
-    const fetchToken = vi.fn(() => "must-not-print");
+    const fetchToken = vi.fn(async () => "must-not-print");
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
       fetchToken,
       getSandboxAgent: () => "hermes",
@@ -349,7 +353,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     // NCQ #3180: legacy dispatch did not catch the @oclif/core ExitError
     // thrown by this.exit(1), surfacing a raw JS stack trace to the user.
     // The adapter must signal failure via process.exitCode instead.
-    mocks.runGatewayTokenCommand.mockImplementationOnce(() => {
+    mocks.runGatewayTokenCommand.mockImplementationOnce(async () => {
       throw new mocks.GatewayTokenCommandError("not applicable");
     });
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
@@ -377,7 +381,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
       "  For Hermes dashboard access, run: nemohermes hermes dashboard-url",
       "  Hermes dashboard auth is read from the in-sandbox config (~/.hermes/config.yaml), not a gateway token.",
     ];
-    mocks.runGatewayTokenCommand.mockImplementationOnce(() => {
+    mocks.runGatewayTokenCommand.mockImplementationOnce(async () => {
       throw new mocks.GatewayTokenCommandError(hermesLines, 1);
     });
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
@@ -406,7 +410,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   it("clears a stale non-zero process.exitCode on a successful gateway-token run", async () => {
     // CodeRabbit #3182: if a prior run() left process.exitCode = 1, a later
     // successful invocation must still report success. Always overwrite.
-    mocks.runGatewayTokenCommand.mockReturnValueOnce(undefined);
+    mocks.runGatewayTokenCommand.mockResolvedValueOnce(undefined);
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
       fetchToken: mocks.fetchGatewayAuthTokenFromSandbox,
       getSandboxAgent: () => "openclaw",
@@ -431,6 +435,10 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   });
 
   it("maps tunnel and deprecated service commands to service actions", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "resolved-sandbox", dashboardPort: 18_791 }],
+      defaultSandbox: "resolved-sandbox",
+    } as never);
     await TunnelStartCommand.run([], rootDir);
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await TunnelStopCommand.run([], rootDir);
@@ -443,9 +451,12 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
-    expect(mocks.resolveDefaultSandboxName).toHaveBeenCalledTimes(1);
     expect(mocks.listSandboxes).toHaveBeenCalledTimes(1);
-    expect(mocks.showStatus).toHaveBeenCalledWith({ sandboxName: "resolved-sandbox" });
+    expect(mocks.getSandbox).not.toHaveBeenCalled();
+    expect(mocks.showStatus).toHaveBeenCalledWith({
+      sandboxName: "resolved-sandbox",
+      dashboardPort: 18_791,
+    });
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );
@@ -455,6 +466,24 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
         [expect.objectContaining({ releaseGatewayPort: true })],
       ]),
     );
+  });
+
+  it("shows the registered dashboard port for an explicit sandbox selection", async () => {
+    vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "selected");
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        { name: "resolved-sandbox", dashboardPort: 18_789 },
+        { name: "selected", dashboardPort: 18_791 },
+      ],
+      defaultSandbox: "resolved-sandbox",
+    } as never);
+
+    await TunnelStatusCommand.run([], rootDir);
+
+    expect(mocks.showStatus).toHaveBeenCalledWith({
+      sandboxName: "selected",
+      dashboardPort: 18_791,
+    });
   });
 
   it("passes uninstall runtime dependencies to the uninstall action", async () => {

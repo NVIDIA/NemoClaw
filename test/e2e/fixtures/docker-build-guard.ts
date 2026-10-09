@@ -9,25 +9,40 @@ import path from "node:path";
 import { shellQuote } from "./clients/command.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 
-export type DockerBuildGuard = {
+export type ContainerBuildGuard = {
   readonly env: NodeJS.ProcessEnv;
   readonly tracePath: string;
   readonly dispose: () => void;
 };
 
-export function createDockerBuildGuard(): DockerBuildGuard {
-  const realDocker = execFileSync("bash", ["-lc", "command -v docker"], {
-    encoding: "utf8",
-    env: buildAvailabilityProbeEnv(),
-    killSignal: "SIGKILL",
-    timeout: 10_000,
-  }).trim();
-  if (!path.isAbsolute(realDocker) || !fs.statSync(realDocker).isFile()) {
-    throw new Error("Docker build guard requires one absolute Docker CLI");
+export type DockerBuildGuard = ContainerBuildGuard;
+
+type GuardedContainerEngine = "docker" | "podman";
+
+const LOCAL_IMAGE_BUILD_PATTERN = /(?:^|\s)build(?:\s|$)|(?:^|\s)buildx\s+bake(?:\s|$)/u;
+
+export function createContainerBuildGuard(
+  containerEngine: GuardedContainerEngine,
+): ContainerBuildGuard {
+  const realExecutable = execFileSync(
+    "bash",
+    ["-lc", 'command -v "$1"', "nemoclaw-container-build-guard", containerEngine],
+    {
+      encoding: "utf8",
+      env: buildAvailabilityProbeEnv(),
+      killSignal: "SIGKILL",
+      timeout: 10_000,
+    },
+  ).trim();
+  if (!path.isAbsolute(realExecutable) || !fs.statSync(realExecutable).isFile()) {
+    throw new Error(
+      `${containerEngine === "docker" ? "Docker" : "Podman"} build guard requires one absolute CLI`,
+    );
   }
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-build-guard-"));
-  const tracePath = path.join(root, "docker-argv.log");
-  const shimPath = path.join(root, "docker");
+  const guardParent = containerEngine === "podman" ? fs.realpathSync(os.homedir()) : os.tmpdir();
+  const root = fs.mkdtempSync(path.join(guardParent, `.nemoclaw-${containerEngine}-build-guard-`));
+  const tracePath = path.join(root, `${containerEngine}-argv.log`);
+  const shimPath = path.join(root, containerEngine);
   fs.writeFileSync(
     shimPath,
     [
@@ -39,12 +54,12 @@ export function createDockerBuildGuard(): DockerBuildGuard {
       "previous=",
       'for argument in "$@"; do',
       '  if [[ "$argument" == build || ("$previous" == buildx && "$argument" == bake) ]]; then',
-      "    echo 'Qualification attempted a forbidden Dockerfile build' >&2",
+      `    echo 'Qualification attempted a forbidden ${containerEngine} image build' >&2`,
       "    exit 97",
       "  fi",
       '  previous="$argument"',
       "done",
-      `exec ${shellQuote(realDocker)} "$@"`,
+      `exec ${shellQuote(realExecutable)} "$@"`,
       "",
     ].join("\n"),
     { mode: 0o700 },
@@ -57,8 +72,25 @@ export function createDockerBuildGuard(): DockerBuildGuard {
   };
 }
 
+export function createDockerBuildGuard(): DockerBuildGuard {
+  return createContainerBuildGuard("docker");
+}
+
+export function countLocalImageBuildCommands(trace: string): number {
+  return trace.split("\n").filter((line) => LOCAL_IMAGE_BUILD_PATTERN.test(line)).length;
+}
+
+export function assertNoLocalImageBuild(
+  trace: string,
+  containerEngine: GuardedContainerEngine,
+): void {
+  if (countLocalImageBuildCommands(trace) > 0) {
+    throw new Error(`Qualification used a forbidden ${containerEngine} image build`);
+  }
+}
+
 export function assertNoDockerfileBuild(trace: string): void {
-  if (/(?:^|\s)build(?:\s|$)|(?:^|\s)buildx\s+bake(?:\s|$)/u.test(trace)) {
+  if (countLocalImageBuildCommands(trace) > 0) {
     throw new Error("Qualification used a forbidden Dockerfile build");
   }
 }

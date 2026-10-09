@@ -186,19 +186,20 @@ function rebind(
     startupProfileSha256: built.startupProfileSha256,
     ...(built.corporateCaB64 === undefined ? {} : { corporateCaB64: built.corporateCaB64 }),
     currentSource: {
-      provider: profile.inference.upstreamProvider,
-      model: profile.inference.model,
-      endpointUrl: profile.inference.upstreamEndpointUrl,
-      preferredInferenceApi: profile.inference.api,
+      provider: profile.inference?.upstreamProvider,
+      model: profile.inference?.model,
+      endpointUrl: profile.inference?.upstreamEndpointUrl,
+      preferredInferenceApi: profile.inference?.api,
       compatibleEndpointReasoning:
-        profile.agent === "openclaw" && profile.inference.upstreamProvider === "compatible-endpoint"
+        profile.agent === "openclaw" &&
+        profile.inference?.upstreamProvider === "compatible-endpoint"
           ? profile.tuning.reasoning
             ? "true"
             : "false"
           : null,
       compatibleEndpointReasoningEffort:
         profile.agent === "openclaw" &&
-        profile.inference.upstreamProvider === "compatible-endpoint" &&
+        profile.inference?.upstreamProvider === "compatible-endpoint" &&
         profile.tuning.reasoningEffort !== "default"
           ? profile.tuning.reasoningEffort
           : null,
@@ -235,6 +236,25 @@ function rebind(
 }
 
 describe("rebindManagedStartupProfileForClone", () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "uses the later configured route when cloning providerless %s startup state",
+    (agent) => {
+      const input = agent === "openclaw" ? openClawInput() : hermesInput();
+      const built = buildManagedStartupProfile({ ...input, inference: null });
+      vi.spyOn(
+        managedStartupCloneRebinderDependencies,
+        "resolveContextWindowForModel",
+      ).mockReturnValue(131_072);
+      const rebound = rebind(built, agent, 21_189, {
+        provider: "nvidia-prod",
+        model: "fixture/model",
+        preferredInferenceApi: "openai-completions",
+      });
+      expect(rebound.profile.inference?.model).toBe("fixture/model");
+      expect(rebound.profile.inference?.upstreamProvider).toBe("nvidia-prod");
+    },
+  );
+
   it("rebinds OpenClaw dashboard and manifest-derived provider identity without ambient tokens", () => {
     const built = buildManagedStartupProfile(openClawInput());
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "ambient-token-must-not-be-read");
@@ -270,7 +290,7 @@ describe("rebindManagedStartupProfileForClone", () => {
     const built = buildManagedStartupProfile({
       ...openClawInput(),
       inference: {
-        ...openClawInput().inference,
+        ...openClawInput().inference!,
         upstreamProvider: "compatible-endpoint",
         api: "openai-completions",
       },
@@ -312,7 +332,7 @@ describe("rebindManagedStartupProfileForClone", () => {
     const ollamaSource = buildManagedStartupProfile({
       ...input,
       inference: {
-        ...input.inference,
+        ...input.inference!,
         upstreamProvider: "ollama-local",
         model: "qwen3:8b",
         api: "openai-completions",
@@ -332,6 +352,29 @@ describe("rebindManagedStartupProfileForClone", () => {
 
     expect(resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
     expect(rebound.profile.tuning.contextWindow).toBe(131_072);
+  });
+
+  it("rejects a changed compatible endpoint without selected-route context evidence", () => {
+    const built = buildManagedStartupProfile({
+      ...openClawInput(),
+      environment: { NEMOCLAW_CONTEXT_WINDOW: "16384" },
+    });
+    const resolveContextWindowForModel = vi
+      .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
+      .mockReturnValue(null);
+
+    expect(() =>
+      rebind(built, "openclaw", 20_789, {
+        provider: "compatible-endpoint",
+        model: "nvidia/custom-model",
+        preferredInferenceApi: "openai-completions",
+      }),
+    ).toThrow("current OpenClaw inference route has no verifiable context window");
+
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
+      "compatible-endpoint",
+      "nvidia/custom-model",
+    );
   });
 
   it("rebinds Hermes public dashboard and provider identity while retaining its internal port", () => {
@@ -458,8 +501,8 @@ describe("rebindManagedStartupProfileForClone", () => {
         encodedProfile: built.encodedProfile,
         startupProfileSha256: "0".repeat(64),
         currentSource: {
-          provider: built.profile.inference.upstreamProvider,
-          model: built.profile.inference.model,
+          provider: built.profile.inference!.upstreamProvider,
+          model: built.profile.inference!.model,
         },
       }),
     ).toThrow(ManagedStartupCloneRebindError);
@@ -480,8 +523,8 @@ describe("rebindManagedStartupProfileForClone", () => {
         startupProfileSha256: built.startupProfileSha256,
         corporateCaB64: "eA==",
         currentSource: {
-          provider: built.profile.inference.upstreamProvider,
-          model: built.profile.inference.model,
+          provider: built.profile.inference!.upstreamProvider,
+          model: built.profile.inference!.model,
         },
       }),
     ).toThrow(/corporate CA transport/u);

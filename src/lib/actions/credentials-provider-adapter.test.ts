@@ -5,10 +5,7 @@ import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import type {
-  OpenShellProviderAdapter,
-  OpenShellProviderError,
-} from "../adapters/openshell/provider-adapter";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
 import { runCredentialsListAction } from "./credentials/list";
@@ -65,6 +62,9 @@ function providerAdapter(
   const getProviderRefreshStatus: OpenShellProviderAdapter["getProviderRefreshStatus"] =
     async () => ({ ok: true, value: { status: "refreshed" } });
   return {
+    ensureProviderPolicyComposition: vi
+      .fn<OpenShellProviderAdapter["ensureProviderPolicyComposition"]>()
+      .mockResolvedValue({ ok: true, value: undefined }),
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
     getProvider: vi.fn(getProvider),
@@ -81,13 +81,50 @@ function providerAdapter(
   };
 }
 
+function nativeNvidiaProviderAdapter(): OpenShellProviderAdapter {
+  let providerPresent = false;
+  return providerAdapter({
+    getProvider: vi.fn(async (request) =>
+      providerPresent
+        ? {
+            ok: true as const,
+            value: {
+              name: request.providerName,
+              type: "nemoclaw-nvidia-inference-v1",
+              credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+              configKeys: [],
+              revision: {
+                id: "11111111-2222-4333-8444-555555555555",
+                resourceVersion: 1,
+              },
+            },
+          }
+        : {
+            ok: false as const,
+            error: {
+              kind: "command" as const,
+              reason: "not_found" as const,
+              message: "provider not found",
+            },
+          },
+    ),
+    createProvider: vi.fn(async () => {
+      providerPresent = true;
+      return { ok: true as const };
+    }),
+    deleteProvider: vi.fn(async () => {
+      providerPresent = false;
+      return { ok: true as const };
+    }),
+  });
+}
+
 describe("credential actions use typed OpenShell provider results", () => {
   beforeEach(() => {
     setGlobalCliActionRuntimeHooksForTest({
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [],
     });
   });
 
@@ -121,7 +158,148 @@ describe("credential actions use typed OpenShell provider results", () => {
       fromExisting: false,
       timeoutMs: 30_000,
     });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("credential-value");
+  });
+
+  it("maps the NVIDIA credential alias to the internal native provider", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
+    const recordExtraProvider = vi.fn(() => true);
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      recordExtraProvider,
+      forgetExtraProvider: () => true,
+    });
+    const providerId = "11111111-2222-4333-8444-555555555555";
+    const adapter = nativeNvidiaProviderAdapter();
+    const setNativeNvidiaProviderAuthority = vi.fn();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "nvidia-prod",
+        type: "nvidia",
+        credentials: ["NVIDIA_INFERENCE_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      {
+        providerAdapter: adapter,
+        getNativeNvidiaProviderAuthority: () => undefined,
+        setNativeNvidiaProviderAuthority,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profilePath: expect.stringMatching(/provider-profiles\/nemoclaw-nvidia-inference-v1\.yaml$/u),
+    });
+    expect(adapter.createProvider).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      name: "nemoclaw-nvidia-prod-v1",
+      type: "nemoclaw-nvidia-inference-v1",
+      credentials: [{ name: "NVIDIA_INFERENCE_API_KEY", value: "host-only-nvidia-value" }],
+      config: [],
+      fromExisting: false,
+    });
+    expect(setNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw", {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId,
+    });
+    expect(recordExtraProvider).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
+  });
+
+  it("removes the native NVIDIA provider when authority persistence fails", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
+    const adapter = nativeNvidiaProviderAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "nvidia-prod",
+        type: "nvidia",
+        credentials: ["NVIDIA_INFERENCE_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      {
+        providerAdapter: adapter,
+        getNativeNvidiaProviderAuthority: () => undefined,
+        setNativeNvidiaProviderAuthority: () => {
+          throw new Error("state directory is read-only");
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toMatch(
+      /newly created provider was removed.*state directory is read-only/su,
+    );
+    expect(adapter.deleteProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "nemoclaw-nvidia-prod-v1",
+    });
+    expect(JSON.stringify(result)).not.toContain("host-only-nvidia-value");
+  });
+
+  it("rejects a substituted native NVIDIA provider before replacing its credential", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "host-only-nvidia-value");
+    const adapter = providerAdapter({
+      getProvider: vi.fn(async (request) => ({
+        ok: true as const,
+        value: {
+          name: request.providerName,
+          type: "nemoclaw-nvidia-inference-v1",
+          credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+          configKeys: [],
+          revision: { id: "replacement-provider-id", resourceVersion: 2 },
+        },
+      })),
+    });
+    const setNativeNvidiaProviderAuthority = vi.fn();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "nvidia-prod",
+        type: "nvidia",
+        credentials: ["NVIDIA_INFERENCE_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      {
+        providerAdapter: adapter,
+        getNativeNvidiaProviderAuthority: () => ({
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "11111111-2222-4333-8444-555555555555",
+        }),
+        setNativeNvidiaProviderAuthority,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain("changed identity");
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(setNativeNvidiaProviderAuthority).not.toHaveBeenCalled();
+  });
+
+  it("lists the native NVIDIA provider only by its logical credential name", async () => {
+    const adapter = providerAdapter({
+      listProviders: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: ["nemoclaw-nvidia-prod-v1", "custom-provider"] },
+      })),
+    });
+
+    const result = await runCredentialsListAction("nemoclaw", { providerAdapter: adapter });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.outputLines).toContain("    nvidia-prod");
+    expect(result.outputLines).toContain("    custom-provider");
+    expect(result.outputLines.join("\n")).not.toContain("nemoclaw-nvidia-prod-v1");
   });
 
   it("registers both Langfuse keys through the checked-in endpoint profile (#10840)", async () => {
@@ -311,7 +489,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     },
   );
 
-  it("imports the bundled OpenAI profile through the provider adapter (#9806)", async () => {
+  it("does not import a compatibility profile for the OpenAI provider (#11229)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
     const adapter = providerAdapter();
 
@@ -327,15 +505,11 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
-      timeoutMs: 30_000,
-    });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("canonicalizes a mixed-case bundled profile through provider creation (#9806)", async () => {
+  it("does not import a compatibility profile for a mixed-case OpenAI type (#11229)", async () => {
     const adapter = providerAdapter();
 
     const result = await runCredentialsAddAction(
@@ -350,11 +524,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
-      timeoutMs: 30_000,
-    });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.inspectProviderProfile).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
       profileType: "openai",
@@ -433,16 +603,17 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
       ok: false,
       error: testCase.createError,
     });
-    const listProviders: OpenShellProviderAdapter["listProviders"] = async () => testCase.inventory;
+    const listProviders = vi
+      .fn<OpenShellProviderAdapter["listProviders"]>()
+      .mockResolvedValue(testCase.inventory);
     const adapter = providerAdapter({
       createProvider: vi.fn(createProvider),
-      listProviders: vi.fn(listProviders),
+      listProviders,
     });
 
     const result = await runCredentialsAddAction(
@@ -464,36 +635,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.failureLines).toEqual(expect.arrayContaining(testCase.expectedLines));
     expect(result.failureLines.join("\n")).not.toContain("<sandbox> rebuild");
     expect(forgetExtraProvider).toHaveBeenCalledTimes(testCase.forgetCalls);
-  });
-
-  it("does not create an OpenAI provider after profile import fails (#9806)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
-      ok: false,
-      error: {
-        kind: "command",
-        reason: "profile_incompatible",
-        message: "The OpenShell provider profile does not match the checked-in boundary.",
-      },
-    });
-    const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
-
-    const result = await runCredentialsAddAction(
-      {
-        provider: "openai-prod",
-        type: "openai",
-        credentials: ["OPENAI_API_KEY"],
-        configPairs: [],
-        fromExisting: false,
-      },
-      { providerAdapter: adapter },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines).toContain(
-      "  OpenShell provider profile 'openai' does not match NemoClaw's checked-in credential boundary.",
-    );
-    expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
   it("does not create a provider from an incompatible bundled profile (#9806)", async () => {
@@ -525,77 +666,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
-
-  it.each([
-    [
-      "authentication",
-      {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the provider operation.",
-      },
-      ["  Restore OpenShell authentication for the selected gateway, then retry."],
-    ],
-    [
-      "unreachable gateway",
-      {
-        kind: "transport",
-        reason: "unreachable",
-        message: "OpenShell could not reach the selected gateway.",
-      },
-      ["  Start the gateway again with `nemoclaw onboard`.", "  Then retry this command."],
-    ],
-    [
-      "timeout",
-      { kind: "timeout", message: "The OpenShell provider operation timed out." },
-      ["  Confirm the selected OpenShell gateway is available, then retry."],
-    ],
-    [
-      "schema mismatch",
-      {
-        kind: "schema",
-        message: "The OpenShell CLI and gateway provider schemas do not match.",
-      },
-      ["  Update OpenShell with scripts/install-openshell.sh, then retry."],
-    ],
-    [
-      "invalid bundled profile",
-      {
-        kind: "validation",
-        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
-      },
-      ["  Restore the bundled provider profile from this NemoClaw release, then retry."],
-    ],
-  ] satisfies ReadonlyArray<readonly [string, OpenShellProviderError, readonly string[]]>)(
-    "gives actionable recovery for a typed %s profile import failure (#9806)",
-    async (_case, error, recoveryLines) => {
-      vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-      const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] =
-        async () => ({
-          ok: false,
-          error,
-        });
-      const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
-
-      const result = await runCredentialsAddAction(
-        {
-          provider: "openai-prod",
-          type: "openai",
-          credentials: ["OPENAI_API_KEY"],
-          configPairs: [],
-          fromExisting: false,
-        },
-        { providerAdapter: adapter },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(result.failureLines).toEqual([
-        "  Could not import bundled provider profile 'openai'.",
-        ...recoveryLines,
-        `  ${error.message}`,
-      ]);
-      expect(adapter.createProvider).not.toHaveBeenCalled();
-    },
-  );
 
   it("does not create from existing credentials when profile identity is unverified (#9806)", async () => {
     const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] =
@@ -632,23 +702,26 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
-  it("creates from existing credentials when inspected keys do not overlap managed MCP reservations (#9806)", async () => {
-    setGlobalCliActionRuntimeHooksForTest({
-      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
-      recordExtraProvider: () => true,
-      forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [
-        {
-          sandboxName: "hermes",
-          server: "maas-glean",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-        },
-      ],
-    });
+  it("creates from existing credentials when live MCP provider keys do not overlap (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["CUSTOM_TOKEN"] } }),
     );
-    const adapter = providerAdapter({ inspectProviderProfile });
+    const adapter = providerAdapter({
+      inspectProviderProfile,
+      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
+        ok: true,
+        value: { names: ["hermes-mcp-maas"] },
+      })),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: {
+          name: "hermes-mcp-maas",
+          type: "nemoclaw-mcp-v1",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+          configKeys: [],
+        },
+      })),
+    });
 
     const result = await runCredentialsAddAction(
       {
@@ -663,26 +736,31 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("rejects existing credentials whose inspected key overlaps a managed MCP reservation (#9806)", async () => {
-    setGlobalCliActionRuntimeHooksForTest({
-      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
-      recordExtraProvider: () => true,
-      forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [
-        {
-          sandboxName: "hermes",
-          server: "maas-glean",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-        },
-      ],
-    });
+  it("defers overlapping retained-provider checks until an actual sandbox attachment (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["MAAS_GLEAN_TOKEN"] } }),
     );
-    const adapter = providerAdapter({ inspectProviderProfile });
+    const adapter = providerAdapter({
+      inspectProviderProfile,
+      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
+        ok: true,
+        value: { names: ["destination-telegram-bridge"] },
+      })),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: {
+          name: "destination-telegram-bridge",
+          type: "nemoclaw-mcp-v1",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+          configKeys: [],
+        },
+      })),
+    });
 
     const result = await runCredentialsAddAction(
       {
@@ -695,12 +773,11 @@ describe("credential actions use typed OpenShell provider results", () => {
       { providerAdapter: adapter },
     );
 
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain(
-      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
-    );
+    expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
-    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
@@ -829,7 +906,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime,
       recordExtraProvider: () => true,
       forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [],
     });
     const promptSpy = vi.spyOn(readline, "createInterface").mockImplementation(() => {
       throw new Error("credentials reset prompted for an invalid provider name");
@@ -910,6 +986,95 @@ describe("credential actions use typed OpenShell provider results", () => {
       "  Provider 'custom-provider' was detached from sandbox(es): alpha during removal.",
     );
     expect(result.outputLines).toContain("    nemoclaw alpha rebuild");
+  });
+
+  it.each(["nvidia-prod", "nemoclaw-nvidia-prod-v1"])(
+    "preserves attached native NVIDIA providers during credential reset via %s",
+    async (provider) => {
+      const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>(async () => ({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider remains attached",
+          attachedSandboxes: ["alpha"],
+        },
+      }));
+      const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>();
+      const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+      const result = await runCredentialsResetAction(
+        { provider, confirmed: true },
+        {
+          providerAdapter: adapter,
+          listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+          withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(deleteProvider).toHaveBeenCalledOnce();
+      expect(deleteProvider).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        providerName: "nemoclaw-nvidia-prod-v1",
+        timeoutMs: 30_000,
+      });
+      expect(detachProvider).not.toHaveBeenCalled();
+      expect(result.failureLines).toContain("  No provider attachment was changed.");
+      expect(result.failureLines).toContain(
+        "  To rotate the credential in place, set NVIDIA_INFERENCE_API_KEY and rerun 'nemoclaw onboard --name <sandbox>'.",
+      );
+      expect(result.failureLines).toContain("    nemoclaw alpha destroy");
+      expect(result.failureLines.join("\n")).not.toContain("rebuild");
+      expect(result.failureLines.join("\n")).not.toContain("openshell sandbox provider detach");
+    },
+  );
+
+  it("clears native NVIDIA gateway authority only after provider deletion is confirmed", async () => {
+    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const adapter = providerAdapter({
+      deleteProvider: vi.fn(async () => ({ ok: true as const })),
+    });
+
+    const result = await runCredentialsResetAction(
+      { provider: "nvidia-prod", confirmed: true },
+      {
+        providerAdapter: adapter,
+        clearNativeNvidiaProviderAuthority,
+        listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+        withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
+  });
+
+  it("clears native NVIDIA authority when the provider is already absent", async () => {
+    const clearNativeNvidiaProviderAuthority = vi.fn();
+    const adapter = providerAdapter({
+      deleteProvider: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          kind: "command" as const,
+          reason: "not_found" as const,
+          message: "provider not found",
+        },
+      })),
+    });
+
+    const result = await runCredentialsResetAction(
+      { provider: "nvidia-prod", confirmed: true },
+      {
+        providerAdapter: adapter,
+        clearNativeNvidiaProviderAuthority,
+        listNativeNvidiaProviderAttachmentSandboxNames: () => [],
+        withGatewayRouteMutationLock: async (_gatewayName, operation) => operation(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(clearNativeNvidiaProviderAuthority).toHaveBeenCalledWith("nemoclaw");
   });
 
   it("reports recovery for sandboxes detached before final deletion fails (#9806)", async () => {
@@ -1030,7 +1195,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
@@ -1076,7 +1240,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
@@ -1122,7 +1285,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()

@@ -84,14 +84,14 @@ describe("Slack runtime env normalization (#4274)", () => {
       envAliases: [
         {
           envKey: "SLACK_BOT_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+          match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
           value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
           message:
             "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
         },
         {
           envKey: "SLACK_APP_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+          match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_APP_TOKEN$",
           value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
           message:
             "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -153,6 +153,19 @@ describe("Slack runtime env normalization (#4274)", () => {
     expect(run.result.stderr).not.toContain("v51_");
     expect(run.bot).not.toContain("openshell:resolve:env:");
     expect(run.app).not.toContain("openshell:resolve:env:");
+  });
+
+  it("preserves stable credential handles in Bolt-compatible aliases", () => {
+    const handle = `s${"a".repeat(64)}`;
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: `openshell:resolve:env:${handle}_SLACK_BOT_TOKEN`,
+      SLACK_APP_TOKEN: `openshell:resolve:env:${handle}_SLACK_APP_TOKEN`,
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe(`xoxb-OPENSHELL-RESOLVE-ENV-${handle}_SLACK_BOT_TOKEN`);
+    expect(run.app).toBe(`xapp-OPENSHELL-RESOLVE-ENV-${handle}_SLACK_APP_TOKEN`);
+    expect(run.result.stderr).not.toContain(handle);
   });
 
   it("normalizes the canonical non-revision placeholder too", () => {

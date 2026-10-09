@@ -18,7 +18,6 @@ import {
 import {
   capturePodmanDestroyIdentity,
   capturePodmanDestroyIdentityByName,
-  createCurrentPodmanOperationEngine,
   createPodmanRuntimeProviderSnapshotSurface,
   NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
   prepareNativePodmanGatewayHostRuntime,
@@ -125,6 +124,27 @@ describe("current Podman runtime provider", () => {
     );
   });
 
+  it("does not inspect after container lookup exhausts the shared snapshot timeout", () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const engine = runtimeEngine(() => exactLabels());
+    vi.mocked(engine.capture).mockImplementation(() => {
+      nowMs = 2_000;
+      return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+    });
+    const surface = createPodmanRuntimeProviderSnapshotSurface(engine);
+    const supported = surface as Extract<typeof surface, { readonly supported: true }>;
+
+    expect(() => supported.preflight("backup", sandbox(), 1_000)).toThrow(
+      "Podman runtime observation deadline expired",
+    );
+    expect(engine.capture).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["container", "inspect"]),
+      expect.anything(),
+    );
+    now.mockRestore();
+  });
+
   it("does not inherit the portable Docker compatibility socket", () => {
     expect(
       resolveNativePodmanSocketPath({
@@ -153,7 +173,7 @@ describe("current Podman runtime provider", () => {
     });
 
     expect(bundle.identity.id).toBe("podman");
-    expect(bundle.bootstrap.supported).toBe(true);
+    expect(bundle.bootstrap).toMatchObject({ supported: false });
     expect(bundle.snapshot.supported).toBe(true);
     expect(bundle.recovery.supported).toBe(true);
     expect(bundle.cleanup.supported).toBe(true);
@@ -161,6 +181,7 @@ describe("current Podman runtime provider", () => {
       supported: true,
       identities: expect.arrayContaining([
         expect.objectContaining({ operation: "host-doctor", engineId: "podman" }),
+        expect.objectContaining({ operation: "external-image-preparation", engineId: "podman" }),
         expect.objectContaining({ operation: "gateway-inspection", engineId: "podman" }),
         expect.objectContaining({ operation: "host-local-inference", engineId: "podman" }),
         expect.objectContaining({ operation: "sandbox-lifecycle", engineId: "podman" }),
@@ -187,17 +208,6 @@ describe("current Podman runtime provider", () => {
     expect(() => bundle.gateway.prepareHostRuntime(input)).toThrow(
       /Inspecting the native Podman gateway address failed.*ENOENT/u,
     );
-  });
-
-  it("projects managed workspace preparation through the lazy production engine", () => {
-    const engine = createCurrentPodmanOperationEngine("managed-bootstrap", {
-      HOME: "/nonexistent/nemoclaw-podman-home",
-      PATH: "/nonexistent/nemoclaw-podman-bin",
-      OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
-    });
-
-    expect(engine.prepareManagedWorkspaceRoot).toBeTypeOf("function");
-    expect(engine.prepareManagedVolumeRoot).toBeTypeOf("function");
   });
 
   it("projects native gateway authority independently from the portable profile", () => {

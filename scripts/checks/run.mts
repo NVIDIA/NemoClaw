@@ -41,11 +41,6 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/local-credential-helper-pin.mts"],
   },
   {
-    name: "hermes-light-skin-boundary",
-    inputs: /^(?:agents\/hermes\/Dockerfile\.base$|src\/lib\/domain\/sandbox\/connect-env\.ts$)/,
-    args: ["scripts/checks/hermes-light-skin-boundary.mts"],
-  },
-  {
     name: "dependency-pins",
     inputs:
       /^(?:Dockerfile(?:\.base)?$|agents\/(?:openclaw|hermes)\/|nemoclaw-blueprint\/blueprint\.yaml$|src\/lib\/(?:onboard\/|actions\/sandbox\/)|\.github\/workflows\/e2e\.yaml$)/,
@@ -112,7 +107,7 @@ export const CHECKS: readonly CheckCommand[] = [
   },
   {
     name: "pi-qualification-receipt-refresh",
-    args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
+    args: ["scripts/checks/pi-qualification-receipt-refresh.mts", "--publication"],
   },
   {
     name: "test-registration-boundary",

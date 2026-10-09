@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +30,134 @@ function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("preserves multiline output through the delayed readiness log fixture", () => {
+    const { bin, env, workDir } = fixture({ delayWorkspaceSshLog: true });
+    const laneLog = path.join(workDir, "lane.log");
+    const input = [
+      "Waiting up to 1 seconds for workspace SSH access",
+      "Readiness diagnostic detail",
+      "Readiness classification detail",
+    ].join("\n");
+
+    const result = spawnSync(path.join(bin, "tee"), ["-a", laneLog], {
+      encoding: "utf8",
+      env,
+      input,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(input);
+    expect(fs.readFileSync(laneLog, "utf8")).toBe(input);
+  });
+
+  it("retains real guest ShellProbe evidence through Vitest and SSH capture (#9851)", () => {
+    const { env, workDir } = fixture({ realCommandEvidence: true });
+    const startedAt = Date.now();
+    const result = run(env);
+    const finishedAt = Date.now();
+    const log = fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8");
+    expect(result.status, log).toBe(0);
+    const records = log
+      .split("\n")
+      .filter((line) => line.startsWith("NEMOCLAW_E2E_COMMAND "))
+      .map((line) => JSON.parse(line.slice("NEMOCLAW_E2E_COMMAND ".length)));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ schemaVersion: 1, exitCode: 0, timedOut: false });
+    expect(records[0].command).toContain("guest-command-proof");
+    expect(Date.parse(records[0].startedAt)).toBeGreaterThanOrEqual(startedAt);
+    expect(Date.parse(records[0].finishedAt)).toBeLessThanOrEqual(finishedAt);
+    expect(Date.parse(records[0].finishedAt) - Date.parse(records[0].startedAt)).toBe(
+      records[0].durationMs,
+    );
+    expect(log).not.toContain("nvapi-test-value");
+    expect(log).not.toContain("guest-private-output\n");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("reports missing command evidence from an older baked suite without changing its result (#9851)", () => {
+    const { env, workDir } = fixture({ omitCommandEvidence: true });
+    expect(run(env).status).toBe(0);
+    expect(fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8")).not.toContain(
+      "NEMOCLAW_E2E_COMMAND ",
+    );
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Completed command metadata unavailable: the guest emitted no command records",
+    );
+  });
+
+  it("retains completed command timestamps when onboarding fails (#9851)", () => {
+    const { env, workDir } = fixture({ e2eFails: true });
+    expect(run(env).status).not.toBe(0);
+    const log = fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8");
+    const record = JSON.parse(
+      log
+        .split("\n")
+        .find((line) => line.startsWith("NEMOCLAW_E2E_COMMAND "))!
+        .slice("NEMOCLAW_E2E_COMMAND ".length),
+    );
+    expect(record).toMatchObject({
+      command: ["brev-quickstart", "e2e-staging"],
+      startedAt: "2026-09-10T18:57:30.000Z",
+      finishedAt: "2026-09-10T18:57:31.000Z",
+      durationMs: 1000,
+      exitCode: 1,
+    });
+    expect(log).not.toContain("nvapi-test-value");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it.each([
+    ["https://127.0.0.1:18080", 18080],
+    ["https://127.0.0.1:19443", 19443],
+    ["http://127.0.0.1:18080", 18080],
+    ["https://[::1]:19443", 19443],
+  ])("diagnoses the declared gateway at %s (#9851)", (gatewayEndpoint, port) => {
+    const { env, workDir, calls } = fixture({
+      e2eFails: true,
+      gatewayEndpoint,
+    });
+    expect(run(env).status).not.toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).toContain(`ss -H -ltnp sport = :${port}`);
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      `declared gateway port: ${port}`,
+    );
+  });
+
+  it.each([
+    "https://untrusted.invalid:18080",
+    "https://127.0.0.1:99999",
+    "https://127.0.0.1",
+    "http://127.0.0.1",
+    "https://127.0.0.1:1023",
+    "$(touch /tmp/unsafe)",
+  ])(
+    "does not probe a substituted port when the declaration is invalid: %s (#9851)",
+    (gatewayEndpoint) => {
+      const { env, workDir, calls } = fixture({ e2eFails: true, gatewayEndpoint });
+      expect(run(env).status).not.toBe(0);
+      expect(fs.readFileSync(calls, "utf8")).not.toMatch(/^ss /m);
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        { status: "ABSENT" },
+      );
+    },
+  );
+
+  it("still cleans up when the baked gateway resolver is unavailable (#9851)", () => {
+    const { env, workDir, calls } = fixture({ e2eFails: true, diagnosticResolverMissing: true });
+    expect(run(env).status).not.toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).not.toMatch(/^ss /m);
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Full E2E failure diagnostic declared gateway listener: status 1",
+    );
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
   it("keeps the staging SSH wrapper outside the full E2E deadline", () => {
     const source = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../tools/e2e/brev-launchable-e2e.sh"),
@@ -687,7 +816,9 @@ describe("focused staging Brev Launchable lane", () => {
     expect(laneLog).toContain("[REDACTED PRIVATE KEY]");
     expect(laneLog).toContain("[REDACTED LONG LINE]");
     expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
-    expect(laneLog).toContain("Full E2E failure diagnostic port 8080 listener: status 0; output:");
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic declared gateway listener: status 0; output:",
+    );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands.indexOf("ssh full-e2e diagnostic platform state")).toBeLessThan(
       commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
@@ -783,7 +914,7 @@ describe("focused staging Brev Launchable lane", () => {
       ["listener presence: present", "listener owner: unavailable"],
     ],
   ])(
-    "classifies port 8080 listener evidence with %s (#6409)",
+    "classifies declared gateway listener evidence with %s (#6409)",
     (_name, listenerOutput, expectedEvidence) => {
       const { env, workDir } = fixture({
         e2eFails: true,
@@ -850,7 +981,7 @@ describe("focused staging Brev Launchable lane", () => {
       "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
     );
     expect(laneLog).toContain(
-      "Full E2E failure diagnostic port 8080 listener: not run; output: diagnostic budget exhausted",
+      "Full E2E failure diagnostic declared gateway listener: not run; output: diagnostic budget exhausted",
     );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
@@ -984,6 +1115,31 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     const output = emittedOutput(result, workDir);
     expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("reports readiness diagnostics when the initial budget expires while logging", () => {
+    const { calls, env, state, workDir } = fixture({
+      brevExecStatus: 0,
+      delayWorkspaceSshLog: true,
+      sshAliasQueryStatus: 42,
+      sshProbeStatus: 0,
+      sshReadyAfter: Number.MAX_SAFE_INTEGER,
+    });
+    const result = run({ ...env, BREV_SSH_TIMEOUT_SECONDS: "1" });
+    expect(result.status).not.toBe(0);
+    const output = emittedOutput(result, workDir);
+    expect(output).toContain("Readiness Brev refresh last failure: none");
+    expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
+    expect(output).toContain("Readiness Brev refresh: not run before the readiness deadline");
+    expect(output).toContain("Readiness classification: direct SSH recovered during diagnostics");
+    expect(output).not.toContain("Readiness classification: Brev refresh/configuration failure");
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).not.toContain("timeout 1s brev refresh");
+    expect(commands).not.toContain("ssh readiness attempt");
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",

@@ -46,6 +46,7 @@ import {
   type ProbeLike,
 } from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
+import { formatOnboardEndpointDiagnostic } from "./diagnostics/redaction";
 import { normalizeReasoningFlag } from "./reasoning-mode";
 import { OnboardDeferredExitError } from "./session-bootstrap";
 
@@ -100,7 +101,7 @@ export interface InferenceSelectionValidationDeps {
    * Optional abort teardown hook for tests. Production loads the helper lazily
    * so openshell binaries stay out of the validation unit graph.
    */
-  teardownOrphanManagedGatewayOnAbort?: () => boolean;
+  teardownOrphanManagedGatewayOnAbort?: () => boolean | Promise<boolean>;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -169,7 +170,7 @@ export function createInferenceSelectionValidationHelpers(
   const trustedPrivateEndpointHosts =
     deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
 
-  function exitNonInteractiveValidationFailure(): never {
+  async function exitNonInteractiveValidationFailure(): Promise<never> {
     // #8952: tear down an unowned managed gateway before fatal exit.
     let gatewayCleanupComplete = false;
     try {
@@ -180,7 +181,7 @@ export function createInferenceSelectionValidationHelpers(
             require("./gateway-destroy") as typeof import("./gateway-destroy");
           return teardownOrphanManagedGatewayOnAbort();
         });
-      gatewayCleanupComplete = teardown();
+      gatewayCleanupComplete = await teardown();
     } catch (error) {
       // Helper never throws; this covers require/load / inject failures.
       console.error(
@@ -196,8 +197,12 @@ export function createInferenceSelectionValidationHelpers(
   function printValidationFailure(
     label: string,
     probe?: { failures?: unknown[]; message?: unknown; advisory?: unknown },
+    endpointUrl?: string,
   ): void {
     console.error(`  ${label} endpoint validation failed.`);
+    if (endpointUrl) {
+      console.error(`  Endpoint: ${formatOnboardEndpointDiagnostic(endpointUrl)}`);
+    }
     if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
     console.error("  Validation details were omitted to avoid exposing credentials.");
     if (!probe) return;
@@ -350,9 +355,9 @@ export function createInferenceSelectionValidationHelpers(
         },
       ],
     };
-    printValidationFailure(label, syntheticProbe);
+    printValidationFailure(label, syntheticProbe, endpointUrl);
     if (deps.isNonInteractive()) {
-      exitNonInteractiveValidationFailure();
+      await exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,
@@ -387,6 +392,7 @@ export function createInferenceSelectionValidationHelpers(
     const probe = await runOpenAiLikeProbe(endpointUrl, model, apiKey, {
       ...probeOptions,
       calibrateTimeouts: true,
+      ...(provider ? { provider } : {}),
     });
     if (!probe.ok) {
       probeOptions.capabilityCache?.invalidate();
@@ -400,7 +406,7 @@ export function createInferenceSelectionValidationHelpers(
         probe,
       );
       if (deps.isNonInteractive()) {
-        exitNonInteractiveValidationFailure();
+        await exitNonInteractiveValidationFailure();
       }
       const retry = await deps.promptValidationRecovery(
         label,
@@ -450,7 +456,7 @@ export function createInferenceSelectionValidationHelpers(
     if (!probe.ok) {
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
-        exitNonInteractiveValidationFailure();
+        await exitNonInteractiveValidationFailure();
       }
       const retry = await deps.promptValidationRecovery(
         label,
@@ -525,9 +531,9 @@ export function createInferenceSelectionValidationHelpers(
         ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
       };
     }
-    printValidationFailure(label, probe);
+    printValidationFailure(label, probe, endpointUrl);
     if (deps.isNonInteractive()) {
-      exitNonInteractiveValidationFailure();
+      await exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,
@@ -608,13 +614,13 @@ export function createInferenceSelectionValidationHelpers(
         ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
       };
     }
-    printValidationFailure(label, probe);
+    printValidationFailure(label, probe, endpointUrl);
     const recovery = getProbeRecovery(probe, { allowModelRetry: true });
     if (intendedApi === "openai-completions" && recovery.kind === "endpoint") {
       printOpenAiSurfaceGuidance();
     }
     if (deps.isNonInteractive()) {
-      exitNonInteractiveValidationFailure();
+      await exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,

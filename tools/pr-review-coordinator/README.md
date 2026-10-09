@@ -1,0 +1,65 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# PR review coordinator
+
+This directory contains the side-effect-free decision core for a repository-owned review
+coordinator. The coordinator consumes an exact-head PR Review Advisor result, repository
+readiness, and the prior review contract. It decides whether a GitHub adapter should stay quiet,
+request changes, or approve.
+
+The local command is deliberately read-only:
+
+```bash
+npm run review:coordinate:local -- --input tools/pr-review-coordinator/examples/clear.json
+```
+
+It does not call GitHub, run the Advisor, post reviews, modify branches, rerun CI, merge, or use an
+App key. This makes it safe to exercise the policy directly.
+
+The checked-in Advisor workflow runs `shadow.mts` after every complete exact-head specialist run.
+That adapter verifies the shared exact-head artifacts and emits a retained decision artifact and job
+summary. It has read-only repository permissions. It evaluates the same P0/P1 ledger, successful CI
+trigger, mergeability, commit verification, and product-scope evidence that a later writer would use,
+but it never performs the proposed review action.
+
+The shadow rollout collector is event-driven rather than scheduled. After the Advisor completes, it
+captures the first five distinct PR decisions in a serialized, artifact-backed sample and then stays
+quiet. Duplicate runs for one PR do not consume another slot. The collector has read-only repository
+permissions, posts no comments or reviews, and retains each sample for maintainers to compare with the
+expected outcome before phase 2 enables selected changes-requested reviews.
+Only artifacts produced by the trusted collector workflow from an independently eligible Advisor run
+count toward the five-sample gate.
+
+Automatic runs inherit a passing required-check state only from the successful exact-head CI trigger;
+manual dispatches remain pending and cannot propose a review. The trusted aggregate makes surviving
+exact-head P0/P1 ledger entries eligible for the shadow decision. A `product-scope` finding keeps the
+approval gate closed; otherwise shadow mode records that no missing-scope defect was reported.
+
+Shadow mode reconstructs prior writes from trusted maintainer reviews and the dedicated coordinator
+bot. Future coordinator-generated changes-requested reviews must carry a hidden
+`nemoclaw-review-coordinator-finding` marker for every frozen finding. Those markers let a later
+exact-head run distinguish a repeated blocker from a newly proven blocker without repeating feedback.
+If unresolved older feedback has no marker, the contract is ambiguous and the coordinator stays quiet;
+it never treats that PR as a first review or proposes approval.
+
+The policy preserves the maintainer review loop's important behavior. Its input is reconciled
+Advisor evidence: the adapter must retain only P0/P1 ledger findings and label whether each finding
+belongs to the frozen contract or was newly proven on the exact follow-up delta.
+
+- Advisor cadence is unchanged. The coordinator only consumes a complete result for the exact
+  current head and base.
+- The first validated P0/P1 result becomes one consolidated changes-requested review.
+- Already-reported findings become a frozen contract and are not repeated on later commits.
+- Follow-up feedback is allowed only for a validated P0/P1 blocker newly introduced or newly
+  proven by the reviewed delta.
+- Malformed evidence, non-boolean snapshot flags, unsupported Advisor statuses, and any Advisor
+  identity other than `exact-head` are rejected before a decision.
+- Ambiguous evidence, stale results, pending prerequisites, drafts, self-authored changes, and
+  duplicate exact-head writes stay quiet.
+- Approval is proposed only for an exact head with a clear exact-head Advisor result, passing
+  required checks, mergeability, explicitly verified commits, and accepted product scope.
+
+Any future GitHub writer must re-read the live head and base immediately before a write and apply
+the same duplicate-write guard. Approval and merge remain separate actions; this coordinator never
+merges.

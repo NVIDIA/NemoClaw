@@ -9,9 +9,12 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
@@ -26,6 +29,30 @@ export function startAttachedOllama(progress: TestProgress, environment: NodeJS.
     spawn: { cwd: REPO_ROOT, env: environment, stdio: "ignore" },
   });
   return ownChildProcess(child);
+}
+
+export function waitForAttachedOllama(
+  host: HostCliClient,
+  environment: NodeJS.ProcessEnv,
+  artifactPrefix = "export-daemon-ready",
+) {
+  // Connection refusal and curl timeouts are transient while this fixture's child starts.
+  return pollUntil({
+    artifactPrefix,
+    attempts: 20,
+    delayMs: 500,
+    probe: (_attempt, artifactName) =>
+      host.command(
+        "curl",
+        ["-q", "--noproxy", "*", "-fsS", "--max-time", "2", "http://127.0.0.1:11439/api/tags"],
+        { artifactName, env: environment, timeoutMs: 5000 },
+      ),
+    accept: (result) => result.exitCode === 0,
+    terminal: (result) =>
+      result.exitCode !== 0 && result.exitCode !== 7 && result.exitCode !== 28
+        ? "The attached daemon readiness read failed."
+        : undefined,
+  });
 }
 
 export const CLI = CLI_ENTRYPOINT;
@@ -88,10 +115,13 @@ export async function preCleanBestEffort(
   }
 }
 
-export function ollamaProxyTokenFile(): string {
-  const home = process.env.HOME;
+export function ollamaProxyTokenFile(home = process.env.HOME): string {
   if (!home) throw new Error("HOME environment variable is required");
   return path.join(home, ".nemoclaw", "ollama-proxy-token");
+}
+
+export function createGpuPrivateHome(home: string): string {
+  return fs.mkdtempSync(path.join(home, ".nemoclaw-gpu-e2e-"));
 }
 
 export function openClawModelConfigProjectionScript(
@@ -188,30 +218,55 @@ export function assertAgentExecutionSucceeded(
   );
 }
 
-export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
+export async function cleanupGpu(
+  host: HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
+  sandbox: SandboxClient,
+  environment: NodeJS.ProcessEnv = env(),
+): Promise<void> {
   await preCleanBestEffort("destroy GPU sandbox", () =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-destroy-gpu",
-      env: env(),
+      env: environment,
       timeoutMs: 120_000,
     }),
   );
   await preCleanBestEffort("delete OpenShell sandbox", () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-delete-gpu",
-      env: env(),
+      env: environment,
       timeoutMs: 60_000,
     }),
   );
-  await preCleanBestEffort("destroy OpenShell gateway", () =>
-    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+  await lifecycle.stopGatewayRuntime({ env: environment, userServiceMode: "permanent" });
+  await preCleanBestEffort("remove OpenShell gateway registration", () =>
+    host.cleanupGatewayRegistration("nemoclaw", {
       artifactName: "cleanup-gateway-destroy-gpu",
-      env: env(),
+      env: environment,
       timeoutMs: 60_000,
     }),
   );
   const ollamaCleanup = await cleanupOllama(host, "cleanup-ollama-processes");
   expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
+}
+
+export function trackGpuGatewayCleanup(
+  cleanup: Pick<CleanupRegistry, "trackDisposable">,
+  host: HostCliClient,
+  lifecycle: LifecyclePhaseFixture,
+  environment: NodeJS.ProcessEnv,
+  artifactName: string,
+  dependentCleanup?: () => Promise<void> | void,
+): void {
+  cleanup.trackDisposable("stop GPU gateway runtime before removing its state", async () => {
+    await lifecycle.stopGatewayRuntime({ env: environment, userServiceMode: "permanent" });
+    await host.cleanupGatewayRegistration("nemoclaw", {
+      artifactName,
+      env: environment,
+      timeoutMs: 60_000,
+    });
+    await dependentCleanup?.();
+  });
 }
 
 export async function cleanupOllama(

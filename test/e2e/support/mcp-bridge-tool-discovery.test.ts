@@ -16,15 +16,126 @@ import {
   startCompatibleMock,
 } from "../live/mcp-bridge-servers.ts";
 import {
+  assertAuthenticatedMcpDiscovery,
   assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpToolDiscovery,
+  buildMcpStatusRequestEvidence,
   hasSuccessfulAuthenticatedMcpDiscovery,
   runHermesInitialMcpReadiness,
   shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
+  withMcpToolCallFailureEvidence,
+  buildHermesGatewayIdentityProbe,
+  buildDeepAgentsConfigProbe,
 } from "../live/mcp-bridge-tool-discovery.ts";
 
 const EXPECTED_SECRET = "expected-secret";
+
+describe("MCP failed tool-call evidence", () => {
+  it("keeps the existing config and process probes unchanged", () => {
+    expect(buildHermesGatewayIdentityProbe()).toBe(
+      [
+        "set -eu",
+        "/usr/bin/python3 -I -S - <<'PY'",
+        "import json, pathlib",
+        "record = json.loads(pathlib.Path('/sandbox/.hermes/runtime/gateway.pid').read_text())",
+        "pid = record if isinstance(record, int) else record['pid']",
+        "fields = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()",
+        "print(json.dumps({'pid': pid, 'start_time': int(fields[19])}, sort_keys=True))",
+        "PY",
+      ].join("\n"),
+    );
+    const probe = buildDeepAgentsConfigProbe("https://fixture.invalid/mcp", "fake", "secret");
+    expect(probe).toContain("entry = data['mcpServers'][\"fake\"]");
+    expect(probe).toContain("assert entry['type'] == 'http'");
+    expect(probe).toContain("assert entry['url'] == \"https://fixture.invalid/mcp\"");
+    expect(probe).toContain("assert re.fullmatch(");
+    expect(probe).toContain('assert "secret" not in text');
+  });
+  function setup() {
+    const requests: FakeMcpRequest[] = [];
+    const host = { nemoclaw: vi.fn().mockResolvedValue({ exitCode: 0 }) };
+    const artifacts = { writeJson: vi.fn().mockResolvedValue("evidence.json") };
+    const options = {
+      artifacts,
+      requests,
+      artifactPrefix: "distinct",
+      sandboxName: "openclaw",
+      serverName: "distinct",
+      credentialEnvName: "DISTINCT_MCP_SECRET",
+      expectedSecret: "secret",
+      redactionValues: ["secret"],
+    };
+    return { host, artifacts, options, requests };
+  }
+
+  it("does not probe or write evidence after a successful call", async () => {
+    const { host, artifacts, options } = setup();
+    await withMcpToolCallFailureEvidence(async () => {}, host, options);
+    expect(host.nemoclaw).not.toHaveBeenCalled();
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("snapshots only failed-call metadata before probing the distinct server", async () => {
+    const { host, artifacts, options, requests } = setup();
+    requests.push(request("old-request"));
+    const failure = new Error("original tool assertion");
+    host.nemoclaw.mockImplementation(async () => {
+      requests.push(request("diagnostic-request"));
+    });
+    await expect(
+      withMcpToolCallFailureEvidence(
+        async () => {
+          requests.push(request("tools/list", { auth: "Bearer secret", body: "private-body" }));
+          throw failure;
+        },
+        host,
+        options,
+      ),
+    ).rejects.toBe(failure);
+    expect(artifacts.writeJson).toHaveBeenCalledExactlyOnceWith(
+      "distinct-failed-call-requests.json",
+      {
+        requests: [
+          {
+            httpMethod: "POST",
+            rpcMethod: "tools/list",
+            responseStatus: 200,
+            credentialKind: "resolved",
+          },
+        ],
+      },
+    );
+    expect(host.nemoclaw).toHaveBeenCalledWith(
+      ["openclaw", "mcp", "status", "distinct", "--tools", "--json"],
+      expect.objectContaining({
+        timeoutMs: 60000,
+        killGraceMs: 1000,
+        captureLimitBytes: 16384,
+        redactionValues: ["secret"],
+      }),
+    );
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain("private-body");
+  });
+
+  it("preserves the original failure if both diagnostic operations fail", async () => {
+    const { host, artifacts, options } = setup();
+    host.nemoclaw.mockRejectedValue(new Error("status unavailable"));
+    artifacts.writeJson.mockImplementation(() => {
+      throw new Error("artifact unavailable");
+    });
+    const failure = new Error("original failure");
+    await expect(
+      withMcpToolCallFailureEvidence(
+        async () => {
+          throw failure;
+        },
+        host,
+        options,
+      ),
+    ).rejects.toBe(failure);
+  });
+});
 const EXPECTED_RESULT_TOKEN = "expected-result";
 const SESSION_ID = "fake-session-1";
 const LEGACY_SESSION_ID = "opaque-legacy-session";
@@ -146,6 +257,55 @@ const BRIDGE_TOOLS = ["tool_search", "tool_describe", "tool_call"].map((name) =>
 let compatibleMock: StartedHttpServer | undefined;
 const artifactRoots: string[] = [];
 
+describe("MCP status request evidence", () => {
+  it("classifies resolved, control, and other requests without retaining bearer values", () => {
+    const controlBearer = "probe-control-bearer";
+    const evidence = buildMcpStatusRequestEvidence(
+      [
+        request("initialize"),
+        request("initialize", {
+          auth: `Bearer ${controlBearer}`,
+          responseStatus: 401,
+          responseHasResult: false,
+        }),
+        request("tools/list", {
+          auth: "Bearer unrelated-bearer",
+          responseStatus: 403,
+          responseHasResult: false,
+        }),
+      ],
+      EXPECTED_SECRET,
+      controlBearer,
+    );
+
+    expect(evidence).toEqual({
+      requests: [
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 200,
+          credentialKind: "resolved",
+        },
+        {
+          httpMethod: "POST",
+          rpcMethod: "initialize",
+          responseStatus: 401,
+          credentialKind: "control",
+        },
+        {
+          httpMethod: "POST",
+          rpcMethod: "tools/list",
+          responseStatus: 403,
+          credentialKind: "other",
+        },
+      ],
+    });
+    expect(JSON.stringify(evidence)).not.toMatch(
+      new RegExp(`${EXPECTED_SECRET}|${controlBearer}|unrelated-bearer`),
+    );
+  });
+});
+
 afterEach(async () => {
   await compatibleMock?.close();
   compatibleMock = undefined;
@@ -211,6 +371,29 @@ function recordToolResult(
 }
 
 describe("authenticated MCP rediscovery evidence", () => {
+  it("accepts status discovery after the credential control request", async () => {
+    const fakeMcp = fakeDiscoveryServer([
+      request("initialize", {
+        auth: "",
+        sessionId: "",
+        protocolVersion: "",
+        responseStatus: 401,
+        responseHasResult: false,
+      }),
+      successfulInitialize(),
+      request("notifications/initialized"),
+      request("tools/list"),
+    ]);
+
+    await expect(
+      assertAuthenticatedMcpDiscovery(fakeMcp, {
+        requestOffset: 0,
+        expectedSecret: EXPECTED_SECRET,
+        label: "trusted-private status discovery",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("accepts successful tool discovery in one negotiated session", () => {
     expect(
       hasSuccessfulAuthenticatedMcpDiscovery(
@@ -289,12 +472,12 @@ describe("authenticated MCP tool discovery transport retry", () => {
     const setSecret = vi.fn();
     const fakeMcp = { requests, setSecret } as unknown as FakeMcpHttpsServer;
     const provider = {
-      registryPresent: true,
-      gatewayPresent: true,
+      present: true,
+      state: "configured",
       attached: true,
       credentialReady: true,
     };
-    const policy = { registryPresent: true, gatewayPresent: true };
+    const policy = { present: true, state: "configured" };
     const adapter = { registered: true };
     const host = {
       nemoclaw: vi
@@ -421,12 +604,12 @@ describe("authenticated MCP tool discovery transport retry", () => {
       0,
       JSON.stringify({
         provider: {
-          registryPresent: true,
-          gatewayPresent: true,
+          present: true,
+          state: "configured",
           attached: true,
           credentialReady: true,
         },
-        policy: { registryPresent: true, gatewayPresent: true },
+        policy: { present: true, state: "configured" },
         adapter: { registered: true },
         toolDiscovery: {},
       }),
@@ -461,14 +644,14 @@ describe("authenticated MCP tool discovery transport retry", () => {
   it("writes redacted diagnostics before rejecting an exit-zero failed discovery (#8746)", async () => {
     const statusJson = {
       provider: {
-        registryPresent: true,
-        gatewayPresent: true,
+        present: true,
+        state: "configured",
         attached: true,
         credentialReady: true,
         credentialResolution: { detail: STATUS_SECRET },
         token: STATUS_SECRET,
       },
-      policy: { registryPresent: true, gatewayPresent: true, token: STATUS_SECRET },
+      policy: { present: true, state: "configured", token: STATUS_SECRET },
       adapter: { registered: true, detail: STATUS_SECRET, sessionId: STATUS_SECRET },
       trustedPrivateTarget: {
         state: "match" as const,
@@ -516,13 +699,13 @@ describe("authenticated MCP tool discovery transport retry", () => {
     const diagnostics = await fs.readFile(artifactPath, "utf8");
     expect(JSON.parse(diagnostics)).toEqual({
       provider: {
-        registryPresent: true,
-        gatewayPresent: true,
+        present: true,
+        state: "configured",
         attached: true,
         credentialReady: true,
         credentialResolutionPresent: true,
       },
-      policy: { registryPresent: true, gatewayPresent: true },
+      policy: { present: true, state: "configured" },
       adapter: { registered: true, detailPresent: true },
       trustedPrivateTarget: { state: "match", detailPresent: true },
       toolDiscovery: {

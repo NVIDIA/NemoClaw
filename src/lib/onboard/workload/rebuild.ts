@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { readCandidateQualificationReceipt } from "../../agent/candidate";
 import { cloneAndDeepFreeze } from "../../core/immutable";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { getVersion } from "../../core/version";
 import type { SandboxEntry } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
@@ -36,6 +37,7 @@ import {
 export type { ManagedWorkloadReceipt } from "./authority";
 
 import {
+  installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
@@ -135,6 +137,7 @@ export async function prepareManagedWorkloadRebuildHandoff(
     readonly runtime: SandboxWorkloadRuntimeCapabilities;
     readonly provider: RuntimeProviderBundle;
     readonly version?: string;
+    readonly rootDir?: string;
   },
 ): Promise<ManagedWorkloadRebuildCatalogHandoff | null> {
   const authority = readManagedWorkloadAuthority(entry);
@@ -193,11 +196,17 @@ export async function prepareManagedWorkloadRebuildHandoff(
       );
     }
     try {
+      // Source installs publish a SHA pointer, not a Git-describe release alias.
+      // Keep rebuild on the same installed-build authority as onboarding.
+      const rootDir = options.rootDir ?? REPOSITORY_ROOT;
+      const catalogRevision =
+        qualificationRevision ??
+        (liveCatalog ? null : installedManagedImageCatalogRevision(process.env, rootDir));
       replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
         agentName: authority.agent,
         legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
         runtime: options.runtime,
-        version: options.version ?? getVersion(),
+        version: options.version ?? getVersion({ rootDir }),
         policy: "require-managed",
         ...(liveCatalog
           ? {
@@ -206,7 +215,7 @@ export async function prepareManagedWorkloadRebuildHandoff(
               expectedCatalogRevision: liveCatalog.revision,
             }
           : {}),
-        ...(qualificationRevision ? { catalogRevision: qualificationRevision } : {}),
+        ...(catalogRevision ? { catalogRevision } : {}),
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(
@@ -293,8 +302,11 @@ export function managedWorkloadRebuildProfileEnvironment(
     if (reasoning !== null) result.NEMOCLAW_REASONING = String(reasoning);
     const reasoningEffort = overrides.openClawReasoningEffort ?? previous.tuning.reasoningEffort;
     if (reasoningEffort !== null) result.NEMOCLAW_REASONING_EFFORT = reasoningEffort;
-    if (previous.inference.inputModalities !== null) {
+    if (previous.inference?.inputModalities != null) {
       result.NEMOCLAW_INFERENCE_INPUTS = previous.inference.inputModalities.join(",");
+    }
+    if (previous.inference?.servingPreset) {
+      result.NEMOCLAW_SERVING_PRESET = previous.inference.servingPreset;
     }
     result.NEMOCLAW_AGENT_TIMEOUT = String(config.agentTimeoutSeconds);
     if (config.heartbeatEvery !== null) {
@@ -311,6 +323,16 @@ export function managedWorkloadRebuildProfileEnvironment(
     result.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = String(config.otel.sampleRate);
   } else if (previous.agent === "hermes" && previous.tuning.contextWindow !== null) {
     result.NEMOCLAW_CONTEXT_WINDOW = String(previous.tuning.contextWindow);
+  } else if (previous.agent === "pi") {
+    if (previous.tuning.contextWindow !== null) {
+      result.NEMOCLAW_CONTEXT_WINDOW = String(previous.tuning.contextWindow);
+    }
+    if (previous.tuning.maxTokens !== null) {
+      result.NEMOCLAW_MAX_TOKENS = String(previous.tuning.maxTokens);
+    }
+    if (previous.tuning.reasoning !== null) {
+      result.NEMOCLAW_REASONING = String(previous.tuning.reasoning);
+    }
   }
 
   if (handoff.previousReceipt.credentialProxyReplayRequired) {

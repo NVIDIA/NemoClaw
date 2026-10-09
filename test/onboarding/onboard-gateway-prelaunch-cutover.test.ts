@@ -53,19 +53,21 @@ function makeHarness(options: HarnessOptions) {
     },
     pidFileGatewayPid: options.pidFileGatewayPid === undefined ? 4242 : options.pidFileGatewayPid,
     initialHealth: {
-      status: "Gateway: nemoclaw\nConnected",
-      namedInfo: "Gateway: nemoclaw",
-      activeInfo: "Gateway: nemoclaw",
+      healthy: true,
+      namedMetadata: true,
+      gatewayReuseState: "healthy",
+      shouldSelect: false,
+      endpoints: [],
+      endpointBinding: "unknown",
     },
   };
   const driftPids = new Set(options.driftPids ?? []);
   const deps: DockerDriverGatewayCutoverDeps = {
     isDockerDriverGatewayProcessAlive: () => true,
-    isGatewayHealthy: () => true,
     getDockerDriverGatewayRuntimeDrift: (pid) =>
       driftPids.has(pid) ? { reason: "test runtime drift" } : null,
     logDockerDriverGatewayRestart: (message) => events.push({ type: "restart", message }),
-    registerDockerDriverGatewayEndpoint: () => true,
+    registerDockerDriverGatewayEndpoint: async () => true,
     isDockerDriverGatewayHttpReady: async () => {
       events.push({ type: "http-ready" });
       return true;
@@ -73,10 +75,13 @@ function makeHarness(options: HarnessOptions) {
     verifySandboxBridgeGatewayReachableOrExit: async () => {
       events.push({ type: "verify-sandbox-bridge" });
     },
-    readGatewayHealth: () => ({
-      status: "Gateway: nemoclaw\nConnected",
-      namedInfo: "Gateway: nemoclaw",
-      activeInfo: "Gateway: nemoclaw",
+    readGatewayHealth: async () => ({
+      healthy: true,
+      namedMetadata: true,
+      gatewayReuseState: "healthy",
+      shouldSelect: false,
+      endpoints: [],
+      endpointBinding: "unknown",
     }),
     rememberDockerDriverGatewayPid: (pid) => events.push({ type: "remember-pid", pid }),
     reapDuplicateHostGatewaysExceptOrFail: (keepPid, _gatewayBin, extraPids) => {
@@ -108,19 +113,26 @@ function makeHarness(options: HarnessOptions) {
 }
 
 describe("Docker-driver gateway prelaunch cutover (#5968)", () => {
-  it("captures the named and active gateway health views", () => {
-    const calls: string[][] = [];
-    const health = readDockerDriverGatewayHealth((args) => {
-      calls.push(args);
-      return args.join(" ");
-    }, "nemoclaw");
-
-    expect(health).toEqual({
-      status: "status",
-      namedInfo: "gateway info -g nemoclaw",
-      activeInfo: "gateway info",
-    });
-    expect(calls).toEqual([["status"], ["gateway", "info", "-g", "nemoclaw"], ["gateway", "info"]]);
+  it("requests health for the explicit gateway through its typed observer", async () => {
+    const requests: unknown[] = [];
+    const health = await readDockerDriverGatewayHealth(
+      {
+        observeGatewayReuse: async (request) => {
+          requests.push(request);
+          return {
+            healthy: true,
+            namedMetadata: true,
+            gatewayReuseState: "healthy",
+            shouldSelect: false,
+            endpoints: [],
+            endpointBinding: "unknown",
+          };
+        },
+      },
+      "nemoclaw",
+    );
+    expect(health.healthy).toBe(true);
+    expect(requests).toEqual([{ target: { kind: "named", gatewayName: "nemoclaw" } }]);
   });
 
   it("skips standalone cutover when managed startup succeeds (#8104)", async () => {

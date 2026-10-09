@@ -34,10 +34,13 @@ type PoliciesApi = {
   listSetupPolicyPresets(
     sandboxName: string,
     options?: { webSearchSupported?: boolean | null; agent?: string | null },
-  ): Preset[];
-  listCustomPresets(sandboxName: string): Preset[];
-  getAppliedPresets(sandboxName: string): string[];
-  customPresetOwnsNetworkPolicyKey?(sandboxName: string, policyKey: string): boolean;
+  ): Preset[] | Promise<Preset[]>;
+  listCustomPresets(sandboxName: string): Preset[] | Promise<Preset[]>;
+  getAppliedPresets(sandboxName: string): string[] | Promise<string[]>;
+  customPresetOwnsNetworkPolicyKey?(
+    sandboxName: string,
+    policyKey: string,
+  ): boolean | Promise<boolean>;
   clampSetupPolicyPresetNames(
     names: string[],
     selectablePresets: Preset[],
@@ -53,7 +56,7 @@ export type PreparedPolicyResumeSelection = {
   suppressedAgentRequiredPresetsLive: boolean;
 };
 
-export function preparePolicyPresetResumeSelection(
+export async function preparePolicyPresetResumeSelection(
   deps: { policies: PoliciesApi },
   sandboxName: string,
   options: {
@@ -68,17 +71,17 @@ export function preparePolicyPresetResumeSelection(
     env?: NodeJS.ProcessEnv;
     tierName?: string | null;
   },
-): PreparedPolicyResumeSelection {
+): Promise<PreparedPolicyResumeSelection> {
   const supportOptions = { webSearchSupported: options.webSearchSupported, agent: options.agent };
   const customPolicyPresetNames = new Set(
-    deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
+    (await deps.policies.listCustomPresets(sandboxName)).map((preset) => preset.name),
   );
   const customOwnsObservability =
-    deps.policies.customPresetOwnsNetworkPolicyKey?.(
+    (await deps.policies.customPresetOwnsNetworkPolicyKey?.(
       sandboxName,
       OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-    ) === true;
-  const rawAppliedPolicyPresets = deps.policies.getAppliedPresets(sandboxName);
+    )) === true;
+  const rawAppliedPolicyPresets = await deps.policies.getAppliedPresets(sandboxName);
   const appliedPolicyPresets = customOwnsObservability
     ? [...new Set(rawAppliedPolicyPresets)].filter(
         (name) =>
@@ -88,7 +91,7 @@ export function preparePolicyPresetResumeSelection(
     : rawAppliedPolicyPresets;
   const selectablePolicyPresets = [
     ...filterSetupPolicyPresetsForAgent(
-      deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
+      await deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
       options.agent,
     ),
     ...filterSetupPolicyPresetNamesForAgent(appliedPolicyPresets, options.agent).map((name) => ({

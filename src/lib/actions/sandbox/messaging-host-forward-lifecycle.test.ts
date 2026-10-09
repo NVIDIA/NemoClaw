@@ -53,10 +53,10 @@ describe("ensureMessagingHostForwardAfterRebuild", () => {
     vi.clearAllMocks();
   });
 
-  it("fails closed without published ForwardTcp authority", () => {
+  it("fails closed without published ForwardTcp authority", async () => {
     vi.mocked(captureOpenshell).mockReturnValue({ status: 1, output: "" });
 
-    const ok = ensureMessagingHostForwardAfterRebuild("demo", makePlan());
+    const ok = await ensureMessagingHostForwardAfterRebuild("demo", makePlan());
 
     expect(ok).toBe(false);
     expect(captureOpenshell).not.toHaveBeenCalled();

@@ -17,16 +17,14 @@ import {
   createCliOpenShellSandboxObserver,
   type CliOpenShellSandboxObserverDeps,
 } from "../adapters/openshell/sandbox-observer-cli";
-import { waitUntil, waitUntilAsync } from "../core/wait";
 import { envInt } from "./env";
 import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
+  waitUntilAsync,
 } from "./readiness-wait";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
-
-type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
 
 export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE";
 

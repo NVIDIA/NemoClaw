@@ -87,19 +87,28 @@ it.each([
     expect(init.status, init.stderr).toBe(0);
     const add = spawnSync("git", ["add", "--", file], { cwd: root, encoding: "utf8" });
     expect(add.status, add.stderr).toBe(0);
+    const hookEnv = {
+      ...process.env,
+      PREK_NO_FAST_PATH: "1",
+    };
     const syntax = spawnSync(
       path.resolve("node_modules/.bin/prek"),
       ["run", "oxlint-fix", "--files", file],
       {
         cwd: root,
         encoding: "utf8",
+        env: hookEnv,
       },
     );
     expect(syntax.status, syntax.stdout + syntax.stderr).toBe(0);
     const result = spawnSync(
       path.resolve("node_modules/.bin/prek"),
       ["run", "oxlint-type-aware", "--files", file],
-      { cwd: root, encoding: "utf8" },
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: hookEnv,
+      },
     );
     expect(result.status, result.stdout + result.stderr).toBe(rule ? 1 : 0);
     expect(fs.readFileSync(path.join(root, file), "utf8") !== source).toBe(fixes ?? false);

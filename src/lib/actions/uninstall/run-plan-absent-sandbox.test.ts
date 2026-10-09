@@ -146,7 +146,7 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
         const calls: string[][] = [];
         const warnings: string[] = [];
 
-        const result = runPortUninstall(
+        const result = await runPortUninstall(
           {
             assumeYes: true,
             deleteModels: false,
@@ -155,7 +155,7 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
             keepOpenShell: false,
           },
           {
-            commandExists: (command) => command === "openshell",
+            commandExists: (command) => command === "openshell" || command === "docker",
             env: {
               HOME: tmpHome,
               NEMOCLAW_GATEWAY_PORT: String(selectedPort),

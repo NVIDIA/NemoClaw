@@ -140,11 +140,15 @@ describe("rebuild replacement target fingerprint", () => {
     { recreateProvider: "compatible-endpoint" },
     { recreateModel: "model-b" },
     { recreatePreferredInferenceApi: "anthropic" },
+    { fromImage: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}` },
     { reinstallDeferredN1xManagedVllm: true },
   ] as const)("changes when a recorded replacement input changes [case %#]", (drift) => {
-    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
-      fingerprintRebuildRecreateTargetIntent(recreateOptions),
-    );
+    expect(
+      fingerprintRebuildRecreateTargetIntent({
+        ...recreateOptions,
+        ...drift,
+      }),
+    ).not.toBe(fingerprintRebuildRecreateTargetIntent(recreateOptions));
   });
 
   it("changes when the replacement targets another gateway", () => {
@@ -158,9 +162,12 @@ describe("rebuild replacement target fingerprint", () => {
   });
 
   it("preserves the previous fingerprint for a replacement without host mounts (#9451)", () => {
-    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, hostMounts: [] })).toBe(
-      PRE_HOST_MOUNT_FINGERPRINT,
-    );
+    expect(
+      fingerprintRebuildRecreateTargetIntent({
+        ...recreateOptions,
+        hostMounts: [],
+      }),
+    ).toBe(PRE_HOST_MOUNT_FINGERPRINT);
   });
 
   it("separates a mounted replacement from the pre-binding fingerprint (#9451)", () => {
@@ -436,7 +443,11 @@ describe("rebuild replacement journal", () => {
     } as registry.SandboxEntry);
 
     expect(() =>
-      open({ sandboxName: "alpha", gatewayName: "nemoclaw-7070", gatewayPort: 7070 }),
+      open({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-7070",
+        gatewayPort: 7070,
+      }),
     ).toThrow(/different recreate transaction in progress/);
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({
       id: stranded.id,
@@ -721,8 +732,6 @@ describe("rebuild replacement recovery backup", () => {
       agentType: "openclaw",
       agentVersion: null,
       expectedVersion: null,
-      stateDirs: [],
-      dir: "/sandbox/.openclaw",
       backupPath,
       blueprintDigest: null,
     };
@@ -733,7 +742,7 @@ describe("rebuild replacement recovery backup", () => {
   });
 
   const deps = () => ({
-    listBackups: () => [{ ...manifest, snapshotVersion: 1 }],
+    listBackups: () => [manifest],
     validateManifest: (_name: string, _agent: string | null | undefined, value: RebuildManifest) =>
       ({ ok: true, manifest: value }) as const,
   });
@@ -801,6 +810,57 @@ describe("rebuild replacement recovery backup", () => {
     ).toThrow("already belongs to another transaction");
     expect(findRebuildRecoveryBackup(identity(), deps())).not.toBeNull();
     expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
+  });
+
+  it("preserves recovery handoffs when the default observer lists a legacy sandbox", () => {
+    manifest.rebuildMcpHandoff = {
+      entries: [],
+      runtimeSelection: { gatewayName: "nemoclaw-18080", workspace: "default" },
+    };
+    const { handoffPath, recordPath } = prepareUnsafeRecovery();
+    const retainedManifest = structuredClone(manifest);
+    const retainedRecord = fs.readFileSync(recordPath, "utf8");
+    const retainedPolicy = fs.readFileSync(handoffPath, "utf8");
+    const clearPolicyHandoff = vi.fn(() => true);
+    const clearMcpHandoff = vi.fn(() => true);
+    mocks.captureOpenshell.mockReset();
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: `Error: code: 'Internal error', message: "sandbox has no spec"`,
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify([
+          {
+            id: SANDBOX_ID,
+            name: "alpha",
+            labels: {},
+            resource_version: 1,
+            created_at: "2026-09-12T00:00:00Z",
+            phase: "Ready",
+            current_policy_version: 1,
+          },
+        ]),
+        stderr: "",
+      });
+
+    expect(() =>
+      retireRebuildRecoveryBackup(
+        { sandboxName: "alpha", transactionId, confirmDataRecovered: true },
+        { ...deps(), clearPolicyHandoff, clearMcpHandoff },
+      ),
+    ).toThrow("OpenShell still reports sandbox 'alpha' on recorded gateway 'nemoclaw-18080'");
+    expect(mocks.captureOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["sandbox", "get", "-g", "nemoclaw-18080", "alpha"],
+      ["sandbox", "list", "-g", "nemoclaw-18080", "-o", "json"],
+    ]);
+    expect(clearPolicyHandoff).not.toHaveBeenCalled();
+    expect(clearMcpHandoff).not.toHaveBeenCalled();
+    expect(fs.readFileSync(recordPath, "utf8")).toBe(retainedRecord);
+    expect(fs.readFileSync(handoffPath, "utf8")).toBe(retainedPolicy);
+    expect(manifest).toEqual(retainedManifest);
   });
 
   it("binds and retires a legacy unsafe handoff with no active journal (#10150)", () => {

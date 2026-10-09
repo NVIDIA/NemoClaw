@@ -5,17 +5,18 @@ import fs from "node:fs";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { redactFullWithUrls } from "../../security/redact";
 import {
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-  parseCliOpenShellProviderNames,
-  runOpenshellProviderCommand,
-} from "./provider-command";
+  assertNoOpenShellGatewayEndpointOverride,
+  type OpenShellGatewayEndpointEnvironment,
+  OpenShellGatewayEndpointOverrideError,
+  scopeGatewayOpenshellArgs,
+} from "./gateway-scope";
 import {
   type AttachOpenShellProviderRequest,
   type ConfigureOpenShellProviderRefreshRequest,
   type DeleteOpenShellProviderRequest,
   type DetachOpenShellProviderRequest,
-  type GetOpenShellProviderRequest,
   type GetOpenShellProviderRefreshStatusRequest,
+  type GetOpenShellProviderRequest,
   type ImportOpenShellProviderProfileRequest,
   type InspectOpenShellProviderProfileRequest,
   type ListOpenShellProviderAttachmentsRequest,
@@ -27,23 +28,27 @@ import {
   type OpenShellProviderResult,
   type UpdateOpenShellProviderRequest,
 } from "./provider-adapter";
-import { reportsExactProviderNotFound } from "./provider-diagnostic-cli";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  parseCliOpenShellProviderNames,
+  runOpenshellProviderCommand,
+} from "./provider-command";
+import {
+  reportsExactProviderNotFound,
+  reportsExactSandboxNotFound,
+  reportsProviderNotAttached,
+} from "./provider-diagnostic-cli";
 import {
   isValidCliOpenShellProviderIdentifier,
+  parseCliOpenShellProviderCredentialState,
   parseCliOpenShellProviderMetadata,
 } from "./provider-metadata-cli";
-import type { OpenShellGatewayTarget } from "./sandbox-observer";
-import {
-  assertNoOpenShellGatewayEndpointOverride,
-  OpenShellGatewayEndpointOverrideError,
-  scopeGatewayOpenshellArgs,
-  type OpenShellGatewayEndpointEnvironment,
-} from "./gateway-scope";
 import {
   exportedProviderProfileMatchesContract,
   isMissingProviderProfile,
   parseCheckedInProviderProfileContract,
 } from "./provider-profile";
+import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
 export type CapturedProviderCommandResult = Readonly<{
   status: number | null;
@@ -97,8 +102,9 @@ const TERMINAL_CSI_RE = /(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/gu;
 const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
   /attached(?:\s|│)+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
-const TOLERATED_DETACH_OUTPUT_RE = /\bNotAttached\b|\bnot\s+attached\b/iu;
 const PROVIDER_GET_DIAGNOSTIC_LIMIT = 64 * 1024;
+const PROVIDER_INVENTORY_DIAGNOSTIC_LIMIT = 4 * 1024 * 1024;
+const PROVIDER_INVENTORY_LIMIT = 1_000;
 const REFRESH_STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
 const NO_PROVIDER_ATTACHMENTS_RE = /^No providers attached to sandbox\b/mu;
 const PROVIDER_ATTACHMENT_HEADER_RE = /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/u;
@@ -268,6 +274,18 @@ function commandError(
     kind: "command",
     reason: result.status === 2 ? "invalid_request" : "failed",
     message: message || "The OpenShell provider operation failed.",
+  };
+}
+
+function providerInventoryError(
+  result: CapturedProviderCommandResult,
+): OpenShellProviderError | null {
+  const error = commandError(result);
+  if (error?.kind !== "command") return error;
+  return {
+    kind: "command",
+    reason: error.reason,
+    message: "OpenShell could not inspect provider credential expiration metadata.",
   };
 }
 
@@ -475,6 +493,68 @@ export function createCliOpenShellProviderAdapter(
     }
   };
 
+  const ensureProviderPolicyComposition: OpenShellProviderAdapter["ensureProviderPolicyComposition"] =
+    async (request) => {
+      const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+      if (targetError) return failure(targetError);
+      const read = () => {
+        const result = invoke(["settings", "get", "--global", "--json"], request);
+        const error = commandError(result);
+        if (error) return failure<string>(error);
+        try {
+          const document = JSON.parse(bufferOrStringToText(result.stdout));
+          const value = document.settings?.providers_v2_enabled;
+          if (document.scope === "global" && ["true", "false", "<unset>"].includes(value)) {
+            return success<string>(value);
+          }
+        } catch {
+          /* Fail closed on incompatible settings output. */
+        }
+        return failure<string>({
+          kind: "schema",
+          message: "OpenShell did not return the global provider policy setting.",
+        });
+      };
+      const before = read();
+      if (!before.ok) return before;
+      if (before.value === "true") return success(undefined);
+      if (before.value === "false") {
+        return failure({
+          kind: "command",
+          reason: "conflict",
+          message:
+            "Native NVIDIA inference requires provider-derived policy, but providers_v2_enabled is explicitly disabled on this gateway. Ask the gateway administrator to enable it.",
+        });
+      }
+      // OpenShell 0.0.116 defaults this gate off. Preserve explicit administrator
+      // choices; enable only its unset default before publishing a native provider.
+      const updated = invoke(
+        [
+          "settings",
+          "set",
+          "--global",
+          "--key",
+          "providers_v2_enabled",
+          "--value",
+          "true",
+          "--yes",
+        ],
+        request,
+      );
+      const error = commandError(updated);
+      if (error) return failure(error);
+      const after = read();
+      if (!after.ok) return after;
+      return after.value === "true"
+        ? success(undefined)
+        : failure({
+            kind: "command",
+            reason: "uncertain",
+            message:
+              "OpenShell did not confirm provider-derived policy activation. Inspect gateway settings before retrying.",
+          });
+    };
+
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
@@ -585,9 +665,55 @@ export function createCliOpenShellProviderAdapter(
       );
     }
     const metadata = parseCliOpenShellProviderMetadata(rawCommandOutput(result));
-    return metadata?.name === request.providerName
-      ? success(metadata)
-      : failure({ kind: "schema", message: "OpenShell returned invalid provider metadata." });
+    if (metadata?.name !== request.providerName) {
+      return failure({ kind: "schema", message: "OpenShell returned invalid provider metadata." });
+    }
+    if (!request.includeCredentialExpirations) return success(metadata);
+
+    for (
+      let offset = 0;
+      offset < 10 * PROVIDER_INVENTORY_LIMIT;
+      offset += PROVIDER_INVENTORY_LIMIT
+    ) {
+      const inventory = invoke(
+        [
+          "provider",
+          "list",
+          "--limit",
+          String(PROVIDER_INVENTORY_LIMIT),
+          "--offset",
+          String(offset),
+          "--output",
+          "json",
+        ],
+        request,
+        undefined,
+        2,
+        true,
+        PROVIDER_INVENTORY_DIAGNOSTIC_LIMIT,
+      );
+      const inventoryError = providerInventoryError(inventory);
+      if (inventoryError) return failure(inventoryError);
+      const credentialState = parseCliOpenShellProviderCredentialState(
+        commandStdout(inventory),
+        request.providerName,
+      );
+      if (credentialState === undefined) continue;
+      return credentialState
+        ? success({
+            ...metadata,
+            credentialKeys: credentialState.credentialKeys,
+            credentialExpiresAtMs: credentialState.credentialExpiresAtMs,
+          })
+        : failure({
+            kind: "schema",
+            message: "OpenShell returned invalid provider credential expiration metadata.",
+          });
+    }
+    return failure({
+      kind: "schema",
+      message: "Provider credential expiration lookup exceeded the bounded inventory limit.",
+    });
   };
 
   const updateProvider: OpenShellProviderAdapter["updateProvider"] = async (
@@ -644,7 +770,13 @@ export function createCliOpenShellProviderAdapter(
   ) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
-    const result = invoke(["provider", "delete", request.providerName], request);
+    const result = invoke(
+      ["provider", "delete", request.providerName],
+      request,
+      undefined,
+      2,
+      true,
+    );
     const output = commandOutput(result);
     if (
       !result.error &&
@@ -678,6 +810,7 @@ export function createCliOpenShellProviderAdapter(
       request,
       undefined,
       3,
+      true,
     );
     const output = commandOutput(result);
     const error = commandError(result);
@@ -685,9 +818,29 @@ export function createCliOpenShellProviderAdapter(
       !result.error &&
       !result.signal &&
       result.status !== null &&
-      TOLERATED_DETACH_OUTPUT_RE.test(output);
+      reportsProviderNotAttached(output, request.providerName, request.sandboxName);
     if (confirmedIdempotentDetach) {
       return success({ changed: false });
+    }
+    if (
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
+      error?.kind === "command" &&
+      reportsExactSandboxNotFound(output, request.sandboxName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+    ) {
+      return failure({
+        kind: "command",
+        reason: "sandbox_not_found",
+        message: `OpenShell sandbox not found: '${request.sandboxName}'.`,
+      });
+    }
+    if (
+      error?.kind === "command" &&
+      error.reason === "not_found" &&
+      !reportsExactProviderNotFound(output, request.providerName, PROVIDER_GET_DIAGNOSTIC_LIMIT)
+    ) {
+      return failure({ ...error, reason: "failed" });
     }
     return error ? failure(error) : success({ changed: true });
   };
@@ -815,6 +968,7 @@ export function createCliOpenShellProviderAdapter(
   };
 
   return {
+    ensureProviderPolicyComposition,
     listProviders,
     createProvider,
     getProvider,

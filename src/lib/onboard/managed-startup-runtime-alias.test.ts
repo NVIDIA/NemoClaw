@@ -14,7 +14,7 @@ import {
 // Keep the retired Slack alias to cover the legacy same-key rewrite shape.
 const slackBotAlias = {
   envKey: "SLACK_BOT_TOKEN",
-  match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+  match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
   value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
   message: "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
 } as const;
@@ -23,7 +23,7 @@ const wechatTokenAlias = {
   channelId: "wechat",
   envKey: "WECHAT_BOT_TOKEN",
   targetEnvKey: "WEIXIN_TOKEN",
-  match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+  match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_WECHAT_BOT_TOKEN$",
   value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
 } as const;
 

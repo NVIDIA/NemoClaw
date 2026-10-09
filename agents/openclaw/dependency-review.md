@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# OpenClaw MCP Runtime Dependency Review
+# OpenClaw Runtime Dependency Review
 
 This file records the reviewed `mcporter` baseline installed in the OpenClaw sandbox image.
 Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever `MCPORTER_VERSION`, its integrity value, a manifest override, or the locked graph changes in `Dockerfile.base` or `Dockerfile`.
@@ -16,10 +16,11 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - Locked graph: `agents/openclaw/mcporter-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration command: `npm --prefix agents/openclaw/mcporter-runtime install --package-lock-only --ignore-scripts --omit=dev`
 - Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && node scripts/lib/reviewed-npm-audit.mts --directory agents/openclaw/mcporter-runtime --exceptions ci/npm-audit-exceptions.json --graph mcporter-runtime --threshold high && npm --prefix agents/openclaw/mcporter-runtime audit signatures --registry=https://registry.yarnpkg.com --omit=dev`
-- Advisory review date: 2026-08-11.
-- Advisory result: `0` known vulnerabilities across the resolved production dependency graph. npm verified registry signatures for all `120` resolved packages and attestations for `14` packages.
+- Advisory review date: 2026-10-06.
+- Advisory result: the production audit reports `9` moderate findings and no high or critical findings. All 120 package registry signatures verified; 15 packages have verified attestations.
+- Security override: `@modelcontextprotocol/sdk@1.31.0` (`sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==`) replaces `1.29.0` for [GHSA-6qxp-vccf-f47h](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6qxp-vccf-f47h). The replacement stays within mcporter's declared `^1.25.1` range and preserves the MIT license and Node.js `>=18` floor. Mcporter persists complete token and client-information objects, preserving the patched SDK's `issuer` field. Existing OAuth credentials saved without `issuer` require clearing and a new sign-in, as specified by the advisory. Remove this override when the reviewed graph resolves to a patched SDK.
 - Security override: `@hono/node-server@2.0.11` (`sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==`) replaces the SDK's vulnerable `1.19.14` resolution for `GHSA-frvp-7c67-39w9` and the previously reviewed `2.0.5` resolution affected by `GHSA-9mqv-5hh9-4cgg`. `2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`. The reviewed v2 range retains the `getRequestListener` API used by `@modelcontextprotocol/sdk`; its Node.js 20 floor is below NemoClaw's Node.js 22.19 floor, and the `/vercel` adapter is not consumed. Mcporter's production path imports the SDK's client transport, not the server adapter, and the image build still exercises the installed CLI after the locked install. Remove the override when the SDK's declared range resolves to a reviewed release outside both affected ranges.
-- Security override: `fast-uri@3.1.6` (`sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==`) replaces Ajv's vulnerable resolution. `GHSA-5jgf-p345-68v8`, `GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, and `GHSA-jqff-g426-hqxp` affect earlier 3.x releases; `3.1.6` is the first patched release for all four. The replacement remains within Ajv's declared `^3.0.1` range, preserves the reviewed v3 API boundary, and also remains outside the older `GHSA-v2hh-gcrm-f6hx` and `GHSA-7p8r-x3mc-p8w7` ranges. Remove the override when the declared graph resolves to a reviewed release outside all affected ranges.
+- Security override: `fast-uri@3.1.7` (`sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==`) replaces Ajv's vulnerable resolution. [GHSA-58mr-gqgx-xq4g](https://github.com/advisories/GHSA-58mr-gqgx-xq4g) and [GHSA-qw65-cvwx-89v3](https://github.com/advisories/GHSA-qw65-cvwx-89v3) affect the previous `3.1.6` pin; `3.1.7` fixes both and retains the earlier 3.x security fixes. The replacement remains within Ajv's declared `^3.0.1` range and preserves the reviewed v3 API and BSD-3-Clause license. The CLI, OpenClaw, mcporter, MCP discovery bundle, legacy OpenClaw remediation, and weather fixture use this patch release. Remove the override when the declared graph resolves to a reviewed release outside all affected ranges.
 - Security override: `hono@4.12.34` (`sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`) replaces the SDK's vulnerable `4.12.27` resolution.
   `GHSA-8j4g-w8fx-2239`, `GHSA-54fx-42gc-7vw4`, `GHSA-f23p-vx2j-j53r`, and `GHSA-79qm-7rj5-m7r9` are fixed in `4.12.34`.
   The replacement remains within the SDK's declared `^4.11.4` range and preserves Hono's Node.js `>=16.9.0` contract.
@@ -29,24 +30,34 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 The reviewed audit wrapper reports lower-severity production findings and blocks unaccepted high or critical advisories. The default `ci/npm-audit-exceptions.json` registry is empty. Any future exception must match one advisory, graph, package, installed version, and severity; identify an owner and NemoClaw tracking issue; state a decision, rationale, and expiry no more than 30 days away; and include compensating controls for temporary risk acceptance. Missing, malformed, expired, overlong, mismatched, or unused exceptions fail closed. The repository-wide audit also rejects exceptions for unknown graph IDs. Registry signature verification remains a separate control.
 
+## Managed messaging proxy address remediation
+
+- Advisory: [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h) affects `proxy-addr@2.0.7`; `2.0.8` contains the reviewed fix.
+- Ordinary graph: `agents/openclaw/managed-image-messaging-runtime/package.json` overrides non-bundled `proxy-addr` resolutions to exact `2.0.8`. Its lock records npm integrity `sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==`, the unchanged `forwarded@0.2.0` and `ipaddr.js@1.9.1` dependencies, the MIT license, and the existing Node.js engine floor.
+- Bundled Slack graph: the reviewed registry archive `@openclaw/slack@2026.9.2` bundles `@slack/bolt@5.0.0`, `express@5.2.1`, and `proxy-addr@2.0.7`. NemoClaw retains the exact official registry install and verifies OpenClaw's trusted provenance record before replacing only that nested package with the reviewed `proxy-addr@2.0.8` archive. The replacement fails closed if the Slack, Bolt, Express, vulnerable package, or replacement package contract differs from the reviewed identities.
+- Audit boundary: the reviewed archive audit applies the same replacement before materializing the aggregate production graph, then pins the complete remediated archive tree digest. The registry archive remains immutable evidence; vulnerable bundled bytes do not survive in the final installed Slack extension.
+- Lifecycle suppression: both the managed graph install and the replacement package retrieval keep lifecycle scripts disabled. The replacement package declares no lifecycle script.
+- Removal condition: remove the Slack-specific rewrite only after the reviewed Slack archive bundles `proxy-addr@2.0.8` or newer. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the replacement is unnecessary.
+- Regression evidence: `test/agents/openclaw/openclaw-npm-remediation.test.ts` guards the exact source and replacement contracts; `test/runtime/messaging/messaging-build-applier-integrity.test.ts` proves the installed official plugin is patched only after provenance verification; `test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts` guards the ordinary graph; and `test/agents/openclaw/openclaw-dependency-review.test.ts` keeps the audit and runtime remediation wiring present.
+
 ## WeChat plugin runtime graph
 
-- Package: `@tencent-weixin/openclaw-weixin@2.4.3`.
+- Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.4.3`.
 - Locked graph: `agents/openclaw/wechat-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
 - Default CI gate: `reviewed-npm-audit` in `.github/workflows/pr.yaml` and `.github/workflows/main.yaml` audits the WeChat locked graph with the shared reviewed npm implementation.
-  The pull request workflow resolves the implementation and policy from the PR base SHA and applies them to the proposed manifest and lockfile.
-  The shared gate uses Node.js `22.23.2` and verified `npm@10.9.4`.
+  The pull request workflow loads the audit implementation, policy, manifest, and lockfile from the candidate checkout.
+  The shared gate uses Node.js `24.18.1` and verified `npm@12.0.2`.
   It installs the exact lock with lifecycle scripts disabled and legacy peer resolution, rejects any low-or-higher production advisory, and verifies registry signatures.
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
   Signature verification makes at most three attempts and retries only `npm error Failed to download`; all other failures stop immediately.
   The shared report artifact stores the audit policy, signature-attempt evidence, and whether each response came from a matching cache entry or a live registry request.
-  Its mcporter receipt and raw response cross into the image build; the other graph receipts remain CI evidence.
+  Its mcporter receipt, raw report, and trusted policy result cross into image builds; the other graph receipts remain CI evidence.
   The archive graph also retains the generated manifest and lock bytes authenticated by its receipt.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --registry=https://registry.yarnpkg.com --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --registry=https://registry.yarnpkg.com --omit=dev --prefix agents/openclaw/wechat-runtime`.
-- Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.
-- Regression tests: `test/install/wechat-locked-install.test.ts` keeps the manifest runtime-lock paths and installer verification dispatch synchronized; `test/install/verify-wechat-runtime-lock.test.ts` proves that the installed graph and OpenClaw peer range fail closed; `test/automation/releases/reviewed-npm-audit-workflow.test.ts` keeps the cache lifecycle, audit threshold, bounded signature retry, invalid-signature denial, and npm-pack boundary synchronized.
+- Advisory review: `2026-09-23`; result: `0` known vulnerabilities across the resolved production graph. Registry signatures verified for all three packages; one package has a verified attestation.
+- Regression tests: `test/install/wechat-locked-install.test.ts` keeps the manifest runtime-lock paths and installer verification dispatch synchronized; `test/install/verify-wechat-runtime-lock.test.ts` proves that the installed graph, OpenClaw peer range, and lazy inbound-handler imports fail closed; `test/automation/releases/reviewed-npm-audit-workflow.test.ts` keeps the cache lifecycle, audit threshold, bounded signature retry, invalid-signature denial, and npm-pack boundary synchronized.
 
 The dedicated graph intentionally omits the plugin's `openclaw` peer dependency. The image already installs and integrity-verifies the reviewed OpenClaw runtime separately; auto-installing another OpenClaw copy would create a second unreviewed runtime graph.
 Disabling scripts also prevents transitive packages from executing lifecycle code during the trusted image build.
@@ -54,15 +65,18 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 ## Source-of-Truth Boundary
 
-- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.6`, resolves `hono` to any version other than exact `4.12.34`, or resolves `ip-address` to any version other than exact `10.3.1`.
+- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.7`, resolves `hono` to any version other than exact `4.12.34`, resolves `ip-address` to any version other than exact `10.3.1`, resolves `@modelcontextprotocol/sdk` to any version other than exact `1.31.0`, or leaves any final managed-messaging `proxy-addr` installation at a version other than exact `2.0.8`.
 - `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, empty-by-default audit exception registry, and review record.
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so the required `reviewed-npm-audit` CI check materializes the exact locked production graph and verifies its registry signatures.
-- `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, lifecycle suppression, and reviewed advisory policy without connecting to Sigstore.
+- `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, and lifecycle suppression.
+  Builds without supplied audit evidence evaluate the reviewed advisory policy directly.
+  Evidence-backed builds instead verify the receipt and policy-result transport hashes after trusted workflow code validates the candidate graph and policy.
+  Neither path connects to Sigstore.
   The `schema=4` and `mcporter-recipe=locked-ci+reviewed-audit-v3` provenance values record this boundary.
   They do not attest that trusted CI verified registry signatures.
 - `enforcementBoundary`: any nonzero `npm audit signatures` status fails the required CI check.
   The PR workflow requires this check before merge.
-  The `pr-reviewed-npm-audit` job loads its audit implementation from the base branch revision and evaluates the dependency files from the commit under review.
+  The `pr-reviewed-npm-audit` job loads its audit implementation, policy, and dependency files from the commit under review.
   The managed-image build job requires that result before local builds and same-repository digest publication.
   The base-image workflow requires its audit result before it builds or publishes any base image.
   It also requires the result before it invokes managed-image publication.
@@ -71,6 +85,50 @@ The lock records the exact version, registry URL, and integrity for every transi
   A matching marker from a local base or mutable tag is package metadata without independent CI attestation.
   It cannot authorize reuse; the existing version checks reinstall the locked runtime or reject a newer base.
 - `regressionTest`: `test/security/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, image-build audit boundary, `reviewed-npm-audit` CI check, and this review synchronized.
-  `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the base branch supplies the audit implementation, the commit under review supplies the input, and publication depends on the audit.
+  `test/inference/managed/managed-image-publication-workflow.test.ts` verifies that the candidate checkout supplies the audit action and inputs, and that publication depends on the audit.
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
+
+## OpenClaw 2026.9.5 staged transition
+
+[PR #12380](https://github.com/NVIDIA/NemoClaw/pull/12380) prepares trusted audit policy for
+[PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382), which updates the runtime.
+The CI and managed-image PR audits load their action, policy, and dependency inputs from the
+candidate checkout. A passing audit checks that candidate's declared policy; independent review
+of the package identities and policy changes remains necessary.
+The two stages separate that review from the production runtime cutover.
+
+During the trust stage, production manifests, locks, lifecycle approvals, and image archives remain
+on OpenClaw 2026.9.2. The existing locked graph remains the primary audit identity.
+The replacement admits only the reviewed 2026.9.5 lock digest, package integrity, and registry URL.
+It does not select a second runtime or permit an arbitrary lock.
+The compressed 2026.9.5 lock fixture records the migration input without changing production selection.
+The replacement audit test consumes that fixture and the checked-in policy, then verifies the emitted
+provenance and npm identity requests.
+
+The trust-stage audit checks the selected 2026.9.2 production lock. It does not qualify the staged
+2026.9.5 lock. Before approving the trust stage, reviewers must also inspect the runtime PR's retained
+audit evidence and match its `packageLockSha256` to the replacement identity and decompressed fixture.
+[CI run 37677060608](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/job/112983299250)
+audited the 2026.9.5 graph at commit `754d187fa833f6198e7a3d808ddf88dc2944025d`.
+Its [reviewed-npm-audit artifact](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/artifacts/11507039810)
+contains the receipt, raw report, and scanner provenance for lock SHA-256
+`b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7`.
+The receipt reports no blocking advisories at the `high` threshold; the policy report records three
+moderate advisories. The audit job also completed signature verification before emitting the receipt.
+This evidence qualifies those lock bytes, not a different lock or a future advisory database.
+Require a fresh matching audit when its receipt expires.
+
+The audit workflow, action, and implementation are unchanged from the trust PR's base,
+`b430d4d2495de65cbd1151d8fd6bff3def0cd58a`. Their candidate-checkout execution is existing repository
+behavior. Reviewers must independently inspect this PR's policy diff; a passing candidate audit does
+not authorize changes to its own policy.
+
+The runtime stage completes the transition by moving all production version owners to 2026.9.5,
+promoting its lock identity to primary, and removing the replacement and superseded archive records.
+For these two PRs, the maintainer requested green CI and managed-image checks, PR Advisor clearance,
+and full E2E qualification. These are acceptance criteria for this upgrade; full E2E is manually
+dispatched and is not an automatically enforced PR check. The runtime CI also executes the
+actual-package patch harness.
+Prekshi Vyas owns completion of these two PRs. Retain the old archive records only while production
+still selects them; remove this transition section when the runtime cutover is complete.

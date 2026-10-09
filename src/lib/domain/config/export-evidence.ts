@@ -14,7 +14,6 @@ import {
   NemoClawOpenClawInterfacesSchema,
   NemoClawHermesInterfacesSchema,
   NemoClawAgentToolDisclosureSchema,
-  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
@@ -31,6 +30,8 @@ import {
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
+import { webSearchEnvFor } from "../../inference/web-search";
+import { webSearchProviderProfileId } from "../../inference/web-search/provider-profile";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -50,6 +51,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "credentialEnv",
   "dashboardPort",
   "dashboardRemoteBindPrepared",
+  "dcodeAutoApprovalMode",
   "endpointUrl",
   "fromDockerfile",
   "gatewayName",
@@ -68,13 +70,12 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "imageTag",
   "lifecycleGeneration",
   "lifecycleLiveIdentityFingerprint",
-  "mcp",
   "messaging",
   "model",
   "name",
+  "nativeNvidiaProviderAttachment",
   "nimContainer",
   "observabilityEnabled",
-  "openclawImagePluginInstalls",
   "openshellDriver",
   "pendingRouteReservation",
   "preferredInferenceApi",
@@ -91,6 +92,25 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
 type ObservedExportRegistryKey = (typeof EXPORT_REGISTRY_EVIDENCE_KEYS)[number];
 
 export type ObservedExportRegistry = DeepReadonly<Pick<SandboxEntry, ObservedExportRegistryKey>>;
+
+export function exportWebSearchBinding(
+  entry: Pick<ObservedExportRegistry, "name" | "agent" | "webSearchEnabled" | "webSearchProvider">,
+) {
+  const provider = entry.webSearchProvider;
+  if (
+    entry.webSearchEnabled !== true ||
+    (provider !== "brave" && provider !== "tavily") ||
+    (entry.agent !== "openclaw" && entry.agent !== "hermes") ||
+    (entry.agent === "hermes" && provider !== "tavily")
+  )
+    return undefined;
+  return {
+    provider,
+    name: `${entry.name}-${provider}-search`,
+    profileId: webSearchProviderProfileId(provider, entry.agent),
+    credentialEnv: webSearchEnvFor(provider),
+  } as const;
+}
 
 declare const CANONICAL_EXPORT_POLICY: unique symbol;
 export type CanonicalExportPolicy = Readonly<Record<string, unknown>> & {
@@ -112,12 +132,18 @@ export interface ObservedExportEndpointEvidence {
     readonly id: string;
     readonly resourceVersion: string;
     readonly profileWorkspace?: string;
+    /** null means the OpenAI profile was read at its binding and confirmed absent. */
     readonly managedProfile?: {
-      readonly id: "brave" | "openai";
+      readonly id:
+        | "brave"
+        | "openai"
+        | "tavily"
+        | "tavily-hermes-v1"
+        | "nemoclaw-nvidia-inference-v1";
       readonly source: "builtin" | "user";
       readonly scope: "" | "platform" | "workspace";
       readonly resourceVersion: string;
-    };
+    } | null;
   };
   readonly endpoint: string;
   readonly source:
@@ -125,7 +151,11 @@ export interface ObservedExportEndpointEvidence {
         readonly kind: "provider-config";
         readonly key: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
       }
-    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" };
+    | { readonly kind: "builtin-profile"; readonly profileId: "nvidia" }
+    | {
+        readonly kind: "managed-profile";
+        readonly profileId: "nemoclaw-nvidia-inference-v1";
+      };
 }
 
 export interface ObservedExportWebSearchProvider {
@@ -277,19 +307,25 @@ const ExportInferenceSchema = Type.Union([
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
       serving: NemoClawManagedVllmServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
     },
     { additionalProperties: false },
   ),
 ]);
+
+const ExportWebSearchSchema = Type.Object(
+  {
+    ...NemoClawBraveSearchConfigSchema.properties,
+    provider: Type.Union([Type.Literal("brave"), Type.Literal("tavily")]),
+  },
+  { additionalProperties: false },
+);
 
 /** Representable values only; provenance and policy qualification remain separate. */
 const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
   tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
-  additionalAgents: Type.Optional(
-    Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
-  ),
   auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
@@ -299,7 +335,7 @@ const exportSourceFields = {
   proxy: Type.Optional(NemoClawManagedProxyConfigSchema),
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
-  webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
+  webSearch: Type.Optional(ExportWebSearchSchema),
 };
 
 export const ExportSourceValuesSchema = Type.Refine(
@@ -314,12 +350,24 @@ export const ExportSourceValuesSchema = Type.Refine(
       agent: Type.Literal("hermes"),
       interfaces: Type.Optional(NemoClawHermesInterfacesSchema),
     }),
+    Type.Object({
+      ...exportSourceFields,
+      agent: Type.Literal("langchain-deepagents-code"),
+      interfaces: Type.Optional(Type.Never()),
+    }),
   ]),
-  (value) =>
-    value.agent === "openclaw" ||
-    (value.execution === undefined &&
-      value.tools === undefined &&
-      value.additionalAgents === undefined),
+  (value) => {
+    if (value.agent === "openclaw") return true;
+    if (
+      value.execution !== undefined ||
+      value.tools !== undefined ||
+      value.observability !== undefined
+    )
+      return false;
+    return value.agent === "hermes"
+      ? value.webSearch === undefined || value.webSearch.provider === "tavily"
+      : value.auth === undefined && value.webSearch === undefined && value.interfaces === undefined;
+  },
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;
@@ -335,7 +383,11 @@ export type VerifiedExportSource = ExportSourceValues & {
 };
 
 export type ExportSourceVerificationResult =
-  | Readonly<{ kind: "verified"; source: VerifiedExportSource }>
+  | Readonly<{
+      kind: "verified";
+      source: VerifiedExportSource;
+      corporateCaOmitted?: true;
+    }>
   | Readonly<{ kind: "rejected"; findings: NonEmptyExportFindings }>;
 
 /** The only observation port. Each call reads one complete source snapshot. */

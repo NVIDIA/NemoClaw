@@ -5,6 +5,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { hasMaintainerBudgetApproval } from "./e2e-budget-approval";
+
 export type PullRequestFile = {
   readonly filename: string;
   readonly previous_filename?: string | null;
@@ -13,6 +15,9 @@ export type PullRequestFile = {
 
 export type GrowthGuardrailDiff = {
   readonly files: readonly PullRequestFile[];
+  readonly pullRequestNumber: number | null;
+  readonly exceptionPolicySource: "base" | "head";
+  readBudgetApproval?(digest: string): Promise<boolean>;
   readBase(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
   readHead(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
 };
@@ -138,6 +143,8 @@ function loadLocalDiff(): GrowthGuardrailDiff {
 
   return {
     files,
+    pullRequestNumber: null,
+    exceptionPolicySource: "head",
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(comparisonBase, file));
     },
@@ -173,6 +180,11 @@ function fetchPullHead(prNumber: string, expectedHeadSha: string): void {
   if (fetchedHead !== expectedHeadSha) throw new Error("Fetched PR head does not match HEAD_SHA");
 }
 
+/** Independent pull_request_target enforcement must never consume candidate policy. */
+function pullRequestExceptionPolicySource(eventName: string | undefined): "base" | "head" {
+  return eventName === "pull_request" ? "head" : "base";
+}
+
 function loadPullRequestDiff(): GrowthGuardrailDiff {
   const prNumber = requiredEnvironment("PR_NUMBER");
   const baseSha = requiredEnvironment("BASE_SHA");
@@ -194,6 +206,16 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
 
   return {
     files: parseChangedFiles(changed),
+    pullRequestNumber: Number(prNumber),
+    exceptionPolicySource: pullRequestExceptionPolicySource(process.env.GITHUB_EVENT_NAME),
+    ...(["pull_request_target", "issue_comment"].includes(process.env.GITHUB_EVENT_NAME ?? "") &&
+    process.env.GITHUB_REPOSITORY === "NVIDIA/NemoClaw"
+      ? {
+          async readBudgetApproval(digest: string) {
+            return hasMaintainerBudgetApproval(Number(prNumber), digest);
+          },
+        }
+      : {}),
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
     },
@@ -208,6 +230,7 @@ export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
 }
 
 export const testOnly = {
+  pullRequestExceptionPolicySource,
   parseAncestorProbe,
   parseChangedFiles,
   readFilesCached,

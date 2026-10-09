@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isProtectedNemoClawHostPort } from "../../core/protected-host-ports";
+import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
-import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
-import {
-  checkOpenAiInferenceProviderProfile,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../../adapters/openshell/provider-profile-registration";
+import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
+import { isLoopbackHostname } from "../../private-networks";
+import {
+  listRecordedGatewayPorts,
+  listRecordedModelRouterPorts,
+  resolveHome,
+} from "../../state/gateway-registry";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints
@@ -23,6 +27,91 @@ export const COMPATIBLE_ENDPOINT_GATEWAY_PORTS = [11434, 11435, VLLM_PORT] as co
 
 const COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET = new Set<number>(COMPATIBLE_ENDPOINT_GATEWAY_PORTS);
 const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-local"]);
+const NO_AUTH_PROXY_ENDPOINT_INELIGIBLE_ERROR =
+  "The no-authentication endpoint is no longer eligible for proxy routing.";
+
+/**
+ * Parse the loopback source identity before checking supported and protected ports.
+ */
+function loopbackNoAuthCompatibleEndpointPort(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): number | null {
+  if (
+    provider !== "compatible-endpoint" ||
+    !endpointUrl ||
+    unsafeEndpointUrlViolation(endpointUrl)
+  ) {
+    return null;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return null;
+  }
+  const port = parsed.port ? Number(parsed.port) : null;
+  return parsed.protocol === "http:" &&
+    !parsed.username &&
+    !parsed.password &&
+    !parsed.search &&
+    !parsed.hash &&
+    !parsed.hostname.endsWith(".") &&
+    isLoopbackHostname(parsed.hostname) &&
+    port !== null &&
+    Number.isInteger(port) &&
+    port >= 1024 &&
+    port <= 65535
+    ? port
+    : null;
+}
+
+export function isLoopbackNoAuthCompatibleEndpointUrl(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): boolean {
+  const port = loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl);
+  const home = resolveHome();
+  return (
+    port !== null &&
+    COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET.has(port) &&
+    !isProtectedNemoClawHostPort(port, listRecordedModelRouterPorts(home)) &&
+    !listRecordedGatewayPorts(home).includes(port)
+  );
+}
+
+/** Revalidate the no-auth endpoint at the proxy's final mutation boundary. */
+export function assertLoopbackNoAuthCompatibleEndpointUrl(
+  endpointUrl: string,
+  options: { allowLegacyRecordedEndpoint?: boolean } = {},
+): void {
+  const eligible = isLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl);
+  const authorizedLegacyEndpoint =
+    options.allowLegacyRecordedEndpoint === true &&
+    isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl("compatible-endpoint", endpointUrl);
+  if (!eligible && !authorizedLegacyEndpoint) {
+    throw new Error(NO_AUTH_PROXY_ENDPOINT_INELIGIBLE_ERROR);
+  }
+}
+
+/**
+ * Recognize the one historical route shape that fresh onboarding now rejects.
+ * The caller must also require the durable no-auth proxy credential marker.
+ */
+export function isLegacyRecordedLoopbackNoAuthCompatibleEndpointUrl(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): boolean {
+  const home = resolveHome();
+  return (
+    OLLAMA_PROXY_PORT !== DEFAULT_OLLAMA_PROXY_PORT &&
+    loopbackNoAuthCompatibleEndpointPort(provider, endpointUrl) === DEFAULT_OLLAMA_PROXY_PORT &&
+    !isProtectedNemoClawHostPort(DEFAULT_OLLAMA_PROXY_PORT, listRecordedModelRouterPorts(home), {
+      allowLegacyProxyDefault: true,
+    }) &&
+    !listRecordedGatewayPorts(home).includes(DEFAULT_OLLAMA_PROXY_PORT)
+  );
+}
 
 // #5744: keep host-side validation on the user-entered loopback URL, but
 // register the sandbox route through OpenShell's host bridge. Remove this when
@@ -92,47 +181,19 @@ export async function reuseRegisteredProviderWithGatewayEndpoint(args: {
   } = args;
   // The caller has already authorized the recovered provider's non-secret
   // credential/config identity through assessRecoveredProviderCredentialReuse.
-  const adapter = createCliOpenShellProviderAdapter({
-    run: (command, options) => {
-      const result = runOpenshell(command, options);
-      return {
-        status: result.status,
-        stdout:
-          typeof result.stdout === "string" || Buffer.isBuffer(result.stdout)
-            ? result.stdout
-            : null,
-        stderr:
-          typeof result.stderr === "string" || Buffer.isBuffer(result.stderr)
-            ? result.stderr
-            : null,
-      };
-    },
+  const existing = runOpenshell(["provider", "get", provider], {
+    ignoreError: true,
+    suppressOutput: true,
   });
-  const existing = await adapter.getProvider({
-    target: { kind: "selected" },
-    providerName: provider,
-  });
-  if (!existing.ok) {
+  if (existing.status !== 0) {
     return {
       ok: false,
-      status: 1,
-      message:
-        existing.error.kind === "command" && existing.error.reason === "not_found"
-          ? `Recovered provider '${provider}' is no longer registered in OpenShell.`
-          : existing.error.message,
+      status: existing.status || 1,
+      message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
     };
   }
   if (gatewayEndpointUrl === endpointUrl) {
-    if (providerType !== OPENAI_GATEWAY_PROVIDER_TYPE) return { ok: true };
-    // #9895: an unchanged gateway route performs no upsert, so the shared
-    // provider-profile boundary in setup-inference never runs here. A provider
-    // that an earlier NemoClaw registered without the `openai` profile stays
-    // unclassifiable, and the sandbox supervisor keeps rejecting the provider
-    // environment until the profile import lands. Declare it here as well.
-    const profile = checkOpenAiInferenceProviderProfile({ runOpenshell });
-    return profile.ok
-      ? { ok: true }
-      : { ok: false, status: 1, message: profile.messages.join("\n").trim() };
+    return { ok: true };
   }
   return upsertProvider(provider, providerType, credentialEnv, gatewayEndpointUrl, {});
 }

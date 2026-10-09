@@ -33,8 +33,8 @@ describe("OpenShell gateway drift preflight", () => {
     expect(parseGatewayClusterImageVersion("example.com/other/image:0.0.36")).toBeNull();
   });
 
-  it("detects a running gateway image that differs from the installed OpenShell version", () => {
-    const drift = getGatewayClusterImageDrift({
+  it("detects a running gateway image that differs from the installed OpenShell version", async () => {
+    const drift = await getGatewayClusterImageDrift({
       deps: {
         getInstalledOpenshellVersion: () => "0.0.37",
         getGatewayClusterImageRef: () => "ghcr.io/nvidia/openshell/cluster:0.0.36",
@@ -49,9 +49,9 @@ describe("OpenShell gateway drift preflight", () => {
     });
   });
 
-  it("does not flag matching gateway image versions", () => {
+  it("does not flag matching gateway image versions", async () => {
     expect(
-      detectOpenShellStateRpcPreflightIssue({
+      await detectOpenShellStateRpcPreflightIssue({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.37",
           getGatewayClusterImageRef: () => "ghcr.io/nvidia/openshell/cluster:0.0.37",
@@ -64,9 +64,9 @@ describe("OpenShell gateway drift preflight", () => {
     ).toBeNull();
   });
 
-  it("ignores stale legacy cluster images when that container is not the active gateway", () => {
+  it("ignores stale legacy cluster images when that container is not the active gateway", async () => {
     expect(
-      getGatewayClusterImageDrift({
+      await getGatewayClusterImageDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.37",
           getGatewayClusterImageRef: () => "ghcr.io/nvidia/openshell/cluster:0.0.36",
@@ -76,25 +76,21 @@ describe("OpenShell gateway drift preflight", () => {
     ).toBeNull();
   });
 
-  it("uses the shared gateway-health classifier when checking the active cluster gateway", () => {
+  it("uses the typed reuse observer when checking the active cluster gateway", async () => {
     const openshellRuntime = requireDist("./runtime.js");
     const docker = requireDist("../docker/inspect.js");
     spies.push(
       vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
         const args = rawArgs as string[];
-        if (args.join(" ") === "status") {
-          return { status: 0, output: "Gateway status: Connected\nGateway: nemoclaw" };
-        }
-        if (args.join(" ") === "gateway info -g nemoclaw") {
+        if (args.join(" ") === "status -g nemoclaw") {
           return {
             status: 0,
-            output:
-              "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+            output: "Server Status\n\n  Gateway: nemoclaw\n  Status: Connected",
           };
         }
         return {
           status: 0,
-          output: "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+          output: '[{"name":"nemoclaw","endpoint":"https://127.0.0.1:8080","active":true}]',
         };
       }),
       vi.spyOn(docker, "dockerContainerInspectFormat").mockImplementation((rawFormat: unknown) => {
@@ -108,7 +104,7 @@ describe("OpenShell gateway drift preflight", () => {
     );
 
     expect(
-      getGatewayClusterImageDrift({
+      await getGatewayClusterImageDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.37",
         },
@@ -117,11 +113,43 @@ describe("OpenShell gateway drift preflight", () => {
       currentVersion: "0.0.36",
       expectedVersion: "0.0.37",
     });
-    expect(isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 8080 })).toBe(true);
-    expect(isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 9090 })).toBe(false);
+    expect(await isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 8080 })).toBe(
+      true,
+    );
+    expect(await isGatewayClusterActiveForGateway("nemoclaw", { expectedGatewayPort: 9090 })).toBe(
+      false,
+    );
   });
 
-  it("pins gateway health probes to the frozen OpenShell target (#10514)", () => {
+  it("fails closed when the typed gateway observation fails", async () => {
+    const docker = requireDist("../docker/inspect.js");
+    const inspectContainer = vi.spyOn(docker, "dockerContainerInspectFormat");
+    spies.push(inspectContainer);
+    const observeGatewayReuse = vi.fn().mockResolvedValue({
+      gatewayReuseState: "missing",
+      healthy: false,
+      namedMetadata: false,
+      shouldSelect: false,
+      endpoints: [],
+      endpointBinding: "unknown",
+      error: { kind: "schema", message: "Gateway observation failed." },
+    });
+
+    expect(
+      await isGatewayClusterActiveForGateway("nemoclaw", {
+        expectedGatewayPort: 8080,
+        observer: { observeGatewayReuse },
+      }),
+    ).toBe(false);
+    expect(observeGatewayReuse).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      expectedGatewayPort: 8080,
+      timeoutMs: expect.any(Number),
+    });
+    expect(inspectContainer).not.toHaveBeenCalled();
+  });
+
+  it("pins gateway health probes to the frozen OpenShell target (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.example.invalid");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
     vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
@@ -136,8 +164,7 @@ describe("OpenShell gateway drift preflight", () => {
       })
       .mockReturnValue({
         status: 0,
-        output:
-          "Gateway Info\n\n  Gateway: nemoclaw-9090\n  Gateway endpoint: https://127.0.0.1:9090",
+        output: '[{"name":"nemoclaw-9090","endpoint":"https://127.0.0.1:9090","active":true}]',
       });
     const inspectContainer = vi
       .spyOn(docker, "dockerContainerInspectFormat")
@@ -151,7 +178,7 @@ describe("OpenShell gateway drift preflight", () => {
     };
 
     expect(
-      isGatewayClusterActiveForGateway(runtimeSelection.gatewayName, {
+      await isGatewayClusterActiveForGateway(runtimeSelection.gatewayName, {
         expectedGatewayPort: 9090,
         runtimeSelection,
       }),
@@ -164,13 +191,16 @@ describe("OpenShell gateway drift preflight", () => {
       }),
       replaceEnv: true,
     });
-    expect(captureOpenshell).toHaveBeenNthCalledWith(1, ["status"], selectedProbeOptions);
     expect(captureOpenshell).toHaveBeenNthCalledWith(
-      2,
-      ["gateway", "info", "-g", "nemoclaw-9090"],
+      1,
+      ["status", "-g", "nemoclaw-9090"],
       selectedProbeOptions,
     );
-    expect(captureOpenshell).toHaveBeenNthCalledWith(3, ["gateway", "info"], selectedProbeOptions);
+    expect(captureOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["gateway", "list", "-o", "json"],
+      selectedProbeOptions,
+    );
     const firstProbeOptions = captureOpenshell.mock.calls[0]?.[1] as
       | { env?: Record<string, string> }
       | undefined;
@@ -179,13 +209,13 @@ describe("OpenShell gateway drift preflight", () => {
     expect(selectedEnv).not.toHaveProperty("OPENSHELL_TOKEN");
   });
 
-  it("ignores stale cluster containers whose published port is not the active gateway endpoint", () => {
+  it("ignores stale cluster containers whose published port is not the active gateway endpoint", async () => {
     const openshellRuntime = requireDist("./runtime.js");
     const docker = requireDist("../docker/inspect.js");
     spies.push(
       vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
         const args = rawArgs as string[];
-        if (args.join(" ") === "status") {
+        if (args.join(" ") === "status -g nemoclaw") {
           return {
             status: 0,
             output: "Server Status\n\n  Gateway: nemoclaw\n  Status: Connected",
@@ -193,7 +223,7 @@ describe("OpenShell gateway drift preflight", () => {
         }
         return {
           status: 0,
-          output: "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:18081",
+          output: '[{"name":"nemoclaw","endpoint":"http://127.0.0.1:18081","active":true}]',
         };
       }),
       vi.spyOn(docker, "dockerContainerInspectFormat").mockImplementation((rawFormat: unknown) => {
@@ -207,7 +237,7 @@ describe("OpenShell gateway drift preflight", () => {
     );
 
     expect(
-      getGatewayClusterImageDrift({
+      await getGatewayClusterImageDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.37",
         },
@@ -215,8 +245,8 @@ describe("OpenShell gateway drift preflight", () => {
     ).toBeNull();
   });
 
-  it("detects a newer gateway image as schema drift", () => {
-    const issue = detectOpenShellStateRpcPreflightIssue({
+  it("detects a newer gateway image as schema drift", async () => {
+    const issue = await detectOpenShellStateRpcPreflightIssue({
       deps: {
         getInstalledOpenshellVersion: () => "0.0.37",
         getGatewayClusterImageRef: () => "ghcr.io/nvidia/openshell/cluster:0.0.38",
@@ -232,23 +262,23 @@ describe("OpenShell gateway drift preflight", () => {
     });
   });
 
-  it("ignores the host Docker gateway when the Vitest sentinel is set", () => {
+  it("ignores the host Docker gateway when the Vitest sentinel is set", async () => {
     expect(process.env.VITEST).toBe("true");
     expect(process.env.NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT).toBe("1");
 
     expect(
-      getGatewayClusterImageDrift({
+      await getGatewayClusterImageDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.37",
           getGatewayClusterImageRef: () => "ghcr.io/nvidia/openshell/cluster:0.0.38",
         },
       }),
     ).not.toBeNull();
-    expect(getGatewayClusterImageDrift()).toBeNull();
+    expect(await getGatewayClusterImageDrift()).toBeNull();
   });
 
-  it("detects host-process gateway binary drift when no cluster container exists", () => {
-    const drift = getGatewayHostProcessDrift({
+  it("detects host-process gateway binary drift when no cluster container exists", async () => {
+    const drift = await getGatewayHostProcessDrift({
       deps: {
         getInstalledOpenshellVersion: () => "0.0.44",
         getGatewayClusterImageRef: () => null,
@@ -266,9 +296,9 @@ describe("OpenShell gateway drift preflight", () => {
     });
   });
 
-  it("does not flag a matching host-process gateway binary", () => {
+  it("does not flag a matching host-process gateway binary", async () => {
     expect(
-      getGatewayHostProcessDrift({
+      await getGatewayHostProcessDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.44",
           getGatewayClusterImageRef: () => null,
@@ -281,10 +311,10 @@ describe("OpenShell gateway drift preflight", () => {
     ).toBeNull();
   });
 
-  it("does not probe host-process drift while an active cluster gateway is present", () => {
+  it("does not probe host-process drift while an active cluster gateway is present", async () => {
     let runtimeProbed = false;
     expect(
-      getGatewayHostProcessDrift({
+      await getGatewayHostProcessDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.44",
           getGatewayClusterImageRef: () => "ghcr.io/nvidia/openshell/cluster:0.0.44",
@@ -299,8 +329,8 @@ describe("OpenShell gateway drift preflight", () => {
     expect(runtimeProbed).toBe(false);
   });
 
-  it("detects host-process drift when a leftover cluster container exists but is not active", () => {
-    const drift = getGatewayHostProcessDrift({
+  it("detects host-process drift when a leftover cluster container exists but is not active", async () => {
+    const drift = await getGatewayHostProcessDrift({
       deps: {
         getInstalledOpenshellVersion: () => "0.0.44",
         // A stopped/leftover cluster container still returns an image ref...
@@ -317,9 +347,9 @@ describe("OpenShell gateway drift preflight", () => {
     expect(drift).toMatchObject({ currentVersion: "0.0.43", expectedVersion: "0.0.44" });
   });
 
-  it("returns null when the host-process gateway version cannot be probed", () => {
+  it("returns null when the host-process gateway version cannot be probed", async () => {
     expect(
-      getGatewayHostProcessDrift({
+      await getGatewayHostProcessDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.44",
           getGatewayClusterImageRef: () => null,
@@ -338,9 +368,9 @@ describe("OpenShell gateway drift preflight", () => {
     [null, "unknown"],
   ] as const)(
     "reports host-process running version %s as %s readiness evidence",
-    (runningVersion, expected) => {
+    async (runningVersion, expected) => {
       expect(
-        observeOpenShellGatewayVersionCompatibility({
+        await observeOpenShellGatewayVersionCompatibility({
           source: "host-process",
           deps: {
             getInstalledOpenshellVersion: () => "0.0.44",
@@ -355,9 +385,9 @@ describe("OpenShell gateway drift preflight", () => {
     },
   );
 
-  it("keeps version compatibility unknown without an installed version", () => {
+  it("keeps version compatibility unknown without an installed version", async () => {
     expect(
-      observeOpenShellGatewayVersionCompatibility({
+      await observeOpenShellGatewayVersionCompatibility({
         source: "host-process",
         deps: {
           getInstalledOpenshellVersion: () => null,
@@ -371,14 +401,14 @@ describe("OpenShell gateway drift preflight", () => {
     ).toBe("unknown");
   });
 
-  it("does not fall from an unproven legacy cluster to an unrelated host binary", () => {
+  it("does not fall from an unproven legacy cluster to an unrelated host binary", async () => {
     const getHostProcessGatewayRuntime = vi.fn(() => ({
       gatewayBin: "/home/u/.local/bin/openshell-gateway",
       runningVersion: "0.0.44",
     }));
 
     expect(
-      observeOpenShellGatewayVersionCompatibility({
+      await observeOpenShellGatewayVersionCompatibility({
         source: "legacy-cluster",
         deps: {
           getInstalledOpenshellVersion: () => "0.0.44",
@@ -395,9 +425,9 @@ describe("OpenShell gateway drift preflight", () => {
     ["ghcr.io/nvidia/openshell/cluster:0.0.44", "compatible"],
     ["ghcr.io/nvidia/openshell/cluster:0.0.43", "drift"],
     ["example.com/cluster:latest", "unknown"],
-  ] as const)("reports bound legacy cluster image %s as %s", (image, expected) => {
+  ] as const)("reports bound legacy cluster image %s as %s", async (image, expected) => {
     expect(
-      observeOpenShellGatewayVersionCompatibility({
+      await observeOpenShellGatewayVersionCompatibility({
         source: "legacy-cluster",
         deps: {
           getInstalledOpenshellVersion: () => "0.0.44",
@@ -408,8 +438,8 @@ describe("OpenShell gateway drift preflight", () => {
     ).toBe(expected);
   });
 
-  it("surfaces host-process drift as a preflight issue when cluster image drift is absent", () => {
-    const issue = detectOpenShellStateRpcPreflightIssue({
+  it("surfaces host-process drift as a preflight issue when cluster image drift is absent", async () => {
+    const issue = await detectOpenShellStateRpcPreflightIssue({
       deps: {
         getInstalledOpenshellVersion: () => "0.0.44",
         getGatewayClusterImageRef: () => null,
@@ -454,13 +484,13 @@ describe("OpenShell gateway drift preflight", () => {
     expect(joined).not.toContain("Running gateway image");
   });
 
-  it("ignores host-process gateway drift when the Vitest sentinel is set", () => {
+  it("ignores host-process gateway drift when the Vitest sentinel is set", async () => {
     expect(process.env.VITEST).toBe("true");
     expect(process.env.NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT).toBe("1");
 
     // Injected deps opt back into detection; the bare call stays disabled.
     expect(
-      getGatewayHostProcessDrift({
+      await getGatewayHostProcessDrift({
         deps: {
           getInstalledOpenshellVersion: () => "0.0.44",
           getGatewayClusterImageRef: () => null,
@@ -468,11 +498,11 @@ describe("OpenShell gateway drift preflight", () => {
         },
       }),
     ).not.toBeNull();
-    expect(getGatewayHostProcessDrift()).toBeNull();
+    expect(await getGatewayHostProcessDrift()).toBeNull();
   });
 
-  it("classifies protobuf invalid-wire output as an unsafe OpenShell state result", () => {
-    const issue = detectOpenShellStateRpcResultIssue(
+  it("classifies protobuf invalid-wire output as an unsafe OpenShell state result", async () => {
+    const issue = await detectOpenShellStateRpcResultIssue(
       {
         status: 1,
         output:
@@ -495,8 +525,8 @@ describe("OpenShell gateway drift preflight", () => {
     );
   });
 
-  it("attaches host-process drift to a protobuf mismatch when there is no cluster container", () => {
-    const issue = detectOpenShellStateRpcResultIssue(
+  it("attaches host-process drift to a protobuf mismatch when there is no cluster container", async () => {
+    const issue = await detectOpenShellStateRpcResultIssue(
       {
         status: 1,
         output:

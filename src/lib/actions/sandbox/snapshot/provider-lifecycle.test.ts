@@ -12,6 +12,7 @@ import type { SandboxEntry } from "../../../state/registry/types";
 import {
   captureSandboxRuntimeSnapshot,
   confirmSandboxRuntimeRestore,
+  prepareSandboxStoppedStateCapture,
   prepareSandboxRuntimeRestore,
 } from "./provider-lifecycle";
 
@@ -83,7 +84,11 @@ function provider(
         providerId,
         supported: true,
         contractVersion: 1,
-        capabilities: { backup: true, restore: true, managedProfileRestore: true },
+        capabilities: {
+          backup: true,
+          restore: true,
+          managedProfileRestore: true,
+        },
         preflight,
         capture,
         validateRestore,
@@ -111,6 +116,65 @@ describe("snapshot provider lifecycle", () => {
     });
     expect(preflight).toHaveBeenCalledWith("backup", expect.objectContaining({ name: "alpha" }));
     expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("bounds both provider observations by the remaining snapshot deadline", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const { bundle, preflight, capture } = provider();
+
+    try {
+      captureSandboxRuntimeSnapshot(bundle, sandbox(), 15_000);
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(preflight).toHaveBeenCalledWith(
+      "backup",
+      expect.objectContaining({ name: "alpha" }),
+      5_000,
+    );
+    expect(capture).toHaveBeenCalledWith(expect.anything(), expect.anything(), 5_000);
+  });
+
+  it("keeps stopped capture optional and passes detached frozen authority to its owner", async () => {
+    const { bundle } = provider();
+    const surface = bundle.snapshot as Extract<typeof bundle.snapshot, { supported: true }>;
+    const target = sandbox();
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      lifecycleState: "stopped" as const,
+    };
+    const projection = { nativeRoot: "/sandbox" };
+    expect(prepareSandboxStoppedStateCapture(bundle, target, source, projection)).toBeNull();
+    const capture = vi.fn(async (_fd: number) => undefined);
+    const assertCurrent = vi.fn();
+    const prepare = vi.fn((entry, snapshot, layout) => {
+      expect(entry).not.toBe(target);
+      expect(snapshot).not.toBe(source);
+      expect(layout).not.toBe(projection);
+      expect(Object.isFrozen(entry)).toBe(true);
+      expect(Object.isFrozen(snapshot.runtime.runtime)).toBe(true);
+      expect(layout.nativeRoot).toBe("/sandbox");
+      return { capture, assertCurrent };
+    });
+    const owner = {
+      ...bundle,
+      snapshot: { ...surface, prepareStoppedStateCapture: prepare },
+    };
+    const prepared = prepareSandboxStoppedStateCapture(owner, target, source, projection)!;
+    await prepared.capture(123, 456);
+    prepared.assertCurrent();
+    expect(capture).toHaveBeenCalledWith(123, 456);
+    expect(assertCurrent).toHaveBeenCalledOnce();
+    expect(() =>
+      prepareSandboxStoppedStateCapture(
+        owner,
+        target,
+        { ...source, providerId: "other" },
+        projection,
+      ),
+    ).toThrow("does not match the owning provider");
+    expect(prepare).toHaveBeenCalledOnce();
   });
 
   it("preflights before restore and revalidates through the same injected facet", () => {
@@ -176,7 +240,10 @@ describe("snapshot provider lifecycle", () => {
       lifecycleGeneration: "generation-1",
       runtime: {
         ...runtime(),
-        runtime: { kind: "replacement-session", handle: "opaque-provider-owned-runtime" },
+        runtime: {
+          kind: "replacement-session",
+          handle: "opaque-provider-owned-runtime",
+        },
       },
       managedProfile,
     });
@@ -184,7 +251,10 @@ describe("snapshot provider lifecycle", () => {
     expect(confirmSandboxRuntimeRestore(bundle, target, prepared).restoreReceipt).toMatchObject({
       providerHandle: "opaque-provider-owned-restore",
       runtime: {
-        runtime: { kind: "replacement-session", handle: "opaque-provider-owned-runtime" },
+        runtime: {
+          kind: "replacement-session",
+          handle: "opaque-provider-owned-runtime",
+        },
       },
     });
   });
@@ -216,6 +286,40 @@ describe("snapshot provider lifecycle", () => {
       ),
     ).toThrow(/cannot represent the snapshot lifecycle state/u);
     expect(restore).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit provider approval for a stopped-to-running restore transition", () => {
+    const { bundle } = provider();
+    const surface = bundle.snapshot as Extract<typeof bundle.snapshot, { supported: true }>;
+    const source = {
+      schemaVersion: 1,
+      providerId: "mxc",
+      providerHandle: "opaque-source",
+      lifecycleState: "stopped",
+      lifecycleGeneration: "source-generation",
+      runtime: runtime(),
+    } as const;
+    expect(() =>
+      prepareSandboxRuntimeRestore(bundle, sandbox("target"), source, managedProfile),
+    ).toThrow("cannot represent the snapshot lifecycle state");
+    const approvedSurface = {
+      ...surface,
+      canRestoreLifecycle: vi.fn(() => true),
+    };
+    const prepared = prepareSandboxRuntimeRestore(
+      { ...bundle, snapshot: approvedSurface },
+      sandbox("target"),
+      source,
+      managedProfile,
+    );
+
+    expect(prepared.source.lifecycleState).toBe("stopped");
+    expect(prepared.preflight.lifecycleState).toBe("running");
+    expect(approvedSurface.canRestoreLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "target" }),
+      "stopped",
+      "running",
+    );
   });
 
   it("propagates provider restore refusal from the read-only preflight edge", () => {
@@ -313,8 +417,16 @@ describe("snapshot provider lifecycle", () => {
   });
 
   it.each([
-    { field: "lifecycle state", lifecycleState: "stopped", lifecycleGeneration: "generation-1" },
-    { field: "lifecycle generation", lifecycleState: "running", lifecycleGeneration: "changed" },
+    {
+      field: "lifecycle state",
+      lifecycleState: "stopped",
+      lifecycleGeneration: "generation-1",
+    },
+    {
+      field: "lifecycle generation",
+      lifecycleState: "running",
+      lifecycleGeneration: "changed",
+    },
   ] as const)(
     "rejects restore proof with changed $field",
     ({ lifecycleState, lifecycleGeneration }) => {
@@ -372,6 +484,45 @@ describe("snapshot provider lifecycle", () => {
 
     expect(() => confirmSandboxRuntimeRestore(bundle, target, prepared)).toThrow(
       /invalid managed restore proof/u,
+    );
+  });
+
+  it("accepts a provider-verified canonical acceleration receipt for a legacy source", () => {
+    const legacyAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["docker-device-id:nvidia.com/gpu=all"],
+    };
+    const canonicalAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["nvidia.com/gpu=all"],
+    };
+    const canRepresentAcceleration = vi.fn((source: object, target: object) => {
+      expect(Object.isFrozen(source)).toBe(true);
+      expect(Object.isFrozen(target)).toBe(true);
+      return true;
+    });
+    const { bundle, restore } = provider();
+    Object.assign(bundle.snapshot, { canRepresentAcceleration });
+    const target = sandbox("target");
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      runtime: { ...runtime(), acceleration: legacyAcceleration },
+    };
+    const prepared = prepareSandboxRuntimeRestore(bundle, target, source, managedProfile);
+    restore.mockReturnValueOnce({
+      ...prepared.preflight,
+      runtime: { ...runtime(), acceleration: canonicalAcceleration },
+      managedProfile,
+    });
+
+    expect(confirmSandboxRuntimeRestore(bundle, target, prepared)).toMatchObject({
+      restoreReceipt: { runtime: { acceleration: canonicalAcceleration } },
+    });
+    expect(canRepresentAcceleration).toHaveBeenCalledWith(
+      legacyAcceleration,
+      canonicalAcceleration,
     );
   });
 

@@ -107,14 +107,18 @@ describe("onboard command options", () => {
       resolve(
         { profile: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b" },
         {
-          env: { NEMOCLAW_PROVIDER: "ollama" },
+          env: {
+            NEMOCLAW_PROVIDER: "ollama",
+            NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.muse-glimmer-30b.spark-single.v1",
+          },
           listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
           error: (message = "") => errors.push(message),
         },
       ),
     ).toThrow("exit:1");
-    expect(errors.join("\n")).toContain("cannot be combined with inference overrides");
-    expect(errors.join("\n")).toContain("NEMOCLAW_PROVIDER");
+    expect(errors.join("\n")).toContain(
+      "cannot be combined with inference overrides: NEMOCLAW_PROVIDER, NEMOCLAW_LLAMACPP_RECIPE",
+    );
 
     errors.length = 0;
     expect(() =>
@@ -135,33 +139,33 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("incompatible: A host requirement is not met");
   });
 
-  it("reuses exact recorded profile identity on resume and rejects catalog drift (#8246)", () => {
+  it("reuses the recorded llama.cpp profile on resume and rejects drift (#8246, #11416)", () => {
     const catalog = loadServingCatalog();
+    let activeCatalog = catalog;
     const recorded = servingProfileProvenance(catalog, catalog.presets[0]!.metadata.id);
-    const resumed = resolve(
-      { resume: true },
-      {
-        loadServingCatalog: () => catalog,
-        loadSession: () => ({ servingProfileProvenance: recorded }) as never,
-      },
-    );
-    expect(resumed.servingProfile).toBe(recorded.preset.id);
-    expect(resumed.servingProfileProvenance).toEqual(recorded);
-
+    const env = { NEMOCLAW_LLAMACPP_RECIPE: recorded.recipe.id };
     const errors: string[] = [];
-    expect(() =>
+    const resume = () =>
       resolve(
         { resume: true },
         {
-          loadServingCatalog: () => ({
-            ...catalog,
-            catalogDigest: `sha256:${"f".repeat(64)}`,
-          }),
+          env,
+          loadServingCatalog: () => activeCatalog,
           loadSession: () => ({ servingProfileProvenance: recorded }) as never,
           error: (message = "") => errors.push(message),
         },
-      ),
-    ).toThrow("exit:1");
+      );
+    const resumed = resume();
+    expect(resumed.servingProfile).toBe(recorded.preset.id);
+    expect(resumed.servingProfileProvenance).toEqual(recorded);
+
+    env.NEMOCLAW_LLAMACPP_RECIPE += ".different";
+    expect(resume).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("NEMOCLAW_LLAMACPP_RECIPE");
+    env.NEMOCLAW_LLAMACPP_RECIPE = recorded.recipe.id;
+    activeCatalog = { ...catalog, catalogDigest: `sha256:${"f".repeat(64)}` };
+    errors.length = 0;
+    expect(resume).toThrow("exit:1");
     expect(errors.join("\n")).toContain("changed since onboarding started");
   });
 
@@ -551,6 +555,48 @@ describe("onboard command options", () => {
     const relativeDockerfilePath = path.relative(process.cwd(), dockerfilePath);
 
     expect(resolve({ from: relativeDockerfilePath }).fromDockerfile).toBe(relativeDockerfilePath);
+  });
+
+  it("accepts only exact-digest external image references", () => {
+    const reference = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
+    expect(resolve({ "from-image": reference }).fromImage).toBe(reference);
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { "from-image": "ghcr.io/example/openclaw:latest" },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("repository@sha256");
+  });
+
+  it("rejects external images for the Portable profile", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          "experimental-profile": "portable",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from-image cannot be used with the Portable profile");
+  });
+
+  it("rejects simultaneous Dockerfile and external image sources", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {
+          from: "Dockerfile",
+          "from-image": `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+        },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("--from and --from-image cannot both be set");
   });
 
   it("rejects missing and non-file Dockerfile paths before onboarding", () => {
@@ -974,7 +1020,7 @@ describe("onboard command options", () => {
       ),
     ).toThrow("exit:1");
     expect(errors).toEqual([
-      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible.`,
+      `  Serving profile '${profileId}' is incompatible: podman-host: readiness status is incompatible; host.docker.unavailable: Docker is unavailable..`,
     ]);
   });
 
@@ -1433,52 +1479,6 @@ describe("onboard command options", () => {
     expect(errors[0]).not.toMatch(
       /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
     );
-  });
-
-  it("re-throws a non-cancellation, non-gateway error so genuine bugs still surface (#7627)", async () => {
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw new Error("unexpected boom");
-        },
-        error: () => {},
-        exit: exitWithCode,
-      }),
-    ).rejects.toThrow("unexpected boom");
-  });
-
-  it("returns without rethrowing when a prompt rejects with SIGINT (#7439)", async () => {
-    const exit = vi.fn<(code: number) => never>();
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw Object.assign(new Error("Prompt interrupted"), {
-            code: "SIGINT",
-          });
-        },
-        error: () => {},
-        exit,
-      }),
-    ).resolves.toBeUndefined();
-    expect(exit).not.toHaveBeenCalled();
-  });
-
-  it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw new Error("docker is not reachable");
-        },
-        error: () => {},
-        exit: exitWithCode,
-      }),
-    ).rejects.toThrow("docker is not reachable");
   });
 
   it("sets the Ollama autostart override before onboarding", async () => {

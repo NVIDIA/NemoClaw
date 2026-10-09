@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Pure reply-matching helper shared by the openclaw-inference-switch live E2E
-// target and its PR-collected unit test. Extracting the predicate lets the fast
-// e2e-support project verify that a wrapped/whitespace-split "PONG" reply is
-// accepted while echoed or embedded tokens are rejected, without gating on
-// NEMOCLAW_RUN_LIVE_E2E=1.
+// Fixture and response helpers shared by the openclaw-inference-switch live
+// target and fast e2e-support tests without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
 import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
+import {
+  startFakeOpenAiCompatibleServer,
+  type FakeOpenAiCompatibleServerOptions,
+} from "../fixtures/fake-openai-compatible.ts";
 
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;
@@ -20,6 +21,36 @@ export interface OpenClawPostSwitchInferenceAttempt {
 export type OpenClawPostSwitchInferenceClassification =
   | { outcome: "passed" }
   | { outcome: "failed"; failureClass: RetryFailureClass };
+
+export type ExhaustedPostSwitchEvidence =
+  | { outcome: "failed"; message: string }
+  | { outcome: "skipped"; reason: string };
+
+export type UnavailableInitialProviderEvidence =
+  | { outcome: "failed"; message: string }
+  | { outcome: "skipped"; reason: string };
+
+/** Required provider qualification cannot succeed by skipping failed onboarding validation. */
+export function classifyUnavailableInitialProviderEvidence(input: {
+  required: boolean;
+  detail: string;
+}): UnavailableInitialProviderEvidence {
+  const detail = `External provider validation was unavailable during onboarding: ${input.detail}`;
+  return input.required
+    ? { outcome: "failed", message: `Required native provider evidence failed: ${detail}` }
+    : { outcome: "skipped", reason: detail };
+}
+
+/** Required provider evidence fails closed after bounded transient retries. */
+export function classifyExhaustedPostSwitchEvidence(input: {
+  required: boolean;
+  lastFailure: string;
+}): ExhaustedPostSwitchEvidence {
+  const detail = `Sandbox inference transient failure after switch; route/config checks already passed: ${input.lastFailure}`;
+  return input.required
+    ? { outcome: "failed", message: `Required native provider evidence failed: ${detail}` }
+    : { outcome: "skipped", reason: detail };
+}
 
 export function classifyOpenClawPostSwitchInferenceAttempt(
   attempt: OpenClawPostSwitchInferenceAttempt,
@@ -61,6 +92,58 @@ export function agentReplyContainsToken(reply: string, expected: string): boolea
   return normalizedExpected.length > 0 && normalizedReply === normalizedExpected;
 }
 
+/** Record zero only when Anthropic tools are absent or an empty array. */
+export function anthropicToolCount(tools: unknown): number | null {
+  if (tools === undefined) return 0;
+  return Array.isArray(tools) ? tools.length : null;
+}
+
+export interface OpenClawGatewayModelRunResult {
+  model: string;
+  provider: string;
+  text: string;
+  transport: "gateway";
+}
+
+/** Parse the stable JSON envelope emitted by `openclaw infer model run --gateway`. */
+export function parseOpenClawGatewayModelRun(raw: string): OpenClawGatewayModelRunResult | null {
+  let document: unknown;
+  try {
+    document = JSON.parse(raw.trim());
+  } catch {
+    return null;
+  }
+  if (!document || typeof document !== "object" || Array.isArray(document)) return null;
+  const record = document as Record<string, unknown>;
+  if (
+    record.ok !== true ||
+    record.capability !== "model.run" ||
+    record.transport !== "gateway" ||
+    typeof record.provider !== "string" ||
+    typeof record.model !== "string" ||
+    !Array.isArray(record.outputs)
+  ) {
+    return null;
+  }
+  const text = record.outputs
+    .map((output) =>
+      output &&
+      typeof output === "object" &&
+      typeof (output as { text?: unknown }).text === "string"
+        ? (output as { text: string }).text
+        : "",
+    )
+    .join("")
+    .trim();
+  if (!text) return null;
+  return {
+    model: record.model,
+    provider: record.provider,
+    text,
+    transport: "gateway",
+  };
+}
+
 // Baseline (mock-Anthropic) inference config the live target builds when
 // NEMOCLAW_SWITCH_MOCK_ANTHROPIC=1 points OpenClaw at a local fake OpenAI-
 // compatible server. Extracted so the fast e2e-support project can assert the
@@ -69,16 +152,32 @@ export function agentReplyContainsToken(reply: string, expected: string): boolea
 export const MOCK_BASELINE_API_KEY = "openclaw-switch-baseline-credential";
 export const MOCK_BASELINE_MODEL = "openclaw-switch-baseline-model";
 
+export function startMockOpenClawBaselineProvider(
+  progress: FakeOpenAiCompatibleServerOptions["progress"],
+) {
+  return startFakeOpenAiCompatibleServer({
+    apiKey: MOCK_BASELINE_API_KEY,
+    chatContent: "PONG",
+    host: "0.0.0.0",
+    model: MOCK_BASELINE_MODEL,
+    publicHost: "host.openshell.internal",
+    progress,
+    requireAuth: true,
+  });
+}
+
 export interface BaselineInferenceConfig {
   apiKey: string;
   endpointUrl: string;
   env: NodeJS.ProcessEnv;
+  model: typeof MOCK_BASELINE_MODEL;
 }
 
 export function mockBaselineInference(endpointUrl: string): BaselineInferenceConfig {
   return {
     apiKey: MOCK_BASELINE_API_KEY,
     endpointUrl,
+    model: MOCK_BASELINE_MODEL,
     env: {
       COMPATIBLE_API_KEY: MOCK_BASELINE_API_KEY,
       NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,

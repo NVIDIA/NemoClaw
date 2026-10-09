@@ -100,12 +100,18 @@ function mergeBaseRevision(git: GitRunner, baseBranch: string | undefined): stri
 }
 
 function changedPathsFromBase(git: GitRunner, revision: string): string[] {
-  return requireGitOutput(
+  const committed = requireGitOutput(
     git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", revision, "HEAD", "--"]),
     `Could not inspect changes after ${revision}`,
-  )
-    .split("\0")
-    .filter(Boolean);
+  );
+  // Pre-commit runs before the receipt refresh is part of HEAD. Include the
+  // index so the final receipt commit can be validated without bypassing this
+  // check; CI still validates the committed comparison with an empty index.
+  const staged = requireGitOutput(
+    git(["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--cached", "--"]),
+    "Could not inspect staged Pi receipt changes",
+  );
+  return [...new Set(`${committed}${staged}`.split("\0").filter(Boolean))];
 }
 
 function piImageSourcePaths(rootDir: string): string[] {
@@ -157,15 +163,21 @@ function parseReceipt(
 function requireReceiptSourceParity(
   git: GitRunner,
   revision: string,
-  comparisonRevision: string,
+  comparisonRevision: string | null,
   imageSourcePaths: readonly string[],
-): void {
-  const result = git(["diff", "--quiet", revision, comparisonRevision, "--", ...imageSourcePaths]);
+  allowPending: boolean,
+): boolean {
+  const result = git(
+    comparisonRevision === null
+      ? ["diff", "--quiet", "--cached", revision, "--", ...imageSourcePaths]
+      : ["diff", "--quiet", revision, comparisonRevision, "--", ...imageSourcePaths],
+  );
   if (result.error) {
     throw new Error(`Could not run git to validate Pi receipt source parity (${result.error})`);
   }
-  if (result.status === 0) return;
+  if (result.status === 0) return true;
   if (result.status === 1) {
+    if (allowPending) return false;
     throw new Error(`Pi image inputs changed after receipt source revision ${revision}`);
   }
   const detail = result.stderr?.trim();
@@ -174,11 +186,22 @@ function requireReceiptSourceParity(
   );
 }
 
-function receiptComparisonRevision(git: GitRunner, explicit?: string): string {
+function receiptComparisonRevision(git: GitRunner, explicit?: string): string | null {
   if (explicit) return explicit;
-  if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_EVENT_NAME !== "pull_request") {
-    return "HEAD";
+  const mergeHead = git(["rev-parse", "--quiet", "--verify", "MERGE_HEAD"]);
+  if (mergeHead.error) {
+    throw new Error(`Could not detect an in-progress merge (${mergeHead.error})`);
   }
+  if (mergeHead.status === 0) return null;
+  if (mergeHead.status !== 1) {
+    const detail = mergeHead.stderr?.trim();
+    throw new Error(
+      `Could not detect an in-progress merge: git exited ${mergeHead.status ?? "without status"}${detail ? ` (${detail})` : ""}`,
+    );
+  }
+  // Local hooks validate the tree being committed, including staged image inputs.
+  if (process.env.GITHUB_ACTIONS !== "true") return null;
+  if (process.env.GITHUB_EVENT_NAME !== "pull_request") return "HEAD";
   const result = git(["rev-parse", "--verify", "HEAD^2"]);
   const revision = requireGitOutput(result, "Could not resolve the exact pull-request head").trim();
   if (!/^[0-9a-f]{40}$/u.test(revision)) {
@@ -193,8 +216,9 @@ function validateReceiptPair(
   imageSourcePaths: readonly string[],
   receipts: readonly { path: string; platform: ManagedImagePlatform }[],
   acceptedDigests: ReadonlySet<string>,
-  comparisonRevision: string,
-): void {
+  comparisonRevision: string | null,
+  allowPending = false,
+): boolean {
   const validated = receipts.map((receipt) => parseReceipt(rootDir, receipt, acceptedDigests));
   const contracts = validated.map(({ contract }) => contract);
   const revisions = new Set(contracts.map(({ source }) => source.revision));
@@ -210,15 +234,17 @@ function validateReceiptPair(
   ) {
     throw new Error("Pi candidate receipt authority must exactly match both published receipts");
   }
-  requireReceiptSourceParity(
+  return requireReceiptSourceParity(
     git,
     contracts[0]!.source.revision,
     comparisonRevision,
     imageSourcePaths,
+    allowPending,
   );
 }
 
 type PiReceiptRefreshCheckOptions = {
+  publication?: boolean;
   acceptedDigests?: ReadonlySet<string>;
   baseBranch?: string;
   git?: GitRunner;
@@ -229,7 +255,7 @@ type PiReceiptRefreshCheckOptions = {
 
 export function checkPiQualificationReceiptRefresh(
   options: PiReceiptRefreshCheckOptions = {},
-): void {
+): "unaffected" | "qualified" | "pending" {
   const git = options.git ?? runGit;
   const rootDir = options.rootDir ?? REPO_ROOT;
   const baseBranch = options.baseBranch ?? process.env.GITHUB_BASE_REF?.trim();
@@ -252,10 +278,12 @@ export function checkPiQualificationReceiptRefresh(
   const receiptAuthorityChanged = changedPaths.some(
     (changedPath) => changedPath === PI_CANDIDATE_AUTHORITY || receiptPaths.includes(changedPath),
   );
-  if (!imageInputsChanged && !receiptAuthorityChanged) return;
+  if (!imageInputsChanged && !receiptAuthorityChanged) return "unaffected";
+
+  const allowPending = options.publication === true && process.env.GITHUB_ACTIONS !== "true";
 
   const missingReceipts = receiptPaths.filter((receipt) => !changedPaths.includes(receipt));
-  if (imageInputsChanged && missingReceipts.length > 0) {
+  if (imageInputsChanged && missingReceipts.length > 0 && !allowPending) {
     throw new Error(
       [
         "Pi image inputs changed without refreshing both qualification receipts.",
@@ -266,17 +294,28 @@ export function checkPiQualificationReceiptRefresh(
       ].join("\n"),
     );
   }
-  validateReceiptPair(
+  const sourceMatches = validateReceiptPair(
     git,
     rootDir,
     imageSourcePaths,
     receipts,
     acceptedDigests,
     receiptComparisonRevision(git, options.headRevision),
+    allowPending,
   );
+  return sourceMatches ? "qualified" : "pending";
 }
 
 const currentModule = fileURLToPath(import.meta.url);
 if (process.argv[1] && path.resolve(process.argv[1]) === currentModule) {
-  checkPiQualificationReceiptRefresh();
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== "--publication")) {
+    throw new Error("Usage: pi-qualification-receipt-refresh.mts [--publication]");
+  }
+  const result = checkPiQualificationReceiptRefresh({ publication: args[0] === "--publication" });
+  if (result === "pending") {
+    console.log(
+      "Pi qualification pending: publish this candidate, then collect matching AMD64/ARM64 receipts. CI still requires qualification.",
+    );
+  }
 }

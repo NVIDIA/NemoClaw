@@ -12,18 +12,27 @@ const runBuffered = vi.hoisted(() =>
   vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(),
 );
 
-vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
+vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-command-cli")>()),
   createCliOpenShellSandboxCommandExecutor: vi.fn(() => ({ runBuffered })),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  captureResolvedOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  captureResolvedOpenshellAsync: vi.fn(async () => ({ status: 0, output: "" })),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0 })),
 }));
 
 vi.mock("../../gateway-runtime-action", () => ({
-  getNamedGatewayLifecycleState: vi.fn(() => ({ kind: "healthy_named" })),
+  getNamedGatewayLifecycleState: vi.fn().mockResolvedValue({
+    state: "healthy_named",
+    activeGateway: "nemoclaw",
+    diagnostic: "Connected.",
+    recoveryBlocked: false,
+    unavailable: false,
+  }),
 }));
 
 vi.mock("../../inference/local", () => ({
@@ -300,7 +309,11 @@ function makeResetDeps(
   overrides: Partial<ManagedInferenceRouteResetDeps> = {},
 ) {
   const calls = {
-    localChecks: [] as Array<{ provider: string; quiet?: boolean }>,
+    localChecks: [] as Array<{
+      provider: string;
+      quiet?: boolean;
+      recordedEndpointUrl?: string | null;
+    }>,
     inferenceSets: [] as Array<{ provider: string; model: string }>,
     unrecoverable: [] as Array<{ sandboxName: string; detail: string }>,
     logs: [] as string[],
@@ -310,12 +323,16 @@ function makeResetDeps(
   const queue = [...probes];
   const deps: ManagedInferenceRouteResetDeps = {
     verifyLocalInferenceRouteDependencies: vi.fn((provider, options) => {
-      calls.localChecks.push({ provider, quiet: options.quiet });
+      calls.localChecks.push({
+        provider,
+        quiet: options.quiet,
+        recordedEndpointUrl: options.recordedEndpointUrl,
+      });
       return true;
     }),
-    runInferenceSet: vi.fn((provider, model) => {
+    runInferenceSet: vi.fn(async (provider, model) => {
       calls.inferenceSets.push({ provider, model });
-      return { status: 0 };
+      return { ok: true as const };
     }),
     probe: vi.fn(async (_sandboxName, options) => {
       calls.probeOptions.push(options);
@@ -344,18 +361,56 @@ describe("managed inference route reset unit flow", () => {
 
     expect(result).toBe(true);
     expect(calls.localChecks).toEqual([
-      { provider: "ollama-local", quiet: false },
-      { provider: "ollama-local", quiet: false },
+      { provider: "ollama-local", quiet: false, recordedEndpointUrl: undefined },
+      { provider: "ollama-local", quiet: false, recordedEndpointUrl: undefined },
     ]);
     expect(calls.inferenceSets).toEqual([{ provider: "ollama-local", model: "qwen3:0.6b" }]);
     expect(calls.logs).toContain("  inference.local route repaired.");
   });
 
+  it("verifies local vLLM dependencies against the sandbox's recorded route endpoint", async () => {
+    const { calls, deps } = makeResetDeps([healthy()]);
+
+    const result = await resetManagedInferenceRouteWithDeps(
+      "demo",
+      sandbox({
+        provider: "vllm-local",
+        model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+        endpointUrl: "http://host.openshell.internal:46145/v1",
+      }),
+      { detail: "BROKEN 503" },
+      deps,
+    );
+
+    expect(result).toBe(true);
+    expect(calls.localChecks).toEqual([
+      {
+        provider: "vllm-local",
+        quiet: false,
+        recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      },
+      {
+        provider: "vllm-local",
+        quiet: false,
+        recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
+      },
+    ]);
+  });
+
   it("probes route health after a non-zero inference set and accepts a healthy route", async () => {
     const { calls, deps } = makeResetDeps([healthy()], {
-      runInferenceSet: vi.fn((provider, model) => {
+      runInferenceSet: vi.fn(async (provider, model) => {
         calls.inferenceSets.push({ provider, model });
-        return { status: 1 };
+        return {
+          ok: false as const,
+          ambiguous: false,
+          error: {
+            kind: "command" as const,
+            reason: "failed" as const,
+            exitCode: 1,
+            message: "failed",
+          },
+        };
       }),
     });
 
@@ -370,6 +425,36 @@ describe("managed inference route reset unit flow", () => {
     expect(calls.localChecks).toHaveLength(1);
     expect(calls.probeOptions[0]).toEqual({ attempts: 3, delayMs: 2000 });
     expect(calls.errors).toEqual([]);
+  });
+
+  it("stops an ambiguous route reset before dependency recheck or probe", async () => {
+    const { calls, deps } = makeResetDeps([healthy()], {
+      runInferenceSet: vi.fn(async (provider, model) => {
+        calls.inferenceSets.push({ provider, model });
+        return {
+          ok: false as const,
+          ambiguous: true,
+          error: {
+            kind: "command" as const,
+            reason: "indeterminate" as const,
+            exitCode: null,
+            message: "route result unknown",
+          },
+        };
+      }),
+    });
+
+    await expect(
+      resetManagedInferenceRouteWithDeps("demo", sandbox(), { detail: "BROKEN 503" }, deps),
+    ).resolves.toBe(false);
+    expect(calls.inferenceSets).toEqual([
+      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+    ]);
+    expect(calls.localChecks).toHaveLength(1);
+    expect(calls.probeOptions).toEqual([]);
+    expect(calls.errors).toContain(
+      "  Error: the OpenShell inference route result is unknown; inspect the same gateway before retrying.",
+    );
   });
 
   it("stops before inference set when local dependency checks fail", async () => {
@@ -394,9 +479,18 @@ describe("managed inference route reset unit flow", () => {
 
   it("fails closed when route reset and the follow-up probe are both unhealthy", async () => {
     const { calls, deps } = makeResetDeps([broken("BROKEN 503 still down")], {
-      runInferenceSet: vi.fn((provider, model) => {
+      runInferenceSet: vi.fn(async (provider, model) => {
         calls.inferenceSets.push({ provider, model });
-        return { status: 1 };
+        return {
+          ok: false as const,
+          ambiguous: false,
+          error: {
+            kind: "command" as const,
+            reason: "failed" as const,
+            exitCode: 1,
+            message: "failed",
+          },
+        };
       }),
     });
 

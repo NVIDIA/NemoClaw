@@ -21,11 +21,14 @@ import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   isPortableExperimentalProfile,
   parseDockerNetworkIpamEntries,
+  PORTABLE_ARCHITECTURE,
   PORTABLE_DOCKER_NETWORK_NAME,
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_HOST,
   PORTABLE_REGISTRY_IP,
+  PORTABLE_REGISTRY_PORT,
   resolveDockerDriverNetworkName,
 } from "../docker-driver-platform";
 import {
@@ -67,7 +70,13 @@ const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
 const REGISTRY_COMMAND_TIMEOUT_MS = 300_000;
+// Stored image references can retain localhost; resolve them through the same IPv4 listener.
 const REGISTRY_FRAGMENT = `[[registry]]
+location = "${PORTABLE_LOCAL_REGISTRY}"
+insecure = true
+
+[[registry]]
+prefix = "localhost:5000"
 location = "${PORTABLE_LOCAL_REGISTRY}"
 insecure = true
 `;
@@ -88,6 +97,7 @@ type SpawnResult = ReturnType<typeof spawnSync>;
 
 export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
+  architecture?: NodeJS.Architecture;
   home?: string;
   uid?: number;
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
@@ -753,7 +763,7 @@ function ensureRegistryContainer(
         "--ip",
         PORTABLE_REGISTRY_IP,
         "-p",
-        "127.0.0.1:5000:5000",
+        `${PORTABLE_REGISTRY_HOST}:${PORTABLE_REGISTRY_PORT}:5000`,
         "--restart=always",
         REGISTRY_IMAGE,
       ],
@@ -773,6 +783,12 @@ export function preparePortableExperimentalHost(
   const dockerNetworkName = resolveDockerDriverNetworkName(env);
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("The portable experimental profile requires Linux.");
+  }
+  const architecture = deps.architecture ?? process.arch;
+  if (architecture !== PORTABLE_ARCHITECTURE.host) {
+    throw new Error(
+      `The portable experimental profile requires Linux x86_64 (amd64); detected Linux ${architecture}.`,
+    );
   }
   const uid = deps.uid ?? process.geteuid?.() ?? process.getuid?.();
   if (!Number.isInteger(uid) || Number(uid) < 0) {

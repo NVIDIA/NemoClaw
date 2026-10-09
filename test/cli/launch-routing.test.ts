@@ -57,6 +57,9 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
     path.join(localBin, "openshell"),
     [
       "#!/usr/bin/env bash",
+      'case "$*" in',
+      "  *__NEMOCLAW_SANDBOX_EXEC_STARTED__*) echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__' ;;",
+      "esac",
       `calls_file=${JSON.stringify(callsFile)}`,
       `call_argv_file=${JSON.stringify(callArgvFile)}`,
       `exec_argv_file=${JSON.stringify(execArgvFile)}`,
@@ -74,6 +77,12 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "  echo 'Gateway Info'",
       "  echo",
       "  echo '  Gateway: nemoclaw'",
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+      "  echo 'Gateway inference:'",
+      "  echo '  Provider: nvidia-prod'",
+      "  echo '  Model: test-model'",
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
@@ -110,6 +119,10 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "      exit 0",
       "    fi",
       "  done",
+      '  if [[ "$*" == *"inference.local/v1/chat/completions"* ]]; then',
+      `    printf '%s\\n' '200' '{"choices":[{"message":{"content":"OK"}}]}'`,
+      "    exit 0",
+      "  fi",
       // Preflight probes: gateway health and the inference.local route.
       "  echo 'OK 200'",
       "  exit 0",
@@ -118,20 +131,6 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
     ].join("\n"),
     { mode: 0o755 },
   );
-  // The exec path's post-command OpenClaw permission cleanup shells out to
-  // Docker; a stub keeps the outcome identical whether or not the host runs a
-  // Docker daemon.
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    [
-      "#!/usr/bin/env bash",
-      'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
-      'if [ "$1" = "ps" ]; then exit 0; fi',
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-
   const readLines = (file: string): string[] =>
     fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
 
@@ -228,15 +227,11 @@ describe("CLI launch routing process contracts (#6006)", () => {
     },
   );
 
-  // OpenClaw sandboxes run a host-side mutable-config permission cleanup after
-  // the exec. The fake host has no sandbox container, so that cleanup fails and
-  // overrides the exit code; `command exit 0` records that the agent exec
-  // itself succeeded. The other agents skip the cleanup and exit 0 normally.
   it.each([
     {
       agent: "openclaw",
       agentCommand: "openclaw tui",
-      exitCode: 1,
+      exitCode: 0,
     },
     { agent: "hermes", agentCommand: "hermes", exitCode: 0 },
     {
@@ -281,19 +276,6 @@ describe("CLI launch routing process contracts (#6006)", () => {
       expect(harness.callLines().filter((call) => call.includes("--tty"))).toHaveLength(1);
 
       expect(result.code).toBe(exitCode);
-    },
-  );
-
-  it(
-    "reports the OpenClaw permission cleanup failure after a successful agent exec",
-    testTimeoutOptions(90_000),
-    () => {
-      const harness = createLaunchHarness("nemoclaw-cli-launch-openclaw-cleanup-", "openclaw");
-
-      const result = harness.runLaunch("launch alpha");
-
-      expect(result.code).toBe(1);
-      expect(result.out).toContain("OpenClaw permission cleanup failed (command exit 0");
     },
   );
 });

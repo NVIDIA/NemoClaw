@@ -67,11 +67,11 @@ beforeEach(() => {
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
   loadPresetForSandboxMock = vi
     .spyOn(policy, "loadPresetForSandbox")
-    .mockReturnValue("network_policies:\n  stub: {}\n");
+    .mockResolvedValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
-  applyPresetMock = vi.spyOn(policy, "applyPreset").mockReturnValue(true);
-  vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
+  applyPresetMock = vi.spyOn(policy, "applyPreset").mockResolvedValue(true);
+  vi.spyOn(policy, "getAppliedPresets").mockResolvedValue([]);
   getCredentialMock = vi.spyOn(store, "getCredential").mockReturnValue(null);
   saveCredentialMock = vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");

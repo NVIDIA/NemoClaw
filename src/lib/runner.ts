@@ -51,12 +51,12 @@ type CaptureOptions = Omit<SpawnSyncOptionsWithStringEncoding, "encoding"> & {
 
 type SpawnResult = SpawnSyncReturns<string | Buffer>;
 
-const dockerHost = detectDockerHost();
-if (dockerHost) {
-  process.env.DOCKER_HOST = dockerHost.dockerHost;
-  if (dockerHost.source === "socket") {
-    delete process.env.DOCKER_CONTEXT;
-  }
+const dockerAuthority = detectDockerHost();
+if (dockerAuthority) {
+  process.env.DOCKER_HOST = dockerAuthority.dockerHost;
+  // The selected authority is now explicit. Keep no context selector that can
+  // override it if the process environment changes after initialization.
+  delete process.env.DOCKER_CONTEXT;
 }
 
 function buildRunnerEnv(
@@ -72,11 +72,14 @@ function buildRunnerEnv(
   }
   if (replaceEnv) return normalizedExtra;
   if (executable !== undefined && path.basename(executable) === "docker") {
-    return buildDockerSubprocessEnv(
-      process.env,
-      normalizedExtra.DOCKER_HOST ?? process.env.DOCKER_HOST,
-      normalizedExtra,
-    );
+    const selectedDockerHost =
+      String(normalizedExtra.DOCKER_HOST ?? "").trim() ||
+      String(process.env.DOCKER_HOST ?? "").trim();
+    return buildDockerSubprocessEnv(process.env, selectedDockerHost || undefined, normalizedExtra, {
+      preserveDockerConfig:
+        selectedDockerHost !== "" &&
+        (normalizedExtra.DOCKER_CONFIG !== undefined || process.env.DOCKER_CONFIG !== undefined),
+    });
   }
   return buildSubprocessEnv(normalizedExtra);
 }

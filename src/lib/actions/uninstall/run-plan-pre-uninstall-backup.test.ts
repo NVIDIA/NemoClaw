@@ -54,7 +54,7 @@ function createFixture(): {
   const logs: string[] = [];
   return {
     deps: {
-      commandExists: (command) => command === "openshell",
+      commandExists: (command) => command === "openshell" || command === "docker",
       env: { HOME: home } as NodeJS.ProcessEnv,
       error: (line) => errors.push(line),
       existsSync: (target) => target.startsWith(home) && fs.existsSync(target),
@@ -134,10 +134,10 @@ describe("pre-uninstall sandbox backup", () => {
     expect(fixture.logs).toContain("Backing up current sandbox state before uninstall...");
   });
 
-  it("stops the synchronous entrypoint before protected sandbox deletion", () => {
+  it("stops the synchronous entrypoint before protected sandbox deletion", async () => {
     const fixture = createFixture();
 
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       fixture.deps,
     );

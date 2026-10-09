@@ -16,6 +16,7 @@ import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
 import { captureSandboxSshConfig } from "./sandbox-ssh-config-capture";
 import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
 
+export { parseVersionFromText } from "./version-text";
 export { classifyManagedGatewayEndpointBinding };
 export { buildSelectedOpenShellSubprocessEnv } from "./command-argv";
 export type { OpenShellRuntimeSelection } from "./runtime-selection";
@@ -95,7 +96,9 @@ export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
   maxBuffer?: number;
 }
 
-export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
+export interface CaptureOpenshellAsyncOptions extends Omit<CaptureOpenshellOptions, "maxBuffer"> {
+  signalSource?: OpenshellAsyncCaptureSignalSource;
+  outputLimitBytes?: number;
   killGraceMs?: number;
   spawnImpl?: OpenshellSpawn;
 }
@@ -129,35 +132,6 @@ export function stripAnsi(value = ""): string {
 
 export type ManagedGatewayEndpointBinding =
   import("../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs").ManagedGatewayEndpointBinding;
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-const SEMVER_PATTERN = /(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/;
-
-export function parseVersionFromText(value = "", versionCommand?: string): string | null {
-  const text = String(value || "");
-  const commandToken = versionCommand?.trim().split(/\s+/, 1)[0] ?? "";
-  const executable = commandToken.split("/").pop() ?? "";
-  if (executable) {
-    const executablePattern = new RegExp(`\\b${escapeRegExp(executable)}\\b`, "i");
-    let executableSeen = false;
-    for (const line of text.split(/\r?\n/)) {
-      const executableMatch = executablePattern.exec(line);
-      if (!executableMatch) continue;
-      executableSeen = true;
-      const versionMatch = line
-        .slice(executableMatch.index + executableMatch[0].length)
-        .match(SEMVER_PATTERN);
-      if (versionMatch) return versionMatch[1];
-    }
-    if (executableSeen) return null;
-  }
-
-  const match = text.match(SEMVER_PATTERN);
-  return match ? match[1] : null;
-}
 
 export function versionGte(left = "0.0.0", right = "0.0.0"): boolean {
   const lhs = String(left)
@@ -336,6 +310,8 @@ export function captureOpenshellCommandAsync(
     timeoutKillSignal:
       opts.killSignal === "SIGTERM" || opts.killSignal === "SIGKILL" ? opts.killSignal : undefined,
     timeoutMilliseconds: opts.timeout,
+    outputLimitBytes: opts.outputLimitBytes,
+    signalSource: opts.signalSource,
   }).then((result) => ({
     status: result.status ?? (result.timedOut ? null : 1),
     output: `${result.stdout}${shouldIncludeStderr(opts) ? result.stderr : ""}`.trim(),
@@ -566,15 +542,4 @@ export function captureOpenshellCommandAsyncResult(
     }
     if (hasInput) child.stdin?.end(opts.input);
   });
-}
-
-export function getInstalledOpenshellVersion(
-  binary: string,
-  opts: CaptureOpenshellOptions = {},
-): string | null {
-  const versionResult = captureOpenshellCommand(binary, ["--version"], {
-    ...opts,
-    ignoreError: true,
-  });
-  return parseVersionFromText(versionResult.output, binary);
 }

@@ -30,6 +30,27 @@ describe("runInferenceSet local-provider verification", () => {
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
   });
 
+  it("normalizes the underscore provider spelling before the local-provider branch (#11369)", async () => {
+    // The reporter's exact input `ollama_local` must reach the local-provider
+    // path as the canonical `ollama-local`, so host validation and the OpenShell
+    // selection both use the normalized name (not the underscore spelling).
+    const deps = createDeps({ config: localConfig(), session: baseSession() });
+
+    await runInferenceSet({ provider: "ollama_local", model: "qwen2.5:7b" }, deps);
+
+    expect(deps.calls.validateLocalProvider).toHaveBeenCalledWith("ollama-local");
+    const openshellArgs = deps.calls.captureOpenshell.mock.calls
+      .map((call) => call[0])
+      .flat()
+      .map(String);
+    expect(openshellArgs).toContain("ollama-local");
+    expect(openshellArgs).not.toContain("ollama_local");
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ provider: "ollama-local" }),
+    );
+  });
+
   it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {
     const deps = createDeps({
       config: localConfig(),
@@ -75,10 +96,7 @@ describe("runInferenceSet local-provider verification", () => {
       session: baseSession(),
     });
 
-    await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
-      deps,
-    );
+    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4-mini" }, deps);
 
     expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();

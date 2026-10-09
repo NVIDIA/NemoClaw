@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DASHBOARD_PORT } from "../../../../core/ports";
+import { GOOGLECHAT_TUNNEL_CLEANUP_ERROR } from "../tunnel/lifecycle";
 import { googlechatWebhookTunnelPidDir } from "../tunnel/pid-dir";
 import type { GooglechatTunnelAudienceGateHookOptions } from "./tunnel-audience-gate";
 
@@ -83,7 +84,9 @@ export function createDefaultGooglechatTunnelGateOptions(
       const { startAll, stopCloudflared } = loadServices();
       const { startGooglechatWebhookProxy, stopGooglechatWebhookProxy } = loadWebhookProxy();
       const pidDir = resolveGooglechatPidDir();
-      stopCloudflared({ pidDir });
+      if (!stopCloudflared({ pidDir })) {
+        throw new Error(GOOGLECHAT_TUNNEL_CLEANUP_ERROR);
+      }
       const proxyPort = await startGooglechatWebhookProxy(pidDir, dashboardPort);
       try {
         await startAll({
@@ -101,7 +104,9 @@ export function createDefaultGooglechatTunnelGateOptions(
       const { stopCloudflared } = loadServices();
       const { stopGooglechatWebhookProxy } = loadWebhookProxy();
       const pidDir = resolveGooglechatPidDir();
-      stopCloudflared({ pidDir });
+      if (!stopCloudflared({ pidDir })) {
+        throw new Error(GOOGLECHAT_TUNNEL_CLEANUP_ERROR);
+      }
       stopGooglechatWebhookProxy(pidDir);
     },
     getTunnelUrl: () => {

@@ -5,7 +5,10 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { encodeManagedStartupProfile } from "../managed-startup/profile";
+import {
+  encodeManagedStartupProfile,
+  MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+} from "../managed-startup/profile";
 import {
   NativeArtifactWorkloadContractError,
   parseNativeArtifactWorkloadReceiptV1,
@@ -36,7 +39,7 @@ function receipt(): Record<string, unknown> {
       workingDirectory: ".",
       environmentNames: ["NEMOCLAW_MANAGED_STARTUP_PROFILE"],
     },
-    startupProfileContractVersion: 1,
+    startupProfileContractVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
     encodedProfile,
     startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
     credentialProxyReplayRequired: true,

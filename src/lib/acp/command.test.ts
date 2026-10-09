@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import { HERMES_LIFECYCLE_DEFINITION } from "../domain/lifecycle/hermes-definition";
 import type { HostGatewayRegistryEntry } from "../state/gateway-registry";
 import {
   type HermesAcpCommandDeps,
@@ -34,14 +35,14 @@ function registryEntry(
     entry: {
       name,
       agent: "hermes",
-      agentVersion: "0.20.6",
+      agentVersion: HERMES_LIFECYCLE_DEFINITION.agentVersion,
       fromDockerfile: null,
       gatewayName,
       gatewayPort,
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       nemoclawVersion: VERSION,
-      openshellVersion: "0.0.106",
+      openshellVersion: HERMES_LIFECYCLE_DEFINITION.openshellVersion,
       ...overrides,
     },
   };
@@ -188,6 +189,11 @@ describe("Hermes ACP command", () => {
     ],
     ["wrong Hermes", [registryEntry("alpha", 8080, { agentVersion: "0.20.5" })], "incompatible"],
     [
+      "wrong OpenShell",
+      [registryEntry("alpha", 8080, { openshellVersion: "0.0.106" })],
+      "incompatible",
+    ],
+    [
       "custom image",
       [registryEntry("alpha", 8080, { fromDockerfile: "/tmp/Dockerfile" })],
       "incompatible",
@@ -238,6 +244,7 @@ describe("Hermes ACP command", () => {
     expect(fixture.output.text()).toBe("");
     expect(fixture.diagnostics.text()).toBe("gateway lifecycle progress belongs on ACP stderr\n");
     expect(fixture.recoverGateway).toHaveBeenCalledWith({
+      authorizeExactTargetTransportRecovery: true,
       gatewayName: "nemoclaw",
       output: expect.objectContaining({
         error: expect.any(Function),
@@ -299,6 +306,44 @@ describe("Hermes ACP command", () => {
       "lock-released",
       "session-finished",
     ]);
+  });
+
+  it("reports retained temporary SSH credential cleanup guidance (#10947)", async () => {
+    const message =
+      'NemoClaw could not remove the temporary SSH configuration at "/tmp/nemoclaw-acp-retained". Remove that directory before running nemoclaw-acp again.';
+    const transport: HermesAcpSshTransport = {
+      run: vi.fn(async (request) => {
+        request.onSessionStarted?.();
+        return {
+          kind: "failed" as const,
+          error: { kind: "cleanup" as const, message },
+          exitCode: 1,
+        };
+      }),
+    };
+    const fixture = commandHarness({ transport });
+
+    expect(await fixture.run(["--sandbox", "alpha"])).toBe(1);
+    expect(fixture.diagnostics.text()).toBe(`${message}\n`);
+  });
+
+  it("keeps a remote nonzero exit while reporting credential cleanup failure (#10947)", async () => {
+    const message =
+      'NemoClaw could not remove the temporary SSH configuration at "/tmp/nemoclaw-acp-retained". Remove that directory before running nemoclaw-acp again.';
+    const transport: HermesAcpSshTransport = {
+      run: vi.fn(async (request) => {
+        request.onSessionStarted?.();
+        return {
+          kind: "completed" as const,
+          cleanupError: { kind: "cleanup" as const, message },
+          exitCode: 42,
+        };
+      }),
+    };
+    const fixture = commandHarness({ transport });
+
+    expect(await fixture.run(["--sandbox", "alpha"])).toBe(42);
+    expect(fixture.diagnostics.text()).toBe(`${message}\n`);
   });
 
   it("fails closed when the registered target changes while waiting for the lifecycle fence", async () => {

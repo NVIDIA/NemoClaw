@@ -33,7 +33,7 @@ function cleanupFixtures(result = { exitCode: 0, stderr: "", stdout: "" }) {
 }
 
 describe("channels stop/start provider cleanup", () => {
-  it("destroys the sandbox before deleting providers during reverse-order cleanup", () => {
+  it("deletes the sandbox through OpenShell before providers during reverse-order cleanup", () => {
     const registrations: string[] = [];
     const cleanup = {
       trackDisposable: vi.fn((name: string) => registrations.push(name)),
@@ -55,7 +55,6 @@ describe("channels stop/start provider cleanup", () => {
     });
 
     expect([...registrations].reverse()).toEqual([
-      "destroy sandbox e2e-oc-ch-cycle",
       "delete OpenShell sandbox e2e-oc-ch-cycle",
       "delete OpenShell provider e2e-oc-ch-cycle-googlechat-bridge",
       "delete OpenShell provider e2e-oc-ch-cycle-teams-bridge",
@@ -114,7 +113,11 @@ describe("channels stop/start provider cleanup", () => {
   });
 
   it("rejects an unexpected provider deletion failure", async () => {
-    const fixtures = cleanupFixtures({ exitCode: 1, stderr: "gateway unavailable", stdout: "" });
+    const fixtures = cleanupFixtures({
+      exitCode: 1,
+      stderr: "gateway unavailable",
+      stdout: "",
+    });
     registerChannelsStopStartProviderCleanup(fixtures.cleanup, fixtures.host, {
       agent: "openclaw",
       env: {},

@@ -11,6 +11,7 @@ import {
   reserveManagedLlamaCppOwner,
 } from "../inference/llama-cpp/managed-state";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
+import type { OpenShellInferenceRouteResult } from "../adapters/openshell/inference-route";
 
 vi.mock("../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
@@ -27,22 +28,23 @@ import {
   type InferenceGetResult,
 } from "./inference-get";
 
-function createDeps(
-  output: string,
-  status: number | null = 0,
-): InferenceGetDeps & {
+function configuredRoute(provider: string, model: string): OpenShellInferenceRouteResult {
+  return { ok: true, value: { state: "configured", route: { provider, model } } };
+}
+
+function createDeps(fixture: OpenShellInferenceRouteResult): InferenceGetDeps & {
   log: ReturnType<typeof vi.fn>;
-  captureOpenshell: ReturnType<typeof vi.fn>;
+  observeInferenceRoute: ReturnType<typeof vi.fn>;
   getSandboxTargetGatewayName: ReturnType<typeof vi.fn>;
   listSandboxes: ReturnType<typeof vi.fn>;
 } {
-  const captureOpenshell = vi.fn(() => ({ status, output }));
+  const observeInferenceRoute = vi.fn(async () => fixture);
   const getSandboxTargetGatewayName = vi.fn(() => "nemoclaw");
   const listSandboxes = vi.fn(() => []);
   const log = vi.fn();
   return {
-    captureOpenshell: captureOpenshell as unknown as InferenceGetDeps["captureOpenshell"] &
-      ReturnType<typeof vi.fn>,
+    inferenceRouteObserver: { observeInferenceRoute },
+    observeInferenceRoute,
     getSandboxTargetGatewayName:
       getSandboxTargetGatewayName as unknown as InferenceGetDeps["getSandboxTargetGatewayName"] &
         ReturnType<typeof vi.fn>,
@@ -144,9 +146,7 @@ const BOUNDED_AFFECTED_SANDBOXES = [
 ];
 
 function createBoundedAffectedDeps(): ReturnType<typeof createDeps> {
-  const deps = createDeps(
-    "Gateway inference:\n  Provider: compatible-endpoint\n  Model: live/model\n",
-  );
+  const deps = createDeps(configuredRoute("compatible-endpoint", "live/model"));
   deps.listSandboxes.mockReturnValue([
     ...Array.from({ length: 10 }, (_, index) => ({
       name: `sandbox-${String(index).padStart(2, "0")}`,
@@ -172,18 +172,48 @@ function expectBoundedAffectedDiagnostics(result: InferenceGetResult, output: st
 }
 
 describe("runInferenceGet", () => {
+  it("reads a recorded native NVIDIA route without consulting the shared gateway route", async () => {
+    const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-nvidia-inference-v1" as const,
+        providerName: "nemoclaw-nvidia-prod-v1" as const,
+        providerId: "11111111-2222-4333-8444-555555555555",
+      },
+    };
+    deps.getDefaultSandbox = () => "alpha";
+    deps.getSandbox = () => sandbox;
+
+    await expect(runInferenceGet({}, deps)).resolves.toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+    });
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
+      "Provider: nvidia-prod",
+      "Model:    nvidia/nemotron-3-super-120b-a12b",
+      "Endpoint: https://integrate.api.nvidia.com/v1",
+    ]);
+  });
+
   it("prints the live provider and model", async () => {
-    const deps = createDeps("Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model\n");
+    const deps = createDeps(configuredRoute("nvidia-prod", "nvidia/model"));
 
     await expect(runInferenceGet({}, deps)).resolves.toEqual({
       provider: "nvidia-prod",
       model: "nvidia/model",
     });
 
-    expect(deps.captureOpenshell).toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(deps.observeInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      timeoutMs: expect.any(Number),
+    });
     expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
       "Provider: nvidia-prod",
       "Model:    nvidia/model",
@@ -191,7 +221,7 @@ describe("runInferenceGet", () => {
   });
 
   it("supports JSON output", async () => {
-    const deps = createDeps("Gateway inference:\n  Provider: openai-api\n  Model: gpt-5.4\n");
+    const deps = createDeps(configuredRoute("openai-api", "gpt-5.4"));
 
     await runInferenceGet({ json: true }, deps);
 
@@ -202,9 +232,7 @@ describe("runInferenceGet", () => {
   });
 
   it("prints the persisted compatible endpoint in human-readable output (#10784)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     recordRoute(deps, {
       provider: "compatible-endpoint",
       endpointUrl: "https://inference.example.test/v1",
@@ -235,9 +263,7 @@ describe("runInferenceGet", () => {
     },
     { label: "direct lookup with missing model metadata", sandboxName: undefined },
   ])("omits a persisted endpoint for $label (#10784)", async ({ sandboxName, persistedModel }) => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: live/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "live/model"));
     deps.listSandboxes.mockReturnValue([
       {
         name: "custom",
@@ -275,9 +301,7 @@ describe("runInferenceGet", () => {
   it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
     "includes the persisted endpoint in JSON output for %s (#10784)",
     async (provider) => {
-      const deps = createDeps(
-        `Gateway inference:\n  Provider: ${provider}\n  Model: custom/model\n`,
-      );
+      const deps = createDeps(configuredRoute(provider, "custom/model"));
       recordRoute(deps, {
         provider,
         endpointUrl: "https://inference.example.test/v1",
@@ -294,7 +318,7 @@ describe("runInferenceGet", () => {
   );
 
   it("omits a persisted endpoint for a managed provider (#10784)", async () => {
-    const deps = createDeps("Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model\n");
+    const deps = createDeps(configuredRoute("nvidia-prod", "nvidia/model"));
     recordRoute(deps, {
       name: "managed",
       provider: "nvidia-prod",
@@ -314,9 +338,7 @@ describe("runInferenceGet", () => {
   });
 
   it("omits a credential-bearing compatible endpoint (#10784)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     recordRoute(deps, {
       provider: "compatible-endpoint",
       endpointUrl: "https://operator:secret@inference.example.test/v1?token=secret",
@@ -335,9 +357,7 @@ describe("runInferenceGet", () => {
     { json: false, label: "human-readable" },
     { json: true, label: "JSON" },
   ])("omits a recognized path credential from $label output", async ({ json }) => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     const pathCredential = "sk-proj-" + "A".repeat(10);
     recordRoute(deps, {
       provider: "compatible-endpoint",
@@ -354,9 +374,7 @@ describe("runInferenceGet", () => {
     { json: false, label: "human-readable" },
     { json: true, label: "JSON" },
   ])("omits an opaque path credential from $label output", async ({ json }) => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     const pathCredential = ["opaque", "tenant", "credential"].join("-");
     recordRoute(deps, {
       provider: "compatible-endpoint",
@@ -373,9 +391,7 @@ describe("runInferenceGet", () => {
     { json: false, label: "human-readable" },
     { json: true, label: "JSON" },
   ])("omits a non-reusable HTTPS-pin adapter endpoint from $label output", async ({ json }) => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     const adapterEndpoint = buildHttpsPinRouteBaseUrl("a".repeat(64));
     recordRoute(deps, {
       provider: "compatible-endpoint",
@@ -391,9 +407,7 @@ describe("runInferenceGet", () => {
   it.each(ENDPOINT_OMISSION_CASES)(
     "omits $name from human-readable output",
     async ({ affectedSandboxes, endpoints, status }) => {
-      const deps = createDeps(
-        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-      );
+      const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
       deps.listSandboxes.mockReturnValue(
         endpoints.map((endpointUrl, index) => ({
           name: `custom-${String(index + 1)}`,
@@ -424,9 +438,7 @@ describe("runInferenceGet", () => {
   it.each(ENDPOINT_OMISSION_CASES)(
     "omits $name from JSON output",
     async ({ affectedSandboxes, endpoints, status }) => {
-      const deps = createDeps(
-        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-      );
+      const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
       deps.listSandboxes.mockReturnValue(
         endpoints.map((endpointUrl, index) => ({
           name: `custom-${String(index + 1)}`,
@@ -452,9 +464,7 @@ describe("runInferenceGet", () => {
   ])(
     "reports a sandbox-first same-gateway endpoint conflict in $label output",
     async ({ json }) => {
-      const deps = createDeps(
-        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-      );
+      const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
       deps.listSandboxes.mockReturnValue([
         {
           name: "custom",
@@ -495,9 +505,7 @@ describe("runInferenceGet", () => {
       peer: { preferredInferenceApi: "openai-completions", credentialEnv: "OTHER_API_KEY" },
     },
   ])("omits an endpoint for a same-gateway $label conflict", async ({ peer }) => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     deps.listSandboxes.mockReturnValue([
       {
         name: "custom",
@@ -569,9 +577,7 @@ describe("runInferenceGet", () => {
   }
 
   it("reports only the selected non-default gateway endpoint in human-readable output (#10784)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     recordGatewayRoutes(deps);
 
     await expect(runInferenceGet({}, deps)).resolves.toEqual({
@@ -588,9 +594,7 @@ describe("runInferenceGet", () => {
   });
 
   it("reports only the selected non-default gateway endpoint in JSON output (#10784)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     recordGatewayRoutes(deps);
 
     const expected = {
@@ -604,9 +608,7 @@ describe("runInferenceGet", () => {
   });
 
   it("treats trailing-slash variants as one endpoint in human-readable output (#10784)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     recordEquivalentEndpointRoutes(deps);
 
     await expect(runInferenceGet({}, deps)).resolves.toEqual({
@@ -622,9 +624,7 @@ describe("runInferenceGet", () => {
   });
 
   it("treats trailing-slash variants as one endpoint in JSON output (#10784)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     recordEquivalentEndpointRoutes(deps);
 
     const expected = {
@@ -637,9 +637,7 @@ describe("runInferenceGet", () => {
   });
 
   it("omits an endpoint longer than the canonical endpoint boundary", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     recordRoute(deps, {
       provider: "compatible-endpoint",
       endpointUrl: `https://inference.example.test/${"a".repeat(2048)}`,
@@ -652,9 +650,7 @@ describe("runInferenceGet", () => {
   });
 
   it("ignores a pending route reservation when selecting the endpoint (#10784)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     deps.listSandboxes.mockReturnValue([
       {
         name: "published",
@@ -684,9 +680,7 @@ describe("runInferenceGet", () => {
   });
 
   it("omits an endpoint from an invalid persisted gateway binding", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     deps.listSandboxes.mockReturnValue([
       {
         name: "broken-binding",
@@ -752,9 +746,7 @@ describe("runInferenceGet", () => {
   ])(
     "retains the live route and omits optional endpoint metadata after $label",
     async ({ options, error, hiddenDetail, expectedStatus }) => {
-      const deps = createDeps(
-        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-      );
+      const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
       deps.listSandboxes.mockImplementation(() => {
         throw error;
       });
@@ -775,7 +767,7 @@ describe("runInferenceGet", () => {
 
   it("reports an attached llama.cpp endpoint for an aligned sandbox route", async () => {
     const deps = {
-      ...createDeps("Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n"),
+      ...createDeps(configuredRoute("llama-cpp-local", "muse-glimmer")),
       getSandbox: () =>
         ({
           name: "llamacpp-env",
@@ -800,7 +792,7 @@ describe("runInferenceGet", () => {
 
   it("reports unavailable managed ownership with safe recovery output", async () => {
     const deps = {
-      ...createDeps("Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n"),
+      ...createDeps(configuredRoute("llama-cpp-local", "muse-glimmer")),
       getSandbox: () =>
         ({
           name: "llamacpp-env",
@@ -839,9 +831,7 @@ describe("runInferenceGet", () => {
         recipeDigest: `sha256:${"3".repeat(64)}`,
         recipeId: "llama-cpp.managed",
       });
-      const deps = createDeps(
-        "Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n",
-      );
+      const deps = createDeps(configuredRoute("llama-cpp-local", "muse-glimmer"));
       deps.getSandbox = () =>
         ({
           name: "llamacpp-managed",
@@ -860,7 +850,7 @@ describe("runInferenceGet", () => {
 
   it("does not attribute a sandbox route when the gateway route drifted", async () => {
     const deps = {
-      ...createDeps("Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model\n"),
+      ...createDeps(configuredRoute("nvidia-prod", "nvidia/model")),
       getSandbox: () =>
         ({
           name: "llamacpp-env",
@@ -879,9 +869,7 @@ describe("runInferenceGet", () => {
   });
 
   it("queries the gateway recorded for the sandbox (#10671)", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
-    );
+    const deps = createDeps(configuredRoute("compatible-endpoint", "custom/model"));
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({ quiet: true, sandboxName: "beta" }, deps)).resolves.toEqual(
@@ -889,14 +877,14 @@ describe("runInferenceGet", () => {
     );
 
     expect(deps.getSandboxTargetGatewayName).toHaveBeenCalledWith("beta");
-    expect(deps.captureOpenshell).toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw-19090"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(deps.observeInferenceRoute).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw-19090" },
+      timeoutMs: expect.any(Number),
+    });
   });
 
   it("fails closed when a named sandbox has an invalid gateway binding", async () => {
-    const deps = createDeps("");
+    const deps = createDeps({ ok: true, value: { state: "unconfigured" } });
     deps.getSandboxTargetGatewayName.mockImplementation(() => {
       throw new Error("invalid gatewayName secret-invalid-gateway and gatewayPort 31337");
     });
@@ -907,7 +895,7 @@ describe("runInferenceGet", () => {
         "NemoClaw could not resolve the sandbox's recorded gateway.\n\nRepair or remove the 'beta' sandbox registration, then rerun inference get.",
     });
     await expect(lookup).rejects.not.toThrow(/secret-invalid-gateway|31337/);
-    expect(deps.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -924,7 +912,7 @@ describe("runInferenceGet", () => {
   ])(
     "preserves safe recovery for a $label registry during gateway resolution",
     async ({ error, recovery }) => {
-      const deps = createDeps("");
+      const deps = createDeps({ ok: true, value: { state: "unconfigured" } });
       deps.getSandboxTargetGatewayName.mockImplementation(() => {
         throw error;
       });
@@ -932,14 +920,12 @@ describe("runInferenceGet", () => {
       await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
         message: expect.stringContaining(recovery),
       });
-      expect(deps.captureOpenshell).not.toHaveBeenCalled();
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
     },
   );
 
   it("sanitizes route values only for human-readable output", async () => {
-    const deps = createDeps(
-      "Gateway inference:\n  Provider: openai\u001b[2J\n  Model: gpt\u0007-5.4\r\n",
-    );
+    const deps = createDeps(configuredRoute("openai\u001b[2J", "gpt\u0007-5.4"));
 
     await expect(runInferenceGet({}, deps)).resolves.toEqual({
       provider: "openai\u001b[2J",
@@ -953,7 +939,7 @@ describe("runInferenceGet", () => {
   });
 
   it("can return the route without rendering output for oclif JSON handling", async () => {
-    const deps = createDeps("Gateway inference:\n  Provider: openai-api\n  Model: gpt-5.4\n");
+    const deps = createDeps(configuredRoute("openai-api", "gpt-5.4"));
 
     await expect(runInferenceGet({ quiet: true }, deps)).resolves.toEqual({
       provider: "openai-api",
@@ -963,7 +949,7 @@ describe("runInferenceGet", () => {
   });
 
   it("fails when no route is configured", async () => {
-    const deps = createDeps("Gateway inference:\n\n  Not configured\n");
+    const deps = createDeps({ ok: true, value: { state: "unconfigured" } });
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({}, deps)).rejects.toThrow(
@@ -973,7 +959,7 @@ describe("runInferenceGet", () => {
   });
 
   it("keeps the legacy unconfigured response in the route absence branch (#10671)", async () => {
-    const deps = createDeps("Inference:\n\n  Not configured");
+    const deps = createDeps({ ok: true, value: { state: "unconfigured" } });
 
     await expect(runInferenceGet({}, deps)).rejects.toThrow(
       "OpenShell inference route is not configured for gateway 'nemoclaw'.",
@@ -982,7 +968,14 @@ describe("runInferenceGet", () => {
   });
 
   it("reports unrecognized gateway output without rendering it (#10671)", async () => {
-    const deps = createDeps("Gateway inference:\n  Unexpected: secret output");
+    const deps = createDeps({
+      ok: false,
+      error: {
+        kind: "schema",
+        reason: "malformed_output",
+        message: "OpenShell returned an unrecognized inference route observation.",
+      },
+    });
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
@@ -993,7 +986,14 @@ describe("runInferenceGet", () => {
   });
 
   it("reports a partial gateway route without rendering it (#10671)", async () => {
-    const deps = createDeps("Gateway inference:\n  Provider: secret-partial-provider");
+    const deps = createDeps({
+      ok: false,
+      error: {
+        kind: "schema",
+        reason: "partial_route",
+        message: "OpenShell returned an incomplete inference route.",
+      },
+    });
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
@@ -1004,14 +1004,14 @@ describe("runInferenceGet", () => {
   });
 
   it("reports the gateway and timeout without command output (#10671)", async () => {
-    const deps = createDeps("", null);
-    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
-    deps.captureOpenshell.mockReturnValue({
-      status: null,
-      output: "secret stderr must not be rendered",
-      error: Object.assign(new Error("secret timeout detail"), { code: "ETIMEDOUT" }),
-      signal: "SIGKILL",
+    const deps = createDeps({
+      ok: false,
+      error: {
+        kind: "timeout",
+        message: "OpenShell inference route observation timed out.",
+      },
     });
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
       message:
@@ -1021,7 +1021,14 @@ describe("runInferenceGet", () => {
   });
 
   it("reports the gateway and exit status without command output (#10671)", async () => {
-    const deps = createDeps("secret stderr must not be rendered", 7);
+    const deps = createDeps({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell inference route observation failed with exit status 7.",
+      },
+    });
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({}, deps)).rejects.toMatchObject({
@@ -1032,18 +1039,36 @@ describe("runInferenceGet", () => {
   });
 
   it("reports sandbox diagnosis guidance when a lookup has no exit status (#10671)", async () => {
-    const deps = createDeps("", null);
-    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
-    deps.captureOpenshell.mockReturnValue({
-      status: null,
-      output: "secret stderr must not be rendered",
-      error: new Error("secret execution detail"),
-      signal: null,
+    const deps = createDeps({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "indeterminate",
+        message: "OpenShell inference route observation ended before an exit status was available.",
+      },
     });
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
       message:
         "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed before an exit status was available. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
+  it("reports a rejected lookup without calling it an exit-status failure (#9809)", async () => {
+    const deps = createDeps({
+      ok: false,
+      error: {
+        kind: "validation",
+        message: "Invalid OpenShell inference route target or timeout.",
+      },
+    });
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+
+    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
+      message:
+        "NemoClaw rejected the inference route lookup for gateway 'nemoclaw-19090' before observation. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
     });
     expect(deps.log).not.toHaveBeenCalled();
   });

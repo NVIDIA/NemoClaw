@@ -34,6 +34,7 @@ describe("policy preset sync", () => {
       path.join(repoRoot, "src", "lib", "onboard", "policy-preset-sync.ts"),
     );
     const script = String.raw`
+(async () => {
 const policies = require(${policiesPath});
 const calls = [];
 policies.listPresets = () => [{ name: "npm" }, { name: "pypi" }];
@@ -42,10 +43,11 @@ policies.applyPresets = (_sandbox, names) => { calls.push("batch:" + names.join(
 policies.removePreset = (_sandbox, name) => { calls.push("remove:" + name); return true; };
 
 const { syncPresetSelection } = require(${syncPath});
-syncPresetSelection("test-sb", [], ["npm", "pypi"]);
-syncPresetSelection("test-sb", [], ["npm", "custom", "pypi"]);
-syncPresetSelection("test-sb", ["slack", "npm", "pypi"], ["npm"]);
+await syncPresetSelection("test-sb", [], ["npm", "pypi"]);
+await syncPresetSelection("test-sb", [], ["npm", "custom", "pypi"]);
+await syncPresetSelection("test-sb", ["slack", "npm", "pypi"], ["npm"]);
 process.stdout.write(JSON.stringify(calls) + "\n");
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
 
     const result = runScript(script);

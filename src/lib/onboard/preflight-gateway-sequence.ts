@@ -19,20 +19,22 @@ export interface PreflightGatewaySequenceDeps {
   cliDisplayName: string;
   dashboardPort?: number;
   verifyGatewayContainerRunning(name: string): GatewayContainerState;
-  recoverGatewayRuntime(): Promise<boolean>;
-  waitForGatewayHttpReady(): Promise<boolean>;
+  recoverGatewayRuntime(): boolean | Promise<boolean>;
+  waitForGatewayHttpReady(): boolean | Promise<boolean>;
   getGatewayLocalEndpoint(): string;
   stopDashboardForward(): void;
   stopAllDashboardForwards(): void;
-  runOpenshell?(args: string[], options: { ignoreError: true }): unknown;
-  getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
+  getGatewayClusterImageDrift():
+    | { currentVersion: string; expectedVersion: string }
+    | null
+    | Promise<{ currentVersion: string; expectedVersion: string } | null>;
   exitProcess(code: number): never;
-  destroyGateway(): boolean;
+  destroyGateway(): boolean | Promise<boolean>;
   destroyGatewayForReuse(
-    destroyGateway: () => boolean,
+    destroyGateway: () => boolean | Promise<boolean>,
     successMessage: string,
     failureMessage: string,
-  ): GatewayReuseState;
+  ): GatewayReuseState | Promise<GatewayReuseState>;
   dockerInspect(
     args: string[],
     opts: { ignoreError: true; suppressOutput: true },
@@ -82,7 +84,7 @@ export async function runPreflightGatewaySequence(
     exitProcess: deps.exitProcess,
   });
 
-  gatewayReuseState = applyPreflightGatewayCleanup({
+  gatewayReuseState = await applyPreflightGatewayCleanup({
     gatewayReuseState,
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,
     externallySupervised: deps.externallySupervised,

@@ -73,6 +73,18 @@ describe("asynchronous onboarding process fixtures", () => {
     expect(result.stdout).toBe("");
   });
 
+  it("forwards interactive input before closing the child pipe", async (context) => {
+    const result = await runOnboardProcessAsync(["-e", "process.stdin.pipe(process.stdout)"], {
+      env: minimalSpawnEnv(process.cwd()),
+      input: "selected-channel\n",
+      timeoutMs: 5_000,
+      context,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("selected-channel\n");
+  });
+
   it.for([
     { mode: "timeout", timeoutMs: 2_000, cancel: (_controller: AbortController) => undefined },
     {

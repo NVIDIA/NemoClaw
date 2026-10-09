@@ -11,12 +11,42 @@ import {
 } from "../../adapters/openshell/policy-boundary";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
+import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
 const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
 
 type PolicyMapping = Record<string, unknown>;
+
+export function parseRebuildPolicyProviderNames(policyDocument: string): string[] {
+  const providers = new Set<string>();
+  const parsed = parseAndValidateSandboxPolicy(policyDocument) as {
+    network_policies?: Record<string, { endpoints?: unknown[] }>;
+  };
+  for (const policy of Object.values(parsed.network_policies ?? {})) {
+    for (const endpoint of Array.isArray(policy?.endpoints) ? policy.endpoints : []) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const value = endpoint as {
+        protocol?: unknown;
+        credential_binding?: { provider?: unknown };
+      };
+      const provider = value.credential_binding?.provider;
+      if (value.protocol === "mcp" && typeof provider === "string" && provider) {
+        providers.add(provider);
+      }
+    }
+  }
+  return [...providers];
+}
+
+export function readValidatedRebuildPolicySource(policySourcePath: string): {
+  readonly document: string;
+  readonly providers: readonly string[];
+} {
+  const document = fs.readFileSync(policySourcePath, "utf8");
+  return { document, providers: parseRebuildPolicyProviderNames(document) };
+}
 
 function authorizedCredentialBindingProviders(
   source: string,
@@ -215,7 +245,7 @@ function mergeRequestedReplacementNetworkPolicies(
           continue;
         }
         throw new Error(
-          `Cannot prepare rebuild policy handoff: live network policy '${key}' does not match the enabled channel requirement.`,
+          `Cannot prepare rebuild policy handoff: live network policy '${key}' does not match the selected runtime requirement.`,
         );
       }
       continue;
@@ -231,8 +261,8 @@ function mergeRequestedReplacementNetworkPolicies(
 /**
  * Build one replacement-create input from OpenShell's live policy. Host edits
  * win completely outside missing non-root process identity, filesystem access,
- * and network keys required by an explicit active messaging command. A live
- * collision on an enabled channel key must already match the selected channel
+ * and network keys required by the selected inference or messaging runtime. A live
+ * collision on a required key must already match the selected runtime
  * policy or rebuild stops before deletion. Those bounded image/command
  * requirements are added only to the replacement create input; they are never
  * persisted as a NemoClaw-owned policy shadow.
@@ -286,13 +316,14 @@ export function mergeReplacementPolicyAccess(
 export function materializeRebuildPolicyHandoff(input: {
   readonly sandboxName?: string;
   readonly livePolicyPath: string;
+  readonly livePolicySource?: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
   readonly removedNetworkPolicyKeys?: readonly string[];
   readonly requiredNetworkPolicySources?: readonly string[];
   readonly authorizedCredentialBindingProviders?: readonly string[];
 }): InitialSandboxPolicy {
-  const liveSource = fs.readFileSync(input.livePolicyPath, "utf8");
+  const liveSource = input.livePolicySource ?? fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
     input.replacementPolicy.sourceBytes?.toString("utf8") ??
     fs.readFileSync(input.replacementPolicy.policyPath, "utf8");
@@ -304,7 +335,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicySources,
     input.sandboxName,
   );
-  if (!merged.changed) {
+  if (!merged.changed && input.livePolicySource === undefined) {
     return {
       ...input.replacementPolicy,
       policyPath: input.livePolicyPath,

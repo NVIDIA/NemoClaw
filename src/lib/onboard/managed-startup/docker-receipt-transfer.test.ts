@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupDockerDaemonReceiptBestEffort,
   dockerDaemonReceiptMount,
+  MANAGED_STARTUP_RECEIPT_VOLUME_LABEL,
   transferDockerReceiptToDaemon,
 } from "./docker-receipt-transfer";
 
@@ -51,19 +52,25 @@ describe("Docker daemon receipt transfer", () => {
     });
 
     expect(calls.map((args) => args[0])).toEqual(["volume", "create", "cp", "rm"]);
-    expect(calls[1]).toEqual(
+    const volumeArgs = calls[0] ?? [];
+    const labelIndex = volumeArgs.indexOf("--label");
+    expect(labelIndex).toBeGreaterThanOrEqual(0);
+    expect(volumeArgs[labelIndex + 1]).toBe(`${MANAGED_STARTUP_RECEIPT_VOLUME_LABEL}=1`);
+    const seedArgs = calls[1] ?? [];
+    expect(seedArgs).toEqual(
       expect.arrayContaining([
         "--network",
         "none",
         "--read-only",
         "--user",
-        "0:0",
         "--security-opt",
         "no-new-privileges",
         "--cap-drop",
         "ALL",
       ]),
     );
+    expect(seedArgs.at(seedArgs.indexOf("--user") + 1)).toBe("0");
+    expect(seedArgs).not.toContain("0:0");
     expect(calls[2]).toEqual(
       expect.arrayContaining([
         "-a",

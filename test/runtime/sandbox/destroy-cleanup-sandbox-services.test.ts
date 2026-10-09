@@ -19,6 +19,7 @@ type SandboxLike = { name?: string; model?: string | null; provider?: string | n
 type StopAllOptions = {
   sandboxName: string;
   cleanupOllamaModels?: boolean;
+  stopCloudflared?: boolean;
   unloadOllamaModels?: () => OllamaUnloadResult | void;
 };
 
@@ -32,6 +33,7 @@ function buildDeps(
       | "getSandbox"
       | "listSandboxes"
       | "stopAll"
+      | "migrateLegacyCloudflaredState"
       | "unloadOllamaModels"
       | "loadPendingOllamaModelCleanup"
       | "clearPendingOllamaModelCleanup"
@@ -69,6 +71,7 @@ function buildDeps(
         stopAllCalls.push(opts);
         return opts.cleanupOllamaModels === false ? undefined : opts.unloadOllamaModels?.();
       }),
+      migrateLegacyCloudflaredState: vi.fn(() => false),
       unloadOllamaModels: vi.fn((onlyModels?: readonly string[]) => {
         unloadCalls += 1;
         unloadArgs.push(onlyModels);
@@ -96,16 +99,17 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     message: "could not connect",
   };
 
-  it("delegates GPU unload to stopAll() exactly once when stopHostServices=true", () => {
+  it("delegates GPU unload to stopAll() exactly once when stopHostServices=true", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.deps.stopAll).toHaveBeenCalledTimes(1);
     expect(harness.stopAllCalls[0]).toEqual(
       expect.objectContaining({
         sandboxName: "regression-2717",
         cleanupOllamaModels: true,
+        stopCloudflared: false,
         unloadOllamaModels: expect.any(Function),
       }),
     );
@@ -113,38 +117,40 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.unloadCalls).toBe(1);
   });
 
-  it("skips host-wide Ollama discovery for a final sandbox with no Ollama ownership", () => {
+  it("skips host-wide Ollama discovery for a final sandbox with no Ollama ownership", async () => {
     const harness = buildDeps({ provider: "nvidia-prod" });
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.stopAllCalls).toEqual([
       expect.objectContaining({
         sandboxName: "regression-2717",
         cleanupOllamaModels: false,
+        stopCloudflared: false,
         unloadOllamaModels: expect.any(Function),
       }),
     ]);
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
   });
 
-  it("keeps host-wide Ollama cleanup enabled for retained model recovery", () => {
+  it("keeps host-wide Ollama cleanup enabled for retained model recovery", async () => {
     const harness = buildDeps({ provider: "nvidia-prod" });
     vi.mocked(harness.deps.loadPendingOllamaModelCleanup).mockReturnValue(["old-model"]);
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.stopAllCalls).toEqual([
       expect.objectContaining({
         sandboxName: "regression-2717",
         cleanupOllamaModels: true,
+        stopCloudflared: false,
         unloadOllamaModels: expect.any(Function),
       }),
     ]);
     expect(harness.deps.unloadOllamaModels).toHaveBeenCalledOnce();
   });
 
-  it("holds model ownership while final host-wide cleanup runs", () => {
+  it("holds model ownership while final host-wide cleanup runs", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
     let ownershipHeld = false;
     harness.deps.withOllamaModelOwnershipLock = vi.fn((operation) => {
@@ -159,17 +165,17 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       expect(ownershipHeld).toBe(true);
     });
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.deps.stopAll).toHaveBeenCalledOnce();
     expect(harness.deps.unloadOllamaModels).toHaveBeenCalledOnce();
     expect(ownershipHeld).toBe(false);
   });
 
-  it("calls unloadOllamaModels() exactly once for an Ollama sandbox when stopHostServices=false", () => {
+  it("calls unloadOllamaModels() exactly once for an Ollama sandbox when stopHostServices=false", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.stopAll).not.toHaveBeenCalled();
     expect(harness.deps.unloadOllamaModels).toHaveBeenCalledTimes(1);
@@ -177,31 +183,31 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.unloadCalls).toBe(1);
   });
 
-  it("releases only the destroyed sandbox model when another Ollama sandbox uses a different model", () => {
+  it("releases only the destroyed sandbox model when another Ollama sandbox uses a different model", async () => {
     const harness = buildDeps({ provider: "ollama-local", model: "target-model:latest" }, [
       { name: "peer", provider: "ollama-local", model: "peer-model:latest" },
     ]);
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.unloadArgs).toEqual([["target-model:latest"]]);
   });
 
-  it("keeps a model that another Ollama sandbox shares", () => {
+  it("keeps a model that another Ollama sandbox shares", async () => {
     const harness = buildDeps({ provider: "ollama-local", model: "shared-model" }, [
       { name: "peer", provider: "ollama-local", model: "shared-model:latest" },
     ]);
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
   });
 
-  it("retries a pending superseded model after the sandbox route changes", () => {
+  it("retries a pending superseded model after the sandbox route changes", async () => {
     const harness = buildDeps({ provider: "nvidia-prod", model: "new-model" });
     vi.mocked(harness.deps.loadPendingOllamaModelCleanup).mockReturnValue(["old-model"]);
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.unloadArgs).toEqual([["old-model"]]);
     expect(harness.deps.clearPendingOllamaModelCleanup).toHaveBeenCalledWith("regression-2717", [
@@ -209,29 +215,29 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     ]);
   });
 
-  it("keeps a pending superseded model that an Ollama peer shares", () => {
+  it("keeps a pending superseded model that an Ollama peer shares", async () => {
     const harness = buildDeps({ provider: "nvidia-prod", model: "new-model" }, [
       { name: "peer", provider: "ollama-local", model: "old-model:latest" },
     ]);
     vi.mocked(harness.deps.loadPendingOllamaModelCleanup).mockReturnValue(["old-model"]);
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
     expect(harness.deps.clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
   });
 
-  it("preserves destroy recovery state when stopAll cannot release Ollama", () => {
+  it("preserves destroy recovery state when stopAll cannot release Ollama", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
     vi.mocked(harness.deps.stopAll).mockReturnValue(cleanupFailure);
 
-    expect(() =>
+    await expect(
       cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
-    ).toThrow(/saved route were retained.*retry destroy/);
+    ).rejects.toThrow(/saved route were retained.*retry destroy/);
     expect(harness.deps.rmSync).not.toHaveBeenCalled();
   });
 
-  it("preserves destroy recovery state when stopAll throws unexpectedly (#10553)", () => {
+  it("preserves destroy recovery state when stopAll throws unexpectedly (#10553)", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
     const stopError = new Error(`unexpected cleanup failure ${"detail ".repeat(100)}`);
     vi.mocked(harness.deps.stopAll).mockImplementation(() => {
@@ -240,7 +246,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
 
     let thrown: unknown;
     try {
-      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+      await cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
     } catch (error) {
       thrown = error;
     }
@@ -255,29 +261,29 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("preserves destroy recovery state when scoped Ollama release fails", () => {
+  it("preserves destroy recovery state when scoped Ollama release fails", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
     vi.mocked(harness.deps.unloadOllamaModels).mockReturnValue(cleanupFailure);
 
-    expect(() =>
+    await expect(
       cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps),
-    ).toThrow(/saved route were retained.*retry destroy/);
+    ).rejects.toThrow(/saved route were retained.*retry destroy/);
     expect(harness.deps.rmSync).not.toHaveBeenCalled();
   });
 
-  it("skips unloadOllamaModels() entirely for non-Ollama providers", () => {
+  it("skips unloadOllamaModels() entirely for non-Ollama providers", async () => {
     const harness = buildDeps({ provider: "nvidia-prod" });
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.stopAll).not.toHaveBeenCalled();
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
   });
 
-  it("removes the sandbox PID dir and tears down all messaging providers", () => {
+  it("removes the sandbox PID dir and tears down all messaging providers", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
-    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+    await cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.rmSync).toHaveBeenCalledWith(
       path.join("/tmp", "nemoclaw-services-regression-2717"),
@@ -298,15 +304,15 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     );
   });
 
-  it("fails closed before other cleanup when the Google Chat tunnel cannot stop", () => {
+  it("fails closed before other cleanup when the Google Chat tunnel cannot stop", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
     vi.mocked(harness.deps.stopGooglechatWebhookTunnel).mockImplementation(() => {
       throw new Error("cloudflared refused to stop");
     });
 
-    expect(() =>
+    await expect(
       cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
-    ).toThrow(/Refusing to finish sandbox cleanup/);
+    ).rejects.toThrow(/Refusing to finish sandbox cleanup/);
 
     expect(harness.deps.getSandbox).not.toHaveBeenCalled();
     expect(harness.deps.stopAll).not.toHaveBeenCalled();
@@ -315,12 +321,12 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("rejects traversal-shaped sandbox names before any cleanup side effect", () => {
+  it("rejects traversal-shaped sandbox names before any cleanup side effect", async () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
-    expect(() =>
+    await expect(
       cleanupSandboxServices("x/../../victim", { stopHostServices: true }, harness.deps),
-    ).toThrow("Invalid sandbox name");
+    ).rejects.toThrow("Invalid sandbox name");
 
     expect(harness.deps.getSandbox).not.toHaveBeenCalled();
     expect(harness.deps.stopAll).not.toHaveBeenCalled();

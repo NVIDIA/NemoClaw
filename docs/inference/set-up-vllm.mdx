@@ -21,6 +21,11 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 <Warning>
 Local vLLM does not require authentication by default.
 Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
+After onboarding, `status` and `doctor` probe an authenticated managed single-host vLLM container on its published loopback port.
+For a bearerless server, they use the port in the sandbox's recorded `http://host.openshell.internal:<port>/v1` route.
+When that route is valid, no later port environment override is required.
+For vLLM, `connect` runs these host probes only when it repairs the route.
+A missing or invalid recorded route makes a bearerless probe fall back to `NEMOCLAW_VLLM_PORT`, which defaults to `8000`.
 Use a host firewall with default-deny inbound rules.
 Allow the configured TCP port only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
@@ -152,7 +157,13 @@ $$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
 #### Handle a Running vLLM Server
 
 The single-host managed vLLM runtime is host-global.
-Destroying a sandbox does not stop it, and the container remains available for other sandboxes.
+`$$nemoclaw <name> destroy` keeps the container while any registered sandbox in any gateway state root reports provider `vllm-local`.
+Local NIM uses the same provider identifier and counts as a possible consumer.
+After the last such sandbox is destroyed, an eligible `destroy` removes the verified NemoClaw-managed container and frees its GPU memory.
+When ownership or Docker state cannot be verified, NemoClaw retains recovery state and reports the reason instead of claiming completed retirement.
+Resolve the cause, then rerun the same `destroy` command.
+Pass `--keep-vllm` or set `NEMOCLAW_KEEP_VLLM=1` to preserve the container for a later sandbox.
+Refer to [CLI Commands](../../reference/commands) for the cleanup conditions.
 Later standard onboarding normally reuses a server that is already listening on the configured vLLM port instead of replacing it automatically.
 When a managed GPU selection accompanies explicit managed-install intent, NemoClaw preserves that intent and reports the running-server conflict.
 
@@ -189,7 +200,7 @@ Choose one action:
   ```
 
 Accept the result when onboarding completes and `$$nemoclaw list` reports the new sandbox with provider `vllm-local` and the expected model.
-NemoClaw does not stop or recreate a running vLLM server automatically because another sandbox can use it.
+Onboarding does not stop or recreate a running vLLM server automatically because another sandbox can use it.
 
 NemoClaw requires a resumed session to reuse the recorded GPU selector.
 A legacy in-progress session cannot add one, and a resumed session cannot change one.
@@ -213,8 +224,10 @@ NemoClaw also records an owner-only, credential-free runtime receipt that binds 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
 On hosts other than N1x, if another vLLM server already occupies the configured vLLM port and no managed GPU selection accompanies explicit managed-install intent, NemoClaw selects the existing-server path and applies the model-identity checks described above.
 On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
-If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
-NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
+Except for the interrupted managed install described below, an occupied single-host port stops installation before NemoClaw persists a bearer key or records the selected model.
+For an interrupted install, it can remove and replace only a running `nemoclaw-vllm` container that has the NemoClaw ownership label and publishes container port `8000` to the requested host port on `127.0.0.1` or `0.0.0.0` through the selected local Docker connection.
+It refuses an unlabeled, stopped, distributed, ambiguous, differently mapped, or differently addressed container.
+For every other port holder, NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
 Stop the process, then run onboarding again.
 Docker reports a bind failure if another process claims the port after this preflight.
 Managed profiles and model-specific recipes use immutable image digests:
@@ -315,7 +328,7 @@ The model-download helper and the long-lived vLLM container use `--pull=never`, 
 
 NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
 It cannot inspect daemon storage through a remote endpoint, a named non-default Docker context, or another Unix socket.
-When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI precedence and uses `DOCKER_CONTEXT`.
+When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI behavior and uses `DOCKER_HOST`.
 Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
 
 When a Docker image-storage check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
@@ -359,7 +372,18 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 For the managed one-host DGX Spark and N1x `nvidia/Qwen3.6-35B-A3B-NVFP4` profiles, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
-The DGX Spark profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, and an `8192`-token batch limit.
+DGX Spark automatically selects its Qwen recipe from the detected unified-memory capacity:
+
+| Detected capacity | Context tokens | Concurrent sequences | Batched tokens | GPU-memory utilization |
+|---|---|---|---|---|
+| At least 60 GB and less than 64 GB | 32,768 | 1 | 4,096 | 0.5 |
+| At least 64 GB | 262,144 | 4 | 8,192 | 0.4 |
+
+The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB of usable unified memory.
+It loads weights with vLLM's lazy `safetensors` strategy instead of `fastsafetensors`.
+It remains Experimental with software validation; physical 64 GB Spark qualification is pending.
+Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
+Before installation, NemoClaw displays the selected hardware profile and context limit.
 The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
 The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
@@ -518,7 +542,8 @@ On a host that still meets the N1x identity checks, `rebuild` reuses the recorde
 - The registry records model `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 - If the registry records `endpointUrl` as `null`, NemoClaw derives `http://host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}/v1`; otherwise, `endpointUrl` must equal that URL.
 - The registry records `openshellDriver` as `docker`.
-- The registry records `endpointSource` as `onboard`, or records both route fields as `null` and either `deferredN1xManagedVllmAccepted: true` or the current process supplies the one-time `NEMOCLAW_PROVIDER=install-vllm` recovery decision below.
+- The registry records `endpointSource` as `onboard`, or records `deferredN1xManagedVllmAccepted: true`. The latter accepts either a `null` endpoint or the canonical local endpoint.
+- A legacy record with both `endpointUrl` and `endpointSource` set to `null` can instead use the one-time `NEMOCLAW_PROVIDER=install-vllm` recovery decision below.
 - The replacement keeps the recorded provider and model, then re-derives the canonical local endpoint.
 - `hostLocalInferenceReceipt` is absent or `null`, or contains a canonical vLLM receipt for `host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}` and the same model.
 
@@ -706,7 +731,7 @@ Follow the diagnostic to restore valid telemetry, correct the selected GPU, or f
 Then run `$$nemoclaw onboard --resume`.
 
 To bound resource use while investigating long-context workflows on one DGX Spark, select the Qwen profile.
-The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit to the current N1x defaults.
+For a Spark with at least 64 GB of detected unified memory, the following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit to the current N1x defaults.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \

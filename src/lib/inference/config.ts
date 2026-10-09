@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Inference provider selection config, model resolution, and gateway
- * inference output parsing. All functions are pure.
+ * Inference provider selection, model resolution, and route reconciliation.
+ * All functions are pure.
  */
 
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
@@ -13,6 +13,7 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
@@ -21,7 +22,18 @@ import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
 export { isSafeModelId };
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
-export { buildGatewayInferenceGetArgs } from "./gateway/command-args";
+export {
+  detachNativeNvidiaProvider,
+  ensureNativeNvidiaProvider,
+  ensureNativeNvidiaProviderAttached,
+  isNativeNvidiaProvider,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+  normalizeNativeNvidiaProviderAttachment,
+  persistNativeNvidiaProviderAuthority,
+  resolveGatewayNativeNvidiaProviderAuthority,
+} from "./native-nvidia";
+export type { NativeNvidiaProviderAttachment } from "./native-nvidia";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
@@ -69,6 +81,9 @@ export const DEFAULT_HERMES_PROVIDER_MODEL = HERMES_PROVIDER_MODEL_OPTIONS[0];
 export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+];
+export const OPENROUTER_CLOUD_MODEL_OPTIONS = [
+  ...CLOUD_MODEL_OPTIONS,
   { id: "minimaxai/minimax-m3", label: "Minimax M3" },
 ];
 export const DEFAULT_ROUTE_PROFILE = "inference-local";
@@ -216,6 +231,13 @@ export function getProviderSelectionConfig(
 
   switch (provider) {
     case "nvidia-prod":
+      return {
+        ...base,
+        endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        model: model || DEFAULT_CLOUD_MODEL,
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerLabel: "NVIDIA Endpoints",
+      };
     case "nvidia-nim":
       return {
         ...base,
@@ -381,6 +403,14 @@ export function getSandboxInferenceConfig(
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       break;
     case "nvidia-prod":
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      inferenceBaseUrl = NVIDIA_HOSTED_NATIVE_ENDPOINT;
+      inferenceApi = "openai-completions";
+      inferenceCompat = {
+        supportsStore: false,
+      };
+      break;
     case "nvidia-nim":
     default:
       providerKey = MANAGED_PROVIDER_ID;
@@ -422,33 +452,6 @@ export function resolveAgentProviderInferenceApi(
     provider,
     coerceAgentInferenceApi(agent, preferredInferenceApi),
   );
-}
-
-export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {
-  if (!output) return null;
-  const stripped = output.replace(/\u001b\[[0-9;]*m/g, "");
-  const lines = stripped.split("\n");
-  let inGateway = false;
-  let provider: string | null = null;
-  let model: string | null = null;
-  for (const line of lines) {
-    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
-      inGateway = true;
-      continue;
-    }
-    if (inGateway && /^\S.*:$/.test(line)) {
-      break;
-    }
-    if (inGateway) {
-      const trimmed = line.trim();
-      const p = trimmed.match(/^Provider:\s*(.+)/);
-      const m = trimmed.match(/^Model:\s*(.+)/);
-      if (p) provider = p[1].trim();
-      if (m) model = m[1].trim();
-    }
-  }
-  if (!provider && !model) return null;
-  return { provider, model };
 }
 
 export interface RecordedInferenceRoute {

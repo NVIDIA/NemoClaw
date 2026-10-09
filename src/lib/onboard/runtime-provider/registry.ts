@@ -3,15 +3,18 @@
 
 import type { SandboxEntry } from "../../state/registry/types";
 import { PORTABLE_AGENT_RUNTIME_PLATFORMS } from "../workload/portable-agent-runtime";
+import { EXTERNAL_IMAGE_AGENTS } from "../workload/source";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
+  normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
   type RuntimeProviderContainerEngineOperation,
+  type RuntimeProviderFinalSandboxLiveness,
   type RuntimeProviderManagedProfileRestoreAuthority,
   type RuntimeProviderMutationOperation,
   type RuntimeProviderRuntimeReceipt,
@@ -20,6 +23,7 @@ import {
   type RuntimeProviderSnapshotRestoreReceipt,
   type RuntimeProviderSnapshotRestoreSource,
 } from "./contract";
+export { normalizeRuntimeProviderIdentity } from "./contract";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceOperationInput,
@@ -55,6 +59,8 @@ const SNAPSHOT_LIFECYCLE_STATES = new Set<RuntimeProviderSnapshotLifecycleState>
   "stopped",
 ]);
 const GATEWAY_LAUNCHERS = new Set(["nemoclaw", "openshell"]);
+const FINAL_SANDBOX_LIVENESS_SOURCES: ReadonlySet<unknown> =
+  new Set<RuntimeProviderFinalSandboxLiveness>(["openshell-and-docker", "openshell-only"]);
 const CHANNEL_STOP_TRANSPORTS: ReadonlySet<unknown> = new Set<RuntimeProviderChannelStopTransport>([
   "docker-kubectl-first",
   "openshell",
@@ -63,6 +69,7 @@ const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-man
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const NATIVE_ARTIFACT_PLATFORMS = new Set(["windows/x64"]);
 const NATIVE_ARTIFACT_AGENTS = new Set(["openclaw"]);
+const EXTERNAL_IMAGE_AGENT_SET: ReadonlySet<string> = new Set(EXTERNAL_IMAGE_AGENTS);
 const PORTABLE_AGENT_RUNTIME_PLATFORM_SET: ReadonlySet<string> = new Set(
   PORTABLE_AGENT_RUNTIME_PLATFORMS,
 );
@@ -82,8 +89,6 @@ const HOST_PLATFORMS = new Set<NodeJS.Platform>([
 ]);
 const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
   "registration",
-  "start",
-  "stop",
   "inference-set",
   "rebuild",
   "clone",
@@ -93,6 +98,7 @@ const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
 ]);
 const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperation>([
   "host-doctor",
+  "external-image-preparation",
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
@@ -315,6 +321,31 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
       }
     }
   }
+  if (profile.externalImageSupport !== undefined && profile.externalImageSupport !== null) {
+    if (!isPlainRecord(profile.externalImageSupport)) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid external image support`,
+      );
+    }
+    const externalSupport = profile.externalImageSupport;
+    if (
+      externalSupport.exactDigestReferences !== true ||
+      !Array.isArray(externalSupport.platforms) ||
+      externalSupport.platforms.length === 0 ||
+      externalSupport.platforms.some(
+        (platform) => !MANAGED_IMAGE_PLATFORMS.has(String(platform)),
+      ) ||
+      new Set(externalSupport.platforms).size !== externalSupport.platforms.length ||
+      !Array.isArray(externalSupport.agents) ||
+      externalSupport.agents.length === 0 ||
+      externalSupport.agents.some((agent) => !EXTERNAL_IMAGE_AGENT_SET.has(String(agent))) ||
+      new Set(externalSupport.agents).size !== externalSupport.agents.length
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid external image support`,
+      );
+    }
+  }
   if (profile.nativeArtifactSupport !== undefined && profile.nativeArtifactSupport !== null) {
     if (!isPlainRecord(profile.nativeArtifactSupport)) {
       throw new RuntimeProviderRegistrationError(
@@ -402,7 +433,6 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
   requireSupported("capabilities", surface);
   for (const field of [
     "hostLocalInference",
-    "directLifecycle",
     "legacyGatewayContainerInspection",
     "workloadImageCleanup",
   ] as const) {
@@ -445,6 +475,11 @@ function validateGatewaySurface(providerId: string, surface: Record<string, unkn
     );
   }
   requireBoolean(surface, "inspectLegacyContainer", "gateway");
+  if (!FINAL_SANDBOX_LIVENESS_SOURCES.has(surface.finalSandboxLiveness)) {
+    throw new RuntimeProviderRegistrationError(
+      "gateway.finalSandboxLiveness must be 'openshell-and-docker' or 'openshell-only'",
+    );
+  }
   requireBoolean(surface, "ownsHostReadiness", "gateway");
   if (surface.ownsHostReadiness === true) {
     requireFunction(surface, "observeOwnedGateway", "gateway");
@@ -489,9 +524,6 @@ function validateLifecycleSurface(providerId: string, surface: Record<string, un
         `lifecycle for '${providerId}' has an invalid channel-stop transport`,
       );
     }
-    requireFunction(surface, "start", "lifecycle");
-    requireFunction(surface, "verifyStarted", "lifecycle");
-    requireFunction(surface, "stop", "lifecycle");
     if (
       surface.containerMutationTimeoutMs !== undefined &&
       (!Number.isSafeInteger(surface.containerMutationTimeoutMs) ||
@@ -600,6 +632,35 @@ function validateContainerEngineSurface(
 ): void {
   if (surface.supported === true) {
     requireFunction(surface, "capture", "containerEngine");
+    const externalImagePreparation = surface.externalImagePreparation;
+    if (externalImagePreparation !== undefined) {
+      if (!isPlainRecord(externalImagePreparation)) {
+        throw new RuntimeProviderRegistrationError(
+          `containerEngine for '${providerId}' has an invalid external image preparation capability`,
+        );
+      }
+      requireNonEmptyString(
+        externalImagePreparation,
+        "displayName",
+        "containerEngine.externalImagePreparation",
+      );
+      requireFunction(
+        externalImagePreparation,
+        "inspectLocal",
+        "containerEngine.externalImagePreparation",
+      );
+      requireFunction(externalImagePreparation, "pull", "containerEngine.externalImagePreparation");
+      requireFunction(
+        externalImagePreparation,
+        "inspectPulled",
+        "containerEngine.externalImagePreparation",
+      );
+      requireFunction(
+        externalImagePreparation,
+        "normalizeContentId",
+        "containerEngine.externalImagePreparation",
+      );
+    }
     const nvidiaContainer = surface.nvidiaContainer;
     if (nvidiaContainer !== undefined) {
       if (!isPlainRecord(nvidiaContainer)) {
@@ -646,6 +707,14 @@ function validateContainerEngineSurface(
         `containerEngine for '${providerId}' cannot expose NVIDIA container proof without host-local-inference authority`,
       );
     }
+    if (
+      externalImagePreparation !== undefined &&
+      !operations.includes("external-image-preparation")
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `containerEngine for '${providerId}' cannot expose external image preparation without external-image-preparation authority`,
+      );
+    }
   }
 }
 
@@ -667,6 +736,29 @@ function validateSupportedSurfaceSchemas(
   validateCleanupSurface(surfaces.cleanup);
   validateContainerEngineSurface(providerId, surfaces.containerEngine);
 
+  const workloadProfile = requireOwnRecord(surfaces.workload, "profile");
+  const advertisesExternalImages =
+    workloadProfile.externalImageSupport !== undefined &&
+    workloadProfile.externalImageSupport !== null;
+  if (advertisesExternalImages) {
+    const identities = surfaces.containerEngine.identities;
+    const hasExternalImageAuthority =
+      Array.isArray(identities) &&
+      identities.some(
+        (identity) =>
+          isPlainRecord(identity) && identity.operation === "external-image-preparation",
+      );
+    if (
+      surfaces.containerEngine.supported !== true ||
+      surfaces.containerEngine.externalImagePreparation === undefined ||
+      !hasExternalImageAuthority
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' cannot advertise external images without provider-owned preparation authority`,
+      );
+    }
+  }
+
   if (surfaces.plan.gatewayLauncher !== surfaces.gateway.launcher) {
     throw new RuntimeProviderRegistrationError(
       `plan and gateway launcher disagree for '${providerId}'`,
@@ -674,7 +766,6 @@ function validateSupportedSurfaceSchemas(
   }
   if (
     surfaces.capabilities.hostLocalInference !== (surfaces.hostLocalInference.supported === true) ||
-    surfaces.capabilities.directLifecycle !== (surfaces.lifecycle.supported === true) ||
     surfaces.capabilities.workloadImageCleanup !== (surfaces.cleanup.supported === true) ||
     surfaces.capabilities.legacyGatewayContainerInspection !==
       surfaces.gateway.inspectLegacyContainer
@@ -724,11 +815,6 @@ export function createRuntimeProviderBundleRegistry(
     registry[key] = cloneAndFreeze(bundle);
   }
   return Object.freeze(registry);
-}
-
-export function normalizeRuntimeProviderIdentity(driverName: string | null | undefined): string {
-  const normalized = driverName?.trim().toLowerCase();
-  return !normalized || normalized === "vm" ? "docker" : normalized;
 }
 
 export function resolveRuntimeProviderBundle(

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
-  DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
+  DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
   DEEPAGENTS_MCP_MAX_SERVERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
-} from "./mcp-bridge-adapter-deepagents-projection";
+} from "./mcp-bridge-adapter-deepagents-native-config";
 import {
   DEEPAGENTS_LEGACY_CONFIG_HELPERS,
   DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
@@ -21,7 +21,7 @@ import {
 
 // Source-of-truth review for the legacy compatibility boundary:
 // invalidState: a v1 sandbox keeps NemoClaw's owned server inside the mutable,
-// user-shared .mcp.json file, while current images use a dedicated projection.
+// user-shared .mcp.json file, while current images use the agent-native config.
 // sourceBoundary: the surviving v1 Deep Agents runtime selects the legacy path;
 // the host registry remains authoritative for the exact entry NemoClaw owns.
 // whyNotSourceFix: replacing the image before teardown would strand its provider
@@ -31,7 +31,7 @@ import {
 // removalCondition: delete this compatibility module after supported releases can
 // no longer contain registry-owned v1 entries and the migration window has ended.
 export function buildDeepAgentsMcpRollbackRegisterCommand(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   expectedServers: Record<string, Record<string, unknown>>,
 ): string {
   const payload = {
@@ -46,7 +46,7 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
     `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
-    ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
+    ...DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
     ...buildDeepAgentsRuntimeKindCommandLines(),
@@ -60,12 +60,12 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "managed_descriptor = None",
     "legacy_identity = None",
     "def fail_rollback(message):",
-    "    close_managed_projection_descriptor(managed_descriptor)",
+    "    close_native_mcp_config_descriptor(managed_descriptor)",
     "    print(message, file=sys.stderr)",
     "    raise SystemExit(2)",
     "try:",
     "    if is_v2:",
-    "        data, managed_identity, managed_descriptor = load_managed_projection_for_update(config_path)",
+    "        data, managed_identity, managed_descriptor = load_native_mcp_config_for_update(config_path)",
     "    elif os.path.lexists(config_path):",
     "        data, legacy_identity = read_legacy_config(config_path)",
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",
@@ -74,12 +74,12 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "    fail_rollback(f'Invalid managed MCP rollback state at {config_path}: expected object')",
     "if is_v2:",
     "    if data and set(data) != {'mcpServers'}:",
-    "        fail_rollback(f'Invalid managed MCP v2 projection at {config_path}')",
+    "        fail_rollback(f'Invalid native MCP v3 config at {config_path}')",
     "    servers = data.get('mcpServers', {})",
     "    if not isinstance(servers, dict):",
-    "        fail_rollback(f'Invalid managed MCP v2 server map at {config_path}')",
+    "        fail_rollback(f'Invalid native MCP v3 server map at {config_path}')",
     "    if any(not managed_http_server_matches(current, payload['expectedServers'].get(name), True) for name, current in servers.items()):",
-    "        fail_rollback(f'Refusing to overwrite drifted managed MCP v2 projection at {config_path}')",
+    "        fail_rollback(f'Refusing to overwrite drifted native MCP v3 config at {config_path}')",
     "    next_servers = {}",
     "    for name, expected in payload['expectedServers'].items():",
     "        if name != payload['server'] and name in servers:",
@@ -118,11 +118,11 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "            pass",
     "else:",
     "    try:",
-    "        write_managed_projection(config_path, data, managed_identity, managed_descriptor)",
+    "        write_native_mcp_config(config_path, data, managed_identity, managed_descriptor)",
     "    except (OSError, ValueError) as exc:",
     "        fail_rollback(f'Could not publish managed MCP rollback state at {config_path}: {exc}')",
     "try:",
-    "    persisted = read_managed_projection(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
+    "    persisted = read_native_mcp_config(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",
     "    fail_rollback(f'Could not verify managed MCP rollback state at {config_path}: {exc}')",
     "if is_v2:",

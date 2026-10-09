@@ -1,23 +1,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import type { RunProviderCommand } from "../../adapters/openshell/provider-adapter-cli";
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import {
   createManagedProviderAdapter,
   managedProviderGatewayTarget,
 } from "../../adapters/openshell/managed-provider-adapter";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import type { RunProviderCommand } from "../../adapters/openshell/provider-adapter-cli";
+import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
+import {
+  isNativeNvidiaProvider,
+  nativeNvidiaProviderAttachmentFromMetadata,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
   assessRecoveredProviderCredentialReuse,
   isRecoveredProviderCredentialReuseSelectionKey,
+  type RecoveredProviderReuseRejectCondition,
 } from "../../onboard/recovered-provider-reuse";
 import * as registry from "../../state/registry";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -37,7 +43,12 @@ const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
   >;
 };
 
-export type RebuildGatewayProviderRegistration = "registered" | "missing" | "indeterminate";
+export type RebuildGatewayProviderRegistration =
+  | "registered"
+  | "expired"
+  | "credential_missing"
+  | "missing"
+  | "indeterminate";
 
 function rebuildProviderAdapter(
   runtimeSelection?: OpenShellRuntimeSelection,
@@ -59,23 +70,55 @@ export async function inspectRebuildGatewayProviderRegistration(
   phase = "Preflight",
   runtimeSelection?: OpenShellRuntimeSelection,
   providerAdapter = rebuildProviderAdapter(runtimeSelection),
+  credentialKey?: string | null,
+  nativeAttachment?: NativeNvidiaProviderAttachment,
 ): Promise<RebuildGatewayProviderRegistration> {
+  if (nativeAttachment && !isNativeNvidiaProvider(provider)) return "indeterminate";
   const result = await providerAdapter.getProvider({
-    providerName: provider,
+    providerName: nativeAttachment?.providerName ?? provider,
     target: managedProviderGatewayTarget,
+    ...(credentialKey ? { includeCredentialExpirations: true } : {}),
   });
+  if (result.ok && nativeAttachment) {
+    try {
+      if (
+        nativeNvidiaProviderAttachmentFromMetadata(result.value).providerId !==
+        nativeAttachment.providerId
+      )
+        return "indeterminate";
+    } catch {
+      return "indeterminate";
+    }
+  }
+  const expiresAtMs = result.ok && credentialKey ? result.value.credentialExpiresAtMs : undefined;
+  const credentialExpiresAtMs = credentialKey ? expiresAtMs?.[credentialKey] : undefined;
+  const credentialKeyMissing = Boolean(
+    result.ok && credentialKey && !result.value.credentialKeys.includes(credentialKey),
+  );
   const registration = result.ok
-    ? "registered"
+    ? credentialKey && expiresAtMs === undefined
+      ? "indeterminate"
+      : credentialKeyMissing
+        ? "credential_missing"
+        : credentialExpiresAtMs !== undefined &&
+            credentialExpiresAtMs > 0 &&
+            credentialExpiresAtMs <= Date.now()
+          ? "expired"
+          : "registered"
     : result.error.kind === "command" && result.error.reason === "not_found"
       ? "missing"
       : "indeterminate";
   log(
-    `${phase} gateway provider check: provider '${provider}' is ${
+    `${phase} gateway provider check: provider '${provider}' ${
       registration === "registered"
-        ? "registered"
-        : registration === "missing"
-          ? "explicitly missing"
-          : "indeterminate"
+        ? "is registered"
+        : registration === "expired"
+          ? `has expired credential ${credentialKey}`
+          : registration === "credential_missing"
+            ? `does not expose credential ${credentialKey}`
+            : registration === "missing"
+              ? "is explicitly missing"
+              : "could not be verified"
     } in OpenShell`,
   );
   return registration;
@@ -86,6 +129,25 @@ type GatewayCredentialReusePreflightDeps = {
   readGatewayProviderMetadata(provider: string): Promise<GatewayProviderMetadata | null>;
   readRecordedProviderEndpoints(provider: string, excludeSandboxName: string): string[] | null;
 };
+
+function rebuildCredentialReuseCondition(condition: RecoveredProviderReuseRejectCondition): string {
+  switch (condition) {
+    case "recovery-source":
+      return "The provider selection was not recovered from this sandbox.";
+    case "provider-identity":
+      return "The recorded provider identity is missing or incompatible.";
+    case "model-identity":
+      return "The recorded model identity is missing or invalid.";
+    case "inference-api":
+      return "The recorded inference API is missing or unsupported.";
+    case "provider-surface":
+      return "The gateway provider is registered for a different API surface.";
+    case "gateway-provider-identity":
+      return "The gateway provider binding is missing or incompatible.";
+    case "endpoint-identity":
+      return "The recorded endpoint identity is missing or incompatible.";
+  }
+}
 
 function printMissingRebuildGatewayProvider(provider: string, credentialEnv: string | null): void {
   console.error("");
@@ -109,6 +171,38 @@ function printIndeterminateRebuildGatewayProvider(provider: string): void {
   );
   console.error("  The provider lookup did not return an explicit not-found response.");
   console.error("  Check gateway connectivity and authentication, then retry rebuild.");
+  console.error("  Sandbox is untouched — no data was lost.");
+}
+
+function printExpiredRebuildGatewayProviderCredential(
+  provider: string,
+  credentialKey: string,
+): void {
+  console.error("");
+  console.error(
+    `  ${_RD}Rebuild preflight failed:${R} provider '${provider}' credential ${credentialKey} is expired in OpenShell.`,
+  );
+  console.error(
+    "  Rebuild will not destroy a sandbox that it cannot restore to working inference.",
+  );
+  console.error(`  Refresh ${credentialKey} in OpenShell or rerun onboard, then retry rebuild.`);
+  console.error("  Sandbox is untouched — no data was lost.");
+}
+
+function printMissingRebuildGatewayProviderCredential(
+  provider: string,
+  credentialKey: string,
+): void {
+  console.error("");
+  console.error(
+    `  ${_RD}Rebuild preflight failed:${R} provider '${provider}' no longer exposes credential ${credentialKey}.`,
+  );
+  console.error(
+    "  Rebuild will not destroy a sandbox that it cannot restore to working inference.",
+  );
+  console.error(
+    `  Re-register '${provider}' with ${credentialKey} in OpenShell or rerun onboard, then retry rebuild.`,
+  );
   console.error("  Sandbox is untouched — no data was lost.");
 }
 
@@ -145,6 +239,7 @@ export async function checkRebuildGatewayProviderOrBail(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   options: {
+    nativeAttachment?: NativeNvidiaProviderAttachment;
     allowProviderReconfigure?: boolean;
     hostCredentialAvailable?: boolean;
     onProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
@@ -152,10 +247,29 @@ export async function checkRebuildGatewayProviderOrBail(
 ): Promise<boolean> {
   if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
 
-  const registration = await inspectRebuildGatewayProviderRegistration(provider, log);
+  const registration = await inspectRebuildGatewayProviderRegistration(
+    provider,
+    log,
+    "Preflight",
+    undefined,
+    rebuildProviderAdapter(),
+    credentialEnv,
+    options.nativeAttachment,
+  );
   if (registration === "registered") return true;
+  if (registration === "expired" && credentialEnv) {
+    printExpiredRebuildGatewayProviderCredential(provider, credentialEnv);
+    bail(`Expired gateway provider credential: ${provider}/${credentialEnv}`);
+    return false;
+  }
+  if (registration === "credential_missing" && credentialEnv) {
+    printMissingRebuildGatewayProviderCredential(provider, credentialEnv);
+    bail(`Missing gateway provider credential: ${provider}/${credentialEnv}`);
+    return false;
+  }
   if (
     registration === "missing" &&
+    !options.nativeAttachment &&
     options.allowProviderReconfigure &&
     options.hostCredentialAvailable &&
     credentialEnv &&
@@ -213,6 +327,11 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  if (config.nativeNvidiaProviderAttachment) {
+    return checkRebuildGatewayProviderOrBail(config.provider, config.credentialEnv, log, bail, {
+      nativeAttachment: config.nativeNvidiaProviderAttachment,
+    });
+  }
   if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;
   const isBedrockRuntime =
     config.provider === "compatible-anthropic-endpoint" &&
@@ -275,18 +394,14 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
     );
     return true;
   }
-  const rejectionReason =
-    decision.kind === "reject"
-      ? decision.reason
-      : "the host credential state changed during preflight";
-
+  if (decision.kind === "validate-host-credential") return true;
   console.error("");
   console.error(
-    `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the gateway credential for '${config.provider}'.`,
+    `  ${_RD}Rebuild preflight failed:${R} cannot safely reuse the recorded gateway credential.`,
   );
-  console.error(`  ${rejectionReason}.`);
-  console.error(`  Export ${config.credentialEnv} to use normal credential validation and upsert.`);
+  console.error(`  ${rebuildCredentialReuseCondition(decision.condition)}`);
+  console.error("  Export the provider credential to use normal validation and upsert.");
   console.error("  Sandbox is untouched — no data was lost.");
-  bail(`Unsafe gateway credential reuse for provider '${config.provider}': ${rejectionReason}`);
+  bail("Unsafe gateway credential reuse");
   return false;
 }

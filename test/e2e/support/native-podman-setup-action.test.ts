@@ -1,14 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { addAbortListener } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, type TestContext, vi } from "vitest";
 import YAML from "yaml";
+
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 
 import {
   validateNativePodmanRestoreAction,
@@ -18,6 +22,34 @@ import {
 const RESTORE_ACTION = path.resolve(".github/actions/restore-native-podman-e2e/action.yaml");
 const SETUP_ACTION = path.resolve(".github/actions/setup-native-podman-e2e/action.yaml");
 const FIXED_RESTORE_ROOT = "/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore";
+const COMMAND_OUTPUT_LIMIT = 64 * 1024;
+const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
+
+type WorkflowStep = {
+  env?: Record<string, unknown>;
+  if?: string;
+  name?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, unknown>;
+};
+
+type WorkflowJob = {
+  env?: Record<string, unknown>;
+  if?: string;
+  needs?: string | string[];
+  "runs-on"?: string;
+  steps?: WorkflowStep[];
+};
+
+function e2eWorkflowJobs(): Record<string, WorkflowJob> {
+  const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+    jobs: Record<string, WorkflowJob>;
+  };
+  return workflow.jobs;
+}
+
+vi.setConfig({ maxConcurrency: 5 });
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -34,9 +66,172 @@ function restoreRunScript(): string {
   );
 }
 
+function setupRunScript(): string {
+  const action = YAML.parse(fs.readFileSync(SETUP_ACTION, "utf8")) as {
+    runs: { steps: Array<{ name?: string; run?: string }> };
+  };
+  return String(
+    action.runs.steps.find(({ name }) => name === "Start native Podman runtime")?.run ?? "",
+  );
+}
+
+function interruptedSetupHarness(cleanupRoot: string): string {
+  const source = setupRunScript();
+  const start = source.indexOf("setup_completed=false");
+  const trapEndMarker = "trap 'exit 143' TERM";
+  const trapEnd = source.indexOf("\nfi", source.indexOf(trapEndMarker, start));
+  const trapBoundary = source
+    .slice(start, trapEnd + "\nfi".length)
+    .replace(
+      '[[ "$CLEANUP_FIXTURE" == /usr/local/libexec/nemoclaw/* ]]',
+      `[[ "$CLEANUP_FIXTURE" == ${shellQuote(cleanupRoot)}/* ]]`,
+    );
+  return [
+    "sudo() {",
+    '  if [[ "${1:-}" == "-n" ]]; then shift; fi',
+    '  if [[ "${1:-}" == "stat" ]]; then printf \'0:0:555\\n\'; return; fi',
+    '  "$@"',
+    "}",
+    trapBoundary,
+    'exit "$SETUP_FAILURE_STATUS"',
+  ].join("\n");
+}
+
+async function runInterruptedSetupFixture(ownerContext: ProcessOwner, cleanupExitStatus: number) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-setup-trap-"));
+  const cleanupRoot = path.join(root, "cleanup");
+  const runnerTemp = path.join(root, "runner-temp");
+  const cleanupFixture = path.join(cleanupRoot, "restore");
+  const cleanupCount = path.join(runnerTemp, "cleanup-count");
+  const dockerState = path.join(runnerTemp, "docker-state");
+  fs.mkdirSync(cleanupRoot, { recursive: true });
+  fs.mkdirSync(runnerTemp, { recursive: true });
+  fs.writeFileSync(dockerState, "isolated\n");
+  writeExecutable(
+    cleanupFixture,
+    `#!/bin/bash
+set -euo pipefail
+count=0
+[[ ! -f "$RUNNER_TEMP/cleanup-count" ]] || count="$(cat "$RUNNER_TEMP/cleanup-count")"
+printf '%s\n' "$((count + 1))" >"$RUNNER_TEMP/cleanup-count"
+printf 'restored\n' >"$RUNNER_TEMP/docker-state"
+exit ${String(cleanupExitStatus)}
+`,
+  );
+  const result = await runCommand(
+    ownerContext,
+    "bash",
+    ["--noprofile", "--norc", "-c", interruptedSetupHarness(cleanupRoot)],
+    {
+      ...process.env,
+      CLEANUP_FIXTURE: cleanupFixture,
+      RUNNER_TEMP: runnerTemp,
+      SETUP_FAILURE_STATUS: "42",
+    },
+  );
+  return { cleanupCount, dockerState, result, root };
+}
+
 type RestoreFixtureKind = "valid" | "regular-file" | "symlink";
 
-function runRestoreFixture(
+type CommandResult = {
+  readonly status: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly timedOut: boolean;
+  readonly stdout: string;
+  readonly stderr: string;
+};
+
+type ProcessOwner = Pick<TestContext, "signal" | "onTestFinished">;
+
+type OutputCapture = {
+  text: string;
+  truncated: boolean;
+};
+
+function appendOutput(capture: OutputCapture, chunk: string): void {
+  const next = capture.truncated ? capture.text : capture.text + chunk;
+  const newlyTruncated =
+    !capture.truncated && Buffer.byteLength(next, "utf8") > COMMAND_OUTPUT_LIMIT;
+  capture.text = capture.truncated
+    ? capture.text
+    : newlyTruncated
+      ? `${new StringDecoder("utf8").write(
+          Buffer.from(next).subarray(
+            0,
+            COMMAND_OUTPUT_LIMIT - Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8"),
+          ),
+        )}${OUTPUT_TRUNCATION_MARKER}`
+      : next;
+  capture.truncated ||= newlyTruncated;
+}
+
+async function runCommand(
+  ownerContext: ProcessOwner,
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs = 15_000,
+): Promise<CommandResult> {
+  ownerContext.signal.throwIfAborted();
+  const stdout: OutputCapture = { text: "", truncated: false };
+  const stderr: OutputCapture = { text: "", truncated: false };
+  const child = spawn(command, [...args], { detached: true, env });
+  const finishController = new AbortController();
+  const abort = addAbortListener(ownerContext.signal, () => finishController.abort());
+  const supervision = superviseChild(child, {
+    killGraceMs: 0,
+    onStderr: (chunk) => {
+      appendOutput(stderr, chunk);
+    },
+    onStdout: (chunk) => {
+      appendOutput(stdout, chunk);
+    },
+    signal: finishController.signal,
+    timeoutMs,
+  });
+  ownerContext.onTestFinished(async () => {
+    finishController.abort();
+    await supervision;
+  });
+
+  try {
+    const result = await supervision;
+    const cleanupDiagnostic = result.cleanupError ? `${result.cleanupError.message}\n` : "";
+    const stderrContent = stderr.truncated
+      ? stderr.text.slice(0, -OUTPUT_TRUNCATION_MARKER.length)
+      : stderr.text;
+    const stderrNeedsTruncation =
+      result.cleanupError !== undefined &&
+      (stderr.truncated ||
+        Buffer.byteLength(stderrContent + cleanupDiagnostic, "utf8") > COMMAND_OUTPUT_LIMIT);
+    const stderrPrefixBudget = Math.max(
+      0,
+      COMMAND_OUTPUT_LIMIT -
+        Buffer.byteLength(cleanupDiagnostic, "utf8") -
+        Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8"),
+    );
+    const boundedStderrPrefix = new StringDecoder("utf8").write(
+      Buffer.from(stderrContent).subarray(0, stderrPrefixBudget),
+    );
+    return {
+      status: result.cleanupError ? -1 : result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      stdout: stdout.text,
+      stderr: result.cleanupError
+        ? stderrNeedsTruncation
+          ? `${boundedStderrPrefix}${cleanupDiagnostic}${OUTPUT_TRUNCATION_MARKER}`
+          : `${stderrContent}${cleanupDiagnostic}`
+        : stderr.text,
+    };
+  } finally {
+    abort[Symbol.dispose]();
+  }
+}
+
+async function runRestoreFixture(
+  ownerContext: ProcessOwner,
   kind: RestoreFixtureKind,
   serviceActiveState = "active",
   socketActiveState = "active",
@@ -133,9 +328,11 @@ function runRestoreFixture(
       "/usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;",
       `${destination}) ;;`,
     );
-  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", `${commandShims}\n${script}`], {
-    encoding: "utf8",
-    env: {
+  const result = await runCommand(
+    ownerContext,
+    "bash",
+    ["--noprofile", "--norc", "-c", `${commandShims}\n${script}`],
+    {
       ...process.env,
       NODE_BINARY: process.execPath,
       DOCKER_SERVICE_STATE: serviceState,
@@ -145,7 +342,7 @@ function runRestoreFixture(
       PATH: `${path.dirname(destination)}:${process.env.PATH ?? "/usr/bin:/bin"}`,
       SYSTEMCTL_LOG: systemctlLog,
     },
-  });
+  );
   return {
     destination,
     expectedSha256,
@@ -162,7 +359,8 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
-function runPodmanCleanupFixture(
+async function runPodmanCleanupFixture(
+  ownerContext: ProcessOwner,
   withDockerState: boolean,
   podmanStopFails = false,
   withUnrelatedServiceUnit = false,
@@ -335,9 +533,11 @@ esac
       "/usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;",
       `${destination}) ;;`,
     );
-  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", `${commandShims}\n${script}`], {
-    encoding: "utf8",
-    env: {
+  const result = await runCommand(
+    ownerContext,
+    "bash",
+    ["--noprofile", "--norc", "-c", `${commandShims}\n${script}`],
+    {
       ...process.env,
       HOME: home,
       LOOPBACK_STATE: loopbackState,
@@ -348,7 +548,7 @@ esac
       RUNNER_TEMP: runnerTemp,
       SYSTEMCTL_LOG: systemctlLog,
     },
-  });
+  );
   return {
     destination,
     expectedSha256,
@@ -369,6 +569,231 @@ esac
 }
 
 describe("native Podman E2E setup boundary", () => {
+  // source-shape-contract: security -- Candidate code may consume only a trusted-main-built Podman 5.7 artifact on the reviewed GPU lane
+  it("builds the Portable Podman toolchain outside candidate execution", () => {
+    const toolchain = e2eWorkflowJobs()["portable-podman-toolchain"]!;
+    const checkout = toolchain.steps?.find(
+      (step) => step.name === "Check out the pinned Podman 5.7 source",
+    );
+    const dependencyInstall = toolchain.steps?.find(
+      (step) =>
+        step.name === "Install pinned Podman build dependencies from the signed Ubuntu snapshot",
+    );
+    const replace = toolchain.steps?.find(
+      (step) => step.name === "Replace only Podman with the pinned portable runtime",
+    );
+    const upload = toolchain.steps?.find(
+      (step) => step.name === "Upload the pinned Portable Podman toolchain",
+    );
+
+    expect(toolchain.needs).toBe("generate-matrix");
+    expect(toolchain.if).toBe(
+      "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'portable-hermes-finalization') }}",
+    );
+    expect(toolchain["runs-on"]).toBe("ubuntu-24.04");
+    expect(checkout?.with).toMatchObject({
+      repository: "podman-container-tools/podman",
+      ref: "0370128fc8dcae93533334324ef838db8f8da8cb",
+      path: ".podman-source",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
+    expect(dependencyInstall?.env).toEqual({
+      UBUNTU_SNAPSHOT_ID: "20260911T000000Z",
+    });
+    expect(dependencyInstall?.run).toContain(
+      "URIs: https://snapshot.ubuntu.com/ubuntu/$UBUNTU_SNAPSHOT_ID",
+    );
+    expect(dependencyInstall?.run).toContain('-o "Dir::Etc::sourcelist=$snapshot_sources"');
+    expect(dependencyInstall?.run).toContain("Dir::Etc::sourceparts=-");
+    expect(dependencyInstall?.run).toContain("Pin: origin snapshot.ubuntu.com");
+    expect(dependencyInstall?.run).toContain("Pin-Priority: 1001");
+    expect(dependencyInstall?.run).toContain('-o "Dir::Etc::preferences=$snapshot_preferences"');
+    expect(dependencyInstall?.run).toContain("Dir::Etc::preferencesparts=-");
+    expect(dependencyInstall?.run).toContain('-o "Dir::State::lists=$snapshot_lists"');
+    expect(dependencyInstall?.run).toContain("APT::Get::AllowUnauthenticated=false");
+    expect(dependencyInstall?.run).toContain("Acquire::AllowInsecureRepositories=false");
+    expect(dependencyInstall?.run).toContain("--allow-downgrades");
+    expect(dependencyInstall?.run).toContain(
+      [
+        '  "gcc=4:13.2.0-7ubuntu1"',
+        '  "git=1:2.43.0-1ubuntu7.3"',
+        '  "libapparmor-dev=4.0.1really4.0.1-0ubuntu0.24.04.7"',
+        '  "libbtrfs-dev=6.6.3-1.1build2"',
+        '  "libc6-dev=2.39-0ubuntu8.9"',
+        '  "libdevmapper-dev=2:1.02.185-3ubuntu3.2"',
+        '  "libglib2.0-dev=2.80.0-6ubuntu3.8"',
+        '  "libprotobuf-c-dev=1.4.1-1ubuntu4"',
+        '  "libprotobuf-dev=3.21.12-8.2ubuntu0.3"',
+        '  "libseccomp-dev=2.5.5-1ubuntu3.1"',
+        '  "libselinux1-dev=3.5-2ubuntu2.1"',
+        '  "libsqlite3-dev=3.45.1-1ubuntu2.7"',
+        '  "libsystemd-dev=255.4-1ubuntu8.17"',
+        '  "make=4.3-4.1build2"',
+        '  "pkg-config=1.8.1-2build1"',
+        '  "protobuf-compiler=3.21.12-8.2ubuntu0.3"',
+      ].join("\n"),
+    );
+    expect(dependencyInstall?.run).toContain("dpkg-query --show --showformat='${Version}'");
+    expect(dependencyInstall?.run).toContain('[[ "$actual_version" == "$expected_version" ]]');
+    expect(replace?.run).toContain("sha256sum --check --strict SHA256SUMS");
+    expect(replace?.run).toContain('"podman version 5.7.0"');
+    expect(replace?.run).toContain('.podmanVersion = "5.7.0"');
+    expect(upload?.with).toEqual({
+      name: "portable-podman-e2e-toolchain-amd64",
+      path: "${{ runner.temp }}/portable-podman-e2e-toolchain/",
+      "if-no-files-found": "error",
+      "retention-days": 3,
+      "compression-level": 0,
+    });
+  });
+
+  // source-shape-contract: security -- The explicit selector must retain the reviewed GPU, runtime, candidate, and cleanup boundaries
+  it("runs Portable Hermes only on the explicit Podman 5.7 GPU lane", () => {
+    const setupAction = YAML.parse(fs.readFileSync(SETUP_ACTION, "utf8")) as {
+      inputs: Record<string, { default?: string }>;
+      runs: { steps: WorkflowStep[] };
+    };
+    const setupRuntime = setupAction.runs.steps.find(
+      (step) => step.name === "Start native Podman runtime",
+    );
+    const dockerCliIsolation = setupAction.runs.steps.find(
+      (step) => step.name === "Remove Docker CLI from native Podman execution",
+    );
+    const liveSource = fs.readFileSync(
+      "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "utf8",
+    );
+    const job = e2eWorkflowJobs()["portable-hermes-finalization"]!;
+    const trustedCheckout = job.steps?.find(
+      (step) => step.name === "Check out trusted workflow cleanup authority",
+    );
+    const fixtureInstall = job.steps?.find(
+      (step) => step.name === "Install immutable native Podman cleanup fixture",
+    );
+    const candidateCheckout = job.steps?.find(
+      (step) => step.name === "Check out the exact candidate",
+    );
+    const setup = job.steps?.find((step) => step.name === "Prepare Portable Podman 5.7 runtime");
+    const live = job.steps?.find(
+      (step) => step.name === "Run Portable Hermes finalization live Vitest test",
+    );
+    const fixtureRemoval = job.steps?.find(
+      (step) => step.name === "Remove immutable native Podman cleanup fixture",
+    );
+    const trustedCheckoutIndex = job.steps?.indexOf(trustedCheckout!) ?? -1;
+    const candidateCheckoutIndex = job.steps?.indexOf(candidateCheckout!) ?? -1;
+    const setupIndex = job.steps?.indexOf(setup!) ?? -1;
+    const uploadIndex =
+      job.steps?.findIndex(
+        (step) => step.name === "Upload Portable Hermes finalization artifacts",
+      ) ?? -1;
+    const restoreIndex =
+      job.steps?.findIndex(
+        (step) => step.name === "Restore Docker and retire Portable Podman runtime",
+      ) ?? -1;
+    const fixtureRemovalIndex = job.steps?.indexOf(fixtureRemoval!) ?? -1;
+
+    expect(job.needs).toEqual(["generate-matrix", "portable-podman-toolchain"]);
+    expect(job["runs-on"]).toBe("linux-amd64-gpu-rtxpro6000-latest-1");
+    expect(job.env).toMatchObject({
+      E2E_DEFAULT_ENABLED: "0",
+      E2E_GATEWAY_RUNTIMES: "podman",
+      E2E_TARGET_ID: "portable-hermes-finalization",
+      E2E_AGENT_RUNTIME: "hermes",
+    });
+    expect(job.env).not.toHaveProperty("E2E_HERMES_BASE_STORAGE_HOME");
+    expect(setupAction.inputs["cleanup-fixture"]?.default).toBe("");
+    expect(setupAction.inputs["isolate-docker-cli"]?.default).toBe("true");
+    expect(dockerCliIsolation?.if).toBe(
+      "${{ inputs.enabled == 'true' && inputs.isolate-docker-cli == 'true' }}",
+    );
+    expect(setupRuntime?.env).toMatchObject({
+      CLEANUP_FIXTURE: "${{ inputs.cleanup-fixture }}",
+    });
+    expect(setupRuntime?.run).toContain("trap cleanup_interrupted_setup EXIT");
+    expect(setupRuntime?.run).toContain("trap 'exit 130' INT");
+    expect(setupRuntime?.run).toContain("trap 'exit 143' TERM");
+    expect(setupRuntime?.run).toContain('== "0:0:555"');
+    expect(setupRuntime?.run).toContain("setup_completed=true");
+    expect(setupRuntime?.run).toContain("trap - EXIT INT TERM");
+    expect(trustedCheckout?.with).toMatchObject({
+      ref: "${{ github.workflow_sha }}",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
+    expect(fixtureInstall?.env).toMatchObject({
+      TRUSTED_FIXTURE_SHA256: "f9b26c07e5b84660a0f2710307cefc9c0c811d3d88628bb0a9500e031ec02ba8",
+    });
+    expect(createHash("sha256").update(restoreRunScript()).digest("hex")).toBe(
+      "f9b26c07e5b84660a0f2710307cefc9c0c811d3d88628bb0a9500e031ec02ba8",
+    );
+    expect(fixtureInstall?.run).toContain("sha256sum --check --strict");
+    expect(fixtureInstall?.run).toContain("--owner=root --group=root --mode=0555");
+    expect(setup?.with).toEqual({
+      "cleanup-fixture":
+        "/usr/local/libexec/nemoclaw/native-podman-e2e-restore.${{ github.run_id }}.${{ github.run_attempt }}",
+      enabled: "true",
+      toolchain: "portable-5.7",
+      "isolate-docker-cli": "false",
+    });
+    expect(setup?.uses).toBe(
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@22789bcaf835db7cf6390781c8d0f454f1e73dec",
+    );
+    expect(live).toMatchObject({
+      env: {
+        E2E_HERMES_BASE_STORAGE_HOME: "${{ runner.temp }}/nemoclaw-hermes-base-storage",
+      },
+    });
+    expect(live?.run).toContain("trap restore_runner EXIT");
+    expect(live?.run).toContain("trap 'exit 130' INT");
+    expect(live?.run).toContain("trap 'exit 143' TERM");
+    expect(live?.run).toContain('[[ "$(uname -m)" == x86_64 ]]');
+    expect(live?.run).toContain("nvidia-smi --query-gpu=name");
+    expect(live?.run).toContain("podman build");
+    expect(
+      liveSource.indexOf(
+        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
+      ),
+    ).toBeGreaterThanOrEqual(0);
+    expect(liveSource.indexOf('run("docker", ["version"])')).toBeGreaterThan(
+      liveSource.indexOf(
+        "assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`)",
+      ),
+    );
+    expect(live?.run).toMatch(
+      /live-vitest-invocation\.mts run \\\n\s+--test-path test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts/u,
+    );
+    expect(trustedCheckoutIndex).toBeGreaterThanOrEqual(0);
+    expect(candidateCheckoutIndex).toBeGreaterThan(trustedCheckoutIndex);
+    expect(setupIndex).toBeGreaterThanOrEqual(0);
+    expect(uploadIndex).toBeGreaterThan(setupIndex);
+    expect(restoreIndex).toBeGreaterThan(uploadIndex);
+    expect(fixtureRemovalIndex).toBeGreaterThan(restoreIndex);
+    expect(JSON.stringify(job)).not.toContain("NVIDIA_API_KEY");
+    expect(JSON.stringify(job)).not.toContain("NVIDIA_INFERENCE_API_KEY");
+  });
+
+  it.concurrent("runs interrupted setup cleanup once and preserves the authoritative failure status", async (context) => {
+    const restored = await runInterruptedSetupFixture(context, 0);
+    const restoreFailed = await runInterruptedSetupFixture(context, 73);
+
+    try {
+      expect(restored.result.status, restored.result.stderr).toBe(42);
+      expect(fs.readFileSync(restored.cleanupCount, "utf8").trim()).toBe("1");
+      expect(fs.readFileSync(restored.dockerState, "utf8").trim()).toBe("restored");
+      expect(restoreFailed.result.status).toBe(73);
+      expect(restoreFailed.result.stderr).toContain(
+        "Native Podman setup failed and runner restoration also failed",
+      );
+      expect(fs.readFileSync(restoreFailed.cleanupCount, "utf8").trim()).toBe("1");
+      expect(fs.readFileSync(restoreFailed.dockerState, "utf8").trim()).toBe("restored");
+    } finally {
+      fs.rmSync(restored.root, { force: true, recursive: true });
+      fs.rmSync(restoreFailed.root, { force: true, recursive: true });
+    }
+  });
+
   it("provides Podman authority without impersonating Docker", () => {
     expect(validateNativePodmanSetupAction()).toEqual([]);
   });
@@ -451,7 +876,111 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
-  it("restores unchanged Docker runtime state and retires its authority (#11014)", () => {
+  it.concurrent("reports signal termination without an exit status", async (context) => {
+    const result = await runCommand(
+      context,
+      "bash",
+      ["--noprofile", "--norc", "-c", "kill -TERM $$"],
+      process.env,
+    );
+
+    expect(result.status).toBeNull();
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.timedOut).toBe(false);
+  });
+
+  it.concurrent("does not report a timeout after a normal exit", async (context) => {
+    const result = await runCommand(context, process.execPath, ["-e", ""], process.env, 1_000);
+
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.timedOut).toBe(false);
+  });
+
+  it.concurrent("terminates a timed-out subprocess group", async (context) => {
+    const startedAt = Date.now();
+    const result = await runCommand(
+      context,
+      "bash",
+      ["--noprofile", "--norc", "-c", "sleep 30"],
+      process.env,
+      100,
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it.concurrent("reports external cancellation separately from timeout", async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-cancel-"));
+    const readyFile = path.join(root, "ready");
+    const controller = new AbortController();
+    const ownerContext: ProcessOwner = {
+      onTestFinished: (cleanup, timeout) => context.onTestFinished(cleanup, timeout),
+      signal: controller.signal,
+    };
+
+    try {
+      const resultPromise = runCommand(
+        ownerContext,
+        process.execPath,
+        [
+          "-e",
+          'const fs = require("node:fs"); process.on("SIGTERM", () => {}); fs.writeFileSync(process.argv[1], "ready"); setInterval(() => {}, 1_000);',
+          readyFile,
+        ],
+        process.env,
+        2_000,
+      );
+      await vi.waitFor(() => expect(fs.existsSync(readyFile)).toBe(true));
+      controller.abort();
+      const result = await resultPromise;
+
+      expect(result.status).toBeNull();
+      expect(result.signal).toBe("SIGKILL");
+      expect(result.timedOut).toBe(false);
+    } finally {
+      controller.abort();
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it.concurrent("bounds captured subprocess output", async (context) => {
+    const result = await runCommand(
+      context,
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024})); process.stderr.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024})); setTimeout(() => process.stdout.write("later output"), 25);`,
+      ],
+      process.env,
+    );
+
+    expect(result.status).toBe(0);
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(COMMAND_OUTPUT_LIMIT);
+    expect(Buffer.byteLength(result.stderr, "utf8")).toBeLessThanOrEqual(COMMAND_OUTPUT_LIMIT);
+    expect(result.stdout.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
+    expect(result.stderr.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
+    expect(result.stdout.startsWith("€")).toBe(true);
+    expect(result.stdout).not.toContain("later output");
+    expect(result.stdout.match(/\[output truncated\]/gu)).toHaveLength(1);
+    expect(result.stdout).not.toContain("�");
+    expect(result.stderr).not.toContain("�");
+  });
+
+  it.concurrent("keeps the output truncation marker stable across later chunks", () => {
+    const capture: OutputCapture = { text: "", truncated: false };
+    appendOutput(capture, "€".repeat(Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1));
+    const truncated = capture.text;
+    appendOutput(capture, "later output");
+
+    expect(capture.text).toBe(truncated);
+    expect(capture.text.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
+    expect(capture.text.match(/\[output truncated\]/gu)).toHaveLength(1);
+  });
+
+  it.concurrent("restores unchanged Docker runtime state and retires its authority (#11014)", async (context) => {
     const {
       destination,
       expectedSha256,
@@ -461,7 +990,7 @@ describe("native Podman E2E setup boundary", () => {
       serviceState,
       socketState,
       systemctlLog,
-    } = runRestoreFixture("valid");
+    } = await runRestoreFixture(context, "valid");
 
     try {
       expect(result.status, result.stderr).toBe(0);
@@ -469,10 +998,12 @@ describe("native Podman E2E setup boundary", () => {
         expectedSha256,
       );
       expect(
-        spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v docker"], {
-          encoding: "utf8",
-          env: { ...process.env, PATH: `${path.dirname(destination)}:/usr/bin:/bin` },
-        }).stdout.trim(),
+        (
+          await runCommand(context, "bash", ["--noprofile", "--norc", "-c", "command -v docker"], {
+            ...process.env,
+            PATH: `${path.dirname(destination)}:/usr/bin:/bin`,
+          })
+        ).stdout.trim(),
       ).toBe(destination);
       expect(fs.existsSync(restoreRoot)).toBe(false);
       expect(fs.readFileSync(serviceState, "utf8").trim()).toBe("active");
@@ -483,10 +1014,10 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
-  it.each(["regular-file", "symlink"] as const)(
+  it.concurrent.for(["regular-file", "symlink"] as const)(
     "rejects a tampered %s restore source without modifying the Docker destination",
-    (kind) => {
-      const { destination, result, root } = runRestoreFixture(kind);
+    async (kind, context) => {
+      const { destination, result, root } = await runRestoreFixture(context, kind);
 
       try {
         expect(result.status).not.toBe(0);
@@ -497,8 +1028,8 @@ describe("native Podman E2E setup boundary", () => {
     },
   );
 
-  it("keeps Docker services inactive when they were inactive before isolation (#11014)", () => {
-    const fixture = runRestoreFixture("valid", "inactive", "inactive");
+  it.concurrent("keeps Docker services inactive when they were inactive before isolation (#11014)", async (context) => {
+    const fixture = await runRestoreFixture(context, "valid", "inactive", "inactive");
 
     try {
       expect(fixture.result.status, fixture.result.stderr).toBe(0);
@@ -509,8 +1040,15 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
-  it("restores absent Docker units when is-enabled returns no text (#11014)", () => {
-    const fixture = runRestoreFixture("valid", "inactive", "inactive", "not-found", "not-found");
+  it.concurrent("restores absent Docker units when is-enabled returns no text (#11014)", async (context) => {
+    const fixture = await runRestoreFixture(
+      context,
+      "valid",
+      "inactive",
+      "inactive",
+      "not-found",
+      "not-found",
+    );
 
     try {
       expect(fixture.result.status, fixture.result.stderr).toBe(0);
@@ -524,39 +1062,42 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
-  it.each([
+  it.concurrent.for([
     ["after complete setup", true],
     ["after setup fails before Docker-state capture", false],
-  ] as const)("removes native Podman runner resources %s (#11014)", (_label, withDockerState) => {
-    const fixture = runPodmanCleanupFixture(withDockerState);
+  ] as const)(
+    "removes native Podman runner resources %s (#11014)",
+    async ([_label, withDockerState], context) => {
+      const fixture = await runPodmanCleanupFixture(context, withDockerState);
 
-    try {
-      expect(fixture.result.status, fixture.result.stderr).toBe(0);
-      expect(fs.existsSync(fixture.toolchainRoot)).toBe(false);
-      expect(fs.existsSync(fixture.storageDirectory)).toBe(false);
-      expect(fs.existsSync(fixture.serviceUnitDirectory)).toBe(false);
-      expect(fs.existsSync(path.join(fixture.runtimeDirectory, "podman"))).toBe(false);
-      expect(fs.existsSync(fixture.loopbackState)).toBe(false);
-      expect(fs.existsSync(fixture.helperRoot)).toBe(false);
-      expect(fs.existsSync(path.join(fixture.runnerTemp, "native-podman-e2e-toolchain"))).toBe(
-        false,
-      );
-      expect(fs.existsSync(fixture.destination)).toBe(withDockerState);
-      expect(
-        withDockerState
-          ? createHash("sha256").update(fs.readFileSync(fixture.destination)).digest("hex")
-          : null,
-      ).toBe(withDockerState ? fixture.expectedSha256 : null);
-      expect(fs.readFileSync(fixture.systemctlLog, "utf8")).toContain(
-        "--user stop nemoclaw-native-podman-e2e.socket nemoclaw-native-podman-e2e.service",
-      );
-    } finally {
-      fs.rmSync(fixture.root, { force: true, recursive: true });
-    }
-  });
+      try {
+        expect(fixture.result.status, fixture.result.stderr).toBe(0);
+        expect(fs.existsSync(fixture.toolchainRoot)).toBe(false);
+        expect(fs.existsSync(fixture.storageDirectory)).toBe(false);
+        expect(fs.existsSync(fixture.serviceUnitDirectory)).toBe(false);
+        expect(fs.existsSync(path.join(fixture.runtimeDirectory, "podman"))).toBe(false);
+        expect(fs.existsSync(fixture.loopbackState)).toBe(false);
+        expect(fs.existsSync(fixture.helperRoot)).toBe(false);
+        expect(fs.existsSync(path.join(fixture.runnerTemp, "native-podman-e2e-toolchain"))).toBe(
+          false,
+        );
+        expect(fs.existsSync(fixture.destination)).toBe(withDockerState);
+        expect(
+          withDockerState
+            ? createHash("sha256").update(fs.readFileSync(fixture.destination)).digest("hex")
+            : null,
+        ).toBe(withDockerState ? fixture.expectedSha256 : null);
+        expect(fs.readFileSync(fixture.systemctlLog, "utf8")).toContain(
+          "--user stop nemoclaw-native-podman-e2e.socket nemoclaw-native-podman-e2e.service",
+        );
+      } finally {
+        fs.rmSync(fixture.root, { force: true, recursive: true });
+      }
+    },
+  );
 
-  it("preserves unrelated user units while completing native Podman cleanup", () => {
-    const fixture = runPodmanCleanupFixture(true, false, true);
+  it.concurrent("preserves unrelated user units while completing native Podman cleanup", async (context) => {
+    const fixture = await runPodmanCleanupFixture(context, true, false, true);
     const unrelatedServiceUnit = path.join(fixture.serviceUnitDirectory, "unrelated.service");
 
     try {
@@ -574,8 +1115,8 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
-  it("preserves recovery authority when the native Podman service survives stop (#11014)", () => {
-    const fixture = runPodmanCleanupFixture(true, true);
+  it.concurrent("restores Docker and preserves Podman recovery authority when Podman cleanup fails (#11014)", async (context) => {
+    const fixture = await runPodmanCleanupFixture(context, true, true);
 
     try {
       expect(fixture.result.status).not.toBe(0);
@@ -586,18 +1127,23 @@ describe("native Podman E2E setup boundary", () => {
       expect(fs.existsSync(path.join(fixture.toolchainRoot, "bin", "podman"))).toBe(true);
       expect(fs.existsSync(fixture.storageDirectory)).toBe(true);
       expect(fs.existsSync(fixture.serviceUnitDirectory)).toBe(true);
-      expect(fs.existsSync(fixture.destination)).toBe(false);
-      expect(fs.existsSync(fixture.restoreRoot)).toBe(true);
-      expect(fs.existsSync(path.join(fixture.restoreRoot, "docker"))).toBe(true);
-      expect(fs.existsSync(path.join(fixture.restoreRoot, "metadata"))).toBe(true);
-      expect(fs.existsSync(path.join(fixture.restoreRoot, "runtime.json"))).toBe(true);
+      expect(fs.existsSync(fixture.destination)).toBe(true);
+      expect(fs.existsSync(fixture.restoreRoot)).toBe(false);
+      expect(createHash("sha256").update(fs.readFileSync(fixture.destination)).digest("hex")).toBe(
+        fixture.expectedSha256,
+      );
+      const systemctlLog = fs.readFileSync(fixture.systemctlLog, "utf8");
+      expect(systemctlLog).toContain("unmask --runtime docker.service");
+      expect(systemctlLog).toContain("unmask --runtime docker.socket");
+      expect(systemctlLog).toContain("start docker.service");
+      expect(systemctlLog).toContain("start docker.socket");
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }
   });
 
-  it("rejects a restore record that cannot prove the prior Docker service state (#11014)", () => {
-    const fixture = runRestoreFixture("valid", "activating");
+  it.concurrent("rejects a restore record that cannot prove the prior Docker service state (#11014)", async (context) => {
+    const fixture = await runRestoreFixture(context, "valid", "activating");
 
     try {
       expect(fixture.result.status).not.toBe(0);

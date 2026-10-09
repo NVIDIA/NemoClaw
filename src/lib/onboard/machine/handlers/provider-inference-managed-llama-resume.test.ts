@@ -3,8 +3,18 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { getSandboxStatusReport } from "../../../actions/sandbox/status";
+import type { VllmProfile } from "../../../inference/vllm";
+import { loadServingCatalog } from "../../../inference/serving/catalog-loader";
+import { servingProfileModel } from "../../../inference/serving/requested-profile-model";
+import * as onboardSession from "../../../state/onboard-session";
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import type { ServingProfileProvenance } from "../../../inference/serving/types";
+import { makeDeps, makeHostState } from "../../__test-helpers__/setup-nim-flow";
+import { resolveOnboardOptions } from "../../command";
+import { resolveLocalModelProfilePlan } from "../../local-model-profile/plan";
+import { buildCreatedSandboxRegistryEntry } from "../../sandbox-registration";
+import { createSetupNim, type SetupNimFlowDeps } from "../../setup-nim-flow";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
 
@@ -27,6 +37,60 @@ const llamaCppProfile: ServingProfileProvenance = {
   estimatedImageDownloadBytes: 2048,
   estimatedModelDownloadBytes: 1024,
 };
+
+const vllmProfile: ServingProfileProvenance = {
+  ...llamaCppProfile,
+  preset: {
+    ...llamaCppProfile.preset,
+    id: "local-model-profile.vllm.spark.v1",
+    displayName: "DGX Spark vLLM",
+  },
+  recipe: {
+    ...llamaCppProfile.recipe,
+    id: "vllm.spark.v1",
+    backend: "vllm",
+  },
+  runtimeImage: "example.invalid/vllm@sha256:fixture",
+};
+
+function registryEntryFor(session: ReturnType<typeof createSession>) {
+  const loadSession = vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
+  try {
+    return buildCreatedSandboxRegistryEntry({
+      sandboxName: "spark-agent",
+      inferenceSelection: {
+        model: session.model!,
+        provider: session.provider!,
+        endpointUrl: session.endpointUrl ?? null,
+        credentialEnv: session.credentialEnv ?? null,
+        preferredInferenceApi: session.preferredInferenceApi ?? null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: session.nimContainer ?? null,
+      },
+      runtimeFields: {
+        gpuEnabled: true,
+        hostGpuDetected: true,
+        sandboxGpuEnabled: true,
+        sandboxGpuMode: "auto",
+        sandboxGpuDevice: null,
+        openshellDriver: "docker",
+        openshellVersion: "0.1.2",
+      },
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: null,
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+  } finally {
+    loadSession.mockRestore();
+  }
+}
 
 describe("handleProviderInferenceState managed llama.cpp resume", () => {
   it.each([
@@ -65,6 +129,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
 
       expect(recoverManagedLlamaCpp).toHaveBeenCalledOnce();
       expect(recoverManagedLlamaCpp).toHaveBeenCalledWith("llama-cpp-local", "spark-agent");
+      expect(calls.probeLlamaCppSandboxReachability).not.toHaveBeenCalled();
       expect(recoverManagedLlamaCpp.mock.invocationCallOrder[0]).toBeLessThan(
         calls.recoverProvider.mock.invocationCallOrder[0]!,
       );
@@ -83,6 +148,9 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
 
   it("persists a fresh managed llama.cpp recipe through provider and inference completion", async () => {
     const { deps, calls } = createDeps({
+      probeLlamaCppSandboxReachability: vi.fn(async () => {
+        throw new Error("Managed runtime readiness must remain with its lifecycle owner.");
+      }),
       setupNim: vi.fn(async () => ({
         ...baseSelection,
         provider: "llama-cpp-local",
@@ -113,6 +181,321 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     );
     expect(persistedUpdates.at(-1)).toMatchObject({
       servingProfileProvenance: llamaCppProfile,
+    });
+  });
+
+  it.each([
+    { resume: false, reachable: false, result: "exit 1" },
+    { resume: true, reachable: false, result: "exit 1" },
+    { resume: false, reachable: true, result: "complete" },
+  ])(
+    "requires a reachable operator llama.cpp route (resume=$resume, reachable=$reachable)",
+    async ({ resume, reachable, result }) => {
+      const route = {
+        provider: "llama-cpp-local",
+        model: "team/model-alias",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      };
+      const session = createSession({
+        ...route,
+        sandboxName: "operator-agent",
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      });
+      session.steps.provider_selection.status = resume ? "complete" : "pending";
+      const probeLlamaCppSandboxReachability = vi.fn(async () => ({
+        ok: reachable,
+        reason: reachable ? ("ok" as const) : ("tcp_failed" as const),
+        networkName: "openshell",
+        gatewayIp: "172.18.0.1",
+      }));
+      const setupNim = vi.fn(async () => ({ ...baseSelection, ...route }));
+      const { deps, calls } = createDeps({
+        setupNim,
+        isInferenceRouteReady: vi.fn(() => true),
+        probeLlamaCppSandboxReachability,
+      });
+
+      const outcome = await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume,
+        sandboxName: "operator-agent",
+      }).then(
+        () => "complete",
+        (error: Error) => error.message,
+      );
+      expect(outcome).toBe(result);
+      expect(calls.setupInference).toHaveBeenCalledTimes(reachable ? 1 : 0);
+      expect(calls.complete.mock.calls.some(([step]) => step === "inference")).toBe(reachable);
+      expect(
+        calls.error.mock.calls.some(([message]) =>
+          message.includes("host.openshell.internal:8081"),
+        ),
+      ).toBe(!reachable);
+      expect(probeLlamaCppSandboxReachability).toHaveBeenCalledOnce();
+      expect(setupNim).toHaveBeenCalledTimes(resume ? 0 : 1);
+    },
+  );
+
+  it("persists installer vLLM profile provenance returned by provider setup (#11896)", async () => {
+    const session = createSession({
+      servingProfileProvenance: vllmProfile,
+    });
+    const { deps, calls } = createDeps({
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "vllm-local",
+        model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        servingProfileProvenance: vllmProfile,
+      })),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      sandboxName: "spark-agent",
+    });
+
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(persistedUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "vllm-local",
+          servingProfileProvenance: vllmProfile,
+        }),
+      ]),
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      servingProfileProvenance: vllmProfile,
+    });
+  });
+
+  it("persists catalog provenance through the production setupNim handoff (#11896)", async () => {
+    const catalog = loadServingCatalog();
+    const plan = resolveLocalModelProfilePlan(catalog, {
+      NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE: "1",
+      NEMOCLAW_LOCAL_MODEL_RUNTIME: "vllm",
+    })!;
+    const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const onboard = vi.fn<NonNullable<SetupNimFlowDeps["localModelProfileIntegration"]>["onboard"]>(
+      async (_plan, _host, state) => {
+        state.provider = "vllm-local";
+        state.model = plan.recipe.spec.model.id;
+        state.endpointUrl = "http://host.openshell.internal:8000/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const productionSetupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [],
+          resolution: { kind: "rejected", reason: "vLLM fixture has no managed llama.cpp choice" },
+        }),
+        localModelProfileIntegration: { resolvePlan: () => plan, onboard },
+        detectInferenceProviderHostState: () =>
+          makeHostState({ vllmProfile: profile, hasVllmImage: true }),
+      }),
+    );
+    const session = createSession({ sandboxName: "spark-agent" });
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates) => {
+      Object.assign(session, onboardSession.filterSafeUpdates(updates));
+      return session;
+    });
+    const { deps } = createDeps({
+      setupNim: (gpu, sandboxName, agent, recover, gatewayName, ...rest) =>
+        productionSetupNim(
+          gpu as Parameters<typeof productionSetupNim>[0],
+          sandboxName,
+          agent as Parameters<typeof productionSetupNim>[2],
+          recover,
+          null,
+          gatewayName,
+          ...rest,
+        ),
+      recordStepComplete,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      gpu: { type: "nvidia", platform: "spark" } as never,
+      sandboxName: "spark-agent",
+    });
+
+    const persistedUpdates = recordStepComplete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(onboard).toHaveBeenCalledOnce();
+    expect(persistedUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "vllm-local",
+          servingProfileProvenance: plan.servingProfileProvenance,
+        }),
+      ]),
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      servingProfileProvenance: plan.servingProfileProvenance,
+    });
+
+    const entry = registryEntryFor(session);
+
+    expect(entry.servingProfileProvenance).toEqual(plan.servingProfileProvenance);
+  });
+
+  it("persists an explicit managed vLLM profile through selection and registration (#12289)", async () => {
+    const catalog = loadServingCatalog();
+    const presetId = "vllm.dgx-spark-gb10.single.nemotron-3-nano-4b-fp8";
+    const requestedProfile = servingProfileModel(catalog, presetId)!;
+    const commandOptions = resolveOnboardOptions(
+      { profile: presetId },
+      {
+        env: {},
+        error: () => {},
+        exit: (code) => {
+          throw new Error(`exit:${code}`);
+        },
+        loadServingCatalog: () => catalog,
+        listServingProfiles: () => [
+          {
+            id: presetId,
+            displayName: "NVIDIA Nemotron-3 Nano 4B FP8 on one DGX Spark",
+            backend: "vllm",
+            model: requestedProfile.modelId,
+            topology: "single-host",
+            selectionMode: "explicit-only",
+            supportState: "supported",
+            estimatedImageDownloadBytes: 1,
+            estimatedModelDownloadBytes: 1,
+            compatible: true,
+            incompatibilityReason: null,
+          },
+        ],
+      },
+    );
+    const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const productionSetupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            hasVllmImage: true,
+            gpuNimCapable: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+          }),
+        installVllm: vi.fn(async (_profile, options) => {
+          options.beforeInstall?.(requestedProfile.servedName);
+          return { ok: true };
+        }),
+        handleVllmSelection: vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+          state.provider = "vllm-local";
+          state.model = requestedProfile.servedName;
+          state.endpointUrl = "http://host.openshell.internal:8000/v1";
+          state.credentialEnv = null;
+          state.preferredInferenceApi = "openai-completions";
+          return "selected";
+        }),
+        resolveRequestedServingProfileModel: () => requestedProfile,
+      }),
+    );
+    const session = createSession({
+      sandboxName: "spark-agent",
+      servingProfileProvenance: commandOptions.servingProfileProvenance,
+    });
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates) => {
+      Object.assign(session, onboardSession.filterSafeUpdates(updates));
+      return session;
+    });
+    const { deps } = createDeps({
+      setupNim: (gpu, sandboxName, agent, recover, gatewayName, ...rest) =>
+        productionSetupNim(
+          gpu as Parameters<typeof productionSetupNim>[0],
+          sandboxName,
+          agent as Parameters<typeof productionSetupNim>[2],
+          recover,
+          null,
+          gatewayName,
+          ...rest,
+        ),
+      recordStepComplete,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      gpu: { type: "nvidia", platform: "spark" } as never,
+      sandboxName: "spark-agent",
+    });
+
+    const entry = registryEntryFor(session);
+    const status = await getSandboxStatusReport("spark-agent", {
+      getSandbox: () => entry,
+      reconcile: async () => ({ state: "missing", output: "not found" }),
+    });
+
+    expect(session.servingProfileProvenance).toEqual(commandOptions.servingProfileProvenance);
+    expect(entry.servingProfileProvenance).toEqual(commandOptions.servingProfileProvenance);
+    expect(status.servingProfileProvenance).toEqual(commandOptions.servingProfileProvenance);
+  });
+
+  it("does not authorize vLLM profile provenance from session-only state (#11896)", async () => {
+    const session = createSession({
+      servingProfileProvenance: vllmProfile,
+    });
+    const { deps, calls } = createDeps({
+      setupNim: vi.fn(async () => ({
+        ...baseSelection,
+        provider: "vllm-local",
+        model: "unrelated/model",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      })),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      sandboxName: "spark-agent",
+    });
+
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      provider: "vllm-local",
+      servingProfileProvenance: null,
+    });
+  });
+
+  it("clears installer vLLM profile provenance when a different provider is selected", async () => {
+    const session = createSession({
+      servingProfileProvenance: vllmProfile,
+    });
+    const { deps, calls } = createDeps();
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      sandboxName: "cloud-agent",
+    });
+
+    const persistedUpdates = calls.complete.mock.calls.map(
+      ([, updates]) => updates as SessionUpdates,
+    );
+    expect(persistedUpdates.at(-1)).toMatchObject({
+      servingProfileProvenance: null,
     });
   });
 });

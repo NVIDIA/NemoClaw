@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { sanitizeReadinessText } from "../../readiness/sanitize.js";
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
 import {
   evaluateOnboardReadinessAdmission,
@@ -25,7 +26,6 @@ import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import type {
   CompiledManagedInferenceCatalog,
   ManagedInferenceFactRequirement,
-  ManagedInferencePresetRequirement,
   ManagedInferenceReadinessRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolution,
@@ -33,11 +33,8 @@ import type {
   ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceSelectionIntent,
   ManagedInferenceServingPreset,
-  ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ManagedInferenceTopologyRequirement,
-  ResolvedHostLocalInferenceSelection,
-  ResolvedManagedInferenceSelection,
   ServingReadinessComparison,
 } from "./types.js";
 
@@ -177,7 +174,11 @@ function readinessError(
     allowDeferredN1xManagedVllm,
   );
   if ((report.status !== "supported" || report.exitCode !== 0) && !admittedReadinessException) {
-    return `${nodeId}: readiness status is ${report.status}`;
+    const findings = report.findings
+      .filter(({ severity }) => severity !== "info")
+      .map(({ id, summary }) => sanitizeReadinessText(`${id}: ${summary}`, 1024))
+      .join("; ");
+    return `${nodeId}: readiness status is ${report.status}${findings ? `; ${findings}` : ""}`;
   }
   if (
     report.findings.some(({ severity }) => severity === "fatal" || severity === "blocking") &&

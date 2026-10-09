@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -152,8 +153,20 @@ export async function preflightRebuildCredentials(
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
 ): Promise<boolean> {
-  const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
+  const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(
+    sb.provider,
+    sb.credentialEnv,
+    sb.endpointUrl,
+  );
   const rebuildProvider = sb.provider;
+  const nativeAttachment = normalizeNativeNvidiaProviderAttachment(
+    sb.nativeNvidiaProviderAttachment,
+  );
+  if (nativeAttachment) {
+    return checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+      nativeAttachment,
+    });
+  }
 
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
     if (

@@ -42,6 +42,12 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { createCliOpenShellSandboxTransferExecutor } from "../../../adapters/openshell/sandbox-transfer-cli";
+import type {
+  OpenShellSandboxTransferCompletion,
+  OpenShellSandboxTransferExecutor,
+  OpenShellSandboxTransferRequest,
+} from "../../../adapters/openshell/sandbox-transfer";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
 import {
@@ -51,7 +57,7 @@ import {
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
-import { ensureLiveSandboxOrExit } from "../gateway-state";
+import { ensureLiveSandboxOrExit, getKnownSandboxTargetGatewayName } from "../gateway-state";
 import { resolveHostPathFromCwd } from "../host-path";
 import { isWarmupSessionId } from "../warmup-session";
 import { assertDownloadedFile } from "./download-verify";
@@ -110,22 +116,110 @@ const SAFE_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 // directory clearly NemoClaw-owned and separate from OpenClaw's own store.
 const STAGING_DIR_IN_SANDBOX = "/sandbox/.nemoclaw-staging";
 
+type DownloadVerification = Readonly<{
+  hostPath: string;
+  remoteLabel: string;
+  sandboxName: string;
+}>;
+
+/** Keep transfer interruption authority alive through publication and lock cleanup. */
+class SessionExportTransfers {
+  private completion: OpenShellSandboxTransferCompletion | undefined;
+  private interrupted = false;
+  private lastDownload: DownloadVerification | undefined;
+
+  constructor(private readonly executor: OpenShellSandboxTransferExecutor) {}
+
+  async download(
+    request: Omit<OpenShellSandboxTransferRequest, "direction"> & { remoteLabel: string },
+  ): Promise<{ status: number | null }> {
+    const { remoteLabel, ...transfer } = request;
+    this.assertNotInterrupted();
+    const next = await this.executor.run({ direction: "download", ...transfer });
+
+    if (this.completion) {
+      this.interrupted ||= this.completion.wasInterrupted();
+      this.completion.release();
+    }
+    this.completion = next;
+    this.lastDownload = {
+      hostPath: request.destination,
+      remoteLabel,
+      sandboxName: request.sandboxName,
+    };
+
+    const status =
+      next.outcome.kind === "completed" && !this.wasInterrupted() ? next.outcome.exitCode : null;
+    return { status };
+  }
+
+  assertNotInterrupted(): void {
+    if (!this.wasInterrupted() || !this.lastDownload) return;
+    assertDownloadedFile({ status: null }, this.lastDownload.hostPath, this.lastDownload);
+  }
+
+  release(): void {
+    this.completion?.release();
+    this.completion = undefined;
+  }
+
+  private wasInterrupted(): boolean {
+    return this.interrupted || (this.completion?.wasInterrupted() ?? false);
+  }
+}
+
+function resolveTransferTarget(sandboxName: string): OpenShellSandboxTransferRequest["target"] {
+  const gatewayName = getKnownSandboxTargetGatewayName(sandboxName);
+  return gatewayName ? { kind: "named", gatewayName } : { kind: "selected" };
+}
+
+function scopeSandboxCommandToTarget(
+  args: string[],
+  target: OpenShellSandboxTransferRequest["target"],
+): string[] {
+  if (target.kind === "selected") return args;
+  return [...args.slice(0, 2), "-g", target.gatewayName, ...args.slice(2)];
+}
+
+function manualRemoteCleanupCommand(input: {
+  sandboxName: string;
+  target: OpenShellSandboxTransferRequest["target"];
+  remotePath: string;
+}): string {
+  return [
+    CLI_NAME,
+    ...scopeSandboxCommandToTarget(
+      ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+      input.target,
+    ),
+  ].join(" ");
+}
+
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
-  return runWithDeferredSandboxLifecycleExit(() =>
-    withMcpLifecycleLock(opts.sandboxName, () => {
-      assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:sessions:export");
-      return exportSandboxSessionsUnlocked(opts);
-    }),
-  );
+  const transfers = new SessionExportTransfers(createCliOpenShellSandboxTransferExecutor());
+  try {
+    const result = await runWithDeferredSandboxLifecycleExit(() =>
+      withMcpLifecycleLock(opts.sandboxName, () => {
+        assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:sessions:export");
+        return exportSandboxSessionsUnlocked(opts, transfers);
+      }),
+    );
+    transfers.assertNotInterrupted();
+    reportSessionsExport(result, opts.json ?? false);
+    return result;
+  } finally {
+    transfers.release();
+  }
 }
 
 async function exportSandboxSessionsUnlocked(
   opts: SessionsExportOptions,
+  transfers: SessionExportTransfers,
 ): Promise<SessionsExportResult> {
   if (registry.getSandbox(opts.sandboxName)?.agent === "hermes") {
-    return exportHermesSessions(opts);
+    return exportHermesSessions(opts, transfers);
   }
   const agent = resolveAgentId(opts);
   const trimmedKeys = (opts.keys ?? []).map((value) => validateSessionKey(value));
@@ -135,6 +229,7 @@ async function exportSandboxSessionsUnlocked(
     allowNonReadyPhase: true,
     exit: deferSandboxLifecycleExit,
   });
+  const target = resolveTransferTarget(opts.sandboxName);
 
   const format: SessionsExportFormat = opts.format === "tar" ? "tar" : "dir";
   const sourceDir = `/sandbox/.openclaw/agents/${agent}/sessions`;
@@ -148,7 +243,13 @@ async function exportSandboxSessionsUnlocked(
     sessionIds: resolvedSessionIds,
     files: resolvedFiles,
     sessions,
-  } = resolveSelectedFiles(opts.sandboxName, agent, trimmedKeys, opts.includeTrajectory ?? false);
+  } = resolveSelectedFiles(
+    opts.sandboxName,
+    target,
+    agent,
+    trimmedKeys,
+    opts.includeTrajectory ?? false,
+  );
 
   if (resolvedFiles.length === 0) {
     throw new Error(`Refusing to export: agent '${agent}' has no sessions to bundle.`);
@@ -178,16 +279,19 @@ async function exportSandboxSessionsUnlocked(
       // finally cleanup below would never run and the staged session JSONL
       // would survive in the in-sandbox staging directory.
       const tarResult = runOpenshell(
-        [
-          "sandbox",
-          "exec",
-          "--name",
-          opts.sandboxName,
-          "--",
-          "sh",
-          "-c",
-          buildShellInvocation(tarArgv, tarballRemote),
-        ],
+        scopeSandboxCommandToTarget(
+          [
+            "sandbox",
+            "exec",
+            "--name",
+            opts.sandboxName,
+            "--",
+            "sh",
+            "-c",
+            buildShellInvocation(tarArgv, tarballRemote),
+          ],
+          target,
+        ),
         { ignoreError: true, stdio: "inherit" },
       );
       if (tarResult.status !== 0) {
@@ -196,10 +300,13 @@ async function exportSandboxSessionsUnlocked(
         );
       }
 
-      const downloadResult = runOpenshell(
-        ["sandbox", "download", opts.sandboxName, tarballRemote, hostStagingPath],
-        { ignoreError: true, stdio: "inherit" },
-      );
+      const downloadResult = await transfers.download({
+        sandboxName: opts.sandboxName,
+        target,
+        source: tarballRemote,
+        destination: hostStagingPath,
+        remoteLabel: tarballRemote,
+      });
       assertDownloadedFile(downloadResult, hostStagingPath, {
         remoteLabel: tarballRemote,
         sandboxName: opts.sandboxName,
@@ -218,6 +325,7 @@ async function exportSandboxSessionsUnlocked(
       // JSONL behind in the in-sandbox staging directory.
       removeRemoteStagingArtifact({
         sandboxName: opts.sandboxName,
+        target,
         remotePath: tarballRemote,
         artifactLabel: "staging tarball",
         retainedDataNote: "The tarball may still contain session JSONL with pasted secrets",
@@ -253,10 +361,13 @@ async function exportSandboxSessionsUnlocked(
     try {
       for (const file of resolvedFiles) {
         const stagingPath = path.join(hostStagingDir, file);
-        const downloadResult = runOpenshell(
-          ["sandbox", "download", opts.sandboxName, `${sourceDir}/${file}`, stagingPath],
-          { ignoreError: true, stdio: "inherit" },
-        );
+        const downloadResult = await transfers.download({
+          sandboxName: opts.sandboxName,
+          target,
+          source: `${sourceDir}/${file}`,
+          destination: stagingPath,
+          remoteLabel: file,
+        });
         assertDownloadedFile(downloadResult, stagingPath, {
           remoteLabel: file,
           sandboxName: opts.sandboxName,
@@ -292,17 +403,6 @@ async function exportSandboxSessionsUnlocked(
     bundleBytes,
     sessions: exported,
   };
-
-  if (opts.json) {
-    console.log(JSON.stringify(result));
-  } else {
-    const sizeNote = bundleBytes !== null ? ` (${bundleBytes} byte(s))` : "";
-    const scope =
-      trimmedKeys.length > 0
-        ? `${trimmedKeys.length} key(s) on agent '${agent}'`
-        : `all sessions for agent '${agent}' (${resolvedSessionIds.length} session(s))`;
-    console.error(`  Exported ${scope} to ${hostDest}${sizeNote}`);
-  }
 
   return result;
 }
@@ -350,12 +450,16 @@ async function exportSandboxSessionsUnlocked(
 //     exposes a host-reachable export RPC (or NemoClaw is granted a stable
 //     contract for the SQLite store layout), making the two-hop in-sandbox
 //     staging + download orchestration unnecessary.
-async function exportHermesSessions(opts: SessionsExportOptions): Promise<SessionsExportResult> {
+async function exportHermesSessions(
+  opts: SessionsExportOptions,
+  transfers: SessionExportTransfers,
+): Promise<SessionsExportResult> {
   rejectOpenClawOnlyOptions(opts);
   await ensureLiveSandboxOrExit(opts.sandboxName, {
     allowNonReadyPhase: true,
     exit: deferSandboxLifecycleExit,
   });
+  const target = resolveTransferTarget(opts.sandboxName);
 
   const hostDest = resolveHermesHostDestination(opts.out, opts.sandboxName);
   const stagingRemote = hermesStagingPath();
@@ -369,7 +473,10 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
 
   try {
     const exportResult = runOpenshell(
-      ["sandbox", "exec", "--name", opts.sandboxName, "--", "sh", "-c", shellCommand],
+      scopeSandboxCommandToTarget(
+        ["sandbox", "exec", "--name", opts.sandboxName, "--", "sh", "-c", shellCommand],
+        target,
+      ),
       { ignoreError: true, stdio: "inherit" },
     );
     if (exportResult.status !== 0) {
@@ -378,10 +485,13 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
       );
     }
 
-    const downloadResult = runOpenshell(
-      ["sandbox", "download", opts.sandboxName, stagingRemote, hostStagingPath],
-      { ignoreError: true, stdio: "inherit" },
-    );
+    const downloadResult = await transfers.download({
+      sandboxName: opts.sandboxName,
+      target,
+      source: stagingRemote,
+      destination: hostStagingPath,
+      remoteLabel: stagingRemote,
+    });
     // Unlike the OpenClaw tar path, the hermes export has no zero-session guard
     // upstream, so a sandbox with no sessions can legitimately produce an empty
     // export file. Verify the artifact exists (the #7367 protection) but do not
@@ -399,6 +509,7 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
     // primary error still propagates once the `finally` block returns.
     removeRemoteStagingArtifact({
       sandboxName: opts.sandboxName,
+      target,
       remotePath: stagingRemote,
       artifactLabel: "staging file",
       retainedDataNote: "The file may still contain a session JSONL with pasted secrets",
@@ -425,14 +536,24 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
     sessions: [],
   };
 
-  if (opts.json) {
-    console.log(JSON.stringify(result));
-  } else {
-    const sizeNote = bundleBytes !== null ? ` (${bundleBytes} byte(s))` : "";
-    console.error(`  Exported hermes sessions to ${hostDest}${sizeNote}`);
-  }
-
   return result;
+}
+
+function reportSessionsExport(result: SessionsExportResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result));
+    return;
+  }
+  const sizeNote = result.bundleBytes !== null ? ` (${result.bundleBytes} byte(s))` : "";
+  if (result.format === "jsonl") {
+    console.error(`  Exported hermes sessions to ${result.hostDest}${sizeNote}`);
+    return;
+  }
+  const scope =
+    result.selectedKeys === "all"
+      ? `all sessions for agent '${result.agent}' (${result.resolvedSessionIds.length} session(s))`
+      : `${result.selectedKeys.length} key(s) on agent '${result.agent}'`;
+  console.error(`  Exported ${scope} to ${result.hostDest}${sizeNote}`);
 }
 
 function rejectOpenClawOnlyOptions(opts: SessionsExportOptions): void {
@@ -497,17 +618,22 @@ function hardenPermissions(target: string): void {
 // supplies the wording for the artefact it staged.
 function removeRemoteStagingArtifact(input: {
   sandboxName: string;
+  target: OpenShellSandboxTransferRequest["target"];
   remotePath: string;
   artifactLabel: string;
   retainedDataNote: string;
 }): void {
   const remoteCleanup = runOpenshell(
-    ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+    scopeSandboxCommandToTarget(
+      ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+      input.target,
+    ),
     { ignoreError: true, stdio: "ignore" },
   );
   if (remoteCleanup.status !== 0) {
+    const manualCleanup = manualRemoteCleanupCommand(input);
     console.warn(
-      `  Warning: failed to remove in-sandbox ${input.artifactLabel} '${input.remotePath}' from sandbox '${input.sandboxName}' (exit ${remoteCleanup.status}). ${input.retainedDataNote}; remove it manually with \`${CLI_NAME} sandbox exec --name ${input.sandboxName} -- rm -f ${input.remotePath}\`.`,
+      `  Warning: failed to remove in-sandbox ${input.artifactLabel} '${input.remotePath}' from sandbox '${input.sandboxName}' (exit ${remoteCleanup.status}). ${input.retainedDataNote}; remove it manually with \`${manualCleanup}\`.`,
     );
   }
 }
@@ -579,11 +705,12 @@ function enforceAgentScope(agent: string, keys: readonly string[]): void {
 
 function resolveSelectedFiles(
   sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
   agent: string,
   keys: readonly string[],
   includeTrajectory: boolean,
 ): { sessionIds: string[]; files: string[]; sessions: SessionIndexEntry[] } {
-  const index = readSessionIndex(sandboxName, agent);
+  const index = readSessionIndex(sandboxName, target, agent);
   const byKey = new Map<string, string>();
   for (const entry of index) byKey.set(entry.key, entry.sessionId);
 
@@ -636,21 +763,28 @@ function normaliseToCanonical(agent: string, key: string): string {
   return `agent:${agent}:${key}`;
 }
 
-function readSessionIndex(sandboxName: string, agent: string): SessionIndexEntry[] {
+function readSessionIndex(
+  sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
+  agent: string,
+): SessionIndexEntry[] {
   const result = captureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "openclaw",
-      "sessions",
-      "list",
-      "--agent",
-      agent,
-      "--json",
-    ],
+    scopeSandboxCommandToTarget(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "openclaw",
+        "sessions",
+        "list",
+        "--agent",
+        agent,
+        "--json",
+      ],
+      target,
+    ),
     { ignoreError: true },
   );
   if (result.status !== 0) {

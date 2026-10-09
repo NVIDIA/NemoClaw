@@ -10,6 +10,7 @@ import type {
 } from "../../adapters/container-engine";
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import {
+  deadlineBoundHostLocalInferenceEngine,
   HOST_LOCAL_INFERENCE_SANDBOX_HOST,
   type HostLocalInferenceEndpointAuthority,
   type HostLocalInferenceEndpointInput,
@@ -26,7 +27,6 @@ import {
   type HostLocalInferenceRouteAuthorityStore,
   type HostLocalInferenceRuntime,
   type HostLocalInferenceRuntimeAuthority,
-  type HostLocalInferenceService,
   type HostLocalManagedInferenceInput,
   type HostLocalManagedInferenceInspection,
   type HostLocalOllamaAccelerationAuthority,
@@ -46,6 +46,10 @@ import {
   requirePersistedEngineAuthority,
 } from "./persisted-engine-authority";
 import { translatePodmanLocalInferenceArgs } from "./podman-inference-args";
+import {
+  assertInferencePublishPortsFree,
+  type InspectPublishedPort,
+} from "./podman-inference-publish-preflight";
 import {
   type PodmanInferenceAuthorityReceipt,
   type PodmanInferenceQualificationOptions,
@@ -168,7 +172,10 @@ function createPodmanPublishedResumeTimingRecorder(
 ): PodmanPublishedResumeTimingRecorder {
   const now = timing?.now ?? (() => performance.now());
   const durations = new Map<PodmanPublishedResumeTimingStage, number>();
-  const active: { stage: PodmanPublishedResumeTimingStage; startedAt: number | null }[] = [];
+  const active: {
+    stage: PodmanPublishedResumeTimingStage;
+    startedAt: number | null;
+  }[] = [];
   let finished = false;
   const safeNow = (): number | null => {
     try {
@@ -254,6 +261,8 @@ export interface PodmanHostLocalInferenceRuntimeOptions {
   readonly operationAcceleration?: HostLocalOllamaAccelerationAuthority;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+  /** Test seam: inspect a host publish target before `podman run`. */
+  readonly inspectPublishedPort?: InspectPublishedPort;
 }
 
 export interface PodmanHostLocalInferenceOperationOptions {
@@ -262,6 +271,8 @@ export interface PodmanHostLocalInferenceOperationOptions {
   readonly env: NodeJS.ProcessEnv;
   /** Accepted acceleration scope for this one operation. */
   readonly acceleration?: HostLocalOllamaAccelerationAuthority;
+  /** Shared absolute deadline for every provider observation in this operation. */
+  readonly deadlineMs?: number;
   /** Prequalified product network whose host listener is not its IPAM gateway. */
   readonly externalNetwork?: PodmanExternalInferenceNetworkAuthority;
   /** Product-specific exact authority when the generic Podman 6 discovery path is unavailable. */
@@ -274,6 +285,8 @@ export interface PodmanHostLocalInferenceOperationOptions {
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+  /** Test seam: inspect a host publish target before `podman run`. */
+  readonly inspectPublishedPort?: InspectPublishedPort;
 }
 
 export type PodmanPreparedHostLocalInferenceOperationOptions = Omit<
@@ -361,7 +374,10 @@ type ManagedContainerRuntime = Extract<
   HostLocalInferenceRuntimeAuthority,
   { readonly kind: "container" }
 > & {
-  readonly gpu: { readonly vendor: "nvidia"; readonly devices: readonly string[] };
+  readonly gpu: {
+    readonly vendor: "nvidia";
+    readonly devices: readonly string[];
+  };
 };
 
 type OllamaHostRuntimeAuthority = Extract<
@@ -549,7 +565,9 @@ function redactingEngine(
   engine: PodmanContainerEngine,
   redactor: PodmanInferenceRedactor,
 ): PodmanContainerEngine {
-  const bound = engine as PodmanContainerEngine & { readonly assertAuthority?: () => void };
+  const bound = engine as PodmanContainerEngine & {
+    readonly assertAuthority?: () => void;
+  };
   return Object.freeze({
     operation: engine.operation,
     engineId: engine.engineId,
@@ -1831,7 +1849,11 @@ function requireLaunchIdentity(
   const parsedPublishes = publishes.map((mapping) => {
     const fields = mapping.split(":");
     if (fields.length !== 3) throw new Error("Podman inference launch publish mapping is invalid.");
-    return { address: fields[0] ?? "", hostPort: fields[1] ?? "", containerPort: fields[2] ?? "" };
+    return {
+      address: fields[0] ?? "",
+      hostPort: fields[1] ?? "",
+      containerPort: fields[2] ?? "",
+    };
   });
   if (
     parsedPublishes.length !== 2 ||
@@ -1907,7 +1929,11 @@ function emitProviderFailure(
 ): void {
   try {
     onFailureEvidence(
-      Object.freeze({ providerId: PROVIDER_ID, phase, message: errorEvidence(redactor, message) }),
+      Object.freeze({
+        providerId: PROVIDER_ID,
+        phase,
+        message: errorEvidence(redactor, message),
+      }),
     );
   } catch (error) {
     throw new PodmanInferenceEvidenceCaptureError(errorEvidence(redactor, error));
@@ -2801,7 +2827,11 @@ function probeOpenAiInference(
               function: {
                 name: "nemoclaw_probe",
                 description: "Return one host-local inference proof.",
-                parameters: { type: "object", properties: {}, additionalProperties: false },
+                parameters: {
+                  type: "object",
+                  properties: {},
+                  additionalProperties: false,
+                },
               },
             },
           ],
@@ -3096,7 +3126,11 @@ function withRollback<T>(
     const failure = errorEvidence(redactor, error);
     try {
       onFailureEvidence(
-        Object.freeze({ providerId: PROVIDER_ID, phase: phase(), message: failure }),
+        Object.freeze({
+          providerId: PROVIDER_ID,
+          phase: phase(),
+          message: failure,
+        }),
       );
     } catch (captureError) {
       throw new Error(
@@ -3257,7 +3291,11 @@ function createPreparedStartup(options: {
       try {
         const status = options.rollback();
         state = "rolled-back";
-        return Object.freeze({ status, priorState: options.priorState, receipt: options.receipt });
+        return Object.freeze({
+          status,
+          priorState: options.priorState,
+          receipt: options.receipt,
+        });
       } catch (error) {
         state = "indeterminate";
         throw error;
@@ -3558,7 +3596,10 @@ export function createPodmanHostLocalInferenceRuntime(
   };
   const inspectPublishedResumeTransaction = (
     receipt: HostLocalInferenceReceipt,
-  ): { readonly receipt: ManagedReceipt; readonly container: ManagedContainer } => {
+  ): {
+    readonly receipt: ManagedReceipt;
+    readonly container: ManagedContainer;
+  } => {
     const normalized = requirePublishedResumeTransactionCurrent(receipt);
     inspectNetwork(requireProofEndpoint(normalized.endpoint));
     const container = requireReceiptIdentity(
@@ -3915,10 +3956,19 @@ export function createPodmanHostLocalInferenceRuntime(
 
     let created: ManagedContainer | null = null;
     let acknowledgedCleanupCandidate: ManagedContainer | null = null;
+    const publishPreflightOptions = options.inspectPublishedPort
+      ? { inspect: options.inspectPublishedPort }
+      : {};
     const receipt = withRollback(
       () => {
         phase = "start";
         assertSpecAuthority();
+        assertInferencePublishPortsFree(
+          spec.endpoint.port,
+          spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+          spec.service,
+          publishPreflightOptions,
+        );
         const translatedArgs = translatedRunArguments(spec, authority);
         const result =
           spec.environment.length === 0 && spec.ollamaContextLength === null
@@ -3935,6 +3985,14 @@ export function createPodmanHostLocalInferenceRuntime(
               })());
         const foundId = lookupContainerId(engine, spec.containerName);
         if (foundId === null) {
+          if (result.status !== 0 || result.error) {
+            assertInferencePublishPortsFree(
+              spec.endpoint.port,
+              spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+              spec.service,
+              publishPreflightOptions,
+            );
+          }
           throw new Error(
             `Podman host-local inference container start failed without an owned runtime: ${redactedCommandEvidence(sensitiveRedactor, result)}`,
           );
@@ -3945,6 +4003,14 @@ export function createPodmanHostLocalInferenceRuntime(
           spec,
           foundId,
         );
+        if (result.status !== 0 || result.error) {
+          assertInferencePublishPortsFree(
+            spec.endpoint.port,
+            spec.endpoint.networkListenerIp ?? spec.endpoint.networkGatewayIp,
+            spec.service,
+            publishPreflightOptions,
+          );
+        }
         if (result.status === 0 && !result.error) {
           const reportedId = exactContainerId(result.stdout.trim());
           if (reportedId !== foundId) {
@@ -4551,7 +4617,10 @@ export function createPodmanHostLocalInferenceRuntime(
       : {}),
     inspectManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection {
       const inspected = inspectReceipt(receipt);
-      return Object.freeze({ running: inspected.container.running, receipt: inspected.receipt });
+      return Object.freeze({
+        running: inspected.container.running,
+        receipt: inspected.receipt,
+      });
     },
     ...(publishedEngineAuthority
       ? {
@@ -4637,7 +4706,10 @@ export function createPodmanHostLocalInferenceRuntime(
             `Podman inference destroy found name '${normalized.runtime.name}' reused by '${name}'.`,
           );
         }
-        return Object.freeze({ status: "already-absent" as const, receipt: normalized });
+        return Object.freeze({
+          status: "already-absent" as const,
+          receipt: normalized,
+        });
       }
       const inspected = inspectReceipt(normalized);
       assertAuthority();
@@ -4649,7 +4721,10 @@ export function createPodmanHostLocalInferenceRuntime(
         onFailureEvidence,
         sensitiveRedactor,
       );
-      return Object.freeze({ status: "removed" as const, receipt: inspected.receipt });
+      return Object.freeze({
+        status: "removed" as const,
+        receipt: inspected.receipt,
+      });
     },
   });
 }
@@ -4782,7 +4857,10 @@ export function createPodmanHostLocalInferenceOperation(
 ): HostLocalInferenceOperation {
   const acceleration = normalizeOperationAcceleration(options.acceleration);
   const redactor = requireRedactor(options.redactSensitive);
-  const qualifiedEngine = redactingEngine(options.engine, redactor);
+  const qualifiedEngine = redactingEngine(
+    deadlineBoundHostLocalInferenceEngine(options.engine, options.deadlineMs),
+    redactor,
+  );
   const authority = options.authority
     ? revalidatePodmanInferenceAuthority(
         qualifiedEngine,

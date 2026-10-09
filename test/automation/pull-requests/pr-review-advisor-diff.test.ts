@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDiff } from "../../../tools/advisors/git.mts";
-
-const ROOT = path.resolve(import.meta.dirname, "../../..");
 
 describe("PR review advisor diff", () => {
   it("keeps content after 160,000 characters", () => {

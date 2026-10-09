@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
 import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
@@ -10,6 +11,7 @@ import {
 import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import * as agentRuntime from "../../../agent/runtime";
+import { isOpenRouterRuntimeAdapterModelsRoute404 } from "../../../inference/openrouter";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
 import {
   observeSandboxOnGateway,
@@ -17,16 +19,23 @@ import {
 } from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
 import {
+  normalizeNativeNvidiaProviderAttachment,
+  verifyNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../../inference/native-nvidia";
+import { createSynchronousCliOpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route-cli";
+import type { OpenShellInferenceRouteObserver } from "../../../adapters/openshell/inference-route";
+import {
   buildSandboxInferenceRouteProbeRequest,
   type InferenceRouteProbeAgent,
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
+import { runSandboxInferenceInvocationProbe } from "../inference-route-health";
 import {
-  isDcodeOpenRouterModelsRoute404,
-  runSandboxInferenceInvocationProbe,
-} from "../inference-route-health";
-import { isSandboxGatewayRunningForStatus } from "../process-recovery";
+  isSandboxGatewayHttpReachableForStatus,
+  isSandboxGatewayRunningForStatus,
+} from "../process-recovery";
 
 export type LaunchReadinessObservationCategory =
   | "missing"
@@ -54,9 +63,13 @@ export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
   capture?: LaunchReadinessBoundCapture;
+  inferenceRouteObserver?: OpenShellInferenceRouteObserver;
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
-  forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
+  forwardsHealthy?: (
+    sandboxName: string,
+    gatewayName: string,
+  ) => boolean | null | Promise<boolean | null>;
   smoke?: (sandboxName: string, agent: AgentDefinition) => ReturnType<typeof runAgentSmokeCommands>;
   inferenceProbe?: (
     sandboxName: string,
@@ -64,6 +77,11 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => Promise<ReturnType<typeof parseSandboxInferenceRouteProbeResult>>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+  verifyNativeNvidiaAttachment?: (input: {
+    sandboxName: string;
+    gatewayName: string;
+    expected: NativeNvidiaProviderAttachment;
+  }) => Promise<void>;
   recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
   recordObservationFailure?: (stage: LaunchReadinessObservationStage) => void;
 }
@@ -72,6 +90,13 @@ export type LaunchReadinessBoundCapture = (
   args: string[],
   options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
 ) => LaunchReadinessCaptureResult;
+
+/** Bind the route observer to the same capture owner as the other readiness reads. */
+export function createLaunchReadinessInferenceRouteObserver(
+  capture: LaunchReadinessBoundCapture,
+): OpenShellInferenceRouteObserver {
+  return createSynchronousCliOpenShellInferenceRouteObserver(capture);
+}
 
 /** Route every OpenShell-backed readiness observation through one bound capture owner. */
 export function createBoundLaunchReadinessDeps(
@@ -85,13 +110,14 @@ export function createBoundLaunchReadinessDeps(
         ignoreError: options?.ignoreError ?? true,
         timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
       }),
+    inferenceRouteObserver: createLaunchReadinessInferenceRouteObserver(capture),
     observeSandbox: (target) => observeSandboxOnGateway(target, capture),
     gatewayHealth: (sandboxName, gatewayName) =>
-      isSandboxGatewayRunningForStatus(sandboxName, gatewayName, {
+      isSandboxGatewayHttpReachableForStatus(sandboxName, gatewayName, {
         commandExecutor,
       }),
     forwardsHealthy: (sandboxName, gatewayName) =>
-      areSandboxLaunchForwardsHealthy(sandboxName, gatewayName, capture),
+      areSandboxLaunchForwardsHealthy(sandboxName, gatewayName),
     inferenceProbe: (sandboxName, agent, gatewayName) =>
       probeInferenceRoute(sandboxName, agent, gatewayName, commandExecutor),
     commandExecutor,
@@ -179,6 +205,55 @@ export function resolveTrustedLaunchAgent(
   return agent;
 }
 
+export function getNativeNvidiaProviderAttachment(
+  entry: SandboxEntry,
+): NativeNvidiaProviderAttachment | null {
+  return normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment) ?? null;
+}
+
+export async function requireNativeNvidiaInferenceHealth(input: {
+  sandboxName: string;
+  gatewayName: string;
+  agentName?: string;
+  entry: SandboxEntry;
+  deps: LaunchReadinessHealthDeps;
+}): Promise<boolean> {
+  const expected = getNativeNvidiaProviderAttachment(input.entry);
+  if (!expected) return false;
+  const provider = normalizedString(input.entry.provider);
+  const model = normalizedString(input.entry.model);
+  if (!provider || !model) throw new LaunchReadinessEvidenceError();
+  if (input.deps.verifyNativeNvidiaAttachment) {
+    await input.deps.verifyNativeNvidiaAttachment({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      expected,
+    });
+  } else {
+    await verifyNativeNvidiaProviderAttachment({
+      adapter: createCliOpenShellProviderAdapter(),
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected,
+    });
+  }
+  const invocation = await (
+    input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
+  )({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    agentName: input.agentName,
+    provider,
+    model,
+    preferredInferenceApi: normalizedString(input.entry.preferredInferenceApi),
+    nativeProvider: true,
+  });
+  if (!invocation.ok) {
+    throw new LaunchReadinessObservationError("health", "inference request");
+  }
+  return true;
+}
+
 async function probeInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
@@ -212,6 +287,10 @@ export async function requireLaunchSemanticHealth(
   inferenceConfigured: boolean,
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
+  if (agentName === "langchain-deepagents-code" && !inferenceConfigured) {
+    recordLaunchReadinessObservationFailure(deps, "inference-route");
+    throw new LaunchReadinessEvidenceError();
+  }
   if (isTerminalAgent(agent)) {
     const smoke = deps.smoke
       ? await deps.smoke(sandboxName, agent)
@@ -249,7 +328,7 @@ export async function requireLaunchSemanticHealth(
     const forwardStartedAt = performance.now();
     let forwards: boolean | null;
     try {
-      forwards = (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
+      forwards = await (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
         sandboxName,
         gatewayName,
       );
@@ -270,6 +349,23 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
+    if (getNativeNvidiaProviderAttachment(entry)) {
+      try {
+        await requireNativeNvidiaInferenceHealth({
+          sandboxName,
+          gatewayName,
+          agentName,
+          entry,
+          deps,
+        });
+        return;
+      } catch (error) {
+        recordLaunchReadinessObservationFailure(deps, "inference-route");
+        throw error;
+      } finally {
+        recordObservationTiming(deps, "inference-route", inferenceStartedAt);
+      }
+    }
     let inference: ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
     try {
       const inferenceProbe =
@@ -287,14 +383,11 @@ export async function requireLaunchSemanticHealth(
     }
     const strictRouteHealth =
       inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
-    if (strictRouteHealth) return;
-    const openRouterDcodeModelsRouteUnsupported =
+    if (strictRouteHealth && agentName !== "langchain-deepagents-code") return;
+    const supportedOpenRouterModelsRouteUnsupported =
       inference.healthy &&
-      isDcodeOpenRouterModelsRoute404(
-        { agentName, provider: entry.provider ?? null },
-        inference.httpStatus,
-      );
-    if (openRouterDcodeModelsRouteUnsupported) {
+      isOpenRouterRuntimeAdapterModelsRoute404(entry.provider, inference.httpStatus);
+    if (strictRouteHealth || supportedOpenRouterModelsRouteUnsupported) {
       const provider = normalizedString(entry.provider);
       const model = normalizedString(entry.model);
       if (!provider || !model) {

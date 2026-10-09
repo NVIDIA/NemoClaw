@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-triage
-description: Triage NemoClaw issues and PRs with Issue Type, Project fields, and allowed labels. Support one item or a batch. Show proposed changes and apply only changes the maintainer accepts. Trigger keywords - triage, label issues, suggest labels, batch triage, triage issue, triage PR, label this, what labels.
+description: "Propose and apply authorized Issue Type, Project fields, and labels for NemoClaw issues or PRs, individually or in a batch."
 user_invocable: true
 ---
 

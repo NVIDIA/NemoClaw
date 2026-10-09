@@ -160,6 +160,7 @@ function registryFields(
   profile: ManagedStartupProfile,
   source: SandboxEntry,
 ): ManagedWorkloadCloneRegistryFields {
+  if (profile.inference === null) fail("Cannot clone a sandbox without configured inference");
   const webSearch =
     profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
       ? profile.agentConfig.webSearch

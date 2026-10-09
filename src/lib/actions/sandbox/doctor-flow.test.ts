@@ -52,12 +52,12 @@ function createDoctorHarness(
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
   ollamaInventoryProbeSpy: MockInstance;
-  inspectMutableConfigPermsSpy: MockInstance;
   loadAgentSpy: MockInstance;
   probeSandboxInferenceGatewayHealthSpy: MockInstance;
+  probeSandboxNativeNvidiaModelsHealthSpy: MockInstance;
+  verifyNativeNvidiaStatusAttachmentSpy: MockInstance;
   logSpy: MockInstance;
   recoverNamedGatewayRuntimeSpy: MockInstance;
-  repairMutableConfigPermsSpy: MockInstance;
   resolveOpenShellSpy: MockInstance;
   resolveSandboxGatewayNameSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
@@ -78,7 +78,6 @@ function createDoctorHarness(
   const gatewayBinding = requireDist("../../onboard/gateway-binding.js");
   const sandboxVerificationExec = requireDist("../../onboard/sandbox-verification-exec.js");
   const sandboxVersion = requireDist("../../sandbox/version.js");
-  const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
   const registry = requireDist("../../state/registry.js");
   const statusCommandDeps = requireDist("../../status-command-deps.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
@@ -153,17 +152,28 @@ function createDoctorHarness(
   const recoverNamedGatewayRuntimeSpy = vi
     .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
     .mockResolvedValue({
-      before: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
-      after: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
+      before: {
+        state: "healthy_named",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
+      after: {
+        state: "healthy_named",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       recovered: false,
     });
   const getNamedGatewayLifecycleStateSpy = vi
     .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-    .mockReturnValue({
+    .mockResolvedValue({
       state: "healthy_named",
-      status: "Status: Connected",
-      gatewayInfo: "Gateway: nemoclaw-19080",
       activeGateway: "nemoclaw-19080",
+      diagnostic: "Status: Connected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
   const captureOpenShellSpy = vi
     .spyOn(runtime, "captureOpenshell")
@@ -205,6 +215,17 @@ function createDoctorHarness(
       httpStatus: 0,
       detail: "Inference gateway unreachable inside the sandbox.",
     });
+  const probeSandboxNativeNvidiaModelsHealthSpy = vi
+    .spyOn(inferenceRouteHealth, "probeSandboxNativeNvidiaModelsHealth")
+    .mockResolvedValue({
+      ok: true,
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+      httpStatus: 200,
+      detail: "native NVIDIA models route reachable",
+    });
+  const verifyNativeNvidiaStatusAttachmentSpy = vi
+    .spyOn(inferenceRouteHealth, "verifyNativeNvidiaStatusAttachment")
+    .mockResolvedValue(undefined);
   const loadAgentSpy = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
     name: "openclaw",
     configPaths: { dir: "/sandbox/.openclaw", configFile: "openclaw.json", format: "json" },
@@ -216,20 +237,6 @@ function createDoctorHarness(
     expectedVersion: "0.2.0",
     isStale: true,
   });
-  const inspectMutableConfigPermsSpy = vi
-    .spyOn(mutableConfigPerms, "inspectMutableConfigPerms")
-    .mockReturnValue({
-      applies: true,
-      ok: true,
-      issues: [],
-    });
-  const repairMutableConfigPermsSpy = vi
-    .spyOn(mutableConfigPerms, "repairMutableConfigPerms")
-    .mockReturnValue({
-      applied: true,
-      verified: true,
-      errors: [],
-    });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
   const executeSandboxCommandForVerificationSpy = vi
@@ -270,12 +277,12 @@ function createDoctorHarness(
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
     ollamaInventoryProbeSpy,
-    inspectMutableConfigPermsSpy,
     loadAgentSpy,
     probeSandboxInferenceGatewayHealthSpy,
+    probeSandboxNativeNvidiaModelsHealthSpy,
+    verifyNativeNvidiaStatusAttachmentSpy,
     logSpy,
     recoverNamedGatewayRuntimeSpy,
-    repairMutableConfigPermsSpy,
     resolveOpenShellSpy,
     resolveSandboxGatewayNameSpy,
     runSandboxDoctor,
@@ -622,6 +629,41 @@ describe("runSandboxDoctor flow", () => {
     },
   );
 
+  it("uses the recorded native NVIDIA attachment instead of an unrelated shared route", async () => {
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-nvidia-inference-v1",
+      providerName: "nemoclaw-nvidia-prod-v1",
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const harness = createDoctorHarness("nvidia-prod", {
+      registryOverrides: { nativeNvidiaProviderAttachment: receipt },
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(harness.verifyNativeNvidiaStatusAttachmentSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "alpha",
+      expected: receipt,
+    });
+    expect(harness.probeSandboxNativeNvidiaModelsHealthSpy).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+    });
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        label: "Inference route (native NVIDIA)",
+        status: "ok",
+      }),
+    );
+  });
+
   it("rejects mutating --fix when JSON output was requested", async () => {
     const harness = createDoctorHarness();
 
@@ -632,7 +674,6 @@ describe("runSandboxDoctor flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(harness.getSandboxSpy).not.toHaveBeenCalled();
     expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
-    expect(harness.repairMutableConfigPermsSpy).not.toHaveBeenCalled();
   });
 
   it("does not run live or tool-scope probes when OpenShell is unavailable", async () => {
@@ -650,11 +691,12 @@ describe("runSandboxDoctor flow", () => {
   it("does not run live or tool-scope probes when the named gateway is disconnected", async () => {
     const harness = createDoctorHarness();
     harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
-    harness.getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    harness.getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "missing_named",
-      status: "Status: Disconnected",
-      gatewayInfo: "",
       activeGateway: null,
+      diagnostic: "Status: Disconnected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
 
     const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
@@ -736,7 +778,7 @@ describe("runSandboxDoctor flow", () => {
       report?.checks.find(
         (check) => check.group === "Sandbox" && check.label === "Lifecycle registration",
       )?.detail,
-    ).toContain("snapshot");
+    ).toContain("affected: rebuild, recovery, upgrade");
   });
 
   it("reports an invalid stored gateway binding without running live probes", async () => {
@@ -796,13 +838,15 @@ describe("runSandboxDoctor flow", () => {
     harness.recoverNamedGatewayRuntimeSpy.mockResolvedValue({
       before: {
         state: "missing_named",
-        status: "Status: Disconnected",
-        gatewayInfo: "",
+        diagnostic: "Status: Disconnected",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       after: {
         state: "healthy_named",
-        status: "Status: Connected",
-        gatewayInfo: "Gateway: nemoclaw-19080",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       recovered: true,
     });
@@ -841,13 +885,8 @@ describe("runSandboxDoctor flow", () => {
     );
   });
 
-  it("does not enable repairs for plain or JSON diagnostics", async () => {
+  it("does not enable tool-scope repairs for plain or JSON diagnostics", async () => {
     const harness = createDoctorHarness();
-    harness.inspectMutableConfigPermsSpy.mockReturnValue({
-      applies: true,
-      ok: false,
-      issues: ["directory mode differs from runtime contract"],
-    });
     const inferenceRouteHealth = requireDist("./inference-route-health.js");
     vi.mocked(inferenceRouteHealth.probeSandboxInferenceGatewayHealth).mockResolvedValue({
       ok: true,
@@ -859,7 +898,6 @@ describe("runSandboxDoctor flow", () => {
     await harness.runSandboxDoctor("alpha");
     await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
-    expect(harness.repairMutableConfigPermsSpy).not.toHaveBeenCalled();
     expect(harness.buildToolScopeChecksSpy).toHaveBeenCalledTimes(2);
     expect(harness.buildToolScopeChecksSpy.mock.calls.map((call) => call[2])).toEqual([
       false,

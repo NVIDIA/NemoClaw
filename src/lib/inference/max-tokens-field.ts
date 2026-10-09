@@ -3,10 +3,10 @@
 
 /**
  * Resolves how an inference probe states its reply budget: the OpenAI-compatible
- * Chat Completions field name for a given model, and the smallest reply budget
- * every probe may request.
+ * Chat Completions field name for a given model, and the reply budget for a
+ * provider.
  *
- * OpenAI's GPT-5 family and the reasoning-model series (o1/o3/o4) reject the
+ * OpenAI's GPT-5/GPT-6 families and the reasoning-model series (o1/o3/o4) reject the
  * legacy `max_tokens` parameter on `/chat/completions` and require
  * `max_completion_tokens` instead — Azure OpenAI surfaces the same requirement
  * (HTTP 400: "Unsupported parameter: 'max_tokens' is not supported with this
@@ -24,15 +24,34 @@
  * discovery succeeds and normal inference works, so a smaller value turns a
  * valid endpoint, model, and credential combination into a failed onboarding,
  * health, or rebuild preflight check (#7939). The Anthropic Messages probe
- * already requests 16; every other probe shares that floor here rather than
- * carrying its own literal.
+ * already requests 16; general Chat Completions probes share that floor here
+ * rather than carrying their own literal.
  */
 export const MIN_PROBE_REPLY_TOKENS = 16;
+
+/**
+ * Gemini probe budget with room for reasoning before visible content (#10260).
+ */
+export const GEMINI_PROBE_REPLY_TOKENS = 256;
+
+/** Returns the Chat Completions probe budget for a provider. */
+export function resolveProbeReplyTokens(
+  provider: string | null | undefined,
+  model?: string | null,
+): number {
+  // Ultra can consume the 16-token floor on reasoning before its acknowledgement.
+  if (
+    (provider === "nvidia-prod" || provider === "nvidia-nim") &&
+    model === "nvidia/nemotron-3-ultra-550b-a55b"
+  )
+    return 256;
+  return provider === "gemini-api" ? GEMINI_PROBE_REPLY_TOKENS : MIN_PROBE_REPLY_TOKENS;
+}
 
 // Matched by prefix rather than exact id: Azure OpenAI deployments append
 // version/suffix segments (e.g. "gpt-5.4", "gpt-5.4-turbo") and callers may or
 // may not include a provider prefix ("azure/gpt-5.4").
-const MAX_COMPLETION_TOKENS_MODEL_PREFIXES = ["gpt-5", "o1", "o3", "o4"];
+const MAX_COMPLETION_TOKENS_MODEL_PREFIXES = ["gpt-5", "gpt-6", "o1", "o3", "o4"];
 
 /**
  * Whether the model requires `max_completion_tokens` in place of `max_tokens`.
@@ -49,7 +68,7 @@ export function requiresMaxCompletionTokensField(model: string | null | undefine
 
 /**
  * Returns the Chat Completions reply-budget field name for the model:
- * `max_completion_tokens` for GPT-5/o-series, otherwise `max_tokens`.
+ * `max_completion_tokens` for GPT-5/GPT-6/o-series, otherwise `max_tokens`.
  */
 export function resolveMaxTokensField(
   model: string | null | undefined,

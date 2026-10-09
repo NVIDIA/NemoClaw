@@ -16,11 +16,10 @@ test(
     meta: {
       e2ePhases: [
         "prepare channel lifecycle sandbox",
-        "onboard sandbox with all messaging channels",
-        "validate active channel integrations",
-        "disable channels and rebuild sandbox",
-        "re-enable channels, rebuild sandbox, and validate lifecycle state",
-        "remove WeChat, Microsoft Teams, and Google Chat and validate cleanup",
+        "onboard channel lifecycle sandbox",
+        "validate configured channel state",
+        "stop and start the sandbox through OpenShell",
+        "validate channel state after native readiness",
       ],
     },
   },

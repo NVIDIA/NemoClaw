@@ -6,9 +6,9 @@ import {
   type CollectHostObservationsOptions,
   createHostReadinessReport,
 } from "../../readiness/host";
-import type { SystemReadinessReport } from "../../readiness/types";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
-import type { ManagedInferenceServingPreset } from "../serving/types";
+import { NEMOCLAW_SERVING_PRESET_ENV } from "../serving/managed-cluster-discovery";
+import { readinessReportForPreset } from "../serving/readiness-report.test-support";
 import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 import {
   discoverManagedLlamaCppSelections,
@@ -24,63 +24,17 @@ const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
 const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const N1X_WSL_PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
+const STATION_GB300_WSL_PRESET_ID = "llama-cpp.station-gb300-wsl-arm64.single.qwen3-6-35b-a3b";
 const LOCAL_DOCKER_SELECTION = {
   dockerContextIsDefault: () => true,
   runtimeProviderId: "docker",
 } as const;
 
-function readinessReport(
-  preset: ManagedInferenceServingPreset,
-  overrides: Partial<SystemReadinessReport> = {},
-): SystemReadinessReport {
-  const requirements = preset.spec.requirements.all.flatMap((requirement) =>
-    "readiness" in requirement ? [requirement.readiness] : [],
-  );
-  return {
-    schemaVersion: "1.1.0",
-    mutated: false,
-    provenance: {
-      nemoclawVersion: "0.1.0",
-      sourceRevision: "a".repeat(40),
-      observedAt: new Date().toISOString(),
-    },
-    observations: requirements.flatMap((requirement) =>
-      requirement.kind !== "observation"
-        ? []
-        : "state" in requirement
-          ? [{ id: requirement.id, state: requirement.state }]
-          : [
-              {
-                id: requirement.id,
-                state: "present" as const,
-                value:
-                  requirement.comparison.operator === "one-of"
-                    ? requirement.comparison.values[0]
-                    : requirement.comparison.value,
-              },
-            ],
-    ),
-    capabilities: requirements.flatMap((requirement) =>
-      requirement.kind === "capability" ? [{ id: requirement.id, state: requirement.state }] : [],
-    ),
-    qualifications: requirements.flatMap((requirement) =>
-      requirement.kind === "qualification"
-        ? [{ id: requirement.id, status: requirement.status }]
-        : [],
-    ),
-    findings: [],
-    evidence: [],
-    status: "supported",
-    exitCode: 0,
-    ...overrides,
-  } as SystemReadinessReport;
-}
-
 function fixture(presetId = SPARK_PRESET_ID) {
   const catalog = loadManagedInferenceCatalog();
   const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
   expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
-  return { catalog, preset: preset!, report: readinessReport(preset!) };
+  return { catalog, preset: preset!, report: readinessReportForPreset(preset!) };
 }
 
 function n1xCollectionOptions(): Omit<
@@ -123,6 +77,18 @@ function n1xCollectionOptions(): Omit<
       productName: "83N7",
     }),
     detectNvidiaDriverVersion: () => "580.65.06",
+  };
+}
+
+function stationGb300CollectionOptions(
+  stationGb300WslProduct = true,
+): Omit<CollectHostObservationsOptions, "detectGpu" | "containerGpuProof"> {
+  return {
+    ...n1xCollectionOptions(),
+    collectPlatformIdentity: () => ({
+      productName: "Virtual Machine",
+      stationGb300WslProduct,
+    }),
   };
 }
 
@@ -251,11 +217,11 @@ describe("managed llama.cpp selection", () => {
     });
   });
 
-  it("selects N1x WSL through the proof-backed GPU identity on an OEM host (#10962)", () => {
+  it("selects N1x WSL through the 5120-core proof-backed GPU identity (#12282)", () => {
     const { catalog } = fixture(N1X_WSL_PRESET_ID);
     const gpu = {
       type: "nvidia",
-      name: "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)",
+      name: "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)",
       platform: "n1x" as const,
       count: 1,
       totalMemoryMB: 49_088,
@@ -275,6 +241,118 @@ describe("managed llama.cpp selection", () => {
     ).toMatchObject({ kind: "selected" });
   });
 
+  it("selects managed Qwen on a qualified mixed-GPU Station GB300 WSL host (#12476)", () => {
+    const { catalog } = fixture(STATION_GB300_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [
+        { name: "NVIDIA RTX PRO 4000 Blackwell", memoryMB: 24_467 },
+        { name: "NVIDIA GB300", memoryMB: 256_703 },
+      ],
+      count: 2,
+      totalMemoryMB: 281_170,
+      availableMemoryMB: 270_000,
+      perGpuMB: 24_467,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        stationGb300CollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({
+      kind: "selected",
+      selection: {
+        selection: "automatic",
+        preset: { metadata: { id: STATION_GB300_WSL_PRESET_ID } },
+        recipe: { metadata: { id: N1X_WSL_RECIPE_ID } },
+      },
+    });
+  });
+
+  it("rejects Station GB300 WSL when the Windows product does not match (#12476)", () => {
+    const { catalog } = fixture(STATION_GB300_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [{ name: "NVIDIA GB300", memoryMB: 256_703 }],
+      count: 1,
+      totalMemoryMB: 256_703,
+      availableMemoryMB: 250_000,
+      perGpuMB: 256_703,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: false,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        stationGb300CollectionOptions(false),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects Station GB300 WSL when the proved GPU set has no GB300 (#12476)", () => {
+    const { catalog } = fixture(STATION_GB300_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      platform: "linux" as const,
+      gpus: [{ name: "NVIDIA RTX PRO 6000 Blackwell", memoryMB: 96_000 }],
+      count: 1,
+      totalMemoryMB: 96_000,
+      availableMemoryMB: 90_000,
+      perGpuMB: 96_000,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+      stationGb300WslProduct: true,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        {},
+        gpu,
+        catalog,
+        stationGb300CollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
+  it("rejects the 5120-core N1x WSL identity below the GPU-memory floor (#12282)", () => {
+    const { catalog } = fixture(N1X_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      name: "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)",
+      platform: "n1x" as const,
+      count: 1,
+      totalMemoryMB: 8_128,
+      perGpuMB: 8_128,
+      nimCapable: true,
+      containerGpuProof: { providerId: "docker", passed: true },
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        gpu,
+        catalog,
+        n1xCollectionOptions(),
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
   it("rejects automatic N1x WSL selection for a remote runtime context (#10962)", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
     const dockerContextIsDefault = vi.fn(() => false);
@@ -284,10 +362,30 @@ describe("managed llama.cpp selection", () => {
     ).toEqual({
       kind: "rejected",
       reason:
-        "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+        "Managed WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
     });
     expect(dockerContextIsDefault).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["automatic", {}],
+    ["explicit", { [NEMOCLAW_SERVING_PRESET_ENV]: STATION_GB300_WSL_PRESET_ID }],
+  ])(
+    "rejects %s Station GB300 WSL selection for a remote runtime context (#12476)",
+    (_case, env) => {
+      const { catalog, report } = fixture(STATION_GB300_WSL_PRESET_ID);
+      const dockerContextIsDefault = vi.fn(() => false);
+
+      expect(
+        resolveManagedLlamaCppSelection(env, catalog, report, { dockerContextIsDefault }),
+      ).toEqual({
+        kind: "rejected",
+        reason:
+          "Managed WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+      });
+      expect(dockerContextIsDefault).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     ["automatic N1x WSL", N1X_WSL_PRESET_ID, {}],
@@ -537,6 +635,86 @@ describe("managed llama.cpp selection", () => {
     });
   });
 
+  it("selects the explicit-only Muse preset that NEMOCLAW_SERVING_PRESET names", () => {
+    const { catalog, report } = fixture();
+
+    const discovered = discoverManagedLlamaCppSelections(
+      { [NEMOCLAW_SERVING_PRESET_ENV]: MUSE_PRESET_ID },
+      catalog,
+      report,
+      LOCAL_DOCKER_SELECTION,
+    );
+
+    expect(discovered.resolution).toMatchObject({
+      kind: "selected",
+      selection: {
+        selection: "explicit",
+        recipe: { metadata: { id: MUSE_RECIPE_ID } },
+        preset: { metadata: { id: MUSE_PRESET_ID } },
+      },
+    });
+    expect(discovered.choices.map(({ selection }) => selection.preset.metadata.id)).toEqual([
+      MUSE_PRESET_ID,
+    ]);
+  });
+
+  it("rejects NEMOCLAW_SERVING_PRESET when NEMOCLAW_LLAMACPP_RECIPE names another recipe", () => {
+    const { catalog, report } = fixture();
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: MUSE_PRESET_ID, [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
+        catalog,
+        report,
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: `NEMOCLAW_SERVING_PRESET ${MUSE_PRESET_ID} selects recipe ${MUSE_RECIPE_ID}, not NEMOCLAW_LLAMACPP_RECIPE ${RECIPE_ID}.`,
+    });
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: MUSE_PRESET_ID, NEMOCLAW_MODEL: "other-model" },
+        catalog,
+        report,
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: "NEMOCLAW_MODEL cannot override the served model in NEMOCLAW_SERVING_PRESET.",
+    });
+  });
+
+  it("rejects an unknown NEMOCLAW_SERVING_PRESET instead of selecting automatically", () => {
+    const { catalog, report } = fixture();
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: "llama-cpp.unknown" },
+        catalog,
+        report,
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: "Unknown managed inference preset llama-cpp.unknown.",
+    });
+  });
+
+  it("keeps automatic selection when NEMOCLAW_SERVING_PRESET names another backend's preset", () => {
+    const { catalog, report } = fixture();
+    const vllmPreset = catalog.presets.find(({ spec }) => spec.plan.backend === "vllm");
+    expect(vllmPreset, "Shipped managed vLLM preset is missing.").toBeDefined();
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: vllmPreset!.metadata.id },
+        catalog,
+        report,
+      ),
+    ).toMatchObject({
+      kind: "selected",
+      selection: { selection: "automatic", preset: { metadata: { id: SPARK_PRESET_ID } } },
+    });
+  });
+
   it("selects the generic Linux amd64 NVIDIA GPU preset from the same declarative recipe", () => {
     const { catalog } = fixture(GENERIC_PRESET_ID);
     const now = new Date();
@@ -650,7 +828,7 @@ describe("managed llama.cpp selection", () => {
 
   it("rejects stale host readiness before activation", () => {
     const { catalog, preset } = fixture();
-    const stale = readinessReport(preset, {
+    const stale = readinessReportForPreset(preset, {
       provenance: {
         nemoclawVersion: "0.1.0",
         sourceRevision: "a".repeat(40),

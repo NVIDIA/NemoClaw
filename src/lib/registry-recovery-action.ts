@@ -19,6 +19,7 @@ import { withGatewayRouteMutationLock } from "./inference/gateway-route-mutation
 import { resolveGatewayName, resolveSandboxGatewayName } from "./onboard/gateway-binding";
 import { validateName } from "./runner";
 import * as onboardSession from "./state/onboard-session";
+import { withCurrentPortableHostFenceTry } from "./state/portable-uninstall-retirement";
 import type { SandboxEntry } from "./state/registry";
 import * as registry from "./state/registry";
 import { getSandboxEntryInference } from "./state/registry-entry-view";
@@ -252,7 +253,7 @@ function seedRecoveryMetadata(
  * only when OpenShell is connected to a NemoClaw-managed gateway (the bare
  * `nemoclaw` or a per-port `nemoclaw-<port>`), never a foreign gateway.
  */
-function canInspectLiveGatewayReadOnly(): boolean {
+async function canInspectLiveGatewayReadOnly(): Promise<boolean> {
   // #5714: unseeded `nemoclaw list` recovery must never mutate gateway state
   // (no select/start). Require `healthy_named` — the active gateway IS the
   // NemoClaw gateway this process resolves/targets. We deliberately do NOT
@@ -264,7 +265,7 @@ function canInspectLiveGatewayReadOnly(): boolean {
   // and never advertises a sandbox the next command cannot act on. Probes are
   // non-fatal so a hung gateway falls back to the empty registry instead of
   // exiting the process.
-  const lifecycle = getNamedGatewayLifecycleState(undefined, { ignoreProbeErrors: true });
+  const lifecycle = await getNamedGatewayLifecycleState();
   return lifecycle.state === "healthy_named";
 }
 
@@ -309,7 +310,7 @@ async function recoverRegistryFromLiveGateway(
     return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
   }
   const canInspectLiveGateway = readOnly
-    ? canInspectLiveGatewayReadOnly()
+    ? await canInspectLiveGatewayReadOnly()
     : await canInspectLiveGatewayViaRecovery();
   if (!canInspectLiveGateway) {
     return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
@@ -463,21 +464,23 @@ export async function recoverRegistryEntries({
   if (!hasRecoverySeed) {
     return recoverRegistryEntriesFromSnapshot(current, session, requestedSandboxName, gatewayName);
   }
-  return withGatewayRouteMutationLock(gatewayName, async () => {
-    const lockedCurrent = registry.listSandboxes();
-    const lockedSession = onboardSession.loadSession();
-    const lockedCheck = shouldRecoverRegistryEntries(
-      lockedCurrent,
-      lockedSession,
-      requestedSandboxName,
-    );
-    return lockedCheck.shouldRecover
-      ? recoverRegistryEntriesFromSnapshot(
-          lockedCurrent,
-          lockedSession,
-          requestedSandboxName,
-          gatewayName,
-        )
-      : { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
-  });
+  return withCurrentPortableHostFenceTry(() =>
+    withGatewayRouteMutationLock(gatewayName, async () => {
+      const lockedCurrent = registry.listSandboxes();
+      const lockedSession = onboardSession.loadSession();
+      const lockedCheck = shouldRecoverRegistryEntries(
+        lockedCurrent,
+        lockedSession,
+        requestedSandboxName,
+      );
+      return lockedCheck.shouldRecover
+        ? recoverRegistryEntriesFromSnapshot(
+            lockedCurrent,
+            lockedSession,
+            requestedSandboxName,
+            gatewayName,
+          )
+        : { ...lockedCurrent, recoveredFromSession: false, recoveredFromGateway: 0 };
+    }),
+  );
 }

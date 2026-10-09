@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
+  assertExitCode,
   assertExitZero,
   type CommandExitResult,
   type CommandResultText,
@@ -20,6 +21,7 @@ export {
   trustedProviderEndpoint,
 } from "./provider.ts";
 export {
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
   SandboxClient,
   sandboxAccessEnv,
   type TrustedSandboxShellScript,

@@ -11,6 +11,10 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
+import {
+  normalizeNativeNvidiaProviderAttachment,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia/contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import type { ReasoningEffort } from "../../onboard/reasoning-mode";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
@@ -21,6 +25,7 @@ import {
   assessRebuildAmbientEnv,
   assessRebuildInferencePreflight,
   canonicalCustomEndpointUrl,
+  getRebuildCredentialEnvFromRegistry,
   isLocalInferenceProvider,
 } from "./rebuild-resume-preflight";
 
@@ -41,6 +46,7 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  * from ambient selection env.
  */
 export interface RebuildResumeConfig {
+  readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   readonly agent: string | null;
   readonly provider: string;
   readonly model: string;
@@ -155,7 +161,7 @@ export function prepareRebuildResumeConfig(
   }
   const compatibleEndpointReasoning = trustedSelection.compatibleEndpointReasoning;
   const compatibleEndpointReasoningEffort = trustedSelection.compatibleEndpointReasoningEffort;
-  const { credentialEnv, rebuildEndpoint, explicitTargetEndpoint, registryInferenceRoute } =
+  const { rebuildEndpoint, explicitTargetEndpoint, registryInferenceRoute } =
     assessRebuildInferencePreflight({
       sandboxName,
       sessionMatchesSandbox,
@@ -230,8 +236,21 @@ export function prepareRebuildResumeConfig(
     );
     return null;
   }
+  const credentialEnv = getRebuildCredentialEnvFromRegistry(
+    trustedSelection.provider,
+    trustedSelection.credentialEnv,
+    endpointUrl,
+  );
 
+  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+    sb.nativeNvidiaProviderAttachment,
+  );
+  if (sb.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+    bail("Malformed native NVIDIA provider attachment; sandbox is untouched");
+    return null;
+  }
   return {
+    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     agent: rebuildAgent,
     provider: trustedSelection.provider,
     model: trustedSelection.model,

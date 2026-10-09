@@ -8,6 +8,10 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
+import {
+  isNativeNvidiaProvider,
+  normalizeNativeNvidiaProviderAttachment,
+} from "../inference/native-nvidia";
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
@@ -41,7 +45,6 @@ export {
   type SandboxInferenceRouteReservationDisposition,
 } from "./registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
-import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizePendingSandboxCreateIdentity,
   normalizeSandboxPolicyAttribution,
@@ -67,9 +70,10 @@ export {
   removeExtraProvider,
 } from "./registry/extra-providers";
 export {
-  listManagedMcpCredentialReservations,
-  type ManagedMcpCredentialReservation,
-} from "./registry/mcp-credential-reservations";
+  clearNativeNvidiaProviderAuthority,
+  getNativeNvidiaProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} from "./registry/native-nvidia-provider-authority";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -97,6 +101,11 @@ export {
   withLock,
 } from "./registry/lock";
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
+export {
+  getSandboxAcrossGatewayRoots,
+  hasSandboxLifecycleAuthority,
+  recordSandboxStopIntentAcrossGatewayRoots,
+} from "./registry/cross-port";
 export type {
   SandboxEntry,
   SandboxGpuProofResult,
@@ -106,8 +115,6 @@ export type {
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
-export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-export { normalizeSandboxMcpState };
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -204,6 +211,11 @@ function assertPendingCreateIdentityMatchesRegistration(
     ["sandbox name", checkpoint.sandboxName === requestedEntry.name],
     ["gateway name", checkpoint.gatewayName === requestedEntry.gatewayName],
     ["gateway port", checkpoint.gatewayPort === requestedEntry.gatewayPort],
+    [
+      "gateway state directory",
+      (checkpoint.openshellGatewayStateDir ?? null) ===
+        (requestedEntry.openshellGatewayStateDir ?? null),
+    ],
     [
       "requested lifecycle generation",
       checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration,
@@ -473,6 +485,14 @@ export function registerSandbox(
         );
       }
     }
+    const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+      entry.nativeNvidiaProviderAttachment,
+    );
+    if (entry.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+      throw new Error(
+        "Cannot register a sandbox with an invalid native NVIDIA provider attachment",
+      );
+    }
     const registered: SandboxEntry = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
@@ -508,12 +528,6 @@ export function registerSandbox(
           : null,
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
-      openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
-        ? entry.openclawImagePluginInstalls.map((install) => ({
-            ...install,
-            ...(install.loadPaths !== undefined ? { loadPaths: [...install.loadPaths] } : {}),
-          }))
-        : undefined,
       nemoclawVersion: entry.nemoclawVersion || null,
       fromDockerfile: entry.fromDockerfile || null,
       hermesAuthMethod:
@@ -522,12 +536,17 @@ export function registerSandbox(
           : null,
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
+      managedStartupProtocol:
+        entry.managedStartupProtocol === "identity-bound" ||
+        entry.managedStartupProtocol === "legacy-unbound"
+          ? entry.managedStartupProtocol
+          : undefined,
       ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+      ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
-      mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
@@ -538,9 +557,11 @@ export function registerSandbox(
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
       hermesApiPort: entry.hermesApiPort ?? undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      dashboardExternalUrl: entry.dashboardExternalUrl ?? undefined,
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
+      openshellGatewayStateDir: entry.openshellGatewayStateDir ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
       reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
     };
@@ -550,7 +571,11 @@ export function registerSandbox(
         ? data
         : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
     );
-    return structuredClone(registered);
+    const persisted = load().sandboxes[entry.name];
+    if (!persisted) {
+      throw new Error(`Cannot read sandbox '${entry.name}' after registration`);
+    }
+    return structuredClone(persisted);
   });
 }
 
@@ -569,11 +594,14 @@ type SandboxInferenceRouteReservation = Pick<
   reservationSessionId?: string;
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
 };
 
 interface SandboxInferenceRouteReservationOptions {
   /** Refuse instead of changing any existing registry row. */
   requireAbsent?: boolean;
+  /** Caller-qualified abandoned registered row; compare and replace without publishing it. */
+  reclaimAbandoned?: SandboxEntry;
 }
 
 /**
@@ -586,11 +614,34 @@ export function reserveSandboxInferenceRoute(
   route: SandboxInferenceRouteReservation,
   options: SandboxInferenceRouteReservationOptions = {},
 ): boolean {
+  const abandoned = options.reclaimAbandoned
+    ? structuredClone(options.reclaimAbandoned)
+    : undefined;
   return withLock(() => {
     const data = load();
     const existing = data.sandboxes[name];
     if (options.requireAbsent === true && existing !== undefined) return false;
+    if (
+      abandoned &&
+      (!isDeepStrictEqual(existing, abandoned) ||
+        abandoned.pendingRouteReservation !== true ||
+        abandoned.pendingCreateIdentity !== undefined ||
+        typeof abandoned.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(abandoned.createdAt)) ||
+        !route.reservationSessionId ||
+        typeof abandoned.reservationSessionId !== "string" ||
+        !abandoned.reservationSessionId ||
+        abandoned.reservationSessionId === route.reservationSessionId ||
+        abandoned.gatewayName !== route.gatewayName)
+    )
+      return false;
     const normalized = normalizeInferenceSelection(route);
+    const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
+      route.nativeNvidiaProviderAttachment,
+    );
+    if (route.nativeNvidiaProviderAttachment !== undefined && !nativeNvidiaProviderAttachment) {
+      throw new Error("Cannot reserve invalid native NVIDIA provider attachment identity");
+    }
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
       route.hostLocalInferenceProvenance !== undefined &&
@@ -630,7 +681,7 @@ export function reserveSandboxInferenceRoute(
     if (existing?.hostLocalInferenceProvenance !== undefined && !sameExplicitHostLocalRoute) {
       throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
     }
-    if (existing?.pendingRouteReservation === true) {
+    if (existing?.pendingRouteReservation === true && !abandoned) {
       const sameReservation =
         (sameExplicitHostLocalRoute &&
           existing.reservationSessionId === undefined &&
@@ -647,6 +698,10 @@ export function reserveSandboxInferenceRoute(
           isDeepStrictEqual(
             existing.hostLocalInferenceProvenance,
             route.hostLocalInferenceProvenance ?? existing.hostLocalInferenceProvenance,
+          ) &&
+          isDeepStrictEqual(
+            existing.nativeNvidiaProviderAttachment,
+            nativeNvidiaProviderAttachment ?? existing.nativeNvidiaProviderAttachment,
           ) &&
           isDeepStrictEqual(
             normalizeInferenceSelection(existing),
@@ -684,6 +739,9 @@ export function reserveSandboxInferenceRoute(
       endpointSource: normalized.endpointSource,
       credentialEnv: normalized.credentialEnv,
       preferredInferenceApi: normalized.preferredInferenceApi,
+      nativeNvidiaProviderAttachment: isNativeNvidiaProvider(normalized.provider)
+        ? (nativeNvidiaProviderAttachment ?? existing?.nativeNvidiaProviderAttachment)
+        : undefined,
       ...(route.hostLocalInferenceReceipt !== undefined
         ? { hostLocalInferenceReceipt: route.hostLocalInferenceReceipt }
         : {}),
@@ -872,6 +930,28 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
     }
     data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
+    return true;
+  });
+}
+
+/** Publish a pending registration only while its complete staged row remains current. */
+export function finalizePendingSandboxRegistrationIfCurrent(expected: SandboxEntry): boolean {
+  const expectedSnapshot = JSON.parse(JSON.stringify(expected)) as SandboxEntry;
+  if (
+    expectedSnapshot.pendingRouteReservation !== true ||
+    expectedSnapshot.pendingCreateIdentity !== undefined
+  ) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[expectedSnapshot.name];
+    if (!current || !isDeepStrictEqual(current, expectedSnapshot)) return false;
+    data.sandboxes[expectedSnapshot.name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+    };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, expectedSnapshot.name));
     return true;
   });
 }

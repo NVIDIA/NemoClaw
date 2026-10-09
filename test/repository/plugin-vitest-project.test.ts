@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -74,10 +74,19 @@ describe("plugin Vitest project contract", () => {
   it("keeps plugin production and test TypeScript projects disjoint", () => {
     const productionFiles = listedTypeScriptFiles("nemoclaw/tsconfig.json");
     const testFiles = listedTypeScriptFiles("nemoclaw/tsconfig.test.json");
+    const typecheck = spawnSync("npm", ["--prefix", "nemoclaw", "run", "typecheck"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    });
+    const typecheckOutput = [typecheck.stdout, typecheck.stderr].join("\n");
 
     expect(productionFiles.some((file) => file.endsWith(".test.ts"))).toBe(false);
     expect(testFiles).toContain(path.join(repositoryRoot, "nemoclaw", "src", "register.test.ts"));
     expect(testFiles).toContain(path.join(repositoryRoot, "nemoclaw", "vitest.config.ts"));
     expect(testFiles).toContain(path.join(repositoryRoot, "nemoclaw", "vitest.project.ts"));
+    expect(typecheck.error).toBeUndefined();
+    expect(typecheck.status, typecheckOutput).toBe(0);
+    expect(typecheckOutput).toContain("-p tsconfig.json");
+    expect(typecheckOutput).toContain("-p tsconfig.test.json");
   });
 });

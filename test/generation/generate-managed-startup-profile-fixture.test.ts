@@ -78,7 +78,7 @@ describe("generate-managed-startup-profile-fixture.mts CLI", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(profile.agent).toBe(agent);
-    expect(profile.inference.model).toBe(DEFAULT_MODEL);
+    expect(profile.inference!.model).toBe(DEFAULT_MODEL);
     expect(profile.proxy.hostHttpUrl).toBe(MANAGED_STARTUP_E2E_HTTP_PROXY);
     expect(profile.proxy.hostHttpsUrl).toBe(MANAGED_STARTUP_E2E_HTTPS_PROXY);
     expect(profile.proxy.hostNoProxy).toEqual([...MANAGED_STARTUP_E2E_NO_PROXY].sort());
@@ -100,7 +100,7 @@ describe("generate-managed-startup-profile-fixture.mts CLI", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(profile.agent).toBe(agent);
-      expect(profile.inference.model).toBe(CHANGED_MODEL);
+      expect(profile.inference!.model).toBe(CHANGED_MODEL);
       expect(profile.proxy.hostHttpUrl).toBeNull();
       expect(profile.proxy.hostHttpsUrl).toBeNull();
       expect(profile.proxy.hostNoProxy).toEqual([]);

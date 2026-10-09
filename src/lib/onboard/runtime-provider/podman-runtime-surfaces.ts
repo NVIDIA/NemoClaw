@@ -398,11 +398,8 @@ export function createCurrentPodmanOperationEngine(
         HOME: environment.HOME ?? os.homedir(),
         PATH: environment.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ...(environment.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: environment.XDG_RUNTIME_DIR } : {}),
-        ...(operation === "managed-bootstrap" && environment.CONTAINERS_CONF
-          ? { CONTAINERS_CONF: environment.CONTAINERS_CONF }
-          : {}),
-        ...(operation === "managed-bootstrap" && environment.CONTAINERS_STORAGE_CONF
-          ? { CONTAINERS_STORAGE_CONF: environment.CONTAINERS_STORAGE_CONF }
+        ...(operation === "external-image-preparation" && environment.REGISTRY_AUTH_FILE
+          ? { REGISTRY_AUTH_FILE: environment.REGISTRY_AUTH_FILE }
           : {}),
       }),
     });
@@ -426,36 +423,6 @@ export function createCurrentPodmanOperationEngine(
       timeout?: number,
     ) => resolve().captureHost(args, timeout),
     assertAuthority: () => resolve().assertAuthority(),
-    ...(operation === "managed-bootstrap"
-      ? {
-          prepareManagedWorkspaceRoot: (
-            input: Parameters<
-              NonNullable<PodmanBoundContainerEngine["prepareManagedWorkspaceRoot"]>
-            >[0],
-          ) => {
-            const prepare = resolve().prepareManagedWorkspaceRoot;
-            if (!prepare) {
-              throw new Error(
-                "Podman managed-bootstrap engine did not expose workspace-root preparation.",
-              );
-            }
-            return prepare(input);
-          },
-          prepareManagedVolumeRoot: (
-            input: Parameters<
-              NonNullable<PodmanBoundContainerEngine["prepareManagedVolumeRoot"]>
-            >[0],
-          ) => {
-            const prepare = resolve().prepareManagedVolumeRoot;
-            if (!prepare) {
-              throw new Error(
-                "Podman managed-bootstrap engine did not expose volume-root preparation.",
-              );
-            }
-            return prepare(input);
-          },
-        }
-      : {}),
   });
 }
 
@@ -531,6 +498,7 @@ function observePodmanRuntime(
   sandbox: SandboxEntry,
   providerId: string,
   engine: PodmanBoundContainerEngine,
+  timeoutMs?: number,
 ) {
   if (sandbox.openshellDriver !== providerId) {
     throw new PodmanRuntimeSurfaceError(
@@ -539,7 +507,7 @@ function observePodmanRuntime(
   }
   let container: PodmanManagedContainer | null;
   try {
-    container = observePodmanManagedContainer(engine, sandbox.name);
+    container = observePodmanManagedContainer(engine, sandbox.name, timeoutMs);
   } catch (error) {
     throw new PodmanRuntimeSurfaceError(error instanceof Error ? error.message : String(error));
   }
@@ -668,7 +636,8 @@ export function createPodmanRuntimeProviderSnapshotSurface(
     const { createRuntimeProviderSnapshotSurface } =
       require("./snapshot") as typeof import("./snapshot");
     return createRuntimeProviderSnapshotSurface("podman", {
-      observe: (sandbox, providerId) => observePodmanRuntime(sandbox, providerId, engine),
+      observe: (sandbox, providerId, timeoutMs) =>
+        observePodmanRuntime(sandbox, providerId, engine, timeoutMs),
       restoreManagedProfile: (sandbox, authority, runtime) =>
         restoreManagedProfile(sandbox, authority, runtime, engine),
     }) as SupportedSnapshotSurface;
@@ -696,7 +665,7 @@ export function planOwnedPodmanWorkloadCleanup(
   if (!workload || workload.kind === "native-artifact") {
     return { action: "retain", reason: "no-owned-image" };
   }
-  if (workload.kind === "managed-image") {
+  if (workload.shared === true) {
     return { action: "retain", reason: "shared-image" };
   }
   if (workload.reference === null) return { action: "retain", reason: "no-owned-image" };
