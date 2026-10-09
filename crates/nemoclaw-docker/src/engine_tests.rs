@@ -10,7 +10,8 @@ async fn docker_transport_distinguishes_confirmed_absence_from_failed_observatio
         (200, "{", false),
     ] {
         let server =
-            crate::fixture::Fixture::start(move |_| Some((status, body.as_bytes().to_vec()))).await;
+            crate::fixture::Fixture::engine(move |_| Some((status, body.as_bytes().to_vec())))
+                .await;
         let engine = Engine::connect(&server.endpoint).unwrap();
         let observed = engine.container("owned").await;
         if absent {

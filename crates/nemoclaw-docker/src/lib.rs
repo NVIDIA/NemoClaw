@@ -7,7 +7,7 @@ pub mod credentials;
 mod endpoint;
 #[cfg(feature = "client")]
 mod engine;
-#[cfg(all(test, unix, feature = "client"))]
+#[cfg(all(test, feature = "client"))]
 mod fixture;
 #[cfg(feature = "client")]
 mod ssh;

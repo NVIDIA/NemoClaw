@@ -49,6 +49,24 @@ impl Fixture {
             task,
         }
     }
+    /// Serve a Docker-style engine API at an endpoint NemoClaw reaches on this
+    /// platform: a Unix socket, or elsewhere `ssh://127.0.0.1:PORT`, which
+    /// the `nemoclaw-fixture-ssh` relay forwards to a loopback port.
+    pub async fn engine(
+        handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+    ) -> Self {
+        #[cfg(unix)]
+        {
+            Self::start(handler).await
+        }
+        #[cfg(not(unix))]
+        {
+            relay_as_ssh();
+            let mut fixture = Self::start_tcp(handler).await;
+            fixture.endpoint = fixture.endpoint.replacen("http://", "ssh://", 1);
+            fixture
+        }
+    }
     /// Serve on an ephemeral loopback port; `endpoint` is `http://127.0.0.1:PORT`.
     pub async fn start_tcp(
         mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
@@ -67,6 +85,45 @@ impl Fixture {
             task,
         }
     }
+}
+/// Put the relay first on this process's `PATH` as `ssh`, once. The relay is
+/// built beside the test executables, which live in the target's `deps`.
+#[cfg(not(unix))]
+fn relay_as_ssh() {
+    static ONCE: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| {
+        let executable = std::env::current_exe().unwrap();
+        let relay = executable
+            .parent()
+            .and_then(std::path::Path::parent)
+            .unwrap()
+            .join(format!(
+                "nemoclaw-fixture-ssh{}",
+                std::env::consts::EXE_SUFFIX
+            ));
+        assert!(
+            relay.is_file(),
+            "{} is missing; build it with cargo build -p nemoclaw-test-fixtures",
+            relay.display()
+        );
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::copy(
+            &relay,
+            directory
+                .path()
+                .join(format!("ssh{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::env::join_paths(
+            std::iter::once(directory.path().to_owned()).chain(std::env::split_paths(&path)),
+        )
+        .unwrap();
+        // SAFETY: only platforms without Unix sockets reach this, and their
+        // environment functions are synchronized.
+        unsafe { std::env::set_var("PATH", path) };
+        directory
+    });
 }
 async fn serve(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,

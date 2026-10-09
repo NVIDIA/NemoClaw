@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A read client for one Docker or Podman engine, over a local socket or SSH.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "engine_tests.rs"]
 mod tests;
 use bollard::{
