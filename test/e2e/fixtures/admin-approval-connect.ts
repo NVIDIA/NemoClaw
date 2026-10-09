@@ -12,6 +12,17 @@ const ADMIN_APPROVAL_CONNECT_SH = readFileSync(
   "utf8",
 ).trimEnd();
 
+export function adminApprovalBody(
+  cronName: string,
+  expectedRequestId?: string,
+  verifyCronConsumer = true,
+): string {
+  return ADMIN_APPROVAL_CONNECT_SH.replace("__NEMOCLAW_ADMIN_CRON_NAME__", shellQuote(cronName))
+    .replace("__NEMOCLAW_ADMIN_EXPECTED_REQUEST_ID__", shellQuote(expectedRequestId ?? ""))
+    .replace("__NEMOCLAW_ADMIN_VERIFY_CRON__", verifyCronConsumer ? "1" : "0")
+    .replace("__NEMOCLAW_ADMIN_REQUEST_SELECTOR_PY__", ADMIN_REQUEST_SELECTOR_PY);
+}
+
 export function adminApprovalConnectScript(
   cliPath: string,
   sandboxName: string,
@@ -25,13 +36,7 @@ export function adminApprovalConnectScript(
 ): string {
   const cli = shellQuote(cliPath);
   const sandbox = shellQuote(sandboxName);
-  const body = ADMIN_APPROVAL_CONNECT_SH.replace(
-    "__NEMOCLAW_ADMIN_CRON_NAME__",
-    shellQuote(cronName),
-  )
-    .replace("__NEMOCLAW_ADMIN_EXPECTED_REQUEST_ID__", shellQuote(expectedRequestId ?? ""))
-    .replace("__NEMOCLAW_ADMIN_VERIFY_CRON__", verifyCronConsumer ? "1" : "0")
-    .replace("__NEMOCLAW_ADMIN_REQUEST_SELECTOR_PY__", ADMIN_REQUEST_SELECTOR_PY);
+  const body = adminApprovalBody(cronName, expectedRequestId, verifyCronConsumer);
   const digest = createHash("sha256").update(body).digest("hex");
   // Read once and verify those bytes before executing them in the prepared
   // shell. A replaced temporary file must never become an approval command.

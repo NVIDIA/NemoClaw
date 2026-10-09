@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -22,6 +22,7 @@ import type {
 } from "../manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../persistence";
 import { MessagingSetupApplier } from "./setup-applier";
+import { messagingSandboxFiles } from "../../../../test/support/messaging-sandbox-files";
 import {
   MESSAGING_SETUP_APPLIER_ENV_KEY,
   type MessagingOpenShellRunner,
@@ -773,18 +774,7 @@ describe("MessagingSetupApplier", () => {
         "",
       ].join("\n"),
     };
-    // Branchless on purpose: the growth guardrail rejects new if statements in
-    // changed test files, and this mirrors the reader/writer shape already used
-    // above.
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const target = String(args.at(-1));
-      const reading = args.includes("cat") && options?.input === undefined;
-      const written = options?.input;
-      Object.assign(files, written === undefined ? {} : { [target]: written });
-      return reading
-        ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
-        : { status: written === undefined ? 1 : 0 };
-    };
+    const runOpenshell = messagingSandboxFiles(files);
 
     await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
 
@@ -814,15 +804,7 @@ describe("MessagingSetupApplier", () => {
         "",
       ].join("\n"),
     };
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const target = String(args.at(-1));
-      const reading = args.includes("cat") && options?.input === undefined;
-      const written = options?.input;
-      Object.assign(files, written === undefined ? {} : { [target]: written });
-      return reading
-        ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
-        : { status: written === undefined ? 1 : 0 };
-    };
+    const runOpenshell = messagingSandboxFiles(files);
 
     expect(plan.agentRender.some((render) => render.target === "~/.hermes/.env")).toBe(false);
 
@@ -833,19 +815,26 @@ describe("MessagingSetupApplier", () => {
     expect(renderedEnv).toContain("OPERATOR_OWNED=keep-me");
   });
 
+  it.each([
+    { status: 1, stderr: "restored config cannot be read" },
+    { status: null, signal: "SIGTERM" },
+  ])("refuses to replace restored Hermes config after a failed read: %j", async (failure) => {
+    const plan = await buildOnboardPlan(ALL_CHANNEL_ENV, ["teams"], "hermes");
+    // Both the read and the absence check fail: the file is not safely absent.
+    const runOpenshell = vi.fn<MessagingOpenShellRunner>().mockReturnValue(failure);
+    const result = MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    await expect(result).rejects.toThrow("Failed to read messaging agent config");
+    expect(runOpenshell.mock.calls.filter(([, options]) => options?.input !== undefined)).toEqual(
+      [],
+    );
+  });
+
   it("renders every built-in Hermes credential and allowlist through the sandbox applier", async () => {
     const plan = await buildOnboardPlan(ALL_CHANNEL_ENV, ALL_CHANNELS, "hermes");
     const files: Record<string, string> = {};
     const providers = new Map<string, string>();
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const target = String(args.at(-1));
-      const reading = args.includes("cat") && options?.input === undefined;
-      const written = options?.input;
-      Object.assign(files, written === undefined ? {} : { [target]: written });
-      return reading
-        ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
-        : { status: written === undefined ? 1 : 0 };
-    };
+    const runOpenshell = messagingSandboxFiles(files);
 
     const credentialResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: ALL_CHANNEL_ENV,

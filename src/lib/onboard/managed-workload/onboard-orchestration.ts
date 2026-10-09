@@ -461,7 +461,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
     readonly skipProviderEffects?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
-    readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
     readonly getHermesToolGatewayProviderName: (sandboxName: string) => string;
     readonly discloseInitialSandboxPolicy: (policy: InitialSandboxPolicy) => void;
@@ -551,7 +550,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     messagingTokenDefs: [...messagingTokenDefs],
     messagingConfig:
       input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),
-    runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
     getHermesToolGatewayProviderName: input.plan.getHermesToolGatewayProviderName,
     discloseInitialSandboxPolicy: input.plan.discloseInitialSandboxPolicy,

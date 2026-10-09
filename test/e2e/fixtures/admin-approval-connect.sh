@@ -27,13 +27,24 @@ cron_name=__NEMOCLAW_ADMIN_CRON_NAME__
 expected_request_id=__NEMOCLAW_ADMIN_EXPECTED_REQUEST_ID__
 verify_cron=__NEMOCLAW_ADMIN_VERIFY_CRON__
 emit_admin_diagnostic() {
-  python3 - "$1" <<'PY_ADMIN_DIAGNOSTIC'
+  python3 - "$1" "${2:-command}" <<'PY_ADMIN_DIAGNOSTIC'
 import re, sys
 from pathlib import Path
 try:
     with Path(sys.argv[1]).open('rb') as stream:
         raw=stream.read(65536).decode('utf-8', errors='replace')
 except FileNotFoundError: raw=''
+# Emit only fixed categories, never device records, identities, tokens or traceback text.
+selection_checks=(
+    ('selection-state-read', r'canonical pairing-state|canonical device state|canonical primary device identity|FileNotFoundError|PermissionError|sqlite3\.'),
+    ('selection-local-identity', r'local CLI identity'),
+    ('selection-pending-count', r'expected exactly one pending request, found [0-9]+'),
+    ('selection-request-binding', r'pending admin request (?:has an invalid requestId|does not match the triggered request)'),
+    ('selection-paired-binding', r'paired device does not belong to the expected CLI operator|cron requestId (?:must match exactly one paired device|public key does not match its paired device)'),
+    ('selection-client-role', r'does not belong to the expected CLI operator|roles? (?:must be|contains|is invalid)'),
+    ('selection-scopes', r'operator\.admin was already granted before explicit approval|scopes?|paired tokens'),
+    ('selection-response', r'device state must be an object|records must be an array of objects|JSONDecodeError'),
+)
 checks=(
     ('timeout', r'timed?\s*out|timeout'),
     ('pairing-required', r'device pairing|required.*pairing|pairing required'),
@@ -42,6 +53,7 @@ checks=(
     ('gateway-unavailable', r'gateway|connection|econn|socket|network'),
     ('invalid-response', r'invalid|parse|json'),
 )
+if sys.argv[2] == 'selection': checks=selection_checks + checks
 label=next((name for name, pattern in checks if re.search(pattern, raw, re.IGNORECASE)), 'command-failed' if raw.strip() else 'no-output')
 print(f'ADMIN_DIAGNOSTIC={label}', file=sys.stderr)
 PY_ADMIN_DIAGNOSTIC
@@ -89,7 +101,7 @@ if ! python3 - "$devices_json" "$request_id_file" "$expected_request_id" 2>"$sel
 __NEMOCLAW_ADMIN_REQUEST_SELECTOR_PY__
 PY_ADMIN_REQUEST
   echo "ADMIN_REQUEST_SELECTION_FAILED" >&2
-  emit_admin_diagnostic "$selector_err"
+  emit_admin_diagnostic "$selector_err" selection
   exit 26
 fi
 request_id="$(cat "$request_id_file")"

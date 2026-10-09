@@ -616,7 +616,6 @@ describe("managed workload onboard orchestration", () => {
       plan: {
         intent: { sandboxGpuLogMessage: null },
         rebindMessagingTokenDefs: async () => [],
-        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(() => "unused"),
         discloseInitialSandboxPolicy: vi.fn(),
@@ -699,7 +698,6 @@ describe("managed workload onboard orchestration", () => {
       plan: {
         intent: { sandboxGpuLogMessage: null },
         rebindMessagingTokenDefs: async () => [],
-        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(() => "unused"),
         discloseInitialSandboxPolicy: vi.fn(),
@@ -1022,7 +1020,6 @@ describe("managed workload onboard orchestration", () => {
         intent: {},
         portableLifecycle: testCase.portableLifecycle === true,
         rebindMessagingTokenDefs: async () => [],
-        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(() => "unused"),
         discloseInitialSandboxPolicy: vi.fn(),

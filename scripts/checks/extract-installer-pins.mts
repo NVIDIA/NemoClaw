@@ -60,6 +60,7 @@ type OpenShellPinLayout = {
 
 type OpenShellReleaseTrust = {
   brevTemplateSha256: readonly string[];
+  featureGateTemplateSha256?: readonly string[];
   formula: {
     asset: "openshell.rb";
     sha256: string;
@@ -592,6 +593,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    featureGateTemplateSha256: ["3404b35030ce0adef3998dcdedf27245610534ddefaa741e125539b3d2e1a735"],
     version: "0.0.116",
   },
   {
@@ -646,6 +648,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
+    // #12603's reviewed split-supervisor check accepts only the selected sandbox hashes.
+    featureGateTemplateSha256: ["3a402736ff8a2e02b5b26382521b4a4b9774046856c42f5be093b56480d6711e"],
     version: "0.1.2",
   },
 ] as const;
@@ -696,6 +700,9 @@ function validateTrustedRelease(release: OpenShellReleaseTrust): void {
     release.installerTemplateSha256.some((sha256) => !SHA256_PATTERN.test(sha256)) ||
     release.brevTemplateSha256.length === 0 ||
     release.brevTemplateSha256.some((sha256) => !SHA256_PATTERN.test(sha256)) ||
+    (release.featureGateTemplateSha256 !== undefined &&
+      (release.featureGateTemplateSha256.length === 0 ||
+        release.featureGateTemplateSha256.some((sha256) => !SHA256_PATTERN.test(sha256)))) ||
     release.sandboxBuilds.some((pin) => !SHA256_PATTERN.test(pin.sha256))
   ) {
     fail(`trusted OpenShell v${release.version} template or sandbox record is invalid`);
@@ -1764,15 +1771,14 @@ function parseCliOptions(argv: string[]): CliOptions {
   return { blueprint, brevInstaller, format, installer, supervisorRuntime };
 }
 
-function runCli(): void {
-  const options = parseCliOptions(process.argv.slice(2));
-  const blueprintSource = readInstallerInput(options.blueprint, "blueprint");
-  const installerSource = readInstallerInput(options.installer, "installer");
-  const brevInstallerSource = readInstallerInput(options.brevInstaller, "Brev launchable");
-  const supervisorRuntimeSource = readInstallerInput(
-    options.supervisorRuntime,
-    "supervisor runtime",
-  );
+export function validateInstallerSources(sources: {
+  blueprintSource: string;
+  installerSource: string;
+  brevInstallerSource: string;
+  supervisorRuntimeSource: string;
+}) {
+  const { blueprintSource, installerSource, brevInstallerSource, supervisorRuntimeSource } =
+    sources;
   const installerPins = extractInstallerPins(installerSource, {
     functionName: "openshell_pinned_sha256",
     sourceLabel: "installer",
@@ -1851,6 +1857,65 @@ function runCli(): void {
       fail(`installer pin-table release ${releaseVersion} must match ${label} ${runtimeVersion}`);
     }
   }
+  return { releaseVersion, pins, installerReleases, installerTemplateSha256, brevTemplateSha256 };
+}
+
+/** Validate the host feature-check module before protected E2E adopts its template. */
+export function validateOpenShellFeatureGateSource(source: string, releaseVersion: string): void {
+  const release = trustedRelease(releaseVersion);
+  if (Buffer.byteLength(source) > MAX_INSTALLER_INPUT_BYTES || source.includes("\0")) {
+    fail("feature gate source is invalid or too large");
+  }
+  const header = "const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([\n";
+  const start = source.indexOf(header);
+  if (start < 0 || source.indexOf(header, start + header.length) !== -1) {
+    fail("feature gate must contain one literal sandbox build map");
+  }
+  const bodyStart = start + header.length;
+  const end = source.indexOf("\n]);", bodyStart);
+  if (end < 0) fail("feature gate sandbox build map is unterminated");
+  const pins = source
+    .slice(bodyStart, end)
+    .split("\n")
+    .flatMap((line) => {
+      if (/^  \/\/[^\r\n]*$/u.test(line)) return [];
+      const match = /^  \["([a-f0-9]{64})", "([0-9]+\.[0-9]+\.[0-9]+)"\],$/u.exec(line);
+      if (!match) fail("feature gate sandbox build map must contain only literal pins");
+      return [{ sha256: match[1]!, version: match[2]! }];
+    });
+  const allowed = new Set(
+    TRUSTED_OPENSHELL_RELEASES.flatMap((record) =>
+      record.sandboxBuilds.map((pin) => `${record.version}:${pin.sha256}`),
+    ),
+  );
+  const actual = new Set(pins.map((pin) => `${pin.version}:${pin.sha256}`));
+  if (
+    new Set(pins.map((pin) => pin.sha256)).size !== pins.length ||
+    pins.some((pin) => !allowed.has(`${pin.version}:${pin.sha256}`)) ||
+    release.sandboxBuilds.length === 0 ||
+    release.sandboxBuilds.some((pin) => !actual.has(`${releaseVersion}:${pin.sha256}`))
+  ) {
+    fail(
+      "feature gate sandbox identities must be unique, base-trusted and include the selected release",
+    );
+  }
+  const normalized =
+    source.slice(0, bodyStart) + "<normalized-sandbox-build-pins>" + source.slice(end);
+  const digest = createHash("sha256").update(normalized).digest("hex");
+  if (!release.featureGateTemplateSha256?.includes(digest)) {
+    fail(`feature gate operational template is not base-trusted; actual_sha256=${digest}`);
+  }
+}
+
+function runCli(): void {
+  const options = parseCliOptions(process.argv.slice(2));
+  const { pins, installerReleases, installerTemplateSha256, brevTemplateSha256 } =
+    validateInstallerSources({
+      blueprintSource: readInstallerInput(options.blueprint, "blueprint"),
+      installerSource: readInstallerInput(options.installer, "installer"),
+      brevInstallerSource: readInstallerInput(options.brevInstaller, "Brev launchable"),
+      supervisorRuntimeSource: readInstallerInput(options.supervisorRuntime, "supervisor runtime"),
+    });
   if (options.format === "json") {
     process.stdout.write(
       `${JSON.stringify(
