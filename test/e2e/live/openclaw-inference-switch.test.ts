@@ -564,9 +564,15 @@ async function assertRegistryAndSession(
       expect(sandbox?.preferredInferenceApi).toBe("anthropic-messages");
       break;
     default:
-      expect(sandbox?.endpointUrl).toBeNull();
-      expect(sandbox?.credentialEnv).toBe(sandbox?.provider === SWITCH_PROVIDER ? null : undefined);
-      expect(sandbox?.preferredInferenceApi).toBeNull();
+      expect(sandbox?.endpointUrl).toBe(
+        SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ? NVIDIA_HOSTED_NATIVE_ENDPOINT : null,
+      );
+      expect(sandbox?.credentialEnv).toBe(
+        SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ? "NVIDIA_INFERENCE_API_KEY" : null,
+      );
+      expect(sandbox?.preferredInferenceApi).toBe(
+        SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ? "openai-completions" : null,
+      );
   }
 
   const sessionPath = path.join(home, ".nemoclaw", "onboard-session.json");
