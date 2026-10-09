@@ -653,6 +653,7 @@
         "test/e2e/live/public-nvidia-switch-provider.ts"
       ],
       "fast": [
+        "src/lib/actions/inference-set-patch-hermes.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",

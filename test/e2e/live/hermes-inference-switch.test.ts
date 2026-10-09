@@ -122,7 +122,9 @@ test(
 
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
-    const mockBaseline = mockAnthropicSwitchEnabled()
+    const useMockBaseline =
+      mockAnthropicSwitchEnabled() || SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
+    const mockBaseline = useMockBaseline
       ? await startFakeOpenAiCompatibleServer({
           apiKey: MOCK_BASELINE_API_KEY,
           chatContent: "PONG",
