@@ -1272,6 +1272,15 @@ describe("Hermes Portable Ollama inference activation", () => {
       expected: "gateway provider journal is malformed",
     },
     {
+      name: "non-string transaction identity",
+      serialize: (journal: ReturnType<typeof gatewayJournal>) =>
+        `${JSON.stringify({
+          ...journal,
+          intent: { ...journal.intent, transactionId: [journal.intent.transactionId] },
+        })}\n`,
+      expected: "gateway provider journal identity is malformed",
+    },
+    {
       name: "malformed transaction identity",
       serialize: (journal: ReturnType<typeof gatewayJournal>) => {
         journal.intent.transactionId = "invalid";

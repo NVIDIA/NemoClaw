@@ -71,7 +71,10 @@ function portableProviderIdentity(options: {
       );
     }
   }
-  if (transactionId !== undefined && !NETWORK_ID.test(transactionId)) {
+  if (
+    transactionId !== undefined &&
+    (typeof transactionId !== "string" || !NETWORK_ID.test(transactionId))
+  ) {
     throw portableGatewayStateConflict(
       "Hermes Portable inference gateway provider journal identity is malformed.",
     );
