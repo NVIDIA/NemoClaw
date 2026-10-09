@@ -167,6 +167,12 @@ The dummy, OpenClaw, Hermes, and Pi also run shared configuration, generation, n
 Native profiles use isolated local inference; images without a selected profile report lifecycle coverage as skipped.
 Readiness qualification is separate and reports unsupported native health as skipped unless `--require-ready` requires it to pass.
 The workflow requires dummy readiness and retains the dummy-specific readiness-failure test; it separately checks OpenClaw reconfiguration and Hermes security.
+
+The image workflow first runs `nemoclaw-build changes images` and skips its remaining steps when the change cannot affect the images; the `Build` checks still pass.
+A file inside a crate counts when that crate is part of the image build: `nemoclaw-build` without default features, or the Ollama proxy, with their dependencies.
+[Path rules](../../.config/determinator-images.toml) classify other files by the `.dockerignore` build context.
+Unclassified files, dependency or feature changes in the image build, manual runs, and failed analyses run every step.
+Commit, then run `cargo run -p nemoclaw-build --no-default-features -- changes images --base origin/v1` to see the decision and its reason.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
 
