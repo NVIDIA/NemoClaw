@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
+import { rebuildBackupPhase } from "../../../../test/helpers/rebuild-flow-harness";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -498,7 +499,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
   });
 
   it("aborts if the provider credential disappears at the delete edge (#6114)", async () => {
-    let credentialHydrations = 0;
+    let credentialAvailable = true;
     const harness = createRebuildFlowHarness({
       sandboxEntry: {
         provider: "compatible-endpoint",
@@ -507,16 +508,20 @@ describe("rebuildSandbox flow: credential preflight", () => {
         endpointUrl: "https://inference.example.test/v1",
         preferredInferenceApi: "openai-completions",
       },
-      hydrateCredentialEnv: () => {
-        credentialHydrations += 1;
-        return credentialHydrations < 3 ? "host-provider-key" : null;
-      },
+      hydrateCredentialEnv: () => (credentialAvailable ? "host-provider-key" : null),
       runOpenshell: providerRuntime([]),
       staleRecovery: false,
     });
     configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
       endpointUrl: "https://inference.example.test/v1",
       preferredInferenceApi: "openai-completions",
+    });
+
+    const backupPhase = rebuildBackupPhase.runRebuildBackupPhase;
+    vi.spyOn(rebuildBackupPhase, "runRebuildBackupPhase").mockImplementation(async (args) => {
+      const result = await backupPhase(args);
+      credentialAvailable = false;
+      return result;
     });
 
     await expect(

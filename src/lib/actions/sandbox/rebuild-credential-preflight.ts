@@ -9,7 +9,9 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
+  validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
+  type HostCredentialTarget,
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
 
@@ -147,6 +149,23 @@ async function preflightHermesProviderCredentials(
   return false;
 }
 
+export async function preflightRebuildHostCredential(
+  target: HostCredentialTarget,
+  credentialValue: string | null,
+  bail: RebuildBail,
+): Promise<boolean> {
+  if (!credentialValue || (await validateRebuildHostInferenceCredential(target, credentialValue)))
+    return true;
+  console.error("");
+  console.error(
+    `  ${RD}Rebuild preflight failed:${R} the host inference credential could not be validated.`,
+  );
+  console.error("  Check the host inference credential and recorded endpoint, then retry rebuild.");
+  console.error("  Sandbox is untouched — no data was lost.");
+  bail("Host inference credential validation failed");
+  return false;
+}
+
 export async function preflightRebuildCredentials(
   sb: RebuildSandboxEntry,
   log: RebuildLog,
@@ -163,9 +182,19 @@ export async function preflightRebuildCredentials(
     sb.nativeNvidiaProviderAttachment,
   );
   if (nativeAttachment) {
-    return checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
-      nativeAttachment,
-    });
+    if (
+      !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+        nativeAttachment,
+      }))
+    )
+      return false;
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: rebuildCredentialEnv },
+      rebuildCredentialEnv
+        ? rebuildOnboardDependencies.hydrateCredentialEnv(rebuildCredentialEnv)
+        : null,
+      bail,
+    );
   }
 
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
@@ -209,7 +238,13 @@ export async function preflightRebuildCredentials(
     );
     return true;
   }
-  if (credentialValue) return true;
+  if (credentialValue) {
+    return preflightRebuildHostCredential(
+      { ...sb, credentialEnv: rebuildCredentialEnv },
+      credentialValue,
+      bail,
+    );
+  }
 
   console.error("");
   console.error(`  ${RD}Rebuild preflight failed:${R} provider credential not found.`);
