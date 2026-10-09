@@ -168,6 +168,11 @@ test(
 
     progress.phase("install baseline Hermes runtime");
     const install = await installHermes(host, apiKey, installEnv);
+    await host.recordSandboxContainerDiscoveryOnFailure(
+      SANDBOX_NAME,
+      install.exitCode,
+      redactionValues,
+    );
     expect(install.exitCode, resultText(install)).toBe(0);
     expectAuthenticatedBaselineInventoryRequest(mockBaseline);
     const baselineRoute = mockBaseline
