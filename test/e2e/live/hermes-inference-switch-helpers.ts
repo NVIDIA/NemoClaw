@@ -103,6 +103,15 @@ export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = proce
   );
 }
 
+export function useLocalHermesInferenceBaseline(
+  runtimeEnv: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
+    mockAnthropicSwitchEnabled(runtimeEnv)
+  );
+}
+
 export function expectAuthenticatedBaselineInventoryRequest(
   baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
 ): void {

@@ -23,6 +23,7 @@ import {
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
+  useLocalHermesInferenceBaseline,
   openAiSurfaceEndpointUrl,
   openshellGatewayName,
   parseInferenceRoute,
@@ -296,7 +297,7 @@ describe("Hermes inference switch command shape", () => {
     ).toThrow();
   });
 
-  it("enables local baseline inference only for the mock Anthropic lane", () => {
+  it("recognizes only the requested mock Anthropic switch", () => {
     const mockAnthropic = {
       NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
@@ -313,6 +314,20 @@ describe("Hermes inference switch command shape", () => {
       mockAnthropicSwitchEnabled({ ...mockAnthropic, NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "0" }),
     ).toBe(false);
     expect(mockAnthropicSwitchEnabled({})).toBe(false);
+  });
+
+  it("uses an authenticated local baseline before native NVIDIA or mock Anthropic switches", () => {
+    expect(useLocalHermesInferenceBaseline({ NEMOCLAW_SWITCH_PROVIDER: "nvidia-prod" })).toBe(true);
+    expect(
+      useLocalHermesInferenceBaseline({
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+        NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      }),
+    ).toBe(true);
+    expect(
+      useLocalHermesInferenceBaseline({ NEMOCLAW_SWITCH_PROVIDER: "compatible-endpoint" }),
+    ).toBe(false);
   });
 
   it("does not retry a successful Hermes response from the wrong model", async () => {
