@@ -55,6 +55,19 @@ Show file/field and source location when available; do not fabricate spans or pr
 Distinguish confirmed resource state from planned actions after partial failure.
 Only promise a diagnostic artifact when one was actually written.
 
+The current text renderer orders a failure as operation and outcome, state location, cause, remaining state, then recovery:
+
+```text
+Apply failed · 3m 41s
+State: /home/alex/.nemoclaw/demo
+
+sandbox/coder: sandbox unavailable: SANDBOX_PHASE_ERROR, reason ControlSupervisorStartFailed, exit code unknown; control supervisor could not start; check the sandbox policy and attached providers; resources retained
+
+Resources retained; sandbox startup failed.
+
+Inspect the sandbox with OpenShell using this deployment's gateway and workspace; collect gateway and supervisor logs before cleanup.
+```
+
 ## Choose implementation scope
 
 Start with the smallest rendering capability that meets the interaction requirements.
