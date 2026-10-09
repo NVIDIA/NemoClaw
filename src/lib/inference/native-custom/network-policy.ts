@@ -15,7 +15,10 @@ export function buildNativeCustomSandboxPolicy(
   const key = "native_custom_inference";
   const entry = {
     name: key,
-    endpoints: profile.endpoints,
+    endpoints: profile.endpoints.map(({ allowed_ips, ...endpoint }) => ({
+      ...endpoint,
+      ...(allowed_ips.length > 0 ? { allowed_ips } : {}),
+    })),
     binaries: profile.binaries.map((path) => ({ path })),
   };
   const existing = parsed.network_policies?.[key];

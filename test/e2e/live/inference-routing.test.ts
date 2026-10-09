@@ -826,19 +826,23 @@ test(
     timeout: CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm live inference prerequisites",
-        "clear the HTTPS pin sandbox",
-        "start the public HTTPS compatible endpoint",
+        "prepare the live HTTPS endpoint",
         "onboard the native HTTPS endpoint",
         "switch to the DNS-backed HTTPS endpoint",
-        "verify pinned route isolation and DNS rebinding",
+        "verify pinned route isolation",
+        "restart and verify a fresh native agent turn",
+        "verify peer attachment and isolation",
+        "verify executable and detached credential denial",
+        "verify DNS rebinding resistance",
         "verify private redirect rejection",
+        "destroy the selected sandbox and verify peer continuity",
         "verify direct native public HTTP routing",
+        "verify final native provider cleanup",
       ],
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
-    progress.phase("confirm live inference prerequisites");
+    progress.phase("prepare the live HTTPS endpoint");
     await requireLivePrerequisites(host, runtimeProvider);
     const model = "nemoclaw-e2e-https-pin";
     const apiKey = "sk-https-pin-TEST-NOT-A-REAL-VALUE";
@@ -849,9 +853,7 @@ test(
     cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
     );
-    progress.phase("clear the HTTPS pin sandbox");
     await cleanupSandbox(host, sandbox, sandboxName);
-    progress.phase("start the public HTTPS compatible endpoint");
     const fake = await startFakeHttpsCompatibleServer({ apiKey, chatContent: "PONG", model });
     cleanup.add("close https-pin fake HTTPS compatible server", async () => {
       try {
@@ -976,7 +978,7 @@ test(
     expect(receipt, "Fresh HTTPS onboarding must publish native authority").toBeDefined();
     expect(receipt.transport?.kind).toBe("https-pin");
     expect(registered.gatewayName).toBe(receipt.transport?.gatewayName);
-    progress.phase("verify pinned route isolation and DNS rebinding");
+    progress.phase("verify pinned route isolation");
     // OpenShell's own network-policy view is a second, independent witness:
     // it must never learn the real upstream hostname either, only the local
     // adapter's host.openshell.internal boundary that everything else here
@@ -1018,6 +1020,7 @@ test(
         { interval: 5_000, timeout: 11_000 },
       )
       .toBe(true);
+    progress.phase("restart and verify a fresh native agent turn");
     const stopped = await runNemoclawCli([sandboxName, "stop"], {
       artifacts,
       artifactName: "tc-inf-11-stop-native",
@@ -1081,6 +1084,7 @@ test(
     );
     expect(nativeTurn.exitCode, resultText(nativeTurn)).toBe(0);
     expect(parseOpenClawAgentText(nativeTurn.stdout)).toMatch(/PONG/u);
+    progress.phase("verify peer attachment and isolation");
     const peerName = inferenceSandboxName("e2e-https-peer");
     cleanup.add(`strict native HTTPS peer cleanup for ${peerName}`, () =>
       cleanupSandbox(host, sandbox, peerName, { strict: true }),
@@ -1118,6 +1122,7 @@ test(
       "https-pin-native-peer-before-detach",
       peerReceipt,
     );
+    progress.phase("verify executable and detached credential denial");
     const securityPayload = JSON.stringify({
       model,
       messages: [{ role: "user", content: "Reply with only: PONG" }],
@@ -1220,6 +1225,7 @@ test(
     // adapter re-resolved DNS per request instead of using the addresses it
     // already pinned, this chat call would fail to connect instead of
     // succeeding.
+    progress.phase("verify DNS rebinding resistance");
     const hostsFixture = await setupDnsRebindingHostsFixture(host, sandboxName, endpointHostname);
     cleanup.add(`restore https-pin DNS rebinding hosts fixture for ${sandboxName}`, () =>
       restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture),
@@ -1295,6 +1301,7 @@ test(
     });
     expect(routeBeforeDestroy.exitCode, resultText(routeBeforeDestroy)).toBe(0);
     expect(routeBeforeDestroy.stdout).toMatch(/HTTP\/1\.[01] 401/u);
+    progress.phase("destroy the selected sandbox and verify peer continuity");
     const destroyed = await runNemoclawCli([sandboxName, "destroy", "--yes"], {
       artifacts,
       artifactName: "tc-inf-11-destroy-native",
@@ -1447,6 +1454,7 @@ test(
             request.path === "/v1/chat/completions",
         ),
     ).toBe(true);
+    progress.phase("verify final native provider cleanup");
     await cleanupSandbox(host, sandbox, peerName, { strict: true });
     const peerProviderAfterDestroy = await sandbox.openshell(
       ["provider", "get", peerReceipt.providerName],

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, expect, it, vi } from "vitest";
+import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
+import { buildNativeCustomSandboxPolicy } from "./network-policy";
 import { prepareNativeCustomInference, restoreNativeCustomInference } from "./transport";
 import { customAttachmentFromPrepared, normalizeNativeCustomProviderAttachment } from "./index";
 import { buildHttpsPinRouteBaseUrl, computeHttpsPinRouteId } from "../https-pin-runtime";
@@ -91,6 +93,11 @@ it("admits the native profile before handing upstream credentials to a sandbox-s
     allowed_ips: [],
   });
   const saved = attachment(selected.prepared);
+  expect(() =>
+    parseAndValidateSandboxPolicy(
+      buildNativeCustomSandboxPolicy("version: 1\nnetwork_policies: {}\n", saved),
+    ),
+  ).not.toThrow();
   expect(normalizeNativeCustomProviderAttachment(saved, "alpha")).toEqual(saved);
   expect(JSON.stringify(saved)).not.toMatch(/host-only-secret|route-only-token/);
   expect(saved.transport).toMatchObject({
