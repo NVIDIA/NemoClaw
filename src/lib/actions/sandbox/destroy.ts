@@ -970,7 +970,6 @@ async function destroySandboxUnlocked(
   );
   let destructiveResult: Awaited<ReturnType<typeof executeSandboxDestroy>>;
   try {
-    telemetryTarget.mutationStarted = true;
     destructiveResult = await executeSandboxDestroy({
       force: normalized.force === true,
       getSandbox: getRegisteredSandbox,
@@ -991,6 +990,9 @@ async function destroySandboxUnlocked(
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
+      onMutationStarted: () => {
+        telemetryTarget.mutationStarted = true;
+      },
     });
   } catch (error) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1058,6 +1060,7 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(destructiveResult.exitCode);
   }
+  telemetryTarget.mutationStarted = true;
   const {
     detachOutcome,
     deleteResult,

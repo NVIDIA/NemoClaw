@@ -281,6 +281,7 @@ type SandboxDestroyExecutionInput = {
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   verifyForwardPortsReleased?: () => boolean | Promise<boolean>;
   stopInferenceResources: () => void;
+  onMutationStarted?: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
@@ -447,10 +448,17 @@ export async function executeSandboxDestroy({
   portableContainerAuthority,
   verifyForwardPortsReleased = () => true,
   stopInferenceResources,
+  onMutationStarted,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
   return withMcpLifecycleLock(sandboxName, async () => {
+    let mutationStarted = false;
+    const markMutationStarted = () => {
+      if (mutationStarted) return;
+      mutationStarted = true;
+      onMutationStarted?.();
+    };
     let destroyRuntimeSelection = mcpRuntimeSelection;
     type IdentityContinuity =
       | { status: "match" }
@@ -728,6 +736,7 @@ export async function executeSandboxDestroy({
     }
     if (!hasHostLocalInferenceOwnership) {
       try {
+        markMutationStarted();
         stopInferenceResources();
       } catch (error) {
         const mcpRecoveryFailure = await restoreMcpForAbort();
@@ -801,6 +810,7 @@ export async function executeSandboxDestroy({
               });
           }
         }
+        markMutationStarted();
         (deps.wipeAgentNativeHome ?? wipeAgentNativeHome)(
           sandboxName,
           sandbox.agent || "openclaw",
@@ -839,6 +849,7 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already have run; inspect those resources before retrying.",
       );
     }
+    markMutationStarted();
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
       : runtimeProvider?.cleanup.supported === true && sandbox
