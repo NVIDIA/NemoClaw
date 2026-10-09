@@ -301,6 +301,9 @@ describe("llama.cpp image PR workflow", () => {
       "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
     );
     expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.authentication"] == "managed-bearer-v1"',
+    );
+    expect(validate.run).toContain(
       'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',
     );
     expect(validate.run).toContain(

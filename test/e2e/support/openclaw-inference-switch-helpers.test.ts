@@ -49,7 +49,7 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
       expect(
         classifyOpenClawPostSwitchInferenceAttempt({
           ...attempt,
-          exitCode: 1,
+          exitCode: 2,
           output: "ETIMEDOUT",
         }),
       ).toEqual({ outcome: "failed", failureClass: "deterministic" });
