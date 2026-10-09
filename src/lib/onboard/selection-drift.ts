@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { SandboxLifecycleHelpers } from "./sandbox-lifecycle";
+
 const MAX_SELECTION_COMPONENT_BYTES = 512;
 const SAFE_SELECTION_COMPONENT = /^[A-Za-z0-9._:/-]+$/u;
 
@@ -33,6 +35,12 @@ export type SelectionDrift = {
   unknown: boolean;
 };
 
+export type GetOpenclawSelectionDrift = (
+  sandboxName: string,
+  provider: string,
+  model: string,
+) => SelectionDrift;
+
 type RunOpenshellForSelection = (
   args: string[],
   opts: { ignoreError: true; stdio: ["ignore", "ignore", "ignore"] },
@@ -42,6 +50,13 @@ export type SelectionConfigReadDeps = {
   runOpenshell: RunOpenshellForSelection;
   tmpDir?: string;
 };
+
+export type GetSelectionDriftWithDeps = (
+  sandboxName: string,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+  deps: SelectionConfigReadDeps,
+) => SelectionDrift;
 
 export interface OpenclawSelectionDriftDepsRuntime {
   runOpenshell: SelectionConfigReadDeps["runOpenshell"];
@@ -54,12 +69,38 @@ export interface OpenclawSelectionDriftDepsRuntime {
   ): Promise<boolean>;
 }
 
+export interface OpenclawSelectionGuardDepsRuntime extends OpenclawSelectionDriftDepsRuntime {
+  getSelectionDrift: GetSelectionDriftWithDeps;
+  inspectSandboxForCreate: SandboxLifecycleHelpers["inspectSandboxForCreate"];
+  isOpenclawReady: SandboxLifecycleHelpers["isOpenclawReady"];
+  isRecreateSandbox(requested?: boolean): boolean;
+}
+
 export function createOpenclawSelectionDriftDeps(runtime: OpenclawSelectionDriftDepsRuntime) {
   return {
     getSelectionDrift: (sandboxName: string, provider: string, model: string) =>
       getSelectionDrift(sandboxName, provider, model, { runOpenshell: runtime.runOpenshell }),
     isNonInteractive: runtime.isNonInteractive,
     confirmRecreateForSelectionDrift: runtime.confirmRecreateForSelectionDrift,
+  };
+}
+
+export function createOpenclawReaderDeps(
+  getSelectionDrift: GetSelectionDriftWithDeps,
+  isOpenclawReady: SandboxLifecycleHelpers["isOpenclawReady"],
+) {
+  return { getSelectionDrift, isOpenclawReady };
+}
+
+export function createOpenclawSelectionGuardDeps(runtime: OpenclawSelectionGuardDepsRuntime) {
+  return {
+    inspectSandboxForCreate: runtime.inspectSandboxForCreate,
+    isOpenclawReady: runtime.isOpenclawReady,
+    getOpenclawSelectionDrift: (sandboxName: string, provider: string, model: string) =>
+      runtime.getSelectionDrift(sandboxName, provider, model, {
+        runOpenshell: runtime.runOpenshell,
+      }),
+    recreateSandbox: runtime.isRecreateSandbox,
   };
 }
 

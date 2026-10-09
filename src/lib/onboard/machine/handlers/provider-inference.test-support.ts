@@ -42,6 +42,17 @@ export const baseSelection: ProviderSelectionResult = {
   nimContainer: null,
 };
 
+export function noOpenclawSelectionDrift() {
+  return {
+    changed: false,
+    providerChanged: false,
+    modelChanged: false,
+    existingProvider: null,
+    existingModel: null,
+    unknown: false,
+  };
+}
+
 /** Mint and activate a provider-recovery receipt bound to one session, as the rebuild assembly would. */
 export function activatedRecoveryReceipt(input: {
   sandboxName: string;

@@ -61,6 +61,9 @@ export interface ProviderInferenceOnboardFlowPhaseOptions<
   providerRecoveryReceipt?: ProviderRecoveryReceipt | null;
   providerRecoveryReceiptLedger?: ReturnType<typeof createProviderRecoveryReceiptLedger>;
   inspectSandboxForCreate: import("../sandbox-lifecycle").SandboxLifecycleHelpers["inspectSandboxForCreate"];
+  isOpenclawReady: import("../sandbox-lifecycle").SandboxLifecycleHelpers["isOpenclawReady"];
+  getOpenclawSelectionDrift: import("../selection-drift").GetOpenclawSelectionDrift;
+  recreateSandbox?: (requested?: boolean) => boolean;
   endpointProvenance: EndpointProvenanceOptions;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
@@ -256,6 +259,12 @@ export function createProviderInferenceOnboardFlowPhase<
       gpuPassthrough: context.gpuPassthrough,
       sandboxName: context.sandboxName,
       requestedSandboxName: context.requestedSandboxName,
+      externalComponentRegistered:
+        context.externalComponent !== null && context.externalComponent !== undefined,
+      recreateSandboxRequested: options.recreateSandbox?.(false) === true,
+      isOpenclawReady: options.isOpenclawReady,
+      getOpenclawSelectionDrift: options.getOpenclawSelectionDrift,
+      inspectSandboxForCreate: options.inspectSandboxForCreate,
       agent: context.agent,
       forceProviderSelection: options.forceProviderSelection,
       forceInferenceSetup: options.forceInferenceSetup,
