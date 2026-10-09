@@ -413,37 +413,42 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn tool_disclosure_cli_export_reapply_and_drift() {
-    for mode in ["direct".to_owned(), "progressive".to_owned()] {
-        let mut document =
-            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
-                .unwrap();
-        document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":if mode == "direct" { serde_json::json!(false) } else { serde_json::json!({"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}) }}}})).unwrap());
-        // Exercise the existing launch-setting drift assertions as well as export/reapply.
-        document.spec.inference_providers[0].api =
-            Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
-        lifecycle(&document.yaml().unwrap()).await;
-    }
+    // Disclosure modes are opaque native settings; agent_tools in the SDK owns
+    // both modes, so one deployment covers their drift detection.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.sandboxes[0]
+        .harness
+        .as_mut()
+        .unwrap()
+        .settings = Some(
+        serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":
+            {"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}}}}))
+        .unwrap(),
+    );
+    // Exercise the existing launch-setting drift assertions as well as export/reapply.
+    document.spec.inference_providers[0].api =
+        Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
+    lifecycle(&document.yaml().unwrap()).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn execution_settings_cli_export_reapply_and_drift() {
-    for heartbeat in [None, Some("0m"), Some("30m")] {
-        let mut document =
-            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
-                .unwrap();
-        document.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .execution = Some(nemoclaw_sdk::config::AgentExecution {
-            timeout_seconds: Some(900),
-        });
-        if let Some(every) = heartbeat {
-            document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"agents":{"defaults":{"heartbeat":{"every":every,"isolatedSession":true}}}}})).unwrap());
-        }
-        lifecycle(&document.yaml().unwrap()).await;
-    }
+    // Heartbeats are opaque native settings, and execution_settings in the SDK
+    // owns the timeout projection, so one deployment covers both.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    let harness = document.spec.sandboxes[0].harness.as_mut().unwrap();
+    harness.execution = Some(nemoclaw_sdk::config::AgentExecution {
+        timeout_seconds: Some(900),
+    });
+    harness.settings = Some(
+        serde_json::from_value(serde_json::json!({"native_config":{"agents":{"defaults":
+            {"heartbeat":{"every":"30m","isolatedSession":true}}}}}))
+        .unwrap(),
+    );
+    lifecycle(&document.yaml().unwrap()).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -479,21 +484,22 @@ async fn hermes_interfaces_sdk_export_reapply_and_drift() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn web_search_cli_export_reapply_and_destroy() {
-    for provider in ["tavily", "brave"] {
+    // Every definition scope compiles to the same targets (web_search in the
+    // SDK), so each provider deploys once, in a different scope.
+    for (provider, inline) in [("tavily", false), ("brave", true)] {
         let mut document =
             Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
                 .unwrap();
-        document.spec.integrations = serde_json::from_value(serde_json::json!({
+        let definitions = serde_json::from_value(serde_json::json!({
             "search":{"kind":"webSearch","provider":provider,"credential":{"env":"SEARCH_KEY"}}
         }))
         .unwrap();
-        document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
-        lifecycle(&document.yaml().unwrap()).await;
-        document.spec.sandboxes[0].integrations = std::mem::take(&mut document.spec.integrations);
-        lifecycle(&document.yaml().unwrap()).await;
-        let sandbox = &mut document.spec.sandboxes[0];
-        sandbox.agent.integration_refs.clear();
-        sandbox.agent.integrations = std::mem::take(&mut sandbox.integrations);
+        if inline {
+            document.spec.sandboxes[0].agent.integrations = definitions;
+        } else {
+            document.spec.integrations = definitions;
+            document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+        }
         lifecycle(&document.yaml().unwrap()).await;
     }
 }
@@ -501,9 +507,12 @@ async fn web_search_cli_export_reapply_and_destroy() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
 async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope() {
-    for input in [
-        include_str!("../../../examples/fabric-openclaw.yaml"),
-        include_str!("../../../examples/hermes-auth.yaml"),
+    for (input, inline_route) in [
+        (
+            include_str!("../../../examples/fabric-openclaw.yaml"),
+            false,
+        ),
+        (include_str!("../../../examples/hermes-auth.yaml"), true),
     ] {
         let mut document = Document::parse(input.as_bytes()).unwrap();
         document.spec.sandboxes[0].inference_providers =
@@ -515,12 +524,15 @@ async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope
             }))
             .unwrap(),
         );
-        lifecycle(&document.yaml().unwrap()).await;
-        let sandbox = &mut document.spec.sandboxes[0];
-        let provider = sandbox.inference_providers.remove(0);
-        let route = &mut sandbox.agent.inference.as_mut().unwrap().routes[0];
-        route.provider_ref = None;
-        route.provider = Some(provider);
+        // Each harness deploys its providers in one scope; inference_references
+        // in the SDK owns that both scopes compile and export unchanged.
+        if inline_route {
+            let sandbox = &mut document.spec.sandboxes[0];
+            let provider = sandbox.inference_providers.remove(0);
+            let route = &mut sandbox.agent.inference.as_mut().unwrap().routes[0];
+            route.provider_ref = None;
+            route.provider = Some(provider);
+        }
         lifecycle(&document.yaml().unwrap()).await;
     }
 }
