@@ -77,6 +77,40 @@ function loadWithPython(document: unknown) {
 }
 
 describe("Hermes managed policy", () => {
+  it.each(["https://integrate.api.nvidia.com/v1", "HTTPS://INTEGRATE.API.NVIDIA.COM:443/v1/"])(
+    "accepts the native NVIDIA inference placeholder at %s",
+    (baseUrl) => {
+      const policy = buildHermesManagedPolicy(
+        { ...SETTINGS, baseUrl, upstreamProvider: "nvidia-prod" },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe(
+        "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+      );
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it.each([
+    ["https://integrate.api.nvidia.com/v1", "sk-OPENSHELL-PROXY-REWRITE"],
+    ["https://inference.local/v1", "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY"],
+    [
+      "https://integrate.api.nvidia.com.example/v1",
+      "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY",
+    ],
+    ["https://integrate.api.nvidia.com/v1", "sk-raw-policy-credential"],
+  ])("rejects credentials outside the managed route contract at %s", (baseUrl, apiKey) => {
+    const policy = buildHermesManagedPolicy({ ...SETTINGS, baseUrl }, {});
+    const malformedPolicy = {
+      ...policy,
+      config: { ...policy.config, model: { ...policy.config.model, api_key: apiKey } },
+    };
+    const result = loadWithPython(malformedPolicy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
   it("accepts absent inference while retaining managed restrictions", () => {
     const policy = buildHermesManagedPolicy({ ...SETTINGS, model: null }, {});
     const result = loadWithPython(policy);

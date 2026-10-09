@@ -9,10 +9,12 @@ import json
 import os
 import stat
 from pathlib import Path
+from urllib.parse import urlsplit
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
 MANAGED_POLICY_SCHEMA_VERSION = 3
 HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE"
+NVIDIA_INFERENCE_PLACEHOLDER = "sk-OPENSHELL-RESOLVE-ENV-NVIDIA_INFERENCE_API_KEY"
 
 
 class ManagedPolicyError(Exception):
@@ -92,10 +94,27 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
     has_routing = any(
         key in config for key in ("model", "providers", "custom_providers", "_nemoclaw_upstream")
     )
-    if has_routing and policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
-        raise ManagedPolicyError(
-            "managed policy model.api_key must use the OpenShell proxy rewrite sentinel"
-        )
+    if has_routing:
+        base_url = policy_value(config, "model.base_url")
+        if not isinstance(base_url, str):
+            raise ManagedPolicyError("managed policy model.base_url is invalid")
+        try:
+            url = urlsplit(base_url)
+            native_nvidia = (
+                url.scheme == "https"
+                and url.hostname == "integrate.api.nvidia.com"
+                and url.port in (None, 443)
+                and url.path in ("/v1", "/v1/")
+                and not (url.username or url.password or url.query or url.fragment)
+            )
+        except (TypeError, ValueError):
+            raise ManagedPolicyError("managed policy model.base_url is invalid") from None
+        expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
+        if policy_value(config, "model.api_key") != expected_key:
+            raise ManagedPolicyError(
+                "managed policy model.api_key must use the OpenShell proxy rewrite sentinel "
+                "or the native NVIDIA credential placeholder for its route"
+            )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
     return document

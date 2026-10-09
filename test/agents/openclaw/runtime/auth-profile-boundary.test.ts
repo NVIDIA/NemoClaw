@@ -171,6 +171,34 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fs.existsSync(fixture.authPath)).toBe(false);
   });
 
+  it.each(["fresh", "legacy"] as const)(
+    "leaves no legacy auth profile for native NVIDIA inference in %s state",
+    (state) => {
+      const fixture = runBashAuthFixture(
+        { ...managedEnv, NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+        state === "legacy"
+          ? seedAuthProfile({ "inference:manual": legacyManagedProfile })
+          : undefined,
+      );
+      expect(fixture.status, fixture.stderr).toBe(0);
+      expect(fs.existsSync(fixture.authPath)).toBe(false);
+      expect(fixture.stdout.trim()).toBe("unset\nunset");
+    },
+  );
+
+  it("preserves user profiles when removing the native NVIDIA generated profile", () => {
+    const custom = { ...legacyProfile("custom"), label: "user-managed" };
+    const fixture = runBashAuthFixture(
+      { ...managedEnv, NEMOCLAW_INFERENCE_BASE_URL: "HTTPS://INTEGRATE.API.NVIDIA.COM:443/v1/" },
+      seedAuthProfile({ "inference:manual": legacyManagedProfile, "custom:manual": custom }),
+    );
+    expect(fixture.status, fixture.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"))).toEqual({
+      "custom:manual": custom,
+    });
+    expect(fixture.stdout.trim()).toBe("unset\nunset");
+  });
+
   it.each([
     ["fresh", "https://inference.local/v1"],
     ["legacy", "https://inference.local/v1"],

@@ -57,12 +57,13 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# OpenShell owns inference.local authentication. Clear its credential aliases
+# OpenShell owns managed inference authentication. Clear its credential aliases
 # after entrypoint overrides are normalized, before setup can launch children.
 # Direct inference routes retain their credentials.
 is_managed_inference_route() {
   # Match URL scheme and host case without spawning a credential-bearing child.
-  [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Ff][Ee][Rr][Ee][Nn][Cc][Ee]\.[Ll][Oo][Cc][Aa][Ll](:443)?(/.*)?$ ]]
+  [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Ff][Ee][Rr][Ee][Nn][Cc][Ee]\.[Ll][Oo][Cc][Aa][Ll](:443)?(/.*)?$ ]] \
+    || [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Tt][Ee][Gg][Rr][Aa][Tt][Ee]\.[Aa][Pp][Ii]\.[Nn][Vv][Ii][Dd][Ii][Aa]\.[Cc][Oo][Mm](:443)?/v1/?$ ]]
 }
 
 clear_managed_inference_credentials() {
@@ -1659,7 +1660,7 @@ prepare_gateway_token_for_current_command() {
 }
 
 # Reconcile this function's legacy generated auth profile for the selected provider.
-# OpenShell authenticates managed inference.local routes on the host, so remove
+# OpenShell authenticates managed inference routes on the host, so remove
 # that generated credential reference. Preserve other user-managed profiles.
 # Direct routes retain their existing profile-writing behavior.
 write_auth_profile() {
