@@ -64,6 +64,7 @@ it("hands one terminal CLI operation to the delivery child (#12859)", async () =
 it("hands an installer failure to the delivery child (#12859)", async () => {
   const directory = beginInstallerTelemetry("install")!;
   expect(directory).toBeTruthy();
+  telemetryRuntime.config = null; // The begin process has exited.
   vi.stubEnv(TELEMETRY_CONTEXT_ENV, directory);
   await finishInstallerTelemetry(directory, "failed", "partial", "cli", 1, {
     target: "1.2.3",

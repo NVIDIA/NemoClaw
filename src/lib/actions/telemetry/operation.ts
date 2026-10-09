@@ -524,6 +524,8 @@ export async function finishInstallerTelemetry(
 ): Promise<void> {
   const inherited = inheritedContext();
   if (!inherited || inherited.directory !== directory) return;
+  // Begin and finish run in separate installer processes.
+  resolveTelemetryDeliveryConfig(process.env);
   const current: Context = { ...inherited, owner: true };
   await active.run(current, async () => {
     setTelemetryOutcome(outcome, state, scope);
