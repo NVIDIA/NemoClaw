@@ -1612,6 +1612,9 @@ _installer_telemetry_finish() {
   entry="$(_installer_telemetry_entry)" || return 0
   if [[ "$status" -eq 130 || "$status" -eq 143 ]]; then
     _INSTALLER_TELEMETRY_OUTCOME=cancelled
+  elif [[ "$status" -eq 10 || "$status" -eq 11 ]]; then
+    _INSTALLER_TELEMETRY_OUTCOME=unverified
+    _INSTALLER_TELEMETRY_STATE=pending
   elif [[ "$status" -ne 0 ]]; then
     _INSTALLER_TELEMETRY_OUTCOME=failed
   fi

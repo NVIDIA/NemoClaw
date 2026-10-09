@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry } from "../../state/registry/types";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding/identity";
 import {
   readSandboxTelemetryEntry,
   updateSandboxTelemetrySelections,
@@ -101,6 +102,7 @@ export async function recordRebuildCompletion(
   accepted: boolean,
   cleanupOnly: boolean,
   previousEntry?: SandboxEntry,
+  mutated = false,
 ): Promise<void> {
   let metadataComplete = true;
   let modelSelectionVerified = true;
@@ -142,10 +144,18 @@ export async function recordRebuildCompletion(
   let outcome: Parameters<typeof recordTelemetryTarget>[0]["outcome"] = "failed";
   if (accepted) outcome = cleanupOnly ? "no_change" : "completed";
   if (accepted && !modelSelectionVerified) outcome = "unverified";
-  const state = accepted && modelSelectionVerified ? "applied" : "partial";
+  const state = accepted && modelSelectionVerified ? "applied" : mutated ? "partial" : "unchanged";
+  let gatewayName: string | undefined;
+  try {
+    const entry = previousEntry ?? readSandboxTelemetryEntry(sandboxName);
+    if (entry) gatewayName = resolveSandboxGatewayName(entry);
+  } catch {
+    /* Telemetry remains non-fatal when the gateway binding cannot be resolved. */
+  }
   recordTelemetryTarget({
     scope: "sandbox",
     sandboxName,
+    ...(gatewayName ? { gatewayName } : {}),
     outcome,
     state,
     verificationStatus: metadataComplete ? "reported" : "collection_error",

@@ -283,7 +283,7 @@ export function createOnboardOperationCompletion(options: {
           );
           metadataErrors.push(...(selection.metadataErrors ?? []));
           modelSelectionVerified = selection.verified;
-          metadataComplete = selection.status !== "collection_error";
+          metadataComplete &&= selection.status !== "collection_error";
         }
         if (
           modelSelectionVerified &&

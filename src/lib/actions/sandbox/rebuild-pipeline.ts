@@ -239,6 +239,7 @@ async function rebuildSandboxUnlocked(
   let recreateOptions = stagedRecreateOptions;
   const { staleRecovery } = liveState;
   let telemetryVerified = false;
+  let telemetryMutated = false;
   let telemetryCleanupOnly = false;
   let telemetryCleanupComplete = true;
   let preparedImage = initiallyPreparedImage;
@@ -920,9 +921,11 @@ async function rebuildSandboxUnlocked(
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
         onDeleteStateAmbiguous: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
       });
@@ -1093,6 +1096,7 @@ async function rebuildSandboxUnlocked(
       telemetryVerified && telemetryCleanupComplete,
       telemetryCleanupOnly,
       sandboxEntry,
+      telemetryMutated,
     );
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();

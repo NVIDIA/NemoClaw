@@ -16,9 +16,31 @@ const { recordTelemetryTarget, setTelemetryOutcome, withTelemetryOperation } =
   require("../../dist/lib/actions/telemetry/operation.js") as typeof import("../../src/lib/actions/telemetry/operation");
 const { isOperationEvent } =
   require("../../dist/lib/domain/telemetry/schema.js") as typeof import("../../src/lib/domain/telemetry/schema");
+const { NemoClawCommand } =
+  require("../../dist/lib/cli/nemoclaw-oclif-command.js") as typeof import("../../src/lib/cli/nemoclaw-oclif-command");
 
-it("delivers one completed operation through the compiled child to a local receiver (#12859)", async () => {
+class MappedTelemetryCommand extends NemoClawCommand {
+  static id = "update";
+
+  public async run(): Promise<void> {
+    setTelemetryOutcome("completed", "applied", "cli");
+    await withTelemetryOperation("install", async () => {
+      recordTelemetryTarget({ scope: "cli", outcome: "completed", state: "applied" });
+    });
+  }
+}
+
+class UnmappedTelemetryCommand extends NemoClawCommand {
+  static id = "status";
+
+  public async run(): Promise<void> {
+    setTelemetryOutcome("completed", "applied", "cli");
+  }
+}
+
+it("delivers one mapped oclif operation and skips an unmapped command (#12859)", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-contract-"));
+  const sourceRoot = path.join(import.meta.dirname, "../..");
   const receipts = path.join(root, "received.ndjson");
   const server = new Worker(
     `const http = require('node:http');
@@ -51,12 +73,8 @@ it("delivers one completed operation through the compiled child to a local recei
       localReceiver: true,
     };
 
-    await withTelemetryOperation("install", async () => {
-      setTelemetryOutcome("completed", "applied", "cli");
-      await withTelemetryOperation("update", async () => {
-        recordTelemetryTarget({ scope: "cli", outcome: "completed", state: "applied" });
-      });
-    });
+    await MappedTelemetryCommand.run([], sourceRoot);
+    await UnmappedTelemetryCommand.run([], sourceRoot);
 
     const received = fs.readFileSync(receipts, "utf8").trim().split("\n");
     expect(received).toHaveLength(1);
@@ -66,7 +84,7 @@ it("delivers one completed operation through the compiled child to a local recei
     expect(envelope.events).toHaveLength(1);
     expect(isOperationEvent(envelope.events[0])).toBe(true);
     expect(envelope.events[0].parameters).toMatchObject({
-      operation: "install",
+      operation: "update",
       outcome: "completed",
       state: "applied",
     });

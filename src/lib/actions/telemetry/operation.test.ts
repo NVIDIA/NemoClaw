@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const spawnSync = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ status: 0, pid: undefined })));
@@ -19,6 +21,7 @@ import {
   TELEMETRY_CONTEXT_ENV,
   withTelemetryOperation,
 } from "./operation";
+import { recordRebuildCompletion } from "./upgrade";
 
 beforeEach(() => {
   spawnSync.mockClear();
@@ -31,6 +34,7 @@ beforeEach(() => {
 afterEach(() => {
   telemetryRuntime.config = null;
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 function deliveryInput(): {
@@ -77,6 +81,94 @@ it("hands an installer failure to the delivery child (#12859)", async () => {
     state: "partial",
   });
   expect(fs.existsSync(directory)).toBe(false);
+});
+
+it("uses a published sandbox's non-default gateway for its terminal receipt (#12859)", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-gateway-"));
+  vi.stubEnv("HOME", home);
+  const registry = path.join(home, ".nemoclaw", "gateways", "19000", "sandboxes.json");
+  fs.mkdirSync(path.dirname(registry), { recursive: true });
+  fs.writeFileSync(
+    registry,
+    JSON.stringify({
+      defaultSandbox: null,
+      sandboxes: { selected: { name: "selected", gatewayPort: 19000 } },
+    }),
+  );
+  try {
+    await withTelemetryOperation("sandbox_rebuild", async () => {
+      recordTelemetryTarget({
+        scope: "sandbox",
+        sandboxName: "selected",
+        gatewayName: "nemoclaw",
+        outcome: "failed",
+        state: "unchanged",
+      });
+    });
+    expect(deliveryInput().context.targets).toMatchObject([
+      { sandboxName: "selected", gatewayName: "nemoclaw-19000" },
+    ]);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  { mutated: false, state: "unchanged" },
+  { mutated: true, state: "partial" },
+])(
+  "reports failed rebuild state $state when mutation is $mutated (#12859)",
+  async ({ mutated, state }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-rebuild-"));
+    vi.stubEnv("HOME", home);
+    try {
+      await withTelemetryOperation("sandbox_rebuild", async () => {
+        await recordRebuildCompletion(
+          "selected",
+          false,
+          false,
+          { name: "selected", gatewayPort: 19000 } as NonNullable<
+            Parameters<typeof recordRebuildCompletion>[3]
+          >,
+          mutated,
+        );
+      });
+      expect(deliveryInput().context.targets).toMatchObject([
+        { outcome: "failed", state, gatewayName: "nemoclaw-19000" },
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+it("removes only old, private operation contexts before beginning a new one (#12859)", async () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-cleanup-"));
+  vi.spyOn(os, "tmpdir").mockReturnValue(temporaryRoot);
+  const stale = fs.mkdtempSync(path.join(temporaryRoot, "nemoclaw-operation-"));
+  const unsafe = fs.mkdtempSync(path.join(temporaryRoot, "nemoclaw-operation-"));
+  const metadata = JSON.stringify({
+    operation: "sandbox_rebuild",
+    contextOwner: "cli",
+    startedAt: new Date(0).toISOString(),
+  });
+  fs.chmodSync(stale, 0o700);
+  fs.writeFileSync(path.join(stale, "metadata.json"), metadata, { mode: 0o600 });
+  fs.writeFileSync(path.join(stale, "receipts.ndjson"), "", { mode: 0o600 });
+  fs.chmodSync(unsafe, 0o700);
+  fs.writeFileSync(path.join(unsafe, "metadata.json"), metadata, { mode: 0o600 });
+  fs.writeFileSync(path.join(unsafe, "receipts.ndjson"), "", { mode: 0o600 });
+  fs.chmodSync(unsafe, 0o755);
+  const old = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+  fs.utimesSync(stale, old, old);
+  fs.utimesSync(unsafe, old, old);
+  try {
+    await withTelemetryOperation("sandbox_rebuild", async () => undefined);
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(unsafe)).toBe(true);
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 it("does not hand malformed receipts to the delivery child (#12859)", async () => {

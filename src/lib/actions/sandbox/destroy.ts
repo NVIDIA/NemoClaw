@@ -688,7 +688,7 @@ export async function destroySandbox(
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   } = {},
 ): Promise<void> {
-  const telemetryTarget: { gatewayName?: string } = {};
+  const telemetryTarget: { gatewayName?: string; mutationStarted?: boolean } = {};
   try {
     return await withSandboxLifecycleLock(sandboxName, () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
@@ -710,6 +710,7 @@ export async function destroySandbox(
       "failed",
       error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
       telemetryTarget.gatewayName,
+      telemetryTarget.mutationStarted === true,
     );
     if (error instanceof SandboxDestroyExitRequest) {
       process.exit(error.exitCode);
@@ -725,7 +726,7 @@ async function destroySandboxUnlocked(
   deps: {
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   },
-  telemetryTarget: { gatewayName?: string },
+  telemetryTarget: { gatewayName?: string; mutationStarted?: boolean },
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
@@ -975,6 +976,7 @@ async function destroySandboxUnlocked(
   );
   let destructiveResult: Awaited<ReturnType<typeof executeSandboxDestroy>>;
   try {
+    telemetryTarget.mutationStarted = true;
     destructiveResult = await executeSandboxDestroy({
       force: normalized.force === true,
       getSandbox: getRegisteredSandbox,

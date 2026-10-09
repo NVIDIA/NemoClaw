@@ -291,7 +291,7 @@ The record describes the operation result and approved configuration categories,
 Production delivery is not enabled.
 
 Set `NEMOCLAW_DISABLE_TELEMETRY=1` in the installer or CLI process environment to suppress collection and delivery.
-CI and automated test processes suppress it automatically.
+NemoClaw also suppresses telemetry for `CI=true`, `CI=1`, `GITHUB_ACTIONS=true`, `VITEST=true`, or `NODE_ENV=test`.
 This setting controls NemoClaw operation telemetry; an agent or third-party tool can have separate diagnostics settings.
 
 ## Filesystem Controls

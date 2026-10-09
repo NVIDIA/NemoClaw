@@ -1086,9 +1086,14 @@ export async function recordDestroyCompletion(
   outcome: "completed" | "cancelled" | "failed",
   exitCode?: number,
   gatewayName?: string,
+  mutationStarted = false,
 ): Promise<void> {
   const state =
-    outcome === "completed" ? "applied" : outcome === "cancelled" ? "unchanged" : "partial";
+    outcome === "completed"
+      ? "applied"
+      : outcome === "cancelled" || !mutationStarted
+        ? "unchanged"
+        : "partial";
   recordTelemetryTarget({
     scope: "sandbox",
     sandboxName,

@@ -38,6 +38,8 @@ export function createSupervisedSandboxCommandReader(
   };
   const forwardInt = () => {
     for (const listener of listeners.SIGINT) listener();
+    process.removeListener("SIGINT", forwardInt);
+    process.kill(process.pid, "SIGINT");
   };
   signal.addEventListener("abort", forwardTerm, { once: true });
   process.on("SIGTERM", forwardTerm);

@@ -7,7 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { GATEWAY_PORT, resolveGatewayName } from "../../onboard/gateway-binding/identity";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding/identity";
+import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
+import { isPublishedSandboxRegistration } from "../../state/registry/route-reservation";
 import type {
   TelemetryOperation,
   TelemetryOperationContext,
@@ -140,12 +142,21 @@ function appendReceipt(value: unknown): void {
 }
 
 export function recordTelemetryTarget(receipt: TelemetryTargetReceipt): void {
+  if (!isTelemetryOperationActive()) return;
+  let gatewayName = receipt.gatewayName;
+  if (receipt.sandboxName) {
+    try {
+      const entry = findSandboxAcrossGatewayRoots(receipt.sandboxName)?.entry;
+      if (entry && isPublishedSandboxRegistration(entry))
+        gatewayName = resolveSandboxGatewayName(entry);
+    } catch {
+      /* A receipt remains best effort when registry identity cannot be read. */
+    }
+  }
   appendReceipt({
     kind: "target",
     ...receipt,
-    ...(receipt.sandboxName === undefined
-      ? {}
-      : { gatewayName: receipt.gatewayName ?? resolveGatewayName(GATEWAY_PORT) }),
+    ...(gatewayName === undefined ? {} : { gatewayName }),
   });
 }
 export function setTelemetryOutcome(
@@ -251,7 +262,7 @@ export async function withTelemetryEvidence<T>(
 }
 
 function terminalContext(current: Context, exitCode = 0): TelemetryOperationContext {
-  const { contextOwner: _owner, ...metadata } = readMetadata(current.directory);
+  const { contextOwner, ...metadata } = readMetadata(current.directory);
   const targets = new Map<string, TelemetryTargetReceipt>();
   let explicit: Record<string, unknown> | undefined;
   let threw = false;
@@ -338,7 +349,14 @@ function terminalContext(current: Context, exitCode = 0): TelemetryOperationCont
   )
     metadata.scope = metadata.targets[0].scope;
   if (
-    (threw || exitCode !== 0) &&
+    (threw ||
+      (exitCode !== 0 &&
+        !(
+          contextOwner === "installer" &&
+          (exitCode === 10 || exitCode === 11) &&
+          metadata.outcome === "unverified" &&
+          metadata.state === "pending"
+        ))) &&
     metadata.outcome !== "checked" &&
     metadata.outcome !== "cancelled" &&
     metadata.outcome !== "skipped"
@@ -467,6 +485,7 @@ function createContextDirectory(
 ): string | null {
   let directory: string | undefined;
   try {
+    removeAbandonedContexts();
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-operation-"));
     fs.chmodSync(directory, 0o700);
     fs.writeFileSync(
@@ -495,6 +514,55 @@ function createContextDirectory(
       } catch {}
     }
     return null;
+  }
+}
+
+function removeAbandonedContexts(): void {
+  if (!process.getuid) return;
+  const temporaryRoot = os.tmpdir();
+  const cutoff = Date.now() - 24 * 60 * 60 * 1_000;
+  try {
+    for (const name of fs.readdirSync(temporaryRoot)) {
+      if (!/^nemoclaw-operation-[A-Za-z0-9]+$/.test(name)) continue;
+      const directory = path.join(temporaryRoot, name);
+      try {
+        const stat = fs.lstatSync(directory);
+        if (
+          !stat.isDirectory() ||
+          stat.uid !== process.getuid() ||
+          (stat.mode & 0o777) !== 0o700 ||
+          stat.mtimeMs >= cutoff
+        )
+          continue;
+        const files = fs.readdirSync(directory);
+        if (
+          files.length !== 2 ||
+          !files.includes("metadata.json") ||
+          !files.includes("receipts.ndjson")
+        )
+          continue;
+        const metadata = fs.lstatSync(path.join(directory, "metadata.json"));
+        if (
+          !metadata.isFile() ||
+          metadata.uid !== process.getuid() ||
+          (metadata.mode & 0o777) !== 0o600
+        )
+          continue;
+        readMetadata(directory);
+        const receipts = fs.lstatSync(path.join(directory, "receipts.ndjson"));
+        if (
+          !receipts.isFile() ||
+          receipts.uid !== process.getuid() ||
+          (receipts.mode & 0o777) !== 0o600
+        )
+          continue;
+        fs.rmSync(directory, { recursive: true });
+      } catch {
+        /* A stale or untrusted entry cannot change the operation. */
+      }
+    }
+  } catch {
+    /* Temporary-directory inspection cannot change the operation. */
   }
 }
 
