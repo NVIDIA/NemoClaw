@@ -24,7 +24,9 @@ pub(crate) fn definitions() -> [crate::Definition; 2] {
         Definition::new(kind, &fields, mutable)
             .optional(&["image_pull_policy"])
             .reset_when_omitted(&["image_pull_policy"])
-            .validate_attribute(check_gateway_attribute)
+            .validate_attribute(|attribute, value| {
+                check_gateway_attribute(attribute, value).map_err(Into::into)
+            })
             .generated("owner", nemoclaw_backend::generate_owner)
             .generated("generation", nemoclaw_backend::generate_generation)
     };
