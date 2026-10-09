@@ -1211,6 +1211,7 @@ export function waitForNimHealth(
   console.log(`  Waiting for NIM health on port ${hostPort} (timeout: ${timeout}s)...`);
 
   while ((Date.now() - start) / 1000 < timeout) {
+    let listed = false;
     try {
       const result = runCaptureImpl(
         [
@@ -1226,16 +1227,15 @@ export function waitForNimHealth(
         ],
         { ignoreError: true },
       );
-      if (isOpenAiModelListBody(result)) {
-        console.log("  NIM is healthy.");
-        return true;
-      }
+      listed = isOpenAiModelListBody(result);
     } catch {
       /* ignored */
     }
     // Short-circuit if the container has already exited — typically NGC auth
     // failure or OOM during model load. Without this, the wizard polls the
     // full timeout (default 1200s) against a dead container. See #3333.
+    // Check it before reporting healthy so another server on the port cannot
+    // stand in for an exited NIM container.
     if (container) {
       const state = inspectContainerState("{{.State.Status}}", container, {
         ignoreError: true,
@@ -1252,6 +1252,12 @@ export function waitForNimHealth(
         }
         return false;
       }
+    }
+    if (listed) {
+      console.log("  NIM is healthy.");
+      return true;
+    }
+    if (container) {
       const tail = readContainerLogs(container, { tail: 30 });
       if (hasNimMemoryCapacityWarning(tail)) {
         console.error(
@@ -1332,7 +1338,7 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
         ],
         { ignoreError: true, timeout: NIM_STATUS_PROBE_TIMEOUT_MS + 1000 },
       );
-      healthy = !!health;
+      healthy = isOpenAiModelListBody(health);
     }
     return { running: state === "running", healthy, container: name, state };
   } catch {
