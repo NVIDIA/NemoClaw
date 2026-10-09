@@ -37,7 +37,7 @@ async fn image_pull_policy_controls_registry_requests_and_requires_a_local_image
                 };
                 let state = Arc::new(Mutex::new((present, 0)));
                 let shared = state.clone();
-                let fixture = Fixture::start(move |request| {
+                let fixture = Fixture::engine(move |request| {
                         let mut state = shared.lock().unwrap();
                         let path = request.path.split('?').next().unwrap();
                         let (code, body) = match (request.method.as_str(), path) {
@@ -91,7 +91,7 @@ async fn network_creation_rechecks_conflicts_that_appear_after_planning() {
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
     let networks = Arc::new(Mutex::new(json!([])));
     let shared = networks.clone();
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         assert_eq!(
             request.method, "GET",
             "conflict must prevent network creation"
@@ -122,7 +122,7 @@ async fn existing_network_is_reused_only_with_matching_ownership_and_configurati
     let network = json!({"Id":"network","Name":spec.network(),"Driver":"bridge","Internal":false,"EnableIPv6":false,"Labels":spec.labels().unwrap(),"IPAM":{"Driver":"default","Config":[{"Subnet":spec.network_cidr(),"Gateway":spec.bridge().unwrap()}]}});
     let shared = Arc::new(Mutex::new(network.clone()));
     let state = shared.clone();
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         assert_eq!(request.method, "GET");
         assert!(
             request.path.starts_with("/networks/"),
@@ -152,7 +152,7 @@ async fn existing_network_is_reused_only_with_matching_ownership_and_configurati
 async fn managed_gateway_accepts_a_native_linux_amd64_image() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    let fixture = Fixture::start(|request| match request.path.as_str() {
+    let fixture = Fixture::engine(|request| match request.path.as_str() {
         "/info" => Some((
             200,
             serde_json::to_vec(&json!({
@@ -186,7 +186,7 @@ async fn managed_gateway_accepts_a_native_linux_amd64_image() {
 async fn managed_gateway_rejects_an_image_for_a_different_engine_architecture() {
     let fixtures: Vec<Value> = serde_json::from_str(include_str!("reference.json")).unwrap();
     let spec: Spec = serde_json::from_str(fixtures[0]["spec"].as_str().unwrap()).unwrap();
-    let fixture = Fixture::start(|request| match request.path.as_str() {
+    let fixture = Fixture::engine(|request| match request.path.as_str() {
         "/info" => Some((
             200,
             serde_json::to_vec(&json!({
@@ -247,7 +247,7 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
     let required_labels = std::collections::HashMap::<String, String>::new();
     let template = container.clone();
     let gateway_config = spec.gateway_config("/var/lib/docker/volumes/fixture/_data");
-    let fixture=Fixture::start(move |request|{
+    let fixture=Fixture::engine(move |request|{
         let mut state=shared.lock().unwrap();
         if request.path.contains("/archive?") {
             let url = url::Url::parse(&format!("http://fixture{}", request.path)).unwrap();
@@ -336,7 +336,7 @@ async fn gateway_failed_startup_and_explicit_recovery_keep_container_and_storage
 #[tokio::test]
 async fn image_pull_reports_layer_bytes_without_claiming_whole_image_percentage() {
     use crate::{ByteProgress, DownloadPhase, Progress, download::with_download_progress};
-    let fixture = Fixture::start(|request| {
+    let fixture = Fixture::engine(|request| {
         if request.method == "POST" && request.path.starts_with("/images/create") {
             Some((200, b"{\"status\":\"Downloading\",\"id\":\"abcdef\",\"progressDetail\":{\"current\":50,\"total\":100}}\n{\"status\":\"Extracting\",\"id\":\"abcdef\",\"progressDetail\":{\"current\":80,\"total\":100}}\n".to_vec()))
         } else if request.method == "GET" && request.path.starts_with("/images/") {

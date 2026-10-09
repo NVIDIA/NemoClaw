@@ -19,7 +19,7 @@ async fn credential_key_write_requires_matching_readback_and_private_permissions
         let key = vec![42_u8; 32];
         let state = Arc::new(Mutex::new((None::<Vec<u8>>, 0)));
         let shared = state.clone();
-        let fixture = Fixture::start(move |request| {
+        let fixture = Fixture::engine(move |request| {
             assert!(request.path.starts_with("/containers/verified/archive?"));
             let url = url::Url::parse(&format!("http://fixture{}", request.path)).unwrap();
             let path = url

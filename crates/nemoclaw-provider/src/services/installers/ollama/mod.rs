@@ -15,5 +15,5 @@ pub use backend::ProxyBackend;
 mod runtime;
 pub use runtime::ProxyRuntimeDataSource;
 pub(crate) mod proxy;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod proxy_container_tests;

@@ -63,14 +63,14 @@ impl Engine {
     }
 }
 
-// Only the Unix fixture tests build container archives.
-#[cfg(all(test, unix))]
+// The fixture tests build container archives.
+#[cfg(test)]
 pub(crate) use nemoclaw_docker::archive;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(crate) mod fixture;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod two_engines;
 
 mod connections;
