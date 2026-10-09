@@ -1331,8 +1331,9 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 ### Onboarding reports a model-catalog HTTP 404
 
-NemoClaw's OpenRouter adapter serves Chat Completions but does not serve a model catalog.
-An `HTTP 404` response from `https://inference.local/v1/models` is expected when the recorded provider is `openrouter-api`.
+The retained legacy OpenRouter shared-route adapter serves Chat Completions but does not serve a model catalog.
+An `HTTP 404` response from `https://inference.local/v1/models` is expected only when the sandbox still uses that legacy shared route with recorded provider `openrouter-api`.
+New OpenRouter selections use a sandbox-attached native provider. Their readiness check verifies that attachment and sends an inference request to the native endpoint; a shared-route catalog response does not qualify them.
 NemoClaw accepts that response only after a bounded inference request serves the selected model.
 Onboarding and `status` report the route ready when that request succeeds.
 
@@ -1349,7 +1350,7 @@ Confirm the OpenRouter credential and selected model, then continue the recorded
 $$nemoclaw onboard --resume
 ```
 
-For other providers, an `HTTP 404` response still means that the route served no supported model catalog.
+For other shared-route providers, an `HTTP 404` response still means that the route served no supported model catalog.
 Confirm the recorded provider and model, and confirm that the endpoint serves `/v1/models`.
 Then continue the recorded session:
 

@@ -3781,8 +3781,8 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 
 Remove a provider credential from the OpenShell gateway by provider name. After removal, re-running `$$nemoclaw onboard` re-prompts for that provider's credential. Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
 
-When the native NVIDIA provider is attached to a sandbox, reset stops without detaching or deleting it.
-Rotate its credential in place by setting `NVIDIA_INFERENCE_API_KEY` and rerunning `$$nemoclaw onboard --name <sandbox>`.
+When a sandbox records an attachment to a native NVIDIA or supported fixed hosted provider, reset stops without detaching or deleting it.
+Rotate its credential in place by supplying the selected provider's credential through the host environment and rerunning `$$nemoclaw onboard --name <sandbox>`. Use `NVIDIA_INFERENCE_API_KEY` for NVIDIA Endpoints and the provider-specific variable documented under `onboard` for another selection.
 To remove it completely, preserve required sandbox state, destroy every attached sandbox, and then retry reset.
 
 ```bash

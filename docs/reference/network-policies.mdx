@@ -90,6 +90,8 @@ When you select NVIDIA Endpoints, NemoClaw attaches the `nemoclaw-nvidia-prod-v1
 This attached provider is the effective NVIDIA Endpoints route. Its profile permits only `GET /v1/models` and `POST /v1/chat/completions` at `integrate.api.nvidia.com:443` from the listed agent-runtime and readiness-verification binaries.
 The NVIDIA API key remains in OpenShell provider state and does not enter the sandbox.
 
+OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider also use sandbox-attached native providers. NemoClaw derives the `native_hosted_inference` policy from the selected provider profile, restricting endpoint hosts, request paths, methods, and agent-runtime binaries. OpenShell replaces credential placeholders at that boundary; raw provider credentials remain outside the sandbox. Retained legacy routes, custom endpoints, and local providers continue to use the shared `inference.local` route.
+
 All endpoints use TLS termination and are enforced at port 443.
 
 <AgentOnly variant="openclaw">
