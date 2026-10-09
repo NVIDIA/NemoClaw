@@ -135,6 +135,7 @@ function runRuntimeProviderGpuProof(
       timedOut: false,
       exitCode: null,
       diagnostic: "configured runtime provider has no NVIDIA container proof capability",
+      failurePhase: "provider",
     };
   }
   const cleanupContainer = (
@@ -176,12 +177,20 @@ function runRuntimeProviderGpuProof(
       timedOut || result.error !== undefined ? "until-deadline" : "immediate",
     );
     const passed = workloadPassed && verifiedDevices !== null && cleanup.status !== "failed";
+    const failurePhase = !workloadPassed
+      ? "capture"
+      : verifiedDevices === null
+        ? "device-evidence"
+        : cleanup.status === "failed"
+          ? "cleanup"
+          : undefined;
     return {
       providerId: provider.identity.id,
       passed,
       timedOut,
       exitCode: result.status,
       diagnostic: diagnosticSource.slice(0, 300),
+      ...(failurePhase ? { failurePhase } : {}),
       ...(passed && verifiedDevices ? { verifiedDevices } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
@@ -193,6 +202,7 @@ function runRuntimeProviderGpuProof(
       exitCode: null,
       diagnostic:
         error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+      failurePhase: "capture",
       cleanup: cleanupContainer(resource, "until-deadline"),
     };
   }
@@ -264,6 +274,17 @@ export function createArm64ContainerGpuProver(
       log(
         `  ✗ ${provider.identity.displayName} GPU proof failed; treating GPU as unproven (CPU fallback).`,
       );
+      if (result.failurePhase === "device-evidence") {
+        log("    CUDA capture succeeded, but the GPU identity or capacity rows were invalid.");
+      } else if (result.failurePhase === "cleanup") {
+        log("    CUDA capture succeeded, but proof container cleanup was not confirmed.");
+      } else if (result.failurePhase === "provider") {
+        log("    The configured provider has no NVIDIA container proof capability.");
+      } else if (result.exitCode !== null) {
+        log(`    Container capture exit status: ${String(result.exitCode)}.`);
+      } else {
+        log("    Container capture did not return an exit status.");
+      }
       log("    Rerun with --no-gpu to skip GPU passthrough.");
     }
     if (result.cleanup?.status === "failed") {

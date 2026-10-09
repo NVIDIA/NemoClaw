@@ -37,19 +37,21 @@ if [ -z "${RUNNER_TEMP:-}" ] || [ ! -d "$RUNNER_TEMP" ]; then
   exit 1
 fi
 
-runner_temp_mode="$(stat -c '%a' "$RUNNER_TEMP")"
-apt_lists="$(mktemp -d "$RUNNER_TEMP/nemoclaw-apt-lists.XXXXXXXX")"
-isolated_sources_dir="$(mktemp -d "$RUNNER_TEMP/nemoclaw-ubuntu-sources.XXXXXXXX")"
-isolated_sources="$isolated_sources_dir/ubuntu.sources"
+# RUNNER_TEMP can have private ancestors that APT's _apt user cannot traverse.
+apt_lists="$(mktemp -d /tmp/nemoclaw-apt-lists.XXXXXXXX)"
+isolated_sources_dir=
 cleanup() {
   local status=$?
   trap - EXIT
   sudo rm -rf -- "$apt_lists" || status=1
-  rm -rf -- "$isolated_sources_dir" || status=1
-  sudo chmod "$runner_temp_mode" "$RUNNER_TEMP" || status=1
+  if [ -n "$isolated_sources_dir" ]; then
+    rm -rf -- "$isolated_sources_dir" || status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT
+isolated_sources_dir="$(mktemp -d /tmp/nemoclaw-ubuntu-sources.XXXXXXXX)"
+isolated_sources="$isolated_sources_dir/ubuntu.sources"
 
 # APT cannot reliably fetch a mirror+file auxiliary list from a custom lists
 # directory during install. Resolve only the runner's Ubuntu mirrorlist URI;
@@ -71,7 +73,6 @@ chmod 0755 "$isolated_sources_dir"
 chmod 0644 "$isolated_sources"
 
 # APT's _apt user needs traversal into the isolated package-list directory.
-sudo chmod o+x "$RUNNER_TEMP"
 sudo chmod 0755 "$apt_lists"
 sudo install -d -o _apt -g root -m 0700 "$apt_lists/partial"
 

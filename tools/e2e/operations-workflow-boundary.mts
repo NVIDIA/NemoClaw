@@ -748,6 +748,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const errors: string[] = [];
   const job = workflow.jobs["base-image-publication"] ?? {};
   const expectedJob = {
+    needs: "generate-matrix",
+    if: "${{ needs.generate-matrix.outputs.managed_image_required != 'false' }}",
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
     outputs: {
@@ -901,10 +903,15 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     );
   }
   const matrix = workflow.jobs["generate-matrix"] ?? {};
-  if (!sameMembers(needs(matrix), ["base-image-publication"])) {
-    errors.push("generate-matrix must wait for complete managed-image publication");
+  if (needs(matrix).length !== 0) {
+    errors.push("generate-matrix must not wait for managed-image publication");
   }
   const matrixOutputs = matrix.outputs ?? {};
+  if (
+    matrixOutputs.managed_image_required !== "${{ steps.matrix.outputs.managed_image_required }}"
+  ) {
+    errors.push("managed-image admission must use the trusted planner output");
+  }
   if ("dcode_base_contract" in matrixOutputs || "dcode_base_ref" in matrixOutputs) {
     errors.push("generate-matrix must not relay Deep Agents Code base outputs");
   }
@@ -1246,6 +1253,8 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
+    requireResults.env?.MANAGED_IMAGE_REQUIRED !==
+      "${{ needs.generate-matrix.outputs.managed_image_required }}" ||
     requireResults.env?.E2E_RESULT_PATH !==
       "${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}" ||
     requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
@@ -1290,6 +1299,7 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
+    requireResults.env?.MANAGED_IMAGE_REQUIRED !== undefined ||
     requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");

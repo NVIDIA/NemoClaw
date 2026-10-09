@@ -941,7 +941,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "hermes",
-      NEMOCLAW_SANDBOX_NAME: "e2e-hm-compatible-anthropic-switch",
+      NEMOCLAW_SANDBOX_NAME: "e2e-hm-anthropic",
       NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
       NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
@@ -1244,7 +1244,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_E2E_SHARD: "anthropic",
-      NEMOCLAW_SANDBOX_NAME: "e2e-oc-compatible-anthropic-switch",
+      NEMOCLAW_SANDBOX_NAME: "e2e-oc-anthropic",
       NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
       NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model",
       NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
@@ -1308,7 +1308,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   ...GATEWAY_UPGRADE_TARGETS,
   dockerOnlyTarget("rebuild-openclaw", {
     displayName: "Rebuild: restores OpenClaw state and native readiness",
-    owningPaths: ["test/e2e/live/openclaw-stopped-recovery.ts"],
+    owningPaths: [
+      "test/e2e/live/openclaw-stopped-recovery.ts",
+      "test/e2e/live/openclaw-restoration.ts",
+    ],
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",

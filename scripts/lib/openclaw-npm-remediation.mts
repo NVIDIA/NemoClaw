@@ -327,7 +327,7 @@ function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.Pr
     .split("\n")
     .filter((entry) => entry.length > 0);
   if (names.length === 0 || verbose.length !== names.length) {
-    throw new Error(`npm archive ${archivePath} has an invalid member listing`);
+    throw new Error("npm archive has an invalid member listing");
   }
   const seen = new Set<string>();
   for (let index = 0; index < names.length; index += 1) {
@@ -341,12 +341,12 @@ function validateArchiveMembers(archivePath: string, cwd: string, env: NodeJS.Pr
       normalized.split("/").some((part) => part === "" || part === "." || part === "..") ||
       seen.has(normalized)
     ) {
-      throw new Error(`npm archive ${archivePath} has an unsafe member: ${member}`);
+      throw new Error("npm archive has an unsafe member");
     }
     seen.add(normalized);
   }
   if (!seen.has("package/package.json")) {
-    throw new Error(`npm archive ${archivePath} has no package/package.json`);
+    throw new Error("npm archive has no package/package.json");
   }
 }
 
@@ -361,7 +361,7 @@ function extractArchive(
   run("tar", ["-xzf", archivePath, "-C", destination], cwd, env, "extract archive");
   const packageDirectory = join(destination, "package");
   if (!existsSync(join(packageDirectory, "package.json"))) {
-    throw new Error(`npm archive ${archivePath} did not extract a package directory`);
+    throw new Error("npm archive did not extract a package directory");
   }
   return packageDirectory;
 }
@@ -921,6 +921,84 @@ export function patchOpenClawDiscordPackageGraph(packageDirectory: string): void
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
+export function patchOpenClawSlackProxyAddrPackageGraph(
+  packageDirectory: string,
+  replacementDirectory: string,
+): void {
+  const packageJson = readJson(join(packageDirectory, "package.json"));
+  requirePackageIdentity(packageJson, "@openclaw/slack", "2026.9.2", "OpenClaw Slack plugin");
+  if (
+    packageJson.dependencies?.["@slack/bolt"] !== "5.0.0" ||
+    !Array.isArray(packageJson.bundledDependencies) ||
+    !packageJson.bundledDependencies.includes("@slack/bolt")
+  ) {
+    throw new Error("@openclaw/slack@2026.9.2 Bolt dependency changed after review");
+  }
+
+  const boltDirectory = join(packageDirectory, "node_modules", "@slack", "bolt");
+  const boltPackageJson = readJson(join(boltDirectory, "package.json"));
+  requirePackageIdentity(boltPackageJson, "@slack/bolt", "5.0.0", "OpenClaw Slack bundled Bolt");
+  if (
+    boltPackageJson.dependencies?.express !== "^5.0.0" ||
+    boltPackageJson.license !== "MIT" ||
+    boltPackageJson.engines?.node !== ">=20"
+  ) {
+    throw new Error("@openclaw/slack@2026.9.2 bundled Bolt contract changed after review");
+  }
+
+  const expressPackageJson = readJson(
+    join(boltDirectory, "node_modules", "express", "package.json"),
+  );
+  requirePackageIdentity(expressPackageJson, "express", "5.2.1", "OpenClaw Slack bundled Express");
+  if (
+    expressPackageJson.dependencies?.["proxy-addr"] !== "^2.0.7" ||
+    expressPackageJson.license !== "MIT" ||
+    expressPackageJson.engines?.node !== ">= 18"
+  ) {
+    throw new Error("@openclaw/slack@2026.9.2 bundled Express contract changed after review");
+  }
+
+  const proxyAddrDirectory = join(boltDirectory, "node_modules", "proxy-addr");
+  const proxyAddrPackageJson = readJson(join(proxyAddrDirectory, "package.json"));
+  requirePackageIdentity(
+    proxyAddrPackageJson,
+    "proxy-addr",
+    "2.0.7",
+    "OpenClaw Slack bundled proxy-addr",
+  );
+  requireDependencyShape(
+    proxyAddrPackageJson,
+    { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    "proxy-addr@2.0.7",
+  );
+  if (proxyAddrPackageJson.license !== "MIT" || proxyAddrPackageJson.engines?.node !== ">= 0.10") {
+    throw new Error("@openclaw/slack@2026.9.2 bundled proxy-addr contract changed after review");
+  }
+
+  const replacementPackageJson = readJson(join(replacementDirectory, "package.json"));
+  requirePackageIdentity(
+    replacementPackageJson,
+    "proxy-addr",
+    PROXY_ADDR_VERSION,
+    "OpenClaw Slack proxy-addr remediation package",
+  );
+  requireDependencyShape(
+    replacementPackageJson,
+    { forwarded: "0.2.0", "ipaddr.js": "1.9.1" },
+    `proxy-addr@${PROXY_ADDR_VERSION}`,
+  );
+  if (
+    replacementPackageJson.license !== "MIT" ||
+    replacementPackageJson.engines?.node !== ">= 0.10"
+  ) {
+    throw new Error(
+      `proxy-addr@${PROXY_ADDR_VERSION} package contract changed; review the remediation before updating it`,
+    );
+  }
+
+  copyReplacementPackage(replacementDirectory, proxyAddrDirectory);
+}
+
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
@@ -1405,34 +1483,6 @@ function packReplacement(
   );
 }
 
-export function patchOpenClawSlackProxyPackageGraph(
-  packageDirectory: string,
-  replacementDirectory: string,
-): void {
-  requirePackageIdentity(
-    readJson(join(packageDirectory, "package.json")),
-    "@openclaw/slack",
-    "2026.9.2",
-    "OpenClaw Slack plugin",
-  );
-  const target = join(
-    packageDirectory,
-    "node_modules",
-    "@slack",
-    "bolt",
-    "node_modules",
-    "proxy-addr",
-  );
-  const original = readJson(join(target, "package.json"));
-  const replacement = readJson(join(replacementDirectory, "package.json"));
-  requirePackageIdentity(original, "proxy-addr", "2.0.7", "Bundled Slack proxy-addr");
-  requirePackageIdentity(replacement, "proxy-addr", PROXY_ADDR_VERSION, "proxy-addr replacement");
-  const dependencies = { forwarded: "0.2.0", "ipaddr.js": "1.9.1" };
-  requireDependencyShape(original, dependencies, "Bundled Slack proxy-addr");
-  requireDependencyShape(replacement, dependencies, "proxy-addr replacement");
-  copyReplacementPackage(replacementDirectory, target);
-}
-
 export function buildRemediatedOpenClawPluginArchive(
   request: BuildRequest,
 ): Extract<RemediatedArchive, { remediated: true }> {
@@ -1472,7 +1522,7 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
-    patchOpenClawSlackProxyPackageGraph(sourcePackage, replacement);
+    patchOpenClawSlackProxyAddrPackageGraph(sourcePackage, replacement);
   } else if (remediation.kind === "core") {
     const fsSafeArchive = packReplacement(
       `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
@@ -1947,8 +1997,30 @@ export function remediateReviewedOpenClawPluginArchive(
 export function remediateInstalledOfficialOpenClawPlugin(
   request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
 ): void {
+  try {
+    remediateVerifiedInstalledOfficialOpenClawPlugin(request);
+  } catch (error) {
+    if (
+      error instanceof OpenClawNpmRemediationCommandError ||
+      error instanceof OpenClawNpmPackageRecoveryError
+    ) {
+      throw error;
+    }
+    throw new Error(
+      "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
+    );
+  }
+}
+
+function remediateVerifiedInstalledOfficialOpenClawPlugin(
+  request: RemediationRequest & Readonly<{ packageDirectory?: string; trustedStateRoot: string }>,
+): void {
   if (REMEDIATIONS[request.packageSpec]?.kind !== "slack-proxy-addr") return;
-  if (!request.packageDirectory || !isAbsolute(request.packageDirectory)) {
+  if (
+    !request.packageDirectory ||
+    !isAbsolute(request.packageDirectory) ||
+    request.packageDirectory.split(sep).includes("..")
+  ) {
     throw new Error("Official plugin remediation requires its verified install path");
   }
   const trustedRoot = realpathSync(request.trustedStateRoot);
@@ -2006,7 +2078,7 @@ export function remediateInstalledOfficialOpenClawPlugin(
       directory,
       env,
     );
-    patchOpenClawSlackProxyPackageGraph(packageDirectory, replacement);
+    patchOpenClawSlackProxyAddrPackageGraph(packageDirectory, replacement);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -2030,7 +2102,11 @@ export function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
   if (message.startsWith("Missing --")) {
     return "OpenClaw npm remediation is missing required arguments.";
   }
-  if (message.includes(" failed:")) {
+  if (
+    message === "OpenClaw npm remediation command failed" ||
+    message === "OpenClaw npm remediation command could not start" ||
+    message.includes(" failed:")
+  ) {
     return "OpenClaw npm remediation command failed.";
   }
   if (

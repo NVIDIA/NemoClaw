@@ -466,6 +466,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     """Return only the NemoClaw-managed inference constructor contract."""
     from deepagents_code.model_config import ModelConfig, ModelConfigError
     from deepagents_code._nemoclaw_managed import (
+        managed_inference_api_key,
         managed_inference_base_url,
         managed_reasoning_effort,
     )
@@ -478,9 +479,10 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     # path, but do not consume mutable provider classes, credentials, params, or
     # endpoints from it.
     ModelConfig.load()
+    base_url = managed_inference_base_url()
     kwargs = {
-        "api_key": "nemoclaw-managed-inference",
-        "base_url": managed_inference_base_url(),
+        "api_key": managed_inference_api_key(base_url),
+        "base_url": base_url,
     }
     if provider == "openai":
         kwargs["use_responses_api"] = False
@@ -488,7 +490,8 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
         reasoning_effort = managed_reasoning_effort()
         if reasoning_effort is not None:
             extra_body["reasoning_effort"] = reasoning_effort
-        if model_name in _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS:
+        if (model_name in _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS
+                and base_url != "https://integrate.api.nvidia.com/v1"):
             # A model name can enable exactly this reviewed template argument
             # and nothing else; the credential, endpoint, and remaining request
             # shape stay fixed above.
