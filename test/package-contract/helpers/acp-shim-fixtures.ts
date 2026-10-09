@@ -137,8 +137,8 @@ export function createManagedSourceNemoClawAcp(
   home: string,
   prefix: string,
   packageJsonSymlinkTarget?: string,
+  sourceRoot = path.join(home, ".nemoclaw", "source"),
 ): string {
-  const sourceRoot = path.join(home, ".nemoclaw", "source");
   const packageRoot = sourceRoot;
   const packageJson = path.join(packageRoot, "package.json");
   const acpEntry = path.join(packageRoot, "dist", "lib", "acp", "main.js");
@@ -224,6 +224,33 @@ export function createCleanManagedSourceAcpWorkTree(home: string, destination: s
   const packageFile = path.join(home, ".nemoclaw", "source", "package.json");
   fs.mkdirSync(destination, { recursive: true });
   fs.copyFileSync(packageFile, path.join(destination, "package.json"));
+}
+
+export function linkSourceCheckoutWorktree(sourceRoot: string, prefix: string): void {
+  const worktreeRoot = `${sourceRoot}-worktree`;
+  runFixtureGit([
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-C",
+    sourceRoot,
+    "worktree",
+    "add",
+    "--quiet",
+    "--detach",
+    worktreeRoot,
+    "HEAD",
+  ]);
+  fs.cpSync(path.join(sourceRoot, "dist"), path.join(worktreeRoot, "dist"), { recursive: true });
+  const packageLink = path.join(prefix, "lib", "node_modules", "nemoclaw");
+  fs.unlinkSync(packageLink);
+  fs.symlinkSync(worktreeRoot, packageLink);
+}
+
+export function configureSourceCheckoutGitHooks(sourceRoot: string, sentinel: string): void {
+  const hook = path.join(path.dirname(sourceRoot), "verification-hook");
+  writeExecutable(hook, `#!/usr/bin/env bash\nprintf executed > ${JSON.stringify(sentinel)}\n`);
+  runFixtureGit(["-C", sourceRoot, "config", "core.fsmonitor", hook]);
+  runFixtureGit(["-C", sourceRoot, "config", "diff.external", hook]);
 }
 
 export function dirtyManagedSourceNemoClawAcp(home: string): void {

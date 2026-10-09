@@ -2536,17 +2536,28 @@ try {
   const candidateBefore = fs.lstatSync(candidate);
   const resolved = fs.realpathSync(candidate);
   const cliRelativePath = path.join("dist", "lib", "acp", "main.js");
-  let packageRoot;
+  const packageRoot = path.dirname(path.dirname(path.dirname(path.dirname(resolved))));
   const expectedSourceRoot = path.join(expectedStateRoot, "source");
-  if (!path.isAbsolute(expectedStateRoot)) process.exit(1);
-  const stateStat = fs.lstatSync(expectedStateRoot);
-  const sourceStat = fs.lstatSync(expectedSourceRoot);
-  if (!stateStat.isDirectory() || stateStat.isSymbolicLink() ||
-      !sourceStat.isDirectory() || sourceStat.isSymbolicLink() ||
-      (stateStat.uid !== uid || sourceStat.uid !== uid)) process.exit(1);
-  packageRoot = fs.realpathSync(expectedSourceRoot);
-  if (packageRoot !== path.dirname(path.dirname(path.dirname(path.dirname(resolved))))) process.exit(1);
-  if (resolved !== path.join(packageRoot, cliRelativePath)) process.exit(1);
+  if (!path.isAbsolute(expectedStateRoot) || resolved !== path.join(packageRoot, cliRelativePath)) process.exit(1);
+  let managedSource = false;
+  try {
+    const stateStat = fs.lstatSync(expectedStateRoot);
+    const sourceStat = fs.lstatSync(expectedSourceRoot);
+    managedSource = stateStat.isDirectory() && !stateStat.isSymbolicLink() &&
+      sourceStat.isDirectory() && !sourceStat.isSymbolicLink() &&
+      stateStat.uid === uid && sourceStat.uid === uid &&
+      fs.realpathSync(expectedSourceRoot) === packageRoot;
+  } catch {}
+  if (!managedSource) {
+    const expectedLink = path.resolve(path.dirname(candidate), "../lib/node_modules/nemoclaw");
+    const expectedBinTarget = "../lib/node_modules/nemoclaw/dist/lib/acp/main.js";
+    const linkStat = fs.lstatSync(expectedLink);
+    if (!linkStat.isSymbolicLink() || linkStat.uid !== uid ||
+        fs.realpathSync(expectedLink) !== packageRoot ||
+        fs.readlinkSync(candidate) !== expectedBinTarget ||
+        packageRoot === path.resolve(expectedSourceRoot) ||
+        packageRoot.startsWith(path.resolve(expectedSourceRoot) + path.sep)) process.exit(1);
+  }
   const packageStat = fs.lstatSync(packageRoot);
   if (!packageStat.isDirectory() || packageStat.isSymbolicLink() || packageStat.uid !== uid) process.exit(1);
   const packageFile = path.join(packageRoot, "package.json");
@@ -2563,8 +2574,15 @@ try {
   if (!publicVersionPattern.test(pkg.version ?? "")) process.exit(1);
   if (!publicVersionPattern.test(identity.nemoclawVersion ?? "")) process.exit(1);
   if (!/^[0-9a-f]{40,64}$/.test(identity.sourceRevision ?? "")) process.exit(1);
-  const gitDir = path.join(packageRoot, ".git");
-  const gitStat = fs.lstatSync(gitDir);
+  let gitDir = path.join(packageRoot, ".git");
+  let gitStat = fs.lstatSync(gitDir);
+  if (!managedSource && ownedRegularFile(gitDir)) {
+    const gitFile = fs.readFileSync(gitDir, "utf8");
+    const gitDirMatch = /^gitdir: ([^\r\n]+)\r?\n?$/.exec(gitFile);
+    if (!gitDirMatch) process.exit(1);
+    gitDir = path.resolve(packageRoot, gitDirMatch[1]);
+    gitStat = fs.lstatSync(gitDir);
+  }
   if (!gitStat.isDirectory() || gitStat.isSymbolicLink() || gitStat.uid !== uid) process.exit(1);
   const gitEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -2578,18 +2596,18 @@ try {
   };
   const revision = execFileSync(
     "git",
-    ["-C", packageRoot, "rev-parse", "--verify", "HEAD^{commit}"],
+    ["-c", "core.fsmonitor=false", "-C", packageRoot, "rev-parse", "--verify", "HEAD^{commit}"],
     gitOptions,
   ).trim();
   if (revision !== identity.sourceRevision) process.exit(1);
   execFileSync(
     "git",
-    ["-C", packageRoot, "diff", "--quiet", "--ignore-submodules", "--"],
+    ["-c", "core.fsmonitor=false", "-C", packageRoot, "diff", "--no-ext-diff", "--no-textconv", "--quiet", "--ignore-submodules", "--"],
     gitOptions,
   );
   execFileSync(
     "git",
-    ["-C", packageRoot, "diff", "--cached", "--quiet", "--ignore-submodules", "--"],
+    ["-c", "core.fsmonitor=false", "-C", packageRoot, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--quiet", "--ignore-submodules", "--"],
     gitOptions,
   );
   const candidateAfter = fs.lstatSync(candidate);
@@ -2649,10 +2667,6 @@ is_installer_managed_cli_shim() {
   shim_cli_path="${exec_line#"$exec_prefix"}"
   shim_cli_path="${shim_cli_path%"$exec_suffix"}"
   [[ "$shim_cli_path" == */"$cli_bin" ]] || return 1
-  if [[ "$cli_bin" == "nemoclaw-acp" && -n "$canonical_cli_path" &&
-    "$shim_cli_path" == "$canonical_cli_path" ]]; then
-    return 0
-  fi
   [[ -e "$shim_cli_path" ]] || return 1
   [[ -n "$canonical_cli_path" && "$shim_cli_path" -ef "$canonical_cli_path" ]] && return 0
   [[ "$cli_bin" == "nemoclaw-acp" ]] && is_nemoclaw_owned_acp_cli_target "$shim_cli_path"

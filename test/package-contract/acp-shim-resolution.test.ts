@@ -7,11 +7,13 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import {
+  configureSourceCheckoutGitHooks,
   createCleanManagedSourceAcpWorkTree,
   createManagedSourceNemoClawAcp,
   createNpmManagedNemoClawAcp,
   createPackagedCliTree,
   dirtyManagedSourceNemoClawAcp,
+  linkSourceCheckoutWorktree,
   runInstallerFunction,
   writeInstallerGeneratedAcpShim,
 } from "./helpers/acp-shim-fixtures.js";
@@ -68,13 +70,46 @@ describe("installer recognition of stale NemoClaw ACP shims (#12738)", () => {
   );
 
   it.skipIf(process.platform === "win32")(
-    "allows preflight before the active npm binary exists, then refreshes the wrapper",
+    "rejects a generated-shaped wrapper naming a missing future active path before and during replacement",
     () => {
-      const scenario = createScenario("empty-new-prefix");
+      const scenario = createScenario("future-active-path");
       const activeCli = path.join(scenario.prefixBin, "nemoclaw-acp");
       writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, activeCli);
-      const oldContents = fs.readFileSync(scenario.shimPath);
+      const originalContents = fs.readFileSync(scenario.shimPath);
       fs.rmSync(activeCli);
+
+      expectRejectedUnchanged(
+        runInstallerFunction(scenario, {}, "preflight_nemoclaw_acp_shim"),
+        scenario,
+        originalContents,
+      );
+
+      expectRejectedUnchanged(
+        runInstallerFunction(
+          scenario,
+          {},
+          'assert_nemoclaw_acp_shim_replaceable "nemoclaw-acp" "$ACTIVE_NPM_PREFIX/bin/nemoclaw-acp"',
+        ),
+        scenario,
+        originalContents,
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refreshes an npm-linked source-checkout ACP shim before the new CLI exists",
+    () => {
+      const scenario = createScenario("source-checkout-link");
+      const sourceRoot = path.join(scenario.tmp, "source-checkout");
+      const oldCli = createManagedSourceNemoClawAcp(
+        scenario.tmp,
+        scenario.oldPrefix,
+        undefined,
+        sourceRoot,
+      );
+      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+      const oldContents = fs.readFileSync(scenario.shimPath);
+      fs.rmSync(path.join(scenario.prefixBin, "nemoclaw-acp"));
 
       const result = runInstallerFunction(
         scenario,
@@ -86,8 +121,36 @@ ensure_cli_shim "nemoclaw-acp"`,
       );
 
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(fs.readFileSync(scenario.shimPath)).toEqual(oldContents);
-      expect(fs.existsSync(path.join(scenario.prefixBin, "nemoclaw-acp"))).toBe(true);
+      expect(fs.readFileSync(scenario.shimPath)).not.toEqual(oldContents);
+      expect(fs.readFileSync(scenario.shimPath, "utf-8")).toContain(
+        path.join(scenario.prefixBin, "nemoclaw-acp"),
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refreshes an npm-linked source worktree ACP wrapper",
+    () => {
+      const scenario = createScenario("source-worktree-link");
+      const sourceRoot = path.join(scenario.tmp, "source-checkout");
+      const oldCli = createManagedSourceNemoClawAcp(
+        scenario.tmp,
+        scenario.oldPrefix,
+        undefined,
+        sourceRoot,
+      );
+      linkSourceCheckoutWorktree(sourceRoot, scenario.oldPrefix);
+      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+      const oldContents = fs.readFileSync(scenario.shimPath);
+
+      const result = runInstallerFunction(
+        scenario,
+        {},
+        'preflight_nemoclaw_acp_shim; ensure_cli_shim "nemoclaw-acp"',
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(scenario.shimPath)).not.toEqual(oldContents);
       expect(fs.readFileSync(scenario.shimPath, "utf-8")).toContain(
         path.join(scenario.prefixBin, "nemoclaw-acp"),
       );
@@ -128,6 +191,66 @@ ensure_cli_shim "nemoclaw-acp"`,
 
     expectRejectedUnchanged(runInstallerFunction(scenario), scenario, originalContents);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a dirty npm-linked source checkout despite ambient Git overrides",
+    () => {
+      const scenario = createScenario("dirty-source-checkout-link");
+      const sourceRoot = path.join(scenario.tmp, "source-checkout");
+      const oldCli = createManagedSourceNemoClawAcp(
+        scenario.tmp,
+        scenario.oldPrefix,
+        undefined,
+        sourceRoot,
+      );
+      const packageFile = path.join(sourceRoot, "package.json");
+      const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8")) as { version: string };
+      pkg.version = "0.0.132";
+      fs.writeFileSync(packageFile, JSON.stringify(pkg));
+      const cleanWorkTree = path.join(scenario.tmp, "clean-source-worktree");
+      fs.mkdirSync(cleanWorkTree);
+      fs.copyFileSync(packageFile, path.join(cleanWorkTree, "package.json"));
+      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+      const originalContents = fs.readFileSync(scenario.shimPath);
+
+      expectRejectedUnchanged(
+        runInstallerFunction(
+          scenario,
+          {
+            GIT_DIR: path.join(sourceRoot, ".git"),
+            GIT_WORK_TREE: cleanWorkTree,
+          },
+          "preflight_nemoclaw_acp_shim",
+        ),
+        scenario,
+        originalContents,
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not execute repository-configured hooks while verifying a linked source checkout",
+    () => {
+      const scenario = createScenario("source-checkout-git-hooks");
+      const sourceRoot = path.join(scenario.tmp, "source-checkout");
+      const oldCli = createManagedSourceNemoClawAcp(
+        scenario.tmp,
+        scenario.oldPrefix,
+        undefined,
+        sourceRoot,
+      );
+      const sentinel = path.join(scenario.tmp, "git-hook-executed");
+      configureSourceCheckoutGitHooks(sourceRoot, sentinel);
+      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+      const originalContents = fs.readFileSync(scenario.shimPath);
+
+      const result = runInstallerFunction(scenario, {}, "preflight_nemoclaw_acp_shim");
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(scenario.shimPath)).toEqual(originalContents);
+      expect(fs.existsSync(sentinel)).toBe(false);
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "does not execute a forged npm-layout ACP target when rejecting its wrapper",
