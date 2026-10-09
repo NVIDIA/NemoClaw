@@ -32,6 +32,8 @@ export const PAIRING_USER = {
   discord: process.env.NEMOCLAW_DISCORD_PAIRING_USER ?? "1005536447329222676",
 };
 
+const SLACK_PAIRING_TEAM = "T3730E2E";
+
 export const DISCORD_DM_CHANNEL = process.env.NEMOCLAW_DISCORD_DM_CHANNEL ?? "1199988877766655554";
 
 export function pairingEnv(options: {
@@ -176,6 +178,7 @@ export async function startFakeSlackApi(
       FAKE_SLACK_API_EXPECTED_BOT_TOKEN: botToken,
       FAKE_SLACK_API_EXPECTED_APP_TOKEN: appToken,
       FAKE_SLACK_API_SOCKET_USER_ID: PAIRING_USER.slack,
+      FAKE_SLACK_API_SOCKET_TEAM_ID: SLACK_PAIRING_TEAM,
     },
     env,
     redactionValues: redactions,
@@ -617,7 +620,8 @@ export function buildPairingApproveCommand(channel: PairingChannel, code: string
 }
 
 export function buildPairingAllowFromCommand(channel: PairingChannel, user: string): string {
-  return buildPairingStateCommand("allowed", channel, "", user);
+  const entry = channel === "slack" ? `team:${SLACK_PAIRING_TEAM}:user:${user}` : user;
+  return buildPairingStateCommand("allowed", channel, "", entry);
 }
 
 export async function approveAndAssertPairing(options: {
