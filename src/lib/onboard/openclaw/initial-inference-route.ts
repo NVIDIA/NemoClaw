@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxInferenceConfig } from "../../inference/config";
+import type { NativeCustomProviderAttachment } from "../../inference/native-custom";
+import { resolveNativeCustomCredentialReference } from "../../inference/native-custom/credential-reference";
 import type { ReasoningEffortRequest } from "../../inference/selection";
 import type { ConfigObject } from "../../security/credential-filter";
 
@@ -24,7 +26,10 @@ export interface InitialOpenclawInferenceRouteDeps {
     upstreamProviderMarker: string,
     reasoningEffort: ReasoningEffortRequest,
     inheritPrimaryReplyBudget: false,
+    nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
+    credentialReference?: string,
   ): { route: SandboxInferenceConfig };
+  resolveNativeCustomCredentialReference?: typeof resolveNativeCustomCredentialReference;
   writeOpenclawInferenceConfigNatively(
     sandboxName: string,
     config: ConfigObject,
@@ -51,6 +56,7 @@ export type InitializeOpenclawInferenceRoute = (
   preferredInferenceApi: string | null,
   gatewayName: string,
   revalidateSandboxIdentity?: (operation: string) => void,
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
 ) => Promise<void>;
 
 export function createOpenclawInferenceRouteWriter(
@@ -63,10 +69,20 @@ export function createOpenclawInferenceRouteWriter(
     preferredInferenceApi,
     gatewayName,
     revalidateSandboxIdentity,
+    nativeCustomProviderAttachment,
   ): Promise<void> {
     revalidateSandboxIdentity?.(`read native OpenClaw config in sandbox '${sandboxName}'`);
     const config = deps.readOpenclawConfig(sandboxName, gatewayName);
-    const patched = deps.patchOpenclawInferenceConfig(
+    const credentialReference = nativeCustomProviderAttachment
+      ? await (
+          deps.resolveNativeCustomCredentialReference ?? resolveNativeCustomCredentialReference
+        )({
+          sandboxName,
+          gatewayName,
+          credentialEnv: nativeCustomProviderAttachment.credentialEnv,
+        })
+      : undefined;
+    const patchArgs = [
       config,
       provider,
       model,
@@ -75,7 +91,14 @@ export function createOpenclawInferenceRouteWriter(
       provider,
       { effort: null, explicit: false },
       false,
-    );
+    ] as const;
+    const patched = nativeCustomProviderAttachment
+      ? deps.patchOpenclawInferenceConfig(
+          ...patchArgs,
+          nativeCustomProviderAttachment,
+          credentialReference,
+        )
+      : deps.patchOpenclawInferenceConfig(...patchArgs);
 
     revalidateSandboxIdentity?.(
       `apply native OpenClaw inference route in sandbox '${sandboxName}'`,
@@ -95,6 +118,7 @@ export function createInitialOpenclawInferenceRoute(
     preferredInferenceApi,
     gatewayName,
     revalidateSandboxIdentity,
+    nativeCustomProviderAttachment,
   ) => {
     await write(
       sandboxName,
@@ -103,6 +127,7 @@ export function createInitialOpenclawInferenceRoute(
       preferredInferenceApi,
       gatewayName,
       revalidateSandboxIdentity,
+      nativeCustomProviderAttachment,
     );
     revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
     const restart = await deps.restartNativeGateway(sandboxName, gatewayName);

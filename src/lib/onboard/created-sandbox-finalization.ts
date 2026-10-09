@@ -998,6 +998,7 @@ export async function finalizeCreatedSandbox(
           options.preferredInferenceApi,
           options.gatewayName,
           deps.revalidateSandboxIdentity,
+          preparedRegistration!.nativeCustomProviderAttachment,
         );
       } catch (error) {
         await abortOpenClawRestoreWindow();

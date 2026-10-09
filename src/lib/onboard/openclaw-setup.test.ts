@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../inference/native-custom";
 
 const configMocks = vi.hoisted(() => ({
   readSandboxConfig: vi.fn(),
@@ -398,6 +402,75 @@ describe("OpenClaw reuse preserves native configuration", () => {
 });
 
 describe("restored native OpenClaw inference fields", () => {
+  it.each([
+    {
+      provider: "compatible-endpoint",
+      api: "openai-completions",
+      key: "COMPATIBLE_API_KEY",
+      endpoint: "https://api.example.com/v1",
+      slot: "inference",
+    },
+    {
+      provider: "compatible-anthropic-endpoint",
+      api: "anthropic-messages",
+      key: "COMPATIBLE_ANTHROPIC_API_KEY",
+      endpoint: "https://api.example.com",
+      slot: "anthropic",
+    },
+  ] as const)(
+    "restores the selected native $api endpoint and issued credential (#12636)",
+    async ({ provider, api, key, endpoint, slot }) => {
+      const prepared = await prepareNativeCustomProfile({
+        sandboxName: "openclaw",
+        provider,
+        api,
+        endpointUrl: endpoint,
+        lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+      });
+      const receipt = customAttachmentFromPrepared(prepared, {
+        schemaVersion: 1,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "restored-native-id",
+      });
+      const reference = `openshell:resolve:env:v3_${key}`;
+      const resolve = vi.fn(async () => reference);
+      const config = {
+        channels: { telegram: { enabled: true } },
+        models: { providers: { other: { models: [{ id: "fallback" }] } } },
+      };
+      const writeValues = vi.fn();
+      const write = createOpenclawInferenceRouteWriter({
+        readOpenclawConfig: () => config,
+        patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+        resolveNativeCustomCredentialReference: resolve,
+        writeOpenclawInferenceConfigNatively: (name, patched, route, gateway) =>
+          writeOpenClawInferenceConfigNatively(name, patched, route, writeValues, gateway),
+      });
+      await write("openclaw", "changed-model", provider, api, "nemoclaw-9090", undefined, receipt);
+      expect(config.models.providers).toMatchObject({
+        [slot]: {
+          baseUrl: endpoint,
+          api,
+          apiKey: reference,
+          models: [expect.objectContaining({ id: "changed-model" })],
+        },
+        other: { models: [{ id: "fallback" }] },
+      });
+      expect(config.channels.telegram.enabled).toBe(true);
+      expect(resolve).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "openclaw",
+        gatewayName: "nemoclaw-9090",
+        credentialEnv: key,
+      });
+      resolve.mockRejectedValueOnce(new Error("Missing issued reference"));
+      await expect(
+        write("openclaw", "changed-model", provider, api, "nemoclaw-9090", undefined, receipt),
+      ).rejects.toThrow("Missing issued reference");
+      expect(writeValues).toHaveBeenCalledOnce();
+    },
+  );
+
   it("changes the selected route while preserving unrelated native settings (#12667)", async () => {
     const config = {
       agents: {
