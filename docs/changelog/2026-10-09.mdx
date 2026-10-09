@@ -24,7 +24,8 @@ It also strengthens credential checks, preserves gateway-scoped tunnels during s
   Related changes: [PR #12557](https://github.com/NVIDIA/NemoClaw/pull/12557), [PR #12609](https://github.com/NVIDIA/NemoClaw/pull/12609), and [PR #12856](https://github.com/NVIDIA/NemoClaw/pull/12856).
   Refer to [Set Up llama.cpp](/user-guide/openclaw/inference/local-inference/set-up-llama-cpp).
 - Custom-image OpenClaw onboarding waits for native startup before it configures and restarts the gateway.
-  Rebuild verifies the restored OpenAI-compatible inference route and reports the preserved backup and retry action if that proof fails.
+  For the **Other OpenAI-compatible endpoint** provider, OpenClaw rebuild verifies the restored inference route.
+  If verification fails, NemoClaw reports the preserved backup and a retry action.
   Related change: [PR #12720](https://github.com/NVIDIA/NemoClaw/pull/12720).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - Resumed Deep Agents Code onboarding restarts a stopped OpenRouter adapter and requires a bounded inference request before it reports success.
