@@ -26,6 +26,7 @@ import (
 
 func testConfig() guardConfig {
 	return guardConfig{
+		apiKey:                "opaque-test-value",
 		listenHost:            "0.0.0.0",
 		listenPort:            8081,
 		upstreamHost:          "127.0.0.1",
@@ -78,6 +79,7 @@ func request(t *testing.T, method, endpoint, contentType string, body io.Reader)
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
+	req.Header.Set("Authorization", "Bearer opaque-test-value")
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -243,17 +245,17 @@ func TestParseConfigRejectsABypassableLlamaServerCommand(t *testing.T) {
 func TestAPIKeyFileMustBeReadableRegularAndNonEmpty(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(root, "missing")
-	if err := validateAPIKeyFile(missing); err == nil {
+	if _, err := loadAPIKeyFile(missing); err == nil {
 		t.Fatal("missing API-key file was accepted")
 	}
-	if err := validateAPIKeyFile(root); err == nil {
+	if _, err := loadAPIKeyFile(root); err == nil {
 		t.Fatal("API-key directory was accepted")
 	}
 	empty := filepath.Join(root, "empty")
 	if err := os.WriteFile(empty, nil, 0600); err != nil {
 		t.Fatalf("create empty API-key file: %v", err)
 	}
-	if err := validateAPIKeyFile(empty); err == nil {
+	if _, err := loadAPIKeyFile(empty); err == nil {
 		t.Fatal("empty API-key file was accepted")
 	}
 	unreadable := filepath.Join(root, "unreadable")
@@ -269,16 +271,35 @@ func TestAPIKeyFileMustBeReadableRegularAndNonEmpty(t *testing.T) {
 			_ = probe.Close()
 			t.Skip("test process can read a mode-000 file")
 		}
-		if err := validateAPIKeyFile(unreadable); err == nil {
+		if _, err := loadAPIKeyFile(unreadable); err == nil {
 			t.Fatal("unreadable API-key file was accepted")
 		}
 	})
-	valid := filepath.Join(root, "valid")
-	if err := os.WriteFile(valid, []byte("opaque-test-key\n"), 0600); err != nil {
-		t.Fatalf("create API-key file: %v", err)
-	}
-	if err := validateAPIKeyFile(valid); err != nil {
-		t.Fatalf("valid API-key file was rejected: %v", err)
+	for _, test := range []struct {
+		name     string
+		contents string
+		accepted bool
+	}{
+		{"valid", strings.Repeat("a", 64), true},
+		{"valid-newline", strings.Repeat("a", 64) + "\n", true},
+		{"short", strings.Repeat("a", 63), false},
+		{"oversized", strings.Repeat("a", 66), false},
+		{"invalid", strings.Repeat("g", 64), false},
+		{"uppercase", strings.Repeat("A", 64), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(root, test.name)
+			if err := os.WriteFile(path, []byte(test.contents), 0600); err != nil {
+				t.Fatalf("create API-key file: %v", err)
+			}
+			key, err := loadAPIKeyFile(path)
+			if test.accepted && (err != nil || key != strings.TrimSpace(test.contents)) {
+				t.Fatal("valid API-key value was not loaded")
+			}
+			if !test.accepted && (err == nil || key != "") {
+				t.Fatal("invalid API-key value was accepted")
+			}
+		})
 	}
 }
 
@@ -306,7 +327,8 @@ func TestRequestGuardChildHelper(t *testing.T) {
 	}
 	signal.Ignore(syscall.SIGTERM)
 	_, _ = fmt.Fprintln(os.Stdout, "ready")
-	select {}
+	// A timer prevents the runtime from terminating the idle child as a deadlock.
+	time.Sleep(time.Minute)
 }
 
 func TestStopChildKillsAtTheDeclaredDeadline(t *testing.T) {
@@ -363,6 +385,7 @@ func TestGuardRejectsOversizedBodiesBeforeUpstream(t *testing.T) {
 		t.Fatalf("create chunked request: %v", err)
 	}
 	chunkedRequest.ContentLength = -1
+	chunkedRequest.Header.Set("Authorization", "Bearer opaque-test-value")
 	chunkedRequest.Header.Set("Content-Type", "application/json")
 	chunkedResponse, err := http.DefaultClient.Do(chunkedRequest)
 	if err != nil {
@@ -448,11 +471,7 @@ func TestGuardInjectsTheDeclaredLimitAndPreservesAuthorization(t *testing.T) {
 
 func TestGuardPreservesBackendAuthenticationFailure(t *testing.T) {
 	guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") == "" {
-			writer.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		writer.WriteHeader(http.StatusOK)
+		writer.WriteHeader(http.StatusUnauthorized)
 	}))
 	response := request(
 		t,
@@ -512,6 +531,7 @@ func TestGuardRejectsEncodedOrMislabeledChatBodiesBeforeUpstream(t *testing.T) {
 		t.Fatalf("create encoded request: %v", err)
 	}
 	encoded.Header.Set("Content-Encoding", "gzip")
+	encoded.Header.Set("Authorization", "Bearer opaque-test-value")
 	encoded.Header.Set("Content-Type", "application/json")
 	encodedResponse, err := http.DefaultClient.Do(encoded)
 	if err != nil {
@@ -567,6 +587,7 @@ func TestGuardStreamsAllowedResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create stream request: %v", err)
 	}
+	req.Header.Set("Authorization", "Bearer opaque-test-value")
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 2 * time.Second}
 	response, err := client.Do(req)
@@ -628,6 +649,7 @@ func TestGuardPropagatesCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create guard request: %v", err)
 	}
+	req.Header.Set("Authorization", "Bearer opaque-test-value")
 	req.Header.Set("Content-Type", "application/json")
 	result := make(chan struct{})
 	go func() {
@@ -687,5 +709,48 @@ func TestGuardBlocksUnsupportedServerSurfaces(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("upstream received %d unsupported requests", calls.Load())
+	}
+}
+
+func TestGuardAuthenticatesPublishedUpstream(t *testing.T) {
+	for _, scenario := range []struct {
+		name    string
+		method  string
+		path    string
+		headers []string
+		status  int
+		calls   int32
+	}{
+		{"missing credential", "GET", "/v1/models", nil, 401, 0},
+		{"invalid credential", "GET", "/v1/models", []string{"Bearer wrong"}, 401, 0},
+		{"duplicate credential", "GET", "/v1/models", []string{"Bearer opaque-test-value", "Bearer opaque-test-value"}, 401, 0},
+		{"private properties", "GET", "/props", nil, 401, 0},
+		{"private metrics", "GET", "/metrics", nil, 401, 0},
+		{"exact health", "GET", "/health", nil, 200, 1},
+		{"health query", "GET", "/health?details=1", nil, 401, 0},
+		{"encoded health", "GET", "/%68ealth", nil, 401, 0},
+		{"health post", "POST", "/health", nil, 401, 0},
+		{"valid credential", "GET", "/v1/models", []string{"bearer opaque-test-value"}, 200, 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			guard, calls := guardedServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.WriteHeader(http.StatusOK)
+			}))
+			req, err := http.NewRequest(scenario.method, guard.URL+scenario.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range scenario.headers {
+				req.Header.Add("Authorization", value)
+			}
+			response, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != scenario.status || calls.Load() != scenario.calls {
+				t.Fatalf("status/calls = %d/%d, want %d/%d", response.StatusCode, calls.Load(), scenario.status, scenario.calls)
+			}
+		})
 	}
 }

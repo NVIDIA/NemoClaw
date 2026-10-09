@@ -109,10 +109,15 @@ placement and specialized evidence. Common starting points are:
 npm run test:changed
 ```
 
-Normal Git hooks validate committed changes. If hooks were skipped or unavailable, commit the
-changes, run `git fetch origin main`, then run `npm run validate:pr`. This command compares committed
-changes with `origin/main` and requires a clean worktree. It checks formatting without applying fixes.
-Complete formatting and generated-file updates before the final commit.
+Normal Git hooks validate committed changes. If hooks are missing, stale, or were skipped, repair
+[contributor setup](.agents/skills/nemoclaw-contributor-onboard/SKILL.md), then follow the
+[publication procedure](.agents/skills/nemoclaw-contributor-create-pr/references/validation.md)
+before pushing. The installed pre-push hook runs publication validation; a separate
+`npm run validate:pr` is not a substitute. Changed validators must run inside the actual hook's
+verified isolation boundary, with Git transport authentication outside it.
+Publication validation compares committed changes with the refreshed `origin/main` and requires a
+clean worktree. It checks formatting without applying fixes. Complete formatting and generated-file
+updates before the final commit.
 When adding or renaming a hook, classify its read-only behavior in
 `scripts/checks/read-only-config.mts`; publication validation rejects unclassified hooks.
 
@@ -128,6 +133,15 @@ change has repository-wide impact or targeted validation cannot prove the outcom
 - `npm run check` runs the repository-wide pre-commit and coverage baseline.
 
 Most focused changes do not require both. Record only checks that actually ran and their results.
+
+### Pi qualification during publication
+
+Local hooks permit publication with pending Pi qualification when image inputs change.
+They still reject missing or malformed receipts and inconsistent receipt authority.
+Publish through normal hooks, then collect genuine AMD64 and ARM64 receipts from the same successful
+managed-image qualification run. Verify the image inputs match the receipt source and commit the receipts
+with their matching authority digests. Existing PR authorization covers this sequence across in-scope repairs.
+CI enforces the strict check; pending qualification does not establish readiness or merge approval.
 
 ### Reviewed SDK archives in PR CI
 
