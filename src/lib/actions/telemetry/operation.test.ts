@@ -115,6 +115,25 @@ it("hands an installer failure to the delivery child (#12859)", async () => {
   expect(fs.existsSync(directory)).toBe(false);
 });
 
+it("leaves a CLI-owned update context for the outer command to finish (#12859)", async () => {
+  await withTelemetryOperation("update", async () => {
+    const directory = beginInstallerTelemetry("update")!;
+    expect(directory).toBe(process.env[TELEMETRY_CONTEXT_ENV]);
+    await finishInstallerTelemetry(directory, "completed", "applied", "cli", 0, {
+      installed: "1.2.3",
+    });
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(fs.existsSync(directory)).toBe(true);
+    setTelemetryOutcome("failed", "partial", "cli");
+  });
+
+  expect(deliveryInput().context).toMatchObject({
+    operation: "update",
+    outcome: "failed",
+    state: "partial",
+  });
+});
+
 it("uses a published sandbox's non-default gateway for its terminal receipt (#12859)", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-gateway-"));
   vi.stubEnv("HOME", home);

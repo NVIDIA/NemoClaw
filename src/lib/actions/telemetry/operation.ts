@@ -602,16 +602,23 @@ export async function finishInstallerTelemetry(
 ): Promise<void> {
   const inherited = inheritedContext();
   if (!inherited || inherited.directory !== directory) return;
+  let installerOwned: boolean;
+  try {
+    installerOwned = readMetadata(directory).contextOwner === "installer";
+  } catch {
+    return;
+  }
   // Begin and finish run in separate installer processes.
   resolveTelemetryDeliveryConfig(process.env);
-  const current: Context = { ...inherited, owner: true };
+  const current: Context = { ...inherited, owner: installerOwned };
   await active.run(current, async () => {
     setTelemetryOutcome(outcome, state, scope);
     recordTelemetryVersions(versions);
-    await finishTelemetryOperation(exitCode);
+    if (installerOwned) await finishTelemetryOperation(exitCode);
   });
-  try {
-    if (readMetadata(directory).contextOwner === "installer")
+  if (installerOwned) {
+    try {
       fs.rmSync(directory, { recursive: true, force: true });
-  } catch {}
+    } catch {}
+  }
 }

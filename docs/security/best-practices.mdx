@@ -293,6 +293,7 @@ A missing or invalid value disables telemetry for that run.
 Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
 It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
 NemoClaw attempts to send one record when a covered operation finishes.
+`--force-station-install` stops after Station validation and does not emit an operation record.
 It limits telemetry collection and delivery to five seconds total.
 If either step fails or times out, the operation result stays the same.
 Help requests and other CLI commands do not emit a record.

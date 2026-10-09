@@ -15,6 +15,31 @@ const { isOperationEvent } =
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 
+it("skips telemetry for Station validation without onboarding (#12859)", () => {
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      'source "$INSTALLER_UNDER_TEST"; _installer_telemetry_begin before; [[ "${_INSTALLER_TELEMETRY_ACTIVE:-}" != true && -z "${NEMOCLAW_TELEMETRY_CONTEXT_DIR:-}" ]]',
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CI: "",
+        GITHUB_ACTIONS: "",
+        VITEST: "",
+        NODE_ENV: "",
+        NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-telemetry:client:attempt-1",
+        NEMOCLAW_TELEMETRY_CONTEXT_DIR: "",
+        FORCE_STATION_INSTALL: "1",
+        INSTALLER_UNDER_TEST: INSTALLER,
+      },
+    },
+  );
+  expect(result.status, result.stderr).toBe(0);
+});
+
 it.each([
   { name: "shell exit 0", exitCode: 0, outcome: "completed", state: "applied", lifecycle: false },
   {
