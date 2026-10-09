@@ -304,6 +304,9 @@ describe("llama.cpp image PR workflow", () => {
       'Labels["io.nvidia.nemoclaw.inference-server.request-guard.authentication"] == "managed-bearer-v1"',
     );
     expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"] == "1"',
+    );
+    expect(validate.run).toContain(
       'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',
     );
     expect(validate.run).toContain(

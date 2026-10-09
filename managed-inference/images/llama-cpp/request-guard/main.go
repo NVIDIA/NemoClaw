@@ -29,11 +29,37 @@ import (
 const (
 	llamaServerPath       = "/usr/local/bin/llama-server"
 	llamaServerAPIKeyPath = "/run/secrets/llama-cpp-api-key"
+	stdioForwardAddress   = "127.0.0.1:8081"
 	maximumBodyBytes      = 64 * 1024 * 1024
 	maximumHeaderBytes    = 1024 * 1024
 	maximumOutputTokens   = 1024 * 1024
 	maximumTimeoutSeconds = 24 * 60 * 60
 )
+
+// Docker exec reaches this process through the daemon when an internal network
+// cannot publish a host port. The HTTP request guard still owns authentication.
+func forwardStdio(input io.Reader, output io.Writer, address string) error {
+	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		return errors.New("request guard is unavailable")
+	}
+	defer connection.Close()
+
+	inputDone := make(chan error, 1)
+	go func() {
+		_, copyError := io.Copy(connection, input)
+		_ = connection.(*net.TCPConn).CloseWrite()
+		inputDone <- copyError
+	}()
+	_, outputError := io.Copy(output, connection)
+	if outputError != nil {
+		return errors.New("request guard response forwarding failed")
+	}
+	if inputError := <-inputDone; inputError != nil {
+		return errors.New("request guard request forwarding failed")
+	}
+	return nil
+}
 
 type guardConfig struct {
 	apiKey                string
@@ -689,6 +715,13 @@ func run(config guardConfig, command []string) int {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--stdio-forward" {
+		if err := forwardStdio(os.Stdin, os.Stdout, stdioForwardAddress); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	config, command, err := parseConfig(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,60 @@ import (
 	"testing"
 	"time"
 )
+
+func TestForwardStdioUsesLoopbackGuardConnection(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptError := listener.Accept()
+		if acceptError != nil {
+			serverDone <- acceptError
+			return
+		}
+		defer connection.Close()
+		request, readError := io.ReadAll(connection)
+		if readError != nil {
+			serverDone <- readError
+			return
+		}
+		if string(request) != "guarded request" {
+			serverDone <- fmt.Errorf("unexpected request: %q", request)
+			return
+		}
+		_, serverDoneError := connection.Write([]byte("guarded response"))
+		serverDone <- serverDoneError
+	}()
+	var output bytes.Buffer
+	if err := forwardStdio(strings.NewReader("guarded request"), &output, listener.Addr().String()); err != nil {
+		t.Fatalf("forward request: %v", err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("guard exchange: %v", err)
+	}
+	if output.String() != "guarded response" {
+		t.Fatalf("unexpected response: %q", output.String())
+	}
+}
+
+func TestForwardStdioRejectsUnavailableGuard(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	address := listener.Addr().String()
+	listener.Close()
+	var output bytes.Buffer
+	if err := forwardStdio(strings.NewReader("request"), &output, address); err == nil {
+		t.Fatal("unavailable request guard was accepted")
+	}
+	if output.Len() != 0 {
+		t.Fatal("unavailable request guard emitted a response")
+	}
+}
 
 func testConfig() guardConfig {
 	return guardConfig{

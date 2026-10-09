@@ -738,6 +738,9 @@ describe("declarative llama.cpp server image", () => {
       'io.nvidia.nemoclaw.inference-server.request-guard.go.version="${REQUEST_GUARD_GO_VERSION}"',
     );
     expect(dockerfile).toContain(
+      'io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward="1"',
+    );
+    expect(dockerfile).toContain(
       'io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256="${REQUEST_GUARD_GO_ARCHIVE_SHA256}"',
     );
     expect(dockerfile).not.toContain("golang-go=");
