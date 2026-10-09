@@ -280,10 +280,10 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
                 .unwrap()
                 .contains("compatibility_status")
         );
-        let requirements: serde_json::Value =
-            serde_json::from_str(image["requirements_json"].as_str().unwrap()).unwrap();
+        let configuration: serde_json::Value =
+            serde_json::from_str(image["config_json"].as_str().unwrap()).unwrap();
         assert_eq!(
-            requirements["configuration"]["harness"]["adapter_id"],
+            configuration["harness"]["adapter_id"],
             document
                 .sandbox_harness(&document.spec.sandboxes[0])
                 .unwrap()
@@ -291,7 +291,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
                 .as_str()
         );
         assert_eq!(
-            requirements["configuration"]["models"]["default"]["api"],
+            configuration["models"]["default"]["api"],
             "openai-completions"
         );
         assert!(graph["output"]["discovery"]["value"].is_object());

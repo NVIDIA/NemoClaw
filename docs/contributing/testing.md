@@ -80,7 +80,9 @@ On Linux and macOS, each platform builds once, then runs two nextest hash partit
 Each platform starts its workers after its own build; it does not wait for other platforms to finish building.
 Windows runs its smaller lifecycle suite in the build job without archive transfer.
 The existing `Test / PLATFORM` required checks succeed only when that platform's build and lifecycle jobs succeed.
-Lifecycle timing artifacts contain per-test durations, with the Unix partition in each artifact name.
+After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.
+In GitHub Actions, the report is added to the job summary.
+The `test-` and `lifecycle-` timing artifacts contain the JUnit reports with per-test durations, with the Unix partition in each lifecycle artifact name.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.

@@ -176,40 +176,52 @@ impl Deployment {
         let observations = operation
             .export_observations(&bundle, &store, &record, false, cancel)
             .await?;
-        let mut document = record.document;
-        consistent_provider_credentials(&document, &record.generations, &observations)?;
-        for target in compile::targets(&document, &record.generations)? {
-            if cancel.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            if target.address.starts_with("data.") || plan::disposable(&target.address) {
-                continue;
-            }
-            let mut observation = observations[&target.address].clone();
-            // Typed OpenShell inputs return to the JSON their rows carry.
-            for input in nemoclaw_openshell::structured_inputs(&target.kind) {
-                if let Some(object) = observation.as_object_mut()
-                    && let Some(value) = object.remove(input.attribute)
-                {
-                    let encoded = input
-                        .row_value(value)
-                        .map_err(|_| Error::State("invalid provider export observation"))?;
-                    object.insert(input.field.into(), json!(encoded.unwrap_or_default()));
-                }
-            }
-            let observed: Row = serde_json::from_value(observation)
-                .map_err(|_| Error::State("invalid provider export observation"))?;
-            let mut expected = target.values;
-            expected.insert("id".into(), observed["id"].clone());
-            match target.kind.as_str() {
-                "provider" => export_provider(&mut document, &expected, &observed)?,
-                "sandbox" => export_sandbox(&expected, &observed)?,
-                _ => {}
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        exported(record.document, &record.generations, &observations)
+    }
+}
+
+/// The saved document, once the observed OpenShell objects agree with what it
+/// compiles to. Observations are the refreshed state's attributes by address.
+pub(super) fn exported(
+    mut document: Document,
+    generations: &compile::Generations,
+    observations: &BTreeMap<String, Value>,
+) -> Result<Document, Error> {
+    consistent_provider_credentials(&document, generations, observations)?;
+    for target in compile::targets(&document, generations)? {
+        if target.address.starts_with("data.") || plan::disposable(&target.address) {
+            continue;
+        }
+        let mut observation = observations
+            .get(&target.address)
+            .cloned()
+            .ok_or(Error::State("incomplete provider export observation"))?;
+        // Typed OpenShell inputs return to the JSON their rows carry.
+        for input in nemoclaw_openshell::structured_inputs(&target.kind) {
+            if let Some(object) = observation.as_object_mut()
+                && let Some(value) = object.remove(input.attribute)
+            {
+                let encoded = input
+                    .row_value(value)
+                    .map_err(|_| Error::State("invalid provider export observation"))?;
+                object.insert(input.field.into(), json!(encoded.unwrap_or_default()));
             }
         }
-        document.validate()?;
-        Ok(document)
+        let observed: Row = serde_json::from_value(observation)
+            .map_err(|_| Error::State("invalid provider export observation"))?;
+        let mut expected = target.values;
+        expected.insert("id".into(), observed["id"].clone());
+        match target.kind.as_str() {
+            "provider" => export_provider(&mut document, &expected, &observed)?,
+            "sandbox" => export_sandbox(&expected, &observed)?,
+            _ => {}
+        }
     }
+    document.validate()?;
+    Ok(document)
 }
 
 fn validate_projection(target: &Target, observed: &Value) -> Result<(), Error> {
@@ -414,6 +426,82 @@ fn export_sandbox(expected: &Row, observed: &Row) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Observations that echo what `document` compiles to, as providers
+    /// report a deployment applied from it.
+    fn echoed(document: &Document, generations: &compile::Generations) -> BTreeMap<String, Value> {
+        compile::targets(document, generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| !target.address.starts_with("data."))
+            .map(|target| {
+                let mut row = json!(target.values);
+                row["id"] = json!(format!("{}-id", target.address));
+                (target.address, row)
+            })
+            .collect()
+    }
+
+    /// A generation for every kind `document` records.
+    fn generations(document: &Document) -> compile::Generations {
+        ["workspace", "provider", "sandbox"]
+            .into_iter()
+            .chain(crate::services::generation_kinds(document).unwrap())
+            .map(|key| (key.into(), "a".repeat(32)))
+            .collect()
+    }
+
+    /// Every example's saved document exports unchanged when the providers
+    /// report what it compiled to, and a drifted sandbox or provider stops the
+    /// export.
+    #[test]
+    fn each_example_exports_its_applied_document_and_stops_on_drift() {
+        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let mut exported_examples = 0;
+        for entry in fs::read_dir(&examples).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("yaml") {
+                continue;
+            }
+            let mut document = Document::parse(fs::read(&path).unwrap().as_slice())
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            document.defaults();
+            let generations = generations(&document);
+            let observations = echoed(&document, &generations);
+            assert_eq!(
+                exported(document.clone(), &generations, &observations)
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+                document,
+                "{}",
+                path.display()
+            );
+            for (kind, field, value) in [
+                ("sandbox", "image", "drifted@sha256:0"),
+                ("provider", "endpoint", "https://drifted.example/v1"),
+            ] {
+                let Some(address) = compile::targets(&document, &generations)
+                    .unwrap()
+                    .into_iter()
+                    .find(|target| target.kind == kind && target.values.contains_key(field))
+                    .map(|target| target.address)
+                else {
+                    continue;
+                };
+                let mut drifted = observations.clone();
+                drifted.get_mut(&address).unwrap()[field] = json!(value);
+                assert!(
+                    exported(document.clone(), &generations, &drifted).is_err(),
+                    "{}: {kind}.{field} drift was exported",
+                    path.display()
+                );
+            }
+            let mut missing = observations.clone();
+            missing.pop_first();
+            assert!(exported(document.clone(), &generations, &missing).is_err());
+            exported_examples += 1;
+        }
+        assert!(exported_examples > 20, "examples were not found");
+    }
 
     #[tokio::test]
     #[ignore = "uses the verified bundle named by NEMOCLAW_TEST_BUNDLE"]
