@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { loadServingCatalog } from "./catalog-loader";
+import { servingProfileProvenance } from "./profile-provenance";
 import {
   resolveRequestedServingProfileModel,
   servingProfileModel,
@@ -20,6 +21,7 @@ describe("requested serving profile model", () => {
     expect(servingProfileModel(catalog, preset.metadata.id)).toEqual({
       presetId: preset.metadata.id,
       backend: recipe.spec.backend,
+      provenance: servingProfileProvenance(catalog, preset.metadata.id),
       servedName: recipe.spec.model.servedName,
       modelId: recipe.spec.model.id,
     });
