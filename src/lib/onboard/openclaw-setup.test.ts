@@ -22,7 +22,15 @@ import {
   createOpenclawSetup,
   isOpenclawGatewayReady,
 } from "./openclaw-setup";
-import { createInitialOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
+import {
+  createInitialOpenclawInferenceRoute,
+  createOpenclawInferenceRouteWriter,
+} from "./openclaw/initial-inference-route";
+
+import {
+  patchOpenClawInferenceConfig,
+  writeOpenClawInferenceConfigNatively,
+} from "../actions/inference-set";
 
 describe("OpenClaw sandbox setup", () => {
   beforeEach(() => {
@@ -387,4 +395,62 @@ describe("OpenClaw reuse preserves native configuration", () => {
       );
     },
   );
+});
+
+describe("restored native OpenClaw inference fields", () => {
+  it("changes the selected route while preserving unrelated native settings (#12667)", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: "inference/test-model", fallbacks: ["other/fallback"] },
+          workspace: "/sandbox/custom",
+        },
+      },
+      channels: { telegram: { enabled: true } },
+      gateway: { port: 18789 },
+      models: { providers: { other: { models: [{ id: "fallback" }] } } },
+    };
+    const writeValues = vi.fn();
+    const identity = vi.fn();
+    const write = createOpenclawInferenceRouteWriter({
+      readOpenclawConfig: () => config,
+      patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+      writeOpenclawInferenceConfigNatively: (name, patched, route, gateway) =>
+        writeOpenClawInferenceConfigNatively(name, patched, route, writeValues, gateway),
+    });
+    await write(
+      "openclaw",
+      "changed-model",
+      "compatible-endpoint",
+      null,
+      "nemoclaw-9090",
+      identity,
+    );
+    expect(config).toMatchObject({
+      agents: {
+        defaults: {
+          model: { primary: "inference/changed-model", fallbacks: ["other/fallback"] },
+          workspace: "/sandbox/custom",
+        },
+      },
+      channels: { telegram: { enabled: true } },
+      gateway: { port: 18789 },
+      models: { providers: { other: { models: [{ id: "fallback" }] } } },
+    });
+    expect(writeValues).toHaveBeenCalledExactlyOnceWith(
+      "openclaw",
+      [
+        { dotpath: "agents.defaults.model.primary", value: "inference/changed-model" },
+        { dotpath: "models.mode", value: "merge" },
+        {
+          dotpath: "models.providers.inference",
+          value: expect.objectContaining({
+            models: [expect.objectContaining({ id: "changed-model" })],
+          }),
+        },
+      ],
+      "nemoclaw-9090",
+    );
+    expect(identity).toHaveBeenCalledTimes(2);
+  });
 });

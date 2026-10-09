@@ -10,6 +10,7 @@ import {
   type OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import * as registry from "../../../state/registry";
 import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
@@ -382,14 +383,35 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("OPENAI_API_KEY");
   });
 
-  it("does not engage the crash-recovery path for a normal fresh create (no checkpoint receipt)", async () => {
-    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing" });
-    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+  it.each([
+    { state: "missing", fresh: false, provider: "provider", model: "model" },
+    { state: "ready", fresh: true, provider: "provider", model: "changed-model" },
+    { state: "ready", fresh: false, provider: "provider", model: "changed-model" },
+    { state: "ready", fresh: true, provider: "changed-provider", model: "model" },
+    { state: "ready", fresh: false, provider: "provider", model: "model" },
+  ])(
+    "checks selection through create for $state sandbox with fresh=$fresh and $provider/$model (#12667)",
+    async ({ state, fresh, provider, model }) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+      const session =
+        state === "missing"
+          ? createSession({ sessionId: "sess-1", agent: "openclaw" })
+          : sessionWithCheckpoint(crashedCheckpoint({ effectGroups: {} }));
+      const { deps, calls } = createDeps({ getSandboxReuseState: () => state }, session);
 
-    await handleSandboxState({ ...baseOptions(deps, session), resume: false });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: false,
+        fresh,
+        sandboxName: "my-assistant",
+        provider,
+        model,
+      });
 
-    expect(calls.createSandbox).toHaveBeenCalled();
-  });
+      expect(calls.createSandbox.mock.calls[0]?.slice(1, 3)).toEqual([model, provider]);
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+    },
+  );
 
   it("reuses a live sandbox even when the create receipt was lost in the crash window (#7022)", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
