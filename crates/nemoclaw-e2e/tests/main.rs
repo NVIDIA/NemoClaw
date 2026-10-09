@@ -45,6 +45,8 @@ mod opentofu_openshell;
 mod provider_protocol;
 #[path = "remote_service.rs"]
 mod remote_service;
+#[path = "runtime_image.rs"]
+mod runtime_image;
 #[path = "sandbox_readiness.rs"]
 mod sandbox_readiness;
 #[path = "service_capacity.rs"]

@@ -332,3 +332,105 @@ async fn omitted_proxy_storage_identity_is_generated_and_labels_its_credential_v
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+/// An Ollama upstream that lists one model with the digest it holds.
+async fn upstream(digest: Arc<Mutex<String>>) -> Fixture {
+    Fixture::start_tcp(move |request| {
+        if request.method != "GET" || request.path != "/api/tags" {
+            return Some((400, Vec::new()));
+        }
+        let body =
+            json!({"models":[{"name":"qwen3:0.6b","digest":*digest.lock().unwrap(),"size":42}]});
+        Some((200, body.to_string().into_bytes()))
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker and Ollama fixtures"]
+async fn authored_external_model_shares_proxy_identity_and_rechecks_its_digest() {
+    let (engine, volumes) = volume_engine().await;
+    let digest = Arc::new(Mutex::new("a".repeat(64)));
+    let upstream = upstream(digest.clone()).await;
+    let workspace = workspace();
+    fs::write(
+        workspace.path().join("main.tf"),
+        format!(
+            r#"terraform {{
+  required_providers {{
+    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+  }}
+}}
+
+provider "nemoclaw" {{}}
+
+resource "nemoclaw_ollama_proxy_storage" "credentials" {{
+  name   = "nc-0123456789abcdef-ollama-proxy-local"
+  engine = "{engine}"
+}}
+
+# The model shares its proxy's identity, so a new proxy re-verifies it.
+resource "nemoclaw_ollama_external_model" "model" {{
+  name       = nemoclaw_ollama_proxy_storage.credentials.name
+  owner      = nemoclaw_ollama_proxy_storage.credentials.owner
+  generation = nemoclaw_ollama_proxy_storage.credentials.generation
+  engine     = "{engine}"
+  upstream   = "{upstream}/v1"
+  model      = "qwen3:0.6b"
+  digest     = "{digest}"
+}}
+"#,
+            engine = engine.endpoint,
+            upstream = upstream.endpoint,
+            digest = "a".repeat(64),
+        ),
+    )
+    .unwrap();
+    success(
+        &workspace,
+        &["apply", "-input=false", "-auto-approve", "-no-color"],
+    );
+    assert!(
+        volumes
+            .lock()
+            .unwrap()
+            .volumes
+            .contains_key("nc-0123456789abcdef-ollama-proxy-local-auth")
+    );
+    let state: Value =
+        serde_json::from_slice(&fs::read(workspace.path().join("terraform.tfstate")).unwrap())
+            .unwrap();
+    let attributes = |kind: &str| {
+        state["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["type"] == kind)
+            .unwrap()["instances"][0]["attributes"]
+            .clone()
+    };
+    let (storage, model) = (
+        attributes("nemoclaw_ollama_proxy_storage"),
+        attributes("nemoclaw_ollama_external_model"),
+    );
+    assert_eq!(model["owner"], storage["owner"]);
+    assert_eq!(
+        model["id"],
+        format!(
+            "{}/{}/{}",
+            storage["owner"].as_str().unwrap(),
+            storage["generation"].as_str().unwrap(),
+            "a".repeat(64)
+        )
+    );
+    success(
+        &workspace,
+        &["plan", "-input=false", "-no-color", "-detailed-exitcode"],
+    );
+    // A changed upstream digest stops planning and names the service's upstream.
+    *digest.lock().unwrap() = "b".repeat(64);
+    let output = run(&workspace, &["plan", "-input=false", "-no-color"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("services.local.upstream"), "{stderr}");
+}
