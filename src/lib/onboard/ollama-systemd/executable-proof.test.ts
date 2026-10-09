@@ -348,7 +348,7 @@ describe("bounded direct execution proof process ownership", () => {
         try {
           processState = fs.readFileSync(statPath, "utf8").split(" ")[2];
         } catch (error) {
-          // The descendant may disappear before open (ENOENT) or during read (ESRCH).
+          // A reaped descendant can disappear before open or during the procfs read.
           expect(["ENOENT", "ESRCH"]).toContain((error as NodeJS.ErrnoException).code);
         }
 

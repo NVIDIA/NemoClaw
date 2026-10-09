@@ -233,6 +233,11 @@
     },
     {
       "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces only the reviewed Slack bundled proxy-addr package",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
       "test": "replaces the reviewed Jaeger propagator with its aligned patched core",
       "category": "security"
     },

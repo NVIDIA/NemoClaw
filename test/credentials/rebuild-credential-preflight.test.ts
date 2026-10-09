@@ -201,7 +201,10 @@ if (a[0] === "sandbox" && a[1] === "exec") {
     const probeStatus = ${String(inferenceProbeHttpStatus ?? 200)};
     const isManagedDcodeProbe = command.includes("/usr/local/lib/nemoclaw/dcode-managed-exec");
     process.stdout.write((isManagedDcodeProbe ? "" : "__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n") + probeStatus + "\\n");
-    if (probeStatus >= 200 && probeStatus < 300) process.exit(0);
+    if (probeStatus >= 200 && probeStatus < 300) {
+      process.stdout.write(JSON.stringify({choices:[{message:{content:"OK"}}]}) + "\\n");
+      process.exit(0);
+    }
     if (!isManagedDcodeProbe) process.stderr.write("upstream rejected stored provider credential\\n");
     process.exit(1);
   }
@@ -379,6 +382,30 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
 }
 
 describe("atomic rebuild process contracts (#2273)", () => {
+  it("rejects an invalid host key before rebuilding a healthy DCode sandbox (#12742)", () => {
+    const fixture = createFixture({
+      agent: "langchain-deepagents-code",
+      provider: "nvidia-prod",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      providerRegistered: true,
+      inferenceProbeHttpStatus: 200,
+    });
+    const registryPath = path.join(fixture.nemoclawDir, "sandboxes.json");
+    const originalRegistry = fs.readFileSync(registryPath, "utf-8");
+    const invalidKey = "invalid-rebuild-test-credential";
+
+    const result = runRebuild(fixture, { NVIDIA_INFERENCE_API_KEY: invalidKey });
+    const output = `${result.stderr || ""}${result.stdout || ""}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("host inference credential could not be validated");
+    expect(output).toContain("Sandbox is untouched");
+    expect(output).not.toContain(invalidKey);
+    expect(output).not.toContain("Backing up sandbox state");
+    expect(fs.existsSync(fixture.deleteMarker)).toBe(false);
+    expect(fs.readFileSync(registryPath, "utf-8")).toBe(originalRegistry);
+  });
+
   it(
     "rejects expired credentials through the CLI before backup or deletion (#10394)",
     testTimeoutOptions(30_000),

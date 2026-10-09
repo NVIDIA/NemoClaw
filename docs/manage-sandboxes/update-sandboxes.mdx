@@ -149,7 +149,7 @@ Outside these forced paths, an in-range source checkout preserves an existing Op
 
 After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
 
-During installer-driven recovery, each stale or non-Ready sandbox requires a validated latest backup.
+During installer-driven recovery, every sandbox selected for recovery requires a validated latest backup.
 The backup's sandbox and agent identities must match the registry.
 <AgentOnly variant="deepagents">
 The registry must also contain positive evidence that NemoClaw managed the sandbox image.
@@ -159,6 +159,12 @@ The registry must contain positive evidence that NemoClaw managed the sandbox im
 </AgentOnly>
 If the replacement gateway reports a stale sandbox as Ready or Running, the installer reuses the validated pre-upgrade backup.
 It does not attempt another backup from the replaced legacy runtime.
+
+<AgentOnly variant="openclaw">
+The installer also selects a Ready legacy OpenClaw sandbox when its agent-version probe fails and its registry has no managed-image fingerprint.
+This recovery requires the installer's explicit managed-image confirmation for that sandbox name and the validated latest backup.
+The sandbox must belong to the selected gateway and have no recorded custom-image evidence.
+</AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 For a listed pre-fingerprint OpenClaw or Hermes registry entry, the installer's explicit managed-image confirmation is the only exception to the registry evidence requirement.

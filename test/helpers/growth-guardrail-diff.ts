@@ -5,6 +5,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { hasMaintainerBudgetApproval } from "./e2e-budget-approval";
+
 export type PullRequestFile = {
   readonly filename: string;
   readonly previous_filename?: string | null;
@@ -15,6 +17,7 @@ export type GrowthGuardrailDiff = {
   readonly files: readonly PullRequestFile[];
   readonly pullRequestNumber: number | null;
   readonly exceptionPolicySource: "base" | "head";
+  readBudgetApproval?(digest: string): Promise<boolean>;
   readBase(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
   readHead(paths: readonly string[]): Promise<ReadonlyMap<string, string | null>>;
 };
@@ -205,6 +208,14 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
     files: parseChangedFiles(changed),
     pullRequestNumber: Number(prNumber),
     exceptionPolicySource: pullRequestExceptionPolicySource(process.env.GITHUB_EVENT_NAME),
+    ...(["pull_request_target", "issue_comment"].includes(process.env.GITHUB_EVENT_NAME ?? "") &&
+    process.env.GITHUB_REPOSITORY === "NVIDIA/NemoClaw"
+      ? {
+          async readBudgetApproval(digest: string) {
+            return hasMaintainerBudgetApproval(Number(prNumber), digest);
+          },
+        }
+      : {}),
     async readBase(paths) {
       return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
     },

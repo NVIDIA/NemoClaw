@@ -14,6 +14,7 @@ import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import {
   beginSandboxRecreateDelete,
+  createSandboxRecreateRuntime,
   beginSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
   fingerprintSandboxRegistryEntry,
@@ -473,6 +474,7 @@ describe("sandbox recreate recovery from a void journal", () => {
       });
       expect(owned.recovery).toEqual({ action: "continue_create" });
       expect(owned.replacedTransactionId).toBeNull();
+      expect(owned.openedWithoutPriorTransaction).toBe(false);
       expect(owned.transaction).toEqual(legacyTransaction);
       expect(owningSession.checkpoint.sandboxRecreate).toEqual(legacyTransaction);
 
@@ -593,6 +595,42 @@ describe("atomic recreate journal ownership", () => {
       },
     };
   }
+
+  it.each([
+    { fresh: true, changed: true, expected: true },
+    { fresh: false, changed: true, expected: false },
+    { fresh: true, changed: false, expected: false },
+    { fresh: true, changed: true, expected: false, vanished: true },
+  ])(
+    "persists selection authority before deletion only for a fresh handoff with known drift ($fresh, $changed)",
+    ({ fresh, changed, expected, vanished = false }) => {
+      const session = sessionWithTransaction();
+      let missing = false;
+      const runtime = createSandboxRecreateRuntime(
+        storeFor(session),
+        {
+          id: TX_ID,
+          targetGeneration: TARGET_GENERATION,
+          targetIntentFingerprint: TARGET_INTENT,
+          ...(fresh ? { freshNonForced: true as const } : {}),
+        },
+        "alpha",
+        "nemoclaw-31818",
+        REGISTERED_SOURCE_ENTRY,
+        () =>
+          missing
+            ? { state: "missing", liveIdentityFingerprint: null }
+            : { state: "not_ready", liveIdentityFingerprint: SOURCE_ID },
+        () => undefined,
+      );
+      missing = vanished;
+      expect(runtime.beginDelete(changed ? true : undefined)).toBe(vanished ? "missing" : "source");
+      expect(session.checkpoint?.sandboxRecreate?.reconcileOpenClawInference === true).toBe(
+        expected,
+      );
+      expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleting");
+    },
+  );
 
   it("replaces a void journal without exposing an empty journal (#10473)", () => {
     const session = sessionWithTransaction();
