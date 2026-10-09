@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::config::Gateway;
 
+use super::opentofu::{command_environment, credential_environment, gateway_environment};
 use super::*;
 
 pub(super) fn kubernetes_context() -> (Document, crate::compile::Generations) {
@@ -491,15 +492,7 @@ async fn schema_commands_do_not_require_inference_credentials() {
         }
     }
     let bundle_directory = tempfile::tempdir().unwrap();
-    let bundle = Bundle {
-        directory: bundle_directory.path().into(),
-        manifest: crate::bundle::Manifest {
-            version: "0.1.0".into(),
-            rust: "fixture".into(),
-            opentofu: crate::compile::OPENTOFU_VERSION.into(),
-            files: BTreeMap::new(),
-        },
-    };
+    let bundle = fixture_bundle(bundle_directory.path());
     fs::create_dir_all(bundle.tofu().parent().unwrap()).unwrap();
     fs::write(
         bundle.tofu(),
@@ -543,6 +536,72 @@ async fn schema_commands_do_not_require_inference_credentials() {
         );
     }
     assert_eq!(secrets.0.load(Ordering::SeqCst), 2);
+}
+
+fn fixture_bundle(directory: &Path) -> Bundle {
+    Bundle {
+        directory: directory.into(),
+        manifest: crate::bundle::Manifest {
+            version: "0.1.0".into(),
+            rust: "fixture".into(),
+            opentofu: crate::compile::OPENTOFU_VERSION.into(),
+            files: BTreeMap::new(),
+        },
+    }
+}
+
+/// Another OpenTofu file would join the root module, so preparation refuses it
+/// before replacing the configuration.
+#[test]
+fn state_directory_refuses_foreign_opentofu_configuration() {
+    let bundle_directory = tempfile::tempdir().unwrap();
+    let bundle = fixture_bundle(bundle_directory.path());
+    let state = tempfile::tempdir().unwrap();
+    let store = Store::open(state.path()).unwrap();
+    let deployment = Deployment::new(state.path(), bundle_directory.path());
+    for name in [".terraform.lock.hcl", "terraform.tfstate", "apply.plan"] {
+        fs::write(state.path().join(name), "{}").unwrap();
+    }
+    deployment
+        .prepare(&bundle, &store, &json!({"prepared": 1}))
+        .unwrap();
+    deployment
+        .prepare(&bundle, &store, &json!({"prepared": 2}))
+        .unwrap();
+    for name in ["extra.tf", "extra.tf.json", "extra.tofu", "extra.tofu.json"] {
+        fs::write(state.path().join(name), "{}").unwrap();
+        assert!(
+            matches!(
+                deployment.prepare(&bundle, &store, &json!({"prepared": 3})),
+                Err(Error::Conflict(_))
+            ),
+            "{name} was accepted"
+        );
+        fs::remove_file(state.path().join(name)).unwrap();
+    }
+    let configuration: Value =
+        serde_json::from_slice(&fs::read(state.path().join("main.tf.json")).unwrap()).unwrap();
+    assert_eq!(configuration, json!({"prepared": 2}));
+}
+
+/// The mirror path keeps its spaces and uses forward slashes on every platform.
+#[test]
+fn provider_mirror_quotes_a_bundle_path_with_spaces() {
+    let parent = tempfile::tempdir().unwrap();
+    let bundle_directory = parent.path().join("NemoClaw bundle 0.1");
+    fs::create_dir(&bundle_directory).unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let store = Store::open(state.path()).unwrap();
+    Deployment::new(state.path(), &bundle_directory)
+        .prepare(&fixture_bundle(&bundle_directory), &store, &json!({}))
+        .unwrap();
+    let prefix = parent.path().to_string_lossy().replace('\\', "/");
+    assert_eq!(
+        fs::read_to_string(state.path().join("providers.tfrc")).unwrap(),
+        format!(
+            "provider_installation {{\n filesystem_mirror {{ path = \"{prefix}/NemoClaw bundle 0.1/providers\" }}\n}}\n"
+        )
+    );
 }
 
 #[test]
