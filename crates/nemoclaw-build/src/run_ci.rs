@@ -179,6 +179,12 @@ fn run_step(
         }
         Step::LiveKind => unreachable!("live-kind runs asynchronously"),
         Step::Schema | Step::Bundle => {
+            if step == Step::Bundle {
+                // CI builds the bundle in its own job, without the build step.
+                let mut build = cargo();
+                configure(&mut build);
+                run(build.args(["build", "--locked", "--package", "nemoclaw-build"]))?;
+            }
             let mut command = Command::new(tool("nemoclaw-build"));
             configure(&mut command);
             if step == Step::Schema {
@@ -244,7 +250,7 @@ fn run_step(
         run(&mut command)?;
     }
     if step == Step::Archive {
-        archive::package_inputs(tools, platform)?;
+        archive::package_inputs(tools)?;
     }
     Ok(())
 }
