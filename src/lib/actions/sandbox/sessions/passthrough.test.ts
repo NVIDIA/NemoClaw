@@ -423,9 +423,6 @@ describe("runSessionsPassthrough", () => {
     { verb: "list" as const, extraArgs: ["--json"] },
   ])("rejects Deep Code session listing with options %j (#12917)", async (options) => {
     getSandboxMock.mockReturnValue({ agent: "langchain-deepagents-code" });
-    runBufferedMock.mockResolvedValueOnce(
-      completedBufferedCommand("", "openclaw: command not found", 127),
-    );
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
       code?: string | number | null,
     ) => {
