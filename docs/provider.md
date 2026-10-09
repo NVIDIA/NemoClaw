@@ -281,7 +281,9 @@ Fabric observations retain the original `catalog`: Fabric adapter and workflow t
 Native schemas and declared requirements are consumed directly, without a second capability projection.
 Missing declarations remain unknown; an advertised setting does not prove that the selected inference model supports it.
 
-Optional `requirements_json` supplies an SDK `FabricRequirements` containing the canonical public Fabric `configuration` and deployment filesystem grants.
+Optional `config_json` supplies the canonical public Fabric configuration, the same document `fabric_agent_configuration` takes.
+Optional `filesystem_read` lists the paths the sandbox policy grants for reading; omitting it skips the filesystem check.
+A configuration without `harness.adapter_id` is rejected.
 Optional `architecture` and `operating_system` supply the execution engine's platform.
 The computed `compatibility_status` is `supported`, `unsupported`, or `unknown`, with details in `observation_json.compatibility`.
 The SDK checks image identity, source revision and platform, then calls Fabric's pure planner with the selected image's descriptors.
@@ -292,7 +294,7 @@ Raw schema messages and rejected values are omitted; unsafe or overlong field id
 For a rejected model token limit, the reason also names `overrides.maxTokens` and up to 16 model routes carrying that setting, including Fabric's generated `default` role.
 Deployment postconditions name the sandbox and adapter and preserve unsupported check reasons in text and JSON errors.
 Onboarding uses the same assessment; unknown error variants retain a generic rejection.
-Omitting requirements preserves metadata-only discovery.
+Omitting `config_json` preserves metadata-only discovery.
 
 The [agent image builder](build.md#build-agent-images) reads `Fabric.discover()` inside each assembled image and stores the result in `io.nemoclaw.fabric.catalog`.
 It selects installed-package records using Fabric's provenance, without editing their descriptors.
@@ -306,7 +308,7 @@ The runtime consumes the same canonical public configuration through Fabric; see
 
 Generated graphs observe each sandbox image independently of resource creation or image acquisition.
 Managed gateways use their configured engine; external gateways require `spec.gateway.engine` for image inspection and do not run managed-gateway prerequisite checks.
-With `requirements_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
+With `config_json`, image discovery also returns `runtime_json`, the selected adapter and advertised runtime layout, and `binaries_json`, its resolved executable list.
 The sandbox consumes `runtime_json`; its `policy` block retains authored policy and managed endpoint inputs, resolved against that layout before creation.
 Provider profiles require a nonempty `binaries` list, which graphs decode from `binaries_json`; search registrations retain their scoped `profile_name`.
 Refresh verifies the actual launch and policy against retained metadata, and export and teardown do not need another image inspection.
