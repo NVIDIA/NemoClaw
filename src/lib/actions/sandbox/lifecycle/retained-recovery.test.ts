@@ -50,6 +50,21 @@ async function setup(port = 19260, dockerHost?: string) {
   const gateway = await import("../destroy-gateway");
   const { reconcileIdentityFreeRecovery } = await import("../destroy-preflight");
   const gatewayName = port === 8080 ? "nemoclaw" : `nemoclaw-${port}`;
+  const { resolveGatewayStateDirForPort } = await import("../../../onboard/gateway-binding");
+  const { writeDockerDriverGatewayRuntimeMarkerForStateDir } =
+    await import("../../../onboard/docker-driver-gateway-runtime-marker");
+  const writeRuntime = (host: string | null, createdAt: string) =>
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(
+      resolveGatewayStateDirForPort({ home: testHome, port }),
+      {
+        pid: 4242,
+        desiredEnv: {},
+        endpoint: `https://127.0.0.1:${port}`,
+        dockerHost: host,
+        createdAt,
+      },
+    );
+  writeRuntime(dockerHost ?? null, new Date(Date.now() - 1_000).toISOString());
   const route = {
     provider: "compatible-endpoint",
     model: "test-model",
@@ -90,9 +105,7 @@ async function setup(port = 19260, dockerHost?: string) {
     malformedRows: 0,
   });
   const volumes = vi.spyOn(docker, "dockerRun").mockReturnValue(emptyDockerResult);
-  const runtime = vi
-    .spyOn(gateway, "resolveGatewayCleanupRuntimeProviderId")
-    .mockReturnValue("docker");
+  const runtime = vi.spyOn(gateway, "resolveGatewayCleanupRuntimeProviderId");
   const files = [
     registry.REGISTRY_FILE,
     session.SESSION_FILE,
@@ -114,6 +127,7 @@ async function setup(port = 19260, dockerHost?: string) {
     containers,
     volumes,
     runtime,
+    writeRuntime,
     snapshot,
     run,
   };
@@ -328,6 +342,10 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
 
   it("pins container and volume observations to the default Docker daemon (#12260)", async () => {
     const h = await setup();
+    h.writeRuntime(
+      "unix:///var/run/docker.sock",
+      new Date(Date.parse(h.record.recordedAt) - 1_000).toISOString(),
+    );
     h.containers.mockRestore();
     expect(process.env.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
     expect(process.env.DOCKER_CONTEXT).toBeUndefined();
@@ -408,6 +426,29 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.volumes).not.toHaveBeenCalled();
   });
 
+  it("preserves recovery created on another Docker daemon (#12260)", async () => {
+    const h = await setup(19260, "unix:///tmp/other-docker.sock");
+    vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
+    const before = h.snapshot();
+
+    expect(h.run).toThrow(/owning Docker runtime/u);
+
+    expect(h.snapshot()).toEqual(before);
+    expect(h.capture).not.toHaveBeenCalled();
+  });
+
+  it("preserves recovery after its gateway is replaced on the default daemon (#12260)", async () => {
+    const h = await setup(19260, "unix:///tmp/other-docker.sock");
+    vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
+    h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) + 1_000).toISOString());
+    const before = h.snapshot();
+
+    expect(h.run).toThrow(/owning Docker runtime/u);
+
+    expect(h.snapshot()).toEqual(before);
+    expect(h.capture).not.toHaveBeenCalled();
+  });
+
   it("preserves recovery when its gateway differs from the owning registry root (#12260)", async () => {
     const h = await setup();
     const before = h.snapshot();
@@ -439,6 +480,20 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(
       h.session.listRetainedSandboxRecoveryRecords()[0]?.resources.sandboxScopedProviders,
     ).toEqual(["alpha-provider"]);
+  });
+
+  it("preserves recovery when its gateway changes during absence probes (#12260)", async () => {
+    const h = await setup();
+    const before = h.snapshot();
+    h.capture.mockImplementationOnce(() => {
+      h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) + 1_000).toISOString());
+      return { status: 0, output: "[]", stdout: "[]", stderr: "" };
+    });
+
+    expect(h.run).toThrow(/owning Docker runtime/u);
+
+    expect(h.capture).toHaveBeenCalledTimes(2);
+    expect(h.snapshot()).toEqual(before);
   });
 
   it("preserves metadata when the reservation gateway name and port conflict (#12260)", async () => {

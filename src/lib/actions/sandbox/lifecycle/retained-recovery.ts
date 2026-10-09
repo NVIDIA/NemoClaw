@@ -175,13 +175,20 @@ export function reconcileIdentityFreeRecovery(
       refuse(sandboxName, "the registry changed before reconciliation");
     }
     if (entry) requireReservationOwner(record, entry, sessionState.loadSession(), state);
-    if (
-      resolveGatewayCleanupRuntimeProviderId(record.gatewayName, entry?.openshellDriver, {
-        requireOwnedRuntime: true,
-      }) !== "docker"
-    ) {
-      refuse(sandboxName, "the owning Docker runtime could not be established");
-    }
+    const requireOwnedRuntime = () => {
+      if (
+        resolveGatewayCleanupRuntimeProviderId(record.gatewayName, entry?.openshellDriver, {
+          requireOwnedRuntime: true,
+          recoveryRecordedAt: record.recordedAt,
+        }) !== "docker"
+      ) {
+        refuse(
+          sandboxName,
+          "the owning Docker runtime on the original default daemon could not be established",
+        );
+      }
+    };
+    requireOwnedRuntime();
     // The runner can normalize the native Linux default context to its explicit Unix endpoint.
     if (
       process.env.DOCKER_HOST?.trim() !== "unix:///var/run/docker.sock" &&
@@ -193,6 +200,7 @@ export function reconcileIdentityFreeRecovery(
       );
     }
     requireAbsence(record, state);
+    requireOwnedRuntime();
     // The onboarding lock prevents a new create while CAS protects the observed reservation.
     const currentRecords = sessionState
       .listRetainedSandboxRecoveryRecords()
