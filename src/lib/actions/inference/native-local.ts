@@ -137,6 +137,11 @@ export async function rollbackNativeLocalSelection(input: {
   if (!input.attachment && !input.previous) return;
   const entry = input.getSandbox(input.sandboxName);
   const recorded = normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
+  if (entry?.nativeLocalProviderAttachment !== undefined && !recorded) {
+    throw new Error(
+      "Malformed native local provider attachment; compensation requires valid authority.",
+    );
+  }
   const committed =
     input.registryCommitted ||
     Boolean(
@@ -147,7 +152,10 @@ export async function rollbackNativeLocalSelection(input: {
   const previousDetachCommitted =
     input.previousDetachCommitted ||
     committed ||
-    (input.previousDetached && !input.attachment && entry?.provider === input.provider);
+    (input.previousDetached &&
+      !input.attachment &&
+      entry?.provider === input.provider &&
+      entry.nativeLocalProviderAttachment === undefined);
   if (input.attachmentChanged && !committed && input.attachment) {
     await detachNativeLocalProvider({
       adapter: input.adapter,

@@ -61,7 +61,7 @@ export LANGCHAIN_TRACING_V2=false
 export DEEPAGENTS_CODE_OFFLINE=1
 export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
-export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider
+unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY
 export NEMOCLAW_LOCAL_INFERENCE_TOKEN=openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
@@ -279,7 +279,7 @@ prepare_runtime_env() {
     write_export_if_set DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
-    printf '%s\n' 'export NEMOCLAW_ATTACHED_PROVIDER_API_KEY=nemoclaw-openshell-provider'
+    printf '%s\n' 'unset NEMOCLAW_ATTACHED_PROVIDER_API_KEY'
     printf '%s\n' 'export NEMOCLAW_LOCAL_INFERENCE_TOKEN=openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN'
     # shellcheck disable=SC2016
     printf '%s\n' 'export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"'

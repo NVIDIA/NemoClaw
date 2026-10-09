@@ -178,6 +178,46 @@ describe("native local selection compensation", () => {
     expect(detachNativeLocalProvider).not.toHaveBeenCalled();
     expect(ensureNativeLocalProviderAttached).not.toHaveBeenCalled();
   });
+  it("restores native access when a same-provider departure was not published (#12558)", async () => {
+    const input = rollbackInput();
+    await rollbackNativeLocalSelection({
+      ...input,
+      attachment: undefined,
+      attachmentChanged: false,
+    });
+    expect(detachNativeLocalProvider).not.toHaveBeenCalled();
+    expect(ensureNativeLocalProviderAttached).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ expected: previous, sandboxName: "alice" }),
+    );
+  });
+  it("keeps a same-provider departure after its registry response was lost (#12558)", async () => {
+    const input = rollbackInput();
+    await rollbackNativeLocalSelection({
+      ...input,
+      attachment: undefined,
+      attachmentChanged: false,
+      getSandbox: () => ({ name: "alice", provider: "compatible-endpoint" }),
+    });
+    expect(detachNativeLocalProvider).not.toHaveBeenCalled();
+    expect(ensureNativeLocalProviderAttached).not.toHaveBeenCalled();
+  });
+  it("retains authority without mutation when a persisted receipt is malformed (#12558)", async () => {
+    const input = rollbackInput();
+    await expect(
+      rollbackNativeLocalSelection({
+        ...input,
+        attachment: undefined,
+        attachmentChanged: false,
+        getSandbox: () => ({
+          name: "alice",
+          provider: "compatible-endpoint",
+          nativeLocalProviderAttachment: { ...previous, providerId: "" },
+        }),
+      }),
+    ).rejects.toThrow("Malformed native local provider attachment");
+    expect(detachNativeLocalProvider).not.toHaveBeenCalled();
+    expect(ensureNativeLocalProviderAttached).not.toHaveBeenCalled();
+  });
   it("retains provider authority when registry observation fails (#12558)", async () => {
     const input = rollbackInput();
     input.getSandbox.mockImplementation(() => {

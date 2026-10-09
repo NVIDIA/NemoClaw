@@ -11,6 +11,12 @@ import {
   type SetupInferenceDeps,
 } from "./setup-inference";
 
+// Reservation recovery has its own state tests; this suite injects registry writes.
+vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sandbox-lifecycle")>()),
+  releaseAbandonedRouteReservation: vi.fn(() => false),
+}));
+
 describe("createProviderReviewDeps", () => {
   it("prepares the Ollama proxy after review acceptance", async () => {
     const updateSession = vi.fn();

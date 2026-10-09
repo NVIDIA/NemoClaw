@@ -107,9 +107,18 @@ async function collectNativeLocalRouteProbe(
 ): Promise<ProviderHealthStatus> {
   const expected = normalizeNativeLocalProviderAttachment(route.nativeLocalProviderAttachment);
   const endpoint = expected ? `${expected.endpointUrl}/chat/completions` : "";
+  if (!sandboxReachable) {
+    return {
+      ok: false,
+      probed: false,
+      providerLabel: "Native local inference",
+      endpoint,
+      detail: "skipped because the sandbox is not reachable through its named gateway",
+    };
+  }
   try {
-    if (!sandboxReachable || !deps.gatewayName || !expected)
-      throw new Error("Native local provider ownership or sandbox reachability is unavailable.");
+    if (!deps.gatewayName || !expected)
+      throw new Error("Native local provider ownership or gateway binding is unavailable.");
     await (deps.verifyNativeLocalStatusAttachmentImpl ?? verifyNativeLocalStatusAttachment)({
       sandboxName,
       gatewayName: deps.gatewayName,
