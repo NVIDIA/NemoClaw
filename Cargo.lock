@@ -2708,6 +2708,7 @@ dependencies = [
  "nemoclaw-openshell",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
+ "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",

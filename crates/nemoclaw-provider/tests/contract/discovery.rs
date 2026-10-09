@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use nemoclaw_e2e::http_fixture as transport;
-use nemoclaw_e2e::tofu::TofuWorkspace;
+use crate::http_fixture as transport;
+use crate::tofu::TofuWorkspace;
 use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
 use serde_json::{Value, json};
 use std::{
@@ -195,7 +195,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
     );
     assert!(tofu.is_absolute() && provider.is_absolute());
     let document =
-        Document::parse(include_bytes!("../../../examples/onboarding/openclaw.yaml").as_slice())
+        Document::parse(include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice())
             .unwrap();
     let image = document.spec.sandboxes[0].image.ref_.clone();
     let mode = Arc::new(AtomicUsize::new(0));
@@ -210,7 +210,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
             json!({"ID":"fixture", "Architecture":"arm64", "ServerVersion":"28.0", "OSType":"linux"})
         } else {
             assert!(request.path.starts_with("/images/") && request.path.ends_with("/json"));
-            let mut catalog=nemoclaw_e2e::image_runtime::catalog();
+            let mut catalog=crate::image_runtime::catalog();
             match current.load(Ordering::SeqCst) {
                 1=>{
                     catalog.adapters.retain(|adapter|adapter.adapter_id()!="nvidia.fabric.openclaw");

@@ -12,6 +12,10 @@ autotests = false
 name = "integration"
 path = "tests/main.rs"
 
+[[test]]
+name = "contract"
+path = "tests/contract/main.rs"
+
 [dependencies]
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
@@ -49,6 +53,7 @@ rustix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
 fabric-provider = { path = "../fabric-provider" }
+nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 prost.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true

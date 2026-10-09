@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Authored runtime image checks through pinned OpenTofu.
 
-use nemoclaw_e2e::{http_fixture::Fixture, tofu::TofuWorkspace};
+use crate::{http_fixture::Fixture, tofu::TofuWorkspace};
 use nemoclaw_sdk::managed::{RUNTIME_SPEC_VERSION, RUNTIME_SPEC_VERSION_LABEL};
 use serde_json::{Value, json};
 use std::{
