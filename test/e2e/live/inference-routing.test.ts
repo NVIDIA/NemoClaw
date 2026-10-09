@@ -725,6 +725,7 @@ test(
         "start the local compatible endpoint",
         "onboard to the compatible endpoint",
         "run a fresh native agent turn",
+        "run a fresh sibling OpenClaw turn",
         "verify sibling endpoint denial",
       ],
     },
@@ -766,6 +767,7 @@ test(
       contract: [
         "a custom OpenAI-compatible endpoint onboards",
         "a fresh agent process reaches its selected native endpoint",
+        "a fresh OpenClaw process reaches its own authenticated native endpoint",
         "a sibling provider grants no access to the first sandbox",
       ],
       endpointUrl: fake.baseUrl,
@@ -814,7 +816,7 @@ test(
             request.model === model,
         ),
     ).toBe(true);
-    progress.phase("verify sibling endpoint denial");
+    progress.phase("run a fresh sibling OpenClaw turn");
     const siblingName = inferenceSandboxName("e2e-compat-peer");
     const sibling = await startFakeOpenAiCompatibleServer({
       apiKey,
@@ -827,7 +829,13 @@ test(
       requireAuth: true,
       requireAuthModels: true,
     });
-    cleanup.add("close sibling compatible endpoint", () => sibling.close());
+    cleanup.add("close sibling compatible endpoint", async () => {
+      try {
+        await artifacts.writeJson("tc-inf-09-sibling-endpoint-requests.json", sibling.requests());
+      } finally {
+        await sibling.close();
+      }
+    });
     cleanup.add("remove sibling native inference sandbox", () =>
       cleanupSandbox(host, sandbox, siblingName, { strict: true }),
     );
@@ -848,6 +856,43 @@ test(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
     expectOnboardSuccess(siblingOnboard, "TC-INF-09 sibling onboard");
+    const siblingRequestOffset = sibling.requests().length;
+    const siblingTurn = await sandbox.exec(
+      siblingName,
+      [
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        `tc-inf-09-sibling-${Date.now()}`,
+        "-m",
+        "Reply with PONG. Do not use tools.",
+      ],
+      {
+        artifactName: "tc-inf-09-sibling-native-agent",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
+    );
+    expect(siblingTurn.exitCode, resultText(siblingTurn)).toBe(0);
+    expect(
+      sibling
+        .requests()
+        .slice(siblingRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === model,
+        ),
+    ).toBe(true);
+    progress.phase("verify sibling endpoint denial");
     const denied = await sandbox.exec(
       sandboxName,
       [
