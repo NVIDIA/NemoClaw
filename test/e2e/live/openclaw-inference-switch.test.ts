@@ -227,10 +227,6 @@ async function proveSelectedMockBaselineAuthentication(
   ).toContainEqual(expectedRequest);
 }
 
-function stripAnsi(value: string): string {
-  return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
 function parsePortEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -534,7 +530,7 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
 }
 
 async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
-  return runNemoclaw(host, home, ["inference", "get"], {
+  return runNemoclaw(host, home, ["inference", "get", "--json"], {
     artifactName: "nemoclaw-inference-get-after-switch",
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
@@ -1322,9 +1318,9 @@ test(
     progress.phase("inspect route configuration and recorded state");
     const route = await getRouteOutput(host, home);
     expect(route.exitCode, resultText(route)).toBe(0);
-    const plainRoute = stripAnsi(resultText(route));
-    expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
-    expect(plainRoute).toContain(`Model: ${SWITCH_MODEL}`);
+    const routeState = JSON.parse(route.stdout) as { provider?: unknown; model?: unknown };
+    expect(routeState.provider).toBe(SWITCH_PROVIDER);
+    expect(routeState.model).toBe(SWITCH_MODEL);
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
