@@ -55,8 +55,8 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
-| Live / Docker | `Live / Docker / linux_arm64`, `Live / Docker / linux_amd64` on `v1` pushes, `run-live-docker/` branch pushes, and manual runs, through `cargo ci live-docker` |
-| Live / Kind | `Live / Kind / linux_arm64`, `Live / Kind / linux_amd64` on `v1` pushes, `run-live-kind/` branch pushes, and manual runs, through `cargo ci live-kind` |
+| Live / Docker | `Live / Docker / linux_arm64`, `Live / Docker / linux_amd64` on pull requests that can affect them, `v1` pushes, `run-live-docker/` branch pushes, and manual runs, through `cargo ci live-docker` |
+| Live / Kind | `Live / Kind / linux_arm64`, `Live / Kind / linux_amd64` on pull requests that can affect them, `v1` pushes, `run-live-kind/` branch pushes, and manual runs, through `cargo ci live-kind` |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.
@@ -65,7 +65,11 @@ Superseded PR runs are cancelled.
 The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
 Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
 Documentation and dependency pushes finish; newer pushes replace older pending runs.
-Live runs use separate concurrency groups and are not cancelled by a newer push.
+Live push runs use separate concurrency groups and are not cancelled by a newer push; superseded pull request runs are cancelled.
+On a pull request, each live job first runs `nemoclaw-build changes live` and skips its remaining steps when the change cannot affect the suite.
+A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
+[Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suite.
+Run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` after committing to see the decision.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Test Runner
