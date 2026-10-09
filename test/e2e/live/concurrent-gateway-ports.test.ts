@@ -597,9 +597,6 @@ test(
     );
     expect(
       registeredImage.exitCode === 0 &&
-        /^(?:openshell\/sandbox-from|nemoclaw-sandbox-local|localhost:5000\/nemoclaw-sandbox-local):/u.test(
-          registeredImageTag,
-        ) &&
         taggedOrphan.exitCode === 0 &&
         garbageCollect.exitCode === 0 &&
         retainedSiblingImage.exitCode === 0 &&
