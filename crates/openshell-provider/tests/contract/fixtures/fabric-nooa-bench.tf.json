@@ -1,0 +1,163 @@
+{
+  "data": {
+    "openshell_gateway": {
+      "apply": {
+        "lifecycle": {
+          "postcondition": [
+            {
+              "condition": "${self.compatible}",
+              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", self.incompatibility)}"
+            }
+          ]
+        },
+        "read_trigger": "${timestamp() != \"\"}",
+        "required_compute_drivers": [
+          "docker"
+        ]
+      },
+      "current": {
+        "required_compute_drivers": [
+          "docker"
+        ]
+      }
+    }
+  },
+  "provider": {
+    "openshell": {
+      "destroy": "${var.destroying}",
+      "endpoint": "${var.endpoint}"
+    }
+  },
+  "resource": {
+    "openshell_provider_profile": {
+      "inference_local-207e499ab0a3f54cec878921": {
+        "authenticated": "false",
+        "binaries": [
+          "/usr/local/bin/python3.99"
+        ],
+        "depends_on": [
+          "data.openshell_gateway.apply"
+        ],
+        "endpoint": "http://172.20.0.1:11446/v1",
+        "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.openshell_gateway.current.compatible}",
+              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
+            }
+          ]
+        },
+        "name": "nemoclaw-inference-local-207e499ab0a3f54cec878921",
+        "owner": "1533935c-7ff1-4c28-9a68-c42ef3dd2fb3",
+        "provider_type": "",
+        "workspace": "${openshell_workspace.deployment.name}"
+      }
+    },
+    "openshell_provider_registration": {
+      "inference_local-207e499ab0a3f54cec878921": {
+        "credential_env": "",
+        "depends_on": [
+          "openshell_provider_profile.inference_local-207e499ab0a3f54cec878921",
+          "data.openshell_gateway.apply"
+        ],
+        "endpoint": "http://172.20.0.1:11446/v1",
+        "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.openshell_gateway.current.compatible}",
+              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
+            }
+          ]
+        },
+        "name": "local-207e499ab0a3f54cec878921",
+        "owner": "1533935c-7ff1-4c28-9a68-c42ef3dd2fb3",
+        "provider_type": "",
+        "workspace": "${openshell_workspace.deployment.name}"
+      }
+    },
+    "openshell_sandbox": {
+      "assistant": {
+        "agent_name": "main",
+        "agent_runtime": "fabric",
+        "depends_on": [
+          "openshell_provider_registration.inference_local-207e499ab0a3f54cec878921",
+          "data.openshell_gateway.apply"
+        ],
+        "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "image": "nc-prototype-fabric@sha256:deaa2580e46f5d27105c7051771d36da36c5879ac2fea98e6b22cd651c910260",
+        "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.openshell_gateway.current.compatible}",
+              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
+            }
+          ]
+        },
+        "name": "assistant",
+        "owner": "1533935c-7ff1-4c28-9a68-c42ef3dd2fb3",
+        "policy": {
+          "explicit": null,
+          "managed": {
+            "nemoclaw-inference-local-207e499ab0a3f54cec878921": {
+              "binaries": [],
+              "endpoints": [
+                {
+                  "access": "full",
+                  "allowed_ips": [
+                    "172.20.0.1/32"
+                  ],
+                  "host": "172.20.0.1",
+                  "path": "/v1/**",
+                  "port": 11446,
+                  "protocol": "rest"
+                }
+              ],
+              "name": "nemoclaw-inference-local-207e499ab0a3f54cec878921"
+            }
+          }
+        },
+        "provider_names": [
+          "local-207e499ab0a3f54cec878921"
+        ],
+        "runtime_json": "{\"runtime\":{\"schema_version\":1,\"command\":[\"/usr/local/bin/fabric-agent\"],\"environment\":{\"ADAPTER_PYTHON\":\"/opt/fabric/bin/python\",\"HOME\":\"/sandbox\",\"NEMOCLAW_ANONYMOUS_API_KEY\":\"unused\",\"NODE_EXTRA_CA_CERTS\":\"/etc/ssl/certs/ca-certificates.crt\",\"PATH\":\"/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin\",\"PYTHONDONTWRITEBYTECODE\":\"1\",\"SSL_CERT_FILE\":\"/etc/ssl/certs/ca-certificates.crt\",\"TMPDIR\":\"/sandbox/tmp\",\"XDG_CACHE_HOME\":\"/sandbox/.cache\"},\"required_paths\":[\"/opt/fabric\",\"/opt/nemoclaw\"],\"policy\":{\"version\":1,\"filesystem_policy\":{\"include_workdir\":false,\"read_only\":[\"/usr\",\"/bin\",\"/sbin\",\"/lib\",\"/lib64\",\"/etc\",\"/app\",\"/opt\",\"/proc\"],\"read_write\":[\"/sandbox\",\"/tmp\",\"/dev/null\",\"/dev/urandom\",\"/home/node\"]},\"landlock\":{\"compatibility\":\"best_effort\"},\"process\":{\"run_as_user\":\"10001\",\"run_as_group\":\"10001\"},\"network_policies\":{}},\"binaries\":{\"nvidia.fabric.nooa.bench-agent\":[\"/usr/local/bin/python3.99\"]}},\"adapter_id\":\"nvidia.fabric.nooa.bench-agent\"}",
+        "workspace": "${openshell_workspace.deployment.name}"
+      }
+    },
+    "openshell_workspace": {
+      "deployment": {
+        "depends_on": [
+          "data.openshell_gateway.apply"
+        ],
+        "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lifecycle": {
+          "precondition": [
+            {
+              "condition": "${data.openshell_gateway.current.compatible}",
+              "error_message": "${format(\"Gateway is incompatible with this configuration: %s. Retain state, correct the gateway or the configuration, and reapply.\", data.openshell_gateway.current.incompatibility)}"
+            }
+          ]
+        },
+        "name": "nc-012b77653b27ec99",
+        "owner": "1533935c-7ff1-4c28-9a68-c42ef3dd2fb3"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "openshell": {
+        "source": "registry.opentofu.org/nvidia/openshell"
+      }
+    },
+    "required_version": "= 1.12.6"
+  },
+  "variable": {
+    "destroying": {
+      "default": false
+    },
+    "endpoint": {
+      "type": "string"
+    }
+  }
+}

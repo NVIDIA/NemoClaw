@@ -2601,6 +2601,7 @@ dependencies = [
  "nemoclaw-provider",
  "nemoclaw-runtime",
  "nemoclaw-sdk",
+ "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "openshell-core",
  "prost",
@@ -2798,6 +2799,23 @@ dependencies = [
  "toml 1.1.5+spec-1.1.0",
  "url",
  "widestring",
+]
+
+[[package]]
+name = "nemoclaw-test-fixtures"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "openshell-core",
+ "prost",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tower",
 ]
 
 [[package]]
@@ -3120,6 +3138,7 @@ dependencies = [
  "nemoclaw-backend",
  "nemoclaw-docker",
  "nemoclaw-openshell",
+ "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
  "openshell-core",
  "openshell-policy",
