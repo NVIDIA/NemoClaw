@@ -385,31 +385,28 @@ OpenShell deletes by name without an ID/version condition, so a concurrent repla
 This procedure removes what destroy retains on Docker engines when you retire a deployment.
 It does not cover a Podman, Kubernetes, or OpenShift gateway, or the workspace on an external gateway; keep the state directory for those ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 
-**Removal permanently deletes the managed gateway volume, with the gateway database, workspace, and signing and encryption keys, plus managed model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
+**Removal permanently deletes the managed gateway's database, workspace, and keys, plus model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
 It does not revoke upstream keys or remove images, external gateways, inference services, or engines.
 
-Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must report `No resource changes planned.`.
-The deployment's `metadata.uid` must belong to no other deployment.
-Run the commands with Docker access to each engine the deployment selects: a managed gateway's `spec.gateway.engine` and each Ollama proxy's `engine`.
+Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.` before you start.
+No other deployment may use the same `metadata.uid`.
+Run the commands with Docker access to each engine the deployment selects: the managed gateway's `spec.gateway.engine`, each service's `placement.engine`, and each Ollama proxy's `engine`.
 For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
-From the directory containing the deployment YAML, set the engine socket, the UID, and the [UID-derived workspace](interfaces.md#select-the-gateway-and-workspace), then list the deployment's objects:
+From any directory, set the engine socket and the UID, then list the deployment's objects:
 
 ```sh
 deployment_engine=unix:///var/run/docker.sock
 deployment_uid=REPLACE_WITH_METADATA_UID
-deployment_workspace=REPLACE_WITH_WORKSPACE
 owner_label="label=nemoclaw.nvidia.com/uid=$deployment_uid"
-sandbox_label="label=openshell.ai/sandbox-namespace=$deployment_workspace-gateway"
 docker --host "$deployment_engine" container ls --all --filter "$owner_label" --format '{{.Names}} {{.Status}}'
 docker --host "$deployment_engine" volume ls --filter "$owner_label" --format '{{.Name}}'
 docker --host "$deployment_engine" network ls --filter "$owner_label" --format '{{.Name}}'
-docker --host "$deployment_engine" container ls --all --quiet --filter "$sandbox_label"
-docker --host "$deployment_engine" volume ls --quiet --filter "$sandbox_label"
 ```
 
 Replace the socket when your selected daemon uses another path.
-Continue only if each listed name starts with the workspace and matches a [retained Docker object](state.md#find-retained-docker-objects), no listed container is running, and the last two commands print nothing.
-Then remove the containers before the volumes and networks, because Docker refuses to remove a volume or network that a container still uses:
+Continue only if every listed name is one of the deployment's [retained Docker objects](state.md#find-retained-docker-objects) and no listed container is running.
+If no engine lists anything although `plan --destroy` reported retained storage, stop and keep the state directory: an engine or the UID is wrong.
+Then remove them:
 
 ```sh
 docker --host "$deployment_engine" container ls --all --quiet --filter "$owner_label" | xargs -r docker --host "$deployment_engine" container rm
@@ -417,12 +414,10 @@ docker --host "$deployment_engine" volume ls --quiet --filter "$owner_label" | x
 docker --host "$deployment_engine" network ls --quiet --filter "$owner_label" | xargs -r docker --host "$deployment_engine" network rm
 ```
 
-Rerun the list commands; nothing labelled with the UID remains on that engine when they print nothing.
-Rerunning the removal changes nothing once the lists are empty.
-If a volume or network remains, `docker --host "$deployment_engine" container ls --all --filter volume=NAME` or `docker --host "$deployment_engine" network inspect NAME` shows the container that still uses it; remove that container only if its name starts with the workspace.
-If every engine lists nothing before any removal although `plan --destroy` reported retained storage, stop and keep the state directory: an engine, the UID, or the workspace is wrong.
+Rerun the list commands to confirm they print nothing; the removal is safe to repeat.
+If a volume or network remains, Docker's error names the container still using it; keep the state directory until you resolve that.
 Once no engine lists an object, remove the `.local/deployment` directory unless the deployment also has resources this procedure does not cover.
-A later apply with that directory fails because its bindings name the removed storage; deploy again with a fresh `metadata.uid` and a new state directory.
+Apply cannot reuse that directory afterward because its bindings name the removed storage; deploy again with a fresh `metadata.uid` and a new state directory.
 
-The [live Docker suite](contributing/testing.md) removes its managed gateway tests' retained storage by the same label and fails if OpenShell left a sandbox object or a labelled object survives removal.
-Removal of managed service volumes and removal on SSH-placed hosts are not verified, and there is no purge command ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+The [live Docker suite](contributing/testing.md) removes its managed gateway storage the same way and fails if a labelled or OpenShell sandbox object remains.
+Removal of managed service volumes and on SSH-placed hosts is not verified, and there is no purge command ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
