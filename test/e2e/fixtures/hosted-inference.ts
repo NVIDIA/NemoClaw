@@ -24,6 +24,13 @@ export const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 const PORTABLE_DESCRIPTOR_VALIDITY_MS = 60 * 60_000;
 const CREDENTIAL_ENV_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
 
+export function requirePublicNvidiaSwitchKey(value: string): string {
+  if (!/^nvapi-[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new Error("NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key");
+  }
+  return value;
+}
+
 export interface HostedInferenceSecrets {
   required(name: string): string;
 }
