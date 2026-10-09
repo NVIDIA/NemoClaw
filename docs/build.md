@@ -60,7 +60,7 @@ There is no v1 `uninstall` command or package-manager installation to reverse in
 
 Before removing a bundle, identify every deployment using it and keep a verified copy wherever its original tooling is still needed for recovery or teardown.
 Finish any operation using that bundle.
-If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first, then either follow [Remove Retained Resources](usage.md#remove-retained-resources) for Docker engines or keep its state for the surviving resources.
+If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first, then [Remove Retained Resources](usage.md#remove-retained-resources), keeping its state for anything that procedure does not cover.
 Then remove that dedicated bundle directory using your host's file manager and remove only its `bin` entry from your shell's `PATH` configuration.
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 

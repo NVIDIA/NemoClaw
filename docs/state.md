@@ -92,14 +92,14 @@ Record those addresses and keep the state directory if you need to account for r
 On Docker engines, each retained resource consists of Docker objects labelled `nemoclaw.nvidia.com/uid` with the deployment's UID.
 Their names start with the deployment's workspace, `WS` below: `nc-` followed by the first 16 hexadecimal digits of the SHA-256 digest of `metadata.uid`.
 
-| Retained resource | Docker objects, for service `NAME` |
+| `plan --destroy` entry | Docker objects |
 |---|---|
-| Managed gateway storage, including the OpenShell workspace | Volume `WS-gateway-data`, network `WS-network`, and exited container `WS-gateway-initialize` |
-| Managed vLLM model downloads and credentials | Volume `WS-inference-NAME-data`, plus `WS-inference-NAME-auth` with `authentication: bearer` |
-| Managed Ollama model downloads | Volume `WS-ollama-NAME-data` |
-| Managed Ollama proxy credentials | Volume `WS-ollama-proxy-NAME-auth` |
+| `gateway storage` | Volume `WS-gateway-data`, network `WS-network`, and exited container `WS-gateway-initialize` |
+| `model cache/NAME` | Volume `WS-inference-NAME-data` for vLLM, or `WS-ollama-NAME-data` for Ollama |
+| `inference credentials/NAME` | Volume `WS-inference-NAME-auth` |
+| `proxy credentials/NAME` | Volume `WS-ollama-proxy-NAME-auth` |
 
-An external gateway keeps the OpenShell workspace on that gateway.
+The `OpenShell workspace` entry of an external gateway stays on that gateway.
 
 ## Recovery and Transfer
 

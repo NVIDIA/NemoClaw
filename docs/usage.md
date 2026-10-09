@@ -386,10 +386,10 @@ This procedure removes what destroy retains on Docker engines when you retire a 
 It does not cover a Podman, Kubernetes, or OpenShift gateway, or the workspace on an external gateway; keep the state directory for those ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 
 **Removal permanently deletes the managed gateway's database, workspace, and keys, plus model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
-It does not revoke upstream keys or remove images, external gateways, inference services, or engines.
+It does not revoke upstream keys or remove images, external gateways, or engines.
 
-Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.` before you start.
-No other deployment may use the same `metadata.uid`.
+Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
+The commands select objects by UID alone, so confirm that no other deployment, including one copied from the same example, uses this `metadata.uid`.
 Run the commands with Docker access to each engine the deployment selects: the managed gateway's `spec.gateway.engine`, each service's `placement.engine`, and each Ollama proxy's `engine`.
 For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
 From any directory, set the engine socket and the UID, then list the deployment's objects:
@@ -404,8 +404,7 @@ docker --host "$deployment_engine" network ls --filter "$owner_label" --format '
 ```
 
 Replace the socket when your selected daemon uses another path.
-Continue only if every listed name is one of the deployment's [retained Docker objects](state.md#find-retained-docker-objects) and no listed container is running.
-If no engine lists anything although `plan --destroy` reported retained storage, stop and keep the state directory: an engine or the UID is wrong.
+Continue only if each listed name belongs to one of those entries in [retained Docker objects](state.md#find-retained-docker-objects) and no listed container is running.
 Then remove them:
 
 ```sh
@@ -415,9 +414,11 @@ docker --host "$deployment_engine" network ls --quiet --filter "$owner_label" | 
 ```
 
 Rerun the list commands to confirm they print nothing; the removal is safe to repeat.
-If a volume or network remains, Docker's error names the container still using it; keep the state directory until you resolve that.
-Once no engine lists an object, remove the `.local/deployment` directory unless the deployment also has resources this procedure does not cover.
-Apply cannot reuse that directory afterward because its bindings name the removed storage; deploy again with a fresh `metadata.uid` and a new state directory.
+If a volume or network remains, Docker's error identifies the container still using it; keep the state directory until you resolve that.
+Repeat on each engine until the objects of every entry are gone.
+Keep the state directory if an entry is not in that table or none of its objects were listed: this procedure does not cover it, or an engine or the UID is wrong.
+Otherwise, remove the `.local/deployment` directory.
+To deploy again, use a fresh `metadata.uid` and a new state directory; apply refuses a state directory whose gateway storage or credentials were removed.
 
-The [live Docker suite](contributing/testing.md) removes its managed gateway storage the same way and fails if a labelled or OpenShell sandbox object remains.
-Removal of managed service volumes and on SSH-placed hosts is not verified, and there is no purge command ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+The [live Docker suite](contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.
+Removal of managed service volumes and of objects on SSH engines is not verified, and there is no purge command ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
