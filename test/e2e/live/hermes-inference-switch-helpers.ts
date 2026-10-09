@@ -10,6 +10,7 @@ import path from "node:path";
 
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
+import { nativeInferenceProbeAuthScript } from "../../../src/lib/inference/probe/native-inference-probe-auth.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -819,6 +820,9 @@ function quotePayload(payload: string): string {
 
 export function sandboxInferenceCommand(payload: string): string {
   if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) {
+    // The upstream URL is the managed route for an attached OpenShell
+    // provider. OpenShell authorizes this profile-scoped request and replaces
+    // the placeholder without exposing the provider credential to the sandbox.
     const auth = nativeInferenceProbeAuthScript("NVIDIA_INFERENCE_API_KEY").join("; ");
     return `${auth}; curl -sS --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
   }
