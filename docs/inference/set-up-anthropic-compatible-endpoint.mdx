@@ -12,6 +12,11 @@ content:
 Use the custom Anthropic-compatible provider to configure a custom base URL and model with `COMPATIBLE_ANTHROPIC_API_KEY`.
 The runtime API differs by agent capability.
 
+Fresh hosted endpoints use an OpenShell provider attached to the selected sandbox.
+The agent receives an issued placeholder credential, and OpenShell authorizes only the selected API and endpoint.
+HTTPS endpoints retain the pinned host adapter; classified AWS Bedrock endpoints retain the host-held AWS credential and signing adapter.
+Host-local endpoints and existing shared-route sandboxes retain their existing routing.
+
 ## Run Onboarding
 
 Start the onboard wizard.
@@ -50,8 +55,9 @@ Refer to [Onboarding rejects an Anthropic-compatible tool call](../../reference/
 
 ## Understand Hermes Routing
 
-Hermes uses the managed OpenAI Chat Completions frontend at `https://inference.local/v1` for this provider.
-NemoClaw validates `/v1/chat/completions`, verifies the same path during inference setup, and registers it with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
+Hermes uses the OpenAI Chat Completions frontend for this provider.
+NemoClaw validates `/v1/chat/completions` and verifies the same path during inference setup.
+For a fresh hosted endpoint, the managed configuration uses the sandbox-attached provider URL and issued credential. Host-local and existing shared routes use `https://inference.local/v1`.
 The route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
@@ -68,7 +74,8 @@ AWS Bedrock routes keep their existing OpenAI-compatible adapter behavior.
 ## Understand Deep Agents Routing
 
 Deep Agents Code supports only OpenAI-compatible inference for this provider.
-NemoClaw validates `/v1/chat/completions`, coerces the route to `openai-completions`, and writes `https://inference.local/v1` as the provider base URL in `/sandbox/.deepagents/config.toml`.
+NemoClaw validates `/v1/chat/completions` and coerces the route to `openai-completions`.
+For a fresh hosted endpoint, `/sandbox/.deepagents/config.toml` contains the sandbox-attached provider URL and issued credential reference. Host-local and existing shared routes use `https://inference.local/v1`.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 If the endpoint implements only Anthropic Messages, onboarding stops instead of creating a Deep Agents sandbox with an unusable runtime route.

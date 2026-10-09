@@ -17,6 +17,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
+import { BUILD_ENDPOINT_URL } from "../../../src/lib/inference/provider-models.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -1161,9 +1163,16 @@ test(
         : null;
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
-      : requireHostedInferenceConfig({
-          required: (name) => publicApiKey ?? secrets.required(name),
-        });
+      : requireHostedInferenceConfig(
+          { required: (name) => publicApiKey ?? secrets.required(name) },
+          publicApiKey
+            ? {
+                ...process.env,
+                NEMOCLAW_ENDPOINT_URL: BUILD_ENDPOINT_URL,
+                NEMOCLAW_MODEL: DEFAULT_CLOUD_MODEL,
+              }
+            : process.env,
+        );
     const apiKey = baseline.apiKey;
     const redactionValues = [apiKey, publicApiKey].filter(
       (value): value is string => typeof value === "string",
@@ -1315,8 +1324,8 @@ test(
     const route = await getRouteOutput(host, home);
     expect(route.exitCode, resultText(route)).toBe(0);
     const plainRoute = stripAnsi(resultText(route));
-    expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
-    expect(plainRoute).toContain(`Model: ${SWITCH_MODEL}`);
+    expect(plainRoute.match(/^\s*Provider:\s*(.*?)\s*$/mu)?.[1]).toBe(SWITCH_PROVIDER);
+    expect(plainRoute.match(/^\s*Model:\s*(.*?)\s*$/mu)?.[1]).toBe(SWITCH_MODEL);
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,

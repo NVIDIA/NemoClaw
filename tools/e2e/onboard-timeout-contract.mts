@@ -31,10 +31,13 @@ export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
 
-// The native HTTPS lifecycle owns two fresh sandboxes plus restart, denial,
-// revocation and deletion. Keep both onboarding deadlines and lifecycle headroom.
+// TC-INF-11 also performs bounded preparation, restart, agent execution,
+// denial, peer isolation, DNS/redirect checks and direct HTTP verification.
+export const CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS = 80 * MINUTE_MS;
 export const CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS =
-  2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + 15 * MINUTE_MS;
+  2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
+  CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS +
+  ONBOARD_TEST_HEADROOM_MS;
 export const CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES =
   (CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
 

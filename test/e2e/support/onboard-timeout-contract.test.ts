@@ -7,6 +7,7 @@ import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onb
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
   CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
+  CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS,
   CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
   CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
@@ -52,6 +53,34 @@ const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
 afterEach(() => vi.unstubAllEnvs());
 
 describe("onboard final-handoff timeout contract", () => {
+  it("contains the ordered native custom lifecycle operation deadlines", () => {
+    const preparation = 30_000 + 2 * (120_000 + 60_000) + 6 * 120_000 + 3 * 60_000;
+    const adminApproval = 180_000 + 240_000;
+    const restartAndAgentTurn = 120_000 + 240_000 + 30_000 + 60_000 + 240_000;
+    const routeAndPeerChats = 120_000 + 5 * 90_000;
+    const denialAndRevocation = 30_000 + 90_000 + 30_000 + 90_000 + 30_000;
+    const dnsAndRedirect = 3 * 60_000 + 90_000 + 90_000;
+    const directHttp = 2 * 30_000 + 60_000 + 30_000 + 90_000;
+    const selectionAndDeletion =
+      60_000 + 30_000 + 30_000 + 120_000 + 30_000 + 30_000 + 210_000 + 2 * 30_000;
+    const fixturePreparation = 2 * MINUTE_MS;
+    expect(CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS).toBeGreaterThanOrEqual(
+      preparation +
+        adminApproval +
+        restartAndAgentTurn +
+        routeAndPeerChats +
+        denialAndRevocation +
+        dnsAndRedirect +
+        directHttp +
+        selectionAndDeletion +
+        fixturePreparation,
+    );
+    expect(CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
+        CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS +
+        testHeadroomMs,
+    );
+  });
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {
     expect(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(
       finalHandoffTimeoutMs * 2 + commandDiagnosticHeadroomMs,

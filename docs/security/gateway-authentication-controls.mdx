@@ -154,7 +154,8 @@ Do not publish those endpoints on shared or public networks unless you put them 
 
 NemoClaw keeps provider credentials in OpenShell.
 NVIDIA Endpoints traffic uses the native NVIDIA endpoint through the sandbox-attached OpenShell provider.
-Other managed inference providers continue to use `inference.local`.
+Fresh custom hosted endpoints also use a sandbox-attached provider and issued credential, with a host adapter for HTTPS or classified Bedrock.
+Host-local, existing shared-route sandboxes, and providers without a native attachment continue to use `inference.local`.
 Generated Hermes runtime files use OpenShell resolver placeholders for managed-tool and messaging credentials.
 
 Hermes startup rejects raw secret-shaped values in sandbox-visible environment or config fields, while allowing empty values, migration sentinels, OpenShell resolver placeholders, and expected Slack placeholder forms.

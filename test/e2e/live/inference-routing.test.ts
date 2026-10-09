@@ -833,6 +833,7 @@ test(
         "switch to the DNS-backed HTTPS endpoint",
         "verify pinned route isolation and DNS rebinding",
         "verify private redirect rejection",
+        "verify direct native public HTTP routing",
       ],
     },
   },
@@ -1331,17 +1332,144 @@ test(
       "https-pin-native-peer-after-selected-destroy",
       peerReceipt,
     );
+    progress.phase("verify direct native public HTTP routing");
+    // Own one runner-local public address so this HTTP proof reaches the
+    // authenticated fixture through the native profile without an adapter.
+    const publicHttpAddress = "93.184.216.34";
+    const existingAddresses = await host.command("ip", ["-j", "address", "show", "dev", "lo"], {
+      artifactName: "tc-inf-11-public-http-address-before",
+      timeoutMs: 30_000,
+    });
+    expect(existingAddresses.exitCode, resultText(existingAddresses)).toBe(0);
+    expect(existingAddresses.stdout).not.toContain(publicHttpAddress);
+    cleanup.add("remove owned public HTTP endpoint address", async () => {
+      const current = await host.command("ip", ["-j", "address", "show", "dev", "lo"], {
+        artifactName: "tc-inf-11-public-http-address-cleanup-before",
+        timeoutMs: 30_000,
+      });
+      expect(current.exitCode, resultText(current)).toBe(0);
+      const removed = await host.command(
+        "sudo",
+        ["ip", "address", "del", `${publicHttpAddress}/32`, "dev", "lo"],
+        {
+          artifactName: "tc-inf-11-public-http-address-cleanup",
+          timeoutMs: 30_000,
+        },
+      );
+      expect(removed.exitCode, resultText(removed)).toBe(0);
+      const after = await host.command("ip", ["-j", "address", "show", "dev", "lo"], {
+        artifactName: "tc-inf-11-public-http-address-cleanup-after",
+        timeoutMs: 30_000,
+      });
+      expect(after.exitCode, resultText(after)).toBe(0);
+      expect(after.stdout).not.toContain(publicHttpAddress);
+    });
+    const added = await host.command(
+      "sudo",
+      ["ip", "address", "add", `${publicHttpAddress}/32`, "dev", "lo"],
+      {
+        artifactName: "tc-inf-11-public-http-address-add",
+        timeoutMs: 30_000,
+      },
+    );
+    expect(added.exitCode, resultText(added)).toBe(0);
+    const publicHttp = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      chatContent: "PONG",
+      host: "0.0.0.0",
+      model,
+      progress,
+      publicHost: publicHttpAddress,
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanup.add("close direct native public HTTP endpoint", async () => {
+      try {
+        await artifacts.writeJson("tc-inf-11-public-http-requests.json", publicHttp.requests());
+      } finally {
+        await publicHttp.close();
+      }
+    });
+    const httpSwitch = await runNemoclawCli(
+      [
+        "inference",
+        "set",
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        model,
+        "--sandbox",
+        peerName,
+        "--endpoint-url",
+        publicHttp.baseUrl,
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
+      ],
+      {
+        artifactName: "tc-inf-11-switch-native-public-http",
+        artifacts,
+        env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
+        progress,
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    expect(httpSwitch.exitCode, redactedResultText(httpSwitch)).toBe(0);
+    const httpReceipt = normalizeNativeCustomProviderAttachment(
+      getSandbox(peerName)?.nativeCustomProviderAttachment,
+      peerName,
+    )!;
+    expect(httpReceipt).toMatchObject({ endpointUrl: publicHttp.baseUrl });
+    expect(httpReceipt.transport).toBeUndefined();
+    const httpConfig = await sandbox.exec(peerName, ["cat", "/sandbox/.openclaw/openclaw.json"], {
+      artifactName: "tc-inf-11-direct-http-native-agent-config",
+      timeoutMs: 30_000,
+    });
+    expect(httpConfig.exitCode, resultText(httpConfig)).toBe(0);
+    expect(httpConfig.stdout).not.toContain("inference.local");
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      peerName,
+      model,
+      [apiKey],
+      "tc-inf-11-direct-native-http-chat",
+      httpReceipt,
+    );
+    expect(
+      publicHttp
+        .requests()
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions",
+        ),
+    ).toBe(true);
     await cleanupSandbox(host, sandbox, peerName, { strict: true });
     const peerProviderAfterDestroy = await sandbox.openshell(
       ["provider", "get", peerReceipt.providerName],
       {
-        artifactName: "tc-inf-11-peer-provider-absent-after-destroy",
+        artifactName: "tc-inf-11-peer-https-provider-absent-after-destroy",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,
       },
     );
     expect(peerProviderAfterDestroy.exitCode, resultText(peerProviderAfterDestroy)).not.toBe(0);
     expect(resultText(peerProviderAfterDestroy)).toMatch(
+      /\bNotFound\b|\bnot\s+found\b|does\s+not\s+exist/iu,
+    );
+    const httpProviderAfterDestroy = await sandbox.openshell(
+      ["provider", "get", httpReceipt.providerName],
+      {
+        artifactName: "tc-inf-11-peer-http-provider-absent-after-destroy",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(httpProviderAfterDestroy.exitCode, resultText(httpProviderAfterDestroy)).not.toBe(0);
+    expect(resultText(httpProviderAfterDestroy)).toMatch(
       /\bNotFound\b|\bnot\s+found\b|does\s+not\s+exist/iu,
     );
     await artifacts.target.complete({
@@ -1351,6 +1479,7 @@ test(
       profileId: receipt.profileId,
       providerId: receipt.providerId,
       peerProviderId: peerReceipt.providerId,
+      publicHttpProviderId: httpReceipt.providerId,
     });
   },
 );

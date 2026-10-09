@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { testTimeout } from "../../helpers/timeouts.ts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -163,7 +164,7 @@ test(
             NEMOCLAW_PREFERRED_API: "openai-completions",
             NEMOCLAW_PROVIDER: "custom",
           }
-        : {}),
+        : { NEMOCLAW_MODEL: DEFAULT_CLOUD_MODEL }),
     };
 
     progress.phase("install baseline Hermes runtime");
