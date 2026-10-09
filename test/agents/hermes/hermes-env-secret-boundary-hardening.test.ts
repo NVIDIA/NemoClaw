@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { extractShellFunction, runHermesBashHarness } from "../../support/hermes-shell-harness";
 
 const VALIDATOR = path.join(
   import.meta.dirname,
@@ -37,17 +38,6 @@ function runEnvTextValidation(input: string | Buffer) {
     input,
     env: { HOME: os.tmpdir(), PATH: process.env.PATH ?? "" },
   });
-}
-
-function extractShellFunction(source: string, name: string): string {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`${escaped}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  const resolved =
-    match ??
-    (() => {
-      throw new Error(`Missing ${name} in start.sh`);
-    })();
-  return `${name}() {${resolved[1]}\n}`;
 }
 
 function runStartEnvValidation(hermesDir: string) {
@@ -191,6 +181,38 @@ function runManagedGatewayEnvValidation(
     { encoding: "utf-8", timeout: 5000 },
   );
 }
+
+describe("agents/hermes/start.sh provider placeholder refresh", () => {
+  it("fails when the provider placeholder guard fails instead of swallowing it (#12510)", () => {
+    const result = runHermesBashHarness(
+      [
+        "validate_hermes_env_secret_boundary() { echo boundary-ran; }",
+        "fake_guard_python() { echo guard-failed >&2; return 1; }",
+        extractShellFunction(
+          fs.readFileSync(START_SCRIPT, "utf-8"),
+          "refresh_hermes_provider_placeholders",
+        ),
+        "_HERMES_PYTHON=fake_guard_python",
+        "_HERMES_RUNTIME_CONFIG_GUARD=guard.py",
+        "_HERMES_BOUNDARY_VALIDATOR=validator.py",
+        "refresh_hermes_provider_placeholders strict",
+        "echo status=$?",
+      ],
+      (tmpDir) => {
+        const hermesHome = path.join(tmpDir, ".hermes");
+        fs.mkdirSync(hermesHome);
+        fs.writeFileSync(
+          path.join(hermesHome, ".env"),
+          "TEAMS_CLIENT_SECRET=openshell:resolve:env:v1_MSTEAMS_APP_PASSWORD\n",
+        );
+        return { HERMES_DIR: hermesHome, HERMES_HASH_FILE: path.join(tmpDir, "hash") };
+      },
+    );
+
+    expect(result.stderr).toContain("guard-failed");
+    expect(result.stdout).toContain("status=1");
+  });
+});
 
 describe("Hermes env-text secret boundary", () => {
   it("accepts a resolver placeholder from stdin", () => {
