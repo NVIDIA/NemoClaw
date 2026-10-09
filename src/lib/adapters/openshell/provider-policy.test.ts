@@ -110,6 +110,60 @@ describe("native provider policy prerequisites", () => {
   ])("rejects an unverified gateway response (#12558)", async (response) => {
     await expect(requireNativeProviderPolicy("selected", async () => response)).rejects.toThrow();
   });
+  it("continues only after verifying disabled composition and sandbox authority (#12558)", async () => {
+    const original = fixture("false");
+    const run = vi.fn(async (args: string[]) =>
+      args[1] === "set" ? { status: 1, stdout: "", stderr: "unavailable" } : original(args),
+    );
+    await expect(initializeNativeProviderPolicy("selected", run)).resolves.toBe("disabled");
+    expect(run.mock.calls.map(([args]) => args[1])).toEqual(["list", "set", "get", "list"]);
+    await expect(requireNativeProviderPolicy("selected", run)).rejects.toThrow(
+      /enable composition/,
+    );
+    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
+  });
+  it.each(["<unset>", "", null, false])(
+    "rejects indeterminate composition value %s after initialization (#12558)",
+    async (value) => {
+      const run = fixture();
+      run.mockResolvedValueOnce({
+        status: 0,
+        stdout: "",
+        stderr: "No global policy history found",
+      });
+      run.mockResolvedValueOnce({ status: 1, stdout: "", stderr: "unavailable" });
+      run.mockResolvedValueOnce({
+        status: 0,
+        stdout: JSON.stringify({ scope: "global", settings: { providers_v2_enabled: value } }),
+        stderr: "",
+      });
+      await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(
+        /Could not verify/,
+      );
+      expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
+    },
+  );
+  it("rejects a policy override introduced during disabled initialization (#12558)", async () => {
+    const run = fixture("false", {
+      status: 0,
+      stdout: JSON.stringify({ scope: "global", status: "loaded" }),
+      stderr: "",
+    });
+    run.mockResolvedValueOnce({ status: 0, stdout: "", stderr: "No global policy history found" });
+    run.mockResolvedValueOnce({ status: 1, stdout: "", stderr: "unavailable" });
+    await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(
+      /global policy override/,
+    );
+    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
+  });
+  it("keeps an unreadable post-write state fatal (#12558)", async () => {
+    const run = fixture();
+    run.mockResolvedValueOnce({ status: 0, stdout: "", stderr: "No global policy history found" });
+    run.mockRejectedValueOnce(new Error("lost response"));
+    run.mockResolvedValueOnce({ status: 1, stdout: "", stderr: "unreachable" });
+    await expect(initializeNativeProviderPolicy("selected", run)).rejects.toThrow(/prerequisites/);
+    expect(run.mock.calls.filter(([args]) => args[1] === "set")).toHaveLength(1);
+  });
   it("rejects an ambient endpoint override before any command (#12558)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://another.example:443");
     const run = fixture();

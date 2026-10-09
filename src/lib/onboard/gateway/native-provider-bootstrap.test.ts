@@ -24,7 +24,7 @@ function fixture() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "native-gateway-"));
   roots.push(stateDir);
   vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "");
-  const initialize = vi.fn(async () => {});
+  const initialize = vi.fn<() => Promise<"disabled" | void>>(async () => {});
   const port = vi.fn(async () => ({ ok: true }));
   const managed = vi
     .spyOn(cutover, "runDockerDriverGatewayManagedFallback")
@@ -130,6 +130,24 @@ describe("native policy initialization ownership", () => {
     f.managed.mockResolvedValue("reused");
     await f.start();
     expect(f.initialize).not.toHaveBeenCalled();
+  });
+  it("allows healthy startup with a warning when composition is verified disabled (#12558)", async () => {
+    const f = fixture();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    f.initialize.mockResolvedValue("disabled");
+    await expect(f.start()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(f.initialize).toHaveBeenCalledTimes(1);
+  });
+  it("rejects changed creation authority before allowing disabled composition (#12558)", async () => {
+    const f = fixture();
+    await f.prepare();
+    f.initialize.mockImplementation(async () => {
+      fs.appendFileSync(path.join(f.stateDir, "openshell-gateway.toml"), "\n# changed");
+      return "disabled";
+    });
+    await expect(f.start()).rejects.toThrow("configuration changed");
+    expect(f.initialize).toHaveBeenCalledTimes(1);
   });
   it("does not return startup success when initialization cannot be verified (#12558)", async () => {
     const f = fixture();

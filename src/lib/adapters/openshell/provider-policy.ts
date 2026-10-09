@@ -98,7 +98,7 @@ export async function requireNativeProviderPolicy(
 export async function initializeNativeProviderPolicy(
   gatewayName: string,
   command?: PolicyCommand,
-): Promise<void> {
+): Promise<"disabled" | void> {
   const run = commandForGateway(gatewayName, command);
   await requireSandboxPolicyAuthority(run);
   await run([
@@ -112,5 +112,14 @@ export async function initializeNativeProviderPolicy(
     "--yes",
   ]).catch(() => undefined);
   // Observe even when the mutation response reports failure; never repeat the write.
-  await requireNativeProviderPolicy(gatewayName, command);
+  const state = document(await run(["settings", "get", "--global", "--json"]));
+  const settings = state.settings;
+  const enabled =
+    state.scope === "global" && settings && typeof settings === "object" && !Array.isArray(settings)
+      ? (settings as Record<string, unknown>).providers_v2_enabled
+      : undefined;
+  if (enabled !== "true" && enabled !== "false")
+    throw new Error("Could not verify native provider composition after gateway initialization.");
+  await requireSandboxPolicyAuthority(run);
+  if (enabled === "false") return "disabled";
 }
