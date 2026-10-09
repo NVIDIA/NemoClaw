@@ -204,7 +204,9 @@ pub(crate) fn definitions() -> [crate::Definition; 3] {
                 ENVIRONMENT_FIELD,
                 Shape::List(Box::new(Shape::String)),
             )
-            .validate_attribute(check_attribute)
+            .validate_attribute(|attribute, value| {
+                check_attribute(attribute, value).map_err(Into::into)
+            })
             .generated("owner", nemoclaw_backend::generate_owner)
             .generated("generation", nemoclaw_backend::generate_generation)
     };
