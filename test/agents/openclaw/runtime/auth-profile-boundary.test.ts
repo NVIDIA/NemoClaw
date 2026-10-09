@@ -134,8 +134,11 @@ function runStartupCredentialBoundary(
       AUTH_TEST_COMMAND: command,
       ...managedEnv,
       NVIDIA_INFERENCE_API_KEY: credentialValue,
-      ...(route === "native"
-        ? { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" }
+      ...(route === "native" || route.startsWith("https://integrate.api.nvidia.com:")
+        ? {
+            NEMOCLAW_INFERENCE_BASE_URL:
+              route === "native" ? "https://integrate.api.nvidia.com/v1" : route,
+          }
         : {}),
       ...(route === "direct" ? { NEMOCLAW_INFERENCE_BASE_URL: "https://direct.example/v1" } : {}),
     },
@@ -170,17 +173,36 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fs.statSync(fixture.authPath).mode & 0o777).toBe(0o600);
   });
 
+  it.each(["https://integrate.api.nvidia.com:0444/v1", "https://integrate.api.nvidia.com:4443/v1"])(
+    "retains direct-route credentials and profiles at %s",
+    (baseUrl) => {
+      const fixture = runBashAuthFixture({ ...managedEnv, NEMOCLAW_INFERENCE_BASE_URL: baseUrl });
+      expect(fixture.status, fixture.stderr).toBe(0);
+      expect(fixture.stdout.trim()).toBe("primary-secret\nlegacy-secret");
+      expect(JSON.parse(fs.readFileSync(fixture.authPath, "utf-8"))).toEqual({
+        "inference:manual": legacyManagedProfile,
+      });
+    },
+  );
+
   it("leaves direct auth state absent when no credential is supplied", () => {
     const fixture = runBashAuthFixture({});
     expect(fixture.status, fixture.stderr).toBe(0);
     expect(fs.existsSync(fixture.authPath)).toBe(false);
   });
 
-  it.each(["fresh", "legacy"] as const)(
-    "leaves no legacy auth profile for native NVIDIA inference in %s state",
-    (state) => {
+  it.each([
+    ["fresh", "https://integrate.api.nvidia.com/v1"],
+    ["legacy", "https://integrate.api.nvidia.com/v1"],
+    ["fresh", "https://integrate.api.nvidia.com:0443/v1"],
+    ["legacy", "https://integrate.api.nvidia.com:0443/v1"],
+    ["fresh", "https://integrate.api.nvidia.com:000443/v1/"],
+    ["legacy", "https://integrate.api.nvidia.com:000443/v1/"],
+  ] as const)(
+    "leaves no legacy auth profile or raw credentials in %s state at %s",
+    (state, baseUrl) => {
       const fixture = runBashAuthFixture(
-        { ...managedEnv, NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+        { ...managedEnv, NEMOCLAW_INFERENCE_BASE_URL: baseUrl },
         state === "legacy"
           ? seedAuthProfile({ "inference:manual": legacyManagedProfile })
           : undefined,
@@ -204,6 +226,17 @@ describe("OpenClaw auth-profile boundary", () => {
     expect(fixture.stdout.trim()).toBe("unset\nunset");
   });
 
+  it.each(["root", "non-root"] as const)(
+    "removes raw credentials before %s command children at native NVIDIA port :0443",
+    (kind) => {
+      const result = runStartupCredentialBoundary(kind, "https://integrate.api.nvidia.com:0443/v1");
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("unset\nunset\nunset\nunset\ncommand\nunset\nunset");
+      expect(result.stderr).not.toContain(managedEnv.NVIDIA_INFERENCE_API_KEY);
+      expect(result.stderr).not.toContain(managedEnv.NVIDIA_API_KEY);
+    },
+  );
+
   it.each([
     "primary-secret",
     "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
@@ -222,24 +255,33 @@ describe("OpenClaw auth-profile boundary", () => {
   });
 
   it.each([
-    ["root", "v42"],
-    ["non-root", "v42"],
-    ["root", `s${"a".repeat(64)}`],
-    ["non-root", `s${"a".repeat(64)}`],
-  ] as const)("preserves the scoped %s runtime handle %s for command children", (kind, scope) => {
-    const reference = `openshell:resolve:env:${scope}_NVIDIA_INFERENCE_API_KEY`;
-    const result = runStartupCredentialBoundary(kind, "native", false, reference);
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(
-      [`${reference}\nunset`, `${reference}\nunset`, "command", `${reference}\nunset`].join("\n"),
-    );
-  });
+    ["root", "v42", "native"],
+    ["non-root", "v42", "native"],
+    ["root", `s${"a".repeat(64)}`, "native"],
+    ["non-root", `s${"a".repeat(64)}`, "native"],
+    ["root", "v42", "https://integrate.api.nvidia.com:0443/v1"],
+    ["non-root", "v42", "https://integrate.api.nvidia.com:0443/v1"],
+    ["root", `s${"a".repeat(64)}`, "https://integrate.api.nvidia.com:0443/v1"],
+    ["non-root", `s${"a".repeat(64)}`, "https://integrate.api.nvidia.com:0443/v1"],
+  ] as const)(
+    "preserves the scoped %s runtime handle %s at %s for command children",
+    (kind, scope, route) => {
+      const reference = `openshell:resolve:env:${scope}_NVIDIA_INFERENCE_API_KEY`;
+      const result = runStartupCredentialBoundary(kind, route, false, reference);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe(
+        [`${reference}\nunset`, `${reference}\nunset`, "command", `${reference}\nunset`].join("\n"),
+      );
+    },
+  );
 
   it.each([
     ["fresh", "https://inference.local/v1"],
     ["legacy", "https://inference.local/v1"],
     ["fresh", "HTTPS://inference.local:443/v1"],
     ["legacy", "https://INFERENCE.LOCAL:443"],
+    ["fresh", "https://inference.local:0443/v1"],
+    ["legacy", "https://inference.local:0443/v1"],
   ] as const)(
     "leaves no managed profile or inherited credentials in %s state at %s",
     (state, baseUrl) => {
