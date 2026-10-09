@@ -231,7 +231,10 @@ export async function prepareProxyResolutionRoute({
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
-    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+    mockBaseline?.baseUrl ??
+    (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+      : (process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL));
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 

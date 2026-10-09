@@ -19,6 +19,11 @@ import path from "node:path";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { BUILD_ENDPOINT_URL } from "../../../src/lib/inference/provider-models.ts";
+import {
+  buildHttpsPinRouteBaseUrl,
+  computeHttpsPinRouteId,
+  isHttpsPinRuntimeEligible,
+} from "../../../src/lib/inference/https-pin-runtime.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -1279,7 +1284,11 @@ test(
       home,
       host,
       model: baseline.model,
-      nativeCustomEndpoint: baselineProvider ? undefined : baseline.endpointUrl,
+      nativeCustomEndpoint: baselineProvider
+        ? undefined
+        : isHttpsPinRuntimeEligible(baseline.endpointUrl)
+          ? `${buildHttpsPinRouteBaseUrl(computeHttpsPinRouteId("nemoclaw", "compatible-endpoint", baseline.endpointUrl, SANDBOX_NAME))}/v1`
+          : baseline.endpointUrl,
       progress,
       redactionValues,
       sandbox,

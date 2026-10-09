@@ -234,6 +234,8 @@ describe("Hermes inference switch command shape", () => {
         "openai",
         "--credential",
         "NVIDIA_INFERENCE_API_KEY",
+        "--config",
+        "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
       ]),
     );
     expect(command.mock.calls[2]?.[1]).toEqual(
