@@ -53,8 +53,8 @@ export type InitializeOpenclawInferenceRoute = (
   revalidateSandboxIdentity?: (operation: string) => void,
 ) => Promise<void>;
 
-export function createInitialOpenclawInferenceRoute(
-  deps: InitialOpenclawInferenceRouteDeps,
+export function createOpenclawInferenceRouteWriter(
+  deps: Omit<InitialOpenclawInferenceRouteDeps, "restartNativeGateway">,
 ): InitializeOpenclawInferenceRoute {
   return async function initializeOpenclawInferenceRoute(
     sandboxName,
@@ -81,7 +81,29 @@ export function createInitialOpenclawInferenceRoute(
       `apply native OpenClaw inference route in sandbox '${sandboxName}'`,
     );
     deps.writeOpenclawInferenceConfigNatively(sandboxName, config, patched.route, gatewayName);
+  };
+}
 
+export function createInitialOpenclawInferenceRoute(
+  deps: InitialOpenclawInferenceRouteDeps,
+): InitializeOpenclawInferenceRoute {
+  const write = createOpenclawInferenceRouteWriter(deps);
+  return async (
+    sandboxName,
+    model,
+    provider,
+    preferredInferenceApi,
+    gatewayName,
+    revalidateSandboxIdentity,
+  ) => {
+    await write(
+      sandboxName,
+      model,
+      provider,
+      preferredInferenceApi,
+      gatewayName,
+      revalidateSandboxIdentity,
+    );
     revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
     const restart = await deps.restartNativeGateway(sandboxName, gatewayName);
     if (!restart.ok) {
@@ -92,7 +114,7 @@ export function createInitialOpenclawInferenceRoute(
   };
 }
 
-export const initializeOpenclawInferenceRoute = createInitialOpenclawInferenceRoute({
+const nativeInferenceRouteDeps: InitialOpenclawInferenceRouteDeps = {
   readOpenclawConfig: (sandboxName, gatewayName) => {
     const config = initialOpenclawInferenceRouteRuntime.loadSandboxConfig();
     return config.readSandboxConfig(
@@ -117,4 +139,11 @@ export const initializeOpenclawInferenceRoute = createInitialOpenclawInferenceRo
     initialOpenclawInferenceRouteRuntime
       .loadFinalizationDeps()
       .restartNativeGatewayForInitialSetup(sandboxName, gatewayName),
-});
+};
+
+export const initializeOpenclawInferenceRoute =
+  createInitialOpenclawInferenceRoute(nativeInferenceRouteDeps);
+
+/** The caller owns the offline restore window and its subsequent gateway restart. */
+export const writeRestoredOpenclawInferenceRoute =
+  createOpenclawInferenceRouteWriter(nativeInferenceRouteDeps);

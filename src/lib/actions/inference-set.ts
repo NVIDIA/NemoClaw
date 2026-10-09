@@ -34,7 +34,9 @@ import {
   ensureNativeNvidiaProvider,
   ensureNativeNvidiaProviderAttached,
   isNativeNvidiaProvider,
+  managedInferenceApiKey,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_INFERENCE_PLACEHOLDER,
   normalizeNativeNvidiaProviderAttachment,
   persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
@@ -721,11 +723,15 @@ function buildProviderConfig(
     baseUrl: route.inferenceBaseUrl,
     apiKey:
       nativeLocalCredentialReference(provider, route.inferenceBaseUrl) ??
-      (typeof existing.apiKey === "string" &&
-      existing.apiKey &&
-      existing.apiKey !== "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN"
-        ? existing.apiKey
-        : "unused"),
+      managedInferenceApiKey(
+        route.inferenceBaseUrl,
+        typeof existing.apiKey === "string" &&
+          existing.apiKey &&
+          existing.apiKey !== NVIDIA_INFERENCE_PLACEHOLDER &&
+          existing.apiKey !== "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+          ? existing.apiKey
+          : "unused",
+      ),
     api: route.inferenceApi,
     models:
       selectedIndex < 0

@@ -145,6 +145,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },
   { path: "src/lib/inference/native-local/agent-config.ts", mode: "100644" },
+  { path: "src/lib/inference-credential.ts", mode: "100644" },
   { path: "src/lib/messaging/AGENTS.md", mode: "100644" },
   { path: "src/lib/messaging/applier/agent-config-remove.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/agent-config.ts", mode: "100644" },

@@ -562,6 +562,7 @@ describe("pre-candidate execution environment identity", () => {
     { owner: owners[4]!, bindingName: "CANDIDATE_SHA" },
     { owner: owners[6]!, bindingName: "GITHUB_TOKEN" },
     { owner: owners[11]!, bindingName: "NEMOCLAW_E2E_CREDENTIALS_ALLOWED" },
+    { owner: owners[11]!, bindingName: "NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE" },
   ];
   const bindingChanges = [
     {
@@ -581,7 +582,7 @@ describe("pre-candidate execution environment identity", () => {
     boundOwners.flatMap(({ owner, bindingName }) =>
       bindingChanges.map((change) => ({ ...owner, bindingName, ...change })),
     ),
-  )("rejects $label binding in $name", ({ name, select, bindingName, apply }) => {
+  )("rejects $label $bindingName binding in $name", ({ name, select, bindingName, apply }) => {
     const errors = validateMutatedWorkflow((workflow) => {
       apply(select(workflow).env as Record<string, unknown>, bindingName);
     });

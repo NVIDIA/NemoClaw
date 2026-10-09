@@ -30,6 +30,7 @@
 import { nativeLocalCredentialReference } from "../src/lib/inference/native-local/agent-config.ts";
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
+import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
 
 import {
   chmodSync,
@@ -977,7 +978,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       baseUrl: inferenceBaseUrl,
       apiKey:
         nativeLocalCredentialReference(env.NEMOCLAW_UPSTREAM_PROVIDER, inferenceBaseUrl) ??
-        "unused",
+        managedInferenceApiKey(inferenceBaseUrl, "unused"),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

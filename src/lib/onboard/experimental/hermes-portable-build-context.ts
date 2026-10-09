@@ -88,6 +88,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json",
   "src/lib/hermes-managed-route.ts",
   "src/lib/inference/native-local/agent-config.ts",
+  "src/lib/inference-credential.ts",
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",

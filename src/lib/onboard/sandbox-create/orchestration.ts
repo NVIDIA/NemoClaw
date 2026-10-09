@@ -57,6 +57,7 @@ import type {
 import { removeManagedHermesStateVolume } from "../managed-workload/hermes-state-volume";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
+  shouldReconcileRestoredOpenClawSelection,
   type OwnedSandboxRecreateRuntime,
 } from "../onboard-recreate-journal";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
@@ -1519,42 +1520,18 @@ export function createProviderEffectBoundary(input: {
   };
 }
 
-type SandboxProviderCleanupAuthority =
-  | {
-      readonly revalidateSandboxIdentity: (operation: string) => void;
-    }
-  | {
-      readonly observeSandbox: () => ReturnType<
-        SandboxCreateOrchestrationRuntime["getSandboxRecreateObservation"]
-      >;
-      readonly revalidateSandboxIdentity: (operation: string) => void;
-    };
-
-export async function runAuthorityBoundProviderCleanup(
-  input: {
-    readonly sandboxName: string;
-    readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
-    readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
-    readonly redact: SandboxCreateOrchestrationRuntime["redact"];
-    readonly tolerateMissingSandbox?: boolean;
-  } & SandboxProviderCleanupAuthority,
-): Promise<void> {
-  const revalidateSandboxIdentity =
-    "observeSandbox" in input
-      ? (operation: string): void => {
-          if (input.observeSandbox().state !== "missing") {
-            throw new Error(
-              `Cannot clean up providers for sandbox '${input.sandboxName}': a sandbox with that name appeared after absence was verified while ${operation}.`,
-            );
-          }
-          input.revalidateSandboxIdentity(operation);
-        }
-      : input.revalidateSandboxIdentity;
+export async function runAuthorityBoundProviderCleanup(input: {
+  readonly sandboxName: string;
+  readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
+  readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+  readonly redact: SandboxCreateOrchestrationRuntime["redact"];
+  readonly revalidateSandboxIdentity: (operation: string) => void;
+}): Promise<void> {
+  const { revalidateSandboxIdentity } = input;
   revalidateSandboxIdentity(`cleaning up providers for sandbox '${input.sandboxName}'`);
   await input.runProviderPreDeleteCleanup(input.sandboxName, {
     runOpenshell: input.runOpenshell,
     redact: input.redact,
-    ...(input.tolerateMissingSandbox ? { tolerateMissingSandbox: true } : {}),
     revalidateSandboxIdentity,
   });
 }
@@ -2256,8 +2233,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       getSandbox: registry.getSandbox,
       note,
     });
+    let reconcileOpenClawInference = false;
     const openRecreateJournal = (): OwnedSandboxRecreateRuntime =>
       recreateJournal.openOnboardRecreateJournal({
+        ...(reconcileOpenClawInference ? { reconcileOpenClawInference: true as const } : {}),
         target: {
           sandboxName,
           gatewayName: GATEWAY_NAME,
@@ -2557,6 +2536,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // mutating a live sandbox.
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
+      reconcileOpenClawInference = shouldReconcileRestoredOpenClawSelection(
+        getRequestedSandboxAgentName(agent),
+        customOpenClawImage,
+        isRecreateSandbox(false),
+        selectionDrift,
+      );
       if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
       if (recreateRuntime.acceptedTarget) {
         if ("complete" in recreateRuntime) recreateRuntime.complete();
@@ -2595,7 +2580,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (
         beginRecreateDeleteAfterPolicyPreflight({
           capturePolicySource: captureRebuildPolicySource,
-          beginDelete: recreateRuntime.beginDelete,
+          beginDelete: () =>
+            recreateRuntime.beginDelete(reconcileOpenClawInference ? true : undefined),
         }) === "source"
       ) {
         await runAuthorityBoundProviderCleanup({
@@ -2754,25 +2740,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     resolvedCreateIntent,
                   )
                 ).messagingTokenDefs;
-              },
-              runProviderPreDeleteCleanup: async (verifiedIdentityRevalidation) => {
-                await runAuthorityBoundProviderCleanup({
-                  sandboxName,
-                  runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
-                  runOpenshell,
-                  redact,
-                  tolerateMissingSandbox: true,
-                  ...(verifiedIdentityRevalidation
-                    ? {
-                        revalidateSandboxIdentity: verifiedIdentityRevalidation,
-                      }
-                    : {
-                        observeSandbox: () =>
-                          getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
-                        revalidateSandboxIdentity: (operation: string) =>
-                          revalidateSandboxIdentity(false, operation),
-                      }),
-                });
               },
               upsertMessagingProviders: (tokenDefs, options) =>
                 applyMessagingProviders(tokenDefs, {
@@ -3505,7 +3472,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         preferredInferenceApi,
         endpointUrl: createIntent?.endpointUrl ?? null,
       },
-      { createIntent, resolvedCreateIntent },
+      {
+        createIntent,
+        resolvedCreateIntent,
+        reconcileOpenClawInference:
+          onboardSession.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ===
+          true,
+      },
       sandboxRuntimeFields,
       agentCreateInput.portableLifecycle,
       {
