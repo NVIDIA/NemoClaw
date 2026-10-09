@@ -182,8 +182,11 @@ export function reconcileIdentityFreeRecovery(
     ) {
       refuse(sandboxName, "the owning Docker runtime could not be established");
     }
-    // Native Linux Docker gateways use the local default daemon. An ambient override is not absence proof.
-    if (!dockerContextIsDefaultFromBuild(process.env)) {
+    // The runner can normalize the native Linux default context to its explicit Unix endpoint.
+    if (
+      process.env.DOCKER_HOST?.trim() !== "unix:///var/run/docker.sock" &&
+      !dockerContextIsDefaultFromBuild(process.env)
+    ) {
       refuse(
         sandboxName,
         "the Docker observation target is not the native gateway's default daemon",

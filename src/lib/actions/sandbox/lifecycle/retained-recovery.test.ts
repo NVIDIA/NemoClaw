@@ -33,13 +33,19 @@ afterEach(() => {
   fs.rmSync(testHome, { recursive: true, force: true });
 });
 
-async function setup(port = 19260) {
+async function setup(port = 19260, dockerHost?: string) {
   vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+  vi.stubEnv("DOCKER_HOST", dockerHost);
+  vi.stubEnv("DOCKER_CONTEXT", "default");
   vi.resetModules();
+  const dockerExec = await import("../../../adapters/docker/exec");
+  vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+    ...emptyDockerResult,
+    stdout: "unix:///var/run/docker.sock",
+  });
   const session = await import("../../../state/onboard-session");
   const registry = await import("../../../state/registry");
   const docker = await import("../../../adapters/docker/run");
-  const dockerTarget = await import("../../../adapters/docker/client-isolation");
   const presence = await import("../destroy-presence");
   const gateway = await import("../destroy-gateway");
   const { reconcileIdentityFreeRecovery } = await import("../destroy-preflight");
@@ -87,9 +93,6 @@ async function setup(port = 19260) {
   const runtime = vi
     .spyOn(gateway, "resolveGatewayCleanupRuntimeProviderId")
     .mockReturnValue("docker");
-  const defaultDaemon = vi
-    .spyOn(dockerTarget, "dockerContextIsDefaultFromBuild")
-    .mockReturnValue(true);
   const files = [
     registry.REGISTRY_FILE,
     session.SESSION_FILE,
@@ -111,7 +114,6 @@ async function setup(port = 19260) {
     containers,
     volumes,
     runtime,
-    defaultDaemon,
     snapshot,
     run,
   };
@@ -327,6 +329,8 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
   it("pins container and volume observations to the default Docker daemon (#12260)", async () => {
     const h = await setup();
     h.containers.mockRestore();
+    expect(process.env.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
+    expect(process.env.DOCKER_CONTEXT).toBeUndefined();
 
     expect(h.run()).toBe(true);
 
@@ -395,11 +399,13 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
   });
 
   it("preserves metadata when Docker targets another daemon (#12260)", async () => {
-    const h = await setup();
-    h.defaultDaemon.mockReturnValue(false);
+    const h = await setup(19260, "unix:///tmp/other-docker.sock");
     const before = h.snapshot();
     expect(h.run).toThrow(/default daemon/u);
     expect(h.snapshot()).toEqual(before);
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(h.containers).not.toHaveBeenCalled();
+    expect(h.volumes).not.toHaveBeenCalled();
   });
 
   it("preserves recovery when its gateway differs from the owning registry root (#12260)", async () => {
