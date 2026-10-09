@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../../inference-credential";
 import type { InferenceSetDeps } from "../inference-set";
 import type { ConfigObject } from "../../security/credential-filter";
 import { nativeHostedAgentConfig } from "../../inference/native-provider/agent-config";
@@ -272,7 +273,14 @@ export function nativeSelectionConfigCredentials(
   return {
     apiKey:
       native?.apiKey ??
-      (typeof existingApiKey === "string" && existingApiKey ? existingApiKey : "unused"),
+      managedInferenceApiKey(
+        baseUrl,
+        typeof existingApiKey === "string" &&
+          existingApiKey &&
+          existingApiKey !== NVIDIA_INFERENCE_PLACEHOLDER
+          ? existingApiKey
+          : "unused",
+      ),
     ...(native?.headers ? { headers: { ...existingHeaders, ...native.headers } } : {}),
   };
 }

@@ -90,6 +90,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/inference/native-provider/agent-config.ts",
   "src/lib/inference/native-provider/contract.ts",
   "src/lib/inference/native-provider/hosted.ts",
+  "src/lib/inference-credential.ts",
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",

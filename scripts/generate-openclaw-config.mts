@@ -30,6 +30,7 @@
 import { nativeHostedAgentConfig } from "../src/lib/inference/native-provider/agent-config.ts";
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
+import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
 
 import {
   chmodSync,
@@ -976,7 +977,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: nativeHosted?.apiKey ?? "unused",
+      apiKey: nativeHosted?.apiKey ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
       ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,

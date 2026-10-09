@@ -10,10 +10,12 @@ import os
 import re
 import stat
 from pathlib import Path
+from urllib.parse import urlsplit
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
 MANAGED_POLICY_SCHEMA_VERSION = 3
 HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE"
+NVIDIA_INFERENCE_PLACEHOLDER = "${NVIDIA_INFERENCE_API_KEY}"
 
 
 class ManagedPolicyError(Exception):
@@ -93,14 +95,39 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
     has_routing = any(
         key in config for key in ("model", "providers", "custom_providers", "_nemoclaw_upstream")
     )
-    api_key = policy_value(config, "model.api_key") if has_routing else None
-    native_placeholder = isinstance(api_key, str) and re.fullmatch(
-        r"openshell:resolve:env:(OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY)", api_key
-    ) is not None
-    if has_routing and api_key != HERMES_PROXY_REWRITE_SENTINEL and not native_placeholder:
-        raise ManagedPolicyError(
-            "managed policy model.api_key must use an OpenShell credential placeholder or proxy rewrite sentinel"
+    if has_routing:
+        base_url = policy_value(config, "model.base_url")
+        if not isinstance(base_url, str):
+            raise ManagedPolicyError("managed policy model.base_url is invalid")
+        # Keep the raw URL contract identical to config generation and startup.
+        route = re.sub(
+            r"^[^/]+://[^/]+", lambda match: match.group().lower(), base_url, count=1
         )
+        native_nvidia = re.fullmatch(
+            r"https://integrate\.api\.nvidia\.com(?::0*443)?/v1/?", route
+        ) is not None
+        if not native_nvidia and re.match(
+            r"https://integrate\.api\.nvidia\.com(?::(?:0*443)?)?(?:[/?#]|\Z)", route
+        ):
+            raise ManagedPolicyError(
+                "Native NVIDIA inference requires https://integrate.api.nvidia.com/v1."
+            )
+        try:
+            url = urlsplit(base_url)
+            # Preserve the reader's existing malformed-port validation for other routes.
+            _ = url.port
+        except (TypeError, ValueError):
+            raise ManagedPolicyError("managed policy model.base_url is invalid") from None
+        expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
+        api_key = policy_value(config, "model.api_key")
+        native_hosted_placeholder = not native_nvidia and isinstance(api_key, str) and re.fullmatch(
+            r"openshell:resolve:env:(OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY)", api_key
+        ) is not None
+        if api_key != expected_key and not native_hosted_placeholder:
+            raise ManagedPolicyError(
+                "managed policy model.api_key must use an OpenShell credential placeholder or proxy rewrite sentinel "
+                "matching its route"
+            )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
     return document

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
+import { managedInferenceApiKey } from "./inference-credential.ts";
 
-// Hermes requires an sk-prefixed value before it sends a request. OpenShell
-// removes this non-secret sentinel and injects the route credential at egress.
+// Shared inference routing replaces this sentinel at egress. Native NVIDIA
+// routing instead expands the supervisor-issued environment handle.
 export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
@@ -79,7 +80,8 @@ export function applyHermesManagedRoute(
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
   const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
-  const apiKey = nativeHosted?.apiKey ?? HERMES_PROXY_REWRITE_SENTINEL;
+  const apiKey =
+    nativeHosted?.apiKey ?? managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
