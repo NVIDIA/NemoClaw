@@ -38,15 +38,7 @@ It uses a built-in OpenTofu resource to exercise the generated precondition and 
 
 Test the runtime bundle and live serving backend separately.
 
-Test the production provider's full OpenShell resource graph against the local gRPC fixture:
-
-```sh
-NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration opentofu_openshell:: -- --ignored
-```
-
-These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
+The [OpenShell provider contract](#openshell-provider-contract) tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
 The `gateway_readiness::` tests use the same explicit OpenTofu/provider paths with local engine and OpenShell fixtures.
 It checks prompt managed-gateway exit diagnostics, bootstrap state retained after failure, corrected retry, unchanged-apply rechecks, and teardown with the readiness data source omitted.
 Its bootstrap identity is a built-in OpenTofu resource; it creates no live container.
@@ -93,6 +85,7 @@ NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
   cargo test -p openshell-provider --test contract -- --ignored
 ```
 
+Its `capabilities` tests check gateway preconditions and saved-plan rechecks, and its `standalone` tests apply authored OpenShell resources from `tests/contract/standalone` through lost replies, foreign or missing objects, bootstrap endpoints, and registration rotation.
 The fixtures are the OpenShell resources the SDK compiles for each example with an external gateway, excluding examples whose credentials are read from a managed service's container.
 `nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
 

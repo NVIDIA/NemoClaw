@@ -25,7 +25,7 @@ test(native_state_json_preserves_module_and_instance_identity_without_refresh)
 | (package(openshell-provider) & binary(=contract))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^provider_protocol::/) | test(/^service_capacity::/) | test(/^service_readiness::/)
-    | test(/^sandbox_readiness::/) | test(/^opentofu_openshell::/) | test(/^deployment::/)
+    | test(/^sandbox_readiness::/) | test(/^standalone_pi::/) | test(/^deployment::/)
     | test(/^service_storage::/) | test(/^vllm_runtime::/)
     | test(/^kubernetes_hcl::/) | test(/^runtime_image::/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)

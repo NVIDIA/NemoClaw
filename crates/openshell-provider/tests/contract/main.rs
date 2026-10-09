@@ -9,6 +9,9 @@ use nemoclaw_test_fixtures::{openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::Path, process::Output};
 
+mod capabilities;
+mod standalone;
+
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
 
 fn tofu() -> std::path::PathBuf {
