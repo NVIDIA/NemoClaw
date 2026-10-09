@@ -23,66 +23,43 @@ pub struct Run {
     pub tests: Vec<Test>,
 }
 
-/// The value of `name` among an element's attributes, unescaped.
-fn attribute(element: &str, name: &str) -> Option<String> {
-    let start = element.find(&format!(" {name}=\""))? + name.len() + 3;
-    let end = start + element[start..].find('"')?;
-    Some(
-        element[start..end]
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&amp;", "&"),
-    )
-}
-
-fn seconds(element: &str) -> Result<f64, String> {
-    attribute(element, "time")
-        .and_then(|time| time.parse().ok())
-        .ok_or_else(|| "JUnit element lacks its time".to_owned())
-}
-
 impl Run {
     /// Read a nextest JUnit report.
     ///
     /// # Errors
-    /// Returns an error when the report lacks its run or test times.
+    /// Returns an error when the report is not JUnit XML or lacks its run time.
     pub fn parse(xml: &str) -> Result<Self, String> {
-        let open = xml
-            .find("<testsuites")
-            .ok_or("JUnit report lacks <testsuites>")?;
-        let header = &xml[open..open + xml[open..].find('>').ok_or("unterminated <testsuites>")?];
-        let wall_seconds = seconds(header)?;
-        let mut tests = Vec::new();
-        let mut rest = &xml[open..];
-        while let Some(start) = rest.find("<testcase ") {
-            rest = &rest[start..];
-            let end = rest.find('>').ok_or("unterminated <testcase>")?;
-            let element = &rest[..end];
-            // A test failed when its element holds a failure or error.
-            let failed = !element.ends_with('/') && {
-                let body = &rest[end..rest.find("</testcase>").unwrap_or(rest.len())];
-                body.contains("<failure") || body.contains("<error")
-            };
-            tests.push(Test {
-                binary: attribute(element, "classname").unwrap_or_default(),
-                name: attribute(element, "name").ok_or("JUnit test lacks its name")?,
-                seconds: seconds(element)?,
-                failed,
-            });
-            rest = &rest[end..];
-        }
+        let report = quick_junit::Report::deserialize_from_str(xml)
+            .map_err(|error| format!("invalid JUnit report: {error}"))?;
+        let wall_seconds = report
+            .time
+            .ok_or("JUnit report lacks its run time")?
+            .as_secs_f64();
+        let tests = report
+            .test_suites
+            .iter()
+            .flat_map(|suite| &suite.test_cases)
+            .map(|test| Test {
+                binary: test
+                    .classname
+                    .as_ref()
+                    .map(|binary| binary.as_str().to_owned())
+                    .unwrap_or_default(),
+                name: test.name.as_str().to_owned(),
+                seconds: test.time.unwrap_or_default().as_secs_f64(),
+                failed: matches!(test.status, quick_junit::TestCaseStatus::NonSuccess { .. }),
+            })
+            .collect();
         Ok(Self {
             wall_seconds,
             tests,
         })
     }
 
-    /// A Markdown report: totals, then time by binary and test module, then
-    /// the `slowest` tests.
+    /// A Markdown report: totals, then the `rows` slowest test modules of
+    /// each binary, then the `rows` slowest tests.
     #[must_use]
-    pub fn report(&self, profile: &str, slowest: usize) -> String {
+    pub fn report(&self, profile: &str, rows: usize) -> String {
         let summed: f64 = self.tests.iter().map(|test| test.seconds).sum();
         let mut report = format!(
             "### {profile}: {} tests, {:.1} s wall, {:.1} s summed\n\n",
@@ -101,16 +78,21 @@ impl Run {
         let mut groups: Vec<_> = groups.into_iter().collect();
         groups.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
         report.push_str("| Binary | Module | Tests | Summed | Slowest |\n|---|---|---|---|---|\n");
-        for ((binary, module), (count, total, max)) in groups {
+        let rest: f64 = groups.iter().skip(rows).map(|group| group.1.1).sum();
+        let others = groups.len().saturating_sub(rows);
+        for ((binary, module), (count, total, max)) in groups.into_iter().take(rows) {
             let _ = writeln!(
                 report,
                 "| {binary} | {module} | {count} | {total:.1} s | {max:.1} s |"
             );
         }
+        if others > 0 {
+            let _ = writeln!(report, "| {others} other modules | | | {rest:.1} s | |");
+        }
         let mut tests: Vec<_> = self.tests.iter().collect();
         tests.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
         report.push_str("\n| Time | Slowest tests |\n|---|---|\n");
-        for test in tests.into_iter().take(slowest) {
+        for test in tests.into_iter().take(rows) {
             let failed = if test.failed { " (failed)" } else { "" };
             let _ = writeln!(
                 report,

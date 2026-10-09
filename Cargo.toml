@@ -33,6 +33,7 @@ unsafe_code = "forbid"
 all = "warn"
 
 [workspace.dependencies]
+quick-junit = "0.8.0"
 thiserror = "2"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }

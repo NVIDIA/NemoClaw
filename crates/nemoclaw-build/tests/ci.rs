@@ -241,17 +241,17 @@ fn nextest_archive_installs_only_its_single_executable() {
 }
 
 const JUNIT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="nextest-run" tests="4" failures="1" errors="0" uuid="u" timestamp="2026-10-09T00:20:53.957+00:00" time="12.500">
+<testsuites name="nextest-run" tests="4" failures="1" errors="0" uuid="4a7e64c9-afaa-4115-a4cb-08e38ea6bf43" timestamp="2026-10-09T00:20:53.957+00:00" time="12.500">
     <testsuite name="nemoclaw-e2e::integration" tests="3" disabled="0" errors="0" failures="1">
-        <testcase name="deployment::slow_scenario" classname="nemoclaw-e2e::integration" timestamp="t" time="9.250">
+        <testcase name="deployment::slow_scenario" classname="nemoclaw-e2e::integration" timestamp="2026-10-09T00:20:54.000+00:00" time="9.250">
         </testcase>
-        <testcase name="deployment::quick &amp; &quot;quoted&quot;" classname="nemoclaw-e2e::integration" timestamp="t" time="0.750">
+        <testcase name="deployment::quick &amp; &quot;quoted&quot;" classname="nemoclaw-e2e::integration" timestamp="2026-10-09T00:20:54.000+00:00" time="0.750">
             <failure type="test failure">failed</failure>
         </testcase>
-        <testcase name="service_storage::applies" classname="nemoclaw-e2e::integration" timestamp="t" time="2.000"/>
+        <testcase name="service_storage::applies" classname="nemoclaw-e2e::integration" timestamp="2026-10-09T00:20:54.000+00:00" time="2.000"/>
     </testsuite>
     <testsuite name="nemoclaw-sdk" tests="1" disabled="0" errors="0" failures="0">
-        <testcase name="state::reads" classname="nemoclaw-sdk" timestamp="t" time="0.500"/>
+        <testcase name="state::reads" classname="nemoclaw-sdk" timestamp="2026-10-09T00:20:54.000+00:00" time="0.500"/>
     </testsuite>
 </testsuites>
 "#;
@@ -276,6 +276,11 @@ fn timing_reports_show_wall_time_and_where_test_time_goes() {
         report.find("| nemoclaw-e2e::integration | service_storage | 1 | 2.0 s | 2.0 s |");
     assert!(
         groups.is_some() && storage.is_some() && groups < storage,
+        "{report}"
+    );
+    // The remaining modules are summed on one row.
+    assert!(
+        report.contains("| 1 other modules | | | 0.5 s | |"),
         "{report}"
     );
     // Only the slowest tests are listed, slowest first.
