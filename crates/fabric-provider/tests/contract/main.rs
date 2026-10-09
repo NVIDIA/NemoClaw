@@ -4,7 +4,10 @@
 //! OpenShell gateway, which runs Fabric's configure, prepare, and status
 //! commands, and a fake Docker engine for image capabilities.
 
+// The fake Docker engine listens on a Unix socket.
+#[cfg(unix)]
 mod capabilities;
+#[cfg(unix)]
 #[path = "../../../test-support/http.rs"]
 mod http;
 mod readiness;
