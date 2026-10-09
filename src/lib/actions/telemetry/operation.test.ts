@@ -146,6 +146,7 @@ it("removes only old, private operation contexts before beginning a new one (#12
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-cleanup-"));
   vi.spyOn(os, "tmpdir").mockReturnValue(temporaryRoot);
   const stale = fs.mkdtempSync(path.join(temporaryRoot, "nemoclaw-operation-"));
+  const claimed = fs.mkdtempSync(path.join(temporaryRoot, "nemoclaw-operation-"));
   const unsafe = fs.mkdtempSync(path.join(temporaryRoot, "nemoclaw-operation-"));
   const metadata = JSON.stringify({
     operation: "sandbox_rebuild",
@@ -155,16 +156,22 @@ it("removes only old, private operation contexts before beginning a new one (#12
   fs.chmodSync(stale, 0o700);
   fs.writeFileSync(path.join(stale, "metadata.json"), metadata, { mode: 0o600 });
   fs.writeFileSync(path.join(stale, "receipts.ndjson"), "", { mode: 0o600 });
+  fs.chmodSync(claimed, 0o700);
+  fs.writeFileSync(path.join(claimed, "metadata.json"), metadata, { mode: 0o600 });
+  fs.writeFileSync(path.join(claimed, "receipts.ndjson"), "", { mode: 0o600 });
+  fs.writeFileSync(path.join(claimed, "claimed"), "", { mode: 0o600 });
   fs.chmodSync(unsafe, 0o700);
   fs.writeFileSync(path.join(unsafe, "metadata.json"), metadata, { mode: 0o600 });
   fs.writeFileSync(path.join(unsafe, "receipts.ndjson"), "", { mode: 0o600 });
   fs.chmodSync(unsafe, 0o755);
   const old = new Date(Date.now() - 25 * 60 * 60 * 1_000);
   fs.utimesSync(stale, old, old);
+  fs.utimesSync(claimed, old, old);
   fs.utimesSync(unsafe, old, old);
   try {
     await withTelemetryOperation("sandbox_rebuild", async () => undefined);
     expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(claimed)).toBe(false);
     expect(fs.existsSync(unsafe)).toBe(true);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });

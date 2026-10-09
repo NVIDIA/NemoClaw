@@ -536,9 +536,10 @@ function removeAbandonedContexts(): void {
           continue;
         const files = fs.readdirSync(directory);
         if (
-          files.length !== 2 ||
+          (files.length !== 2 && files.length !== 3) ||
           !files.includes("metadata.json") ||
-          !files.includes("receipts.ndjson")
+          !files.includes("receipts.ndjson") ||
+          files.some((file) => !["metadata.json", "receipts.ndjson", "claimed"].includes(file))
         )
           continue;
         const metadata = fs.lstatSync(path.join(directory, "metadata.json"));
@@ -556,6 +557,15 @@ function removeAbandonedContexts(): void {
           (receipts.mode & 0o777) !== 0o600
         )
           continue;
+        if (files.includes("claimed")) {
+          const claimed = fs.lstatSync(path.join(directory, "claimed"));
+          if (
+            !claimed.isFile() ||
+            claimed.uid !== process.getuid() ||
+            (claimed.mode & 0o777) !== 0o600
+          )
+            continue;
+        }
         fs.rmSync(directory, { recursive: true });
       } catch {
         /* A stale or untrusted entry cannot change the operation. */
