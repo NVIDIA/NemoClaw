@@ -60,7 +60,6 @@ The [Helm removal recovery procedure](../usage.md#recover-an-interrupted-helm-re
 Issuer private material stays outside Helm values and OpenTofu state.
 The provider receives the explicit kubeconfig and context; ambient Helm and Kubernetes provider settings are excluded.
 OpenTofu and its providers inherit only platform variables, so a kubeconfig exec plugin gets the caller variables listed in `gateway.kubernetes.environment` and nothing else.
-The [migration policy](../migration.md#move-from-the-combined-kubernetes-gateway-resource) keeps deployments using the earlier combined gateway resource with their original bundle and state; the new graph starts a separate deployment.
 
 ## OpenShell SDK Boundary
 
