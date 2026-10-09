@@ -296,12 +296,26 @@ const { createSandbox } = require(${onboardPath});
       );
     },
   );
-  it(
-    "recreate-sandbox flag backs up and restores workspace state",
+  it.for([
+    { scenario: "forced recreation", force: true, marked: false, primary: "openai/gpt-4o" },
+    {
+      scenario: "marked recreation resume",
+      force: false,
+      marked: true,
+      primary: "inference/gpt-5.4",
+    },
+    {
+      scenario: "unmarked recreation resume",
+      force: false,
+      marked: false,
+      primary: "openai/gpt-4o",
+    },
+  ])(
+    "$scenario restores native state with its recorded selection authority (#12667)",
     {
       timeout: 60_000,
     },
-    async (context) => {
+    async ({ force, marked, primary }, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -333,8 +347,24 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
+let nativeConfig = { agents: { defaults: { model: { primary: "openai/gpt-4o" } } }, models: { providers: {} }, custom: { retained: true } };
+let registered = null;
+const sandboxConfig = require(${JSON.stringify(path.join(repoRoot, "src/lib/sandbox/config.ts"))});
+sandboxConfig.readSandboxConfig = () => structuredClone(nativeConfig);
+sandboxConfig.setOpenClawConfigValues = (_name, updates) => {
+  for (const { dotpath, value } of updates) {
+    const keys = dotpath.split(".");
+    const leaf = keys.pop();
+    let current = nativeConfig;
+    for (const key of keys) current = current[key] ??= {};
+    current[leaf] = structuredClone(value);
+  }
+};
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
-processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
+processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
+  events.push({ kind: "restart", primary: nativeConfig.agents.defaults.model.primary });
+  return { ok: true };
+};
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
@@ -370,6 +400,7 @@ runner.run = (command) => {
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
 	  getSandbox: registry.getSandbox,
+      registerSandbox: (entry) => { registered = entry; },
 	});
 
 let latestBackup = null;
@@ -388,6 +419,7 @@ sandboxState.backupSandboxState = (name) => {
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
   events.push({ kind: "restore", name, backupPath, options });
+  nativeConfig.agents.defaults.model.primary = "openai/gpt-4o";
   return {
     success: true,
     restoredDirs: ["workspace", "skills"],
@@ -420,12 +452,19 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
-	  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
-	    createFixture,
-	  ));
-  console.log(JSON.stringify({ sandboxName, events }));
+  process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force ? "1" : "0")};
+  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    createFixture,
+  );
+  // Seed the durable checkpoint left by the interrupted invocation. The resumed
+  // request carries only its existing transaction identity, never fresh authority.
+  const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+  const interrupted = sessions.loadSession();
+  if (${JSON.stringify(marked)}) interrupted.checkpoint.sandboxRecreate.reconcileOpenClawInference = true;
+  sessions.saveSession(interrupted);
+  const sandboxName = await createSandbox(...createArgs);
+  console.log(JSON.stringify({ sandboxName, events, nativeConfig, registered, sourceId: sourceSandbox.lifecycleLiveIdentityFingerprint, replacementId: createdSandbox.state.sandboxId }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -463,6 +502,7 @@ const { createSandbox } = require(${onboardPath});
         name?: string;
         backupPath?: string;
         options?: { targetAgentType?: string };
+        primary?: string;
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -482,6 +522,15 @@ const { createSandbox } = require(${onboardPath});
         "restore must use backup path",
       );
       assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
+      assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
+      assert.equal(events.find((event) => event.kind === "restart")?.primary, primary);
+      assert.deepEqual(payload.nativeConfig.custom, { retained: true });
+      assert.equal(payload.registered.model, "gpt-5.4");
+      assert.equal(
+        payload.registered.lifecycleLiveIdentityFingerprint,
+        createHash("sha256").update(payload.replacementId).digest("hex"),
+      );
+      assert.notEqual(payload.registered.lifecycleLiveIdentityFingerprint, payload.sourceId);
     },
   );
 
