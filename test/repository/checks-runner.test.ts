@@ -101,7 +101,7 @@ describe("checks runner", () => {
       [
         fileURLToPath(import.meta.resolve("tsx/cli")),
         "scripts/checks/pi-qualification-receipt-refresh.mts",
-        "--local-publication",
+        "--publication",
       ],
       expect.objectContaining({ stdio: "inherit" }),
     );

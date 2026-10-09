@@ -40,9 +40,9 @@ selection_checks=(
     ('selection-local-identity', r'local CLI identity'),
     ('selection-pending-count', r'expected exactly one pending request, found [0-9]+'),
     ('selection-request-binding', r'pending admin request (?:has an invalid requestId|does not match the triggered request)'),
+    ('selection-paired-binding', r'paired device does not belong to the expected CLI operator|cron requestId (?:must match exactly one paired device|public key does not match its paired device)'),
     ('selection-client-role', r'does not belong to the expected CLI operator|roles? (?:must be|contains|is invalid)'),
-    ('selection-paired-binding', r'cron requestId (?:must match exactly one paired device|public key does not match its paired device)'),
-    ('selection-scopes', r'scopes?|paired tokens'),
+    ('selection-scopes', r'operator\.admin was already granted before explicit approval|scopes?|paired tokens'),
     ('selection-response', r'device state must be an object|records must be an array of objects|JSONDecodeError'),
 )
 checks=(

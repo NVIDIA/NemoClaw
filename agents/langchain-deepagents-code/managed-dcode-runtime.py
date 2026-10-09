@@ -231,6 +231,10 @@ def _contains_other_platform_secret(value: str, platform: str) -> bool:
 
 
 def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
+    if name == "NEMOCLAW_ATTACHED_PROVIDER_API_KEY":
+        if value != os.environ.get("NVIDIA_INFERENCE_API_KEY"):
+            return False
+        name = "NVIDIA_INFERENCE_API_KEY"
     if name == "OPENSHELL_TLS_KEY" or not _MCP_ENV_NAME.fullmatch(name):
         return False
     canonical = f"{_OPENSHELL_ENV_PLACEHOLDER_PREFIX}{name}"
@@ -1501,6 +1505,13 @@ def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
     _assert_safe_auth_state()
+    # Whole-home rebuild restores can retain the old native api_key_env field.
+    # Remove this alias when supported stored configs have retired that field.
+    native_placeholder = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
+    if _is_openshell_placeholder_for_name("NVIDIA_INFERENCE_API_KEY", native_placeholder):
+        os.environ["NEMOCLAW_ATTACHED_PROVIDER_API_KEY"] = native_placeholder
+    else:
+        os.environ.pop("NEMOCLAW_ATTACHED_PROVIDER_API_KEY", None)
     os.environ[_UPSTREAM_PROVIDER_ENV] = _managed_upstream_provider()
     managed_fetch_proxy_url()
     base_url = managed_inference_base_url()

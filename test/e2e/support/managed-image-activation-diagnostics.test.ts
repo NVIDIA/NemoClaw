@@ -194,7 +194,10 @@ describe("managed image activation failure diagnostics", () => {
     expectedRequestId?: string;
     prepare: (
       env: NodeJS.ProcessEnv,
-      devices: { pending: Array<Record<string, unknown>> },
+      devices: {
+        pending: Array<Record<string, unknown>>;
+        paired: Array<Record<string, unknown>>;
+      },
       secret: string,
     ) => void;
   }>([
@@ -224,6 +227,29 @@ describe("managed image activation failure diagnostics", () => {
         devices.pending[0]!.scopes = [secret];
       },
     },
+    {
+      diagnostic: "selection-paired-binding",
+      prepare: (_env, devices) => {
+        devices.paired[0]!.clientId = "node";
+      },
+    },
+    {
+      diagnostic: "selection-client-role",
+      prepare: (_env, devices) => {
+        devices.pending[0]!.clientId = "node";
+      },
+    },
+    {
+      diagnostic: "selection-scopes",
+      prepare: (_env, devices) => {
+        const scopes = ["operator.pairing", "operator.read", "operator.write", "operator.admin"];
+        Object.assign(devices.paired[0]!, {
+          scopes,
+          approvedScopes: scopes,
+          tokens: [{ role: "operator", scopes }],
+        });
+      },
+    },
   ])(
     "reports $diagnostic without approving or disclosing selector inputs",
     ({ diagnostic, expectedRequestId, prepare }) => {
@@ -248,6 +274,7 @@ exit 91
         const env = prepareManagedAdminState(fixture.root, requestId);
         const devices = JSON.parse(readFileSync(env.FAKE_DEVICES_STATE!, "utf8")) as {
           pending: Array<Record<string, unknown>>;
+          paired: Array<Record<string, unknown>>;
         };
         prepare(env, devices, secret);
         writeFileSync(env.FAKE_DEVICES_STATE!, JSON.stringify(devices));

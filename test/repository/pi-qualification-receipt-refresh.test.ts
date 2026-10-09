@@ -77,17 +77,18 @@ describe("Pi qualification receipt refresh", () => {
   function run(
     changedPaths: readonly string[],
     options: {
-      allowPendingPublication?: boolean;
+      publication?: boolean;
       accepted?: ReadonlySet<string>;
       headRevision?: string | null;
       mergeInProgress?: boolean;
       pullRequestHeadRevision?: string;
       sourceParity?: boolean;
+      stagedSourceParity?: boolean;
       stagedPaths?: readonly string[];
     } = {},
-  ): "pending-publication" | undefined {
+  ) {
     return checkPiQualificationReceiptRefresh({
-      allowPendingPublication: options.allowPendingPublication,
+      publication: options.publication,
       acceptedDigests: options.accepted ?? acceptedDigests,
       baseBranch: "main",
       git: (args) =>
@@ -111,10 +112,18 @@ describe("Pi qualification receipt refresh", () => {
                     })()
               : args.includes("--quiet")
                 ? (args.includes("--cached") &&
-                    options.mergeInProgress &&
+                    (options.mergeInProgress || process.env.GITHUB_ACTIONS !== "true") &&
                     args[3] === SOURCE_REVISION) ||
                   args[3] === (options.headRevision ?? options.pullRequestHeadRevision ?? "HEAD")
-                  ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
+                  ? {
+                      status:
+                        (args.includes("--cached")
+                          ? (options.stagedSourceParity ?? options.sourceParity)
+                          : options.sourceParity) === false
+                          ? 1
+                          : 0,
+                      stdout: "",
+                    }
                   : (() => {
                       throw new Error(`Unexpected source parity arguments: ${args.join(" ")}`);
                     })()
@@ -142,67 +151,86 @@ describe("Pi qualification receipt refresh", () => {
     expect(() => run(["protected/base/config.json", RECEIPTS[0].path])).toThrow(RECEIPTS[1].path);
   });
 
-  it("allows a local source commit before image publication without treating it as qualification", () => {
-    expect(
-      run(["protected/app/config.json"], {
-        allowPendingPublication: true,
-        sourceParity: false,
-      }),
-    ).toBe("pending-publication");
-  });
-
-  it("keeps CI strict even when the local-publication option is supplied", () => {
-    vi.stubEnv("GITHUB_ACTIONS", "true");
-    expect(() =>
-      run(["protected/app/config.json"], {
-        allowPendingPublication: true,
-      }),
-    ).toThrow("Pi image inputs changed without refreshing both qualification receipts");
-  });
-
-  it.each([RECEIPTS[0].path, "src/lib/agent/candidate-authority.ts"])(
-    "does not defer a local refresh that changes %s",
-    (changedPath) => {
-      expect(() =>
-        run(["protected/app/config.json"], {
-          allowPendingPublication: true,
-          stagedPaths: [changedPath],
-        }),
-      ).toThrow("Pi image inputs changed without refreshing both qualification receipts");
-    },
-  );
-
-  it("does not accept broken receipt authority during source-only publication", () => {
-    expect(() =>
-      run(["protected/app/config.json"], {
-        allowPendingPublication: true,
-        accepted: new Set(),
-      }),
-    ).toThrow("is not present in the Pi candidate receipt authority");
-  });
-
-  it("requires source parity once both receipts are added to the same local PR", () => {
-    expect(() =>
-      run(["protected/app/config.json"], {
-        allowPendingPublication: true,
-        stagedPaths: RECEIPTS.map(({ path: receiptPath }) => receiptPath),
-        sourceParity: false,
-      }),
-    ).toThrow(`Pi image inputs changed after receipt source revision ${SOURCE_REVISION}`);
-    expect(
-      run(["protected/app/config.json"], {
-        allowPendingPublication: true,
-        stagedPaths: RECEIPTS.map(({ path: receiptPath }) => receiptPath),
-      }),
-    ).toBeUndefined();
-  });
-
   it.each(RECEIPTS)("rejects deletion of the $platform qualification receipt", (candidate) => {
     fs.unlinkSync(path.join(rootDir, candidate.path));
 
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
     ).toThrow(`Pi image inputs changed but qualification receipt is missing: ${candidate.path}`);
+  });
+
+  it("allows local publication with pending qualification after an image input changes", () => {
+    expect(run(["protected/app/config.json"], { publication: true, sourceParity: false })).toBe(
+      "pending",
+    );
+  });
+
+  it("reports pending when staged image inputs differ from otherwise qualified HEAD", () => {
+    expect(
+      run([], {
+        publication: true,
+        headRevision: null,
+        sourceParity: true,
+        stagedSourceParity: false,
+        stagedPaths: ["protected/app/config.json"],
+      }),
+    ).toBe("pending");
+  });
+
+  it("qualifies staged inputs that match the receipt revision", () => {
+    expect(
+      run([], {
+        publication: true,
+        headRevision: null,
+        sourceParity: false,
+        stagedSourceParity: true,
+        stagedPaths: ["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)],
+      }),
+    ).toBe("qualified");
+  });
+
+  it("rejects stale staged sources in strict local validation", () => {
+    expect(() =>
+      run([], {
+        headRevision: null,
+        sourceParity: true,
+        stagedSourceParity: false,
+        stagedPaths: ["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)],
+      }),
+    ).toThrow("Pi image inputs changed after receipt");
+  });
+
+  it("keeps CI strict when publication mode is requested", () => {
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    expect(() =>
+      run(["protected/app/config.json"], { publication: true, sourceParity: false }),
+    ).toThrow("Pi image inputs changed without refreshing both qualification receipts");
+  });
+
+  it("rejects invalid receipt authority during local publication", () => {
+    expect(() =>
+      run(["protected/app/config.json"], {
+        publication: true,
+        sourceParity: false,
+        accepted: new Set(),
+      }),
+    ).toThrow("not present in the Pi candidate receipt authority");
+  });
+
+  it("rejects a missing receipt during local publication", () => {
+    fs.unlinkSync(path.join(rootDir, RECEIPTS[1].path));
+    expect(() =>
+      run(["protected/app/config.json"], { publication: true, sourceParity: false }),
+    ).toThrow("qualification receipt is missing");
+  });
+
+  it("requires new qualification after another image change and accepts its refreshed receipts", () => {
+    const changed = ["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)];
+    expect(run(changed, { publication: true, sourceParity: false })).toBe("pending");
+    expect(() => run(changed, { sourceParity: false })).toThrow(
+      "Pi image inputs changed after receipt",
+    );
+    expect(run(changed)).toBe("qualified");
   });
 
   it("accepts refreshed receipts when image sources match the receipt revision", () => {
@@ -228,7 +256,7 @@ describe("Pi qualification receipt refresh", () => {
     ).not.toThrow();
   });
 
-  it("probes for a merge before comparing receipt parity against HEAD", () => {
+  it("compares local receipt parity against the index outside a merge", () => {
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path }) => path)], {
         headRevision: null,
