@@ -1147,17 +1147,19 @@ During that lease, another `launch` still verifies these conditions:
 <AgentOnly variant="openclaw,hermes">
 
 - The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
-  Shared-route providers use `inference.local`.
-  NVIDIA Endpoints verifies the recorded sandbox-attached provider and sends the request to `https://integrate.api.nvidia.com/v1`.
-  The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
+  NVIDIA Endpoints and supported fixed hosted selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
+  Retained legacy, custom, and local shared routes use `inference.local`.
+  Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
   A failed model request rejects readiness before the agent starts.
   This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-- The recorded inference selection matches the live route, and every configured route serves a valid response to a bounded request for the recorded model.
-  The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models`.
+- The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
+  NVIDIA Endpoints and supported fixed hosted selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
+  Retained legacy, custom, and local shared routes use `inference.local`.
+  Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
   A failed model request rejects readiness before the agent starts.
 
 </AgentOnly>
@@ -1230,7 +1232,7 @@ A recognized broken shared-route result lets `connect` attempt DNS or route repa
 When the initial shared-route probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
 It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
 
-For NVIDIA Endpoints, `connect` does not inspect or change the unrelated shared route.
+For NVIDIA Endpoints and supported fixed hosted selections, `connect` does not inspect or change the unrelated shared route.
 It verifies the recorded sandbox-attached provider and sends a native inference request for the selected model.
 The request must return a structurally valid successful inference result before `connect` opens SSH.
 <AgentOnly variant="deepagents">
