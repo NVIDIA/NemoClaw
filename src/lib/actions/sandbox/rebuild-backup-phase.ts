@@ -150,6 +150,17 @@ function writeRebuildPolicySource(policy: string, policySourcePath?: string): st
   return resolvedPolicySourcePath;
 }
 
+/** Signals a capture-layer bail so this phase can release the quiesce window first. */
+class RebuildCaptureBail extends Error {
+  constructor(
+    message: string,
+    readonly code: number | undefined,
+  ) {
+    super(message);
+    this.name = "RebuildCaptureBail";
+  }
+}
+
 export async function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
@@ -183,22 +194,47 @@ export async function runRebuildBackupPhase(
     }
     sourceBackupWindow = begun.window;
   }
+  // The CLI bail prints and exits the process, so a `finally` cannot run after
+  // it (#12875): once the gateway is quiesced, every bail must release the
+  // source window BEFORE it fires, or the retained sandbox stays unreachable.
+  let sourceWindowReleased = false;
+  const releaseSourceWindowOnce = async (): Promise<void> => {
+    if (sourceBackupWindow && !sourceWindowReleased) {
+      sourceWindowReleased = true;
+      await releaseRebuildSourceOpenClawWindow(sourceBackupWindow);
+    }
+  };
+  const bailWithSourceWindow = async (message: string, code?: number): Promise<never> => {
+    await releaseSourceWindowOnce();
+    return input.bail(message, code);
+  };
   let transferSourceWindow = false;
   try {
     let backupManifest: RebuildBackupManifest | undefined =
       preparedRecoveryManifest ??
-      (await backupStateForRebuild(
-        input.sandboxName,
-        input.sandboxEntry,
-        input.staleRecovery,
-        input.log,
-        input.bail,
-        input.stoppedNativeState,
-      ));
+      (await (async () => {
+        try {
+          return await backupStateForRebuild(
+            input.sandboxName,
+            input.sandboxEntry,
+            input.staleRecovery,
+            input.log,
+            (message, code) => {
+              throw new RebuildCaptureBail(message, code);
+            },
+            input.stoppedNativeState,
+          );
+        } catch (error) {
+          if (error instanceof RebuildCaptureBail) {
+            return await bailWithSourceWindow(error.message, error.code);
+          }
+          throw error;
+        }
+      })());
     if (backupManifest === undefined) return null;
     const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
     if (input.staleRecovery && !retainedPolicy) {
-      return input.bail(
+      return await bailWithSourceWindow(
         "The live OpenShell policy and its verified rebuild handoff are unavailable. Rebuild will not reconstruct policy from NemoClaw state.",
       );
     }
@@ -221,11 +257,11 @@ export async function runRebuildBackupPhase(
           backupManifest,
         });
       } catch (error) {
-        return input.bail(
+        return await bailWithSourceWindow(
           `Cannot bind the retained credential-bearing policy handoff to a bounded recovery transaction: ${error instanceof Error ? error.message : String(error)} Recovery remains at '${backupManifest.backupPath}'.`,
         );
       }
-      return input.bail(
+      return await bailWithSourceWindow(
         `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Recovery:\n` +
           `  1. Recover any required data from the backup before deletion. Keep the backup and policy handoff until that recovery is complete.\n` +
           `  2. Restore access to recorded gateway '${input.gatewayName}', select it with \`openshell gateway select ${input.gatewayName}\`, and confirm \`openshell status\` is healthy.\n` +
@@ -263,7 +299,7 @@ export async function runRebuildBackupPhase(
           ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
         };
       } catch (error) {
-        return input.bail(
+        return await bailWithSourceWindow(
           `The current OpenShell policy could not be retained for rebuild recovery: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
@@ -275,8 +311,8 @@ export async function runRebuildBackupPhase(
       ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
     };
   } finally {
-    if (sourceBackupWindow && !transferSourceWindow) {
-      await releaseRebuildSourceOpenClawWindow(sourceBackupWindow);
+    if (!transferSourceWindow) {
+      await releaseSourceWindowOnce();
     }
   }
 }
