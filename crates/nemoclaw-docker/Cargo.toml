@@ -27,6 +27,9 @@ client = [
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 bollard = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
+# The SSH transport speaks HTTP over ssh's standard input and output.
+hyper = { version = "1", features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 reqwest = { workspace = true, optional = true }
 getrandom.workspace = true
 regex.workspace = true
@@ -40,7 +43,3 @@ url.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "macros", "rt-multi-thread"] }
-
-[target.'cfg(unix)'.dependencies]
-hyper = { version = "1", features = ["client", "http1"], optional = true }
-hyper-util = { version = "0.1", features = ["tokio"], optional = true }
