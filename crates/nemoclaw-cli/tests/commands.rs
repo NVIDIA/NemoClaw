@@ -176,6 +176,53 @@ fn invalid_configuration_fails_before_creating_state_or_echoing_secrets() {
     assert!(output.stdout.is_empty());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-sentinel"));
 }
+/// An unsupported ownership annotation is rejected by the schema, naming its
+/// field, before the existing deployment's saved intent or state is read.
+#[test]
+fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = directory.path().join("state");
+    fs::create_dir(&state).unwrap();
+    let saved = [
+        ("intent.json", "saved intent"),
+        ("terraform.tfstate", "saved state"),
+    ];
+    for (name, contents) in saved {
+        fs::write(state.join(name), contents).unwrap();
+    }
+    let document = nemoclaw_sdk::config::Document::parse(
+        include_bytes!("../../../examples/explicit-policy.yaml").as_slice(),
+    )
+    .unwrap();
+    let mut invalid = serde_json::to_value(&document).unwrap();
+    invalid["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
+    let config = directory.path().join("unsupported.yaml");
+    fs::write(&config, invalid.to_string()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw"))
+        .arg("apply")
+        .arg("--state-dir")
+        .arg(&state)
+        .arg("--bundle")
+        .arg(directory.path().join("missing-bundle"))
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("configuration violates schema"),
+        "{diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("spec.inferenceProviders[0]")
+            && diagnostic.contains("unknown fields are not allowed"),
+        "{diagnostic}"
+    );
+    for (name, contents) in saved {
+        assert_eq!(fs::read_to_string(state.join(name)).unwrap(), contents);
+    }
+}
+
 #[test]
 fn bundle_flag_selects_an_explicit_bundle() {
     let directory = tempfile::tempdir().unwrap();

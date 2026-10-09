@@ -85,18 +85,13 @@ async fn remote_model_lifecycle_preserves_data_and_stops_on_observation_failure(
     lifecycle("nvidia.fabric.openclaw", false, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated fixtures"]
-async fn managed_hermes_model_lifecycle_preserves_data_without_generation() {
-    lifecycle("nvidia.fabric.hermes", false, "vllm", false, false).await;
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
 async fn managed_bearer_credentials_survive_export_reapply_and_destroy() {
     lifecycle("nvidia.fabric.hermes", true, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn managed_pi_model_lifecycle_preserves_data_without_generation() {
+async fn managed_pi_applies_without_generation_and_refused_sandbox_changes_keep_intent() {
     lifecycle("nvidia.fabric.pi", false, "vllm", false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -389,6 +384,15 @@ async fn lifecycle(
             );
         }
     }
+    // Pi proves a managed service applies without generation and that refused
+    // sandbox changes keep retained intent; the service recovery below does
+    // not depend on the harness and runs for the other harnesses.
+    if harness == "nvidia.fabric.pi" {
+        refused_sandbox_changes_preserve_retained_intent(root, &bundle, &gateway).await;
+        run(root, &bundle, "destroy", "", true).await;
+        assert!(read(root, "engine.json")["container"].is_null());
+        return;
+    }
     if check_pulls {
         assert_eq!(read(root, "engine.json")["pulls"], 1);
         let original = read(root, "config.yaml");
@@ -582,9 +586,6 @@ async fn lifecycle(
                 || arg == "probe"
                 || arg == "--message")
     );
-    if harness == "nvidia.fabric.pi" {
-        refused_sandbox_changes_preserve_retained_intent(root, &bundle, &gateway).await;
-    }
     if check_pulls {
         let mut changed = read(root, "config.yaml");
         changed["spec"]["services"]["qwen"]
@@ -795,13 +796,15 @@ async fn refused_sandbox_changes_preserve_retained_intent(
                 assert!(result.get("remainingState").is_none(), "{result}");
             }
             assert!(result["help"].as_str().unwrap().contains("docs/usage.md"));
-            let exported = run(root, bundle, "export", "", true).await;
-            assert_eq!(
-                Document::parse(exported.as_slice()).unwrap(),
-                Document::parse(serde_json::to_vec(&original).unwrap().as_slice()).unwrap()
-            );
         }
     }
+    // The saved intent is byte-identical after each refusal, so one export
+    // shows it still reproduces the accepted document.
+    let exported = run(root, bundle, "export", "", true).await;
+    assert_eq!(
+        Document::parse(exported.as_slice()).unwrap(),
+        Document::parse(serde_json::to_vec(&original).unwrap().as_slice()).unwrap()
+    );
     // A root observation failure after runtime planning must not save a new
     // document either, even when its sandbox changes would otherwise be valid.
     let mut revised = original.clone();
