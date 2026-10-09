@@ -272,7 +272,9 @@ mod reader {
         }
     }
 }
-#[cfg(all(test, feature = "client"))]
+// Its engine sends archive stat headers, which Fixture cannot yet, from a
+// Unix socket.
+#[cfg(all(test, unix, feature = "client"))]
 #[path = "credentials_wait_tests.rs"]
 mod wait_tests;
 #[cfg(feature = "client")]

@@ -532,6 +532,9 @@ async fn gateway_processes_require_layout_two_before_engine_access() {
     }
 }
 
+// Its engine answers archive stat headers, which Fixture cannot yet, on a
+// Unix socket.
+#[cfg(unix)]
 #[tokio::test]
 async fn authenticated_vllm_readiness_rechecks_key_permissions() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
