@@ -27,6 +27,9 @@ vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
   withMcpLifecycleLock: withLifecycleLockMock,
 }));
 
+import SandboxSessionsCommand from "../../../../commands/sandbox/sessions";
+import SandboxSessionsListCommand from "../../../../commands/sandbox/sessions/list";
+
 import { WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import {
   createSessionsPassthrough,
@@ -200,6 +203,15 @@ describe("filterWarmupSessionsListText", () => {
   });
 });
 
+it.each(
+  [SandboxSessionsCommand, SandboxSessionsListCommand].map((command) => ({
+    id: command.id,
+    description: command.description,
+  })),
+)("$id describes the Deep Code session-listing limitation (#12917)", ({ description }) => {
+  expect(description).toContain("Session listing is not supported for Deep Code sandboxes.");
+});
+
 describe("printSessionsPassthroughHelp", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
@@ -222,6 +234,7 @@ describe("printSessionsPassthroughHelp", () => {
     expect(help).not.toMatch(/Pass-through to `openclaw sessions/i);
     expect(help).toMatch(/openclaw/i);
     expect(help).toMatch(/hermes sessions list/i);
+    expect(help).toContain("Session listing is not supported for Deep Code sandboxes.");
     // Warm-up filtering is documented as OpenClaw-specific, not universal.
     expect(help).toMatch(/warm-up[^\n]*OpenClaw|OpenClaw[^\n]*warm-up/i);
   });
@@ -233,6 +246,7 @@ describe("printSessionsPassthroughHelp", () => {
     expect(help).not.toMatch(/Pass-through to `openclaw sessions list/i);
     expect(help).toMatch(/sessions list/);
     expect(help).toMatch(/hermes/i);
+    expect(help).toContain("Session listing is not supported for Deep Code sandboxes.");
   });
 });
 
