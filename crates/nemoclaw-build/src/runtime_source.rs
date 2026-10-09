@@ -13,7 +13,7 @@ pub fn native_runtime_platform() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "aarch64") => Ok("linux_arm64"),
         ("linux", "x86_64") => Ok("linux_amd64"),
-        _ => Err("runtime images require a native Linux ARM64 or AMD64 host".into()),
+        _ => Err("runtime images require a Linux ARM64 or AMD64 host".into()),
     }
 }
 

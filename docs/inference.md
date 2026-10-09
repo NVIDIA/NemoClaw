@@ -224,7 +224,7 @@ Context and concurrency use the common `serving.contextTokens` and `serving.maxS
 A dedicated-memory profile can use the common `gpuMemoryUtilization` setting with an explicit minimum GPU memory requirement.
 
 Use the [plan/apply/export workflow](usage.md) with the adapted complete example.
-A failed startup retains provider state, the model volume, and status for inspection; correct the failure and explicitly reapply.
+A failed startup retains provider state, the model volume, and status for inspection; correct the failure and reapply.
 Recovery may replace the container while reusing that volume.
 Destroy removes owned runtime resources and retains the model volume.
 Verified cached snapshots can be reused without querying a subsequently changed registry tag.

@@ -82,9 +82,7 @@ fn runtime_bindings(
     if bindings.keys().any(|key| {
         !expected.contains_key(key) && (!plan::disposable(key) || key.starts_with("docker_volume."))
     }) {
-        return Err(Error::Conflict(
-            "ordinary apply cannot remove a managed runtime",
-        ));
+        return Err(Error::Conflict("apply cannot remove a managed runtime"));
     }
     for target in targets {
         kubernetes_binding(target, bindings)?;
