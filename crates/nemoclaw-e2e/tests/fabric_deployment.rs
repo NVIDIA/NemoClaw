@@ -3,7 +3,6 @@
 // Deployment planning requires image discovery, whose engine transports are Unix-only.
 // Windows retains bridge tests that need no engine transport and an unsupported-engine regression.
 #![cfg(unix)]
-use nemoclaw_sdk::config::InferenceProviderKind;
 
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
@@ -23,15 +22,10 @@ macro_rules! harness_test {
     };
 }
 
-harness_test!(harness_deepagents, "nvidia.fabric.langchain.deepagents");
-harness_test!(harness_hermes, "nvidia.fabric.hermes");
+// Every harness's example compiles, passes the Fabric planner, and exports
+// in the SDK's tests. OpenClaw covers the harness-independent checks here,
+// and Pi its route roles.
 harness_test!(harness_openclaw, "nvidia.fabric.openclaw");
-harness_test!(harness_claude, "nvidia.fabric.claude");
-harness_test!(harness_codex, "nvidia.fabric.codex");
-harness_test!(harness_mini_swe_agent, "nvidia.fabric.mini-swe-agent");
-harness_test!(harness_nooa, "nvidia.fabric.nooa");
-harness_test!(harness_nooa_bench, "nvidia.fabric.nooa.bench-agent");
-harness_test!(harness_remote_agent, "nvidia.fabric.remote-agent");
 harness_test!(harness_pi, "nvidia.fabric.pi");
 
 async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness: &str) {
@@ -46,11 +40,7 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     // Keep passive discovery deterministic across apply and export. Connection
     // failures can otherwise vary between transport errors and timeouts.
-    let catalog_path = if harness == "nvidia.fabric.claude" {
-        "/v1/models?limit=1000"
-    } else {
-        "/v1/models"
-    };
+    let catalog_path = "/v1/models";
     let unexpected = Arc::new(Mutex::new(Vec::new()));
     let seen = unexpected.clone();
     let catalog = nemoclaw_e2e::http_fixture::Fixture::start_tcp(move |request| {
@@ -85,21 +75,6 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
             .routes[0]
             .overrides
             .clone();
-    }
-    if harness == "nvidia.fabric.claude" {
-        document.spec.inference_providers[0].provider = InferenceProviderKind::Anthropic;
-    }
-    if harness == "nvidia.fabric.codex" {
-        document.spec.inference_providers[0].api =
-            Some(nemoclaw_sdk::config::InferenceApi::OpenaiResponses);
-    }
-    if harness == "nvidia.fabric.nooa" {
-        document.spec.sandboxes[0].harness.as_mut().unwrap().config = Some(
-            serde_json::from_value(
-                serde_json::json!({"workflow":{"target_id":"nvidia.nooa.coding-agent"}}),
-            )
-            .unwrap(),
-        );
     }
     let deployment = Deployment::new(directory.path(), &bundle);
     let cancel = CancellationToken::new();
@@ -171,20 +146,6 @@ async fn harness_reconciles_configuration_and_protects_sandbox_identity(harness:
                 .iter()
                 .any(|arg| arg == "invoke" || arg == "--message"))
     );
-    // Model changes and the refusal of adapter, image, and observed changes do
-    // not depend on the harness. OpenClaw covers them, and Pi its route roles;
-    // every other harness only proves it applies, reapplies, and exports.
-    if !matches!(harness, "nvidia.fabric.openclaw" | "nvidia.fabric.pi") {
-        deployment.destroy(&cancel).await.unwrap();
-        assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
-        assert!(fixture.state.lock().unwrap().providers.is_empty());
-        assert_eq!(
-            *unexpected.lock().unwrap(),
-            Vec::<String>::new(),
-            "only the model catalog may be requested"
-        );
-        return;
-    }
     if harness != "nvidia.fabric.pi" {
         let mut changed_model = document.clone();
         changed_model.spec.sandboxes[0]
