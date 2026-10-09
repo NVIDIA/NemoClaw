@@ -180,3 +180,16 @@ it("rejects malformed records and a failed receiver without retry (#12859)", asy
   expect(await sendOperationTelemetry(context, 0)).toBe("failed");
   expect(fetchMock).toHaveBeenCalledOnce();
 });
+
+it("stops collection at the delivery deadline when a reader ignores cancellation (#12859)", async () => {
+  allowLocalTelemetry();
+  localReceiver();
+  collectOperationSnapshot.mockImplementation(() => new Promise(() => undefined));
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+
+  const startedAt = performance.now();
+  expect(await sendOperationTelemetry(context, 25)).toBe("failed");
+  expect(performance.now() - startedAt).toBeLessThan(1_000);
+  expect(fetchMock).not.toHaveBeenCalled();
+});

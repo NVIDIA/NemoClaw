@@ -188,7 +188,14 @@ export async function sendOperationTelemetry(
   const deadlineAt = Date.now() + budgetMs;
   const timer = setTimeout(() => controller.abort(), budgetMs);
   try {
-    const event = await collectOperationEvent(context, { signal: controller.signal, deadlineAt });
+    const deadline = new Promise<null>((resolve) => {
+      controller.signal.addEventListener("abort", () => resolve(null), { once: true });
+    });
+    const event = await Promise.race([
+      collectOperationEvent(context, { signal: controller.signal, deadlineAt }),
+      deadline,
+    ]);
+    if (event === null || controller.signal.aborted) return "failed";
     if (
       telemetryRuntime.config !== config ||
       shouldSuppressTelemetry(process.env) ||

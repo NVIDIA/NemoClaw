@@ -131,6 +131,13 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
     sandboxes: {
+      first: {
+        name: "first",
+        agent: "openclaw",
+        gatewayPort: 8080,
+        model: "gpt-4o",
+        provider: "openai-api",
+      },
       selected: {
         name: "selected",
         agent: "openclaw",
@@ -151,14 +158,29 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       },
     },
   });
-  const responses: Record<string, string> = {
-    uname: "Linux",
-    openclaw: JSON.stringify([{ id: "main", isDefault: true }]),
-    cat: config,
+  const responses: Record<string, Record<string, string>> = {
+    first: {
+      uname: "Linux",
+      openclaw: JSON.stringify([{ id: "main", isDefault: true }]),
+      cat: JSON.stringify({
+        agents: {
+          defaults: { model: "openai/gpt-4o" },
+          entries: { main: { default: true } },
+        },
+        models: { providers: { openai: { api: "openai-completions" } } },
+      }),
+    },
+    selected: {
+      uname: "Linux",
+      openclaw: JSON.stringify([{ id: "main", isDefault: true }]),
+      cat: config,
+    },
   };
-  const read = vi.fn(async ({ command }: { command: readonly string[] }) => {
-    return responses[command[0] ?? ""] ?? "";
-  });
+  const read = vi.fn(
+    async ({ sandboxName, command }: { sandboxName: string; command: readonly string[] }) => {
+      return responses[sandboxName]?.[command[0] ?? ""] ?? "";
+    },
+  );
   mocks.createReader.mockReturnValue({
     read,
     observeInferenceRoute: vi.fn(async () => ({
@@ -194,11 +216,15 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
   });
   expect(read).toHaveBeenCalled();
   expect(event.parameters).toMatchObject({
-    publishedEnvironmentCount: 1,
-    configuredRuntimeCount: 1,
-    configuredAgentCount: 1,
-    targetResults: [{ configurationPosition: 0, configurationStatus: "reported" }],
+    publishedEnvironmentCount: 2,
+    configuredRuntimeCount: 2,
+    configuredAgentCount: 2,
+    targetResults: [{ configurationPosition: 1, configurationStatus: "reported" }],
     configurations: [
+      {
+        agentHarnessId: "openclaw",
+        agentsStatus: "reported",
+      },
       {
         agentHarnessId: "openclaw",
         agentsStatus: "reported",
@@ -206,13 +232,14 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       },
     ],
   });
-  expect(event.parameters.configurations[0].agents).toHaveLength(1);
-  expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+  expect(event.parameters.configurations[0].agents[0].models[0].modelId).toBe("other");
+  expect(event.parameters.configurations[1].agents).toHaveLength(1);
+  expect(event.parameters.configurations[1].agents[0].models[0]).toMatchObject({
     modelId: "nvidia/nemotron-3-ultra-550b-a55b",
     providerProfile: "nvidia",
     apiFamily: "openai-completions",
   });
-  expect(event.parameters.configurations[0].currentInferenceRoute).toMatchObject({
+  expect(event.parameters.configurations[1].currentInferenceRoute).toMatchObject({
     modelId: "nvidia/nemotron-3-ultra-550b-a55b",
     providerProfile: "nvidia",
   });
