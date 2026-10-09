@@ -28,6 +28,7 @@ import {
   type RestoreResult,
 } from "../state/sandbox";
 import { cliName } from "./branding";
+import { writeRestoredOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
@@ -63,6 +64,7 @@ export type CreatedSandboxFinalizationOptions = {
   preUpgradeBackup: boolean;
   targetAgentType: string;
   customImage?: boolean;
+  reconcileOpenClawInference?: boolean;
   validateManagedDcode: boolean;
   provider: string;
   model: string;
@@ -72,6 +74,7 @@ export type CreatedSandboxFinalizationOptions = {
 
 export type CreatedSandboxFinalizationDeps = {
   revalidateSandboxIdentity?(operation: string): void;
+  writeRestoredOpenclawInferenceRoute?: typeof writeRestoredOpenclawInferenceRoute;
   restoreRecreatedSandboxState(
     sandboxName: string,
     backupPath: string,
@@ -604,6 +607,7 @@ type OnboardResolvedCreateIntent = {
 type OnboardCreateContext = {
   readonly createIntent: OnboardCreateIntent;
   readonly resolvedCreateIntent: OnboardResolvedCreateIntent;
+  readonly reconcileOpenClawInference?: boolean;
 };
 type OnboardAgentFlags = {
   readonly customOpenClawImage: boolean;
@@ -740,6 +744,7 @@ export function createOnboardCreatedSandboxCompletion(
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
         targetAgentType: agent?.name ?? "openclaw",
         customImage: Boolean(fromDockerfile) || agentFlags.externalImage === true,
+        reconcileOpenClawInference: createContext.reconcileOpenClawInference,
         validateManagedDcode: agentFlags.isManagedDcodeAgent,
         provider,
         model,
@@ -980,6 +985,24 @@ export async function finalizeCreatedSandbox(
       reportUnregisteredSandboxRecovery();
       deps.error(`  Keep the snapshot for manual recovery: ${options.restoreBackupPath}`);
       return deps.exitProcess(1);
+    }
+    if (openClawRestoreWindow && options.reconcileOpenClawInference && !options.customImage) {
+      try {
+        preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration!);
+        if (!options.gatewayName)
+          throw new Error("OpenClaw restore reconciliation requires its selected gateway.");
+        await (deps.writeRestoredOpenclawInferenceRoute ?? writeRestoredOpenclawInferenceRoute)(
+          options.sandboxName,
+          options.model,
+          options.provider,
+          options.preferredInferenceApi,
+          options.gatewayName,
+          deps.revalidateSandboxIdentity,
+        );
+      } catch (error) {
+        await abortOpenClawRestoreWindow();
+        throw error;
+      }
     }
     if (openClawRestoreWindow) {
       deps.revalidateSandboxIdentity?.(

@@ -12,7 +12,10 @@ import {
   approveOpenClawAdminScope,
   exactRequestAdminApprovalConnectScript,
 } from "../live/openclaw-admin-scope.ts";
-import { adminApprovalConnectScript } from "../fixtures/admin-approval-connect.ts";
+import {
+  adminApprovalBody,
+  adminApprovalConnectScript,
+} from "../fixtures/admin-approval-connect.ts";
 import { createHostProcessWorkspace } from "../../helpers/host-process-harness.ts";
 import {
   ADMIN_APPROVAL_TEST_CLI_SH,
@@ -186,6 +189,129 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it.each<{
+    diagnostic: string;
+    expectedRequestId?: string;
+    prepare: (
+      env: NodeJS.ProcessEnv,
+      devices: {
+        pending: Array<Record<string, unknown>>;
+        paired: Array<Record<string, unknown>>;
+      },
+      secret: string,
+    ) => void;
+  }>([
+    {
+      diagnostic: "selection-state-read",
+      prepare: (env, _devices, secret) => {
+        writeFileSync(
+          env.NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER!,
+          `def read_openclaw_pairing_state(*args, **kwargs):\n    raise PermissionError("${secret}")\n`,
+        );
+      },
+    },
+    {
+      diagnostic: "selection-request-binding",
+      expectedRequestId: "a96ada31-9cf9-4d99-97cc-978dcbb9fc39",
+      prepare: () => {},
+    },
+    {
+      diagnostic: "selection-pending-count",
+      prepare: (_env, devices) => {
+        devices.pending.push({ ...devices.pending[0] });
+      },
+    },
+    {
+      diagnostic: "selection-scopes",
+      prepare: (_env, devices, secret) => {
+        devices.pending[0]!.scopes = [secret];
+      },
+    },
+    {
+      diagnostic: "selection-paired-binding",
+      prepare: (_env, devices) => {
+        devices.paired[0]!.clientId = "node";
+      },
+    },
+    {
+      diagnostic: "selection-client-role",
+      prepare: (_env, devices) => {
+        devices.pending[0]!.clientId = "node";
+      },
+    },
+    {
+      diagnostic: "selection-scopes",
+      prepare: (_env, devices) => {
+        const scopes = ["operator.pairing", "operator.read", "operator.write", "operator.admin"];
+        Object.assign(devices.paired[0]!, {
+          scopes,
+          approvedScopes: scopes,
+          tokens: [{ role: "operator", scopes }],
+        });
+      },
+    },
+  ])(
+    "reports $diagnostic without approving or disclosing selector inputs",
+    ({ diagnostic, expectedRequestId, prepare }) => {
+      const fixture = createHostProcessWorkspace("nemoclaw-admin-body-diagnostic-");
+      const requestId = "4edc8df0-20d0-4308-b0e8-850843ae0cf4";
+      const secret = "selector-private-diagnostic-value";
+      const approveLog = fixture.path("approve.log");
+      // BSD mktemp without a template selects the system temp directory instead of TMPDIR.
+      fixture.writeExecutable(
+        "mktemp",
+        '#!/bin/sh\nexec /usr/bin/mktemp "$TMPDIR/tmp.XXXXXXXXXX"\n',
+      );
+      fixture.writeExecutable(
+        "openclaw",
+        `#!/bin/sh
+if [ "$1:$2" = "devices:list" ]; then cat "$FAKE_DEVICES_STATE"; exit 0; fi
+printf '%s\\n' "$*" >"$MANAGED_ADMIN_APPROVE_LOG"
+exit 91
+`,
+      );
+      try {
+        const env = prepareManagedAdminState(fixture.root, requestId);
+        const devices = JSON.parse(readFileSync(env.FAKE_DEVICES_STATE!, "utf8")) as {
+          pending: Array<Record<string, unknown>>;
+          paired: Array<Record<string, unknown>>;
+        };
+        prepare(env, devices, secret);
+        writeFileSync(env.FAKE_DEVICES_STATE!, JSON.stringify(devices));
+        const result = fixture.run(
+          "/bin/bash",
+          [
+            "--noprofile",
+            "--norc",
+            "-c",
+            adminApprovalBody("diagnostic", expectedRequestId ?? requestId),
+          ],
+          {
+            env: fixture.environment({
+              ...env,
+              TMPDIR: fixture.root,
+              MANAGED_ADMIN_APPROVE_LOG: approveLog,
+              OPENCLAW_GATEWAY_PORT: "18789",
+              OPENCLAW_GATEWAY_TOKEN: secret,
+            }),
+            timeout: 10_000,
+          },
+        );
+        expect(result.status, result.stderr).toBe(26);
+        expect(result.stderr.trim()).toBe(
+          `ADMIN_REQUEST_SELECTION_FAILED\nADMIN_DIAGNOSTIC=${diagnostic}`,
+        );
+        expect(result.stdout).toBe("");
+        expect(result.output).not.toContain(secret);
+        expect(result.output).not.toContain(requestId);
+        expect(existsSync(approveLog)).toBe(false);
+        expect(fs.readdirSync(fixture.root).filter((name) => name.startsWith("tmp."))).toEqual([]);
+      } finally {
+        fixture.remove();
+      }
+    },
+  );
+
   it("adopts public OpenClaw and Hermes digests through Docker and Podman", () => {
     const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
     expect(externalImageActivationAgents("docker")).toEqual(["openclaw", "hermes"]);
@@ -492,6 +618,7 @@ ${exactRequestAdminApprovalConnectScript(cliPath, "fixture-sandbox", "managed-cr
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("ADMIN_REQUEST_SELECTION_FAILED");
+      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=selection-pending-count");
       expect(existsSync(approveLog)).toBe(false);
       expect(result.stderr).not.toContain(requestId);
     } finally {
@@ -581,7 +708,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("ADMIN_REQUEST_SELECTION_FAILED");
-      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=command-failed");
+      expect(result.stderr).toContain("ADMIN_DIAGNOSTIC=selection-request-binding");
       expect(existsSync(approveLog)).toBe(false);
       expect(result.stderr).not.toContain(outputRequestId);
       expect(result.stderr).not.toContain(canonicalRequestId);

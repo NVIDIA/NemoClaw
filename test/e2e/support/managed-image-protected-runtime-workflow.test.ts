@@ -56,6 +56,92 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
+  it.each([
+    ["Bind reviewed candidate OpenShell runtime", "if", "false"],
+    ["Bind reviewed candidate OpenShell runtime", "continue-on-error", true],
+    ["Bind reviewed candidate OpenShell runtime", "env", { CHECKOUT_SHA: "other" }],
+    ["Bind reviewed candidate OpenShell runtime", "run", "echo bypass"],
+    ["Restore trusted OpenShell sources", "if", "success()"],
+    ["Restore trusted OpenShell sources", "run", "echo bypass"],
+    ["Build trusted CLI with reviewed OpenShell runtime", "if", "false"],
+    ["Build trusted CLI with reviewed OpenShell runtime", "run", "echo bypass"],
+    ["Prepare E2E workspace", "with", {}],
+  ])("rejects OpenShell step %s with altered %s", (name, field, replacement) => {
+    const value = workflow();
+    namedStep(value, String(name))[String(field)] = replacement;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects building the CLI before projecting candidate OpenShell", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const build = namedStep(value, "Build trusted CLI with reviewed OpenShell runtime");
+    const projection = namedStep(value, "Bind reviewed candidate OpenShell runtime");
+    const index = steps.indexOf(projection);
+    job.steps = [
+      ...steps.slice(0, index),
+      build,
+      ...steps.slice(index).filter((step) => step !== build),
+    ];
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it.each([
+    ["Download reviewed OpenShell SDK archive", "with", { name: "other-run" }],
+    ["Download reviewed OpenShell SDK archive", "if", "false"],
+    [
+      "Install reviewed OpenShell SDK from trusted controller",
+      "uses",
+      "./.candidate-runtime/.github/actions/install-reviewed-openshell-sdk",
+    ],
+    ["Install reviewed OpenShell SDK from trusted controller", "if", "false"],
+    ["Install reviewed OpenShell SDK from trusted controller", "continue-on-error", true],
+  ])("rejects SDK step %s with altered %s", (name, field, replacement) => {
+    const value = workflow();
+    namedStep(value, String(name))[String(field)] = replacement;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects building the CLI before installing the projected SDK", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    const steps = job.steps as Array<Record<string, unknown>>;
+    const build = namedStep(value, "Build trusted CLI with reviewed OpenShell runtime");
+    const install = namedStep(value, "Install reviewed OpenShell SDK from trusted controller");
+    const index = steps.indexOf(install);
+    job.steps = [
+      ...steps.slice(0, index),
+      build,
+      ...steps.slice(index).filter((step) => step !== build),
+    ];
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects missing source verification", () => {
+    const value = workflow();
+    const step = namedStep(
+      value,
+      "Run all-agent GPU, local inference, rollback, and cleanup qualification",
+    );
+    const command =
+      'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"';
+    step.run = String(step.run).replace(command, "");
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it("rejects source verification after qualification", () => {
+    const value = workflow();
+    const step = namedStep(
+      value,
+      "Run all-agent GPU, local inference, rollback, and cleanup qualification",
+    );
+    const command =
+      'node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"';
+    step.run = `${String(step.run).replace(command, "")}\n${command}\n`;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
   it("rejects a runtime job that exceeds the 75 minute budget", () => {
     const value = workflow();
     runtimeJob(value)["timeout-minutes"] = 300;
@@ -98,6 +184,29 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toEqual([]);
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
+  });
+
+  it.each([
+    "node scripts/checks/protected-dcode-base-receipt.mts verify",
+    '"$verified" == "$reference"',
+    '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
+    '"$CANDIDATE_BASES" == false',
+    '[[ "$CANDIDATE_BASES" == false &&',
+  ])("rejects a candidate OCI base handoff without %s", (fragment) => {
+    const value = workflow();
+    const step = namedStep(value, "Resolve digest-pinned amd64 runtime base images");
+    step.run = String(step.run).replace(fragment, "REMOVED");
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).not.toEqual([]);
+  });
+
+  it.each([
+    ["managed-image-multiarch-startup", "Resolve digest-pinned platform base images"],
+    ["managed-image-protected-runtime", "Resolve digest-pinned amd64 runtime base images"],
+  ])("rejects a disabled candidate base selector in %s", (jobId, name) => {
+    const value = workflow();
+    const step = namedJobStep(value, jobId, name);
+    (step.env as Record<string, unknown>).CANDIDATE_BASES = "false";
+    expect(validateE2eWorkflow(value)).not.toEqual([]);
   });
 
   it("requires cancellation cleanup for the derived Docker Engine 27 receipt daemon", () => {
@@ -644,7 +753,7 @@ describe("protected managed-image runtime workflow", () => {
     runtimeJob(value).needs = ["generate-matrix"];
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup",
+      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, managed-image-multiarch-startup, and package-openshell-sdk",
     );
   });
 
