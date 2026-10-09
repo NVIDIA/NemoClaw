@@ -147,7 +147,8 @@ async fn lifecycle(
         format!(
             "#!/bin/sh\nNEMOCLAW_TEST_REMOTE='{}' exec '{}' \"$@\"\n",
             root.display(),
-            env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
+            std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
+                .expect("Cargo sets the fixture executable path")
         ),
     )
     .unwrap();
