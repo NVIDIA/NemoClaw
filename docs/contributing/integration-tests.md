@@ -89,6 +89,21 @@ Its `capabilities` tests check gateway preconditions and saved-plan rechecks, an
 The fixtures are the OpenShell resources the SDK compiles for each example with an external gateway, excluding examples whose credentials are read from a managed service's container.
 `nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
 
+## Fabric Provider Contract
+
+The `fabric-provider` crate's `contract` tests run each Fabric type through OpenTofu with the same paths:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p fabric-provider --test contract -- --ignored
+```
+
+`fabric_agent_configuration` applies a Pi configuration to a sandbox from `tests/contract/fixtures`. An invalid configuration fails validation at its field without repeating the value. The configuration updates without replacing the sandbox, a stopped host is reconfigured, and a lost reply is not retried.
+`fabric_sandbox_readiness` reports the configured agent ready, and not ready while its health fails, without writing to the sandbox.
+`fabric_capabilities` reads a fake Docker engine's image metadata. A compatible image reports its runtime binaries, while another platform, or a read policy without the runtime's paths, is unsupported, and a missing image is unknown.
+A coverage test requires a contract test for every Fabric type.
+
 ## Standalone Sandbox Completion
 
 On Unix, build the production provider and supply the explicit OpenTofu and provider paths as above.

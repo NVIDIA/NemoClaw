@@ -56,5 +56,37 @@ resource "openshell_sandbox" "agent" {
   agent_runtime       = "fabric"
   runtime_json   = var.runtime_json
   provider_names = [openshell_provider_registration.inference[0].name]
-@POLICY@
+  policy {
+    managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {
+      endpoints {
+        access = "full"
+        allowed_ips = ["127.0.0.1/32"]
+        host = "127.0.0.1"
+        path = "/v1/**"
+        port = 11434
+        protocol = "rest"
+      }
+      name = "nemoclaw-inference-local-fcb7b1f1af3733764900def4"
+    }
+  }
+}
+variable "model" { default = "first-model" }
+variable "adapter" {
+  type    = any
+  default = "nvidia.fabric.pi"
+}
+resource "fabric_agent_configuration" "agent" {
+  count      = var.enabled ? 1 : 0
+  workspace  = openshell_sandbox.agent[0].workspace
+  name       = openshell_sandbox.agent[0].name
+  owner      = openshell_sandbox.agent[0].owner
+  generation = openshell_sandbox.agent[0].generation
+  sandbox_id = openshell_sandbox.agent[0].id
+  config_json = jsonencode({
+    schema_version = "fabric.agent/v1alpha1"
+    runtime        = {}
+    metadata       = { name = "assistant" }
+    harness        = { adapter_id = var.adapter }
+    models         = { default = { provider = "openai", model = var.model } }
+  })
 }

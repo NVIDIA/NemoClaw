@@ -1,60 +1,78 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pi configuration through the openshell and fabric providers together.
-//! The fabric provider's contract tests will own this.
+//! Contract tests: Fabric types through pinned OpenTofu against the fake
+//! OpenShell gateway, which runs Fabric's configure, prepare, and status
+//! commands, and a fake Docker engine for image capabilities.
 
-use nemoclaw_e2e::tofu::TofuWorkspace;
-use nemoclaw_test_fixtures::openshell::Fixture;
+// The fake Docker engine listens on a Unix socket.
+#[cfg(unix)]
+mod capabilities;
+#[cfg(unix)]
+#[path = "../../../test-support/http.rs"]
+mod http;
+mod readiness;
+
+use nemoclaw_test_fixtures::{executable, openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, process::Output};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    process::Output,
+};
 
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
+
+fn tofu() -> PathBuf {
+    let tofu = PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit pinned OpenTofu path"),
+    );
+    assert!(tofu.is_absolute());
+    tofu
+}
+
+/// A provider built beside NEMOCLAW_TEST_PROVIDER, as the lifecycle tests
+/// receive it.
+fn provider(name: &str) -> PathBuf {
+    let nemoclaw = PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider build path"),
+    );
+    assert!(nemoclaw.is_absolute());
+    nemoclaw
+        .parent()
+        .unwrap()
+        .join(executable(&format!("terraform-provider-{name}")))
+}
+
+/// A workspace with the openshell and fabric providers.
+fn workspace() -> TofuWorkspace {
+    TofuWorkspace::with_providers(
+        tofu(),
+        &[
+            ("openshell", &provider("openshell")),
+            ("fabric", &provider("fabric")),
+        ],
+    )
+}
+
+/// A sandbox with a Pi configuration, plus `extra` fixture files.
 struct Standalone {
     root: TofuWorkspace,
 }
 impl Standalone {
-    fn new(endpoint: &str) -> Self {
-        let tofu =
-            PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu"));
-        let provider =
-            PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider"));
-        assert!(tofu.is_absolute() && provider.is_absolute());
-        let root = TofuWorkspace::new(tofu, provider);
-        let runtime = nemoclaw_e2e::image_runtime::binding("nvidia.fabric.pi");
-        let mut document = nemoclaw_sdk::config::Document::parse(
-            include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    fn new(endpoint: &str, extra: &[&str]) -> Self {
+        let root = workspace();
+        for file in std::iter::once("main.tf").chain(extra.iter().copied()) {
+            fs::copy(Path::new(FIXTURES).join(file), root.path().join(file)).unwrap();
+        }
+        let mut variables: Value = serde_json::from_slice(
+            &fs::read(Path::new(FIXTURES).join("terraform.tfvars.json")).unwrap(),
         )
         .unwrap();
-        document.spec.inference_providers[0].endpoint = "http://127.0.0.1:11434/v1".into();
-        let policy =
-            nemoclaw_sdk::image_runtime::policy_input(&document, &document.spec.sandboxes[0])
-                .unwrap();
-        // Write the policy as an author would: a typed block, not JSON.
-        let input = nemoclaw_openshell::structured_inputs("sandbox")
-            .into_iter()
-            .find(|input| input.attribute == "policy")
-            .unwrap();
-        let nemoclaw_tofu::shape::Shape::Object(fields) = &input.shape else {
-            unreachable!("the policy is a block")
-        };
-        let policy = input
-            .configuration(&serde_json::to_string(&policy).unwrap())
-            .unwrap();
-        fs::write(
-            root.path().join("main.tf"),
-            include_str!("fixtures/openshell_resources.tf").replace(
-                "@POLICY@\n",
-                &nemoclaw_e2e::hcl::block("policy", fields, &policy, 2),
-            ),
-        )
-        .unwrap();
+        variables["endpoint"] = json!(endpoint);
         fs::write(
             root.path().join("terraform.tfvars.json"),
-            json!({
-                "endpoint": endpoint,
-                "runtime_json": serde_json::to_string(&runtime).unwrap(),
-                "binaries": runtime.binaries(),
-            })
-            .to_string(),
+            variables.to_string(),
         )
         .unwrap();
         Self { root }
@@ -94,33 +112,30 @@ impl Standalone {
     }
 }
 
+/// Every Fabric type has a contract test.
+#[test]
+fn every_fabric_type_has_a_contract_test() {
+    let mut sources = String::new();
+    for entry in fs::read_dir(FIXTURES).unwrap() {
+        sources += &fs::read_to_string(entry.unwrap().path()).unwrap();
+    }
+    sources += include_str!("capabilities.rs");
+    let used: BTreeSet<&str> = [
+        "fabric_agent_configuration",
+        "fabric_sandbox_readiness",
+        "fabric_capabilities",
+    ]
+    .into_iter()
+    .filter(|kind| sources.contains(&format!("\"{kind}\"")))
+    .collect();
+    assert_eq!(used.len(), 3, "types with a contract test: {used:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Pi fixture"]
-async fn standalone_pi_configuration_updates_without_replacing_the_sandbox() {
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; fake OpenShell gateway"]
+async fn pi_configuration_updates_without_replacing_the_sandbox() {
     let fixture = Fixture::start().await;
-    let tofu = Standalone::new(&fixture.endpoint);
-    let source = fs::read_to_string(tofu.root.path().join("main.tf")).unwrap();
-    fs::write(
-        tofu.root.path().join("main.tf"),
-        source
-            + r#"
-variable "model" { default = "first-model" }
-variable "adapter" {
-  type    = any
-  default = "nvidia.fabric.pi"
-}
-resource "fabric_agent_configuration" "agent" {
-  count = var.enabled ? 1 : 0
-  workspace = openshell_sandbox.agent[0].workspace
-  name = openshell_sandbox.agent[0].name
-  owner = openshell_sandbox.agent[0].owner
-  generation = openshell_sandbox.agent[0].generation
-  sandbox_id = openshell_sandbox.agent[0].id
-  config_json = jsonencode({ schema_version = "fabric.agent/v1alpha1", runtime = {}, metadata = { name = "assistant" }, harness = { adapter_id = var.adapter }, models = { default = { provider = "openai", model = var.model } } })
-}
-"#,
-    )
-    .unwrap();
+    let tofu = Standalone::new(&fixture.endpoint, &[]);
     // A configuration Fabric rejects fails validation at its field, before
     // any sandbox call, and the message never repeats the rejected value.
     let rejected = tofu.run(
