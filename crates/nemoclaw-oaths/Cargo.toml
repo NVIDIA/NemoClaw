@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "nemoclaw-oaths"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Markdown behavior specifications run as tests through Varar"
+autotests = false
+
+# Varar owns the libtest harness: each Markdown example is one test item.
+[[test]]
+name = "oaths"
+path = "tests/oaths.rs"
+harness = false
+
+[dependencies]
+nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+serde_json.workspace = true
+serde-saphyr.workspace = true
+varar = "0.8.1"
+varar-cargotest = "0.8.1"
+
+[lints]
+workspace = true

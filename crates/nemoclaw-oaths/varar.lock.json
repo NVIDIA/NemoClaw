@@ -1,0 +1,107 @@
+{
+  "version": 2,
+  "oaths": {
+    "oaths/config-diagnostics.md": {
+      "sourceHash": "fnv1a:fa4962b9",
+      "examples": [
+        {
+          "name": "Reading this configuration:",
+          "line": 12
+        },
+        {
+          "name": "fails with:",
+          "line": 20
+        },
+        {
+          "name": "Reading this configuration:",
+          "line": 28
+        },
+        {
+          "name": "fails with:",
+          "line": 36
+        },
+        {
+          "name": "Reading this configuration:",
+          "line": 44
+        },
+        {
+          "name": "fails with:",
+          "line": 53
+        },
+        {
+          "name": "Input without a value is an empty document, which differs from a value of the wrong type. Each input, written as a JSON string, fails with its message:",
+          "line": 61
+        },
+        {
+          "name": "An explicit YAML tag can change how a value is read, so a configuration must not contain one. Replacing each original in `examples/fabric-openclaw.yaml` with its replacement fails with the message:",
+          "line": 74
+        },
+        {
+          "name": "Tag text inside a string is a value, not a tag. Reading this configuration:",
+          "line": 85
+        },
+        {
+          "name": "keeps these harness settings:",
+          "line": 123
+        },
+        {
+          "name": "A schema violation names the field path, with array indices, and the constraint it breaks. Reading this configuration:",
+          "line": 134
+        },
+        {
+          "name": "fails with:",
+          "line": 174
+        },
+        {
+          "name": "Starting from `examples/spark/spark-inline.yaml`, changing `kvCacheGiB: 8` to `kvCacheGiB: 2` fails with:",
+          "line": 182
+        },
+        {
+          "name": "A column counts characters, not bytes. In this single-line document, `é` is two bytes but one column, so the column is 352 rather than 353. Reading this configuration:",
+          "line": 190
+        },
+        {
+          "name": "fails with:",
+          "line": 198
+        }
+      ]
+    },
+    "oaths/multiple-sandboxes.md": {
+      "sourceHash": "fnv1a:ba53f2c9",
+      "examples": [
+        {
+          "name": "Starting from `examples/multiple-sandboxes.yaml`, it compiles to 5 sandboxes and 3 provider registrations. Exporting it and reading the export back gives the same configuration",
+          "line": 13
+        },
+        {
+          "name": "Each harness adapter receives its own registration of a provider, so two sandboxes share a registration only when they use the same harness. Compiling `examples/multiple-sandboxes.yaml` gives each sandbox its harness, its agent, and the partner that shares its provider registration:",
+          "line": 16
+        },
+        {
+          "name": "Starting from `examples/fabric-openclaw.yaml`, add a sandbox named \"research\" and give it the \"deepagents\" harness. It compiles to 2 sandboxes and 2 provider registrations. Reversing the sandboxes changes no compiled resource",
+          "line": 32
+        },
+        {
+          "name": "Starting from `examples/fabric-openclaw.yaml`, add a provider named \"other-models\" at \"http://172.20.0.1:11447/v1\", add a sandbox named \"bob\", and route it to \"other-models\". It compiles to 2 sandboxes and 2 provider registrations. Reversing the sandboxes and providers changes no compiled resource",
+          "line": 38
+        },
+        {
+          "name": "Starting from `examples/fabric-openclaw.yaml`, add a sandbox named \"another\". It compiles to 2 sandboxes and 1 provider registration. Reversing the sandboxes gives the same digest",
+          "line": 44
+        },
+        {
+          "name": "Managed discovery requests keep their identity too. Starting from `examples/onboarding/openclaw.yaml`, add a sandbox named \"research\" and give it the \"deepagents\" harness. It compiles to 2 sandboxes and 2 provider registrations. Reversing the sandboxes changes no compiled resource",
+          "line": 50
+        },
+        {
+          "name": "Starting from `examples/fabric-openclaw.yaml`, move the \"local\" provider into the first sandbox and add a sandbox named \"other\". It compiles to 2 sandboxes and 2 provider registrations, and the registrations have 2 different names. Reversing the sandboxes changes no compiled resource",
+          "line": 59
+        },
+        {
+          "name": "Starting from `examples/fabric-openclaw.yaml`, adding a sandbox named \"additional\" changes no existing compiled resource",
+          "line": 68
+        }
+      ]
+    }
+  }
+}

@@ -22,8 +22,6 @@ mod compile;
 mod config;
 #[path = "config_choices.rs"]
 mod config_choices;
-#[path = "config_diagnostics.rs"]
-mod config_diagnostics;
 #[path = "config_input.rs"]
 mod config_input;
 #[path = "config_kinds.rs"]
@@ -112,8 +110,6 @@ mod model_selection;
 mod multiple_models;
 #[path = "multiple_providers.rs"]
 mod multiple_providers;
-#[path = "multiple_sandboxes.rs"]
-mod multiple_sandboxes;
 #[path = "mutation.rs"]
 mod mutation;
 #[path = "native_inference.rs"]

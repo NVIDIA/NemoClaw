@@ -1,0 +1,7 @@
+{
+  "docs": {
+    "include": ["oaths/**/*.md"],
+    "exclude": []
+  },
+  "steps": ["src/steps/*.steps.rs"]
+}
