@@ -24,6 +24,11 @@ import {
   hasBedrockRuntimeAwsAuthEnv,
   isBedrockRuntimeEndpoint,
 } from "../../inference/bedrock-runtime";
+import {
+  isNativeNvidiaProvider,
+  nativeNvidiaProviderAttachmentFromMetadata,
+  type NativeNvidiaProviderAttachment,
+} from "../../inference/native-nvidia";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
   assessRecoveredProviderCredentialReuse,
@@ -63,7 +68,7 @@ const probes = require("../../inference/onboard-probes") as {
   getProbeExtraHeaders(provider: string): string[] | undefined;
 };
 
-type HostCredentialTarget = Pick<
+export type HostCredentialTarget = Pick<
   RebuildSandboxEntry,
   "provider" | "model" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi"
 >;
@@ -155,12 +160,25 @@ export async function inspectRebuildGatewayProviderRegistration(
   runtimeSelection?: OpenShellRuntimeSelection,
   providerAdapter = rebuildProviderAdapter(runtimeSelection),
   credentialKey?: string | null,
+  nativeAttachment?: NativeNvidiaProviderAttachment,
 ): Promise<RebuildGatewayProviderRegistration> {
+  if (nativeAttachment && !isNativeNvidiaProvider(provider)) return "indeterminate";
   const result = await providerAdapter.getProvider({
-    providerName: provider,
+    providerName: nativeAttachment?.providerName ?? provider,
     target: managedProviderGatewayTarget,
     ...(credentialKey ? { includeCredentialExpirations: true } : {}),
   });
+  if (result.ok && nativeAttachment) {
+    try {
+      if (
+        nativeNvidiaProviderAttachmentFromMetadata(result.value).providerId !==
+        nativeAttachment.providerId
+      )
+        return "indeterminate";
+    } catch {
+      return "indeterminate";
+    }
+  }
   const expiresAtMs = result.ok && credentialKey ? result.value.credentialExpiresAtMs : undefined;
   const credentialExpiresAtMs = credentialKey ? expiresAtMs?.[credentialKey] : undefined;
   const credentialKeyMissing = Boolean(
@@ -310,6 +328,7 @@ export async function checkRebuildGatewayProviderOrBail(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   options: {
+    nativeAttachment?: NativeNvidiaProviderAttachment;
     allowProviderReconfigure?: boolean;
     hostCredentialAvailable?: boolean;
     onProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
@@ -324,6 +343,7 @@ export async function checkRebuildGatewayProviderOrBail(
     undefined,
     rebuildProviderAdapter(),
     credentialEnv,
+    options.nativeAttachment,
   );
   if (registration === "registered") return true;
   if (registration === "expired" && credentialEnv) {
@@ -338,6 +358,7 @@ export async function checkRebuildGatewayProviderOrBail(
   }
   if (
     registration === "missing" &&
+    !options.nativeAttachment &&
     options.allowProviderReconfigure &&
     options.hostCredentialAvailable &&
     credentialEnv &&
@@ -395,6 +416,11 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  if (config.nativeNvidiaProviderAttachment) {
+    return checkRebuildGatewayProviderOrBail(config.provider, config.credentialEnv, log, bail, {
+      nativeAttachment: config.nativeNvidiaProviderAttachment,
+    });
+  }
   if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;
   const isBedrockRuntime =
     config.provider === "compatible-anthropic-endpoint" &&

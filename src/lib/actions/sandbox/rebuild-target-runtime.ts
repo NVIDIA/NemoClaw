@@ -25,6 +25,7 @@ import { agentSupportsWebSearchProvider } from "../../onboard/web-search-support
 import { redact } from "../../security/redact";
 import {
   preflightRebuildCredentials,
+  preflightRebuildHostCredential,
   type RebuildBail,
   type RebuildLog,
 } from "./rebuild-credential-preflight";
@@ -113,6 +114,18 @@ export type RebuildTargetRuntimePreflightResult =
       requiresGatewayProviderReconfigure: boolean;
     }
   | { ok: false };
+
+export async function preflightRebuildTargetHostCredential(
+  target: RebuildTargetConfig,
+  bail: RebuildBail,
+): Promise<boolean> {
+  const credentialEnv = target.credentialEnv;
+  return preflightRebuildHostCredential(
+    { ...target.resumeConfig, credentialEnv },
+    credentialEnv ? rebuildOnboardDependencies.hydrateCredentialEnv(credentialEnv) : null,
+    bail,
+  );
+}
 
 export async function preflightRebuildTargetRuntime(
   target: RebuildTargetConfig,

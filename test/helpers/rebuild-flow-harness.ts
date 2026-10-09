@@ -49,6 +49,12 @@ export const messagingHostForwardLifecycle = requireDist("./messaging-host-forwa
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
 export const nim = requireDist("../../inference/nim.js");
 export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
+export const managedWorkloadRebuild = requireDist(
+  "../../onboard/workload/rebuild.js",
+) as typeof import("../../src/lib/onboard/workload/rebuild");
+export const rebuildBackupPhase = requireDist(
+  "./rebuild-backup-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-backup-phase");
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",

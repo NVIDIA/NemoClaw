@@ -601,11 +601,19 @@ describe("native Podman E2E setup boundary", () => {
     expect(dependencyInstall?.env).toEqual({
       UBUNTU_SNAPSHOT_ID: "20260911T000000Z",
     });
-    expect(dependencyInstall?.run).toContain("Dir::Etc::sourcelist=sources.list.d/ubuntu.sources");
+    expect(dependencyInstall?.run).toContain(
+      "URIs: https://snapshot.ubuntu.com/ubuntu/$UBUNTU_SNAPSHOT_ID",
+    );
+    expect(dependencyInstall?.run).toContain('-o "Dir::Etc::sourcelist=$snapshot_sources"');
     expect(dependencyInstall?.run).toContain("Dir::Etc::sourceparts=-");
+    expect(dependencyInstall?.run).toContain("Pin: origin snapshot.ubuntu.com");
+    expect(dependencyInstall?.run).toContain("Pin-Priority: 1001");
+    expect(dependencyInstall?.run).toContain('-o "Dir::Etc::preferences=$snapshot_preferences"');
+    expect(dependencyInstall?.run).toContain("Dir::Etc::preferencesparts=-");
+    expect(dependencyInstall?.run).toContain('-o "Dir::State::lists=$snapshot_lists"');
     expect(dependencyInstall?.run).toContain("APT::Get::AllowUnauthenticated=false");
     expect(dependencyInstall?.run).toContain("Acquire::AllowInsecureRepositories=false");
-    expect(dependencyInstall?.run).toContain('--snapshot "$UBUNTU_SNAPSHOT_ID"');
+    expect(dependencyInstall?.run).toContain("--allow-downgrades");
     expect(dependencyInstall?.run).toContain(
       [
         '  "gcc=4:13.2.0-7ubuntu1"',

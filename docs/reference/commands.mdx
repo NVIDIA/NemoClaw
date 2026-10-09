@@ -260,6 +260,14 @@ The command reads the registry and current OpenShell state without changing the 
 It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent.
 If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
+<AgentOnly variant="openclaw">
+
+Gemini config export stops with an unsupported-provider error because V1 cannot consume the Gemini document.
+The command writes no YAML and does not create or replace an output file, including with `--force`.
+Continue using the existing Gemini sandbox until V1 support is available.
+
+</AgentOnly>
+
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies that the recorded NemoClaw-owned provider attachment matches the live provider, least-privilege profile, and fixed native endpoint.
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
@@ -454,7 +462,15 @@ The flag selects managed vLLM and managed llama.cpp profiles. A managed llama.cp
 $$nemoclaw onboard --profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
 ```
 
-If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature. The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation. When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root. Otherwise, onboarding stops before it records a route that the profile does not declare. After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
+If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
+The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+
+When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
+Otherwise, onboarding stops before it records a route that the profile does not declare.
+Reusing a running vLLM server does not record the requested profile's provenance.
+
+For a sandbox created with a managed vLLM or llama.cpp installation, human status shows the profile, recipe, and catalog digest.
+JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
 #### `--host-mount`
 
@@ -3267,7 +3283,13 @@ $$nemoclaw upgrade-sandboxes [--check] [--auto] [--yes|-y]
 
 Before it inspects a gateway or starts a rebuild, the command validates every registered sandbox name against the NemoClaw sandbox name format. Route-only reservations are not sandboxes and are excluded from this validation. If the command finds incompatible names, it lists each name before any gateway inspection or rebuild. With `--check`, the command then returns without changing state. In a mutating mode, it exits with a nonzero status. NemoClaw does not truncate or rename a registered sandbox identity. Follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) to transfer state to a compatible replacement before you rerun the command.
 
-Each rebuild reuses the same whole-home transfer as `$$nemoclaw <name> rebuild`, so the complete OpenShell-provided native home/workspace survives the upgrade. If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image. Restore registry access, then rerun the command so NemoClaw can validate the exact image digest. During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup. That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry. The legacy confirmation never overrides recorded custom-image evidence. OpenClaw's native plugin and package state transfers with unknown files, configuration, histories, hooks, cron data, and child-agent state; NemoClaw does not require separate ownership metadata.
+Each rebuild reuses the same whole-home transfer as `$$nemoclaw <name> rebuild`, so the complete OpenShell-provided native home/workspace survives the upgrade. If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image. Restore registry access, then rerun the command so NemoClaw can validate the exact image digest. During installer recovery, stale or non-Ready registered sandboxes can be rebuilt from their validated latest backups. That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry. The legacy confirmation never overrides recorded custom-image evidence. OpenClaw's native plugin and package state transfers with unknown files, configuration, histories, hooks, cron data, and child-agent state; NemoClaw does not require separate ownership metadata.
+
+<AgentOnly variant="openclaw">
+Installer recovery also selects a Ready legacy OpenClaw sandbox when its agent-version probe fails and its registry has no managed-image fingerprint.
+Recovery requires explicit managed-image confirmation for that sandbox name, a validated latest backup, and the sandbox's recorded gateway.
+Recorded custom-image evidence prevents this recovery.
+</AgentOnly>
 
 When installer recovery rebuilds an intentionally stopped sandbox, NemoClaw returns the replacement to `Stopped`.
 The command exits nonzero if OpenShell cannot confirm that phase or a required post-stop reconciliation fails.
@@ -3773,7 +3795,9 @@ $$nemoclaw credentials reset nvidia-prod
 
 ### `$$nemoclaw gc`
 
-Remove orphaned sandbox Docker images from the host. Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository. The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain. This command lists images from both repositories, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
+Remove orphaned sandbox Docker images from the host. Sandbox creation can build images in the gateway-managed `openshell/sandbox-from` repository or the locally prebuilt `nemoclaw-sandbox-local` repository. The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain. Docker images are shared across gateways on the host. This command lists images from both repositories, checks every validated host gateway registry, and removes only images that no registered sandbox uses. It checks the registries again after confirmation, so images registered while the prompt was open remain protected.
+
+If the command cannot safely read a gateway registry, it stops before deletion. Correct the reported gateway-state problem, then rerun `$$nemoclaw gc --dry-run` before removing images.
 
 ```bash
 $$nemoclaw gc [--dry-run] [--yes|-y|--force]

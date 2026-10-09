@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { rebuildProviderPreflight } from "../../../../test/helpers/rebuild-flow-harness";
+import {
+  managedWorkloadRebuild,
+  rebuildProviderPreflight,
+} from "../../../../test/helpers/rebuild-flow-harness";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   configureDcodeSession,
@@ -18,6 +21,41 @@ import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("rebuildSandbox DCode flow: preflight", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it.each([false, true])(
+    "rejects an invalid host key before an unavailable catalog with force %s (#12742)",
+    async (force) => {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: {
+          ...makeDcodeSandboxEntry(),
+          provider: "nvidia-prod",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          nativeNvidiaProviderAttachment: {
+            schemaVersion: 1,
+            profileId: "nemoclaw-nvidia-inference-v1",
+            providerName: "nemoclaw-nvidia-prod-v1",
+            providerId: "native-provider-id",
+          },
+        },
+        hydrateCredentialEnv: () => "invalid-rebuild-test-credential",
+      });
+      configureDcodeSession(harness);
+      vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockRestore();
+      const catalog = vi
+        .spyOn(managedWorkloadRebuild, "prepareManagedWorkloadRebuildHandoff")
+        .mockRejectedValue(new Error("managed image catalog is unavailable"));
+
+      await expect(
+        harness.rebuildSandbox("alpha", force ? ["--yes", "--force"] : ["--yes"], {
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("Host inference credential validation failed");
+
+      expect(catalog).not.toHaveBeenCalled();
+      expectNoDcodeMutation(harness);
+    },
+  );
 
   it.each([false, true])(
     "rejects an invalid host inference key before DCode mutation with force %s (#12742)",
