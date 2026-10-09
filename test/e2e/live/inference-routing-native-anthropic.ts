@@ -72,7 +72,7 @@ export async function verifyFreshNativeAnthropicEndpoint(
     },
   );
   expect(anthropicConfig.exitCode, resultText(anthropicConfig)).toBe(0);
-  const nativeAnthropicProvider = JSON.parse(anthropicConfig.stdout).models.providers.inference;
+  const nativeAnthropicProvider = JSON.parse(anthropicConfig.stdout).models.providers.anthropic;
   expect(nativeAnthropicProvider).toMatchObject({
     api: "anthropic-messages",
     baseUrl: anthropic.endpointUrl,
