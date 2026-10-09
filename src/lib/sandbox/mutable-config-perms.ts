@@ -13,8 +13,11 @@ export interface MutableHermesConfigVerification {
 
 const MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS = 20_000;
 const MUTABLE_HERMES_CONFIG_PROBE = String.raw`
+import errno
+import fcntl
 import os
 import stat
+import struct
 import subprocess
 import sys
 
@@ -37,7 +40,23 @@ def require_private_topology():
         raise RuntimeError("Private Hermes config requires an attested same-UID runtime; rebuild with the current Hermes image")
 
 def metadata(st):
-    return (st.st_dev, st.st_ino, st.st_uid, st.st_gid, st.st_mode, st.st_nlink)
+    return (st.st_dev, st.st_ino, st.st_uid, st.st_gid, st.st_mode, st.st_nlink, st.st_ctime_ns)
+
+def require_mutable_flags(descriptor, info):
+    if hasattr(info, "st_flags"):
+        flags = info.st_flags
+        blocked = stat.UF_IMMUTABLE | stat.UF_APPEND | stat.SF_IMMUTABLE | stat.SF_APPEND
+    else:
+        try:
+            flags = struct.unpack("I", fcntl.ioctl(descriptor, 0x80086601, struct.pack("I", 0)))[0]
+        except OSError as exc:
+            # Match the runtime guard on filesystems without inode-flag support.
+            if exc.errno in (errno.ENOTTY, errno.EOPNOTSUPP, errno.EINVAL):
+                return
+            raise
+        blocked = 0x10 | 0x20
+    if flags & blocked:
+        raise PermissionError("Hermes config has immutable or append-only inode flags")
 
 directory_fd = os.open(config_dir, directory_flags)
 try:
@@ -51,6 +70,7 @@ try:
         require_private_topology()
     elif stat.S_IMODE(directory.st_mode) != 0o3770:
         raise RuntimeError("Hermes config root does not have an allowed mutable mode")
+    require_mutable_flags(directory_fd, directory)
     if not os.access(".", os.W_OK | os.X_OK, dir_fd=directory_fd, effective_ids=True):
         raise PermissionError("Hermes config root is not writable by the sandbox identity")
 
@@ -66,6 +86,7 @@ try:
                 raise RuntimeError("Hermes config artifact is not owned by the sandbox identity")
             if stat.S_IMODE(artifact.st_mode) != 0o640:
                 raise RuntimeError("Hermes config artifact does not have mode 0640")
+            require_mutable_flags(descriptor, artifact)
             if not os.access(os.path.basename(config_path), os.W_OK, dir_fd=directory_fd,
                              effective_ids=True, follow_symlinks=False):
                 raise PermissionError("Hermes config artifact is not writable by the sandbox identity")

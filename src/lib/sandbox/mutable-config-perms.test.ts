@@ -141,6 +141,8 @@ describe("mutable Hermes config permissions", () => {
     [0o700, "changed", false],
     [0o700, "directory-race", false],
     [0o3770, "access-denied", false],
+    [0o3770, "append-only-root", false],
+    [0o3770, "immutable-artifact", false],
     [0o750, "verified", false],
   ] as const)(
     "checks mode %s with %s topology without changing state",
@@ -165,9 +167,29 @@ describe("mutable Hermes config permissions", () => {
       const codeIndex = command.indexOf("-c") + 1;
       // The image-owned topology response is external input to the host probe.
       // Guard tests exercise its real procfs proof separately.
+      // Supply blocking inode flags as external metadata; keep file I/O real.
       const prelude = `
-import os, subprocess, types
+import fcntl, os, stat, struct, subprocess, types
 topology = ${JSON.stringify(topology)}
+original_fstat = os.fstat
+original_ioctl = fcntl.ioctl
+def blocking_flags(fd, append_flag, immutable_flag):
+    mode = original_fstat(fd).st_mode
+    return (append_flag if topology == "append-only-root" and stat.S_ISDIR(mode) else
+            immutable_flag if topology == "immutable-artifact" and stat.S_ISREG(mode) else 0)
+def inode_flags(fd, request, buffer):
+    if topology in ("append-only-root", "immutable-artifact"):
+        return struct.pack("I", blocking_flags(fd, 0x20, 0x10))
+    return original_ioctl(fd, request, buffer)
+def native_flags(fd):
+    value = original_fstat(fd)
+    if not hasattr(value, "st_flags"):
+        return value
+    fields = {name: getattr(value, name) for name in dir(value) if name.startswith("st_")}
+    fields["st_flags"] |= blocking_flags(fd, stat.UF_APPEND, stat.UF_IMMUTABLE)
+    return types.SimpleNamespace(**fields)
+fcntl.ioctl = inode_flags
+os.fstat = native_flags
 calls = 0
 def topology_response(args, **kwargs):
     global calls
