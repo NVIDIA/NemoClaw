@@ -122,6 +122,7 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
       providerName: this.definition.providerName,
       providerId: metadata.revision.id,
       ...(this.definition.endpointUrl ? { endpointUrl: this.definition.endpointUrl } : {}),
+      ...(this.definition.allowedIps ? { allowedIps: [...this.definition.allowedIps] } : {}),
     };
   }
 

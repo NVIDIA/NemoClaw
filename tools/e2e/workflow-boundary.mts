@@ -264,6 +264,7 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
   "catalogue-standard",
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
+  "catalogue-hosted-inference",
   "catalogue-github-read",
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =

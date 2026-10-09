@@ -421,6 +421,7 @@ describe("native Hermes Provider setup", () => {
     providerName: definition.providerName,
     providerId: "native-identity",
     endpointUrl: endpoint,
+    allowedIps: ["8.8.8.8"],
   };
 
   it.each(["oauth", "api-key"])(

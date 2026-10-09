@@ -150,6 +150,7 @@ it("retains independent Hermes ownership across authenticated endpoint changes (
       providerName: first.providerName,
       providerId: "first-id",
       endpointUrl: first.endpoint,
+      allowedIps: ["8.8.8.8"],
     };
     const secondReceipt = {
       schemaVersion: 1 as const,
@@ -157,6 +158,7 @@ it("retains independent Hermes ownership across authenticated endpoint changes (
       providerName: second.providerName,
       providerId: "second-id",
       endpointUrl: second.endpoint,
+      allowedIps: ["8.8.8.8"],
     };
     registry.setNativeHostedProviderAuthority("gateway", "hermes-provider", firstReceipt);
     registry.setNativeHostedProviderAuthority("gateway", "hermes-provider", secondReceipt);

@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireHermesPublicPins } from "../../inference/native-provider/hermes-pins";
 import {
   HOSTED_NATIVE_PROVIDERS,
+  type HostedProviderDefinition,
   hostedNativeProvider,
 } from "../../inference/native-provider/hosted";
 import {
@@ -14,7 +16,10 @@ export type HostedNativeProfileId =
   | (typeof HOSTED_NATIVE_PROVIDERS)[number]["profileId"]
   | `nemoclaw-hermes-inference-${string}-v1`;
 
-export function hostedNativeProfile(profileId: string, endpointUrl?: string) {
+export function hostedNativeProfile(
+  profileId: string,
+  endpointUrl?: string,
+): HostedProviderDefinition | undefined {
   if (endpointUrl) {
     const bound = hostedNativeProvider("hermes-provider", endpointUrl);
     return bound?.profileId === profileId ? bound : undefined;
@@ -25,6 +30,7 @@ export function hostedNativeProfile(profileId: string, endpointUrl?: string) {
 export function hostedNativeProfileBoundary(
   profileId: string,
   endpointUrl?: string,
+  allowedIps?: readonly string[],
 ): NativeProfileBoundary<HostedNativeProfileId> | undefined {
   const definition = hostedNativeProfile(profileId, endpointUrl);
   if (!definition) return undefined;
@@ -36,6 +42,7 @@ export function hostedNativeProfileBoundary(
   else if (definition.logicalProvider === "openai-api") paths.push("responses");
   return {
     profileId: definition.profileId as HostedNativeProfileId,
+    ...(definition.endpointUrl ? { allowedIps: requireHermesPublicPins(allowedIps) } : {}),
     credentialEnv: definition.credentialEnv,
     authStyle: definition.api === "anthropic-messages" ? "header" : "bearer",
     headerName: definition.api === "anthropic-messages" ? "x-api-key" : "authorization",
@@ -52,7 +59,13 @@ export function isManagedNativeHostedProfileResponse(
   value: unknown,
   profileId: string,
   endpointUrl?: string,
+  allowedIps?: readonly string[],
 ) {
-  const boundary = hostedNativeProfileBoundary(profileId, endpointUrl);
+  let boundary;
+  try {
+    boundary = hostedNativeProfileBoundary(profileId, endpointUrl, allowedIps);
+  } catch {
+    return undefined;
+  }
   return boundary && isManagedNativeProfileResponse(value, boundary) ? value : undefined;
 }

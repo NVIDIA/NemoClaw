@@ -194,7 +194,12 @@ async function readProviderEvidence(
     workspace: "default",
     name: routeProvider,
     ...(profileContract ? { profileContract } : {}),
-    ...(nativeReceipt?.endpointUrl ? { nativeHostedEndpoint: nativeReceipt.endpointUrl } : {}),
+    ...(nativeReceipt?.endpointUrl
+      ? {
+          nativeHostedEndpoint: nativeReceipt.endpointUrl,
+          nativeHostedAllowedIps: nativeReceipt.allowedIps,
+        }
+      : {}),
     configKeys: [configKey],
     signal,
   });

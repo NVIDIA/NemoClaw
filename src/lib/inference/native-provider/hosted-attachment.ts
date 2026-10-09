@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { requireHermesPublicPins } from "./hermes-pins";
 import { normalizeNativeProviderAttachment, type NativeProviderAttachment } from "./contract";
 import {
   HOSTED_NATIVE_PROVIDERS,
@@ -22,6 +23,9 @@ export function hostedNativeProviderForAttachment(
           ? receipt.endpointUrl
           : undefined,
       )!;
+      if (definition.endpointUrl) {
+        definition = { ...definition, allowedIps: requireHermesPublicPins(receipt.allowedIps) };
+      }
     } catch {
       continue;
     }

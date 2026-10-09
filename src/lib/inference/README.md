@@ -100,3 +100,5 @@ Ollama onboarding records no user credential. Source verification requires the g
 exactly the internal `NEMOCLAW_OLLAMA_PROXY_TOKEN` credential used by the managed proxy. It accepts
 either an absent user-credential selection or that explicit internal credential name, verifies the
 live proxy, and keeps the credential value inside the proxy owner.
+
+Authenticated Hermes endpoint attachments retain exact public IP addresses. Profile import, sandbox policy composition, recovery, and export verification require those same addresses. Missing, private, or widened address authority is rejected before provider mutation.

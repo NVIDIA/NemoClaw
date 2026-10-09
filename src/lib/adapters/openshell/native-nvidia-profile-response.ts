@@ -17,6 +17,7 @@ export type NativeProfileBoundary<Id extends string = string> = Readonly<{
   headerName: string;
   host: string;
   port?: number;
+  allowedIps?: readonly string[];
   rules: readonly Readonly<{ method: "GET" | "POST"; path: string }>[];
 }>;
 
@@ -103,7 +104,7 @@ function nativeEndpoint(value: unknown, expected: NativeProfileBoundary): boolea
     Array.isArray(rules) &&
     rules.length === expected.rules.length &&
     expected.rules.every((rule, index) => nativeRule(rules[index], rule.method, rule.path)) &&
-    emptyArray(endpoint.allowedIps) &&
+    stringArrayEquals(endpoint.allowedIps, expected.allowedIps ?? []) &&
     emptyArray(endpoint.denyRules) &&
     endpoint.allowEncodedSlash === false &&
     endpoint.persistedQueries === "" &&

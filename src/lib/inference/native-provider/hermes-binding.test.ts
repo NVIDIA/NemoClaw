@@ -9,16 +9,21 @@ import { hostedNativeProvider } from "./hosted";
 import { requireHostedProviderAttachment } from "./hosted-attachment";
 import { boundHermesNativeProfile, withHermesNativeProfile } from "./hermes-profile";
 import { prepareHostedNativeProvider } from "./setup";
+import { buildNativeHostedSandboxPolicy } from "./network-policy";
 import { nativeHostedAgentConfig } from "./agent-config";
 
 const endpoint = "https://staging.nous.example/api/v1";
-const definition = hostedNativeProvider("hermes-provider", endpoint)!;
+const definition = {
+  ...hostedNativeProvider("hermes-provider", endpoint)!,
+  allowedIps: ["8.8.8.8"],
+};
 const receipt = {
   schemaVersion: 1 as const,
   profileId: definition.profileId,
   providerName: definition.providerName,
   providerId: "identity",
   endpointUrl: endpoint,
+  allowedIps: definition.allowedIps,
 };
 
 describe("Hermes authenticated endpoint binding", () => {
@@ -33,6 +38,7 @@ describe("Hermes authenticated endpoint binding", () => {
       {
         host: "staging.nous.example",
         port: 443,
+        allowed_ips: ["8.8.8.8"],
         protocol: "rest",
         enforcement: "enforce",
         rules: [
@@ -101,6 +107,9 @@ describe("Hermes authenticated endpoint binding", () => {
     const importProviderProfile = vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(
       async ({ profilePath }) => {
         expect(YAML.parse(fs.readFileSync(profilePath, "utf8")).id).toBe(definition.profileId);
+        expect(YAML.parse(fs.readFileSync(profilePath, "utf8")).endpoints[0].allowed_ips).toEqual([
+          "8.8.8.8",
+        ]);
         return { ok: true };
       },
     );
@@ -144,6 +153,53 @@ describe("Hermes authenticated endpoint binding", () => {
     expect(JSON.stringify(writeAuthority.mock.calls)).not.toContain("host-secret");
     expect(fs.existsSync(importProviderProfile.mock.calls[0][0].profilePath)).toBe(false);
   });
+
+  it("keeps approved pins on restart instead of accepting rebound DNS", async () => {
+    const lookup = vi.fn(async () => [{ address: "10.0.0.1", family: 4 }]);
+    const importProviderProfile = vi.fn<OpenShellProviderAdapter["importProviderProfile"]>(
+      async ({ profilePath }) => {
+        expect(YAML.parse(fs.readFileSync(profilePath, "utf8")).endpoints[0].allowed_ips).toEqual([
+          "8.8.8.8",
+        ]);
+        return {
+          ok: false,
+          error: {
+            kind: "command",
+            reason: "profile_incompatible",
+            message: "refuse altered boundary",
+          },
+        };
+      },
+    );
+    await expect(
+      prepareHostedNativeProvider({
+        provider: "hermes-provider",
+        gatewayName: "gateway",
+        endpointUrl: endpoint,
+        credentialValue: "host-secret",
+        lookup,
+        adapter: { importProviderProfile } as unknown as OpenShellProviderAdapter,
+        readAuthority: () => receipt,
+        writeAuthority: vi.fn(),
+      }),
+    ).rejects.toThrow("conflicts");
+    expect(lookup).not.toHaveBeenCalled();
+    const policy = YAML.parse(
+      buildNativeHostedSandboxPolicy("network_policies: {}", definition.providerName, receipt),
+    );
+    expect(policy.network_policies.native_hosted_inference.endpoints[0].allowed_ips).toEqual([
+      "8.8.8.8",
+    ]);
+  });
+
+  it.each([undefined, [], ["10.0.0.1"], ["0.0.0.0/0"], ["8.8.8.8", "127.0.0.1"]])(
+    "rejects missing or unsafe durable pins %j",
+    (allowedIps) => {
+      expect(() =>
+        requireHostedProviderAttachment({ ...receipt, allowedIps }, "hermes-provider"),
+      ).toThrow("Invalid native hosted");
+    },
+  );
 
   it("removes temporary profile material when OpenShell rejects an import", async () => {
     let importedPath = "";

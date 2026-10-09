@@ -1011,6 +1011,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "catalogue-standard",
     "catalogue-nvidia-api",
     "catalogue-nvidia-inference",
+    "catalogue-hosted-inference",
     "catalogue-github-read",
   ]) {
     const catalogue = workflow.jobs[jobName] ?? {};
@@ -1114,6 +1115,7 @@ const STOCK_ONBOARDING_CATALOGUE_JOBS = [
   "catalogue-standard",
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
+  "catalogue-hosted-inference",
   "catalogue-github-read",
 ] as const;
 

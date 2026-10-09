@@ -415,7 +415,9 @@ describe("hosted native rebuild provider preflight", () => {
         profileId: definition.profileId,
         providerName: definition.providerName,
         providerId: "owned-id",
-        ...("endpointUrl" in definition ? { endpointUrl: definition.endpointUrl } : {}),
+        ...("endpointUrl" in definition
+          ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+          : {}),
       };
       const get = vi.spyOn(adapter, "getProvider").mockResolvedValue({
         ok: true,

@@ -2107,3 +2107,21 @@ The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login 
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
 The existing cleanup helper destroys each test sandbox. Use a disposable gateway because provider
 credentials can remain stored after sandbox removal.
+
+### Fixed hosted-provider qualification
+
+Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,
+`hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
+These Docker targets reuse `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
+Default suites and changed-file selection do not select them or spend provider quota.
+The credential-free `inference-routing` target remains separate.
+
+Before dispatch, obtain an approved disposable environment and credential source for the selected provider.
+The controller passes only that target's repository secret (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, `OPENROUTER_API_KEY`, or `NOUS_API_KEY`) to the test step.
+Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANTHROPIC_MODEL`,
+`NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, or `NEMOCLAW_HERMES_MODEL` to an approved model.
+Missing credentials or models fail before onboarding. A selected test that skips cannot produce passing evidence.
+The existing controller binds artifacts to the tested source revision and trusted workflow revision.
+A manual PR run requires the existing controller credential approval; adding a target does not grant that approval.
+Hermes API-key evidence does not qualify interactive OAuth login.

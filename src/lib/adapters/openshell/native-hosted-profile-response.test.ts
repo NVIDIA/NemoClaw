@@ -4,7 +4,10 @@
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
-import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
+import {
+  hostedNativeProvider,
+  HOSTED_NATIVE_PROVIDERS,
+} from "../../inference/native-provider/hosted";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
 import { parseCheckedInProviderProfileContract } from "./provider-profile";
 import { isManagedNativeHostedProfileResponse } from "./native-hosted-profile-response";
@@ -110,4 +113,32 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label profile read boundary", (d
       ),
     ).toBeUndefined();
   });
+});
+
+it("requires the exact public IP restriction on a Hermes bound profile", () => {
+  const endpointUrl = "https://staging.nous.example/v1";
+  const definition = hostedNativeProvider("hermes-provider", endpointUrl)!;
+  const base = response(HOSTED_NATIVE_PROVIDERS[4]);
+  const value = {
+    profile: {
+      ...base.profile,
+      id: definition.profileId,
+      endpoints: [
+        { ...base.profile.endpoints[0], host: "staging.nous.example", allowedIps: ["8.8.8.8"] },
+      ],
+    },
+  };
+  expect(
+    isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl, ["8.8.8.8"]),
+  ).toBe(value);
+  expect(
+    isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl, ["1.1.1.1"]),
+  ).toBeUndefined();
+  expect(
+    isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl),
+  ).toBeUndefined();
+  value.profile.endpoints[0].allowedIps = ["10.0.0.1"];
+  expect(
+    isManagedNativeHostedProfileResponse(value, definition.profileId, endpointUrl, ["10.0.0.1"]),
+  ).toBeUndefined();
 });

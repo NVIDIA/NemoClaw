@@ -7,6 +7,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { NativeProviderDefinition } from "./contract";
+import { requireHermesPublicPins } from "./hermes-pins";
 import { hostedNativeProvider } from "./hosted";
 
 /** Reuse the checked-in Hermes boundary, replacing only its authenticated destination. */
@@ -35,6 +36,7 @@ export function boundHermesNativeProfile(definition: NativeProviderDefinition): 
     {
       host: endpoint.hostname,
       port: Number(endpoint.port || 443),
+      allowed_ips: requireHermesPublicPins(definition.allowedIps),
       protocol: "rest",
       enforcement: "enforce",
       rules: [

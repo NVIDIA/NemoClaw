@@ -78,6 +78,7 @@ const CATALOGUE_CREDENTIAL_BOUNDARIES = {
   "catalogue-standard": "no provider credential",
   "catalogue-nvidia-api": "NVIDIA API key",
   "catalogue-nvidia-inference": "NVIDIA inference API key",
+  "catalogue-hosted-inference": "selected hosted inference API key",
   "catalogue-github-read": "GitHub read token",
 } as const;
 

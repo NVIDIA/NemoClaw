@@ -10,6 +10,7 @@ import type { SandboxEntry } from "../../state/registry/types";
 import type { NativeProviderAttachment } from "./contract";
 import { nativeProviderLifecycle } from "./index";
 import { hostedNativeProvider } from "./hosted";
+import { requireHermesPublicPins } from "./hermes-pins";
 import { requireHostedProviderAttachment } from "./hosted-attachment";
 
 /** Prepare gateway ownership; attachment remains the selected sandbox transaction's job. */
@@ -33,27 +34,41 @@ export async function prepareHostedNativeProvider(input: {
     input.recordedSandbox?.provider === input.provider
       ? input.recordedSandbox.nativeHostedProviderAttachment?.endpointUrl
       : undefined;
-  const definition = hostedNativeProvider(input.provider, input.endpointUrl ?? recordedEndpoint);
+  let definition = hostedNativeProvider(input.provider, input.endpointUrl ?? recordedEndpoint);
   if (!definition) throw new Error("Unsupported fixed hosted provider");
-  if (definition.endpointUrl) {
-    const allowed = await assertEndpointResolvesPublic(definition.endpointUrl, input.lookup);
-    if (!allowed.ok)
-      throw new Error(`Hermes returned an unsafe inference endpoint: ${allowed.reason}`);
-  }
-  const lifecycle = nativeProviderLifecycle(definition);
   const recorded = input.recordedSandbox;
   const recordedAttachment =
     recorded?.provider === input.provider
       ? requireHostedProviderAttachment(recorded.nativeHostedProviderAttachment, input.provider)
       : undefined;
+  const gatewayAuthority = input.readAuthority(
+    input.gatewayName,
+    input.provider,
+    definition.endpointUrl ??
+      (input.provider === "hermes-provider" ? definition.endpoint : undefined),
+  );
+  if (definition.endpointUrl) {
+    const prior =
+      gatewayAuthority ??
+      (recordedAttachment?.providerName === definition.providerName
+        ? recordedAttachment
+        : undefined);
+    const allowed = prior
+      ? undefined
+      : await assertEndpointResolvesPublic(definition.endpointUrl, input.lookup);
+    if (allowed && !allowed.ok)
+      throw new Error(`Hermes returned an unsafe inference endpoint: ${allowed.reason}`);
+    const addresses =
+      prior?.allowedIps ??
+      (allowed?.ok && allowed.addresses?.length
+        ? allowed.addresses
+        : [new URL(definition.endpointUrl).hostname.replace(/^\[|\]$/gu, "")]);
+    definition = { ...definition, allowedIps: requireHermesPublicPins(addresses) };
+  }
+  const lifecycle = nativeProviderLifecycle(definition);
   const expected = lifecycle.resolveGatewayNativeProviderAuthority({
     gatewayName: input.gatewayName,
-    gatewayAuthority: input.readAuthority(
-      input.gatewayName,
-      input.provider,
-      definition.endpointUrl ??
-        (input.provider === "hermes-provider" ? definition.endpoint : undefined),
-    ),
+    gatewayAuthority,
     recordedAttachment:
       recordedAttachment?.providerName === definition.providerName ? recordedAttachment : undefined,
   });

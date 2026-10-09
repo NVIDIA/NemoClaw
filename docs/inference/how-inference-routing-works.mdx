@@ -14,22 +14,38 @@ This design keeps provider credentials outside the sandbox.
 
 ## Request Path
 
-Most providers use the shared `inference.local` route inside the sandbox.
-OpenShell intercepts each request on the host and forwards it to the provider and model selected during onboarding.
+New NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, OpenRouter, and Hermes Provider selections use sandbox-attached OpenShell providers.
+The agent calls the selected provider's API hostname with a credential placeholder.
+OpenShell checks the destination, executable, and allowed request paths, then supplies the host-managed credential.
+
+```text
+Sandbox agent -> provider API hostname -> sandbox-attached OpenShell provider -> selected hosted service
+```
+
+| Provider | Agent endpoint |
+| --- | --- |
+| NVIDIA Endpoints | `https://integrate.api.nvidia.com/v1` |
+| OpenAI | `https://api.openai.com/v1` |
+| Anthropic | `https://api.anthropic.com` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Hermes Provider | `https://inference-api.nousresearch.com/v1`, or the endpoint returned by authenticated login |
+
+Each sandbox records its selected provider attachment. Changing one sandbox's native selection does not change another sandbox's route.
+OpenRouter attribution headers remain in the managed agent configuration.
+For an endpoint returned by Hermes login, NemoClaw records its accepted public IP addresses and restricts the provider and sandbox policy to those addresses.
+A different destination cannot gain access through a later DNS change.
+
+Existing sandboxes without a native attachment retain their recorded shared route.
+User-supplied endpoints, local inference, and Model Router also retain the shared route in this migration.
 
 ```text
 Sandbox agent -> inference.local -> shared OpenShell route -> selected provider and model
 ```
 
-NVIDIA Endpoints use a sandbox-attached OpenShell provider instead of the shared route.
-The agent addresses the NVIDIA API hostname, but OpenShell still intercepts the request and supplies the host-managed credential.
-
-```text
-Sandbox agent -> integrate.api.nvidia.com -> sandbox-attached OpenShell provider -> NVIDIA
-```
-
-Host-side services such as Model Router and the OpenRouter runtime adapter remain behind the OpenShell route.
-The sandbox uses `inference.local` for those services instead of calling their host ports directly.
+Use `$$nemoclaw inference get` to inspect the selected sandbox's recorded route.
+`status`, `doctor`, and startup checks verify its recorded native provider identity before using a native attachment.
+Missing or conflicting ownership stops the operation instead of falling back to the shared route.
 
 ## Credential Boundary
 
@@ -45,7 +61,7 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 ## Deep Agents Configuration
 
-For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Most providers use `https://inference.local/v1`. NVIDIA Endpoints instead uses the least-privilege OpenShell provider attached to the sandbox at `https://integrate.api.nvidia.com/v1`.
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Supported native hosted selections use the endpoints above. Shared-route selections retain `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

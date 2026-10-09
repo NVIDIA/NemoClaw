@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { HOSTED_PROVIDER_SMOKE_CASES as hostedCases } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   parseOpenClawJsonDocuments,
@@ -28,8 +29,8 @@ import {
 } from "./inference-routing-helpers.ts";
 
 // These credential-backed smokes are intentionally outside the PR-required
-// inference-routing lane. A future workflow that supplies provider credentials
-// must run them only from trusted main.
+// inference-routing lane. Explicit hosted-inference catalogue targets supply
+// only the selected credential through the trusted E2E controller.
 
 test(
   "TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and filesystem",
@@ -217,65 +218,6 @@ test(
 );
 
 // Each case uses OpenClaw only; deterministic tests own the other supported agents.
-const hostedCases = [
-  {
-    id: "TC-INF-02",
-    selector: "openai",
-    provider: "openai",
-    label: "OpenAI",
-    credential: "OPENAI_API_KEY",
-    modelEnv: "NEMOCLAW_OPENAI_MODEL",
-    defaultModel: "gpt-4o-mini",
-    providerKey: "openai",
-    endpoint: "https://api.openai.com/v1",
-    placeholder: "OPENAI_API_KEY",
-  },
-  {
-    id: "TC-INF-03",
-    selector: "anthropic",
-    provider: "anthropic",
-    label: "Anthropic",
-    credential: "ANTHROPIC_API_KEY",
-    modelEnv: "NEMOCLAW_ANTHROPIC_MODEL",
-    defaultModel: "claude-sonnet-4-6",
-    providerKey: "anthropic",
-    endpoint: "https://api.anthropic.com",
-    placeholder: "ANTHROPIC_API_KEY",
-  },
-  {
-    id: "TC-INF-06",
-    selector: "gemini",
-    provider: "gemini",
-    label: "Gemini",
-    credential: "GEMINI_API_KEY",
-    modelEnv: "NEMOCLAW_GEMINI_MODEL",
-    providerKey: "inference",
-    endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    placeholder: "GEMINI_API_KEY",
-  },
-  {
-    id: "TC-INF-07",
-    selector: "openrouter",
-    provider: "openrouter",
-    label: "OpenRouter",
-    credential: "OPENROUTER_API_KEY",
-    modelEnv: "NEMOCLAW_OPENROUTER_MODEL",
-    providerKey: "inference",
-    endpoint: "https://openrouter.ai/api/v1",
-    placeholder: "OPENROUTER_API_KEY",
-  },
-  {
-    id: "TC-INF-08",
-    selector: "hermes",
-    provider: "hermes",
-    label: "Hermes Provider",
-    credential: "NOUS_API_KEY",
-    modelEnv: "NEMOCLAW_HERMES_MODEL",
-    providerKey: "inference",
-    endpoint: "https://inference-api.nousresearch.com/v1",
-    placeholder: "OPENAI_API_KEY",
-  },
-] as const;
 
 test.for(hostedCases)(
   "$id $label answers through its native provider",

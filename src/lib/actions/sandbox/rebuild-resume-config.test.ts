@@ -946,7 +946,9 @@ describe("fixed hosted rebuild authority", () => {
         profileId: definition.profileId,
         providerName: definition.providerName,
         providerId: "owned-id",
-        ...("endpointUrl" in definition ? { endpointUrl: definition.endpointUrl } : {}),
+        ...("endpointUrl" in definition
+          ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+          : {}),
       };
       const result = prepareRebuildResumeConfig(
         "alpha",

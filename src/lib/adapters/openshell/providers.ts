@@ -74,6 +74,7 @@ export interface Providers {
         configKeys: readonly string[];
         profileContract?: ProfileContract;
         nativeHostedEndpoint?: string;
+        nativeHostedAllowedIps?: readonly string[];
       }>,
   ): Promise<Provider | null>;
 }
@@ -129,6 +130,7 @@ async function readManagedProfile(
     profileWorkspace,
     providerType,
     request.nativeHostedEndpoint,
+    request.nativeHostedAllowedIps,
   );
 }
 
@@ -156,6 +158,7 @@ function validateManagedProfileResponse(
   profileWorkspace: string,
   providerType: string,
   nativeHostedEndpoint?: string,
+  nativeHostedAllowedIps?: readonly string[],
 ): NonNullable<Provider["managedProfile"]> {
   if (profileContract === "native-nvidia") {
     return validateNativeManagedProfileResponse(response, profileWorkspace);
@@ -165,6 +168,7 @@ function validateManagedProfileResponse(
       response,
       providerType,
       nativeHostedEndpoint,
+      nativeHostedAllowedIps,
     );
     if (
       !validated ||

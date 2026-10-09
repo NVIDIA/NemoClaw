@@ -442,7 +442,9 @@ describe("hosted native doctor", () => {
       providerName: definition.providerName,
       profileId: definition.profileId,
       providerId: "owned-id",
-      ...("endpointUrl" in definition ? { endpointUrl: definition.endpointUrl } : {}),
+      ...("endpointUrl" in definition
+        ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+        : {}),
     };
     const verify = vi.fn(async () => undefined);
     const probe = vi.fn(async () => ({ ok: true as const }));

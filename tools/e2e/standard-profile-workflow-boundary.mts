@@ -33,7 +33,9 @@ const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
 const guardedCallerSecret = (name: string): string =>
-  `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
+  name === "HOSTED_INFERENCE_API_KEY"
+    ? `\${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}`
+    : `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -68,6 +70,14 @@ const PROFILE_JOBS = {
     matrix: "catalogue_nvidia_inference_matrix",
     credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
+    githubToken: false,
+    maxParallel: undefined,
+  },
+  "hosted-inference": {
+    job: "catalogue-hosted-inference",
+    matrix: "catalogue_hosted_inference_matrix",
+    credentialBoundary: "selected hosted inference API key",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "HOSTED_INFERENCE_API_KEY"],
     githubToken: false,
     maxParallel: undefined,
   },
@@ -271,13 +281,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "DOCKERHUB_USERNAME",
     "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
+    "HOSTED_INFERENCE_API_KEY",
   ];
   const declaredSecrets = record(call.secrets);
   if (
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only its four optional profile secrets");
+    errors.push("standard E2E profile must accept only its declared optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -669,6 +680,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
+    executeEnv.HOSTED_INFERENCE_API_KEY !==
+      "${{ inputs.trusted_main && secrets.HOSTED_INFERENCE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {
