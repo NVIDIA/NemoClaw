@@ -203,7 +203,8 @@ fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and
 
 #[test]
 #[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
-fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
+fn real_tofu_retains_a_tainted_instance_and_plans_its_replacement_after_creation_reports_a_later_failure()
+ {
     let e = Experiment::new(
         std::env::var("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture")
             .expect("Cargo sets the fixture executable path"),
@@ -211,9 +212,15 @@ fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
     e.mode("create-error");
     let output = e.run(&["apply", "-auto-approve", "-input=false"]);
     assert!(!output.status.success());
+    let instance = e.state()["resources"][0]["instances"][0].clone();
+    assert_eq!(instance["attributes"]["id"], "fixture-id");
+    // A create that reported a later failure is not a trustworthy object, so
+    // the next plan must replace it rather than reuse or adopt it.
+    assert_eq!(instance["status"], "tainted", "{instance}");
     assert_eq!(
-        e.state()["resources"][0]["instances"][0]["attributes"]["id"],
-        "fixture-id"
+        e.plan()["resource_changes"][0]["change"]["actions"],
+        json!(["delete", "create"]),
+        "the next plan must replace the tainted instance"
     );
 }
 
