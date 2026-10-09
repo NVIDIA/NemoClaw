@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { writePreGatewaySession } from "../../../../test/support/uninstall-pre-gateway-session";
 import {
@@ -116,6 +116,11 @@ function nonListOpenShellCalls(calls: readonly string[][]): string[][] {
       command === "openshell" && !(resource === "gateway" && action === "list"),
   );
 }
+
+beforeAll(async () => {
+  // Transform the cold module graph during setup; each case still reloads its gateway environment.
+  await import("./run-plan");
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -238,6 +238,7 @@ export function prepareSandboxCreatePolicy(
         ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
+      inferenceProvider: intent.inferenceProvider,
       // Channel presets bind `{sandboxName}-<channel>-bridge`; without the name,
       // composing them throws.
       sandboxName: intent.sandboxName,
