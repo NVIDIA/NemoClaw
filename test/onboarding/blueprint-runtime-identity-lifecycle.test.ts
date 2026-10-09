@@ -28,6 +28,7 @@ interface FakeOpenShellCall {
 interface FakeOpenShellState {
   attachments: Record<string, string>;
   calls: FakeOpenShellCall[];
+  profileSource: string | null;
   profiles: string[];
   providers: Record<
     string,
@@ -53,6 +54,7 @@ const CONFIG = {
 const INITIAL_STATE: FakeOpenShellState = {
   attachments: {},
   calls: [],
+  profileSource: null,
   profiles: [],
   providers: {},
 };
@@ -108,8 +110,14 @@ if (args[0] === "provider" && args[1] === "get") {
 }
 
 if (args.join(" ").startsWith("provider profile import --file ")) {
+  state.profileSource = fs.readFileSync(args[args.indexOf("--file") + 1], "utf8");
   state.profiles.push("okta-runtime-v1");
   save(0);
+}
+
+if (args.join(" ") === "provider profile export okta-runtime-v1 --output yaml") {
+  if (!state.profileSource) save(1, "", "provider profile not found");
+  save(0, state.profileSource);
 }
 
 if (args[0] === "provider" && args[1] === "create") {
