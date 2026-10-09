@@ -121,7 +121,7 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         if (
             not native_nvidia
             and url.scheme.lower() == "https"
-            and unquote(url.hostname or "").lower().removesuffix(".")
+            and unquote(url.hostname or "").lower().rstrip(".")
             == "integrate.api.nvidia.com"
             and url.port in (None, 443)
         ):

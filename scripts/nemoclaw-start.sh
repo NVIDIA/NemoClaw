@@ -81,7 +81,7 @@ clear_managed_inference_credentials() {
       try {
         const url = new URL(process.env.NEMOCLAW_INFERENCE_BASE_URL);
         if (url.protocol === "https:" &&
-            url.hostname.replace(/\.$/, "") === "integrate.api.nvidia.com" &&
+            url.hostname.replace(/\.+$/, "") === "integrate.api.nvidia.com" &&
             url.port === "") process.exit(42);
       } catch {}
     ' || parsed_host_status=$?
