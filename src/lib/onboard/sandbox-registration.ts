@@ -473,7 +473,7 @@ export function validateSelectedNativeOpenclawAttachment(
   const attachment = normalizeNativeCustomProviderAttachment(value, sandboxName);
   if (
     !attachment ||
-    attachment.api !== preferredInferenceApi ||
+    (preferredInferenceApi !== null && attachment.api !== preferredInferenceApi) ||
     (attachment.credentialEnv === "COMPATIBLE_API_KEY"
       ? provider !== "compatible-endpoint"
       : provider !== "compatible-anthropic-endpoint")

@@ -103,9 +103,14 @@ describe("handleAgentSetupState", () => {
     });
   }
 
-  it.each([false, true])(
-    "carries native authority into managed setup with resume=%s",
-    async (resume) => {
+  it.each([
+    { resume: false, preferredInferenceApi: "openai-completions" },
+    { resume: true, preferredInferenceApi: "openai-completions" },
+    { resume: false, preferredInferenceApi: null },
+    { resume: true, preferredInferenceApi: null },
+  ])(
+    "carries native authority into managed setup with resume=$resume and API=$preferredInferenceApi",
+    async ({ resume, preferredInferenceApi }) => {
       const attachment = await nativeAttachment();
       const { deps, calls } = createDeps({
         agentSetupContext: () => ({
@@ -118,6 +123,7 @@ describe("handleAgentSetupState", () => {
         ...baseOptions(deps),
         provider: "compatible-endpoint",
         resume,
+        preferredInferenceApi,
         managedOpenclawStartup: true,
         initializeNativeInferenceRoute: true,
       });
@@ -125,7 +131,7 @@ describe("handleAgentSetupState", () => {
         "my-assistant",
         "model",
         "compatible-endpoint",
-        "openai-completions",
+        preferredInferenceApi,
         "nemoclaw-19090",
         undefined,
         attachment,
@@ -159,26 +165,33 @@ describe("handleAgentSetupState", () => {
     );
   });
 
-  it("refuses foreign native authority before configuring OpenClaw", async () => {
-    const attachment = await nativeAttachment();
-    const { deps, calls } = createDeps({
-      agentSetupContext: () => ({
-        gatewayName: "nemoclaw-19090",
-        nativeCustomProviderAttachment: { ...attachment, sandboxName: "foreign" },
-      }),
-    });
-    await expect(
-      handleAgentSetupState({
-        ...baseOptions(deps),
-        provider: "compatible-endpoint",
-        managedOpenclawStartup: true,
-        initializeNativeInferenceRoute: true,
-      }),
-    ).rejects.toThrow("matching the selected sandbox");
-    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
-    expect(calls.setupOpenclaw).not.toHaveBeenCalled();
-    expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
-  });
+  it.each([
+    { sandboxName: "foreign", preferredInferenceApi: "openai-completions" },
+    { sandboxName: "my-assistant", preferredInferenceApi: "anthropic-messages" },
+  ])(
+    "refuses conflicting native authority for $sandboxName / $preferredInferenceApi before configuration",
+    async ({ sandboxName, preferredInferenceApi }) => {
+      const attachment = await nativeAttachment();
+      const { deps, calls } = createDeps({
+        agentSetupContext: () => ({
+          gatewayName: "nemoclaw-19090",
+          nativeCustomProviderAttachment: { ...attachment, sandboxName },
+        }),
+      });
+      await expect(
+        handleAgentSetupState({
+          ...baseOptions(deps),
+          provider: "compatible-endpoint",
+          preferredInferenceApi,
+          managedOpenclawStartup: true,
+          initializeNativeInferenceRoute: true,
+        }),
+      ).rejects.toThrow("matching the selected sandbox");
+      expect(calls.configureOpenclaw).not.toHaveBeenCalled();
+      expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+      expect(calls.initializeOpenclawInferenceRoute).not.toHaveBeenCalled();
+    },
+  );
 
   it("delegates non-OpenClaw agent setup and skips openclaw", async () => {
     const { deps, calls } = createDeps();
