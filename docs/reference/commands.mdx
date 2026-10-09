@@ -1098,13 +1098,14 @@ When the latest resumable onboarding session owns the matching inference-route r
 JSON output reports the same state in `incompleteOnboarding`; it remains separate from `sandboxes` and never affects the default sandbox.
 When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`.
 NemoClaw does not expose stale reservations that belong to another onboarding session.
-Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable.
+When session detection is available, each sandbox row reports `activeSessionCount` as a nonnegative integer; otherwise, it reports `null`.
+The count includes detected SSH sessions and interactive OpenShell `connect` sessions.
 Each sandbox row reports `agent` as a string in both text and JSON output, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway.
 The gateway sandbox list does not expose the agent.
 The row does not include the former derived `connected` boolean.
-Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
+A sandbox with an active SSH or interactive OpenShell `connect` session has a `●` marker.
 
 <AgentOnly variant="openclaw,hermes">
   When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text output shows that URL.
@@ -1751,7 +1752,8 @@ If the sandbox or gateway cannot be verified, the command exits non-zero instead
 
 When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the last CUDA usability proof state. It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access. Failed proofs include remediation guidance for the detected platform.
 
-An `SSH sessions` line reports how many active SSH sessions the sandbox has, or `none`; the line is omitted when the session probe is unavailable.
+An `Active sessions:` line reports the number of active SSH and interactive OpenShell `connect` sessions, or `none` when there are none.
+The line is omitted when the session probe is unavailable.
 
 <AgentOnly variant="openclaw,hermes">
   The sandbox list in the status output includes the dashboard port suffix for sandboxes with a
@@ -2106,7 +2108,10 @@ Download any files you need before destroying the sandbox; do not rely on retain
 If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name> rebuild` instead.
 </Warning>
 
-If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds. Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows. These controls do not suppress the active-session warning. The warning lists the detected process IDs, and destroy still terminates those sessions with a `Broken pipe` error.
+If NemoClaw detects active SSH or interactive OpenShell `connect` sessions, `destroy` prints a warning before the confirmation prompt.
+The warning lists detected process IDs and states that destroy terminates the sessions and interrupts running commands.
+Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to delete without prompting in scripted workflows.
+These controls do not suppress the warning.
 
 Before changing a Docker-backed sandbox, NemoClaw inspects every container with the requested `openshell.ai/sandbox-name` label. The command continues when Docker returns no matching containers. For one matching container, the command continues only when all these labels have the required values:
 
@@ -2162,8 +2167,6 @@ After that message, confirm that `openshell sandbox list -g <gateway-name>` repo
 Then run `openshell gateway remove <gateway-name>` to remove the gateway.
 
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
-If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a `Broken pipe` error and lists their process IDs.
-This warning prints before the confirmation prompt and when `--yes` or `--force` skips that prompt.
 
 If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits nonzero after sandbox and registry deletion and skips gateway and volume removal.
 NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
@@ -3178,7 +3181,9 @@ $$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--ye
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation.                                                                                                                                                                                   |
 | `--observability`, `--no-observability`           | Enable or disable managed trace export for a LangChain Deep Agents Code sandbox during the transactional rebuild. This path preserves managed MCP providers and adapter state.                                                                                                                                                                                                                                                                             |
 
-If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox. Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+If NemoClaw detects active SSH or interactive OpenShell `connect` sessions, `rebuild` warns that it will terminate them and interrupt running commands.
+The warning appears before confirmation.
+Pass `--yes`, `-y`, or `--force` to skip the confirmation prompt in scripted workflows.
 
 For other eligible sources, the backup step normally reaches the sandbox over its live transport. When that first attempt fails because the transport is unreachable, and the sandbox has exactly one eligible stopped container, `rebuild` starts that container, retries the backup, and returns the container to its stopped state before continuing. `rebuild` aborts before deleting the original sandbox when it finds no eligible stopped container, when the retried backup also fails, or when it cannot return the started container to its stopped state; in that last case it names the container so you can stop it yourself before retrying.
 If the complete native home/workspace cannot be archived, `rebuild` stops before deleting the original sandbox. This fail-closed behavior also applies to `--force`.
@@ -3478,7 +3483,9 @@ It is not counted as a registered sandbox and does not trigger sandbox or gatewa
 Each JSON sandbox row reports `agent` as a string, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 This command reads the registry without gateway recovery, so it never reports `unknown`.
-For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
+For each listed sandbox, text output includes the configured inference provider and model.
+When session detection is available, an `Active sessions:` line reports the number of SSH and interactive OpenShell `connect` sessions, or `none`.
+The line is omitted when the session probe is unavailable.
 That route line is labeled `Inference (configured):`.
 An unavailable recorded provider or model appears as `unknown`.
 When onboarding records a browser-facing dashboard URL from `CHAT_UI_URL`, text output adds a `Dashboard URL:` line for that sandbox.
