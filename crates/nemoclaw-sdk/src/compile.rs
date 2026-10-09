@@ -558,31 +558,50 @@ fn compile_with_plans(
             "error_message":gateway_error_message("self")
         }]}
     });
-    let sandbox_readiness: BTreeMap<_, _> = document.spec.sandboxes.iter().map(|sandbox| {
-        let reference = format!("openshell_sandbox.{}", sandbox.name);
-        // Readiness takes the sandbox's string attributes; typed inputs stay behind.
-        let typed = serde_json::to_string(
-            &nemoclaw_openshell::structured_inputs("sandbox")
-                .iter()
-                .map(|input| input.attribute)
-                .collect::<Vec<_>>(),
-        )
-        .expect("attribute names");
-        let binding = format!(
-            "${{merge({{for key, value in {reference} : key => value if !contains({typed}, key)}}, {{config_json = fabric_agent_configuration.{}.config_json}})}}",
-            sandbox.name
-        );
-        Ok((sandbox.name.clone(), json!({
-            "sandbox":binding,
+    let sandbox_readiness: BTreeMap<_, _> = document
+        .spec
+        .sandboxes
+        .iter()
+        .map(|sandbox| {
+            // Readiness names the sandbox and configuration attributes it reads.
+            let mut readiness: serde_json::Map<String, Value> = [
+                "workspace",
+                "name",
+                "id",
+                "owner",
+                "generation",
+                "agent_name",
+                "agent_runtime",
+                "runtime_json",
+            ]
+            .into_iter()
+            .map(|name| {
+                (
+                    name.to_owned(),
+                    json!(format!("${{openshell_sandbox.{}.{name}}}", sandbox.name)),
+                )
+            })
+            .collect();
+            readiness.insert(
+                "config_json".into(),
+                json!(format!(
+                    "${{fabric_agent_configuration.{}.config_json}}",
+                    sandbox.name
+                )),
+            );
             // uuid() is unknown in a saved plan and records a unique observation
             // token, so failed applies cannot report stale health as a new result.
-            "read_trigger":"${uuid()}",
-            "lifecycle":{"postcondition":[{
-                "condition":"${self.ready}",
-                "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
-            }]}
-        })))
-    }).collect::<Result<_, ConfigError>>()?;
+            readiness.insert("read_trigger".into(), json!("${uuid()}"));
+            readiness.insert(
+                "lifecycle".into(),
+                json!({"postcondition":[{
+                    "condition":"${self.ready}",
+                    "error_message":"${self.error_message != null ? self.error_message : \"Fabric readiness could not be established; resources retained\"}"
+                }]}),
+            );
+            (sandbox.name.clone(), Value::Object(readiness))
+        })
+        .collect();
     graph["resource"] = resources;
     graph["data"]["fabric_sandbox_readiness"] = json!(sandbox_readiness);
     graph["data"]["openshell_gateway"]["apply"] = apply_readiness;
