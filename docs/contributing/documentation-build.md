@@ -121,6 +121,7 @@ Manual runs perform validation only.
 The stable staging URL is `https://nvidia-preview-nemoclaw-v1.docs.buildwithfern.com/nemoclaw` after its first successful publish.
 It uses main's staging instance only in Fern preview mode; publishing it does not replace main's staging pages.
 Failed validation blocks publication.
+Publication jobs run the build tool that validation compiled from the same commit, so they set up only Node and npm.
 Rerun a failed publication job after correcting credentials or service availability.
 Unmerged closed-PR previews require explicit deletion with the helper.
 

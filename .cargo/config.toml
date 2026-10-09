@@ -20,9 +20,12 @@ debug = 1
 
 # Dependencies change rarely, and unoptimized they dominate test time: JSON
 # Schema validation, parsing, and hashing run throughout every test step.
-# Workspace crates stay unoptimized for incremental builds.
+# Workspace crates stay unoptimized for incremental builds. Third-party crates
+# keep symbol names in backtraces but not line numbers; their debug data was a
+# third of the dependency build output that CI caches.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 # Deployment tests verify native bundle digests on every operation.
 [profile.dev.package.sha2]

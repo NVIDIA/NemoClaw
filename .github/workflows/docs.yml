@@ -19,6 +19,8 @@ jobs:
     name: Validate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      build-tool: ${{ steps.build-tool.outputs.artifact }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,6 +30,19 @@ jobs:
         run: "cargo test --locked -p nemoclaw-build --test integration -- docs:: fern::"
       - name: Check generated reference, local links, and Fern routes
         run: cargo run --locked -p nemoclaw-build -- fern check
+      # Publication jobs run this binary, built from the same commit in this run,
+      # instead of compiling it again. The attempt keeps a rerun's name unique.
+      - name: Name the build tool artifact
+        id: build-tool
+        env:
+          ARTIFACT: docs-build-tool-${{ github.sha }}-${{ github.run_attempt }}
+        run: echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.build-tool.outputs.artifact }}
+          path: target/debug/nemoclaw-build
+          if-no-files-found: error
+          retention-days: 1
 
   preview:
     name: PR preview
@@ -38,6 +53,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    env:
+      NEMOCLAW_BUILD: .build/docs-tool/nemoclaw-build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,13 +67,24 @@ jobs:
           if [ -n "$FERN_TOKEN" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; fi
       - uses: ./.github/actions/setup-docs
         if: steps.available.outputs.enabled == 'true'
+        with:
+          rust: "false"
+      - name: Download the build tool from Validate
+        if: steps.available.outputs.enabled == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.validate.outputs.build-tool }}
+          path: .build/docs-tool
+      - name: Make the build tool executable
+        if: steps.available.outputs.enabled == 'true'
+        run: chmod +x "$NEMOCLAW_BUILD"
       - name: Publish isolated PR preview
         if: steps.available.outputs.enabled == 'true'
         id: publish
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           PREVIEW_ID: nemoclaw-v1-pr-${{ github.event.pull_request.number }}
-        run: cargo run --locked -p nemoclaw-build -- fern preview --id "$PREVIEW_ID"
+        run: '"$NEMOCLAW_BUILD" fern preview --id "$PREVIEW_ID"'
       - name: Comment with preview URL
         if: steps.available.outputs.enabled == 'true'
         env:
@@ -65,7 +93,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PREVIEW_URL: ${{ steps.publish.outputs.preview_url }}
         run: >-
-          cargo run --locked -p nemoclaw-build -- fern comment
+          "$NEMOCLAW_BUILD" fern comment
           --repository "$GH_REPO" --pull-request "$PR_NUMBER" --url "$PREVIEW_URL"
 
   staging:
@@ -78,15 +106,26 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      NEMOCLAW_BUILD: .build/docs-tool/nemoclaw-build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-docs
+        with:
+          rust: "false"
+      - name: Download the build tool from Validate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.validate.outputs.build-tool }}
+          path: .build/docs-tool
+      - name: Make the build tool executable
+        run: chmod +x "$NEMOCLAW_BUILD"
       - name: Publish v1 without replacing main staging
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
-        run: cargo run --locked -p nemoclaw-build -- fern preview --id nemoclaw-v1
+        run: '"$NEMOCLAW_BUILD" fern preview --id nemoclaw-v1'
       - name: Remove merged v1 PR previews
         env:
           GH_TOKEN: ${{ github.token }}
@@ -94,7 +133,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
         run: >-
-          cargo run --locked -p nemoclaw-build -- fern delete-merged
+          "$NEMOCLAW_BUILD" fern delete-merged
           --repository "$GH_REPO" --commit "$COMMIT_SHA"
 
   public:
@@ -104,6 +143,8 @@ jobs:
     environment: docs-v1-public
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      NEMOCLAW_BUILD: .build/docs-tool/nemoclaw-build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,8 +155,17 @@ jobs:
           git fetch --no-tags origin v1
           git merge-base --is-ancestor HEAD origin/v1
       - uses: ./.github/actions/setup-docs
+        with:
+          rust: "false"
+      - name: Download the build tool from Validate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.validate.outputs.build-tool }}
+          path: .build/docs-tool
+      - name: Make the build tool executable
+        run: chmod +x "$NEMOCLAW_BUILD"
       - name: Publish main and v1 through the version selector
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           FERN_V1_PUBLIC_ENABLED: ${{ vars.FERN_V1_PUBLIC_ENABLED }}
-        run: cargo run --locked -p nemoclaw-build -- fern public
+        run: '"$NEMOCLAW_BUILD" fern public'

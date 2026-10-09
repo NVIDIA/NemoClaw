@@ -11,7 +11,9 @@ permissions:
   contents: read
 concurrency:
   group: ci-native-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  # Only v1 pushes save the shared Rust caches, and a cold Windows or macOS build
+  # outlasts the usual gap between merges. Cancelling pushes left those caches unwritten.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   linux_arm64:
     uses: ./.github/workflows/native-platform.yml

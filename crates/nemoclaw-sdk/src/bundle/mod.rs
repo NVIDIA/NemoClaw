@@ -70,6 +70,99 @@ impl Bundle {
         self.directory.join("libexec").join(executable("tofu"))
     }
 }
+/// Metadata that changes when a file is written or replaced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Stamp {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    /// Unix inode change time and identity; the change time cannot be set
+    /// back by a writer.
+    #[cfg(unix)]
+    identity: (u64, u64, i64, i64),
+    #[cfg(not(unix))]
+    created: Option<std::time::SystemTime>,
+}
+impl Stamp {
+    fn read(path: &Path) -> Option<Self> {
+        let metadata = fs::symlink_metadata(path).ok()?;
+        #[cfg(unix)]
+        let identity = {
+            use std::os::unix::fs::MetadataExt;
+            (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            )
+        };
+        Some(Self {
+            length: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            identity,
+            #[cfg(not(unix))]
+            created: metadata.created().ok(),
+        })
+    }
+}
+/// The manifest's and every listed file's metadata, or `None` when any is
+/// unavailable.
+fn stamps(directory: &Path, manifest: &Manifest) -> Option<Vec<Stamp>> {
+    std::iter::once("manifest.json")
+        .chain(manifest.files.keys().map(String::as_str))
+        .map(|name| Stamp::read(&directory.join(name)))
+        .collect()
+}
+
+/// A bundle verified once and verified again only when the manifest or a
+/// file it lists is written, replaced, or removed.
+#[derive(Debug, Default)]
+pub struct VerifiedBundle {
+    state: std::sync::Mutex<VerifiedState>,
+}
+#[derive(Debug, Default)]
+struct VerifiedState {
+    verified: Option<(Bundle, Vec<Stamp>)>,
+    hashings: usize,
+}
+impl VerifiedBundle {
+    /// Open `directory` as [`Bundle::open`] does, reusing the last
+    /// verification while no listed file has changed.
+    ///
+    /// # Errors
+    /// Returns the verification error; failures are not remembered.
+    pub fn open(&self, directory: &Path) -> Result<Bundle, Error> {
+        let directory = directory
+            .canonicalize()
+            .map_err(|_| Error::Bundle("bundle directory is unavailable"))?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::State("bundle verification state is unavailable"))?;
+        if let Some((bundle, recorded)) = &state.verified
+            && bundle.directory == directory
+            && stamps(&directory, &bundle.manifest).as_ref() == Some(recorded)
+        {
+            return Ok(bundle.clone());
+        }
+        state.verified = None;
+        state.hashings += 1;
+        // Stamps taken before hashing make a write during it visible next time.
+        let manifest = fs::read(directory.join("manifest.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok());
+        let before = manifest.and_then(|manifest| stamps(&directory, &manifest));
+        let bundle = Bundle::open(&directory)?;
+        if let Some(before) = before {
+            state.verified = Some((bundle.clone(), before));
+        }
+        Ok(bundle)
+    }
+    #[cfg(test)]
+    pub(crate) fn hashings(&self) -> usize {
+        self.state.lock().unwrap().hashings
+    }
+}
 pub fn executable(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }

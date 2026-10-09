@@ -80,6 +80,9 @@ crossterm = "0.29"
 # Cluster access for Kubernetes gateways; helm is the only cluster subprocess.
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring", "ws"] }
 k8s-openapi = { version = "0.28", default-features = false, features = ["latest"] }
+# Decide which CI workflows a change can affect; see crates/nemoclaw-build/src/changes.rs.
+determinator = "0.12"
+guppy = "0.17"
 
 [patch."https://github.com/NVIDIA/OpenShell"]
 openshell-sdk = { path = "crates/vendor/openshell-sdk" }
