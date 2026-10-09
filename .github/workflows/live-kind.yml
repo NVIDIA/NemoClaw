@@ -40,6 +40,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ matrix.platform }}
+          save-cache: "false"
       - name: Build test executables
         run: cargo ci build
       - name: Build and verify native bundle

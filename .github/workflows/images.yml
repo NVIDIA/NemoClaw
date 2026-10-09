@@ -18,8 +18,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: agent-images-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: agent-images-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   images:
     name: Build / ${{ matrix.platform }}

@@ -16,7 +16,7 @@ A warm run on Linux ARM64 takes about ten minutes, mostly in the workspace and l
 
 Run one step with `cargo ci STEP`, for example `cargo ci lifecycle`.
 The steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and `lifecycle`; every step first checks the pinned tools.
-Each workflow step calls the same command, so the local result matches the platform's CI job.
+CI uses the same steps; Unix lifecycle workers execute the built tests from an archive instead of compiling them again.
 It does not run the image, documentation, or dependency workflows, or another platform's job.
 
 On Linux with a local Docker engine that uses the [containerd image store](../build.md), `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
@@ -62,23 +62,56 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 The first eight checks are required by the `v1` ruleset, including documentation validation.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
 Superseded PR runs are cancelled.
-Running branch pushes finish; newer pushes replace older pending runs.
-Live runs use separate concurrency groups.
+Native and image workflows also cancel superseded pushes; their manual runs use separate concurrency groups and finish.
+Documentation and dependency pushes finish; newer pushes replace older pending runs.
+Live runs use separate concurrency groups and are not cancelled by a newer push.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Test Runner
 
-All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
+Every `CI / Native` platform uses cargo-nextest 0.9.144 for both the `ci` and `lifecycle` profiles.
 `cargo ci tools` installs its prebuilt executable after checksum verification; installation cannot fall back to compiling it.
-`cargo ci test` runs the ordinary tests with the `ci` profile and then the doctests.
+`cargo ci test` runs tests not marked `#[ignore]` with the `ci` profile, then the doctests.
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
-CI retains the same workspace and target selection across both runs so Cargo can reuse the compiled tests.
-After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests.
-In GitHub Actions, the report is added to the job summary, and the JUnit reports with per-test durations are uploaded as the `test-` and `lifecycle-` artifacts.
+CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
+On Linux and macOS, each platform builds once, then runs two nextest hash partitions on separate runners with four test slots each.
+Each platform starts its workers after its own build; it does not wait for other platforms to finish building.
+Windows runs its smaller lifecycle suite in the build job without archive transfer.
+The existing `Test / PLATFORM` required checks succeed only when that platform's build and lifecycle jobs succeed.
+After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.
+In GitHub Actions, the report is added to the job summary.
+The `test-` and `lifecycle-` timing artifacts contain the JUnit reports with per-test durations, with the Unix partition in each lifecycle artifact name.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.
+
+### Run a Lifecycle Partition
+
+Plain `cargo ci` still runs the complete local suite.
+After `cargo ci build` and `cargo ci bundle`, select one partition explicitly:
+
+```sh
+cargo ci lifecycle --partition hash:1/2
+cargo ci lifecycle --partition hash:2/2
+```
+
+To reproduce the Unix archive handoff, run `cargo ci archive` after building.
+It writes `.build/ci/lifecycle.tar.zst` and `.build/ci/lifecycle-inputs.tar`.
+The first contains only binaries selected by the lifecycle profile and their nextest metadata; the second preserves the bundle, pinned tools, `nemoclaw-build` executable, provider helpers, and their executable permissions.
+Copy both archives into `.build/ci` in a separate checkout of the same revision on the same operating system and architecture, then run:
+
+```sh
+tar -xf .build/ci/lifecycle-inputs.tar
+.build/ci/nemoclaw-build ci lifecycle --archive-file .build/ci/lifecycle.tar.zst --partition hash:1/2
+```
+
+The worker remaps test working directories to this checkout and extracts nextest files into `.build/ci/extracted`.
+Repeating the command overwrites that extraction directory's archived files.
+The worker does not compile; it writes JUnit timings under `target/nextest/lifecycle`.
+Both options require an explicitly selected `lifecycle` step, so they cannot silently narrow plain `cargo ci`.
+CI retains the input archives for one day; rerunning a failed shard uses its producer's artifact, even from an earlier attempt.
+After the artifact expires, rerun the complete workflow to rebuild it.
 
 ## Dependency Policy
 
@@ -162,6 +195,10 @@ Only `v1` writes Rust dependency caches; PRs restore the base branch cache and s
 This avoids spending PR time saving caches scoped to individual pull requests.
 
 Dependency caches are keyed by platform and the Rust toolchain, manifests, lockfile, and build environment, rather than each source commit.
+Native, Docker, and Kind jobs share each platform's dependency cache instead of adding their job names to its key.
+Only the native build job writes that shared cache; Docker and Kind jobs restore it without uploading duplicate copies.
+Documentation and Brev retain separate cache prefixes.
+The shared key causes a one-time cold build when first enabled; old job-specific entries can expire normally.
 
 The checksum-addressed OpenTofu archives in `.build/downloads` use a separate cache keyed by platform and `versions.json`.
 Source-only changes reuse that archive cache without uploading it again.

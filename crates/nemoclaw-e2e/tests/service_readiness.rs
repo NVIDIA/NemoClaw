@@ -27,7 +27,8 @@ async fn standalone_readiness(proxy: bool) {
     let root = directory.path();
     fs::create_dir(root.join("bin")).unwrap();
     std::os::unix::fs::symlink(
-        env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
+        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
+            .expect("Cargo sets the fixture executable path"),
         root.join("bin/ssh"),
     )
     .unwrap();
