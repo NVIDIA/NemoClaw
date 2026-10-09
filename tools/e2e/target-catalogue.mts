@@ -1014,6 +1014,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: false,
     cloudflared: true,
     owningPaths: [
+      "src/lib/inference/native-custom/",
+      "src/lib/inference/native-provider/",
+      "src/lib/actions/inference-set/native-custom.ts",
+      "src/lib/state/registry/native-custom-provider-authority.ts",
+      "src/lib/onboard/resume/native-custom.ts",
       "tools/e2e/onboard-timeout-contract.mts",
       "test/e2e/live/inference-routing-native-anthropic.ts",
       "test/e2e/live/inference-routing-helpers.ts",

@@ -4,8 +4,10 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { D, R } from "../../cli/terminal-style";
 import { isBedrockRuntimeEndpoint } from "../../inference/bedrock-runtime";
 import { DEFAULT_ROUTE_CREDENTIAL_ENV } from "../../inference/config";
+import { isNativeCustomProvider } from "../../inference/native-custom/profile";
 import { validateNvidiaApiKeyValue } from "../../validation";
 import { hydrateCredentialEnv } from "../credential-env";
+import type { RetainedNativeCustomSelection } from "../resume/native-custom";
 import {
   matchesGatewayProviderBinding,
   readGatewayProviderMetadata,
@@ -35,6 +37,11 @@ export type ResumeProviderShimDeps = {
 
 export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
   return {
+    async hasRetainedNativeCustomSelection(input: RetainedNativeCustomSelection) {
+      if (!isNativeCustomProvider(input.provider) || !input.sandboxName) return false;
+      const { hasRetainedNativeCustomSelection } = await import("../resume/native-custom");
+      return hasRetainedNativeCustomSelection(input);
+    },
     async ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
       sandboxName: string | null | undefined,

@@ -66,3 +66,21 @@ export function clearNativeCustomProviderAuthority(
     save(data);
   });
 }
+
+/** Require the sandbox receipt and gateway-scoped ownership to describe the same provider. */
+export function getMatchingNativeCustomProviderAuthority(
+  gatewayName: string,
+  sandboxName: string,
+  value: unknown,
+  getAuthority = getNativeCustomProviderAuthority,
+): NativeCustomProviderAttachment {
+  const receipt = normalizeNativeCustomProviderAttachment(value, sandboxName);
+  if (!receipt) throw new Error("Recorded native custom selection cannot authorize resume.");
+  const authority = normalizeNativeCustomProviderAttachment(
+    getAuthority(gatewayName, receipt.providerName),
+    sandboxName,
+  );
+  if (!authority || JSON.stringify(authority) !== JSON.stringify(receipt))
+    throw new Error("Native custom sandbox and gateway authority disagree during resume.");
+  return receipt;
+}

@@ -844,6 +844,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 }
 
 /** Use the existing destroy-module loader so the spy observes the consumer's module identity. */
+export function nativeCustomDestroyAuthorityStore() {
+  return requireSource(
+    "../../state/registry/native-custom-provider-authority.js",
+  ) as typeof import("../../src/lib/state/registry/native-custom-provider-authority");
+}
+
+/** Use the existing destroy-module loader so the spy observes the consumer's module identity. */
 export function spyOnNativeCustomDestroyCleanup(
   action: typeof import("../../src/lib/inference/native-custom/cleanup").retireNativeCustomProviders,
 ) {

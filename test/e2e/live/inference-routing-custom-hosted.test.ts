@@ -288,6 +288,7 @@ test(
       timeoutMs: 60_000,
     });
     expect(status.exitCode, redactedResultText(status)).toBe(0);
+    const restartRequestOffset = fake.requests().length;
     const nativeTurn = await sandbox.exec(
       sandboxName,
       [
@@ -311,6 +312,18 @@ test(
     );
     expect(nativeTurn.exitCode, resultText(nativeTurn)).toBe(0);
     expect(parseOpenClawAgentText(nativeTurn.stdout)).toMatch(/PONG/u);
+    expect(
+      fake
+        .requests()
+        .slice(restartRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            JSON.parse(request.body).model === model,
+        ),
+    ).toBe(true);
     progress.phase("verify peer attachment and isolation");
     const peerName = inferenceSandboxName("e2e-https-peer");
     cleanup.add(`strict native HTTPS peer cleanup for ${peerName}`, () =>

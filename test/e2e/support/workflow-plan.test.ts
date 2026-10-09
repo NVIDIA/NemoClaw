@@ -289,6 +289,23 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it.each([
+    "src/lib/inference/native-custom/transport.ts",
+    "src/lib/actions/inference-set/native-custom.ts",
+    "src/lib/state/registry/native-custom-provider-authority.ts",
+    "src/lib/onboard/resume/native-custom.ts",
+  ])("selects native custom lifecycle evidence when %s changes (#12636)", (changedFile) => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: [changedFile], gatewayRuntimes: ["docker"] },
+    );
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .map((row) => row.id),
+    ).toContain("inference-routing-custom-hosted");
+  });
+
   it("selects ordinary agent consumers and inference restart for a scope patch", () => {
     const plan = buildE2eWorkflowPlan(
       {},

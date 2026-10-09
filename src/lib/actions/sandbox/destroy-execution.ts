@@ -45,6 +45,7 @@ import {
 import { redact, redactFull } from "../../security/redact";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
+import { listNativeCustomProviderAuthorities } from "../../state/registry/native-custom-provider-authority";
 import {
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentityProof,
@@ -313,6 +314,7 @@ export type SandboxDestroyExecutionResult =
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
       portableLifecycleOwnershipRequiresGateway?: boolean;
+      nativeCustomOwnershipRequiresGateway?: boolean;
       hostLocalInferenceCleanupFailure?: string;
       deleteConfirmed?: boolean;
     };
@@ -934,7 +936,10 @@ export async function executeSandboxDestroy({
       }
     }
     const deleteFailed = deleteResult.kind === "failed" && !alreadyGone;
-    // Exact MCP, host-local inference, and Portable lifecycle ownership must
+    const hasNativeCustomOwnership =
+      sandbox?.nativeCustomProviderAttachment !== undefined ||
+      listNativeCustomProviderAuthorities(effectiveDeleteGatewayName, sandboxName).length > 0;
+    // Exact MCP, native custom, host-local inference, and Portable lifecycle ownership must
     // survive an unconfirmed remote deletion. Force may discard only a local
     // record that retains none of those cleanup authorities.
     const forcedLocalCleanup =
@@ -947,6 +952,7 @@ export async function executeSandboxDestroy({
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
+      !hasNativeCustomOwnership &&
       portableContainerAuthority === undefined;
 
     if (deleteFailed && !forcedLocalCleanup) {
@@ -965,6 +971,7 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
         portableLifecycleOwnershipRequiresGateway:
           gatewayUnreachable && portableContainerAuthority !== undefined,
+        nativeCustomOwnershipRequiresGateway: gatewayUnreachable && hasNativeCustomOwnership,
       };
     }
 

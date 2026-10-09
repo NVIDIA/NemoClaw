@@ -1012,6 +1012,13 @@ async function destroySandboxUnlocked(
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force does not bypass MCP source inspection.`,
         );
+      } else if (destructiveResult.nativeCustomOwnershipRequiresGateway) {
+        console.error(
+          "  The OpenShell gateway is unreachable. The sandbox record and native custom provider authority were preserved for cleanup recovery.",
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot discard native custom provider ownership.`,
+        );
       } else if (destructiveResult.portableLifecycleOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. NemoClaw preserved the sandbox registry record and schema-4 Portable receipt because OpenShell sandbox deletion and absence of the exact Podman container are unconfirmed.`,

@@ -9,15 +9,12 @@ import {
   createDestroyHarness,
   resetDestroyModuleCache,
   spyOnNativeCustomDestroyCleanup,
+  nativeCustomDestroyAuthorityStore,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import {
   prepareNativeCustomProfile,
   customAttachmentFromPrepared,
 } from "../../inference/native-custom";
-import {
-  listNativeCustomProviderAuthorities,
-  setNativeCustomProviderAuthority,
-} from "../../state/registry/native-custom-provider-authority";
 
 let temporaryHome: string;
 let originalGateway: string | undefined;
@@ -39,7 +36,7 @@ afterEach(() => {
   fs.rmSync(temporaryHome, { recursive: true, force: true });
 });
 
-async function fixture(attached = true) {
+async function fixture(attached = true, unreachable = false) {
   const prepared = await prepareNativeCustomProfile({
     sandboxName: "alpha",
     provider: "compatible-endpoint",
@@ -53,17 +50,41 @@ async function fixture(attached = true) {
     providerId: "owned-id",
   });
   const harness = createDestroyHarness({
+    ...(unreachable
+      ? { deleteStatus: 1, deleteOutput: "error trying to connect: connection refused" }
+      : {}),
     registryEntryOverrides: {
       provider: "compatible-endpoint",
       nativeCustomProviderAttachment: attached ? receipt : undefined,
     },
   });
-  setNativeCustomProviderAuthority("nemoclaw-19080", receipt);
+  nativeCustomDestroyAuthorityStore().setNativeCustomProviderAuthority("nemoclaw-19080", receipt);
   const retire = spyOnNativeCustomDestroyCleanup(async () => {
     harness.events.push("native-cleanup");
   });
   return { harness, retire };
 }
+
+it.each([true, false])(
+  "retains native ownership during forced destroy with unreachable gateway and attachment %s (#12636)",
+  async (attached) => {
+    const { harness, retire } = await fixture(attached, true);
+    await expect(harness.destroySandbox("alpha", { yes: true, force: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(retire).not.toHaveBeenCalled();
+    expect(
+      nativeCustomDestroyAuthorityStore().listNativeCustomProviderAuthorities(
+        "nemoclaw-19080",
+        "alpha",
+      ),
+    ).toHaveLength(1);
+    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "--force cannot discard native custom provider ownership",
+    );
+  },
+);
 
 it.each([true, false])(
   "retires owned native providers after confirmed deletion with attachment %s (#12636)",
@@ -88,6 +109,11 @@ it.each([true, false])(
     ).rejects.toThrow("native custom provider cleanup could not be verified");
     expect(harness.events).toContain("delete");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-    expect(listNativeCustomProviderAuthorities("nemoclaw-19080", "alpha")).toHaveLength(1);
+    expect(
+      nativeCustomDestroyAuthorityStore().listNativeCustomProviderAuthorities(
+        "nemoclaw-19080",
+        "alpha",
+      ),
+    ).toHaveLength(1);
   },
 );
