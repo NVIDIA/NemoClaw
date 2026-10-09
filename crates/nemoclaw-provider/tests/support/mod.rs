@@ -16,7 +16,11 @@ pub fn specification(kind: &str) -> Value {
         .into_iter()
         .find(|target| target.kind == kind)
         .unwrap();
-    serde_json::from_str(&target.values["spec"]).unwrap()
+    // Gateways and their storage take typed attributes instead of a spec.
+    target.values.get("spec").map_or_else(
+        || serde_json::json!(target.values),
+        |spec| serde_json::from_str(spec).unwrap(),
+    )
 }
 
 /// A served resource definition with its planning rules, narrowed to the
@@ -30,6 +34,7 @@ pub fn definition(
         .or_else(|| {
             openshell_provider::definitions()
                 .into_iter()
+                .chain(fabric_provider::definitions())
                 .find(|definition| definition.kind == kind)
         })
         .unwrap();

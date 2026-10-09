@@ -1,23 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Image runtime metadata, with the Fabric adapter and deployment policy rules
-//! that only the SDK applies.
-use crate::{config::ExplicitPolicy, fabric_catalog::FabricAdapter};
+//! Image runtime metadata, with the deployment policy rules that only the SDK applies.
+use crate::config::ExplicitPolicy;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use nemoclaw_openshell::runtime::{
     ClusterGrants, ImageRuntime, PolicyInput, RuntimeBinding, path_is_granted,
 };
-
-/// Whether `runtime` is well formed and resolves every installed adapter.
-pub(crate) fn valid_for(runtime: &ImageRuntime, adapters: &[FabricAdapter]) -> bool {
-    runtime.valid_layout()
-        && runtime.binaries.len() == adapters.len()
-        && adapters
-            .iter()
-            .all(|adapter| runtime.binaries.contains_key(adapter.adapter_id()))
-}
 
 /// Authored policy and deployment-owned endpoint grants for a sandbox.
 pub fn policy_input(

@@ -41,8 +41,8 @@ fn native_telemetry_settings_are_opaque_and_do_not_implicitly_grant_network_acce
             .contains_key("nemoclaw-otlp")
     );
     let graph = compile(&document, &generations, "0.1.0").unwrap();
-    let encoded = graph["resource"]["nemoclaw_agent_configuration"]
-        [&document.spec.sandboxes[0].name]["config_json"]
+    let encoded = graph["resource"]["fabric_agent_configuration"][&document.spec.sandboxes[0].name]
+        ["config_json"]
         .as_str()
         .unwrap();
     assert!(encoded.contains("agent $${fixture} %%{literal}"));

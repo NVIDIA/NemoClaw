@@ -255,14 +255,34 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
         .into_iter()
         .find(|target| target.kind == "managed_gateway")
         .unwrap();
-    let mut spec: Value = serde_json::from_str(&target.values["spec"]).unwrap();
-    spec["gateway"]["engine"] = json!(fixture.endpoint);
+    // Planning checks prerequisites only for known identity; omitted identity
+    // is generated during apply.
+    let mut settings = target.values.clone();
+    settings.remove("image_pull_policy");
+    settings.insert("engine".into(), fixture.endpoint.clone());
+    fs::remove_file(e.dir.path().join("main.tf.json")).unwrap();
     let configure = |policy: &str| {
-        fs::write(e.dir.path().join("main.tf.json"), json!({
-            "terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}},
-            "provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}},
-            "resource":{"nemoclaw_managed_gateway":{"gateway":{"spec":spec.to_string(), "image_pull_policy":policy}}}
-        }).to_string()).unwrap();
+        let attributes: String = settings
+            .iter()
+            .chain([(&"image_pull_policy".to_owned(), &policy.to_owned())])
+            .map(|(name, value)| format!("  {name} = {}\n", json!(value)))
+            .collect();
+        fs::write(
+            e.dir.path().join("main.tf"),
+            format!(
+                r#"terraform {{
+  required_version = "= 1.12.6"
+  required_providers {{
+    nemoclaw = {{ source = "registry.opentofu.org/nvidia/nemoclaw" }}
+  }}
+}}
+provider "nemoclaw" {{}}
+resource "nemoclaw_managed_gateway" "gateway" {{
+{attributes}}}
+"#
+            ),
+        )
+        .unwrap();
     };
     configure("Never");
     e.success(&["validate"]);

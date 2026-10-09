@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{Diagnostics, diagnostics::diagnostic};
-use nemoclaw_sdk::fabric_capabilities::schema_accepts;
+use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Map, Value};
 
 #[derive(Clone, Debug, PartialEq)]

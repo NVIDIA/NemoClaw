@@ -16,7 +16,7 @@ fn service_capacity_is_exposed_as_read_only_data() {
         .expect("combined capacity data source")
         .schema(&mut diagnostics)
         .unwrap();
-    for field in ["engine", "specs"] {
+    for field in ["engine", "contracts"] {
         assert!(matches!(
             schema.block.attributes[field].constraint,
             AttributeConstraint::Required
@@ -37,7 +37,6 @@ fn production_provider_serves_platform_resources_but_not_openshell_objects() {
     let mut diagnostics = Diagnostics::default();
     let resources = provider.get_resources(&mut diagnostics).unwrap();
     for name in [
-        "agent_configuration",
         "managed_gateway",
         "gateway_storage",
         "inference_storage",
@@ -49,24 +48,27 @@ fn production_provider_serves_platform_resources_but_not_openshell_objects() {
     ] {
         assert!(resources.contains_key(name), "{name}");
     }
-    for name in ["workspace", "provider", "provider_profile", "sandbox"] {
+    // OpenShell objects and Fabric agents have their own providers.
+    for name in [
+        "workspace",
+        "provider",
+        "provider_profile",
+        "sandbox",
+        "agent_configuration",
+    ] {
         assert!(!resources.contains_key(name), "{name}");
     }
     let sources = provider.get_data_sources(&mut diagnostics).unwrap();
-    assert!(!sources.contains_key("gateway_capabilities"));
-    let schema = provider.schema(&mut diagnostics).unwrap();
-    for name in [
-        "endpoint",
-        "credential_env",
-        "tls_ca_env",
-        "tls_certificate_env",
-        "tls_key_env",
-        "destroy",
-        "platform_only",
-    ] {
-        assert!(schema.block.attributes.contains_key(name));
+    for name in ["gateway_capabilities", "sandbox_readiness"] {
+        assert!(!sources.contains_key(name), "{name}");
     }
-    assert!(!schema.block.attributes.contains_key("ollama_engine"));
+    // Every resource names its own engine or cluster; the provider only
+    // grants teardown permission.
+    let schema = provider.schema(&mut diagnostics).unwrap();
+    assert_eq!(
+        schema.block.attributes.keys().collect::<Vec<_>>(),
+        ["destroy"]
+    );
     assert!(diagnostics.errors.is_empty());
 }
 
@@ -152,19 +154,19 @@ fn engine_discovery_is_available_without_a_gateway() {
     let provider = NemoClawProvider::default();
     let mut diagnostics = Diagnostics::default();
     let sources = provider.get_data_sources(&mut diagnostics).unwrap();
-    for kind in ["engine_capabilities", "fabric_capabilities"] {
-        let schema = sources
-            .get(kind)
-            .expect("read-only discovery data source")
-            .schema(&mut diagnostics)
-            .unwrap();
-        assert!(matches!(
-            schema.block.attributes["observation_json"].constraint,
-            AttributeConstraint::Computed
-        ));
-    }
+    let schema = sources
+        .get("engine_capabilities")
+        .expect("read-only discovery data source")
+        .schema(&mut diagnostics)
+        .unwrap();
     assert!(matches!(
-        provider.schema(&mut diagnostics).unwrap().block.attributes["endpoint"].constraint,
+        schema.block.attributes["observation_json"].constraint,
+        AttributeConstraint::Computed
+    ));
+    // Fabric image reads belong to the fabric provider.
+    assert!(!sources.contains_key("fabric_capabilities"));
+    assert!(matches!(
+        provider.schema(&mut diagnostics).unwrap().block.attributes["destroy"].constraint,
         AttributeConstraint::Optional
     ));
 }
@@ -190,4 +192,144 @@ fn inference_discovery_keeps_credentials_as_optional_references() {
         AttributeConstraint::Computed
     ));
     assert!(!schema.block.attributes.contains_key("credential"));
+}
+
+#[test]
+fn ollama_proxy_identity_is_optional_and_computed() {
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let resources = provider.get_resources(&mut diagnostics).unwrap();
+    for kind in ["ollama_proxy_storage", "ollama_external_model"] {
+        let schema = resources[kind].schema(&mut diagnostics).unwrap();
+        for attribute in ["owner", "generation"] {
+            assert!(
+                matches!(
+                    schema.block.attributes[attribute].constraint,
+                    tf_provider::schema::AttributeConstraint::OptionalComputed
+                ),
+                "{kind}.{attribute}"
+            );
+        }
+    }
+    assert!(diagnostics.errors.is_empty());
+}
+
+#[test]
+fn managed_gateway_resources_take_typed_settings() {
+    use tf_provider::schema::AttributeConstraint::{OptionalComputed, Required};
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let resources = provider.get_resources(&mut diagnostics).unwrap();
+    for (kind, endpoint) in [("managed_gateway", true), ("gateway_storage", false)] {
+        let schema = resources[kind].schema(&mut diagnostics).unwrap();
+        let attributes = &schema.block.attributes;
+        assert!(!attributes.contains_key("spec"), "{kind}");
+        for attribute in ["name", "compute_driver", "engine", "image", "network_cidr"] {
+            assert!(
+                matches!(attributes[attribute].constraint, Required),
+                "{kind}.{attribute}"
+            );
+        }
+        for attribute in ["owner", "generation"] {
+            assert!(
+                matches!(attributes[attribute].constraint, OptionalComputed),
+                "{kind}.{attribute}"
+            );
+        }
+        assert!(
+            matches!(
+                (&attributes["endpoint"].constraint, endpoint),
+                (Required, true) | (OptionalComputed, false)
+            ),
+            "{kind}.endpoint"
+        );
+    }
+    assert!(diagnostics.errors.is_empty());
+}
+
+#[test]
+fn service_observations_take_typed_inputs_instead_of_compiled_specs() {
+    use tf_provider::schema::AttributeConstraint::{Optional, Required};
+    let mut diagnostics = Diagnostics::default();
+    let sources = NemoClawProvider::default()
+        .get_data_sources(&mut diagnostics)
+        .unwrap();
+    for (source, required, optional) in [
+        (
+            "runtime_image",
+            &["engine", "image", "architecture"][..],
+            &["labels", "image_id", "allow_missing"][..],
+        ),
+        (
+            "service_readiness",
+            &["engine", "name", "contract", "container_id"][..],
+            &["wait_timeout_seconds", "read_trigger"][..],
+        ),
+        ("service_capacity", &["engine", "contracts"][..], &[][..]),
+    ] {
+        let schema = sources[source].schema(&mut diagnostics).unwrap();
+        let attributes = &schema.block.attributes;
+        assert!(!attributes.contains_key("spec"), "{source}");
+        for attribute in required {
+            assert!(
+                matches!(attributes[*attribute].constraint, Required),
+                "{source}.{attribute}"
+            );
+        }
+        for attribute in optional {
+            assert!(
+                matches!(attributes[*attribute].constraint, Optional),
+                "{source}.{attribute}"
+            );
+        }
+    }
+    assert!(diagnostics.errors.is_empty());
+}
+
+#[test]
+fn kubernetes_resources_take_typed_settings() {
+    use tf_provider::schema::{
+        AttributeConstraint::{OptionalComputed, Required},
+        AttributeType,
+    };
+    let provider = NemoClawProvider::default();
+    let mut diagnostics = Diagnostics::default();
+    let resources = provider.get_resources(&mut diagnostics).unwrap();
+    for kind in [
+        "kubernetes_storage",
+        "kubernetes_auth",
+        "kubernetes_gateway",
+    ] {
+        let schema = resources[kind].schema(&mut diagnostics).unwrap();
+        let attributes = &schema.block.attributes;
+        assert!(!attributes.contains_key("spec"), "{kind}");
+        for attribute in [
+            "name",
+            "compute_driver",
+            "endpoint",
+            "kubeconfig_env",
+            "context",
+            "namespace",
+            "authentication_profile",
+        ] {
+            assert!(
+                matches!(attributes[attribute].constraint, Required),
+                "{kind}.{attribute}"
+            );
+        }
+        for attribute in ["owner", "generation"] {
+            assert!(
+                matches!(attributes[attribute].constraint, OptionalComputed),
+                "{kind}.{attribute}"
+            );
+        }
+        assert!(
+            matches!(
+                &attributes["environment"].attr_type,
+                AttributeType::List(item) if matches!(**item, AttributeType::String)
+            ),
+            "{kind}.environment"
+        );
+    }
+    assert!(diagnostics.errors.is_empty());
 }

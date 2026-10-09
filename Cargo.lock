@@ -937,6 +937,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemo-fabric-core",
+ "nemoclaw-backend",
+ "nemoclaw-docker",
+ "nemoclaw-fabric",
+ "nemoclaw-openshell",
+ "nemoclaw-tofu",
+ "openshell-provider",
+ "regex",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tf-provider",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "fancy-regex"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2324,6 +2346,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "nemoclaw-docker",
+ "nemoclaw-fabric",
  "nemoclaw-openshell",
  "nemoclaw-sdk",
  "openshell-sdk",
@@ -2363,6 +2386,7 @@ name = "nemoclaw-e2e"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "fabric-provider",
  "getrandom 0.4.3",
  "http",
  "nemoclaw-openshell",
@@ -2386,6 +2410,22 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tower",
+]
+
+[[package]]
+name = "nemoclaw-fabric"
+version = "0.1.0"
+dependencies = [
+ "nemo-fabric-core",
+ "nemoclaw-backend",
+ "nemoclaw-docker",
+ "nemoclaw-openshell",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -2447,11 +2487,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bollard",
+ "fabric-provider",
  "futures-util",
  "getrandom 0.4.3",
  "interprocess",
  "ipnet",
- "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-discovery",
  "nemoclaw-docker",
@@ -2525,6 +2565,7 @@ dependencies = [
  "nemo-fabric-core",
  "nemoclaw-backend",
  "nemoclaw-docker",
+ "nemoclaw-fabric",
  "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
@@ -2543,7 +2584,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "thiserror 2.0.20",
  "time",
  "tokio",
  "tokio-util",

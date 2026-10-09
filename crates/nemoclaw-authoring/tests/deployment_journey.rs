@@ -270,7 +270,7 @@ fn single_sandbox_examples_offer_existing_sdk_values_without_changing_them() {
         for question in &questions {
             assert_eq!(question.suggestion(), before.pointer(question.id()));
             assert_eq!(
-                nemoclaw_sdk::fabric_capabilities::schema_accepts(
+                nemoclaw_sdk::json_schema::schema_accepts(
                     question.schema(),
                     question.suggestion().unwrap()
                 ),

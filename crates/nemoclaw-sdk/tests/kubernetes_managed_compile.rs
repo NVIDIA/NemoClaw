@@ -156,7 +156,17 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             .iter()
             .all(|target| target.kind.starts_with("kubernetes_") || target.kind == "helm_release")
     );
-    assert_eq!(platform["provider"]["nemoclaw"]["platform_only"], true);
+    // The platform stage has no gateway, so it omits the gateway providers.
+    assert_eq!(platform["provider"]["nemoclaw"], json!({}));
+    for provider in ["openshell", "fabric"] {
+        assert!(platform["provider"].get(provider).is_none(), "{provider}");
+        assert!(
+            platform["terraform"]["required_providers"]
+                .get(provider)
+                .is_none(),
+            "{provider}"
+        );
+    }
     assert!(platform.get("data").is_none());
     assert!(
         platform["terraform"]["required_providers"]
@@ -181,34 +191,39 @@ fn managed_kubernetes_stages_owned_platform_before_authenticated_agents() {
             "${self.running == \"true\"}"
         );
     }
-    let spec: serde_json::Value = serde_json::from_str(
-        platform["resource"]["nemoclaw_kubernetes_gateway"]["runtime"]["spec"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        spec["settings"]["kubernetes"]["kubeconfig"]["env"],
-        "TEST_KUBECONFIG"
-    );
-    assert_eq!(spec["generation"], "a".repeat(32));
+    // Every platform resource takes the cluster target as typed attributes.
+    for kind in [
+        "nemoclaw_kubernetes_storage",
+        "nemoclaw_kubernetes_auth",
+        "nemoclaw_kubernetes_gateway",
+    ] {
+        let resource = &platform["resource"][kind]["runtime"];
+        assert!(resource.get("spec").is_none(), "{kind}");
+        assert_eq!(resource["kubeconfig_env"], "TEST_KUBECONFIG", "{kind}");
+        assert_eq!(resource["context"], "test-cluster", "{kind}");
+        assert_eq!(resource["namespace"], "test-agents", "{kind}");
+        assert_eq!(resource["compute_driver"], "kubernetes", "{kind}");
+        assert_eq!(resource["endpoint"], "https://127.0.0.1:17671", "{kind}");
+        assert_eq!(resource["authentication_profile"], "development", "{kind}");
+        assert_eq!(resource["generation"], "a".repeat(32), "{kind}");
+        assert!(resource.get("environment").is_none(), "{kind}");
+    }
     let agents = compile(&document, &generations, "0.1.0").unwrap();
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["credential_env"],
-        "NEMOCLAW_MANAGED_K8S_TOKEN"
-    );
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["tls_ca_env"],
-        "NEMOCLAW_MANAGED_K8S_CA"
-    );
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["tls_certificate_env"],
-        "NEMOCLAW_MANAGED_K8S_CERT"
-    );
-    assert_eq!(
-        agents["provider"]["nemoclaw"]["tls_key_env"],
-        "NEMOCLAW_MANAGED_K8S_KEY"
-    );
+    // The managed gateway's credentials reach both gateway providers.
+    for provider in ["openshell", "fabric"] {
+        for (field, expected) in [
+            ("credential_env", "NEMOCLAW_MANAGED_K8S_TOKEN"),
+            ("tls_ca_env", "NEMOCLAW_MANAGED_K8S_CA"),
+            ("tls_certificate_env", "NEMOCLAW_MANAGED_K8S_CERT"),
+            ("tls_key_env", "NEMOCLAW_MANAGED_K8S_KEY"),
+        ] {
+            assert_eq!(
+                agents["provider"][provider][field], expected,
+                "{provider}.{field}"
+            );
+        }
+    }
+    assert_eq!(agents["provider"]["nemoclaw"], json!({}));
     assert!(
         agents["resource"]
             .get("nemoclaw_kubernetes_gateway")
@@ -242,10 +257,70 @@ fn managed_kubernetes_discovery_never_uses_a_local_container_engine() {
             .get("nemoclaw_inference_capabilities")
             .is_some()
     );
-    let image = &agents["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"];
+    let image = &agents["data"]["fabric_capabilities"]["sandbox_0"];
     assert_eq!(image["engine"], "");
     assert_eq!(image["metadata_env"], "TEST_IMAGE_METADATA");
     assert!(image.get("architecture").is_none());
     let platform = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(platform.get("output").is_none());
+}
+
+#[test]
+fn kubernetes_attributes_reproduce_each_resource_specification() {
+    use nemoclaw_sdk::kubernetes::{AUTH_KIND, GATEWAY_KIND, STORAGE_KIND, Spec};
+    let mut value = serde_json::to_value(document()).unwrap();
+    value["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    value["spec"]["gateway"]["runtime"]["provider"] = json!("openshift");
+    let generations = [
+        "workspace",
+        "provider",
+        "sandbox",
+        "kubernetes_gateway",
+        "kubernetes_storage",
+    ]
+    .map(|kind| (kind.into(), "a".repeat(32)))
+    .into();
+    for document in [
+        document(),
+        Document::parse(serde_json::to_vec(&value).unwrap().as_slice()).unwrap(),
+    ] {
+        for target in runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| target.kind.starts_with("kubernetes_"))
+        {
+            let spec = Spec::from_row(&target.kind, &target.values).unwrap();
+            assert_eq!(spec.row().unwrap(), target.values);
+            assert_eq!(spec.kind, target.kind);
+            let kubernetes = spec.settings.kubernetes.as_ref().unwrap();
+            assert_eq!(kubernetes.context, "test-cluster");
+            assert_eq!(
+                document
+                    .spec
+                    .gateway
+                    .as_managed()
+                    .unwrap()
+                    .kubernetes
+                    .as_ref(),
+                Some(kubernetes)
+            );
+            assert!(matches!(
+                target.kind.as_str(),
+                STORAGE_KIND | AUTH_KIND | GATEWAY_KIND
+            ));
+            for (attribute, invalid) in [
+                ("compute_driver", "docker"),
+                ("namespace", "Not A Namespace"),
+                ("kubeconfig_env", "lowercase"),
+                ("endpoint", "http://127.0.0.1:17671"),
+                ("authentication_profile", "production"),
+                ("environment_json", "[\"KUBECONFIG\"]"),
+            ] {
+                let mut row = target.values.clone();
+                row.insert(attribute.into(), invalid.into());
+                assert!(Spec::from_row(&target.kind, &row).is_err(), "{attribute}");
+            }
+            assert!(Spec::from_row("managed_gateway", &target.values).is_err());
+        }
+    }
 }

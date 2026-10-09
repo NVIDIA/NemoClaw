@@ -31,6 +31,30 @@ struct Workspace {
 
 impl Workspace {
     fn new(engine: &str, runtime: &str) -> Self {
+        Self::contract(engine, "vllm_runtime", "NEMOCLAW_RUNTIME_SPEC", runtime)
+    }
+
+    /// A container whose `variable` takes the `source` data source's contract.
+    fn contract(engine: &str, source: &str, variable: &str, settings: &str) -> Self {
+        Self::with(
+            engine,
+            &format!(
+                r#"data "nemoclaw_{source}" "qwen" {{
+{settings}}}
+
+resource "docker_container" "qwen" {{
+  name       = "qwen"
+  image      = "runtime@sha256:{digest}"
+  env        = ["{variable}=${{data.nemoclaw_{source}.qwen.spec}}"]
+}}
+"#,
+                digest = "a".repeat(64),
+            ),
+        )
+    }
+
+    /// A workspace declaring `body` beside the NemoClaw and Docker providers.
+    fn with(engine: &str, body: &str) -> Self {
         let bundle =
             PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
         assert!(bundle.is_absolute());
@@ -60,25 +84,13 @@ impl Workspace {
   }}
 }}
 
-provider "nemoclaw" {{
-  endpoint = "http://127.0.0.1:1"
-}}
+provider "nemoclaw" {{}}
 
 provider "docker" {{
   host = "{engine}"
 }}
 
-data "nemoclaw_vllm_runtime" "qwen" {{
-{runtime}}}
-
-resource "docker_container" "qwen" {{
-  name       = "qwen"
-  image      = "vllm@sha256:{digest}"
-  entrypoint = ["/usr/local/bin/nemoclaw-runtime"]
-  env        = ["NEMOCLAW_RUNTIME_SPEC=${{data.nemoclaw_vllm_runtime.qwen.spec}}"]
-}}
-"#,
-                digest = "a".repeat(64),
+{body}"#
             ),
         )
         .unwrap();
@@ -186,4 +198,166 @@ async fn vllm_runtime_rejects_unknown_and_invalid_settings_at_their_attributes()
         assert!(!output.status.success(), "{runtime}");
         assert!(stderr.contains(expected), "{expected}: {stderr}");
     }
+}
+
+/// The planned container's contract in `variable`.
+fn planned_contract(workspace: &Workspace, variable: &str) -> Value {
+    let output = workspace.plan();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan: Value =
+        serde_json::from_slice(&workspace.run(&["show", "-json", "runtime.plan"]).stdout).unwrap();
+    let container = plan["resource_changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["address"] == "docker_container.qwen")
+        .unwrap();
+    let environment = container["change"]["after"]["env"][0].as_str().unwrap();
+    serde_json::from_str(
+        environment
+            .strip_prefix(&format!("{variable}="))
+            .expect("the planned container carries the contract"),
+    )
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; no live services"]
+async fn authored_ollama_containers_take_their_contracts_from_typed_settings() {
+    let engine = engine().await;
+    let digest = "7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435";
+    let workspace = Workspace::contract(
+        &engine.endpoint,
+        "ollama_runtime",
+        "NEMOCLAW_RUNTIME_SPEC",
+        &format!(
+            r#"  hardware {{
+    profile = "dgx-spark"
+  }}
+  model {{
+    name   = "qwen3:0.6b"
+    digest = "{digest}"
+  }}
+  serving {{
+    context_tokens = 8192
+  }}
+"#
+        ),
+    );
+    let spec = planned_contract(&workspace, "NEMOCLAW_RUNTIME_SPEC");
+    nemoclaw_runtime::RuntimeSpec::decode(&spec.to_string()).expect("the runtime accepts it");
+    assert_eq!(spec["kind"], "ollama");
+    assert_eq!(spec["model"]["name"], "qwen3:0.6b");
+
+    let workspace = Workspace::contract(
+        &engine.endpoint,
+        "ollama_proxy_runtime",
+        "NEMOCLAW_OLLAMA_PROXY",
+        &format!(
+            r#"  bind_address = "127.0.0.1:11435"
+  upstream     = "http://127.0.0.1:11434/v1"
+  model        = "qwen3:0.6b"
+  digest       = "{digest}"
+"#
+        ),
+    );
+    let spec = planned_contract(&workspace, "NEMOCLAW_OLLAMA_PROXY");
+    assert_eq!(
+        spec,
+        json!({"upstream": "http://127.0.0.1:11434/v1", "endpoint": "http://127.0.0.1:11435/v1", "model": "qwen3:0.6b", "digest": digest})
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit NEMOCLAW_TEST_BUNDLE; no live services"]
+async fn authored_docker_gateway_takes_its_launch_from_typed_settings() {
+    let engine = engine().await;
+    let workspace = Workspace::with(
+        &engine.endpoint,
+        &format!(
+            r#"data "nemoclaw_gateway_runtime" "gateway" {{
+  name      = "nc-0123456789abcdef-gateway"
+  endpoint  = "http://127.0.0.1:17670"
+  data_path = "/var/lib/docker/volumes/nc-0123456789abcdef-gateway-data/_data"
+}}
+
+resource "docker_container" "gateway" {{
+  name       = "nc-0123456789abcdef-gateway"
+  image      = "gateway@sha256:{digest}"
+  entrypoint = data.nemoclaw_gateway_runtime.gateway.entrypoint
+  command    = data.nemoclaw_gateway_runtime.gateway.command
+  env        = data.nemoclaw_gateway_runtime.gateway.env
+}}
+"#,
+            digest = "a".repeat(64),
+        ),
+    );
+    let output = workspace.plan();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan: Value =
+        serde_json::from_slice(&workspace.run(&["show", "-json", "runtime.plan"]).stdout).unwrap();
+    let container = plan["resource_changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["address"] == "docker_container.gateway")
+        .unwrap();
+    let data = "/var/lib/docker/volumes/nc-0123456789abcdef-gateway-data/_data";
+    let after = &container["change"]["after"];
+    assert_eq!(
+        after["entrypoint"],
+        json!(["/usr/local/bin/openshell-gateway"])
+    );
+    assert_eq!(
+        after["command"],
+        json!([
+            "--config",
+            format!("{data}/gateway.toml"),
+            "--name",
+            "nc-0123456789abcdef-gateway",
+            "--bind-address",
+            "0.0.0.0",
+            "--port",
+            "17670"
+        ])
+    );
+    let mut environment: Vec<_> = after["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect();
+    environment.sort();
+    assert_eq!(
+        environment,
+        [
+            format!("OPENSHELL_DB_URL=sqlite:{data}/gateway.db"),
+            format!("XDG_STATE_HOME={data}/state"),
+        ]
+    );
+
+    let workspace = Workspace::with(
+        &engine.endpoint,
+        r#"data "nemoclaw_gateway_runtime" "gateway" {
+  name      = "nc-0123456789abcdef-gateway"
+  endpoint  = "http://127.0.0.1:80"
+  data_path = "relative"
+}
+"#,
+    );
+    let output = workspace.plan();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Invalid Docker gateway settings"),
+        "{stderr}"
+    );
 }

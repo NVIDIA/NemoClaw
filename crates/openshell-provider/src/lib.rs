@@ -19,12 +19,12 @@ mod gateway;
 mod transport;
 use nemoclaw_backend::{ObservationError, Row};
 
-pub use client::{GatewayClient, GatewaySettings, OpenShellBackend};
+pub use client::{GatewayClient, GatewayConfig, GatewaySettings, OpenShellBackend};
 pub use gateway_source::{GatewayDataSource, GatewayState, observe_with_wait};
 pub use nemoclaw_backend::{EnvironmentSecrets, Secrets};
 use nemoclaw_openshell::credential_metadata;
 use openshell_sdk::raw::proto;
-pub use provider::{OpenShellProvider, OpenShellProviderConfig};
+pub use provider::OpenShellProvider;
 use transport::ConnectedOpenShellGateway;
 pub use transport::{OpenShell, RESPONSE_LIMIT, SandboxPhase};
 

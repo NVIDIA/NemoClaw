@@ -42,7 +42,9 @@ pub fn object_kind(name: &str) -> &str {
             .find(|(_, resource)| *resource == name)
             .map_or(name, |(kind, _)| kind);
     }
-    name.strip_prefix("nemoclaw_").unwrap_or(name)
+    name.strip_prefix("nemoclaw_")
+        .or_else(|| name.strip_prefix("fabric_"))
+        .unwrap_or(name)
 }
 
 /// The OpenTofu resource type for an OpenShell object kind.

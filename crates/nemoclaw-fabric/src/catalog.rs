@@ -3,6 +3,7 @@
 
 //! Fabric descriptor metadata, without importing adapters or starting runtimes.
 
+use nemoclaw_openshell::runtime::ImageRuntime;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -29,7 +30,7 @@ pub struct FabricCatalog {
     pub runtime_files: BTreeMap<String, Vec<PathBuf>>,
     /// Present only for an installed image, never inferred from the bundled descriptors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<Box<crate::image_runtime::ImageRuntime>>,
+    pub runtime: Option<Box<ImageRuntime>>,
 }
 
 /// Image-owned bridge metadata, separate from Fabric adapter descriptors.
@@ -108,7 +109,7 @@ impl FabricCatalog {
             || catalog
                 .runtime
                 .as_ref()
-                .is_some_and(|runtime| !crate::image_runtime::valid_for(runtime, &catalog.adapters))
+                .is_some_and(|runtime| !valid_for(runtime, &catalog.adapters))
             || catalog.runtime_files.iter().any(|(adapter_id, files)| {
                 !catalog
                     .adapters
@@ -127,6 +128,15 @@ impl FabricCatalog {
         }
         Ok(catalog)
     }
+}
+
+/// Whether `runtime` is well formed and resolves every installed adapter.
+pub fn valid_for(runtime: &ImageRuntime, adapters: &[FabricAdapter]) -> bool {
+    runtime.valid_layout()
+        && runtime.binaries.len() == adapters.len()
+        && adapters
+            .iter()
+            .all(|adapter| runtime.binaries.contains_key(adapter.adapter_id()))
 }
 
 #[cfg(test)]

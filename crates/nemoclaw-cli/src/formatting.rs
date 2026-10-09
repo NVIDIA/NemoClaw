@@ -197,7 +197,7 @@ pub(crate) fn resource_label(address: &str) -> String {
                 return terminal_text(&format!("inference credentials/{name}"));
             }
             let mappings = [
-                ("nemoclaw_agent_configuration.", "agent runtime/"),
+                ("fabric_agent_configuration.", "agent runtime/"),
                 (
                     "openshell_provider_profile.web_search_",
                     "web search profile/",
@@ -218,7 +218,7 @@ pub(crate) fn resource_label(address: &str) -> String {
                 ),
                 ("docker_volume.inference_storage_inference_", "model cache/"),
                 ("openshell_sandbox.", "sandbox/"),
-                ("data.nemoclaw_sandbox_readiness.", "sandbox readiness/"),
+                ("data.fabric_sandbox_readiness.", "sandbox readiness/"),
                 ("openshell_provider_registration.inference_", "provider/"),
                 ("openshell_provider_profile.inference_", "provider profile/"),
                 ("docker_image.", "image binding/"),
@@ -806,7 +806,7 @@ mod tests {
     #[test]
     fn resource_results_name_authored_sources_and_separate_deferred_work() {
         let result = json!({"outcome":"planned", "changes":[
-            {"resource":"nemoclaw_agent_configuration.host", "actions":["update"]},
+            {"resource":"fabric_agent_configuration.host", "actions":["update"]},
             {"resource":"openshell_provider_registration.inference_local-1234", "actions":["update"]},
             {"resource":"openshell_provider_registration.web_search_tavily_1234", "actions":["create"]},
             {"resource":"openshell_provider_profile.web_search_tavily", "actions":["create"]},
@@ -816,7 +816,7 @@ mod tests {
         }, "deferred":["Gateway is required"], "deferredResources":[
             "docker_container.ollama_proxy_local", "nemoclaw_ollama_external_model.local", "nemoclaw_ollama_proxy_storage.local", "docker_image.image_1234"
         ], "discovery":{"resources":[
-            {"address":"nemoclaw_agent_configuration.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
+            {"address":"fabric_agent_configuration.host", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":true, "retained":false, "reusePlanned":false, "agentRunning":false},
             {"address":"openshell_provider_registration.inference_local-1234", "scope":"deployment", "existed":true, "plannedActions":["update"], "drifted":false, "retained":false, "reusePlanned":false},
             {"address":"docker_container.managed_gateway_runtime", "scope":"runtime", "existed":true, "plannedActions":["no-op"], "drifted":true, "retained":false, "reusePlanned":false}
         ]}});

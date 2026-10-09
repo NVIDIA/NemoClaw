@@ -81,22 +81,23 @@ async fn teardown_does_not_resume_incomplete_retained_kubernetes_storage() {
     let generations = ["kubernetes_storage", "kubernetes_gateway"]
         .map(|kind| (kind.into(), "a".repeat(32)))
         .into();
-    let spec = compile::runtime_targets(&document, &generations)
+    let mut row = compile::runtime_targets(&document, &generations)
         .unwrap()
         .into_iter()
         .find(|target| target.kind == "kubernetes_storage")
         .unwrap()
-        .values["spec"]
-        .clone();
+        .values;
+    let fields: Vec<_> = nemoclaw_sdk::kubernetes::ATTRIBUTES
+        .into_iter()
+        .chain(["running"])
+        .collect();
     let resource = ResourceAdapter::new(
-        support::definition("kubernetes_storage", &["spec", "running"], &["running"]),
+        support::definition("kubernetes_storage", &fields, &["running"]),
         Arc::new(Fixture(Ok(None))),
     );
-    let prior = state(Row::from([
-        ("id".into(), "retained-storage".into()),
-        ("spec".into(), spec),
-        ("running".into(), "false".into()),
-    ]));
+    row.insert("id".into(), "retained-storage".into());
+    row.insert("running".into(), "false".into());
+    let prior = state(row);
     for destroying in [false, true] {
         resource
             .destroying

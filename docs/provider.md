@@ -3,18 +3,19 @@
 
 # Understand the OpenTofu Provider
 
-The native bundle includes the NemoClaw, OpenShell, Docker, and Helm OpenTofu providers.
+The native bundle includes the NemoClaw, OpenShell, Fabric, Docker, and Helm OpenTofu providers.
 The SDK compiles desired-state YAML into resource graphs and runs bundled OpenTofu.
 OpenShell manages workspaces, provider registrations and profiles, and sandboxes through a gateway's API.
-Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages Fabric runtime configuration, Podman gateway processes, Kubernetes gateway prerequisites and model services, initialization, retained gateway bridges, and durable data bindings.
+Fabric configures the Fabric host in each agent sandbox and waits for its runtime, through the same gateway.
+Docker manages disposable service compute and Docker gateway processes; Helm installs the managed Kubernetes gateway chart; NemoClaw manages Podman gateway processes, Kubernetes gateway prerequisites and model services, initialization, retained gateway bridges, and durable data bindings.
 Use [the SDK](sdk.md) or [CLI](reference/cli.md) for the documented deployment workflow.
 
 ## Resource and State Ownership
 
 OpenTofu owns graph execution and resource state.
 The SDK retains desired intent, validates plans, coordinates runtime stages, and reports provider observations.
-The NemoClaw and OpenShell providers verify durable data and credential identity; the Docker and Helm providers reconcile their native resource state.
-The SDK refuses state that an earlier release wrote with the NemoClaw provider's OpenShell types, before reading or changing it; keep that state directory and use the release that wrote it.
+The NemoClaw, OpenShell, and Fabric providers verify durable data and credential identity; the Docker and Helm providers reconcile their native resource state.
+The SDK refuses state that an earlier release wrote with the NemoClaw provider's OpenShell or Fabric types, before reading or changing it; keep that state directory and use the release that wrote it.
 
 Before planning, the SDK checks configuration, locks state, and validates retained intent and local bindings.
 OpenTofu refresh and provider planning perform environmental checks; the SDK does not run a separate environmental preflight.
@@ -32,12 +33,13 @@ The generated graphs manage these objects and observations:
 |---|---|
 | OpenShell provider | Workspace, provider registration, provider profile, and sandbox |
 | OpenShell provider data source | Gateway version and compute drivers |
-| NemoClaw provider | Fabric runtime configuration |
+| Fabric provider | Fabric runtime configuration |
+| Fabric provider data source | Fabric image capabilities and sandbox completion |
 | NemoClaw provider | Podman gateway process (`nemoclaw_managed_gateway`); gateway storage, initialization, and retained bridge (`nemoclaw_gateway_storage`) |
 | NemoClaw provider | Retained inference credentials and proxy storage; external Ollama model observation |
 | NemoClaw provider | Kubernetes namespace and encryption key (`nemoclaw_kubernetes_storage`), development issuer (`nemoclaw_kubernetes_auth`), and gateway readiness (`nemoclaw_kubernetes_gateway`) |
 | NemoClaw provider | Kubernetes vLLM/Ollama workloads and readiness (`nemoclaw_kubernetes_service`), with retained model and optional separate credential PVCs (`nemoclaw_kubernetes_service_storage`) |
-| NemoClaw provider data source | Engine and Fabric image capabilities, managed runtime-image compatibility, managed gateway readiness, vLLM/Ollama service or proxy readiness, and sandbox completion |
+| NemoClaw provider data source | Engine capabilities, managed runtime-image compatibility, managed gateway readiness, and vLLM/Ollama service or proxy readiness |
 | Docker provider | Docker gateway, inference, and proxy containers; model-cache volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
@@ -54,6 +56,7 @@ The bundle pins these providers:
 |---|---|---|
 | NemoClaw | `registry.opentofu.org/nvidia/nemoclaw` | Source-derived |
 | OpenShell | `registry.opentofu.org/nvidia/openshell` | Source-derived, matching NemoClaw |
+| Fabric | `registry.opentofu.org/nvidia/fabric` | Source-derived, matching NemoClaw |
 | Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
 
@@ -80,7 +83,7 @@ Inputs are typed:
   The block's attributes and blocks follow the sandbox policy model with snake_case names: optional `explicit` policy and `managed` deployment grants, whose named network rules are labeled blocks.
   A matcher that is either a glob or alternatives sets `value` for the glob, or `any` for the alternatives.
 - `openshell_provider_profile` takes a `binaries` list.
-- `runtime_json` stays the JSON string that `nemoclaw_fabric_capabilities` returns.
+- `runtime_json` stays the JSON string that `fabric_capabilities` returns.
 - `owner` and `generation` are optional; when omitted, the provider generates them during apply and keeps them in state, with the lost-reply limit described for [service storage](#nemoclaw-resources).
 
 ```hcl
@@ -89,7 +92,7 @@ resource "openshell_sandbox" "assistant" {
   name           = "assistant"
   image          = var.image
   agent_name     = "assistant"
-  runtime_json   = data.nemoclaw_fabric_capabilities.assistant.runtime_json
+  runtime_json   = data.fabric_capabilities.assistant.runtime_json
   provider_names = [openshell_provider_registration.local.name]
   policy {
     explicit {
@@ -109,11 +112,25 @@ resource "openshell_sandbox" "assistant" {
 }
 ```
 
+### Fabric Resource and Data Source
+
+| Type | Manages or observes |
+|---|---|
+| `fabric_agent_configuration` | Fabric runtime configuration in a sandbox |
+| `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
+| `fabric_capabilities` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
+
+The `fabric` provider takes the same gateway settings as the `openshell` provider, and `destroy`, which permits removing agent configurations during explicit teardown.
+It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_capabilities` instead reads the container engine named on it.
+The bundled Fabric provider includes NemoClaw's managed-service checks when it verifies a configuration's parent sandbox.
+
 ### NemoClaw Resources
+
+The `nemoclaw` provider's only setting is `destroy`, which permits deleting gateways, cluster model workloads, and proxies during explicit teardown.
+Each resource names the engine or cluster it uses.
 
 | Resource | Manages |
 |---|---|
-| `nemoclaw_agent_configuration` | Fabric runtime configuration in a sandbox |
 | `nemoclaw_managed_gateway` | Podman gateway process |
 | `nemoclaw_gateway_storage` | Gateway storage, initialization, and retained bridge |
 | `nemoclaw_kubernetes_storage` | Kubernetes namespace and encryption key |
@@ -147,20 +164,35 @@ If a create succeeds but its reply is lost, OpenTofu state has no record of a ge
 The next apply generates another, finds the volume labelled with the lost one, and stops.
 To keep the volume, set `owner` and `generation` to its `nemoclaw.nvidia.com/uid` and `nemoclaw.nvidia.com/generation` labels and apply again.
 
+`nemoclaw_ollama_proxy_storage` takes `name` and `engine`, and keeps the proxy credential in a volume named `<name>-auth`.
+`nemoclaw_ollama_external_model` takes `name`, `engine`, `upstream`, `model`, and `digest`.
+Both take optional `owner` and `generation`, generated the same way; generated graphs give the external model its proxy storage's values.
+
+`nemoclaw_gateway_storage` and `nemoclaw_managed_gateway` take the gateway's `name`, `compute_driver` (`docker` or `podman`), `engine`, `image`, and `network_cidr`, optional `owner` and `generation`, generated the same way, and optional `image_pull_policy`:
+
+- `name` is `nc-`, 16 lowercase hexadecimal characters, a hyphen, and a lowercase name.
+- `engine` is a local Unix engine socket; Podman requires its API service socket.
+- `network_cidr` is a private IPv4 `/24`.
+
+`nemoclaw_managed_gateway` also requires the gateway `endpoint`, an HTTP origin with an unprivileged loopback port.
+`nemoclaw_gateway_storage` requires `endpoint` for Podman and rejects it for Docker, whose gateway data does not depend on the listen port; it returns the volume's `data_path`.
+The storage volume, bridge network, and initialization labels derive from `name`, `owner`, and the other settings, so changing any of them requires new storage.
+
 ### NemoClaw Data Sources
 
 | Data source | Observes |
 |---|---|
 | `nemoclaw_engine_capabilities` | [Engine prerequisites](#engine-and-fabric-discovery) |
-| `nemoclaw_fabric_capabilities` | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 | `nemoclaw_target_hardware` | [Engine-advertised hardware](#target-hardware) |
 | `nemoclaw_inference_capabilities` | [Inference model catalog](#inference-endpoint-metadata) |
 | `nemoclaw_gateway_readiness` | [Managed Docker gateway process and health](#gateway-capabilities) |
 | `nemoclaw_runtime_image` | [Managed runtime image labels](#runtime-image-compatibility) |
 | `nemoclaw_service_readiness` | [vLLM, Ollama, and proxy readiness](#runtime-capacity-and-readiness) |
 | `nemoclaw_service_capacity` | [Combined service capacity](#combined-service-capacity) |
-| `nemoclaw_sandbox_readiness` | [Sandbox completion](#sandbox-completion) |
 | `nemoclaw_vllm_runtime` | Nothing; [computes the vLLM runtime contract](#vllm-runtime-contract) |
+| `nemoclaw_ollama_runtime` | Nothing; [computes the Ollama runtime contract](#ollama-runtime-contracts) |
+| `nemoclaw_ollama_proxy_runtime` | Nothing; [computes the Ollama proxy contract](#ollama-runtime-contracts) |
+| `nemoclaw_gateway_runtime` | Nothing; [computes a Docker gateway's launch](#docker-gateway-launch) |
 
 ### Docker and Helm Types
 
@@ -229,7 +261,7 @@ An observation describes the selected target at the time of its read; it is not 
 | Engine prerequisites | `nemoclaw_engine_capabilities`; selected Docker/Podman API | Onboarding target changes and managed deployment planning |
 | Engine features, CPU, memory, and advertised GPU inventory | `nemoclaw_target_hardware`; selected engine API | Onboarding and planning for selected gateway/service engines |
 | GPU memory, driver, compute capability, and disk measurements | Provider `observe_host_hardware` with a selected `HostObserver` | Explicit direct calls or existing configured service-capacity checks; the new passive hardware source does not run collectors |
-| Packaged adapters, APIs, settings, and runtime requirements | `nemoclaw_fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
+| Packaged adapters, APIs, settings, and runtime requirements | `fabric_capabilities`; selected image metadata containing Fabric discovery results | Onboarding image changes and deployment planning |
 | Managed runtime specification, required labels, and platform | `nemoclaw_runtime_image`; selected engine image inspection | Plan for present images; after image acquisition before runtime mutations |
 | Advertised models and catalog authentication | `nemoclaw_inference_capabilities`; HTTP model-list endpoint from the control host | Onboarding endpoint changes and planning for selected inference routes |
 | Credential-reference availability | Direct SDK `observe_credentials`; application's secret resolver | Onboarding, SDK calls, and plan-result discovery; values and local availability do not enter provider state |
@@ -238,7 +270,7 @@ An observation describes the selected target at the time of its read; it is not 
 
 ## Engine and Fabric Discovery
 
-`nemoclaw_engine_capabilities` and `nemoclaw_fabric_capabilities` require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
+`nemoclaw_engine_capabilities` (NemoClaw provider) and `fabric_capabilities` (Fabric provider) require `engine`, the selected container-engine endpoint, without requiring an OpenShell connection.
 The engine source also requires `compute_driver` (`docker` or `podman`); the Fabric source requires `image`.
 For a cluster image that no local engine can inspect, the Fabric source instead reads the metadata bundle whose path is in the environment variable named by `metadata_env`; `engine` must then be empty.
 Both return `status`, `available`, and structured JSON in `observation_json`.
@@ -370,7 +402,7 @@ Teardown omits the capability gates so a version or driver mismatch alone does n
 
 [Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
-Fabric configuration writes are owned by `nemoclaw_agent_configuration`; unchanged apply preserves the active runtime handle.
+Fabric configuration writes are owned by `fabric_agent_configuration`; unchanged apply preserves the active runtime handle.
 Its `config_json` is the canonical public Fabric configuration, separate from immutable sandbox identity.
 
 ## vLLM Runtime Contract
@@ -408,10 +440,48 @@ Generated graphs declare:
 
 OpenTofu shows a changed setting as a replacement of the whole `NEMOCLAW_RUNTIME_SPEC` environment entry.
 
+## Ollama Runtime Contracts
+
+`nemoclaw_ollama_runtime` computes the managed Ollama runtime's `NEMOCLAW_RUNTIME_SPEC` the same way.
+Its blocks follow the Ollama runtime contract with snake_case names: `hardware`, `model` with `name` and `digest`, `serving`, and `memory`.
+
+`nemoclaw_ollama_proxy_runtime` computes the external Ollama proxy's `NEMOCLAW_OLLAMA_PROXY` value from `bind_address`, `upstream`, `model`, and `digest`.
+`bind_address` is a loopback or private address with a port, and `upstream` a loopback HTTP endpoint ending in `/v1`; the output `spec` names the endpoint the proxy serves on `bind_address`.
+Generated graphs pass each `spec` to its container's environment variable.
+
+## Docker Gateway Launch
+
+`nemoclaw_gateway_runtime` computes a Docker gateway container's `entrypoint`, `command`, and `env` without contacting any host.
+It takes the gateway's `name` and `endpoint`, validated as for `nemoclaw_managed_gateway`, and the `data_path` returned by its `nemoclaw_gateway_storage`, an absolute path:
+
+```hcl
+data "nemoclaw_gateway_runtime" "gateway" {
+  name      = nemoclaw_gateway_storage.gateway.name
+  endpoint  = "http://127.0.0.1:17670"
+  data_path = nemoclaw_gateway_storage.gateway.data_path
+}
+
+resource "docker_container" "gateway" {
+  # name, image, network, ports, and mounts as described below
+  entrypoint = data.nemoclaw_gateway_runtime.gateway.entrypoint
+  command    = data.nemoclaw_gateway_runtime.gateway.command
+  env        = data.nemoclaw_gateway_runtime.gateway.env
+}
+```
+
+The gateway reads its configuration and database under `data_path` and listens on all container addresses at the endpoint's port.
+Generated graphs also run the container as `0:0` and give it:
+
+- the storage's volume mounted at `data_path`;
+- the engine socket mounted at `/var/run/docker.sock`;
+- the endpoint's port published on the endpoint's address;
+- the storage's bridge network, at the second host address of `network_cidr`.
+
 ## Runtime Image Compatibility
 
-`nemoclaw_runtime_image` requires the compiled managed-service `spec` and returns `observation_json` with `status`, `source`, and `required_version`.
-The source checks the vLLM or Ollama image's `org.nemoclaw.runtime.spec` label against the shared runtime contract, plus the compiled platform and required backend, recipe, and authentication labels.
+`nemoclaw_runtime_image` requires the service's `engine`, its `image` pinned by SHA-256 digest, and its `architecture` (`amd64` or `arm64`), and returns `observation_json` with `status`, `source`, and `required_version`.
+Optional `labels` maps each label the image must carry to its value; generated graphs require the service's backend, recipe, and authentication labels.
+The source checks the vLLM or Ollama image's `org.nemoclaw.runtime.spec` label against the shared runtime contract, plus the Linux platform, the architecture, and `labels`.
 It performs one engine image inspection with a 20-second bound and never pulls an image or starts a process.
 Missing or mismatched runtime-spec labels fail with [rebuild guidance](build.md#retained-sources-and-compatibility); authentication, transport, and incomplete inspection failures also stop the operation.
 Diagnostics do not echo image label values.
@@ -432,11 +502,11 @@ A successful plan therefore does not establish that a model will fit or load.
 The hosted runtime checks its hardware, startup headroom, model artifacts, and available memory before serving.
 Its resident supervisor continues protecting host memory after the CLI exits and does not automatically restart a stopped workload.
 The runtime graph uses `nemoclaw_service_readiness` to wait for current application status from the Docker provider's container ID.
-The data source validates the runtime specification and container identity, reads the service's status contract, and checks generated vLLM credential permissions when authentication is enabled.
+The data source validates the runtime contract and container identity, reads the service's status contract, and checks generated vLLM credential permissions when the contract enables authentication.
 It does not repeat model-file verification, collect hardware inventory, or request model responses.
 Startup phases may be polled; stopped services, failed observations, and malformed status fail the read.
 
-The data source requires `spec` and `container_id`.
+The data source requires the container's `engine`, `name`, and `container_id`, and its `contract`: the `spec` of the `nemoclaw_vllm_runtime`, `nemoclaw_ollama_runtime`, or `nemoclaw_ollama_proxy_runtime` data source the container runs with.
 Its optional `wait_timeout_seconds` accepts zero to 32400 seconds; omission means 32400 seconds, and zero requests one bounded observation.
 Successful reads return `ready: true`; unsuccessful reads report an error.
 The optional `read_trigger` has the same scheduling semantics as the gateway trigger above.
@@ -444,8 +514,7 @@ The compiler references the container's `id` and uses `timestamp() != ""` to def
 This apply-time read appears as `unverified` in SDK plan results; it does not make an otherwise resolved resource plan incomplete or relax the apply gate.
 The runtime graph must succeed before the SDK proceeds to the OpenShell graph.
 The OpenShell graph uses the same data source for Ollama proxies, with a 30-second wait and dependencies from their selected provider registrations.
-A proxy specification contains `kind: "ollama_proxy"`, an engine endpoint, and the compiled `proxy` specification.
-Its observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
+For a proxy contract, the observation verifies the recorded container ID and name, running state, credential file permissions, and the upstream model digest through read-only metadata.
 It waits for an initially missing key only while the container runs and the volume has no initialization marker; initialized missing keys and invalid permissions fail immediately.
 The SDK runs no readiness loop of its own.
 
@@ -455,7 +524,7 @@ See [runtime ownership](design/runtime.md) and [recovery](models.md#diagnose-and
 
 ## Sandbox Completion
 
-The OpenShell graph uses `nemoclaw_sandbox_readiness` after sandbox creation and any runtime configuration resource.
+The OpenShell graph uses `fabric_sandbox_readiness` after sandbox creation and any runtime configuration resource.
 Its required `sandbox` map carries the sandbox resource's binding and configuration; the provider checks startup and configuration before requesting the packaged bridge's health response.
 It does not invoke an agent or model.
 The optional string `read_trigger` uses `uuid()` in generated graphs, making the read unknown during planning and recording a fresh token on every apply.
@@ -483,6 +552,7 @@ The shared backend compares public Fabric configuration and runtime handle state
 ## Combined Service Capacity
 
 The optional `nemoclaw_service_capacity` data source remains available for explicit capacity observation.
+It takes an `engine` and `contracts`, the `spec` of each `nemoclaw_vllm_runtime` or `nemoclaw_ollama_runtime` data source on that engine, and rejects a contract listed twice.
 It reports required and observed bytes and compatibility using the selected execution host's measurements.
 The SDK's default service graph does not use it as an admission gate.
 Per-service runtime protection does not reserve capacity across deployments or schedule shared GPUs.
@@ -520,6 +590,21 @@ The runtime graph for a managed Kubernetes or OpenShift gateway declares four re
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.
 4. `nemoclaw_kubernetes_gateway.runtime` records the chart's StatefulSet identity and reports readiness in `running`.
 
+The three NemoClaw resources take the same cluster target and identity:
+
+- `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
+- `compute_driver`: `kubernetes` or `openshift`.
+- `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
+- `kubeconfig_env`: the environment variable whose value is the kubeconfig file path.
+- `context` and `namespace`: the exact kubeconfig context and the namespace for the gateway.
+- `authentication_profile`: `development`.
+- Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs.
+- Optional `owner` and `generation`, generated on create when omitted.
+
+The three resources share one private receipt, keyed by `owner` and `name`, so give `nemoclaw_kubernetes_auth` and `nemoclaw_kubernetes_gateway` the storage's `owner`, for example `owner = nemoclaw_kubernetes_storage.platform.owner`.
+Generated graphs also give the authentication resource the gateway's `generation`.
+Changing any of these settings after creation fails planning and leaves the resources unchanged.
+
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
 The Helm provider receives only the authored kubeconfig path and context; ambient Helm and Kubernetes settings are excluded.
@@ -532,16 +617,15 @@ The namespace, encryption key, and persistent volumes remain.
 ## Packaging and Qualification
 
 Follow [bundle building](build.md) for matched CLI, SDK contract, provider, schema, and OpenTofu versions.
-The NemoClaw and OpenShell providers use the same source-derived version to prevent stale reuse.
+The NemoClaw, OpenShell, and Fabric providers use the same source-derived version to prevent stale reuse.
 The Docker and Helm providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
 
-[Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [OpenShell provider schema tests](../crates/openshell-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
+[Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [OpenShell provider schema tests](../crates/openshell-provider/tests/schema.rs), [Fabric provider schema tests](../crates/fabric-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
 [Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
 
 ## Direct OpenTofu Usage
 
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
-Gateway and Kubernetes resources take one SDK-compiled `spec` string instead of typed attributes ([#12782](https://github.com/NVIDIA/NemoClaw/issues/12782)).
 
 These sections need verified implementations and test results before they can recommend a direct-use workflow.

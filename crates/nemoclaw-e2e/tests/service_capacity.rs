@@ -60,19 +60,26 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     assert!(compiled["data"]["nemoclaw_service_capacity"].is_null());
     // Capacity is opt-in. Exercise the production data source with an explicit
     // consumer without creating model processes or contacting a live gateway.
-    let specs: Vec<_> = compile::runtime_targets(&document, &generations)
+    // Capacity takes each service's runtime contract.
+    let contracts: Vec<_> = compile::runtime_targets(&document, &generations)
         .unwrap()
         .into_iter()
         .filter(|target| target.kind == "inference_service")
-        .map(|target| target.values["spec"].clone())
+        .map(|target| {
+            serde_json::from_str::<nemoclaw_sdk::managed::Spec>(&target.values["spec"])
+                .unwrap()
+                .runtime_configuration()
+                .unwrap()
+                .to_owned()
+        })
         .collect();
-    assert_eq!(specs.len(), 2);
+    assert_eq!(contracts.len(), 2);
     let capacity = "data.nemoclaw_service_capacity.selected";
     let condition = json!({"precondition":[{
         "condition":format!("${{{capacity}.compatible}}"),
         "error_message":format!("Combined service memory requires ${{{capacity}.required_bytes}} bytes; observed ${{{capacity}.observed_bytes}} bytes.")
     }]});
-    let mut graph = json!({"terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}}, "provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:1"}}, "data":{"nemoclaw_service_capacity":{"selected":{"engine":"ssh://operator@gpu-box","specs":specs}}}, "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
+    let mut graph = json!({"terraform":{"required_version":"= 1.12.6", "required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw"}}}, "provider":{"nemoclaw":{}}, "data":{"nemoclaw_service_capacity":{"selected":{"engine":"ssh://operator@gpu-box","contracts":contracts}}}, "resource":{"terraform_data":{"consumer":{"input":"capacity checked", "lifecycle":condition}}}});
     let write_graph =
         |graph: &Value| fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     let control = |value: Value| fs::write(root.join("control.json"), value.to_string()).unwrap();
@@ -133,9 +140,9 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         .values_mut()
         .next()
         .unwrap();
-    let specs = source["specs"].clone();
-    source["specs"] = json!("${terraform_data.requirements.output}");
-    graph["resource"]["terraform_data"]["requirements"] = json!({"input":specs});
+    let contracts = source["contracts"].clone();
+    source["contracts"] = json!("${terraform_data.requirements.output}");
+    graph["resource"]["terraform_data"]["requirements"] = json!({"input":contracts});
     write_graph(&graph);
     let reads = fs::read(root.join("capacity_reads")).unwrap();
     run(&["plan", "-input=false", "-out=deferred.plan"], true);

@@ -26,7 +26,7 @@ fn runtime_compilation_does_not_require_openshell_resource_generations() {
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["resource"]["docker_container"].is_object());
     assert!(graph["resource"].get("openshell_sandbox").is_none());
-    assert!(graph["data"].get("nemoclaw_sandbox_readiness").is_none());
+    assert!(graph["data"].get("fabric_sandbox_readiness").is_none());
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn multiple_services_share_image_acquisition_without_custom_capacity_gates() {
     let graph = compile_runtime(&document, &generations, "0.1.0").unwrap();
     assert!(graph["data"].get("nemoclaw_service_capacity").is_none());
     assert!(
-        graph["data"].get("nemoclaw_sandbox_readiness").is_none(),
+        graph["data"].get("fabric_sandbox_readiness").is_none(),
         "the runtime graph cannot observe sandboxes owned by the deployment graph"
     );
     let readiness = &graph["data"]["openshell_gateway"]["current"];
@@ -117,16 +117,27 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
         ])
     );
     let gateway = &graph["resource"]["docker_container"]["managed_gateway_runtime"];
-    let gateway_spec: nemoclaw_sdk::managed::Spec = serde_json::from_str(
-        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-            .as_str()
-            .unwrap(),
+    let gateway_spec = nemoclaw_sdk::managed::Spec::from_gateway_row(
+        nemoclaw_sdk::managed::GATEWAY_STORAGE_KIND,
+        &graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+            .collect(),
     )
     .unwrap();
-    let command = gateway["command"].as_array().unwrap();
-    let gateway_port = command.windows(2).find(|pair| pair[0] == "--port").unwrap()[1]
+    let launch = &graph["data"]["nemoclaw_gateway_runtime"]["managed_gateway_runtime"];
+    assert_eq!(
+        launch["data_path"],
+        "${nemoclaw_gateway_storage.runtime.data_path}"
+    );
+    let gateway_port = launch["endpoint"]
         .as_str()
         .unwrap()
+        .rsplit_once(':')
+        .unwrap()
+        .1
         .parse::<u16>()
         .unwrap();
     assert!(gateway.get("network_mode").is_none());
@@ -160,19 +171,21 @@ fn managed_graph_separates_retained_storage_from_replaceable_processes() {
     {
         let attrs = &graph["resource"][format!("nemoclaw_{}", target.kind)]
             [target.address.split_once('.').unwrap().1];
-        assert_eq!(attrs["spec"], target.values["spec"]);
+        for (name, value) in &target.values {
+            assert_eq!(attrs[name], json!(value), "{}.{name}", target.address);
+        }
         assert!(
             attrs.get("running").is_none(),
             "running is observed, not declared readiness"
         );
     }
-    let storage: serde_json::Value = serde_json::from_str(
-        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]["spec"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(storage["layout"], 1);
+    assert_eq!(gateway_spec.layout, 1);
+    assert!(
+        graph["resource"]["nemoclaw_gateway_storage"]["runtime"]
+            .get("endpoint")
+            .is_none(),
+        "Docker gateway storage does not depend on the listen port"
+    );
 }
 
 #[test]
@@ -324,7 +337,13 @@ fn service_readiness_follows_provider_identity_and_is_fresh_on_unchanged_apply()
         "${docker_container.inference_service_inference_qwen.id}"
     );
     assert_eq!(readiness["read_trigger"], "${timestamp() != \"\"}");
-    assert!(readiness["spec"].is_string());
+    assert_eq!(
+        readiness["contract"],
+        "${data.nemoclaw_vllm_runtime.inference_service_inference_qwen.spec}"
+    );
+    let container = &graph["resource"]["docker_container"]["inference_service_inference_qwen"];
+    assert_eq!(readiness["name"], container["name"]);
+    assert!(readiness["engine"].as_str().unwrap().starts_with("unix://"));
 }
 
 #[test]

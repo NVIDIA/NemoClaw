@@ -55,6 +55,36 @@ pub struct ResourceSchema {
     pub mutable: &'static [&'static str],
 }
 
+/// Managed Kubernetes resource fields: the cluster target and identity, the
+/// environment list as JSON, and the observed reconciliation.
+const KUBERNETES_FIELDS: [&str; 11] = [
+    "name",
+    "owner",
+    "generation",
+    "compute_driver",
+    "endpoint",
+    "kubeconfig_env",
+    "context",
+    "namespace",
+    "authentication_profile",
+    crate::kubernetes::ENVIRONMENT_FIELD,
+    "running",
+];
+const KUBERNETES_AUTH_FIELDS: [&str; 13] = [
+    "name",
+    "owner",
+    "generation",
+    "compute_driver",
+    "endpoint",
+    "kubeconfig_env",
+    "context",
+    "namespace",
+    "authentication_profile",
+    crate::kubernetes::ENVIRONMENT_FIELD,
+    "running",
+    "release_present",
+    "gateway_values",
+];
 pub fn resource_schemas() -> Vec<ResourceSchema> {
     vec![
         ResourceSchema {
@@ -69,17 +99,17 @@ pub fn resource_schemas() -> Vec<ResourceSchema> {
         },
         ResourceSchema {
             kind: crate::kubernetes::STORAGE_KIND,
-            fields: &["spec", "running"],
+            fields: &KUBERNETES_FIELDS,
             mutable: &["running"],
         },
         ResourceSchema {
             kind: crate::kubernetes::GATEWAY_KIND,
-            fields: &["spec", "running"],
+            fields: &KUBERNETES_FIELDS,
             mutable: &["running"],
         },
         ResourceSchema {
             kind: crate::kubernetes::AUTH_KIND,
-            fields: &["spec", "running", "release_present", "gateway_values"],
+            fields: &KUBERNETES_AUTH_FIELDS,
             mutable: &["running", "release_present", "gateway_values"],
         },
         ResourceSchema {

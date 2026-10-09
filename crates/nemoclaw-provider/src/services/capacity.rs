@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::installers;
-use crate::{Error, docker::Connections, hardware::Capacity, managed::Spec};
-use nemoclaw_runtime::ollama::ManagedOllama;
-use std::collections::BTreeSet;
+use crate::{Error, docker::Connections, hardware::Capacity};
+use nemoclaw_runtime::{RuntimeSpec, ollama::ManagedOllama};
 
 /// Total serving memory required by the selected services on one execution engine.
 /// Unified memory includes the largest host reserve once; dedicated memory uses VRAM.
@@ -27,58 +25,51 @@ impl ServiceCapacity {
     }
 }
 
-fn service(spec: &Spec) -> Result<CapacityService, Error> {
-    match spec.kind.as_str() {
-        installers::vllm::SERVICE_KIND => Ok(CapacityService::Vllm(
-            installers::vllm::configured_service(spec)?,
-        )),
-        installers::ollama::SERVICE_KIND => Ok(CapacityService::Ollama(
-            installers::ollama::configured_service(spec)?,
-        )),
-        _ => Err(Error::Conflict("runtime has no hardware contract")),
-    }
-}
-fn parse(engine: Option<&str>, specs: &[String]) -> Result<Vec<(CapacityService, bool)>, Error> {
-    if specs.is_empty() {
+/// Each runtime contract is one service; engine placement is the caller's.
+fn parse(
+    engine: Option<&str>,
+    contracts: &[String],
+) -> Result<Vec<(CapacityService, bool)>, Error> {
+    if contracts.is_empty() {
         return Err(Error::Conflict(
-            "service capacity requires at least one specification",
+            "service capacity requires at least one runtime contract",
         ));
     }
     if let Some(engine) = engine {
         crate::config::validate_engine_endpoint(engine)?;
     }
-    let mut names = BTreeSet::new();
-    specs
+    // Two services cannot share a contract: each serves its own port.
+    let mut seen = std::collections::BTreeSet::new();
+    contracts
         .iter()
         .map(|encoded| {
-            let spec: Spec = serde_json::from_str(encoded)
-                .map_err(|_| Error::State("invalid capacity specification"))?;
-            super::validate_resource_spec(&spec.kind, encoded)?;
-            if engine.is_some_and(|engine| spec.engine() != engine) {
+            if !seen.insert(encoded) {
                 return Err(Error::Conflict(
-                    "capacity engine differs from runtime specification",
+                    "duplicate runtime contract in capacity requirements",
                 ));
             }
-            if !names.insert((spec.kind.clone(), spec.name.clone())) {
-                return Err(Error::Conflict(
-                    "duplicate service in capacity requirements",
-                ));
-            }
-            Ok((service(&spec)?, false))
+            let service = match RuntimeSpec::decode(encoded)? {
+                RuntimeSpec::Vllm(service) => CapacityService::Vllm(*service),
+                RuntimeSpec::Ollama(service) => CapacityService::Ollama(*service),
+            };
+            Ok((service, false))
         })
         .collect()
 }
 /// Validate capacity inputs without contacting hosts or resolving credentials.
-pub fn validate_capacity_specs(engine: Option<&str>, specs: &[String]) -> Result<(), Error> {
-    parse(engine, specs).map(|_| ())
+pub fn validate_capacity_contracts(
+    engine: Option<&str>,
+    contracts: &[String],
+) -> Result<(), Error> {
+    parse(engine, contracts).map(|_| ())
 }
 /// Read total capacity without treating an existing process's allocations as new demand.
 pub async fn observe_service_capacity(
     connections: &Connections,
     endpoint: &str,
-    specs: &[String],
+    contracts: &[String],
 ) -> Result<ServiceCapacity, Error> {
-    let services = parse(Some(endpoint), specs)?;
+    let services = parse(Some(endpoint), contracts)?;
     let engine = crate::managed::service_engine(connections, endpoint)?;
     let work = async {
         let host = engine.host_observer.observe(&engine).await?;

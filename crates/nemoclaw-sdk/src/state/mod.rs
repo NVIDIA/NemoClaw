@@ -115,7 +115,7 @@ impl Record {
             // Fabric configuration has no independent runtime: its sandbox owns
             // any partial effects, and its configuration binding uses that ID.
             let address = address
-                .strip_prefix("nemoclaw_agent_configuration.")
+                .strip_prefix("fabric_agent_configuration.")
                 .map(|name| format!("openshell_sandbox.{name}"))
                 .unwrap_or_else(|| address.clone());
             !bindings.get(&address).is_some_and(|binding| {
@@ -331,6 +331,30 @@ impl Record {
         Ok(())
     }
 }
+/// State records omitted optional attributes as null.
+fn nullable<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+fn nullable_list<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+/// String attributes typed resources record in state.
+const TYPED_ATTRIBUTES: [&str; 12] = [
+    "name",
+    "owner",
+    "generation",
+    "compute_driver",
+    "engine",
+    "endpoint",
+    "image",
+    "network_cidr",
+    "kubeconfig_env",
+    "context",
+    "namespace",
+    "authentication_profile",
+];
 #[derive(Clone, Debug, Default, Deserialize)]
 pub(crate) struct StateBinding {
     pub id: String,
@@ -350,24 +374,74 @@ pub(crate) struct StateBinding {
     pub spec: String,
     #[serde(default)]
     pub engine: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub compute_driver: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub endpoint: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub image: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub network_cidr: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub kubeconfig_env: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub context: String,
+    #[serde(default, deserialize_with = "nullable")]
+    pub authentication_profile: String,
+    #[serde(default, deserialize_with = "nullable_list")]
+    pub environment: Vec<String>,
     #[serde(skip)]
     pub deposed: BTreeMap<String, String>,
 }
 
 impl StateBinding {
+    /// Bound typed attributes of gateways, their storage, and managed
+    /// Kubernetes resources, as their compiled rows carry them; empty values
+    /// were not set.
+    pub(crate) fn typed_values(&self) -> crate::backend::Row {
+        let mut values: crate::backend::Row = TYPED_ATTRIBUTES
+            .into_iter()
+            .zip([
+                &self.name,
+                &self.owner,
+                &self.generation,
+                &self.compute_driver,
+                &self.engine,
+                &self.endpoint,
+                &self.image,
+                &self.network_cidr,
+                &self.kubeconfig_env,
+                &self.context,
+                &self.namespace,
+                &self.authentication_profile,
+            ])
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(attribute, value)| (attribute.to_owned(), value.clone()))
+            .collect();
+        if !self.environment.is_empty() {
+            values.insert(
+                crate::kubernetes::ENVIRONMENT_FIELD.into(),
+                serde_json::to_string(&self.environment).unwrap_or_default(),
+            );
+        }
+        values
+    }
     /// Whether bound configuration differs from compiled values. An encoded
-    /// specification compares whole; typed storage compares its identity.
+    /// specification compares whole; typed resources compare their attributes.
     pub(crate) fn differs(&self, values: &crate::backend::Row) -> bool {
         match values.get("spec") {
             Some(spec) => *spec != self.spec,
-            None => [
-                ("name", &self.name),
-                ("owner", &self.owner),
-                ("generation", &self.generation),
-                ("engine", &self.engine),
-            ]
-            .into_iter()
-            .any(|(attribute, bound)| values.get(attribute).is_some_and(|want| want != bound)),
+            None => {
+                let bound = self.typed_values();
+                // An omitted environment list is still part of a Kubernetes target.
+                let environment = crate::kubernetes::ENVIRONMENT_FIELD;
+                TYPED_ATTRIBUTES.into_iter().any(|attribute| {
+                    values
+                        .get(attribute)
+                        .is_some_and(|want| bound.get(attribute) != Some(want))
+                }) || (values.contains_key("kubeconfig_env")
+                    && values.get(environment) != bound.get(environment))
+            }
         }
     }
 }
@@ -452,16 +526,20 @@ pub(crate) fn schema_environment(directory: &Path) -> BTreeMap<String, String> {
         ),
     ])
 }
-/// Resource types that served OpenShell objects before the `openshell` provider.
-const EARLIER_TYPES: [&str; 5] = [
+/// OpenShell and Fabric types that the nemoclaw provider served before the
+/// `openshell` and `fabric` providers.
+const EARLIER_TYPES: [&str; 8] = [
     "nemoclaw_workspace",
     "nemoclaw_provider",
     "nemoclaw_provider_profile",
     "nemoclaw_sandbox",
     "nemoclaw_gateway_capabilities",
+    "nemoclaw_agent_configuration",
+    "nemoclaw_sandbox_readiness",
+    "nemoclaw_fabric_capabilities",
 ];
 
-/// Refuse state that an earlier release wrote with OpenShell types of the
+/// Refuse state that an earlier release wrote with OpenShell or Fabric types of the
 /// nemoclaw provider. Reading it would need that provider's schemas, and no
 /// release upgrades it, so it is left unchanged for the release that wrote it.
 fn reject_earlier_types(path: &Path) -> Result<(), Error> {
@@ -485,7 +563,7 @@ fn reject_earlier_types(path: &Path) -> Result<(), Error> {
         .any(|resource| EARLIER_TYPES.contains(&resource.kind.as_str()))
     {
         return Err(Error::State(
-            "OpenTofu state holds OpenShell resources from an earlier release; keep the state directory and use the release that wrote it",
+            "OpenTofu state holds OpenShell or Fabric resources from an earlier release; keep the state directory and use the release that wrote it",
         ));
     }
     Ok(())
@@ -596,6 +674,14 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
                 binding.owner = attributes.owner;
                 binding.generation = attributes.generation;
                 binding.engine = attributes.engine;
+                binding.compute_driver = attributes.compute_driver;
+                binding.endpoint = attributes.endpoint;
+                binding.image = attributes.image;
+                binding.network_cidr = attributes.network_cidr;
+                binding.kubeconfig_env = attributes.kubeconfig_env;
+                binding.context = attributes.context;
+                binding.authentication_profile = attributes.authentication_profile;
+                binding.environment = attributes.environment;
             }
         }
     }

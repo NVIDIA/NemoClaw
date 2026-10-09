@@ -75,6 +75,8 @@ impl Deployment {
             ))?;
             if !plan::disposable(&target.address)
                 && (target.values.contains_key("spec")
+                    // Gateways, their storage, and Kubernetes resources are typed.
+                    || target.values.contains_key("compute_driver")
                     || crate::services::resource_behavior(&target.kind).retained_storage)
                 && binding.differs(&target.values)
             {
@@ -547,7 +549,7 @@ mod tests {
     #[test]
     fn export_rejects_configuration_and_intent_identity_drift_from_provider_observations() {
         let target = Target {
-            address: "nemoclaw_agent_configuration.agent".into(),
+            address: "fabric_agent_configuration.agent".into(),
             kind: "agent_configuration".into(),
             values: Row::from([
                 ("owner".into(), "deployment".into()),

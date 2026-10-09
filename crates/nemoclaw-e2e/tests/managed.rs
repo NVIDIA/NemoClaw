@@ -27,7 +27,7 @@ fn provider_refreshes_retained_storage_without_changes() {
         "requires the two retained storage resources"
     );
     let directory = TofuWorkspace::new(tofu, provider);
-    let mut graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw","version":"0.1.0"}}},"provider":{"nemoclaw":{"endpoint":"http://127.0.0.1:17681"}},"resource":{}});
+    let mut graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw","version":"0.1.0"}}},"provider":{"nemoclaw":{}},"resource":{}});
     for resource in resources {
         assert_eq!(resource["instances"].as_array().unwrap().len(), 1);
         let attrs = &resource["instances"][0]["attributes"];

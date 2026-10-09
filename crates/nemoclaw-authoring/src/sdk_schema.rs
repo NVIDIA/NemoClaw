@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use crate::fingerprint::sha256;
 use nemoclaw_sdk::config::schema::input_schema;
-use nemoclaw_sdk::fabric_capabilities::schema_accepts;
+use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Value, json};
 
 /// Find a field in the SDK input schema without maintaining a parallel list of

@@ -67,13 +67,24 @@ async fn identity(cluster: &Cluster, server: &str) -> Result<ClusterIdentity, Ob
     let system = Api::<Namespace>::all(cluster.client().clone())
         .get_opt("kube-system")
         .await
-        .map_err(|_| ObservationError::Transport)?
+        .map_err(read_failure)?
         .and_then(|namespace| namespace.metadata.uid)
         .ok_or(ObservationError::Incomplete)?;
     Ok(ClusterIdentity {
         server: server.into(),
         system_uid: system,
     })
+}
+
+/// The class of a failed cluster read. A rejected credential or a missing
+/// permission is the user's to fix, so it must not read as a network fault;
+/// every other failure is a transport failure.
+fn read_failure(error: kube::Error) -> ObservationError {
+    match error {
+        kube::Error::Api(status) if status.code == 401 => ObservationError::Authentication,
+        kube::Error::Api(status) if status.code == 403 => ObservationError::Permission,
+        _ => ObservationError::Transport,
+    }
 }
 
 /// Agent Sandbox must already be installed and its controller available.
@@ -118,7 +129,7 @@ async fn default_storage_class(cluster: &Cluster) -> Result<(), ObservationError
     let classes = Api::<StorageClass>::all(cluster.client().clone())
         .list(&ListParams::default())
         .await
-        .map_err(|_| ObservationError::Transport)?;
+        .map_err(read_failure)?;
     let defaults = classes
         .items
         .iter()

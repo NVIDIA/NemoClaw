@@ -17,7 +17,8 @@ The [accepted scope](scope.md) defines the invariants; this page explains the re
 | Docker provider | Docker containers, images, model-cache volumes, and service networks |
 | Helm provider | The pinned OpenShell chart release on the authored Kubernetes cluster |
 | OpenShell provider | OpenShell workspaces, provider registrations and profiles, sandboxes, and gateway capability reads |
-| NemoClaw provider | Fabric runtime configuration, Podman gateway processes, durable storage contracts, and readiness observations |
+| Fabric provider | Fabric runtime configuration and readiness in agent sandboxes |
+| NemoClaw provider | Podman gateway processes, durable storage contracts, and readiness observations |
 | Hosted runtime | Model preparation, startup, application health, and protective shutdown |
 | Fabric | Adapter and target discovery, native schemas, native configuration validation and mapping, and agent execution |
 

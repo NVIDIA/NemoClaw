@@ -49,32 +49,6 @@ fn image_digest_evidence_distinguishes_matching_substituted_and_unrecorded_image
 }
 
 #[test]
-fn malformed_and_external_schemas_remain_unknown_without_io() {
-    use nemoclaw_sdk::fabric_capabilities::schema_accepts;
-    assert_eq!(
-        schema_accepts(
-            &serde_json::json!({"type":"invented"}),
-            &serde_json::json!({})
-        ),
-        None
-    );
-    assert_eq!(
-        schema_accepts(
-            &serde_json::json!({"$ref":"file:///etc/passwd"}),
-            &serde_json::json!({})
-        ),
-        None
-    );
-    assert_eq!(
-        schema_accepts(
-            &serde_json::json!({"$ref":"https://example.invalid/schema"}),
-            &serde_json::json!({})
-        ),
-        None
-    );
-}
-
-#[test]
 fn a_proven_platform_mismatch_is_unsupported_even_when_the_catalog_is_unknown() {
     use nemoclaw_sdk::fabric_capabilities::{FabricRequirements, assess_image};
     let image = ImageMetadata {

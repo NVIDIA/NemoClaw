@@ -13,10 +13,19 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/nemoclaw";
 /// Registry address of the provider that reconciles OpenShell objects.
 pub const OPENSHELL_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/openshell";
+/// Registry address of the provider that configures Fabric agents in sandboxes.
+pub const FABRIC_PROVIDER_ADDRESS: &str = "registry.opentofu.org/nvidia/fabric";
+/// Providers that reach the gateway, and so share its connection settings.
+pub const GATEWAY_PROVIDERS: [&str; 2] = ["openshell", "fabric"];
+/// This repository's providers; each takes `destroy`.
+pub const NEMOCLAW_PROVIDERS: [&str; 3] = ["nemoclaw", "openshell", "fabric"];
 
 /// The OpenTofu resource type that reconciles a resource kind.
 pub fn resource_type(kind: &str) -> String {
-    nemoclaw_openshell::resource_type(kind).unwrap_or_else(|| format!("nemoclaw_{kind}"))
+    nemoclaw_openshell::resource_type(kind).unwrap_or_else(|| match kind {
+        "agent_configuration" => format!("fabric_{kind}"),
+        _ => format!("nemoclaw_{kind}"),
+    })
 }
 pub use crate::artifact_pins::OPENTOFU_VERSION;
 pub type Generations = BTreeMap<String, String>;
@@ -129,7 +138,7 @@ fn targets_with_plans(
         {
             result.push(Target {
                 kind: "agent_configuration".into(),
-                address: format!("nemoclaw_agent_configuration.{}", sandbox.name),
+                address: format!("fabric_agent_configuration.{}", sandbox.name),
                 values: [
                     ("workspace".into(), workspace.clone()),
                     ("name".into(), sandbox.name.clone()),
@@ -371,10 +380,12 @@ fn graph_base(document: &Document, version: &str) -> Result<Value, ConfigError> 
     let mut graph = json!({
         "terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{
             "nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")},
-            "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")}
+            "openshell":{"source":OPENSHELL_PROVIDER_ADDRESS,"version":format!("= {version}")},
+            "fabric":{"source":FABRIC_PROVIDER_ADDRESS,"version":format!("= {version}")}
         }},
-        // Fabric resources still reach the gateway through the nemoclaw provider.
-        "provider":{"nemoclaw":provider.clone(),"openshell":provider}, "resource":{},
+        // The nemoclaw provider reaches engines and clusters named on each
+        // resource; only the gateway providers take the connection.
+        "provider":{"nemoclaw":{},"openshell":provider.clone(),"fabric":provider}, "resource":{},
         "data":{"openshell_gateway":{"current":{"required_compute_drivers":drivers}}}
     });
     crate::discovery_graph::populate(&mut graph, document)?;
@@ -400,7 +411,7 @@ fn compile_with_plans(
     let mut ordered: Vec<_> = document.spec.sandboxes.iter().collect();
     ordered.sort_by_key(|sandbox| &sandbox.name);
     for (index, sandbox) in ordered.iter().enumerate() {
-        let source = format!("data.nemoclaw_fabric_capabilities.sandbox_{index}");
+        let source = format!("data.fabric_capabilities.sandbox_{index}");
         runtime_sources.insert(sandbox.name.clone(), source.clone());
         for provider in document.sandbox_inference_providers(sandbox)? {
             profile_sources
@@ -562,7 +573,7 @@ fn compile_with_plans(
         )
         .expect("attribute names");
         let binding = format!(
-            "${{merge({{for key, value in {reference} : key => value if !contains({typed}, key)}}, {{config_json = nemoclaw_agent_configuration.{}.config_json}})}}",
+            "${{merge({{for key, value in {reference} : key => value if !contains({typed}, key)}}, {{config_json = fabric_agent_configuration.{}.config_json}})}}",
             sandbox.name
         );
         Ok((sandbox.name.clone(), json!({
@@ -577,7 +588,7 @@ fn compile_with_plans(
         })))
     }).collect::<Result<_, ConfigError>>()?;
     graph["resource"] = resources;
-    graph["data"]["nemoclaw_sandbox_readiness"] = json!(sandbox_readiness);
+    graph["data"]["fabric_sandbox_readiness"] = json!(sandbox_readiness);
     graph["data"]["openshell_gateway"]["apply"] = apply_readiness;
     Ok(graph)
 }

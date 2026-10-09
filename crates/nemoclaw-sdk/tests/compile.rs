@@ -167,16 +167,20 @@ fn compiled_resources_preserve_ownership_connections_and_dependency_order() {
     sandbox.agent.inference.as_mut().unwrap().routes[0].provider_ref = Some("remote".into());
     let generations = ownership_generations();
     let graph = compile(&document, &generations, "0.1.0").unwrap();
-    let connection = &graph["provider"]["nemoclaw"];
-    for (field, expected) in [
-        ("endpoint", "https://gateway.example.test"),
-        ("credential_env", "GATEWAY_TOKEN"),
-        ("tls_ca_env", "GATEWAY_CA"),
-        ("tls_certificate_env", "GATEWAY_CERT"),
-        ("tls_key_env", "GATEWAY_KEY"),
-    ] {
-        assert_eq!(connection[field], expected, "{field}");
+    // Only the gateway providers take the connection.
+    for provider in ["openshell", "fabric"] {
+        let connection = &graph["provider"][provider];
+        for (field, expected) in [
+            ("endpoint", "https://gateway.example.test"),
+            ("credential_env", "GATEWAY_TOKEN"),
+            ("tls_ca_env", "GATEWAY_CA"),
+            ("tls_certificate_env", "GATEWAY_CERT"),
+            ("tls_key_env", "GATEWAY_KEY"),
+        ] {
+            assert_eq!(connection[field], expected, "{provider}.{field}");
+        }
     }
+    assert_eq!(graph["provider"]["nemoclaw"], json!({}));
     let resources = &graph["resource"];
     let workspace = &resources["openshell_workspace"]["deployment"];
     let provider =
@@ -264,7 +268,7 @@ fn managed_plans_query_selected_engine_and_image_without_probe_resources() {
             engine.get("depends_on").is_none(),
             "read existing capabilities during plan"
         );
-        let image = &graph["data"]["nemoclaw_fabric_capabilities"]["sandbox_0"];
+        let image = &graph["data"]["fabric_capabilities"]["sandbox_0"];
         assert_eq!(image["image"], document.spec.sandboxes[0].image.ref_);
         assert!(
             image.get("depends_on").is_none(),
@@ -368,7 +372,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
             graph["resource"]["openshell_sandbox"][name]["runtime_json"]
                 .as_str()
                 .unwrap()
-                .contains("nemoclaw_fabric_capabilities")
+                .contains("fabric_capabilities")
         );
     }
     for profile in graph["resource"]["openshell_provider_profile"]
@@ -377,7 +381,7 @@ fn adding_an_image_keeps_existing_registration_and_separates_executable_scopes()
         .values()
     {
         let binaries = profile["binaries"].as_str().unwrap();
-        assert!(binaries.starts_with("${jsondecode(data.nemoclaw_fabric_capabilities."));
+        assert!(binaries.starts_with("${jsondecode(data.fabric_capabilities."));
         assert!(binaries.ends_with(".binaries_json)}"));
     }
 }

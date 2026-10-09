@@ -87,6 +87,158 @@ impl Spec {
         serde_json::to_string(self)
             .map_err(|_| Error::State("cannot encode Kubernetes specification"))
     }
+    /// Resource attributes naming this specification's resource; the
+    /// `environment` list is carried as JSON in `environment_json`.
+    ///
+    /// # Errors
+    /// Returns an error if the specification is invalid.
+    pub fn row(&self) -> Result<crate::backend::Row, Error> {
+        self.validate()?;
+        let target = self
+            .settings
+            .kubernetes
+            .as_ref()
+            .ok_or(Error::State("missing Kubernetes settings"))?;
+        let driver = serde_json::to_value(self.settings.runtime.provider)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .ok_or(Error::State("cannot encode Kubernetes compute driver"))?;
+        let profile = serde_json::to_value(target.authentication.profile)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .ok_or(Error::State("cannot encode Kubernetes authentication"))?;
+        let mut row: crate::backend::Row = ATTRIBUTES
+            .into_iter()
+            .zip([
+                self.name.clone(),
+                self.owner.clone(),
+                self.generation.clone(),
+                driver,
+                self.settings.endpoint.clone(),
+                target.kubeconfig.env.clone(),
+                target.context.clone(),
+                target.namespace.clone(),
+                profile,
+            ])
+            .map(|(attribute, value)| (attribute.to_owned(), value))
+            .collect();
+        if !target.environment.is_empty() {
+            row.insert(
+                ENVIRONMENT_FIELD.into(),
+                serde_json::to_string(&target.environment)
+                    .map_err(|_| Error::State("cannot encode Kubernetes environment"))?,
+            );
+        }
+        Ok(row)
+    }
+    /// The `kind` resource's specification named by its attributes.
+    ///
+    /// # Errors
+    /// Returns an incomplete observation for missing attributes and a conflict
+    /// for invalid ones.
+    pub fn from_row(kind: &str, row: &crate::backend::Row) -> Result<Self, Error> {
+        if !matches!(kind, STORAGE_KIND | AUTH_KIND | GATEWAY_KIND) {
+            return Err(ObservationError::BindingMismatch.into());
+        }
+        let get = |attribute: &str| {
+            row.get(attribute)
+                .filter(|value| !value.is_empty())
+                .cloned()
+                .ok_or(ObservationError::Incomplete)
+        };
+        let invalid = || Error::Conflict("invalid managed Kubernetes attribute");
+        let parse = |attribute: &str| -> Result<serde_json::Value, Error> {
+            Ok(serde_json::Value::String(get(attribute)?))
+        };
+        let provider: crate::config::ComputeDriver =
+            serde_json::from_value(parse("compute_driver")?).map_err(|_| invalid())?;
+        if !provider.is_kubernetes() {
+            return Err(invalid());
+        }
+        let environment = match row.get(ENVIRONMENT_FIELD).filter(|value| !value.is_empty()) {
+            Some(encoded) => serde_json::from_str(encoded).map_err(|_| invalid())?,
+            None => Vec::new(),
+        };
+        let spec = Self {
+            layout: 1,
+            kind: kind.into(),
+            name: get("name")?,
+            owner: get("owner")?,
+            generation: get("generation")?,
+            settings: ManagedGateway {
+                runtime: crate::config::Runtime { provider },
+                endpoint: get("endpoint")?,
+                kubernetes: Some(crate::config::ManagedKubernetes {
+                    kubeconfig: crate::config::Credential {
+                        env: get("kubeconfig_env")?,
+                    },
+                    context: get("context")?,
+                    namespace: get("namespace")?,
+                    authentication: crate::config::KubernetesAuthentication {
+                        profile: serde_json::from_value(parse("authentication_profile")?)
+                            .map_err(|_| invalid())?,
+                    },
+                    environment,
+                }),
+                ..Default::default()
+            },
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
+}
+
+/// String attributes of the managed Kubernetes resources.
+pub const ATTRIBUTES: [&str; 9] = [
+    "name",
+    "owner",
+    "generation",
+    "compute_driver",
+    "endpoint",
+    "kubeconfig_env",
+    "context",
+    "namespace",
+    "authentication_profile",
+];
+/// Row field carrying the `environment` list as JSON.
+pub const ENVIRONMENT_FIELD: &str = "environment_json";
+
+/// Check one attribute without the others, explaining a rejected value
+/// without echoing it.
+pub fn check_attribute(attribute: &str, value: &str) -> Result<(), &'static str> {
+    let (pattern, requirement) = match attribute {
+        "name" => (
+            r"^nc-[a-f0-9]{16}-gateway$",
+            "must be nc-, 16 lowercase hexadecimal characters, and -gateway",
+        ),
+        "owner" => (r"^[a-f0-9-]{36}$", "must be a lowercase UUID"),
+        "generation" => (
+            r"^[a-f0-9]{32}$",
+            "must be 32 lowercase hexadecimal characters",
+        ),
+        "compute_driver" => (
+            r"^(kubernetes|openshift)$",
+            "must be kubernetes or openshift",
+        ),
+        "authentication_profile" => (r"^development$", "must be development"),
+        "namespace" => (
+            r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+            "must be a Kubernetes namespace name",
+        ),
+        "kubeconfig_env" => (
+            r"^[A-Z_][A-Z0-9_]*$",
+            "must be an uppercase environment variable name",
+        ),
+        _ => return Ok(()),
+    };
+    if regex::Regex::new(pattern)
+        .expect("constant pattern")
+        .is_match(value)
+    {
+        Ok(())
+    } else {
+        Err(requirement)
+    }
 }
 
 /// The kubeconfig file and context a deployment names.

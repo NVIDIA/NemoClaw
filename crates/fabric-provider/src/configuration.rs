@@ -3,9 +3,9 @@
 //! The Fabric agent configuration resource: a running runtime's applied
 //! configuration in a Fabric sandbox, written through the Fabric bridge.
 
-use crate::fabric::bridge::{AgentBridge, value};
-use crate::openshell::{OpenShell, SandboxPhase, verify_identity};
+use crate::bridge::{AgentBridge, value};
 use nemoclaw_backend::{Error, Mutation, ObservationError, Row};
+use openshell_provider::{OpenShell, SandboxPhase, verify_identity};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -187,14 +187,9 @@ pub(crate) async fn configure_agent(client: &OpenShell, binding: &Row) -> Result
     .map_err(|_| Error::Conflict("Fabric sandbox startup timed out; resources retained"))??;
     let config: serde_json::Value =
         serde_json::from_str(value(binding, "config_json")).map_err(|_| ObservationError::Query)?;
-    let response = crate::fabric::bridge::bridge_input(
-        client,
-        binding,
-        "configure",
-        &config,
-        Some(&generation),
-    )
-    .await?;
+    let response =
+        crate::bridge::bridge_input(client, binding, "configure", &config, Some(&generation))
+            .await?;
     if response.status != "succeeded" {
         let failure = response
             .error

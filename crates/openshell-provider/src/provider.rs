@@ -3,12 +3,11 @@
 //! The `openshell` OpenTofu provider: OpenShell objects and gateway reads.
 
 use crate::{
-    client::{GatewayClient, GatewaySettings, OpenShellBackend},
+    client::{GatewayClient, GatewayConfig, OpenShellBackend},
     gateway_source::GatewayDataSource,
 };
 use async_trait::async_trait;
 use nemoclaw_tofu::{ResourceAdapter, StructuredAdapter};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
@@ -16,23 +15,9 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use tf_provider::{
-    Diagnostics, DynamicDataSource, DynamicResource, Provider,
-    schema::{Attribute, AttributeConstraint, AttributeType, Block, Description, Schema},
-    value::Value,
-};
+use tf_provider::{Diagnostics, DynamicDataSource, DynamicResource, Provider, schema::Schema};
 
 use nemoclaw_openshell::RESOURCE_TYPES;
-
-#[derive(Default, Serialize, Deserialize)]
-pub struct OpenShellProviderConfig {
-    endpoint: Value<String>,
-    credential_env: Value<String>,
-    tls_ca_env: Value<String>,
-    tls_certificate_env: Value<String>,
-    tls_key_env: Value<String>,
-    destroy: Value<bool>,
-}
 
 /// Serves workspaces, provider registrations and profiles, sandboxes, and the
 /// gateway data source through one configured gateway.
@@ -54,114 +39,24 @@ impl OpenShellProvider {
 
 #[async_trait]
 impl Provider for OpenShellProvider {
-    type Config<'a> = OpenShellProviderConfig;
+    type Config<'a> = GatewayConfig;
     type MetaState<'a> = tf_provider::value::ValueEmpty;
 
     fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
-        let attribute = |attr_type, description: &str| Attribute {
-            attr_type,
-            constraint: AttributeConstraint::Optional,
-            description: Description::plain(description.to_owned()),
-            ..Default::default()
-        };
-        Some(Schema {
-            version: 0,
-            block: Block {
-                attributes: [
-                    (
-                        "endpoint",
-                        attribute(AttributeType::String, "Gateway HTTP(S) origin."),
-                    ),
-                    (
-                        "credential_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable holding the bearer credential.",
-                        ),
-                    ),
-                    (
-                        "tls_ca_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable naming the CA certificate file.",
-                        ),
-                    ),
-                    (
-                        "tls_certificate_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable naming the client certificate file.",
-                        ),
-                    ),
-                    (
-                        "tls_key_env",
-                        attribute(
-                            AttributeType::String,
-                            "Environment variable naming the client key file.",
-                        ),
-                    ),
-                    (
-                        "destroy",
-                        attribute(
-                            AttributeType::Bool,
-                            "Permit deleting sandboxes during explicit teardown.",
-                        ),
-                    ),
-                ]
-                .into_iter()
-                .map(|(name, attribute)| (name.into(), attribute))
-                .collect(),
-                ..Default::default()
-            },
-        })
+        Some(GatewayConfig::schema())
     }
 
     async fn configure<'a>(
         &self,
         diags: &mut Diagnostics,
         _: String,
-        config: OpenShellProviderConfig,
+        config: GatewayConfig,
     ) -> Option<()> {
-        // Reconfiguration must not retain a client or teardown permission from
-        // an earlier configuration when inputs become unknown or invalid.
+        // Withdraw teardown permission before validating, so a rejected
+        // reconfiguration cannot keep an earlier grant.
         self.destroying.store(false, Ordering::Release);
-        let settings = GatewaySettings {
-            endpoint: &config.endpoint,
-            credential_env: &config.credential_env,
-            tls_ca_env: &config.tls_ca_env,
-            tls_certificate_env: &config.tls_certificate_env,
-            tls_key_env: &config.tls_key_env,
-        };
-        let deferred = settings.unknown() || matches!(config.destroy, Value::Unknown);
-        if let Err(error) = self.client.reset(deferred) {
-            diags.root_error_short(error);
-            return None;
-        }
-        if deferred {
-            return Some(());
-        }
-        let connection = match settings.connection() {
-            Ok(Some(connection)) => connection,
-            Ok(None) => {
-                if settings.credentials() || matches!(config.destroy, Value::Value(true)) {
-                    diags.root_error_short("Gateway credentials and teardown require an endpoint");
-                    return None;
-                }
-                return Some(());
-            }
-            Err(error) => {
-                diags.root_error_short(error);
-                return None;
-            }
-        };
-        if let Err(error) = self.client.connect(&connection) {
-            diags.root_error("Gateway connection", error);
-            return None;
-        }
-        self.destroying.store(
-            matches!(config.destroy, Value::Value(true)),
-            Ordering::Release,
-        );
+        let destroying = self.client.configure(diags, &config)?;
+        self.destroying.store(destroying, Ordering::Release);
         Some(())
     }
 
@@ -198,5 +93,40 @@ impl Provider for OpenShellProvider {
             "gateway".into(),
             Box::new(GatewayDataSource(self.client.clone())) as Box<dyn DynamicDataSource>,
         )]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tf_provider::value::Value;
+
+    // Connecting starts a lazy channel, which needs a runtime.
+    #[tokio::test]
+    async fn rejected_reconfiguration_withdraws_teardown_permission() {
+        let provider = OpenShellProvider::default();
+        let permitted = GatewayConfig {
+            endpoint: Value::Value("http://127.0.0.1:1".into()),
+            destroy: Value::Value(true),
+            ..Default::default()
+        };
+        let mut diagnostics = Diagnostics::default();
+        provider
+            .configure(&mut diagnostics, String::new(), permitted)
+            .await
+            .unwrap();
+        assert!(provider.destroying.load(Ordering::Acquire));
+        // Teardown without an endpoint is refused.
+        let rejected = GatewayConfig {
+            destroy: Value::Value(true),
+            ..Default::default()
+        };
+        assert!(
+            provider
+                .configure(&mut diagnostics, String::new(), rejected)
+                .await
+                .is_none()
+        );
+        assert!(!provider.destroying.load(Ordering::Acquire));
     }
 }

@@ -666,7 +666,7 @@ fn pending_recovery_requires_matching_current_bindings_and_retains_unknown_creat
         assert!(retained.pending(), "{field}");
         let unresolved = retained.pending_creations;
         assert!(unresolved.contains_key(sandbox));
-        assert!(unresolved.contains_key("nemoclaw_agent_configuration.assistant"));
+        assert!(unresolved.contains_key("fabric_agent_configuration.assistant"));
     }
     let missing = bindings
         .keys()
@@ -787,6 +787,41 @@ fn typed_storage_bindings_compare_their_complete_identity() {
     }
 }
 
+#[test]
+fn gateway_storage_bindings_record_their_typed_settings() {
+    // Docker gateway storage omits its endpoint, which state records as null.
+    let values = serde_json::json!({
+        "id":"engine/nc-0123456789abcdef-gateway-data/created",
+        "name":"nc-0123456789abcdef-gateway",
+        "owner":"302ff5e1-088d-42ce-959f-4ff4c3570c13",
+        "generation":"b".repeat(32),
+        "compute_driver":"docker",
+        "engine":"unix:///var/run/docker.sock",
+        "endpoint":null,
+        "image":format!("gateway@sha256:{}", "a".repeat(64)),
+        "network_cidr":"172.30.160.0/24",
+        "image_pull_policy":null,
+        "data_path":"/var/lib/docker/volumes/data/_data",
+    });
+    let address = "nemoclaw_gateway_storage.runtime";
+    let bindings = read(&state(serde_json::json!([
+        {"address":address, "mode":"managed", "values":values}
+    ])))
+    .unwrap();
+    let compiled: crate::backend::Row = values
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| crate::managed::GATEWAY_ATTRIBUTES.contains(&name.as_str()))
+        .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+        .collect();
+    assert_eq!(bindings[address].typed_values(), compiled);
+    assert!(!bindings[address].differs(&compiled));
+    let mut changed = compiled.clone();
+    changed.insert("image".into(), "changed".into());
+    assert!(bindings[address].differs(&changed));
+}
+
 #[tokio::test]
 async fn state_with_openshell_types_from_the_nemoclaw_provider_is_rejected_before_any_read() {
     for kind in [
@@ -795,6 +830,9 @@ async fn state_with_openshell_types_from_the_nemoclaw_provider_is_rejected_befor
         "nemoclaw_provider_profile",
         "nemoclaw_sandbox",
         "nemoclaw_gateway_capabilities",
+        "nemoclaw_agent_configuration",
+        "nemoclaw_sandbox_readiness",
+        "nemoclaw_fabric_capabilities",
     ] {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(

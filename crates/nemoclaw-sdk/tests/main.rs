@@ -78,6 +78,8 @@ mod inference_settings;
 mod inline_recipe;
 #[path = "interfaces.rs"]
 mod interfaces;
+#[path = "json_schema.rs"]
+mod json_schema;
 #[path = "kubernetes_auth.rs"]
 mod kubernetes_auth;
 #[path = "kubernetes_cluster.rs"]

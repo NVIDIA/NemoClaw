@@ -12,7 +12,7 @@ variable "owner" { type = string }
 variable "enabled" { default = true }
 variable "revision" { default = "initial" }
 variable "fail_start" { default = false }
-provider "nemoclaw" { endpoint = "http://127.0.0.1:1" }
+provider "nemoclaw" {}
 provider "docker" { host = "@ENGINE@" }
 resource "docker_volume" "cache" {
   name = "${var.name}-data"

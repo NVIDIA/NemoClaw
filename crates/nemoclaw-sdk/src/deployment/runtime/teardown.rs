@@ -305,7 +305,7 @@ fn bind_teardown_processes(
             crate::kubernetes::GATEWAY_KIND | crate::kubernetes::AUTH_KIND
         ) {
             if let Some(binding) = bindings.get(&target.address)
-                && binding.spec != target.values["spec"]
+                && binding.differs(&target.values)
             {
                 return Err(Error::Conflict(
                     "Kubernetes gateway binding differs from retained intent",
@@ -330,15 +330,13 @@ fn bind_teardown_processes(
                 "destroy requires independent storage bindings before removing a managed process",
             ));
         }
-        let want: Spec = serde_json::from_str(&target.values["spec"])
+        let want = Spec::from_values(&target.kind, &target.values)
             .map_err(|_| Error::State("invalid runtime intent"))?;
         if plan::disposable(&target.address) {
             continue;
         }
-        target.values.insert(
-            "spec".into(),
-            bound_spec(&want, bindings.get(&target.address))?.json()?,
-        );
+        bound_spec(&target.kind, &want, bindings.get(&target.address))?
+            .write_values(&target.kind, &mut target.values)?;
     }
     Ok(())
 }
@@ -543,8 +541,9 @@ mod tests {
             BTreeSet::from([KUBERNETES_STORAGE.into()])
         );
         let graph = compiled.graph;
-        assert_eq!(graph["provider"]["nemoclaw"]["platform_only"], true);
-        assert_eq!(graph["provider"]["nemoclaw"]["destroy"], true);
+        assert_eq!(graph["provider"]["nemoclaw"], json!({"destroy": true}));
+        assert!(graph["provider"].get("openshell").is_none());
+        assert!(graph["provider"].get("fabric").is_none());
         assert_eq!(graph["resource"].as_object().unwrap().len(), 1);
         assert_eq!(
             graph["resource"]["nemoclaw_kubernetes_storage"]["runtime"]["lifecycle"]["prevent_destroy"],
@@ -629,6 +628,10 @@ mod tests {
             owner: value("owner"),
             generation: value("generation"),
             engine: value("engine"),
+            compute_driver: value("compute_driver"),
+            endpoint: value("endpoint"),
+            image: value("image"),
+            network_cidr: value("network_cidr"),
             ..Default::default()
         }
     }

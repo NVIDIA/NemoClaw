@@ -13,6 +13,7 @@ name = "integration"
 path = "tests/main.rs"
 
 [dependencies]
+fabric-provider = { path = "../fabric-provider" }
 nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
@@ -43,7 +44,6 @@ openshell-core.workspace = true
 openshell-sdk.workspace = true
 openshell-policy.workspace = true
 tonic.workspace = true
-nemo-fabric-core = { git = "https://github.com/NVIDIA/NeMo-Fabric", rev = "24f068c895e5cbc30286bc743498be4e5014d658" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["fs"] }
@@ -66,3 +66,7 @@ path = "src/main.rs"
 [[bin]]
 name = "terraform-provider-nemoclaw-openshell"
 path = "src/openshell_main.rs"
+
+[[bin]]
+name = "terraform-provider-nemoclaw-fabric"
+path = "src/fabric_main.rs"

@@ -444,7 +444,7 @@ Authentication, permission, ownership, permanent image-start failures, and repor
 Model Pod termination allows 60 seconds of grace, and the provider waits up to another 30 seconds for API deletion to complete.
 Other bounded observations can fail earlier, and request or transport failures are not automatically retried as mutations.
 The old onboarding timeout environment variables are not configuration inputs for these SDK paths.
-Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/nemoclaw-provider/src/fabric/configuration.rs), [agent readiness](../crates/nemoclaw-provider/src/fabric/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
+Use the [field reference](reference/configuration.md), [bound execution](../crates/openshell-provider/src/transport.rs), [agent configuration](../crates/fabric-provider/src/configuration.rs), [agent readiness](../crates/fabric-provider/src/bridge.rs), [deployment readiness](../crates/nemoclaw-sdk/src/deployment/runtime.rs), and [recipe runner](../crates/nemoclaw-runtime/src/vllm/runtime/inline_recipe.rs) for the current boundaries.
 For a stopped managed service, inspect its [retained status](models.md#diagnose-and-recover-a-stopped-runtime) before choosing recovery.
 
 ## Verify the Result

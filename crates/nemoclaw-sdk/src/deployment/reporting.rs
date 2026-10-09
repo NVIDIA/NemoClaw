@@ -210,7 +210,7 @@ fn observation_name(address: &str) -> Option<String> {
         Some("gateway".into())
     } else {
         [
-            "data.nemoclaw_fabric_capabilities.",
+            "data.fabric_capabilities.",
             "data.nemoclaw_runtime_image.",
             "data.nemoclaw_target_hardware.",
             "data.nemoclaw_inference_capabilities.",
@@ -379,7 +379,7 @@ impl Plan {
                 drifted,
                 agent_running: change
                     .address
-                    .starts_with("nemoclaw_agent_configuration.")
+                    .starts_with("fabric_agent_configuration.")
                     .then(|| {
                         change.change.before["running"]
                             .as_str()

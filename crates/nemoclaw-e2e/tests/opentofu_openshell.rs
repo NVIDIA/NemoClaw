@@ -377,8 +377,9 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
         }
     }
 
-    graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    graph["provider"]["openshell"]["destroy"] = json!(true);
+    for provider in ["nemoclaw", "openshell", "fabric"] {
+        graph["provider"][provider]["destroy"] = json!(true);
+    }
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
     graph["resource"]["openshell_workspace"]["deployment"]
@@ -388,7 +389,7 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     graph["resource"]["openshell_workspace"]["deployment"]["lifecycle"] =
         json!({"prevent_destroy":true});
     for kind in [
-        "nemoclaw_agent_configuration",
+        "fabric_agent_configuration",
         "openshell_sandbox",
         "openshell_provider_profile",
         "openshell_provider_registration",

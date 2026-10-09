@@ -31,6 +31,8 @@ mod health;
 mod hosted_parity;
 #[path = "inference_discovery.rs"]
 mod inference_discovery;
+#[path = "kubernetes_hcl.rs"]
+mod kubernetes_hcl;
 #[path = "managed.rs"]
 mod managed;
 #[path = "model_live.rs"]
@@ -45,6 +47,9 @@ mod opentofu_openshell;
 mod provider_protocol;
 #[path = "remote_service.rs"]
 mod remote_service;
+#[cfg(unix)]
+#[path = "runtime_image.rs"]
+mod runtime_image;
 #[path = "sandbox_readiness.rs"]
 mod sandbox_readiness;
 #[path = "service_capacity.rs"]

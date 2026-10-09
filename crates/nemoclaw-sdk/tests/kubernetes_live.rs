@@ -370,7 +370,7 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         .unwrap()
         .into_iter()
         .find(|target| target.kind == GATEWAY_KIND)
-        .map(|target| Spec::decode(&target.values["spec"]).unwrap())
+        .map(|target| Spec::from_row(&target.kind, &target.values).unwrap())
         .unwrap();
     let tofu = Tofu::new(bundle, target);
     // These private files make a failed run inspectable without logging the
@@ -593,7 +593,7 @@ spec:
             ..
         } => assert_eq!(
             failures,
-            &["data.nemoclaw_sandbox_readiness.assistant".to_owned()],
+            &["data.fabric_sandbox_readiness.assistant".to_owned()],
             "apply must stop only at the agent's health check"
         ),
         other => panic!("apply must stop at the agent's health check, not earlier: {other}"),

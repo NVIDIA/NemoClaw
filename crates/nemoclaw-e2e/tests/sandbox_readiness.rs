@@ -54,7 +54,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .unwrap();
     let health = observations
         .iter()
-        .find(|row| row["address"] == "data.nemoclaw_sandbox_readiness.assistant")
+        .find(|row| row["address"] == "data.fabric_sandbox_readiness.assistant")
         .unwrap();
     assert_eq!(health["values"]["ready"], false);
     let failed_health: nemoclaw_sdk::RuntimeHealth =
@@ -126,7 +126,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["address"] == "data.nemoclaw_sandbox_readiness.assistant")
+        .find(|row| row["address"] == "data.fabric_sandbox_readiness.assistant")
         .unwrap();
     assert_ne!(observation["values"]["read_trigger"], token);
     assert_eq!(observation["values"]["ready"], true);
@@ -154,7 +154,7 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["address"] == "data.nemoclaw_sandbox_readiness.assistant")
+        .find(|row| row["address"] == "data.fabric_sandbox_readiness.assistant")
         .unwrap();
     let message = rejection["values"]["error_message"].as_str().unwrap();
     assert!(
@@ -171,8 +171,9 @@ async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindin
     // Teardown omits observations so an unavailable runtime cannot block deletion.
     graph.as_object_mut().unwrap().remove("data");
     graph.as_object_mut().unwrap().remove("output");
-    graph["provider"]["nemoclaw"]["destroy"] = json!(true);
-    graph["provider"]["openshell"]["destroy"] = json!(true);
+    for provider in ["nemoclaw", "openshell", "fabric"] {
+        graph["provider"][provider]["destroy"] = json!(true);
+    }
     let mut workspace = graph["resource"]["openshell_workspace"].clone();
     workspace["deployment"]
         .as_object_mut()

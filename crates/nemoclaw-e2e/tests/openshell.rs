@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_provider::fabric::AgentBridge as _;
+use fabric_provider::AgentBridge as _;
 
 use nemoclaw_e2e::image_runtime::targets;
 use nemoclaw_e2e::openshell::Fixture;
@@ -823,7 +823,7 @@ async fn public_configuration_refresh_verifies_runtime_intent_without_mutation()
         .clone();
     desired.insert("sandbox_id".into(), rows[3]["id"].clone());
     fixture.state.lock().unwrap().host_unavailable_checks = 1;
-    let fabric = nemoclaw_provider::fabric::AgentConfigurationBackend(client.clone());
+    let fabric = fabric_provider::AgentConfigurationBackend(client.clone());
     let configured = fabric.ensure("agent_configuration", &desired).await;
     assert!(configured.error().is_none(), "{:?}", configured.error());
     let binding = configured.into_parts().0.unwrap();

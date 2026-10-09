@@ -346,7 +346,7 @@ fn teardown_delegates_reconstructible_and_disposable_recovery_to_opentofu() {
     for address in [
         "openshell_provider_registration.example",
         "openshell_provider_profile.example",
-        "nemoclaw_agent_configuration.example",
+        "fabric_agent_configuration.example",
         "docker_container.runtime",
     ] {
         let allowed = BTreeMap::from([(address.into(), Row::new())]);
@@ -1292,7 +1292,7 @@ const UNEXPECTED_OBSERVATION: &str = "plan contains an unexpected observation";
 
 // Observations a plan could name without the compiled graph reading them.
 const UNDECLARED_OBSERVATIONS: [&str; 6] = [
-    "data.nemoclaw_fabric_capabilities.sandbox_99",
+    "data.fabric_capabilities.sandbox_99",
     "data.nemoclaw_target_hardware.target_99",
     "data.nemoclaw_inference_capabilities.endpoint_99",
     "data.nemoclaw_engine_capabilities.current",
