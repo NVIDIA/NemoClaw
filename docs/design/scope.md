@@ -22,6 +22,9 @@ NemoClaw provides a public desired-state SDK, CLI, and OpenTofu provider.
 | Hosted runtime | Startup capacity checks, model preparation, and application health |
 | Fabric | Agent runtime health semantics and adapter checks |
 
+Every OpenTofu resource and data source must take the inputs its backend uses, written in HCL, not documents compiled by the SDK.
+Fabric configurations and Fabric runtime bindings remain JSON strings, because their open schemas have no fixed OpenTofu type.
+
 Add a crate only for an existing consumer and a justified dependency or deployment boundary.
 Backward compatibility with earlier schemas, SDK APIs, or state formats is not required; reject unsupported state without adopting, replacing, or deleting its resources.
 
