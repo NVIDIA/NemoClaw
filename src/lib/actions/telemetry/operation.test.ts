@@ -17,6 +17,7 @@ import { runAgentsApply } from "../sandbox/agents/apply";
 import {
   beginInstallerTelemetry,
   finishInstallerTelemetry,
+  finishTelemetryOperation,
   recordTelemetryTarget,
   setTelemetryOutcome,
   TELEMETRY_CONTEXT_ENV,
@@ -133,6 +134,24 @@ it("leaves a CLI-owned update context for the outer command to finish (#12859)",
     state: "partial",
   });
 });
+
+it.each([
+  ["completed", "applied", 0],
+  ["failed", "partial", 1],
+  ["unverified", "pending", 10],
+  ["unverified", "pending", 11],
+] as const)(
+  "records the installer %s/%s result in a CLI-owned update (exit %i) (#12859)",
+  async (outcome, state, exitCode) => {
+    await withTelemetryOperation("update", async () => {
+      const directory = beginInstallerTelemetry("update")!;
+      await finishInstallerTelemetry(directory, outcome, state, "cli", exitCode);
+      expect(spawnSync).not.toHaveBeenCalled();
+      await finishTelemetryOperation(exitCode);
+    });
+    expect(deliveryInput().context).toMatchObject({ operation: "update", outcome, state });
+  },
+);
 
 it("uses a published sandbox's non-default gateway for its terminal receipt (#12859)", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telemetry-gateway-"));

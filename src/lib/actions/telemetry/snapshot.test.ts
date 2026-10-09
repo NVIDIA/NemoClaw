@@ -26,6 +26,8 @@ vi.mock("../sandbox/mcp-bridge-provider-inspection", async (importOriginal) => (
 }));
 
 import { collectOperationSnapshot } from "./snapshot";
+import { collectOperationEvent } from "./send";
+import { isOperationEvent } from "../../domain/telemetry/schema";
 
 beforeEach(() => {
   mocks.listRoots.mockReset();
@@ -123,4 +125,96 @@ it("marks observations that never start before cancellation (#12859)", async () 
     Array(5).fill("not_observed"),
   );
   expect(snapshot.collectionStatus).toBe("partial");
+});
+
+it("joins a published OpenClaw configuration to its operation target (#12859)", async () => {
+  mocks.readRegistry.mockReturnValue({
+    defaultSandbox: null,
+    sandboxes: {
+      selected: {
+        name: "selected",
+        agent: "openclaw",
+        gatewayPort: 8080,
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        provider: "nvidia-prod",
+      },
+    },
+  });
+  const config = JSON.stringify({
+    agents: {
+      defaults: { model: "nvidia/nvidia/nemotron-3-ultra-550b-a55b" },
+      entries: { main: { default: true } },
+    },
+    models: {
+      providers: {
+        nvidia: { api: "openai-completions", baseUrl: "https://inference.local/v1" },
+      },
+    },
+  });
+  const responses: Record<string, string> = {
+    uname: "Linux",
+    openclaw: JSON.stringify([{ id: "main", isDefault: true }]),
+    cat: config,
+  };
+  const read = vi.fn(async ({ command }: { command: readonly string[] }) => {
+    return responses[command[0] ?? ""] ?? "";
+  });
+  mocks.createReader.mockReturnValue({
+    read,
+    observeInferenceRoute: vi.fn(async () => ({
+      ok: true,
+      value: {
+        state: "configured",
+        route: { model: "nvidia/nemotron-3-ultra-550b-a55b", provider: "nvidia-prod" },
+      },
+    })),
+    dispose: vi.fn(),
+  });
+  const context = {
+    operation: "sandbox_rebuild" as const,
+    startedAt: "2026-10-09T00:00:00.000Z",
+    completedAt: "2026-10-09T00:00:01.000Z",
+    outcome: "completed" as const,
+    state: "applied" as const,
+    scope: "sandbox" as const,
+    installedVersion: "1.2.3",
+    targets: [
+      {
+        scope: "sandbox" as const,
+        sandboxName: "selected",
+        gatewayName: "nemoclaw",
+        outcome: "completed" as const,
+        state: "applied" as const,
+      },
+    ],
+  };
+  const event = await collectOperationEvent(context, {
+    signal: new AbortController().signal,
+    deadlineAt: Date.now() + 10_000,
+  });
+  expect(read).toHaveBeenCalled();
+  expect(event.parameters).toMatchObject({
+    publishedEnvironmentCount: 1,
+    configuredRuntimeCount: 1,
+    configuredAgentCount: 1,
+    targetResults: [{ configurationPosition: 0, configurationStatus: "reported" }],
+    configurations: [
+      {
+        agentHarnessId: "openclaw",
+        agentsStatus: "reported",
+        currentInferenceRouteStatus: "reported",
+      },
+    ],
+  });
+  expect(event.parameters.configurations[0].agents).toHaveLength(1);
+  expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+    modelId: "nvidia/nemotron-3-ultra-550b-a55b",
+    providerProfile: "nvidia",
+    apiFamily: "openai-completions",
+  });
+  expect(event.parameters.configurations[0].currentInferenceRoute).toMatchObject({
+    modelId: "nvidia/nemotron-3-ultra-550b-a55b",
+    providerProfile: "nvidia",
+  });
+  expect(isOperationEvent(event)).toBe(true);
 });

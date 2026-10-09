@@ -352,7 +352,8 @@ function terminalContext(current: Context, exitCode = 0): TelemetryOperationCont
     (threw ||
       (exitCode !== 0 &&
         !(
-          contextOwner === "installer" &&
+          (contextOwner === "installer" ||
+            (metadata.operation === "update" && explicit?.installer === true)) &&
           (exitCode === 10 || exitCode === 11) &&
           metadata.outcome === "unverified" &&
           metadata.state === "pending"
@@ -604,7 +605,9 @@ export async function finishInstallerTelemetry(
   if (!inherited || inherited.directory !== directory) return;
   let installerOwned: boolean;
   try {
-    installerOwned = readMetadata(directory).contextOwner === "installer";
+    const metadata = readMetadata(directory);
+    installerOwned = metadata.contextOwner === "installer";
+    if (!installerOwned && metadata.operation !== "update") return;
   } catch {
     return;
   }
@@ -612,7 +615,8 @@ export async function finishInstallerTelemetry(
   resolveTelemetryDeliveryConfig(process.env);
   const current: Context = { ...inherited, owner: installerOwned };
   await active.run(current, async () => {
-    setTelemetryOutcome(outcome, state, scope);
+    if (installerOwned) setTelemetryOutcome(outcome, state, scope);
+    else appendReceipt({ kind: "outcome", outcome, state, scope, installer: true });
     recordTelemetryVersions(versions);
     if (installerOwned) await finishTelemetryOperation(exitCode);
   });
