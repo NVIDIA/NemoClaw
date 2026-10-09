@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Hermes requires an sk-prefixed value before it sends a request. OpenShell
-// removes this non-secret sentinel and injects the route credential at egress.
+import { managedInferenceApiKey } from "./inference-credential.ts";
+
+// The inference.local route replaces this non-secret sentinel at egress.
+// Native NVIDIA routing instead expands the supervisor-issued environment handle.
 export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
@@ -85,7 +87,7 @@ export function applyHermesManagedRoute(
     ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(route.upstreamProvider);
   let apiKey = nativeCustom
     ? `sk-OPENSHELL-RESOLVE-ENV-${route.upstreamProvider === "compatible-endpoint" ? "COMPATIBLE_API_KEY" : "COMPATIBLE_ANTHROPIC_API_KEY"}`
-    : HERMES_PROXY_REWRITE_SENTINEL;
+    : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   if (route.credentialReference !== undefined) {
     const key =
       route.upstreamProvider === "compatible-endpoint"

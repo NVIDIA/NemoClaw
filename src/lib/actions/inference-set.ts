@@ -36,7 +36,9 @@ import {
   ensureNativeNvidiaProvider,
   ensureNativeNvidiaProviderAttached,
   isNativeNvidiaProvider,
+  managedInferenceApiKey,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_INFERENCE_PLACEHOLDER,
   normalizeNativeNvidiaProviderAttachment,
   persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
@@ -721,7 +723,14 @@ function buildProviderConfig(
   const providerConfig: ConfigObject = {
     ...existing,
     baseUrl: route.inferenceBaseUrl,
-    apiKey: typeof existing.apiKey === "string" && existing.apiKey ? existing.apiKey : "unused",
+    apiKey: managedInferenceApiKey(
+      route.inferenceBaseUrl,
+      typeof existing.apiKey === "string" &&
+        existing.apiKey &&
+        existing.apiKey !== NVIDIA_INFERENCE_PLACEHOLDER
+        ? existing.apiKey
+        : "unused",
+    ),
     api: route.inferenceApi,
     models:
       selectedIndex < 0

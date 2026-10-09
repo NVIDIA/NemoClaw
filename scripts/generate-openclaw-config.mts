@@ -28,6 +28,7 @@
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
+import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
 
 import {
   chmodSync,
@@ -980,7 +981,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
         ) &&
         new URL(inferenceBaseUrl).hostname !== "inference.local"
           ? `openshell:resolve:env:${env.NEMOCLAW_UPSTREAM_PROVIDER === "compatible-endpoint" ? "COMPATIBLE_API_KEY" : "COMPATIBLE_ANTHROPIC_API_KEY"}`
-          : "unused",
+          : managedInferenceApiKey(inferenceBaseUrl, "unused"),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

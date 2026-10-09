@@ -6,6 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  INVALID_NATIVE_NVIDIA_URLS,
+  NATIVE_NVIDIA_URLS,
+} from "../../fixtures/native-nvidia-inference-urls";
 import type { HermesBuildSettings } from "../../../agents/hermes/config/build-env.ts";
 import {
   buildHermesManagedPolicy,
@@ -77,6 +81,53 @@ function loadWithPython(document: unknown) {
 }
 
 describe("Hermes managed policy", () => {
+  it.each(NATIVE_NVIDIA_URLS)(
+    "accepts the native NVIDIA inference placeholder at %s",
+    (baseUrl) => {
+      const policy = buildHermesManagedPolicy(
+        { ...SETTINGS, baseUrl, upstreamProvider: "nvidia-prod" },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe("${NVIDIA_INFERENCE_API_KEY}");
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it.each(INVALID_NATIVE_NVIDIA_URLS)(
+    "rejects ambiguous native NVIDIA routing at %j",
+    (baseUrl) => {
+      expect(() => buildHermesManagedPolicy({ ...SETTINGS, baseUrl }, {})).toThrow(
+        "Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.",
+      );
+
+      const policy = buildHermesManagedPolicy({ ...SETTINGS, baseUrl: NATIVE_NVIDIA_URLS[0] }, {});
+      const result = loadWithPython({
+        ...policy,
+        config: { ...policy.config, model: { ...policy.config.model, base_url: baseUrl } },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Native NVIDIA inference requires");
+      expect(result.stderr).not.toContain("do-not-echo");
+    },
+  );
+
+  it.each([
+    ["https://integrate.api.nvidia.com/v1", "sk-OPENSHELL-PROXY-REWRITE"],
+    ["https://inference.local/v1", "${NVIDIA_INFERENCE_API_KEY}"],
+    ["https://integrate.api.nvidia.com.example/v1", "${NVIDIA_INFERENCE_API_KEY}"],
+    ["https://integrate.api.nvidia.com/v1", "sk-raw-policy-credential"],
+  ])("rejects credentials outside the managed route contract at %s", (baseUrl, apiKey) => {
+    const policy = buildHermesManagedPolicy({ ...SETTINGS, baseUrl }, {});
+    const malformedPolicy = {
+      ...policy,
+      config: { ...policy.config, model: { ...policy.config.model, api_key: apiKey } },
+    };
+    const result = loadWithPython(malformedPolicy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
   it("accepts absent inference while retaining managed restrictions", () => {
     const policy = buildHermesManagedPolicy({ ...SETTINGS, model: null }, {});
     const result = loadWithPython(policy);
