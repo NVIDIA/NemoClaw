@@ -244,9 +244,10 @@ export async function preflightRebuildTargetRuntime(
       return { ok: false };
     }
 
-    // Credential preflight must use the same trusted selection. Legacy registry
-    // rows may recover provider/model from their own matching onboard session;
-    // checking the raw row first would miss that remote credential requirement.
+    // Revalidate after image preparation: a key accepted before catalog lookup
+    // can be revoked while the image builds. Stop before backup in that case.
+    // Use the resolved selection, including an API family recovered from the
+    // sandbox's matching session, so every probe checks the recreate target.
     if (
       !(await preflightRebuildCredentials(
         {
@@ -255,6 +256,7 @@ export async function preflightRebuildTargetRuntime(
           model: target.resumeConfig.model,
           endpointUrl: target.resumeConfig.endpointUrl,
           credentialEnv: target.credentialEnv,
+          preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
           hermesAuthMethod: target.durableConfig.hermesAuthMethod,
         },
         log,
