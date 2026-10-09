@@ -674,6 +674,7 @@ async function rebuildSandboxUnlocked(
             `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
           );
         }
+        telemetryMutated = true;
         const restored = await runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",

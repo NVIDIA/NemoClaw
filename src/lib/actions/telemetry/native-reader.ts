@@ -36,13 +36,18 @@ export function createSupervisedSandboxCommandReader(
   const forwardTerm = () => {
     for (const listener of listeners.SIGTERM) listener();
   };
+  const forwardProcessTerm = () => {
+    forwardTerm();
+    process.removeListener("SIGTERM", forwardProcessTerm);
+    process.kill(process.pid, "SIGTERM");
+  };
   const forwardInt = () => {
     for (const listener of listeners.SIGINT) listener();
     process.removeListener("SIGINT", forwardInt);
     process.kill(process.pid, "SIGINT");
   };
   signal.addEventListener("abort", forwardTerm, { once: true });
-  process.on("SIGTERM", forwardTerm);
+  process.on("SIGTERM", forwardProcessTerm);
   process.on("SIGINT", forwardInt);
   const signalSource = {
     add: (signalName: "SIGTERM" | "SIGINT", listener: () => void) => {
@@ -108,7 +113,7 @@ export function createSupervisedSandboxCommandReader(
     },
     dispose: () => {
       signal.removeEventListener("abort", forwardTerm);
-      process.removeListener("SIGTERM", forwardTerm);
+      process.removeListener("SIGTERM", forwardProcessTerm);
       process.removeListener("SIGINT", forwardInt);
     },
   };

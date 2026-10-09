@@ -1075,7 +1075,6 @@ describe("rebuild post-restore phase", () => {
     expect(output).toContain(errors.length ? "x".repeat(4096) : "No diagnostic was returned.");
     expect(output.length).toBeLessThan(4300);
   });
-  });
 
   it.each(["langchain-deepagents-code", "pi"] as const)(
     "proves the rebuilt %s terminal-agent posture from exact generic completion",

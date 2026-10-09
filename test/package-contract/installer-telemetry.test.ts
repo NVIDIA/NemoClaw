@@ -16,12 +16,38 @@ const { isOperationEvent } =
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 
 it.each([
-  { exitCode: 0, outcome: "completed", state: "applied" },
-  { exitCode: 10, outcome: "unverified", state: "pending" },
-  { exitCode: 11, outcome: "unverified", state: "pending" },
+  { name: "shell exit 0", exitCode: 0, outcome: "completed", state: "applied", lifecycle: false },
+  {
+    name: "shell exit 10",
+    exitCode: 10,
+    outcome: "unverified",
+    state: "pending",
+    lifecycle: false,
+  },
+  {
+    name: "shell exit 11",
+    exitCode: 11,
+    outcome: "unverified",
+    state: "pending",
+    lifecycle: false,
+  },
+  {
+    name: "successful installer lifecycle",
+    exitCode: 0,
+    outcome: "completed",
+    state: "applied",
+    lifecycle: true,
+  },
+  {
+    name: "installer host failure after telemetry starts",
+    exitCode: 47,
+    outcome: "failed",
+    state: "unchanged",
+    lifecycle: true,
+  },
 ])(
-  "delivers one installer record after shell exit $exitCode (#12859)",
-  async ({ exitCode, outcome, state }) => {
+  "delivers one installer record for $name (#12859)",
+  async ({ exitCode, outcome, state, lifecycle }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-telemetry-"));
     const receipts = path.join(root, "received.ndjson");
     const sourceRoot = path.join(import.meta.dirname, "../..");
@@ -32,6 +58,12 @@ it.each([
     ) as { nemoclawVersion: string };
     const preload = path.join(root, "local-receiver.cjs");
     const trace = path.join(root, "delivery-trace.log");
+    const stubScripts = path.join(root, "scripts");
+    const fakeCli = path.join(root, "nemoclaw");
+    fs.mkdirSync(stubScripts);
+    fs.writeFileSync(path.join(stubScripts, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n");
+    fs.writeFileSync(fakeCli, "#!/usr/bin/env bash\nexit 0\n");
+    fs.chmodSync(fakeCli, 0o755);
     fs.writeFileSync(
       preload,
       `const fs = require('node:fs');
@@ -64,39 +96,70 @@ globalThis.fetch = (input, init) => {
     try {
       expect(fs.existsSync(entry)).toBe(true);
       const [port] = (await once(server, "message")) as [number];
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `set -euo pipefail
+      const shell = lifecycle
+        ? `set -euo pipefail
+source "$INSTALLER_UNDER_TEST"
+SCRIPT_DIR="$TEST_SCRIPT_DIR"
+apply_persisted_automatic_gateway_port() { :; }
+validate_deferred_onboarding_request() { :; }
+validate_forwarded_service_port_overrides() { :; }
+load_station_vllm_conflict_helpers() { :; }
+consume_station_local_vllm_resume() { return 1; }
+resolve_nemoclaw_gateway_port() { printf '8080\\n'; }
+preflight_explicit_express_flags() { :; }
+validate_installer_docker_target_before_host_changes() { :; }
+print_banner() { :; }
+preflight_usage_notice_prompt() { :; }
+prepare_installer_host() { [[ "$TEST_EXIT_CODE" != 47 ]] || return 47; }
+prepare_installer_node_runtime() { :; }
+ensure_station_express_pair() { :; }
+step() { :; }
+fix_npm_permissions() { :; }
+preflight_nemoclaw_acp_shim() { :; }
+preinstall_backup_and_retire_legacy_gateway() { :; }
+spin() { :; }
+command_exists() { [[ "$1" == git ]]; }
+resolve_repo_root() { printf '%s\\n' "$NEMOCLAW_SOURCE_ROOT"; }
+is_source_checkout() { return 0; }
+verify_nemoclaw() { _NEMOCLAW_VERIFIED_VERSION="$EXPECTED_VERSION"; _CLI_PATH="$TEST_CLI_PATH"; }
+maybe_install_openshell_during_install() { :; }
+ensure_nemoclaw_shim() { :; }
+refresh_path() { :; }
+require_reportable_openshell_version() { :; }
+registered_sandbox_count() { printf '0\\n'; }
+should_defer_onboarding() { return 0; }
+print_done() { :; }
+main --non-interactive --yes-i-accept-third-party-software`
+        : `set -euo pipefail
 source "$INSTALLER_UNDER_TEST"
 _NEMOCLAW_VERIFIED_VERSION="$EXPECTED_VERSION"
 _installer_telemetry_begin ${exitCode === 0 ? "installed" : "before"}
 [[ "$_INSTALLER_TELEMETRY_ACTIVE" == true ]]
 ${exitCode === 0 ? "_INSTALLER_TELEMETRY_OUTCOME=completed\n_INSTALLER_TELEMETRY_STATE=applied" : ""}
-exit ${exitCode}`,
-        ],
-        {
-          cwd: sourceRoot,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            CI: "",
-            GITHUB_ACTIONS: "",
-            VITEST: "",
-            NODE_ENV: "",
-            NEMOCLAW_DISABLE_TELEMETRY: "",
-            NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-telemetry:client:attempt-1",
-            NEMOCLAW_TEST_RECEIVER_URL: `http://127.0.0.1:${port}/`,
-            NEMOCLAW_TEST_TRACE: trace,
-            NEMOCLAW_SOURCE_ROOT: sourceRoot,
-            NODE_OPTIONS: `--require=${preload}`,
-            HOME: root,
-            INSTALLER_UNDER_TEST: INSTALLER,
-            EXPECTED_VERSION: identity.nemoclawVersion,
-          },
+exit ${exitCode}`;
+      const result = spawnSync("bash", ["-c", shell], {
+        cwd: sourceRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CI: "",
+          GITHUB_ACTIONS: "",
+          VITEST: "",
+          NODE_ENV: "",
+          NEMOCLAW_DISABLE_TELEMETRY: "",
+          NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-telemetry:client:attempt-1",
+          NEMOCLAW_TEST_RECEIVER_URL: `http://127.0.0.1:${port}/`,
+          NEMOCLAW_TEST_TRACE: trace,
+          NEMOCLAW_SOURCE_ROOT: sourceRoot,
+          NODE_OPTIONS: `--require=${preload}`,
+          HOME: root,
+          INSTALLER_UNDER_TEST: INSTALLER,
+          EXPECTED_VERSION: identity.nemoclawVersion,
+          TEST_SCRIPT_DIR: stubScripts,
+          TEST_CLI_PATH: fakeCli,
+          TEST_EXIT_CODE: String(exitCode),
         },
-      );
+      });
       expect(result.status, result.stderr).toBe(exitCode);
       expect(
         fs.existsSync(receipts),
@@ -119,7 +182,9 @@ exit ${exitCode}`,
         state,
         ...(exitCode === 0
           ? { versions: { installedStatus: "reported", targetStatus: "reported" } }
-          : {}),
+          : lifecycle
+            ? { versions: { installedStatus: "not_observed", targetStatus: "not_observed" } }
+            : {}),
       });
     } finally {
       await server.terminate();

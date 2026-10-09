@@ -285,8 +285,11 @@ Broader binary access would let unrelated sandbox processes send data to Tavily 
 ## QA Operation Telemetry
 
 NemoClaw operation telemetry is currently available only for QA runs.
-A valid `NEMOCLAW_TELEMETRY_TEST_LABEL` selects NVIDIA's fixed TEST receiver before a host CLI or installer operation starts.
-NemoClaw sends one record after the operation finishes.
+A valid `NEMOCLAW_TELEMETRY_TEST_LABEL` selects NVIDIA's fixed TEST receiver for the installer and supported CLI commands.
+Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
+It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
+NemoClaw sends one record after one of these operations finishes.
+Help requests and other CLI commands do not emit a record.
 The record describes the operation result and approved configuration categories, such as model and policy choices.
 Production delivery is not enabled.
 
