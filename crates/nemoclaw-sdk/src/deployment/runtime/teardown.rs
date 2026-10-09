@@ -201,15 +201,8 @@ impl Deployment {
             &teardown_expected(record, &bindings, runtime)?,
             &compiled.observations,
         );
-        self.prepare(bundle, store, &compiled.graph)?;
-        self.tofu(
-            bundle,
-            store,
-            &destroy_environment(&record.document),
-            &["init", "-upgrade", "-input=false", "-no-color"],
-            cancel,
-        )
-        .await?;
+        self.initialize(bundle, store, &compiled.graph, cancel)
+            .await?;
         let plan = self
             .saved_plan(
                 bundle,
