@@ -62,7 +62,8 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 The first eight checks are required by the `v1` ruleset, including documentation validation.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
 Superseded PR runs are cancelled.
-Native and image workflows also cancel superseded pushes; their manual runs use separate concurrency groups and finish.
+The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
+Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
 Documentation and dependency pushes finish; newer pushes replace older pending runs.
 Live runs use separate concurrency groups and are not cancelled by a newer push.
 The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
