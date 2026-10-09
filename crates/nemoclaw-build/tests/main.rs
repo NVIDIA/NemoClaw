@@ -11,6 +11,8 @@ mod bake;
 mod catalog_sources;
 #[path = "ci.rs"]
 mod ci;
+#[cfg(unix)]
+mod ci_lifecycle;
 #[path = "docs.rs"]
 mod docs;
 #[path = "fabric_cache.rs"]
