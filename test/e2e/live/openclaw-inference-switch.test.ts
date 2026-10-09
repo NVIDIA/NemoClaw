@@ -1320,9 +1320,12 @@ test(
     expect(route.exitCode, resultText(route)).toBe(0);
     const plainRoute = stripAnsi(resultText(route));
     // The CLI aligns the label columns; the exact rendering contract is owned by
-    // src/lib/actions/inference-get.test.ts, so accept one or more spaces here.
-    expect(plainRoute).toMatch(new RegExp(`Provider: +${escapeRegExp(SWITCH_PROVIDER)}\\b`));
-    expect(plainRoute).toMatch(new RegExp(`Model: +${escapeRegExp(SWITCH_MODEL)}\\b`));
+    // src/lib/actions/inference-get.test.ts, so accept one or more spaces here and
+    // require each displayed value to end at the line boundary.
+    expect(plainRoute).toMatch(
+      new RegExp(`Provider: +${escapeRegExp(SWITCH_PROVIDER)}(?:\\r?\\n|$)`),
+    );
+    expect(plainRoute).toMatch(new RegExp(`Model: +${escapeRegExp(SWITCH_MODEL)}(?:\\r?\\n|$)`));
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
