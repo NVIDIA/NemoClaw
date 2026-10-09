@@ -2,19 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::labels::display_value;
-use nemoclaw_authoring::{Capabilities, Diagnostics, JourneyQuestion, JourneyState};
+use nemoclaw_authoring::{
+    Capabilities, Diagnostics, JourneyQuestion, JourneyResolution, JourneyState,
+};
 use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{config::Document, discovery::DiscoveryRequest};
 use serde_json::Value;
+use std::cell::{Cell, RefCell};
 
 pub(crate) struct JourneyWizard {
     pub(super) capabilities: Capabilities,
-    pub(super) state: JourneyState,
+    /// Private, with `observations`, so every change clears `resolution`.
+    state: JourneyState,
     pub(super) history: Vec<JourneyState>,
     pub(super) selected: usize,
     pub(super) selection_changed: bool,
     pub(super) custom_answer: bool,
-    pub(super) observations: DiscoveryObservations,
+    observations: DiscoveryObservations,
+    /// The last resolution of `state` with `observations`. Resolving
+    /// validates and parses the whole document, and the view, the next
+    /// question, and each step ask for it again.
+    resolution: RefCell<Option<Result<JourneyResolution, Diagnostics>>>,
+    resolutions: Cell<usize>,
     /// The engines this machine's environment names, read before the first question.
     pub(super) local_engine_candidates: Vec<DiscoveryRequest>,
     pub(super) input: String,
@@ -34,6 +43,8 @@ impl JourneyWizard {
             selection_changed: false,
             custom_answer: false,
             observations: DiscoveryObservations::new(),
+            resolution: RefCell::new(None),
+            resolutions: Cell::new(0),
             local_engine_candidates: Vec::new(),
             input: String::new(),
             error: None,
@@ -57,19 +68,54 @@ impl JourneyWizard {
         self.observations.merge(observed);
         self.state
             .use_local_engines(&self.local_engine_candidates, &self.observations);
+        self.changed();
     }
 
+    /// Keep one observation of the target.
     #[cfg(test)]
+    pub(super) fn record(
+        &mut self,
+        query: nemoclaw_sdk::discovery::DiscoveryQuery,
+        observation: nemoclaw_sdk::discovery::DiscoveryObservation,
+    ) {
+        self.observations.record(query, observation);
+        self.changed();
+    }
+
     pub(crate) fn state(&self) -> &JourneyState {
         &self.state
     }
 
-    pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
-        Ok(self
+    pub(super) fn observations(&self) -> &DiscoveryObservations {
+        &self.observations
+    }
+
+    /// The journey resolved with what the target said, reused until the
+    /// state or observations change.
+    pub(super) fn resolution(&self) -> Result<JourneyResolution, Diagnostics> {
+        if let Some(resolved) = self.resolution.borrow().as_ref() {
+            return resolved.clone();
+        }
+        let resolved = self
             .state
-            .resolve_with_observations(&self.capabilities, &self.observations)?
-            .next_question()
-            .cloned())
+            .resolve_with_observations(&self.capabilities, &self.observations);
+        self.resolutions.set(self.resolutions.get() + 1);
+        *self.resolution.borrow_mut() = Some(resolved.clone());
+        resolved
+    }
+
+    /// How many times the journey was resolved.
+    #[cfg(test)]
+    pub(super) fn resolutions(&self) -> usize {
+        self.resolutions.get()
+    }
+
+    fn changed(&mut self) {
+        *self.resolution.get_mut() = None;
+    }
+
+    pub(crate) fn question(&self) -> Result<Option<JourneyQuestion>, Diagnostics> {
+        Ok(self.resolution()?.next_question().cloned())
     }
 
     pub(super) fn choice_index(&self, question: &JourneyQuestion) -> usize {
@@ -98,8 +144,9 @@ impl JourneyWizard {
             .question()?
             .expect("submit requires an active question");
         let previous = self.state.clone();
-        self.state
-            .answer(&self.capabilities, question.id(), answer)?;
+        let answered = self.state.answer(&self.capabilities, question.id(), answer);
+        self.changed();
+        answered?;
         self.history.push(previous);
         self.selected = 0;
         self.selection_changed = false;
@@ -117,6 +164,7 @@ impl JourneyWizard {
             Ok(delegated) => {
                 self.history.push(self.state.clone());
                 self.state = delegated;
+                self.changed();
                 self.error = None;
             }
             // The resolver already supplies a catalog credential note. Keep
@@ -136,6 +184,7 @@ impl JourneyWizard {
     pub(super) fn back(&mut self) {
         if let Some(previous) = self.history.pop() {
             self.state = previous;
+            self.changed();
             self.selected = 0;
             self.selection_changed = false;
             self.custom_answer = false;
@@ -226,10 +275,7 @@ impl JourneyWizard {
             self.started = true;
             return;
         }
-        let resolution = match self
-            .state
-            .resolve_with_observations(&self.capabilities, &self.observations)
-        {
+        let resolution = match self.resolution() {
             Ok(resolution) => resolution,
             Err(error) => {
                 self.error = Some(error.to_string());
@@ -276,8 +322,7 @@ impl JourneyWizard {
     }
 
     pub(super) fn document(&self) -> Result<Document, Box<dyn std::error::Error>> {
-        self.state
-            .resolve_with_observations(&self.capabilities, &self.observations)?
+        self.resolution()?
             .ready_document()
             .cloned()
             .ok_or_else(|| "the journey is not complete".into())
