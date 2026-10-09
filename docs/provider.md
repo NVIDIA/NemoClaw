@@ -43,8 +43,8 @@ The generated graphs manage these objects and observations:
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
 
-The [standalone HCL fixture](contributing/integration-tests.md#standalone-cache-and-credential-resources) verifies cache and credential resource composition without SDK orchestration.
-It does not qualify a complete standalone OpenShell deployment workflow.
+Every provider type has a [lifecycle test](contributing/integration-tests.md) that plans hand-written HCL through pinned OpenTofu without SDK orchestration.
+These tests do not qualify a complete standalone deployment workflow.
 Do not edit SDK-generated graphs or share a deployment state directory between independently managed workflows.
 
 ## Provider Catalog
@@ -117,7 +117,8 @@ resource "openshell_sandbox" "assistant" {
 | `fabric_sandbox_readiness` data source | [Sandbox completion](#sandbox-completion) |
 | `fabric_capabilities` data source | [Fabric image catalog and compatibility](#engine-and-fabric-discovery) |
 
-The `fabric` provider takes the same gateway settings as the `openshell` provider, and `destroy`, which permits removing agent configurations during explicit teardown.
+The `fabric` provider takes the same gateway settings as the `openshell` provider.
+It also accepts `destroy`, but no Fabric type requires it: removing an agent configuration releases its binding without changing the sandbox.
 It reaches each sandbox's Fabric host by running commands in the sandbox through the gateway; `fabric_capabilities` instead reads the container engine named on it.
 
 ### NemoClaw Resources
@@ -622,4 +623,4 @@ The Docker and Helm providers have fixed release versions and checksum-pinned na
 The providers are not published yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 Supported HCL examples, import, adoption, remote-state backends and compatibility across releases are tracked in [#12645](https://github.com/NVIDIA/NemoClaw/issues/12645).
 
-These sections need verified implementations and test results before they can recommend a direct-use workflow.
+Every resource and data source takes inputs that can be written in HCL, but this guide does not recommend a direct-use workflow.
