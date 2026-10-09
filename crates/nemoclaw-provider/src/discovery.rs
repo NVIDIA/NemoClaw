@@ -187,7 +187,8 @@ mod tests {
         for field in [
             "image",
             "metadata_env",
-            "requirements_json",
+            "config_json",
+            "filesystem_read",
             "compatibility_status",
         ] {
             assert!(!schema.block.attributes.contains_key(field), "{field}");

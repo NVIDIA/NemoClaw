@@ -97,6 +97,95 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+async fn authored_fabric_requirements_take_the_configuration_and_policy_reads_separately() {
+    let tofu =
+        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
+    let provider = PathBuf::from(
+        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
+    );
+    let catalog_json = serde_json::to_string(&FabricCatalog::bundled()).unwrap();
+    let fixture = transport::Fixture::start(move |request| {
+        let body = match request.path.as_str() {
+            "/images/labeled:image/json" => json!({"Id":"sha256:fixture", "Config":{"Labels":{IMAGE_CATALOG_LABEL:catalog_json}}}),
+            other => panic!("unexpected engine query {other}"),
+        };
+        Some((200, serde_json::to_vec(&body).unwrap()))
+    })
+    .await;
+    let directory = TofuWorkspace::new(tofu, provider);
+    let write = |configuration: &str, reads: &str| {
+        fs::write(
+            directory.path().join("main.tf"),
+            format!(
+                r#"terraform {{
+  required_providers {{
+    fabric = {{ source = "nvidia/fabric" }}
+  }}
+}}
+
+provider "fabric" {{}}
+
+data "fabric_capabilities" "agent" {{
+  engine          = "{engine}"
+  image           = "labeled:image"
+  config_json     = jsonencode({configuration})
+  filesystem_read = {reads}
+}}
+
+output "status" {{
+  value = data.fabric_capabilities.agent.compatibility_status
+}}
+"#,
+                engine = fixture.endpoint
+            ),
+        )
+        .unwrap();
+    };
+    let plan = || {
+        let result = directory
+            .command()
+            .args(["plan", "-input=false", "-no-color"])
+            .output()
+            .unwrap();
+        (
+            result.status.success(),
+            format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            ),
+        )
+    };
+
+    write(
+        r#"{ harness = { adapter_id = "fixture.adapter" } }"#,
+        r#"["/srv", "/opt/app"]"#,
+    );
+    let (planned, output) = plan();
+    assert!(planned, "{output}");
+
+    write(r#"{ harness = {} }"#, "null");
+    let (planned, output) = plan();
+    assert!(
+        !planned,
+        "a configuration without an adapter must be rejected"
+    );
+    assert!(
+        output.contains("Invalid discovery target or selection"),
+        "{output}"
+    );
+
+    write(
+        r#"{ harness = { adapter_id = "fixture.adapter" } }"#,
+        r#""/srv""#,
+    );
+    let (planned, output) = plan();
+    assert!(!planned, "filesystem_read must be a list");
+    assert!(output.contains("filesystem_read"), "{output}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabilities() {
     use nemoclaw_sdk::{compile::compile, config::Document};
     let tofu =

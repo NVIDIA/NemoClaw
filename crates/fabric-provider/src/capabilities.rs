@@ -31,7 +31,8 @@ pub struct FabricCapabilitiesState {
     engine: Value<String>,
     image: Value<String>,
     metadata_env: Value<String>,
-    requirements_json: Value<String>,
+    config_json: Value<String>,
+    filesystem_read: Value<Vec<Value<String>>>,
     architecture: Value<String>,
     operating_system: Value<String>,
     compatibility_status: Value<String>,
@@ -62,6 +63,38 @@ impl FabricCapabilitiesState {
     }
 }
 
+/// The Fabric requirements the inputs describe: none when no configuration
+/// is given, and an error when the configuration names no adapter.
+fn requirements(config: &FabricCapabilitiesState) -> Result<Option<FabricRequirements>, ()> {
+    let Value::Value(json) = &config.config_json else {
+        return Ok(None);
+    };
+    let configuration: serde_json::Value = serde_json::from_str(json).map_err(|_| ())?;
+    if !configuration
+        .pointer("/harness/adapter_id")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| !id.is_empty())
+    {
+        return Err(());
+    }
+    let filesystem_read = match &config.filesystem_read {
+        Value::Value(paths) => Some(
+            paths
+                .iter()
+                .map(|path| match path {
+                    Value::Value(path) => Ok(path.clone()),
+                    _ => Err(()),
+                })
+                .collect::<Result<_, _>>()?,
+        ),
+        _ => None,
+    };
+    Ok(Some(FabricRequirements {
+        configuration,
+        filesystem_read,
+    }))
+}
+
 fn valid(config: &FabricCapabilitiesState) -> bool {
     // An empty engine selects verified image metadata instead of an engine read.
     let engine_valid = match &config.engine {
@@ -73,18 +106,10 @@ fn valid(config: &FabricCapabilitiesState) -> bool {
     };
     let image_valid = matches!(&config.image, Value::Unknown)
         || matches!(&config.image, Value::Value(image) if !image.is_empty());
-    let requirements_valid = match &config.requirements_json {
-        Value::Value(json) => {
-            serde_json::from_str::<FabricRequirements>(json).is_ok_and(|request| {
-                request
-                    .configuration
-                    .pointer("/harness/adapter_id")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|id| !id.is_empty())
-            })
-        }
-        _ => true,
-    };
+    // Unknown values are checked again when the read runs.
+    let requirements_valid = matches!(&config.config_json, Value::Unknown)
+        || matches!(&config.filesystem_read, Value::Value(paths) if paths.iter().any(|p| matches!(p, Value::Unknown)))
+        || requirements(config).is_ok();
     let metadata_valid = match &config.metadata_env {
         Value::Null | Value::Unknown => true,
         Value::Value(name) => {
@@ -113,7 +138,12 @@ impl DataSource for FabricCapabilitiesDataSource {
                     ("engine", String, Required),
                     ("image", String, Required),
                     ("metadata_env", String, Optional),
-                    ("requirements_json", String, Optional),
+                    ("config_json", String, Optional),
+                    (
+                        "filesystem_read",
+                        AttributeType::List(Box::new(String)),
+                        Optional,
+                    ),
                     ("architecture", String, Optional),
                     ("operating_system", String, Optional),
                     ("observation_json", String, Computed),
@@ -168,12 +198,14 @@ impl DataSource for FabricCapabilitiesDataSource {
         };
         if [
             &config.metadata_env,
-            &config.requirements_json,
+            &config.config_json,
             &config.architecture,
             &config.operating_system,
         ]
         .iter()
         .any(|value| matches!(value, Value::Unknown))
+            || matches!(&config.filesystem_read, Value::Unknown)
+            || matches!(&config.filesystem_read, Value::Value(paths) if paths.iter().any(|p| matches!(p, Value::Unknown)))
         {
             return Some(config.defer());
         }
@@ -185,8 +217,7 @@ impl DataSource for FabricCapabilitiesDataSource {
         } else {
             observe_fabric(self.0.as_ref(), &engine, &image).await
         };
-        if let Value::Value(json) = &config.requirements_json {
-            let requirements: FabricRequirements = serde_json::from_str(json).ok()?;
+        if let Some(requirements) = requirements(&config).ok()? {
             if let Some(runtime) = observation
                 .catalog
                 .as_ref()
@@ -375,8 +406,8 @@ mod tests {
             let mut config = fabric_config();
             config.engine = Value::Value(fixture.endpoint.clone());
             config.image = Value::Value(image.into());
-            config.requirements_json =
-                Value::Value(serde_json::json!({"configuration":{"schema_version":"fabric.agent/v1alpha1","metadata":{"name":"main"},"harness":{"adapter_id":"nvidia.fabric.langchain.deepagents","settings":settings},"runtime":{},"models":{"default":{"provider":"openai","model":"fixture-model","base_url":"http://localhost/v1","api_key_env":"MODEL_KEY"}}}}).to_string());
+            config.config_json =
+                Value::Value(serde_json::json!({"schema_version":"fabric.agent/v1alpha1","metadata":{"name":"main"},"harness":{"adapter_id":"nvidia.fabric.langchain.deepagents","settings":settings},"runtime":{},"models":{"default":{"provider":"openai","model":"fixture-model","base_url":"http://localhost/v1","api_key_env":"MODEL_KEY"}}}).to_string());
             config.architecture = Value::Value(architecture.into());
             config.operating_system = Value::Value("linux".into());
             let mut diagnostics = Diagnostics::default();
@@ -425,6 +456,47 @@ mod tests {
                 "schema field omitted: {field}"
             );
         }
-        assert!(serialized["requirements_json"].is_null());
+        assert!(serialized["config_json"].is_null());
+        assert!(serialized["filesystem_read"].is_null());
+    }
+
+    #[test]
+    fn requirements_are_the_configuration_and_the_policy_reads_as_separate_inputs() {
+        let schema = FabricCapabilitiesDataSource::default()
+            .schema(&mut Diagnostics::default())
+            .unwrap();
+        let attribute = |name: &str| {
+            schema
+                .block
+                .attributes
+                .get(name)
+                .map(|a| (format!("{:?}", a.attr_type), format!("{:?}", a.constraint)))
+        };
+        assert!(!schema.block.attributes.contains_key("requirements_json"));
+        assert_eq!(
+            attribute("config_json"),
+            Some(("String".into(), "Optional".into()))
+        );
+        assert_eq!(
+            attribute("filesystem_read"),
+            Some(("List(String)".into(), "Optional".into()))
+        );
+
+        let mut config = fabric_config();
+        config.config_json = Value::Value(r#"{"harness":{"adapter_id":"a"}}"#.into());
+        config.filesystem_read = Value::Value(vec![Value::Value("/srv".into())]);
+        let required = requirements(&config).unwrap().unwrap();
+        assert_eq!(required.configuration["harness"]["adapter_id"], "a");
+        assert_eq!(required.filesystem_read, Some(vec!["/srv".into()]));
+
+        config.filesystem_read = Value::Null;
+        assert_eq!(
+            requirements(&config).unwrap().unwrap().filesystem_read,
+            None
+        );
+        config.config_json = Value::Null;
+        assert!(requirements(&config).unwrap().is_none());
+        config.config_json = Value::Value(r#"{"harness":{}}"#.into());
+        assert!(requirements(&config).is_err(), "an adapter_id is required");
     }
 }
