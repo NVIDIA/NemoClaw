@@ -115,6 +115,8 @@ mod durable_source_tests {
             "provider",
             "sandbox",
             "managed_gateway",
+            "kubernetes_storage",
+            "kubernetes_gateway",
             "inference_service",
             "ollama_proxy",
         ]
@@ -127,6 +129,146 @@ mod durable_source_tests {
             .unwrap()
             .values
     }
+    fn cluster_source() -> (Source, crate::backend::Row) {
+        let document = crate::config::Document::parse(
+            include_bytes!("../../../../examples/kubernetes/local-vllm.yaml").as_slice(),
+        )
+        .unwrap();
+        let row = provider(&document);
+        let source =
+            Source::parse(&row["credential_source"], &row["owner"], &row["endpoint"]).unwrap();
+        (source, row)
+    }
+
+    #[test]
+    fn cluster_source_rejects_a_foreign_owner_with_the_expected_model_name() {
+        let (mut source, row) = cluster_source();
+        let Source::ClusterService { storage, .. } = &mut source else {
+            panic!("compiled cluster credential source")
+        };
+        // Keep storage internally consistent and preserve the expected name prefix,
+        // so only the registration's owner binding rejects this source.
+        storage.owner = "11111111-1111-4111-8111-111111111111".into();
+        storage.gateway.owner = storage.owner.clone();
+        storage.validate().unwrap();
+        assert_eq!(
+            Source::parse(
+                &serde_json::to_string(&source).unwrap(),
+                &row["owner"],
+                &row["endpoint"]
+            ),
+            Err(ObservationError::BindingMismatch)
+        );
+    }
+
+    #[test]
+    fn cluster_source_rejects_a_foreign_model_name_with_the_expected_owner() {
+        let (mut source, row) = cluster_source();
+        let Source::ClusterService { storage, endpoint } = &mut source else {
+            panic!("compiled cluster credential source")
+        };
+        storage.name = "nc-0000000000000000-model-0000000000000000".into();
+        storage.validate().unwrap();
+        let mut url = url::Url::parse(endpoint).unwrap();
+        url.set_host(Some(&crate::kubernetes::services::service_host(
+            &storage.name,
+            storage.namespace(),
+        )))
+        .unwrap();
+        *endpoint = url.to_string();
+        let endpoint = endpoint.clone();
+        assert_eq!(
+            Source::parse(
+                &serde_json::to_string(&source).unwrap(),
+                &row["owner"],
+                &endpoint
+            ),
+            Err(ObservationError::BindingMismatch)
+        );
+    }
+
+    #[test]
+    fn cluster_source_rejects_each_invalid_endpoint_component() {
+        let (source, row) = cluster_source();
+        for case in [
+            "scheme",
+            "host",
+            "missing port",
+            "zero port",
+            "path",
+            "username",
+            "password",
+            "query",
+            "fragment",
+        ] {
+            let mut changed = source.clone();
+            let Source::ClusterService { endpoint, .. } = &mut changed else {
+                panic!("compiled cluster credential source")
+            };
+            let mut url = url::Url::parse(endpoint).unwrap();
+            match case {
+                "scheme" => url.set_scheme("https").unwrap(),
+                "host" => url
+                    .set_host(Some("foreign.default.svc.cluster.local"))
+                    .unwrap(),
+                "missing port" => url.set_port(None).unwrap(),
+                "zero port" => url.set_port(Some(0)).unwrap(),
+                "path" => url.set_path("/v1/completions"),
+                "username" => url.set_username("foreign").unwrap(),
+                "password" => url.set_password(Some("foreign")).unwrap(),
+                "query" => url.set_query(Some("foreign=value")),
+                "fragment" => url.set_fragment(Some("foreign")),
+                _ => unreachable!(),
+            }
+            *endpoint = url.to_string();
+            // Matching the published URL to the registration prevents its equality
+            // check from masking a missing check on an individual URL component.
+            let endpoint = endpoint.clone();
+            assert_eq!(
+                Source::parse(
+                    &serde_json::to_string(&changed).unwrap(),
+                    &row["owner"],
+                    &endpoint
+                ),
+                Err(ObservationError::BindingMismatch),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn cluster_source_rejects_invalid_storage_before_using_its_cluster_target() {
+        let (source, row) = cluster_source();
+        let original = serde_json::to_value(source).unwrap();
+        for (case, pointer, invalid) in [
+            ("layout", "/storage/layout", json!(0)),
+            ("kind", "/storage/kind", json!("kubernetes_service")),
+            ("generation", "/storage/generation", json!("invalid")),
+            ("capacity", "/storage/storageGib", json!(0)),
+            ("gateway kind", "/storage/gateway/kind", json!("foreign")),
+            (
+                "missing cluster target",
+                "/storage/gateway/settings/kubernetes",
+                Value::Null,
+            ),
+            (
+                "empty cluster context",
+                "/storage/gateway/settings/kubernetes/context",
+                json!(""),
+            ),
+        ] {
+            let mut changed = original.clone();
+            *changed
+                .pointer_mut(pointer)
+                .unwrap_or_else(|| panic!("missing {case} fixture field: {pointer}")) = invalid;
+            assert_eq!(
+                Source::parse(&changed.to_string(), &row["owner"], &row["endpoint"]),
+                Err(ObservationError::BindingMismatch),
+                "{case}"
+            );
+        }
+    }
+
     #[test]
     fn remote_source_retains_published_endpoint_without_compute_configuration() {
         let mut document = crate::config::Document::parse(

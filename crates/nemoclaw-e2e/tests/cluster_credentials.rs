@@ -5,7 +5,7 @@
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_provider::{
     cluster_services::OpenShellServices,
-    openshell::{GatewayClient, OpenShellBackend, Services},
+    openshell::{GatewayClient, GatewayConfig, OpenShellBackend, Services},
 };
 use nemoclaw_sdk::{
     ObservationError,
@@ -91,11 +91,13 @@ async fn configured_gateway_routes_cluster_keys_to_registration_and_refreshes_on
         .values;
     let services = Arc::new(ClusterReads::default());
     let client = Arc::new(GatewayClient::with_services(services.clone()));
-    let connection = nemoclaw_openshell::Connection {
-        endpoint: fixture.endpoint.clone(),
+    let config = GatewayConfig {
+        endpoint: tf_provider::value::Value::Value(fixture.endpoint.clone()),
         ..Default::default()
     };
-    client.connect(&connection).unwrap();
+    let mut diagnostics = tf_provider::Diagnostics::default();
+    assert_eq!(client.configure(&mut diagnostics, &config), Some(false));
+    assert!(diagnostics.errors.is_empty());
     let backend = OpenShellBackend(client.clone());
     let mut saved = None;
     for kind in ["workspace", "provider_profile", "provider"] {
@@ -130,6 +132,10 @@ async fn configured_gateway_routes_cluster_keys_to_registration_and_refreshes_on
             registered.credentials,
             [(profile.credentials[0].name.clone(), KEY.into())].into()
         );
+        assert_eq!(
+            registered.config,
+            [("OPENAI_BASE_URL".into(), registration["endpoint"].clone())].into()
+        );
         let metadata = registered.metadata.as_ref().unwrap();
         assert!(
             !serde_json::to_string(&metadata.annotations)
@@ -145,8 +151,8 @@ async fn configured_gateway_routes_cluster_keys_to_registration_and_refreshes_on
     };
 
     // Provider reconfiguration must retain the selected service callbacks.
-    client.reset(false).unwrap();
-    client.connect(&connection).unwrap();
+    assert_eq!(client.configure(&mut diagnostics, &config), Some(false));
+    assert!(diagnostics.errors.is_empty());
     let validations = services.validations.load(Ordering::SeqCst);
     let observed = backend
         .read("provider", &saved, false)
