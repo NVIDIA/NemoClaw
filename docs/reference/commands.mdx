@@ -1100,6 +1100,7 @@ When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_
 NemoClaw does not expose stale reservations that belong to another onboarding session.
 When session detection is available, each sandbox row reports `activeSessionCount` as a nonnegative integer; otherwise, it reports `null`.
 The count includes detected SSH sessions and interactive OpenShell `connect` sessions.
+Noninteractive exec commands and dashboard forwards are not counted.
 Each sandbox row reports `agent` as a string in both text and JSON output, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway.
@@ -3181,9 +3182,9 @@ $$nemoclaw my-assistant rebuild [--retire-recovery <transaction-id> --yes] [--ye
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation.                                                                                                                                                                                   |
 | `--observability`, `--no-observability`           | Enable or disable managed trace export for a LangChain Deep Agents Code sandbox during the transactional rebuild. This path preserves managed MCP providers and adapter state.                                                                                                                                                                                                                                                                             |
 
-If NemoClaw detects active SSH or interactive OpenShell `connect` sessions, `rebuild` warns that it will terminate them and interrupt running commands.
-The warning appears before confirmation.
-Pass `--yes`, `-y`, or `--force` to skip the confirmation prompt in scripted workflows.
+Unless `--yes`, `-y`, or `--force` skips confirmation, `rebuild` warns before prompting when NemoClaw detects active SSH or interactive OpenShell `connect` sessions.
+The warning says that rebuild terminates those sessions and interrupts running commands.
+Those flags also suppress the warning.
 
 For other eligible sources, the backup step normally reaches the sandbox over its live transport. When that first attempt fails because the transport is unreachable, and the sandbox has exactly one eligible stopped container, `rebuild` starts that container, retries the backup, and returns the container to its stopped state before continuing. `rebuild` aborts before deleting the original sandbox when it finds no eligible stopped container, when the retried backup also fails, or when it cannot return the started container to its stopped state; in that last case it names the container so you can stop it yourself before retrying.
 If the complete native home/workspace cannot be archived, `rebuild` stops before deleting the original sandbox. This fail-closed behavior also applies to `--force`.
