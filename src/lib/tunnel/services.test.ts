@@ -40,6 +40,20 @@ import {
 // sandbox-name discovery plus the skip/guard branches), never openshell/docker.
 vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
 
+const linuxPidfdAvailable =
+  process.platform === "linux" &&
+  (() => {
+    const probe = childProcess.spawnSync(
+      "python3",
+      [
+        "-c",
+        "import os, signal; fd = os.pidfd_open(os.getpid()) if hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal') else None; os.close(fd) if fd is not None else None; print('available' if fd is not None else 'unavailable')",
+      ],
+      { encoding: "utf8", timeout: 1000 },
+    );
+    return probe.status === 0 && probe.stdout.trim() === "available";
+  })();
+
 const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
 const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
 const INTEGRATION_ENV_PID_DIR = `/tmp/nemoclaw-services-${INTEGRATION_ENV_SANDBOX}`;
@@ -935,7 +949,7 @@ describe("stopAll", () => {
     expect(signal).toHaveBeenCalledWith(4242, "SIGTERM");
   });
 
-  it.skipIf(process.platform !== "linux")(
+  it.skipIf(!linuxPidfdAvailable)(
     "signals a verified cloudflared process through a Linux pidfd",
     () => {
       const executable = join(pidDir, "cloudflared");

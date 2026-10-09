@@ -12,6 +12,11 @@ import {
 import { selectDefaultOllamaModel } from "../inference/local";
 import { detectGpu } from "../inference/nim";
 
+vi.mock("../inference/gpu-trust", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../inference/gpu-trust")>()),
+  nvidiaHostLooksGenuine: () => !(process.platform === "linux" && process.arch === "arm64"),
+}));
+
 vi.mock("../adapters/docker", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/docker")>()),
   dockerInfoFormat: vi.fn(),

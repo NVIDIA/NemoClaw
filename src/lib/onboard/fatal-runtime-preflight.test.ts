@@ -169,6 +169,7 @@ async function withLinuxArm64<T>(operation: () => Promise<T>): Promise<T> {
   const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
   Object.defineProperty(process, "platform", { ...platform, value: "linux" });
   Object.defineProperty(process, "arch", { ...arch, value: "arm64" });
+  vi.spyOn(await import("../inference/gpu-trust"), "nvidiaHostLooksGenuine").mockReturnValue(false);
   try {
     return await operation();
   } finally {
