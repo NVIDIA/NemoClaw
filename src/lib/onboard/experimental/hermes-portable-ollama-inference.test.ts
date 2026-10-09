@@ -658,12 +658,19 @@ describe("Hermes Portable Ollama inference activation", () => {
     ).toBe(true);
     expect(podmanEvents.some((event) => event.includes("executable=docker"))).toBe(false);
     expect(podmanEvents.some((event) => event.includes("--env OLLAMA_CONTEXT_LENGTH"))).toBe(true);
+    const timeoutByCommand: Record<string, number> = {
+      "provider get": OPENSHELL_PROBE_TIMEOUT_MS,
+      "provider get scoped": OPENSHELL_OPERATION_TIMEOUT_MS,
+      "provider profile scoped": OPENSHELL_OPERATION_TIMEOUT_MS,
+      "provider create scoped": OPENSHELL_OPERATION_TIMEOUT_MS,
+      "settings get scoped": OPENSHELL_PROBE_TIMEOUT_MS,
+      "policy list scoped": OPENSHELL_PROBE_TIMEOUT_MS,
+    };
     expect(
-      fixture.gatewayProvider
-        .calls()
-        .every(({ timeout }) =>
-          [OPENSHELL_PROBE_TIMEOUT_MS, OPENSHELL_OPERATION_TIMEOUT_MS].includes(timeout),
-        ),
+      fixture.gatewayProvider.calls().every(({ args, timeout }) => {
+        const command = `${args.slice(0, 2).join(" ")}${args.includes("-g") ? " scoped" : ""}`;
+        return timeout === timeoutByCommand[command];
+      }),
     ).toBe(true);
   });
 
