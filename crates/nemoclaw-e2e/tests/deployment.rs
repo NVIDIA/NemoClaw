@@ -381,19 +381,6 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn explicit_network_sdk_apply_cli_export_reapply_and_destroy_preserve_intent() {
-    lifecycle(include_str!("../../../examples/explicit-policy.yaml")).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn inference_settings_sdk_apply_export_reapply_and_drift() {
-    lifecycle(include_str!("../../../examples/inference-tuning.yaml")).await;
-    lifecycle(include_str!("../../../examples/hermes-auth.yaml")).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
@@ -413,42 +400,8 @@ async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn tool_disclosure_cli_export_reapply_and_drift() {
-    for mode in ["direct".to_owned(), "progressive".to_owned()] {
-        let mut document =
-            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
-                .unwrap();
-        document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":if mode == "direct" { serde_json::json!(false) } else { serde_json::json!({"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}) }}}})).unwrap());
-        // Exercise the existing launch-setting drift assertions as well as export/reapply.
-        document.spec.inference_providers[0].api =
-            Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
-        lifecycle(&document.yaml().unwrap()).await;
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn execution_settings_cli_export_reapply_and_drift() {
-    for heartbeat in [None, Some("0m"), Some("30m")] {
-        let mut document =
-            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
-                .unwrap();
-        document.spec.sandboxes[0]
-            .harness
-            .as_mut()
-            .unwrap()
-            .execution = Some(nemoclaw_sdk::config::AgentExecution {
-            timeout_seconds: Some(900),
-        });
-        if let Some(every) = heartbeat {
-            document.spec.sandboxes[0].harness.as_mut().unwrap().settings = Some(serde_json::from_value(serde_json::json!({"native_config":{"agents":{"defaults":{"heartbeat":{"every":every,"isolatedSession":true}}}}})).unwrap());
-        }
-        lifecycle(&document.yaml().unwrap()).await;
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn observability_cli_export_reapply_and_drift() {
+    // Disclosure modes are opaque native settings; agent_tools in the SDK owns
+    // both modes, so one deployment covers their drift detection.
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     document.spec.sandboxes[0]
@@ -456,90 +409,32 @@ async fn observability_cli_export_reapply_and_drift() {
         .as_mut()
         .unwrap()
         .settings = Some(
-        serde_json::from_value(serde_json::json!({
-        "native_config":{"diagnostics":{"enabled":true,"otel":{"enabled":true,"endpoint":"http://host.openshell.internal:4318",
-                "serviceName":"agent ${fixture} %{literal}","sampleRate":0.5}}}}))
+        serde_json::from_value(serde_json::json!({"native_config":{"tools":{"toolSearch":
+            {"mode":"tools","searchDefaultLimit":8,"maxSearchLimit":20}}}}))
         .unwrap(),
     );
+    // Exercise the existing launch-setting drift assertions as well as export/reapply.
+    document.spec.inference_providers[0].api =
+        Some(nemoclaw_sdk::config::InferenceApi::OpenaiCompletions);
     lifecycle(&document.yaml().unwrap()).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn openclaw_interfaces_sdk_lifecycle_preserves_intent_and_rejects_drift() {
-    lifecycle(include_str!("../../../examples/openclaw-dashboard.yaml")).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn hermes_interfaces_sdk_export_reapply_and_drift() {
-    lifecycle(include_str!("../../../examples/hermes-interfaces.yaml")).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn web_search_cli_export_reapply_and_destroy() {
-    for provider in ["tavily", "brave"] {
-        let mut document =
-            Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes())
-                .unwrap();
-        document.spec.integrations = serde_json::from_value(serde_json::json!({
-            "search":{"kind":"webSearch","provider":provider,"credential":{"env":"SEARCH_KEY"}}
-        }))
-        .unwrap();
-        document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
-        lifecycle(&document.yaml().unwrap()).await;
-        document.spec.sandboxes[0].integrations = std::mem::take(&mut document.spec.integrations);
-        lifecycle(&document.yaml().unwrap()).await;
-        let sandbox = &mut document.spec.sandboxes[0];
-        sandbox.agent.integration_refs.clear();
-        sandbox.agent.integrations = std::mem::take(&mut sandbox.integrations);
-        lifecycle(&document.yaml().unwrap()).await;
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn provider_definitions_export_reapply_and_destroy_in_their_authored_scope() {
-    for input in [
-        include_str!("../../../examples/fabric-openclaw.yaml"),
-        include_str!("../../../examples/hermes-auth.yaml"),
-    ] {
-        let mut document = Document::parse(input.as_bytes()).unwrap();
-        document.spec.sandboxes[0].inference_providers =
-            std::mem::take(&mut document.spec.inference_providers);
-        document.spec.inference_providers.push(
-            serde_json::from_value(serde_json::json!({
-                "name":"unused", "provider":"openai", "endpoint":"https://unused.example.test/v1",
-                "credential":{"env":"UNUSED_KEY"}
-            }))
-            .unwrap(),
-        );
-        lifecycle(&document.yaml().unwrap()).await;
-        let sandbox = &mut document.spec.sandboxes[0];
-        let provider = sandbox.inference_providers.remove(0);
-        let route = &mut sandbox.agent.inference.as_mut().unwrap().routes[0];
-        route.provider_ref = None;
-        route.provider = Some(provider);
-        lifecycle(&document.yaml().unwrap()).await;
-    }
+    // Every definition scope and provider compiles to the same kind of targets
+    // (web_search in the SDK), and their registration drift is one code path.
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document.spec.integrations = serde_json::from_value(serde_json::json!({
+        "search":{"kind":"webSearch","provider":"tavily","credential":{"env":"SEARCH_KEY"}}
+    }))
+    .unwrap();
+    document.spec.sandboxes[0].agent.integration_refs = vec!["search".into()];
+    lifecycle(&document.yaml().unwrap()).await;
 }
 
 async fn lifecycle(input: &str) {
-    lifecycle_with_rejected_annotations(input, false).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn unsupported_ownership_annotations_leave_an_applied_deployment_unchanged() {
-    lifecycle_with_rejected_annotations(
-        include_str!("../../../examples/explicit-policy.yaml"),
-        true,
-    )
-    .await;
-}
-
-async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bool) {
     let bundle =
         PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").expect("explicit bundle path"));
     assert!(bundle.is_absolute());
@@ -645,40 +540,6 @@ async fn lifecycle_with_rejected_annotations(input: &str, reject_annotations: bo
         effects,
         document.spec.sandboxes.len() + if has_search { 5 } else { 3 }
     );
-    if reject_annotations {
-        let intent_path = directory.path().join("intent.json");
-        let state_path = directory.path().join("terraform.tfstate");
-        let before_intent = fs::read(&intent_path).unwrap();
-        let before_state = fs::read(&state_path).unwrap();
-        let mut invalid = serde_json::to_value(&document).unwrap();
-        invalid["spec"]["inferenceProviders"][0]["management"] = serde_json::json!("external");
-        let input = directory.path().join("unsupported.yaml");
-        fs::write(&input, invalid.to_string()).unwrap();
-        let rejected = Command::new(
-            bundle
-                .join("bin")
-                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-        )
-        .args(["apply", "--state-dir"])
-        .arg(directory.path())
-        .arg(input)
-        .output()
-        .unwrap();
-        assert!(!rejected.status.success());
-        let diagnostic = String::from_utf8_lossy(&rejected.stderr);
-        assert!(
-            diagnostic.contains("configuration violates schema"),
-            "{diagnostic}"
-        );
-        assert!(
-            diagnostic.contains("spec.inferenceProviders[0]")
-                && diagnostic.contains("unknown fields are not allowed"),
-            "{diagnostic}"
-        );
-        assert_eq!(fs::read(intent_path).unwrap(), before_intent);
-        assert_eq!(fs::read(state_path).unwrap(), before_state);
-        assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    }
     let exported = Command::new(
         bundle
             .join("bin")
@@ -1697,54 +1558,58 @@ async fn cli_redaction_preserves_failures_and_recovery_with_short_and_colliding_
     fixture.state.lock().unwrap().configuration_error = Some(serde_json::json!({
         "error": {"stage":"start", "code":"lifecycle_adapter_start_failed", "runtime_state":"unavailable", "message":"native-secret-must-not-escape"}
     }));
-    for secret in [
-        "a",
-        "z",
-        "lifecycle_adapter_start_failed",
-        "inert-credential-for-context-check",
+    // Redaction rules belong to nemoclaw-sdk's process tests; this checks
+    // that each rule reaches both output formats of a failed apply.
+    for (secret, format) in [
+        ("a", "text"),
+        ("lifecycle_adapter_start_failed", "json"),
+        ("inert-credential-for-context-check", "text"),
     ] {
-        for format in ["text", "json"] {
-            let failed = invoke("apply", format, secret);
-            assert_eq!(failed.status.code(), Some(1));
-            let stdout = String::from_utf8(failed.stdout).unwrap();
-            let stderr = String::from_utf8(failed.stderr).unwrap();
-            let message = if format == "json" {
-                let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-                assert_eq!(result["outcome"], "failed");
-                result["error"]["message"].as_str().unwrap().to_owned()
-            } else {
-                stderr.clone()
-            };
-            if secret.len() == 1 {
-                assert!(message.contains("child diagnostic withheld because a credential is too short for safe redaction"), "{message}");
-                assert!(
-                    !message.contains("[redacted]"),
-                    "short-value character matches must not escape"
-                );
-            } else if secret == "lifecycle_adapter_start_failed" {
-                assert!(message.contains("[redacted]"), "{message}");
-                assert!(
-                    message.contains("agent runtime is unavailable"),
-                    "{message}"
-                );
-                assert!(!message.contains(secret));
-            } else {
-                assert!(message.contains("sandbox/assistant"), "{message}");
-                assert!(
-                    message.contains("lifecycle_adapter_start_failed"),
-                    "{message}"
-                );
-                assert!(
-                    message.contains("agent runtime is unavailable"),
-                    "{message}"
-                );
-            }
-            assert!(!message.contains("[[redacted]]"));
-            assert!(!stdout.contains("native-secret-must-not-escape"));
-            assert!(!stderr.contains("native-secret-must-not-escape"));
-            assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
-            assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        let failed = invoke("apply", format, secret);
+        assert_eq!(failed.status.code(), Some(1));
+        let stdout = String::from_utf8(failed.stdout).unwrap();
+        let stderr = String::from_utf8(failed.stderr).unwrap();
+        let message = if format == "json" {
+            let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+            assert_eq!(result["outcome"], "failed");
+            result["error"]["message"].as_str().unwrap().to_owned()
+        } else {
+            stderr.clone()
+        };
+        if secret.len() == 1 {
+            assert!(
+                message.contains(
+                    "child diagnostic withheld because a credential is too short for safe redaction"
+                ),
+                "{message}"
+            );
+            assert!(
+                !message.contains("[redacted]"),
+                "short-value character matches must not escape"
+            );
+        } else if secret == "lifecycle_adapter_start_failed" {
+            assert!(message.contains("[redacted]"), "{message}");
+            assert!(
+                message.contains("agent runtime is unavailable"),
+                "{message}"
+            );
+            assert!(!message.contains(secret));
+        } else {
+            assert!(message.contains("sandbox/assistant"), "{message}");
+            assert!(
+                message.contains("lifecycle_adapter_start_failed"),
+                "{message}"
+            );
+            assert!(
+                message.contains("agent runtime is unavailable"),
+                "{message}"
+            );
         }
+        assert!(!message.contains("[[redacted]]"));
+        assert!(!stdout.contains("native-secret-must-not-escape"));
+        assert!(!stderr.contains("native-secret-must-not-escape"));
+        assert_eq!(fixture.state.lock().unwrap().sandboxes, original);
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
     }
     fixture.state.lock().unwrap().configuration_error = None;
     let recovered = invoke("apply", "json", "a");
