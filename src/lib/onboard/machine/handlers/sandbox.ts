@@ -922,7 +922,8 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxReuseState: string,
   ): Promise<SandboxResumeDecision> {
-    if (this.options.recreateSandbox(false)) return decision;
+    // A fresh run records the requested name before checking the existing sandbox's selection.
+    if (!this.options.resume || this.options.recreateSandbox(false)) return decision;
     return this.applyCheckpointCrashRecovery(decision, state, sandboxReuseState);
   }
 
@@ -2000,13 +2001,21 @@ class SandboxStateFlow<
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
     sourceEntry: SandboxEntry | null,
-  ): CheckpointSandboxRecreateTransaction | null {
+  ): ReturnType<typeof ownSandboxRecreateTransaction> | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
     const ownsPendingCreateReservation =
       sourceEntry?.pendingRouteReservation === true &&
       sourceEntry.reservationSessionId === state.session?.sessionId;
-    if (!this.options.resume && !existing && sourceEntry && !ownsPendingCreateReservation) {
-      return null;
+    if (!this.options.resume && !existing && sourceEntry) {
+      // A route reservation on a Ready sandbox does not decide whether it needs replacement.
+      // Let createSandbox check selection drift before opening its recreation journal.
+      if (
+        !ownsPendingCreateReservation ||
+        (!createIntent.recreate &&
+          this.deps.getSandboxRecreateObservation(sandboxName).state === "ready")
+      ) {
+        return null;
+      }
     }
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,
@@ -2056,7 +2065,7 @@ class SandboxStateFlow<
         }
         return checkpoint;
       },
-    }).transaction;
+    });
   }
 
   private sandboxRecreateTargetIntentFingerprint(
@@ -2087,6 +2096,16 @@ class SandboxStateFlow<
     });
   }
 
+  private freshSelectionReconciliationFields(
+    owned: ReturnType<typeof ownSandboxRecreateTransaction> | null,
+  ): { readonly freshNonForced?: true } {
+    return owned?.openedWithoutPriorTransaction &&
+      !this.options.resume &&
+      !this.options.recreateSandbox(false)
+      ? { freshNonForced: true }
+      : {};
+  }
+
   private async prepareSandboxRecreate(
     state: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
@@ -2096,9 +2115,10 @@ class SandboxStateFlow<
     const sourceEntry = this.deps.getSandboxRegistryEntry(requestedSandboxName);
     const continueHermesPortableLifecycle =
       decision.kind === "create" && decision.continueHermesPortableLifecycle === true;
-    const transaction = continueHermesPortableLifecycle
+    const owned = continueHermesPortableLifecycle
       ? null
       : this.beginSandboxRecreateJournal(state, requestedSandboxName, createIntent, sourceEntry);
+    const transaction = owned?.transaction ?? null;
     const repairMetadata: SandboxRecreateRepairMetadata | null =
       decision.kind === "repair-and-recreate"
         ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }
@@ -2121,6 +2141,7 @@ class SandboxStateFlow<
       ...createIntent,
       recreate: true,
       recreateTransaction: {
+        ...this.freshSelectionReconciliationFields(owned),
         id: transaction.id,
         targetGeneration: transaction.targetGeneration,
         targetIntentFingerprint: transaction.targetIntentFingerprint,
@@ -2416,6 +2437,7 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
+      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
     return withSandboxImageRegistrationFence(async () => {
