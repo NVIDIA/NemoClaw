@@ -24,6 +24,7 @@ import {
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationInput,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -58,7 +59,8 @@ function runProbeCommandWithBody(
   code: string,
   body: string,
   parentDirectory: string = tmpdir(),
-  probeInput = input,
+  probeInput: SandboxInferenceInvocationInput = input,
+  probeEnvironment: NodeJS.ProcessEnv = {},
 ): { stdout: string; argv: string[] } {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
@@ -79,7 +81,7 @@ function runProbeCommandWithBody(
     );
     const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}`, ...probeEnvironment },
     });
     return {
       stdout: run.stdout || "",
@@ -147,6 +149,30 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
     expect(command).toContain("openshell:resolve:env:");
+  });
+
+  it("uses the supervisor credential in the shared native model request (#12822)", () => {
+    const model = "nvidia/nemotron-3-super-120b-a12b";
+    const placeholder = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+    const servedBody = '{"choices":[{"message":{"content":"OK"}}]}';
+    const result = runProbeCommandWithBody(
+      "200",
+      servedBody,
+      tmpdir(),
+      {
+        ...input,
+        provider: "nvidia-prod",
+        model,
+        nativeProvider: true,
+      },
+      { NVIDIA_INFERENCE_API_KEY: placeholder },
+    );
+
+    expect(result.stdout).toBe(`200\n${servedBody}`);
+    expect(result.argv).toContain(`Authorization: Bearer ${placeholder}`);
+    expect(result.argv.at(-1)).toBe("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(JSON.parse(result.argv[result.argv.indexOf("--data-binary") + 1]).model).toBe(model);
+    expect(result.argv.join("\n")).not.toContain("nemoclaw-openshell-provider");
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
@@ -446,11 +472,40 @@ describe("sandbox inference invocation probe", () => {
       ),
     ).resolves.toEqual({
       ok: false,
-      detail: "sandbox inference invocation probe was unavailable",
+      detail: "sandbox inference invocation probe exited with status 127",
       httpStatus: null,
       endpoint: "https://inference.local/v1/chat/completions",
     });
   });
+
+  it.each([
+    [56, "curl-error:56\n", null, "exited with status 56"],
+    [1, "401\n", 401, "returned HTTP 401"],
+    [0, '200\n{"choices":[{"message":{"content":"OK"}}]}', null, "was unavailable"],
+  ] as const)(
+    "preserves failed DCode diagnostics and rejects successful startup stderr (exit %s) (#12822)",
+    async (exitCode, stdout, httpStatus, detail) => {
+      const runBuffered = vi.fn(async () =>
+        bufferedResult(exitCode, stdout, "untrusted stderr with nvapi-private-canary"),
+      );
+      const result = await probeSandboxInferenceInvocation(
+        {
+          ...input,
+          agentName: "langchain-deepagents-code",
+          provider: "nvidia-prod",
+          nativeProvider: true,
+        },
+        { commandExecutor: { runBuffered } },
+      );
+      expect(result).toEqual({
+        ok: false,
+        detail: `sandbox inference invocation probe ${detail}`,
+        httpStatus,
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      });
+      expect(JSON.stringify(result)).not.toContain("nvapi-private-canary");
+    },
+  );
 
   it("accepts a served response body that serializes an empty tool call list (#9108)", async () => {
     const body = JSON.stringify({

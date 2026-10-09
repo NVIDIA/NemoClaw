@@ -114,6 +114,15 @@ leaves provider-derived policy disabled when that setting is unset. Setup enable
 that default and confirms the result, preserves an explicit `false`, and stops on
 unknown or failed responses without retrying a settings write. A successfully
 enabled setting remains enabled if later provider setup fails; it is gateway state,
-not a sandbox-owned resource. DCode reads the attached `NVIDIA_INFERENCE_API_KEY`
+not a sandbox-owned resource.
+
+Native NVIDIA policy preparation and invocation probes are shared across agent
+integrations. When NVIDIA is selected, policy preparation adds the mandatory
+`native_nvidia_inference` entry from the checked-in provider profile's endpoint,
+method, path, and binary scope. Existing sandboxes receive the required entry
+during a native rebuild; a conflicting host-defined entry stops rebuild before the
+sandbox is replaced. DCode reads the attached `NVIDIA_INFERENCE_API_KEY`
 placeholder from its runtime environment, so the supervisor resolves the current
-credential generation without exposing the key to DCode.
+credential generation without exposing the key to DCode. Its managed runtime maps
+the legacy config key to that current placeholder, so a restored config does not
+keep sending the retired fixed value.

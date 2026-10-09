@@ -198,9 +198,12 @@ async function executeDcodeSandboxInferenceInvocation(
     const completed = await commandExecutor.runBuffered(
       buildDcodeSandboxInferenceInvocationRequest(input, timeoutMs),
     );
-    if (completed.outcome.kind !== "completed" || completed.stderr.trim()) {
+    if (completed.outcome.kind !== "completed") {
       return null;
     }
+    // Preserve failed curl/launcher exit codes even when they emit stderr.
+    // Successful evidence still rejects startup stderr; diagnostics never echo it.
+    if (completed.outcome.exitCode === 0 && completed.stderr.trim()) return null;
     return {
       status: completed.outcome.exitCode,
       stdout: completed.stdout,
