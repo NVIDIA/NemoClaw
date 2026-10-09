@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Wall-clock budgets for each test step, in seconds, enforced on the Linux CI
+# runners; other platforms report their times without failing. wall_seconds
+# bounds a step's run, or each lifecycle partition; test_seconds bounds any one
+# test in it. Lower a budget when a change makes the step faster; raising one
+# needs the reason in the pull request. See docs/contributing/testing.md.
+
+# Unit and integration tests: 27 s on linux_amd64, slowest test 5.1 s.
+test:
+  wall_seconds: 45
+  test_seconds: 8
+
+# Each lifecycle partition: 270 s on linux_amd64, slowest test 149 s.
+lifecycle:
+  wall_seconds: 360
+  test_seconds: 180

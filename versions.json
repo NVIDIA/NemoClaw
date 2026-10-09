@@ -1,6 +1,6 @@
 {
   "opentofu": "1.12.6",
-  "openshell": "0.1.2",
+  "openshell": "0.1.3",
   "openclaw": "2026.9.4",
   "ollama": "0.34.0",
   "platforms": {
@@ -126,13 +126,13 @@
   "rust": "1.98.1",
   "protobuf": "36.1",
   "nextest": "0.9.144",
-  "openshellRevision": "6648bd0c290efbc41ba131ee9831ee45cd431f94",
+  "openshellRevision": "e1f3c82caa3ed3b65de22889ae7ef32a774878ef",
   "images": {
     "agent": "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e",
-    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:2fe4dad9118e14ab80a8258b545ea6e6cd74c3469e24ad4e6610f964d98913a2",
-    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:d7b5264bb6bc56f4796e6fa3617b8e4a8d785be0b7293542efd8cc250b0fb67a",
-    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:bf4797b6c511f2d8ba02955dbba4bf76c1f0dd6d83531420c5408d5f1fb9d72f",
-    "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:7a714bbbbcef7b5ed8dac599e89e89df12eb623fa4454d22f89df41d6f047e2a",
+    "gateway": "ghcr.io/nvidia/openshell/gateway@sha256:ea14aa4db0980fab4769fb6b5509ac42ae3dc8495e645b1ba1fe1ada49892fa6",
+    "supervisor": "ghcr.io/nvidia/openshell/supervisor@sha256:4ab2b970cdb02c7518ba4ccbbadb4861ae9a8d0b8770e5b160697f0453b0a8e4",
+    "sandboxRuntime": "ghcr.io/nvidia/openshell/sandbox@sha256:2658534bfb3f1ebba4bb7792e9e875a0972edbe7ae5f58d807ae22c46844a2ac",
+    "gatewayChart": "oci://ghcr.io/nvidia/openshell/helm-chart@sha256:44ec11bbf264fde0b65c804c856113a4dd322731a8b3803315724357855a434b",
     "developmentIssuer": "docker.io/nginxinc/nginx-unprivileged@sha256:5aea7cc516b419e3526f47dd1531be31a56a046cfe44754d94f9383e13e2ee99",
     "kindNode": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
   },

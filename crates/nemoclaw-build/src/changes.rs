@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Decide whether changes since a base revision can affect `CI / Images`.
+//! Decide whether changes since a base revision can affect `CI / Images` or the
+//! live suites.
 //!
-//! determinator maps changed files to workspace packages, using the rules in
-//! [`RULES`] for files outside crates. guppy then simulates the image build:
-//! nemoclaw-build without default features, including the dev-dependencies its
-//! `bake::` tests compile, and the Ollama proxy with its defaults and tests.
-//! The images are affected when a changed package is in that build, or when
-//! its third-party dependencies or enabled features differ from the base.
+//! determinator maps changed files to workspace packages, using each workflow's
+//! path rules for files outside crates. guppy then simulates the workflow's build.
+//! The image build is nemoclaw-build without default features, including the
+//! dev-dependencies its `bake::` tests compile, and the Ollama proxy with its
+//! defaults and tests. The live build is [`LIVE_PACKAGES`] with their defaults and
+//! tests. A workflow is affected when a changed package is in its build, or when its
+//! build's third-party dependencies or enabled features differ from the base.
 
 use determinator::{Determinator, Utf8Paths0, rules::DeterminatorRules};
 use guppy::{
@@ -22,6 +24,43 @@ use std::{collections::BTreeSet, fs, path::Path, process::Command};
 
 /// Path rules for files outside crates, relative to the repository root.
 pub const RULES: &str = ".config/determinator-images.toml";
+/// The live suites' path rules.
+pub const LIVE_RULES: &str = ".config/determinator-live.toml";
+/// Packages whose tests run in the live suites, and the CLI and providers the
+/// bundle they test ships.
+pub const LIVE_PACKAGES: [&str; 8] = [
+    "nemoclaw-build",
+    "nemoclaw-cli",
+    "nemoclaw-e2e",
+    "nemoclaw-provider",
+    "nemoclaw-runtime",
+    "nemoclaw-sdk",
+    "openshell-provider",
+    "fabric-provider",
+];
+
+/// A CI workflow whose steps run only when a change can affect them.
+#[derive(Clone, Copy)]
+pub enum Workflow {
+    /// `CI / Images`.
+    Images,
+    /// `Live / Docker` and `Live / Kind`.
+    Live,
+}
+impl Workflow {
+    fn rules(self) -> &'static str {
+        match self {
+            Self::Images => RULES,
+            Self::Live => LIVE_RULES,
+        }
+    }
+    fn subject(self) -> &'static str {
+        match self {
+            Self::Images => "image",
+            Self::Live => "live",
+        }
+    }
+}
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -35,15 +74,22 @@ pub struct Decision {
 ///
 /// Any failure to analyze the change runs the checks rather than skipping them.
 pub fn images(root: &Path, base: &str) -> Decision {
-    analyze(root, base).unwrap_or_else(|error| Decision {
+    decide(root, base, Workflow::Images)
+}
+
+/// Decide for `workflow`; any failure to analyze the change runs it.
+pub fn decide(root: &Path, base: &str, workflow: Workflow) -> Decision {
+    analyze(root, base, workflow).unwrap_or_else(|error| Decision {
         run: true,
         reason: format!(
-            "could not analyze changes since {base} ({error}); running the image checks"
+            "could not analyze changes since {base} ({error}); running the {} checks",
+            workflow.subject()
         ),
     })
 }
 
-fn analyze(root: &Path, base: &str) -> Result<Decision> {
+fn analyze(root: &Path, base: &str, workflow: Workflow) -> Result<Decision> {
+    let rules_path = workflow.rules();
     let base = String::from_utf8(git(
         root,
         &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
@@ -57,9 +103,10 @@ fn analyze(root: &Path, base: &str) -> Result<Decision> {
         &["diff", "-z", "--name-only", "--no-renames", &base, "HEAD"],
     )?;
     let paths = Utf8Paths0::from_bytes(changed).map_err(|_| "a changed path is not UTF-8")?;
+    let rules = fs::read_to_string(root.join(rules_path))
+        .map_err(|e| format!("cannot read {rules_path}: {e}"))?;
     let rules =
-        fs::read_to_string(root.join(RULES)).map_err(|e| format!("cannot read {RULES}: {e}"))?;
-    let rules = DeterminatorRules::parse(&rules).map_err(|e| format!("invalid {RULES}: {e}"))?;
+        DeterminatorRules::parse(&rules).map_err(|e| format!("invalid {rules_path}: {e}"))?;
 
     let new = graph(root)?;
     let base_tree = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -72,11 +119,16 @@ fn analyze(root: &Path, base: &str) -> Result<Decision> {
     let mut determinator = Determinator::new(&old, &new);
     determinator
         .set_rules(&rules)
-        .map_err(|e| format!("invalid {RULES}: {e}"))?;
+        .map_err(|e| format!("invalid {rules_path}: {e}"))?;
     determinator.add_changed_paths(&paths);
     let path_changed = determinator.compute().path_changed_set;
 
-    let build = image_build(&new)?;
+    let build_for = |graph| match workflow {
+        Workflow::Images => image_build(graph),
+        Workflow::Live => live_build(graph),
+    };
+    let subject = workflow.subject();
+    let build = build_for(&new)?;
     for package in packages(&build).packages(DependencyDirection::Forward) {
         if path_changed
             .contains(package.id())
@@ -84,19 +136,22 @@ fn analyze(root: &Path, base: &str) -> Result<Decision> {
         {
             return Ok(Decision {
                 run: true,
-                reason: format!("{} is part of the image build and changed", package.name()),
+                reason: format!(
+                    "{} is part of the {subject} build and changed",
+                    package.name()
+                ),
             });
         }
     }
-    if summary(&build) != summary(&image_build(&old)?) {
+    if summary(&build) != summary(&build_for(&old)?) {
         return Ok(Decision {
             run: true,
-            reason: "the image build's dependencies or features changed".into(),
+            reason: format!("the {subject} build's dependencies or features changed"),
         });
     }
     Ok(Decision {
         run: false,
-        reason: format!("no image inputs changed since {base}"),
+        reason: format!("no {subject} inputs changed since {base}"),
     })
 }
 
@@ -135,6 +190,19 @@ fn image_build(graph: &PackageGraph) -> Result<CargoSet<'_>> {
         .union(&workspace("nemoclaw-ollama-proxy")?.to_feature_set(StandardFeatures::Default));
     // The default options follow dev-dependencies of the initials, resolve for any
     // platform, and use resolver 1, which unifies at least the workspace resolver's features.
+    CargoSet::new(
+        initials,
+        graph.feature_graph().resolve_none(),
+        &CargoOptions::new(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn live_build(graph: &PackageGraph) -> Result<CargoSet<'_>> {
+    let initials = graph
+        .resolve_workspace_names(LIVE_PACKAGES)
+        .map_err(|e| format!("workspace lacks a live package: {e}"))?
+        .to_feature_set(StandardFeatures::Default);
     CargoSet::new(
         initials,
         graph.feature_graph().resolve_none(),

@@ -91,6 +91,8 @@ enum Action {
 enum ChangedWorkflow {
     /// `CI / Images`.
     Images,
+    /// `Live / Docker` and `Live / Kind`.
+    Live,
 }
 #[cfg(feature = "sdk")]
 #[derive(Subcommand)]
@@ -476,10 +478,13 @@ async fn main() -> Result<()> {
         .map_err(Into::into);
     }
     if let Action::Changes { workflow, base } = &cli.command {
-        let ChangedWorkflow::Images = workflow;
-        let decision = nemoclaw_build::changes::images(Path::new("."), base);
+        let (workflow, name) = match workflow {
+            ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
+            ChangedWorkflow::Live => (nemoclaw_build::changes::Workflow::Live, "live"),
+        };
+        let decision = nemoclaw_build::changes::decide(Path::new("."), base, workflow);
         eprintln!("{}", decision.reason);
-        println!("images={}", decision.run);
+        println!("{name}={}", decision.run);
         return Ok(());
     }
     let pins: Pins = serde_json::from_slice(&fs::read("versions.json")?)?;

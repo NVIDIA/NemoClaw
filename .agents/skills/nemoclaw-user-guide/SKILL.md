@@ -26,7 +26,8 @@ The staging content moves with successful pushes: its source links must match th
 The unversioned index and **Latest** selector describe main.
 For an earlier deployment, follow its version's documentation and matching tooling; the presence of this v1 skill does not authorize migration.
 If the versioned page cannot be fetched, use matching local sources or report the missing source instead of substituting main commands.
-Do not assume generic Markdown headers establish version-scoped search or a working MCP server.
+Each v1 Markdown page carries a generic header that links the unversioned index and advertises MCP.
+That header does not establish version-scoped search or a working docs MCP server; [#12644](https://github.com/NVIDIA/NemoClaw/issues/12644) tracks both.
 
 ## Route the Task
 
@@ -41,7 +42,7 @@ Do not assume generic Markdown headers establish version-scoped search or a work
 
 Read only the sources relevant to the user's task and follow their verification and recovery steps.
 Treat **TBD** as an implementation or procedure that still needs verification.
-Distinguish parser acceptance, fixture coverage, and live results at their recorded revisions.
+Match each claim to the source that supports it: parser acceptance shows a field is accepted, fixture coverage shows behavior against substitutes, and a live result shows behavior on one host at its recorded revision.
 Keep client, sandbox engine, and inference host requirements separate.
 Preserve credential references, immutable image pins, the original bundle, and deployment state.
 Configuration export does not back up native files or conversation history; destroy deletes sandbox data and has no confirmation prompt.

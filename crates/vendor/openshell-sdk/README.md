@@ -56,8 +56,10 @@ portable workload shape and driver config. Failures map to a typed `SdkError`
 with a discriminable kind.
 
 Set `SandboxSpec::service_exposures` to register named or unnamed loopback HTTP
-services during creation. Each `ServiceExposure` contains a service name and a
-target port; an empty name selects the unnamed endpoint. The returned
+services during creation. Each `ServiceExposure` contains a service name, a
+target port, and an authorization mode; an empty name selects the unnamed
+endpoint. Authorization is stripped by default. Select `BearerPassthrough` only
+when the sandbox application validates its own bearer credential. The returned
 `SandboxRef::service_urls` map contains each routed URL under the same name.
 
 Curated calls without a workspace argument explicitly select the `default`
