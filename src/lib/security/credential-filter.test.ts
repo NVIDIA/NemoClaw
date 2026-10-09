@@ -229,6 +229,25 @@ describe("textContainsHighConfidenceCredential", () => {
   });
 
   it.each([
+    [
+      "const native = /^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/;",
+      false,
+    ],
+    [
+      "const native = /^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,21}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/;",
+      true,
+    ],
+    [
+      `const native = /^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/; const apiKey = "${makeJwtFixture()}";`,
+      true,
+    ],
+  ])("scans native matcher source without hiding credentials: %s", (source, expected) => {
+    expect(textContainsHighConfidenceCredential(source)).toBe(expected);
+    expect(textContainsCredential(source)).toBe(expected);
+    expect(isSafeCredentialPlaceholder(source)).toBe(false);
+  });
+
+  it.each([
     "xoxb-OPENSHELL-RESOLVE-ENV-SLACK-BOT-TOKEN",
     "xapp-OPENSHELL-RESOLVE-ENV-SLACK-APP-TOKEN",
   ])("flags malformed Slack placeholder-shaped credentials: %s", (value) => {

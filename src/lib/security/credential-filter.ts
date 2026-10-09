@@ -111,6 +111,10 @@ function textWithoutSafeCredentialFixtures(value: string): string {
       // Normalize that exact source fragment without stripping the reserved
       // prefix from malformed placeholder-shaped credential values.
       .replace(/(?:xox[bx]|xapp)-OPENSHELL-RESOLVE-ENV-\[A-Za-z0-9_\]\+/gu, "unused")
+      .replaceAll(
+        "/^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/",
+        "unused",
+      )
       .replace(/(?<![A-Za-z0-9_-])sk-OPENSHELL-PROXY-REWRITE(?![A-Za-z0-9_-])/gu, "unused")
       // The shared provider signature intentionally has no leading boundary.
       // Exclude embedded English fragments such as `task-concurrency-diagnosis`
