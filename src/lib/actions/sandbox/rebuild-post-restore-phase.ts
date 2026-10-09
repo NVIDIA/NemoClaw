@@ -15,11 +15,13 @@ import {
 } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as sandboxVersion from "../../sandbox/version";
 import { inspectMutableHermesConfigPerms } from "../../sandbox/mutable-config-perms";
+import { escapeTerminalText } from "../../policy/preset-scope-render";
 import * as registry from "../../state/registry";
 import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import { redactBoundedRebuildFailure } from "./rebuild-preflight-confirmation";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -39,7 +41,7 @@ import {
 } from "./rebuild-mcp-phase";
 import {
   finalizePendingMessagingRemovalsAfterRestore,
-  reapplyMessagingManifestBeforeOpenClawStart,
+  reapplyMessagingManifestBeforeAgentStart,
 } from "./rebuild-messaging-phase";
 import {
   abortUnregisteredOpenClawPostRestoreDoctor,
@@ -299,22 +301,33 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
       if (!openClawDoctorWindow) return;
+    }
 
+    if (targetAgentName === "openclaw" || targetAgentName === "hermes") {
       try {
-        await reapplyMessagingManifestBeforeOpenClawStart(
+        await reapplyMessagingManifestBeforeAgentStart(
           sandboxName,
+          targetAgentName,
           messagingPlan,
           log,
           mcpRuntimeSelection,
         );
-      } catch (error) {
-        log(
-          `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        // Parser errors can include credential-bearing configuration excerpts.
+        log("Messaging manifest reapply failed; configuration details omitted.");
         console.error(
           `  ${YW}\u26a0${R} Messaging manifest config reapply failed before gateway start.`,
         );
-        bail("OpenClaw messaging manifest config reapply failed during rebuild.");
+        if (hermesCronRestoreIdentity) {
+          return bailAfterHermesCronRestoreFailure(
+            sandboxName,
+            backupManifest,
+            "Hermes cron dispatch remains drained because messaging config could not be restored.",
+            "Messaging manifest config reapply failed during rebuild.",
+            bail,
+          );
+        }
+        bail("Messaging manifest config reapply failed during rebuild.");
         return;
       }
     }
@@ -460,8 +473,15 @@ export async function runRebuildPostRestorePhase(
     if (mutableConfigPermissionsVerified) {
       log("Verified the rebuilt Hermes mutable config posture");
     } else {
-      log(
-        `Hermes mutable config posture was not verified: ${mutableConfigVerification.errors.join("; ")}`,
+      const detail = escapeTerminalText(
+        redactBoundedRebuildFailure(mutableConfigVerification.errors.join("; ")),
+      ).slice(0, 4096);
+      log(`Hermes mutable config posture was not verified: ${detail}`);
+      console.error(
+        `  Hermes config write permissions could not be verified: ${detail || "No diagnostic was returned."}`,
+      );
+      console.error(
+        `  Correct the reported problem, then run \`${CLI_NAME} ${sandboxName} rebuild\` to repeat verification.`,
       );
     }
   }
