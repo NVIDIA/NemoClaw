@@ -312,10 +312,9 @@ export async function runRebuildPostRestorePhase(
           log,
           mcpRuntimeSelection,
         );
-      } catch (error) {
-        log(
-          `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        // Parser errors can include credential-bearing configuration excerpts.
+        log("Messaging manifest reapply failed; configuration details omitted.");
         console.error(
           `  ${YW}\u26a0${R} Messaging manifest config reapply failed before gateway start.`,
         );

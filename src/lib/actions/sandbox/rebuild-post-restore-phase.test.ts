@@ -30,6 +30,7 @@ import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
+import { createRebuildCommandContext } from "./rebuild-preflight-confirmation";
 
 const processRecovery = restoreWindow;
 
@@ -270,6 +271,39 @@ describe("rebuild post-restore phase", () => {
       expect(process.env.OPENSHELL_GATEWAY).toBe("unrelated-gateway");
     },
   );
+
+  it("stops rebuild without exposing malformed Hermes config in verbose logs", async () => {
+    agentName = "hermes";
+    vi.mocked(rebuildMessaging.reapplyMessagingManifestBeforeAgentStart).mockRestore();
+    const plan = await hermesTeamsPlan();
+    const secret = "synthetic-hermes-credential-do-not-log";
+    const configPath = "/sandbox/.hermes/config.yaml";
+    const malformedConfig = `model: { api_key: "${secret}"\n`;
+    const files = {
+      "/sandbox/.hermes/.env": "USER_SETTING=preserved\n",
+      [configPath]: malformedConfig,
+    };
+    const fileRunner = messagingSandboxFiles(files);
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args, options) =>
+      fileRunner(args, { input: options?.input }),
+    );
+    const context = createRebuildCommandContext({ verbose: true }, { throwOnError: true });
+    const log = vi.fn(context.log);
+
+    await expect(
+      runRebuildPostRestorePhase({ ...input(), ...context, log, messagingPlan: plan }),
+    ).rejects.toThrow("Messaging manifest config reapply failed during rebuild.");
+
+    const output = [...vi.mocked(console.error).mock.calls, ...vi.mocked(console.log).mock.calls]
+      .flat()
+      .join("\n");
+    expect(output).toContain("Messaging manifest config reapply failed before gateway start");
+    expect(output).not.toContain(secret);
+    expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
+    expect(files[configPath]).toBe(malformedConfig);
+    expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+  });
 
   it.each(["sandbox", "agent"] as const)(
     "rejects a restored messaging plan for another %s",
@@ -641,7 +675,7 @@ describe("rebuild post-restore phase", () => {
         "Messaging manifest config reapply failed during rebuild.",
       );
       expect(args.log).toHaveBeenCalledWith(
-        "Messaging manifest reapply failed: config write failed",
+        "Messaging manifest reapply failed; configuration details omitted.",
       );
       expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
       expect(
