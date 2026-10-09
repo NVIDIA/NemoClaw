@@ -86,43 +86,34 @@ impl Fixture {
         }
     }
 }
-/// Put the relay first on this process's `PATH` as `ssh`, once. The relay is
-/// built beside the test executables, which live in the target's `deps`.
+/// Install the relay as `ssh` beside this test executable, once. Windows
+/// resolves a bare program name in the launching executable's directory
+/// before `PATH`, so the engine client reaches the relay without changing the
+/// environment. The relay is built beside the test executables' `deps`.
 #[cfg(not(unix))]
 fn relay_as_ssh() {
-    static ONCE: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    ONCE.get_or_init(|| {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
         let executable = std::env::current_exe().unwrap();
-        let relay = executable
-            .parent()
-            .and_then(std::path::Path::parent)
-            .unwrap()
-            .join(format!(
-                "nemoclaw-fixture-ssh{}",
-                std::env::consts::EXE_SUFFIX
-            ));
+        let deps = executable.parent().unwrap();
+        let relay = deps.parent().unwrap().join(format!(
+            "nemoclaw-fixture-ssh{}",
+            std::env::consts::EXE_SUFFIX
+        ));
         assert!(
             relay.is_file(),
             "{} is missing; build it with cargo build -p nemoclaw-test-fixtures",
             relay.display()
         );
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::copy(
-            &relay,
-            directory
-                .path()
-                .join(format!("ssh{}", std::env::consts::EXE_SUFFIX)),
-        )
-        .unwrap();
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let path = std::env::join_paths(
-            std::iter::once(directory.path().to_owned()).chain(std::env::split_paths(&path)),
-        )
-        .unwrap();
-        // SAFETY: only platforms without Unix sockets reach this, and their
-        // environment functions are synchronized.
-        unsafe { std::env::set_var("PATH", path) };
-        directory
+        // Other test executables install it too; replace it atomically.
+        let staged = deps.join(format!("ssh-{}.tmp", std::process::id()));
+        std::fs::copy(&relay, &staged).unwrap();
+        let installed = deps.join(format!("ssh{}", std::env::consts::EXE_SUFFIX));
+        if std::fs::rename(&staged, &installed).is_err() {
+            // A running relay keeps the file open; the installed copy serves.
+            let _ = std::fs::remove_file(&staged);
+            assert!(installed.is_file());
+        }
     });
 }
 async fn serve(
