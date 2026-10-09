@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import YAML from "yaml";
 import { hermesApiCommand } from "../fixtures/hermes-api-command.ts";
 import { HOSTED_PROVIDER_SMOKE_CASES as hostedCases } from "../../../tools/e2e/hosted-provider-smoke.mts";
@@ -231,6 +232,7 @@ test.for(hostedCases)(
         "recreate the hosted sandbox",
         "onboard the hosted provider",
         "verify native agent configuration",
+        "verify hosted credential isolation",
         "request a fresh agent response",
       ],
     },
@@ -260,6 +262,7 @@ test.for(hostedCases)(
       contract: [
         "hosted provider onboards",
         "agent uses the native endpoint with a credential placeholder",
+        "selected credential is absent from sandbox environment, process arguments, and sampled files",
         "fresh agent request answers with the selected model",
       ],
     });
@@ -300,6 +303,30 @@ test.for(hostedCases)(
       [hermes ? "base_url" : "baseUrl"]: selected.endpoint,
       [hermes ? "api_key" : "apiKey"]: `openshell:resolve:env:${selected.placeholder}`,
     });
+    progress.phase("verify hosted credential isolation");
+    const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {
+      artifactName: `${selected.id}-credential-isolation`,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 90_000,
+    });
+    expect(isolation.exitCode, resultText(isolation)).toBe(0);
+    const isolationEvidence = JSON.parse(isolation.stdout);
+    expect(
+      isolationEvidence.environmentClean,
+      "real credential absent from sandbox environment",
+    ).toBe(true);
+    expect(
+      isolationEvidence.processesClean,
+      "real credential absent from sandbox process arguments",
+    ).toBe(true);
+    expect(
+      isolationEvidence.sampledFilesClean,
+      "real credential absent from sampled sandbox files",
+    ).toBe(true);
+    expect(isolationEvidence.canaryDetected, "filesystem scanner detects a planted control").toBe(
+      true,
+    );
     progress.phase("request a fresh agent response");
     const responseOptions = {
       artifactName: `${selected.id}-native-agent`,

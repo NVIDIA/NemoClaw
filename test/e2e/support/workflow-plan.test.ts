@@ -954,7 +954,6 @@ describe("E2E workflow plan", () => {
   });
 
   it.each([
-    ".github/workflows/e2e.yaml",
     ".github/actions/prepare-e2e/action.yaml",
     "test/e2e/fixtures/e2e-test.ts",
     "tools/e2e/live-vitest-invocation.mts",
@@ -978,9 +977,7 @@ describe("E2E workflow plan", () => {
       { changedFiles: [".github/workflows/e2e-standard-profile.yaml"] },
     );
 
-    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(
-      E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "hosted-inference").length,
-    );
+    expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
     expect(plan.selectedJobs).toEqual(["jetson-nvmap-gpu"]);
     expect(plan.matrix).toEqual([]);
     expect(plan.testMatrix).toEqual([]);

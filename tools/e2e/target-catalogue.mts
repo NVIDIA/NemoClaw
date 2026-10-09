@@ -1006,6 +1006,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       agentRuntime: selected.selector === "hermes" ? "hermes" : "openclaw",
       prAdvisorSelectable: true,
       owningPaths: [
+        "test/e2e/live/inference-routing-credential-scan.ts",
         `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
         ...(["openai", "anthropic", "hermes"].includes(selected.selector)
           ? ["src/lib/inference/native-provider/", "src/lib/onboard/setup-inference.ts"]
@@ -1871,7 +1872,16 @@ export function catalogueTargetsForChangedFiles(
     const ownsSource = files.some((file) =>
       entry.owningPaths.some((owner) => pathMatches(file, owner)),
     );
-    if (entry.profile === "hosted-inference") return ownsSource;
+    if (entry.profile === "hosted-inference") {
+      return (
+        ownsSource ||
+        files.some(
+          (file) =>
+            file === ".github/workflows/e2e.yaml" ||
+            file === ".github/workflows/e2e-standard-profile.yaml",
+        )
+      );
+    }
     return shared || ownsSource || files.includes(entry.testFile);
   });
 }

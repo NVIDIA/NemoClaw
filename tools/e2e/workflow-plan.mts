@@ -773,9 +773,17 @@ export function buildE2eWorkflowPlan(
       const plan = buildE2eWorkflowPlan(selectors, { gatewayRuntimes });
       const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
       const selectedJobs = [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])];
+      const affectedCatalogueTargets = catalogueTargetsForChangedFiles(changedFiles);
       return withCoverageMatrix(
         {
           ...planWithoutCoverage,
+          catalogueMatrices: catalogueMatrices(
+            E2E_TARGET_CATALOGUE.filter(
+              (target) =>
+                target.profile !== "hosted-inference" || affectedCatalogueTargets.includes(target),
+            ),
+            gatewayRuntimes,
+          ),
           selectedJobs,
           runtimeProvidersByJob: {
             ...plan.runtimeProvidersByJob,

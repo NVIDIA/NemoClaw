@@ -2098,7 +2098,12 @@ A skipped provider is missing qualification evidence.
 
 OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
 Hermes Provider onboards Hermes and submits a fresh request to its managed API.
-Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer. This covers runtime configuration, OpenShell injection, and the
+Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer.
+Before the request, a sandbox probe checks the raw environment, process arguments, and a bounded file sample
+for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
+booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
+The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
+This is not an exhaustive filesystem scan. This covers runtime configuration, OpenShell injection, and the
 remote inference boundary. Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
@@ -2113,6 +2118,8 @@ Select one explicit target with `targets=hosted-inference-openai`, `hosted-infer
 `hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
 These Docker targets reuse `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
 Default suites and unrelated shared-file changes do not select these targets.
+Changes to `e2e.yaml` or `e2e-standard-profile.yaml` select all five hosted targets because these
+workflows own the credential handoff.
 Native hosted lifecycle changes select OpenAI, Anthropic, and Hermes as protocol and credential
 representatives. A provider-profile change selects that provider. Advisor can recommend an explicit
 hosted target. Selection identifies required evidence; it does not grant dispatch or credential access.
