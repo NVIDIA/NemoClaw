@@ -617,6 +617,7 @@ async function readAndAssertOpenClawConfig(
     model: string;
     inferenceApi: string;
     artifactName: string;
+    nativeNvidia?: boolean;
   },
 ): Promise<OpenClawModelConfig | undefined> {
   const configResult = await sandbox.exec(
@@ -638,13 +639,13 @@ async function readAndAssertOpenClawConfig(
 
   expect(config.agents?.defaults?.model?.primary).toBe(expectedPrimary);
   expect(provider?.baseUrl).toBe(
-    SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+    expected.nativeNvidia
       ? NVIDIA_HOSTED_NATIVE_ENDPOINT
       : expected.inferenceApi === "anthropic-messages"
         ? "https://inference.local"
         : "https://inference.local/v1",
   );
-  expect(provider?.apiKey).toBe("unused");
+  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "${NVIDIA_INFERENCE_API_KEY}" : "unused");
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
@@ -657,10 +658,15 @@ async function assertOpenClawConfig(
     model: string;
     inferenceApi: string;
     artifactName: string;
+    nativeNvidia?: boolean;
   },
 ): Promise<void> {
   const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
-  expect(typeof selectedModel?.maxTokens === "number" && selectedModel.maxTokens > 0).toBe(true);
+  expect(
+    expected.inferenceApi === "anthropic-messages"
+      ? typeof selectedModel?.maxTokens === "number" && selectedModel.maxTokens > 0
+      : selectedModel?.maxTokens === undefined,
+  ).toBe(true);
 }
 
 async function assertInitialOpenClawConfig(
@@ -670,6 +676,7 @@ async function assertInitialOpenClawConfig(
     model: string;
     inferenceApi: string;
     artifactName: string;
+    nativeNvidia?: boolean;
   },
 ): Promise<void> {
   const selectedModel = await readAndAssertOpenClawConfig(sandbox, home, expected);
@@ -1321,6 +1328,7 @@ test(
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
       artifactName: "read-openclaw-config-after-inference-switch",
+      nativeNvidia: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
     });
     await assertRegistryAndSession(home, { mockProvider, sandbox });
 
