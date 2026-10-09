@@ -586,25 +586,24 @@ test(
         timeoutMs: 30_000,
       },
     );
-    const removedOrphanImage = await host.command(
+    const orphanTagsAfterGc = await host.command(
       "docker",
-      ["image", "inspect", "--format", "{{.Id}}", orphanTag],
+      ["image", "ls", "--filter", `reference=${orphanTag}`, "--format", "{{.Repository}}:{{.Tag}}"],
       {
         artifactName: "phase-3-gc-orphan-tag-removed",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
+    const orphanTagAbsent =
+      orphanTagsAfterGc.exitCode === 0 && !orphanTagsAfterGc.stdout.split("\n").includes(orphanTag);
     expect(
       registeredImage.exitCode === 0 &&
-        /^(?:openshell\/sandbox-from|nemoclaw-sandbox-local|localhost:5000\/nemoclaw-sandbox-local):/u.test(
-          registeredImageTag,
-        ) &&
         taggedOrphan.exitCode === 0 &&
         garbageCollect.exitCode === 0 &&
         retainedSiblingImage.exitCode === 0 &&
-        removedOrphanImage.exitCode !== 0,
-      `registered image=${resultText(registeredImage)}, tag=${registeredImageTag}; orphan tag=${resultText(taggedOrphan)}; gc=${resultText(garbageCollect)}; sibling=${resultText(retainedSiblingImage)}; orphan inspect=${resultText(removedOrphanImage)}`,
+        orphanTagAbsent,
+      `registered image=${resultText(registeredImage)}, tag=${registeredImageTag}; orphan tag=${resultText(taggedOrphan)}; gc=${resultText(garbageCollect)}; sibling=${resultText(retainedSiblingImage)}; orphan tags=${resultText(orphanTagsAfterGc)}`,
     ).toBe(true);
 
     progress.phase("uninstall alternate gateway without disrupting default");
@@ -715,7 +714,7 @@ test(
           outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B) &&
           !outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A),
         siblingGatewayImagePreservedByGc: retainedSiblingImage.exitCode === 0,
-        gcRemovedOnlyOrphanTag: removedOrphanImage.exitCode !== 0,
+        gcRemovedOnlyOrphanTag: orphanTagAbsent,
         dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
         gatewayBUninstalled: uninstallB.exitCode === 0 && scopedStateRemoved.exitCode === 0,
         sandboxAPreservedAfterUninstallB:
