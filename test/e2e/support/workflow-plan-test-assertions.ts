@@ -6,6 +6,7 @@ import {
   releaseRequiredWorkflowJobs,
   selectedWorkflowJobs,
 } from "../../../tools/e2e/workflow-plan.mts";
+import { requiresManagedImages } from "../../../tools/e2e/workflow-prerequisites.mts";
 
 export function expectedWorkflowPlanCiOutput(
   plan: ReturnType<typeof buildE2eWorkflowPlan>,
@@ -21,6 +22,7 @@ export function expectedWorkflowPlanCiOutput(
     `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
     `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
     `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
+    `managed_image_required=${requiresManagedImages(selectedWorkflowJobs(plan))}`,
     `hermes_selected=${plan.hermesSelected}`,
     `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
     `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,

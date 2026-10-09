@@ -85,6 +85,17 @@ Each consumer runs the pinned preparation action with `build-cli: "false"` to in
 The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
+The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
+base activation. PR runs build all three managed-agent bases from the selected
+checkout's Dockerfiles, pins and lockfiles on native CPU runners. Each base has
+a separate OCI layout and receipt bound to its agent, source SHA, trusted
+workflow SHA, platform, run ID and attempt. The protected GPU controller verifies
+these identities and every config, manifest and layer digest before using the
+bases offline. PR runs reject published-base substitution and failed verification.
+Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
+uses a published base with v1 activation and a candidate base with v2 activation.
+The receipt command retains its Deep Agents default for existing callers; an
+explicit agent selects the OpenClaw or Hermes contract.
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -169,6 +180,17 @@ It binds every artifact to the workflow run, attempt, candidate commit, artifact
 It requires every shipped agent once, one candidate revision, one release, and one cohort before it assembles the candidate catalog.
 No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
 Manual PR E2E does not fall back to local Dockerfile builds.
+
+Routine changes to existing dependency pins, lockfiles, and image digests use
+this path policy; they do not need a new dependency registry or per-version
+workflow edits. Regression cases exercise the real policy for OpenClaw, Hermes,
+Deep Agents, Pi, OpenShell, and shared npm inputs. These are artifact-selection
+tests, not live qualification. OpenShell's gateway-only jobs select the candidate
+release through the existing trusted installer verifier. New release trust
+records, controller protocols, permissions, and unsupported platforms still need
+their own review. Historical upgrade fixtures keep their historical versions.
+Pi retains its separate candidate contract and qualification receipts below;
+selecting a shipped-agent catalog does not qualify Pi.
 
 Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
 Changed-input runs pass the authenticated candidate catalog separately to those consumers.
@@ -266,6 +288,16 @@ local image, removes registry credentials, validates the anonymously pullable di
 `managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
 qualification receipts may consume these candidate contracts only when the recorded image-source
 paths are unchanged through the receipt commit.
+
+Keep a Pi upgrade in one PR with two publication steps:
+
+1. Commit and push the image inputs, leaving both existing receipts and their authority unchanged.
+   Local hooks permit this source-only step and report qualification as pending.
+2. After both candidate images publish, add their receipts and matching authority in the same PR.
+   Keep image inputs unchanged between the source and receipt commits.
+
+CI does not permit the source-only exception. It requires refreshed receipts before the PR can pass.
+A partial receipt or authority change remains an error in local hooks and CI.
 
 Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
 managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
@@ -1838,6 +1870,15 @@ The API must report `NVIDIA/NemoClaw` as the PR source repository. Empty `jobs` 
 
 A same-repository PR may also select any supported E2E job or target.
 Main and manual PR runs use the same typed planner from the trusted workflow revision.
+The planner derives managed-image prerequisites from the selected jobs' dependency graph.
+Gateway auth and external gateway health can run without managed-agent image publication;
+selecting an image consumer alongside them retains that consumer's publication gate.
+When either gateway job is selected, the trusted installer verifier reads the exact candidate's blueprint,
+installer, Brev installer, and supervisor pins as data and selects its reviewed OpenShell release.
+Gateway auth and external gateway health use that version, not the version pinned on `main`.
+Unreviewed releases, inconsistent pins, and modified installer templates fail admission.
+Adding release trust remains a reviewed change; selecting an already trusted version needs no
+version-specific workflow change. A focused pass is not full release qualification.
 PRs from forks, including other NVIDIA repositories, are rejected before candidate execution.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 Jetson and Launchable retain their operator and image-producer requirements.
@@ -1854,7 +1895,8 @@ PR runs select the nearest fully successful publication on the trusted workflow 
 The publication must cover the PR base's latest reviewed image input.
 For that publication, the job binds the run ID, attempt, revision, cohort artifact ID, and artifact digest before it emits `managed_image_revision`.
 It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
-`generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
+`generate-matrix` runs first and selects whether publication is required.
+Stock-onboarding jobs still depend on publication, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
@@ -1948,6 +1990,16 @@ To select the protected managed-image runtime qualification, set `jobs=managed-i
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+The GPU job reads OpenShell sources from the candidate commit as data, then validates their pins and operational templates.
+It projects only the reviewed installer, supervisor and feature-check modules, plus version literals, into the trusted controller checkout.
+It builds that controller after projection and verifies the projected sources before qualification.
+The job restores the trusted sources after qualification and retains source-digest records with its artifacts.
+Those records identify tested inputs; they do not prove live E2E success.
+The job also selects the candidate OpenShell SDK from the controller's reviewed current or replacement archives.
+It projects the SDK identity into the trusted manifest and lockfile, then installs the verified archive before building the CLI.
+The SDK version must match the candidate runtime version.
+Changed SDK dependency metadata or transitive dependencies require a trust/bootstrap review; unrelated candidate npm changes never enter the controller.
+Live qualification must still pass for the selected candidate; source projection and archive-install tests do not establish that result.
 To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
