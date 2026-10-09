@@ -536,7 +536,7 @@ Automatic and explicit resume, reuse, recreation, and fresh onboarding with that
 <Warning>
 OpenShell deletes by mutable sandbox name.
 A matching identity check cannot prevent another gateway client from replacing the sandbox between the final check and deletion.
-Keep other clients from replacing this name during retained recovery.
+Use live retained cleanup only when no independent OpenShell client can replace this sandbox name during cleanup.
 </Warning>
 
 Run `$$nemoclaw <sandbox-name> destroy` to check retained recovery and reconcile verified residual state.

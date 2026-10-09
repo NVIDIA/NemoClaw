@@ -13,8 +13,9 @@ It also strengthens credential checks, preserves gateway-scoped tunnels during s
   Related change: [PR #12538](https://github.com/NVIDIA/NemoClaw/pull/12538).
   Refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 - New and recreated NVIDIA Endpoints sandboxes use a sandbox-attached OpenShell provider instead of the shared `inference.local` route.
-  Sandboxes created earlier keep the shared route until you recreate them.
-  OpenClaw and Hermes can then switch that attachment in place; Deep Agents Code uses rebuild.
+  Older sandboxes keep the shared route until recreated.
+  Recreate Deep Agents Code sandboxes during onboarding.
+  OpenClaw and Hermes can switch an existing native attachment in place.
   Follow-up repairs restore native sandbox requests and use the supervisor-issued credential handle for OpenClaw and Hermes.
   Related changes: [PR #12562](https://github.com/NVIDIA/NemoClaw/pull/12562), [PR #12826](https://github.com/NVIDIA/NemoClaw/pull/12826), and [PR #12895](https://github.com/NVIDIA/NemoClaw/pull/12895).
   Refer to [Use NVIDIA Endpoints](/user-guide/openclaw/inference/hosted-inference/use-nvidia-endpoints).
