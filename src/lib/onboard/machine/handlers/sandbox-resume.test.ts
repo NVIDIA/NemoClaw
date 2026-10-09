@@ -29,6 +29,7 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     toolDisclosureMigrationNeeded: false,
     toolDisclosureChanged: false,
     inferenceSelectionChanged: false,
+    openclawInferenceSelectionChanged: false,
     ...overrides,
   };
 }
@@ -36,6 +37,29 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
 describe("decideSandboxResume", () => {
   it("reuses only a complete ready sandbox without configuration drift", () => {
     expect(decideSandboxResume(resumeSignals())).toEqual({ kind: "reuse" });
+  });
+
+  it("recreates a Ready sandbox when OpenClaw inference selection has known drift", () => {
+    expect(decideSandboxResume(resumeSignals({ openclawInferenceSelectionChanged: true }))).toEqual(
+      {
+        kind: "recreate",
+        note: "  Sandbox inference selection changed; recreating to apply the requested model.",
+        removeRegistryEntry: false,
+        confirmOpenclawInferenceSelectionDrift: true,
+      },
+    );
+  });
+
+  it("continues an authorized recreate journal without requesting a second drift confirmation", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({ openclawInferenceSelectionChanged: true, activeRecreateJournal: true }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    });
   });
 
   it("continues pending Hermes Portable lifecycle custody instead of reusing its Ready sandbox (#9211)", () => {

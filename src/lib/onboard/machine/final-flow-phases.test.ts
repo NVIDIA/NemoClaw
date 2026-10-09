@@ -77,6 +77,24 @@ describe("final onboard flow phases", () => {
     ).toBe(testCase.expected);
   });
 
+  it("initializes OpenClaw's native model route after inference-drift recreation", () => {
+    expect(
+      shouldInitializeNativeOpenclawInferenceRoute(
+        context({ openclawInferenceSelectionChanged: true }),
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it("defers the native route after an inference-drift rebuild until saved config is restored", () => {
+    expect(
+      shouldInitializeNativeOpenclawInferenceRoute(
+        context({ openclawInferenceSelectionChanged: true }),
+        true,
+      ),
+    ).toBe(false);
+  });
+
   it("passes verified sandbox identity authority to custom-image route setup (#12033)", async () => {
     const revalidateSandboxIdentity = vi.fn();
     const setupOpenclaw = vi.fn(async (...args) => {

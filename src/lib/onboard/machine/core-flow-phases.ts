@@ -379,6 +379,7 @@ export function createSandboxOnboardFlowPhase<
         sandboxName: sandboxStateResult.sandboxName,
         webSearchConfig: sandboxStateResult.webSearchConfig,
         webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
+        openclawInferenceSelectionChanged: sandboxStateResult.openclawInferenceSelectionChanged,
         hermesToolGateways: sandboxStateResult.hermesToolGateways,
         selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
         webSearchSupported: sandboxStateResult.webSearchSupported,

@@ -43,6 +43,26 @@ export type SelectionConfigReadDeps = {
   tmpDir?: string;
 };
 
+export interface OpenclawSelectionDriftDepsRuntime {
+  runOpenshell: SelectionConfigReadDeps["runOpenshell"];
+  isNonInteractive(): boolean;
+  confirmRecreateForSelectionDrift(
+    sandboxName: string,
+    drift: SelectionDrift,
+    requestedProvider: string | null,
+    requestedModel: string | null,
+  ): Promise<boolean>;
+}
+
+export function createOpenclawSelectionDriftDeps(runtime: OpenclawSelectionDriftDepsRuntime) {
+  return {
+    getSelectionDrift: (sandboxName: string, provider: string, model: string) =>
+      getSelectionDrift(sandboxName, provider, model, { runOpenshell: runtime.runOpenshell }),
+    isNonInteractive: runtime.isNonInteractive,
+    confirmRecreateForSelectionDrift: runtime.confirmRecreateForSelectionDrift,
+  };
+}
+
 export function findSelectionConfigPath(dir: string): string | null {
   if (!dir || !fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });

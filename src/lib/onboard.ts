@@ -106,9 +106,7 @@ const {
   buildDirectSandboxGpuProofCommands,
   discloseInitialSandboxPolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
-const {
-  getSelectionDrift,
-}: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const selectionDrift: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
   createDcodeSelectionDriftReader,
   requiresSelectionRecreate,
@@ -1474,7 +1472,7 @@ const sandboxCreateOrchestrationRuntime = {
   getSandboxRecreateObservation,
   getSandboxReuseState,
   getSandboxRuntimeRegistryFields,
-  getSelectionDrift,
+  getSelectionDrift: selectionDrift.getSelectionDrift,
   hasSandboxGpuDrift,
   inferenceConfig,
   inspectSandboxForCreate,
@@ -3063,6 +3061,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
             getSandboxReuseState,
+            ...selectionDrift.createOpenclawSelectionDriftDeps(sandboxCreateOrchestrationRuntime),
             getSandboxRecreateObservation,
             getDcodeSelectionDrift: sandboxCreateOrchestrationRuntime.readDcodeSelectionDrift,
             hasSandboxGpuDrift,

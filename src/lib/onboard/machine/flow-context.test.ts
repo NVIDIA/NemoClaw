@@ -151,6 +151,7 @@ describe("onboard flow context helpers", () => {
       sandboxName: "my-assistant",
       webSearchConfig: null,
       webSearchConfigChanged: false,
+      openclawInferenceSelectionChanged: false,
       hermesToolGateways: [],
       selectedMessagingChannels: ["telegram"],
       webSearchSupported: true,

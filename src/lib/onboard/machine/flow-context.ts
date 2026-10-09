@@ -31,6 +31,8 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   webSearchConfigChanged?: boolean;
+  /** OpenClaw must sync its native model route after confirmed sandbox recreation. */
+  openclawInferenceSelectionChanged?: boolean;
   webSearchSupported: boolean;
   selectedMessagingChannels: string[];
   /** Process-local proof that the provider phase admitted a providerless APF plan. */
@@ -100,6 +102,7 @@ export interface SandboxCreatedContextUpdate {
   sandboxName: string;
   webSearchConfig: WebSearchConfig | null;
   webSearchConfigChanged: boolean;
+  openclawInferenceSelectionChanged: boolean;
   hermesToolGateways: string[];
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
