@@ -1003,7 +1003,15 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   ...HOSTED_PROVIDER_SMOKE_CASES.map((selected) =>
     dockerOnlyTarget(`hosted-inference-${selected.selector}`, {
       displayName: `Inference: completes a native ${selected.label} agent request`,
-      agentRuntime: "openclaw",
+      agentRuntime: selected.selector === "hermes" ? "hermes" : "openclaw",
+      prAdvisorSelectable: true,
+      owningPaths: [
+        `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
+        ...(["openai", "anthropic", "hermes"].includes(selected.selector)
+          ? ["src/lib/inference/native-provider/", "src/lib/onboard/setup-inference.ts"]
+          : []),
+        ...(selected.selector === "hermes" ? ["src/lib/hermes-provider-auth.ts"] : []),
+      ],
       environmentOrInferenceEndpoint: `Ubuntu; ${selected.label} hosted inference`,
       profile: "hosted-inference",
       releaseRequired: false,
@@ -1856,17 +1864,16 @@ export function catalogueTargetsForChangedFiles(
   changedFiles: readonly string[],
 ): E2eCatalogueTarget[] {
   const files = [...new Set(changedFiles)];
-  if (files.some((file) => E2E_CATALOGUE_SHARED_PATHS.some((owner) => pathMatches(file, owner)))) {
-    return E2E_TARGET_CATALOGUE.filter((entry) => entry.profile !== "hosted-inference");
-  }
-  return E2E_TARGET_CATALOGUE.filter(
-    (entry) =>
-      entry.profile !== "hosted-inference" &&
-      files.some(
-        (file) =>
-          file === entry.testFile || entry.owningPaths.some((owner) => pathMatches(file, owner)),
-      ),
+  const shared = files.some((file) =>
+    E2E_CATALOGUE_SHARED_PATHS.some((owner) => pathMatches(file, owner)),
   );
+  return E2E_TARGET_CATALOGUE.filter((entry) => {
+    const ownsSource = files.some((file) =>
+      entry.owningPaths.some((owner) => pathMatches(file, owner)),
+    );
+    if (entry.profile === "hosted-inference") return ownsSource;
+    return shared || ownsSource || files.includes(entry.testFile);
+  });
 }
 
 export function catalogueHostPackages(

@@ -217,7 +217,7 @@ Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced
 
 ### Inference
 
-Most providers use the OpenShell-managed `inference.local` route. NVIDIA Endpoints instead uses its least-privilege, sandbox-attached OpenShell provider at `integrate.api.nvidia.com`. In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
+NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. In both cases, OpenShell mediates inference traffic and keeps provider credentials outside the sandbox.
 
 <AgentOnly variant="deepagents">
 

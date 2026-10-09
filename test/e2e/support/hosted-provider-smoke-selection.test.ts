@@ -10,6 +10,7 @@ import {
 } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import {
   catalogueTarget,
+  catalogueRecommendationSelectorIds,
   E2E_TARGET_CATALOGUE,
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
@@ -22,6 +23,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
   const id = `hosted-inference-${selected.selector}`;
   it("selects only the named provider in the existing smoke owner", () => {
     const target = catalogueTarget(id);
+    expect(target.agentRuntime).toBe(selected.selector === "hermes" ? "hermes" : "openclaw");
     expect(target.testFile).toBe("test/e2e/live/inference-routing-provider-smoke.test.ts");
     expect(
       new RegExp(target.selector!).test(
@@ -52,7 +54,7 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label qualification selection", (se
   });
 });
 
-it("never automatically spends hosted-provider quota on changed files or the default suite", () => {
+it("does not select hosted providers for unrelated shared files or the default suite", () => {
   expect(
     catalogueTargetsForChangedFiles(["tools/e2e/target-catalogue.mts"]).filter(
       (target) => target.profile === "hosted-inference",
@@ -69,4 +71,28 @@ it("selects automatic catalogue targets when their shared installer changes", ()
   expect(catalogueTargetsForChangedFiles(["scripts/install-openshell.sh"])).toEqual(
     E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "hosted-inference"),
   );
+});
+
+it("selects distinct protocol and credential representatives for hosted lifecycle changes", () => {
+  expect(
+    buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["src/lib/inference/native-provider/lifecycle.ts"] },
+    ).catalogueMatrices["hosted-inference"].map((row) => row.id),
+  ).toEqual(["hosted-inference-openai", "hosted-inference-anthropic", "hosted-inference-hermes"]);
+  expect(catalogueRecommendationSelectorIds()).toEqual(
+    expect.arrayContaining(
+      HOSTED_PROVIDER_SMOKE_CASES.map((entry) => `hosted-inference-${entry.selector}`),
+    ),
+  );
+});
+
+it.each(HOSTED_PROVIDER_SMOKE_CASES)("selects only $label for its profile change", (selected) => {
+  expect(
+    catalogueTargetsForChangedFiles([
+      `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
+    ])
+      .filter((target) => target.profile === "hosted-inference")
+      .map((target) => target.id),
+  ).toEqual([`hosted-inference-${selected.selector}`]);
 });

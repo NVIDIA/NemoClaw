@@ -358,13 +358,13 @@ Inside the sandbox:
 ## Inference Routing
 
 Agent inference follows one of two OpenShell-managed paths.
-Most providers use the shared `inference.local` route through the OpenShell gateway:
+Custom and local providers retain the shared `inference.local` route through the OpenShell gateway:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  inference.local  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
 
-NVIDIA Endpoints uses a restricted provider attached to the sandbox:
+NVIDIA Endpoints and supported fixed hosted providers use restricted providers attached to the sandbox. For example, NVIDIA Endpoints uses this path:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  integrate.api.nvidia.com  ──▶  NVIDIA Endpoints

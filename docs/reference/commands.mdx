@@ -1658,7 +1658,7 @@ $$nemoclaw my-assistant start
 When that deadline expires, `start` keeps the existing container, exits non-zero, and prints the
 `NEMOCLAW_CONNECT_TIMEOUT` value to use on the next run.
 
-After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. Most providers use `https://inference.local`; NVIDIA Endpoints uses the sandbox-attached OpenShell provider for `https://integrate.api.nvidia.com/v1`. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
+After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case. It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command. Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content. The request allows up to 90 seconds, and the host wrapper allows 95 seconds for bounded process startup and cleanup. Each run consumes provider tokens on a hosted path. When the sandbox records no provider or no model, `start` skips the request and exits `0`. For a shared gateway route, `doctor` still classifies an HTTP `401` or `403` response as reachable. The native NVIDIA doctor probe instead requires a 2xx response from the sandbox-attached provider. Correct the provider credential when `start` reports either status.
 
 ### `$$nemoclaw <name> status`
 
@@ -1706,7 +1706,7 @@ $$nemoclaw my-assistant status --json
 $$nemoclaw sandbox status my-assistant --json
 ```
 
-The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. Most providers use `https://inference.local/v1`; NVIDIA Endpoints uses the sandbox-attached provider for `https://integrate.api.nvidia.com/v1`. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
+The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses. The main `Inference` line reports one of these states:
 
 | State          | Meaning                                                                                                                                                                                                               |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2060,7 +2060,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. Most model traffic uses the OpenShell-managed `inference.local` route. NVIDIA Endpoints uses a sandbox-attached OpenShell provider for `integrate.api.nvidia.com`.
+`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route.
 
 </AgentOnly>
 
@@ -3232,7 +3232,7 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. Most providers use `inference.local`; NVIDIA Endpoints uses its sandbox-attached provider at `integrate.api.nvidia.com`. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
 
 </AgentOnly>
 

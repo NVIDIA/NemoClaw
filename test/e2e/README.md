@@ -2096,8 +2096,9 @@ Use an approved disposable environment and credentials from its approved source.
 These tests are outside the credential-free `inference-routing` PR lane.
 A skipped provider is missing qualification evidence.
 
-Each case onboards OpenClaw, checks its native endpoint and credential placeholder, and starts a fresh
-agent process with the selected model. This covers runtime configuration, OpenShell injection, and the
+OpenAI, Anthropic, Gemini, and OpenRouter onboard OpenClaw and start a fresh agent process.
+Hermes Provider onboards Hermes and submits a fresh request to its managed API.
+Each case checks the native endpoint, credential placeholder, selected adapter, response model, and nonempty answer. This covers runtime configuration, OpenShell injection, and the
 remote inference boundary. Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
@@ -2108,12 +2109,13 @@ Credentials remain in the test host environment and OpenShell provider store; ar
 The existing cleanup helper destroys each test sandbox. Use a disposable gateway because provider
 credentials can remain stored after sandbox removal.
 
-### Fixed hosted-provider qualification
-
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,
 `hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
 These Docker targets reuse `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
-Default suites and changed-file selection do not select them or spend provider quota.
+Default suites and unrelated shared-file changes do not select these targets.
+Native hosted lifecycle changes select OpenAI, Anthropic, and Hermes as protocol and credential
+representatives. A provider-profile change selects that provider. Advisor can recommend an explicit
+hosted target. Selection identifies required evidence; it does not grant dispatch or credential access.
 The credential-free `inference-routing` target remains separate.
 
 Before dispatch, obtain an approved disposable environment and credential source for the selected provider.
@@ -2125,3 +2127,11 @@ Missing credentials or models fail before onboarding. A selected test that skips
 The existing controller binds artifacts to the tested source revision and trusted workflow revision.
 A manual PR run requires the existing controller credential approval; adding a target does not grant that approval.
 Hermes API-key evidence does not qualify interactive OAuth login.
+
+Hermes OAuth remains a live qualification gap for Slice 2 (#12589). Its supported login uses an
+interactive device authorization before registering the returned endpoint. The deterministic owner
+`src/lib/hermes-provider-auth.test.ts` covers the returned endpoint, native credential callback,
+absence of legacy registration, and token redaction. The API-key smoke cannot qualify that login.
+Closing the gap requires an approved disposable interactive environment and an authorized account
+operator, followed by a fresh Hermes response using the returned native endpoint. Do not add an
+unsupported noninteractive token bootstrap or count the API-key smoke as OAuth evidence.

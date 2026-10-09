@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import YAML from "yaml";
+import { hermesApiCommand } from "../fixtures/hermes-api-command.ts";
 import { HOSTED_PROVIDER_SMOKE_CASES as hostedCases } from "../../../tools/e2e/hosted-provider-smoke.mts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
@@ -245,6 +247,7 @@ test.for(hostedCases)(
       ("defaultModel" in selected ? selected.defaultModel : "") ||
       skipLive(skip, `${selected.modelEnv} must name an available model`);
     await requireLivePrerequisites(host, runtimeProvider);
+    const hermes = selected.selector === "hermes";
     const sandboxName = inferenceSandboxName(`e2e-${selected.selector}`);
     cleanup.add(`best-effort hosted inference cleanup for ${sandboxName}`, () =>
       cleanupSandbox(host, sandbox, sandboxName),
@@ -257,7 +260,7 @@ test.for(hostedCases)(
       contract: [
         "hosted provider onboards",
         "agent uses the native endpoint with a credential placeholder",
-        "fresh agent process answers with the selected model",
+        "fresh agent request answers with the selected model",
       ],
     });
     progress.phase("onboard the hosted provider");
@@ -265,7 +268,7 @@ test.for(hostedCases)(
       artifacts,
       sandboxName,
       {
-        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_AGENT: hermes ? "hermes" : "openclaw",
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PROVIDER: selected.provider,
         [selected.credential]: apiKey,
@@ -281,7 +284,9 @@ test.for(hostedCases)(
     progress.phase("verify native agent configuration");
     const config = await sandbox.exec(
       sandboxName,
-      ["openclaw", "config", "get", `models.providers.${selected.providerKey}`, "--json"],
+      hermes
+        ? ["cat", "/sandbox/.hermes/config.yaml"]
+        : ["openclaw", "config", "get", `models.providers.${selected.providerKey}`, "--json"],
       {
         artifactName: `${selected.id}-native-config`,
         env: buildAvailabilityProbeEnv(),
@@ -290,41 +295,71 @@ test.for(hostedCases)(
       },
     );
     expect(config.exitCode, resultText(config)).toBe(0);
-    expect(JSON.parse(config.stdout)).toMatchObject({
-      baseUrl: selected.endpoint,
-      apiKey: `openshell:resolve:env:${selected.placeholder}`,
+    const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
+    expect(providerConfig).toMatchObject({
+      [hermes ? "base_url" : "baseUrl"]: selected.endpoint,
+      [hermes ? "api_key" : "apiKey"]: `openshell:resolve:env:${selected.placeholder}`,
     });
     progress.phase("request a fresh agent response");
-    const response = await sandbox.exec(
-      sandboxName,
-      [
-        "nemoclaw-start",
-        "openclaw",
-        "agent",
-        "--agent",
-        "main",
-        "--json",
-        "--thinking",
-        "off",
-        "--session-id",
-        `native-${crypto.randomUUID()}`,
-        "-m",
-        "Reply with one short greeting. Do not use tools.",
-      ],
-      {
-        artifactName: `${selected.id}-native-agent`,
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: [apiKey],
-        timeoutMs: 180_000,
-      },
-    );
+    const responseOptions = {
+      artifactName: `${selected.id}-native-agent`,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 180_000,
+    };
+    const response = hermes
+      ? await sandbox.execShell(
+          sandboxName,
+          trustedSandboxShellScript(
+            hermesApiCommand(
+              JSON.stringify({
+                model,
+                messages: [
+                  { role: "user", content: "Reply with one short greeting. Do not use tools." },
+                ],
+                stream: false,
+              }),
+            ),
+          ),
+          responseOptions,
+        )
+      : await sandbox.exec(
+          sandboxName,
+          [
+            "nemoclaw-start",
+            "openclaw",
+            "agent",
+            "--agent",
+            "main",
+            "--json",
+            "--thinking",
+            "off",
+            "--session-id",
+            `native-${crypto.randomUUID()}`,
+            "-m",
+            "Reply with one short greeting. Do not use tools.",
+          ],
+          responseOptions,
+        );
     expect(response.exitCode, resultText(response)).toBe(0);
-    const responses = parseOpenClawJsonDocuments(response.stdout)
-      .map(openClawAgentResponseRecord)
-      .filter((value) => value !== null);
-    expect(responses.at(-1)).toMatchObject({
-      meta: { agentMeta: { provider: selected.providerKey, model } },
+    const document = hermes
+      ? JSON.parse(response.stdout)
+      : parseOpenClawJsonDocuments(response.stdout)
+          .map(openClawAgentResponseRecord)
+          .filter((value) => value !== null)
+          .at(-1);
+    // Hermes reports the response model through its API; its selected adapter is
+    // recorded in config. OpenClaw reports both in the agent response metadata.
+    const agentSelection = hermes
+      ? { provider: providerConfig.provider, model: document.model }
+      : document?.meta?.agentMeta;
+    expect(agentSelection).toMatchObject({
+      provider: hermes ? "custom" : selected.providerKey,
+      model,
     });
-    expect(parseOpenClawAgentText(response.stdout).trim()).not.toBe("");
+    const text = hermes
+      ? (document.choices?.[0]?.message?.content ?? "")
+      : parseOpenClawAgentText(response.stdout);
+    expect(text.trim()).not.toBe("");
   },
 );
