@@ -2119,6 +2119,8 @@ hosted target. Selection identifies required evidence; it does not grant dispatc
 The credential-free `inference-routing` target remains separate.
 
 Before dispatch, obtain an approved disposable environment and credential source for the selected provider.
+Credential-bearing hosted runs require the canonical `e2e.yaml` workflow from `main`.
+Branch-dispatched workflows receive no hosted-provider or registry credentials, even for an approved candidate.
 The controller passes only that target's repository secret (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, or `NOUS_API_KEY`) to the test step.
 Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANTHROPIC_MODEL`,

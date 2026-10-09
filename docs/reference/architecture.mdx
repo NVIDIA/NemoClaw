@@ -29,8 +29,8 @@ graph LR
     USER(["👤 User"]):::user
 
     subgraph EXTERNAL["External Services"]
-        SHARED_INFERENCE["Shared-route inference providers<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
-        NVIDIA_INFERENCE["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
+        SHARED_INFERENCE["Shared-route inference providers<br/><small>Custom endpoints · Ollama<br/>vLLM · Model Router</small>"]:::external
+        NVIDIA_INFERENCE["Native inference providers<br/><small>NVIDIA · fixed hosted providers</small>"]:::external
         INTEGRATIONS["Integration APIs<br/><small>MCP · GitHub · package indexes</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
     end
@@ -65,9 +65,9 @@ graph LR
     BP -->|"Defines sandbox<br/>shape + policies"| SANDBOX
     STATE -->|"Backup + restore"| SANDBOX
 
-    AGENT -->|"Most inference requests<br/><small>inference.local · no credentials</small>"| GW
+    AGENT -->|"Custom and local requests<br/><small>inference.local · placeholder credentials</small>"| GW
     GW -->|"Shared-route request with<br/>credential injected"| SHARED_INFERENCE
-    AGENT -->|"Attached NVIDIA provider<br/><small>restricted request · placeholder credential</small>"| NVIDIA_INFERENCE
+    AGENT -->|"Attached native provider<br/><small>restricted request · placeholder credential</small>"| NVIDIA_INFERENCE
 
     INTEGRATIONS -->|"External APIs"| INTEG
     INTEG -->|"Policy-gated access"| AGENT
@@ -171,14 +171,14 @@ graph TB
         end
     end
 
-    SHARED_INFER["Shared-route inference provider<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
-    NVIDIA_INFER["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
+    SHARED_INFER["Shared-route inference provider<br/><small>Custom endpoints · Ollama<br/>vLLM · Model Router</small>"]:::external
+    NVIDIA_INFER["Native inference providers<br/><small>NVIDIA · fixed hosted providers</small>"]:::external
 
     CLI -->|"openshell CLI<br/>(orchestrates)"| GW
     GW -->|"creates/recreates<br/>Docker-driver sandbox"| SANDBOX
     SANDBOX -->|"shared-route requests<br/><small>inference.local · placeholder credentials</small>"| GW
     GW -->|"shared-route egress<br/>credential injected at L7 proxy"| SHARED_INFER
-    SANDBOX -->|"attached NVIDIA provider<br/><small>restricted egress · placeholder rewritten</small>"| NVIDIA_INFER
+    SANDBOX -->|"attached native provider<br/><small>restricted egress · placeholder rewritten</small>"| NVIDIA_INFER
 
     class HOST host
     class DOCKER docker
@@ -195,7 +195,7 @@ Layering from top to bottom:
 | Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
 | Sandbox container | Docker container | Runs the selected supported agent runtime and NemoClaw integration under Landlock + seccomp + netns. |
 | OpenShell L7 proxy | Gateway process | Intercepts shared-route agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
-| OpenShell attached NVIDIA provider | Provider profile attached to the sandbox | Restricts NVIDIA Endpoints egress by host, method, path, and binary, then rewrites the placeholder credential at the egress boundary. |
+| OpenShell attached native provider | Provider profile attached to the sandbox | Restricts NVIDIA and fixed hosted provider egress by host, method, path, and binary, then rewrites the placeholder credential at the egress boundary. |
 
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider and placeholder system.
@@ -397,7 +397,7 @@ Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inf
 Provider credentials live in OpenShell's credential store, not on the host filesystem.
 NemoClaw never writes them to host disk.
 The OpenShell L7 proxy injects values for shared routes.
-The sandbox-attached NVIDIA provider rewrites its placeholder credential at egress.
+Sandbox-attached native providers rewrite placeholder credentials at egress.
 Refer to [Credential Storage](../security/credential-storage) for the inspection, rotation, and migration flow.
 
 ## Host-Side State and Config

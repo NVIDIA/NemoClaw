@@ -32,10 +32,12 @@ const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
-const guardedCallerSecret = (name: string): string =>
+const HOSTED_WORKFLOW_SOURCE_GUARD =
+  "github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && ";
+const guardedCallerSecret = (name: string, hosted = false): string =>
   name === "HOSTED_INFERENCE_API_KEY"
-    ? `\${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}`
-    : `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
+    ? `\${{ ${HOSTED_WORKFLOW_SOURCE_GUARD}github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}`
+    : `\${{ ${hosted ? HOSTED_WORKFLOW_SOURCE_GUARD : ""}${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -212,7 +214,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       shard: "${{ matrix.shard }}",
       artifact_layout: "${{ matrix.artifact_layout }}",
       trusted_main:
-        "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
+        contract.job === "catalogue-hosted-inference"
+          ? `\${{ ${HOSTED_WORKFLOW_SOURCE_GUARD}${TRUSTED_CALLER_CREDENTIAL_PREDICATE} }}`
+          : "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
     })) {
       if (withInputs[name] !== expected) {
         errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
@@ -221,7 +225,11 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     const callerSecrets = record(job.secrets);
     if (
       Object.keys(callerSecrets).sort().join(",") !== [...contract.secrets].sort().join(",") ||
-      contract.secrets.some((name) => callerSecrets[name] !== guardedCallerSecret(name))
+      contract.secrets.some(
+        (name) =>
+          callerSecrets[name] !==
+          guardedCallerSecret(name, contract.job === "catalogue-hosted-inference"),
+      )
     ) {
       errors.push(`${contract.job} must receive only its profile secrets`);
     }

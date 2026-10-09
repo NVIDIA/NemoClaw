@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 import {
@@ -95,4 +96,89 @@ it.each(HOSTED_PROVIDER_SMOKE_CASES)("selects only $label for its profile change
       .filter((target) => target.profile === "hosted-inference")
       .map((target) => target.id),
   ).toEqual([`hosted-inference-${selected.selector}`]);
+});
+
+describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label workflow credential boundary", (provider) => {
+  it.each([
+    { name: "main dispatch", allowed: true },
+    { name: "main push", event: "push", allowed: true },
+    {
+      name: "approved candidate on main",
+      candidate: "candidate-sha",
+      approved: "true",
+      allowed: true,
+    },
+    {
+      name: "branch dispatch",
+      ref: "refs/heads/feature",
+      workflowRef: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/feature",
+      allowed: false,
+    },
+    {
+      name: "branch workflow with main ref",
+      workflowRef: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/feature",
+      allowed: false,
+    },
+    {
+      name: "branch dispatch with approved candidate",
+      ref: "refs/heads/feature",
+      candidate: "candidate-sha",
+      approved: "true",
+      allowed: false,
+    },
+    { name: "fork dispatch", repository: "contributor/NemoClaw", allowed: false },
+    { name: "pull request event", event: "pull_request", allowed: false },
+    { name: "unapproved candidate", candidate: "candidate-sha", allowed: false },
+  ])("restricts hosted credentials for $name", (scenario) => {
+    const job = workflow.jobs["catalogue-hosted-inference"];
+    const secrets = {
+      DOCKERHUB_USERNAME: "registry-user",
+      DOCKERHUB_TOKEN: "registry-canary",
+      ...Object.fromEntries(
+        HOSTED_PROVIDER_SMOKE_CASES.map((provider) => [provider.credential, provider.selector]),
+      ),
+    };
+    const context = {
+      github: {
+        repository: scenario.repository ?? "NVIDIA/NemoClaw",
+        ref: scenario.ref ?? "refs/heads/main",
+        workflow_ref:
+          scenario.workflowRef ?? "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main",
+        event_name: scenario.event ?? "workflow_dispatch",
+      },
+      inputs: { checkout_sha: scenario.candidate ?? "" },
+      needs: {
+        "generate-matrix": { outputs: { e2e_credentials_allowed: scenario.approved ?? "false" } },
+      },
+      matrix: { id: `hosted-inference-${provider.selector}` },
+      secrets,
+    };
+    const observed = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "-e",
+          `
+      const { readFileSync } = require("node:fs");
+      const { runInNewContext } = require("node:vm");
+      const { job, context } = JSON.parse(readFileSync(0, "utf8"));
+      const evaluate = expression => runInNewContext(
+        expression.slice(3, -2).replaceAll("needs.generate-matrix", 'needs["generate-matrix"]'),
+        context, { timeout: 1000 });
+      process.stdout.write(JSON.stringify({
+        trusted: evaluate(job.with.trusted_main),
+        ...Object.fromEntries(Object.entries(job.secrets).map(([name, expression]) => [name, evaluate(expression)])),
+      }));
+    `,
+        ],
+        { input: JSON.stringify({ job, context }), env: {}, encoding: "utf8", timeout: 5000 },
+      ),
+    );
+    expect(observed).toEqual({
+      trusted: scenario.allowed,
+      DOCKERHUB_USERNAME: scenario.allowed ? "registry-user" : "",
+      DOCKERHUB_TOKEN: scenario.allowed ? "registry-canary" : "",
+      HOSTED_INFERENCE_API_KEY: scenario.allowed ? provider.selector : "",
+    });
+  });
 });
