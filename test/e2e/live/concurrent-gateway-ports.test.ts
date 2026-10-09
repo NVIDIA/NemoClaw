@@ -551,10 +551,10 @@ test(
         timeoutMs: 30_000,
       },
     );
-    const registeredImageRef = resultText(registeredImage).trim();
+    const registeredImageTag = resultText(registeredImage).trim();
     const siblingImageBeforeGc = await host.command(
       "docker",
-      ["image", "inspect", "--format", "{{.Id}}", registeredImageRef],
+      ["image", "inspect", "--format", "{{.Id}}", registeredImageTag],
       {
         artifactName: "phase-3-gateway-b-image-before-gc",
         env: commandEnv(),
@@ -565,7 +565,7 @@ test(
     const orphanTag = `nemoclaw-sandbox-local:concurrent-gc-orphan-${Date.now()}`;
     const taggedOrphan = await host.command(
       "docker",
-      ["image", "tag", registeredImageRef, orphanTag],
+      ["image", "tag", registeredImageTag, orphanTag],
       {
         artifactName: "phase-3-create-gc-orphan-tag",
         env: commandEnv(),
@@ -588,7 +588,7 @@ test(
 
     const retainedSiblingImage = await host.command(
       "docker",
-      ["image", "inspect", "--format", "{{.Id}}", registeredImageRef],
+      ["image", "inspect", "--format", "{{.Id}}", registeredImageTag],
       {
         artifactName: "phase-3-gateway-b-image-retained-after-gc",
         env: commandEnv(),
@@ -617,7 +617,7 @@ test(
         garbageCollect.exitCode === 0 &&
         siblingImagePreserved &&
         orphanTagAbsent,
-      `registered image=${resultText(registeredImage)}, ref=${registeredImageRef}; sibling before=${resultText(siblingImageBeforeGc)}; orphan tag=${resultText(taggedOrphan)}; gc=${resultText(garbageCollect)}; sibling after=${resultText(retainedSiblingImage)}; orphan tags=${resultText(orphanTagsAfterGc)}`,
+      `registered image=${resultText(registeredImage)}, ref=${registeredImageTag}; sibling before=${resultText(siblingImageBeforeGc)}; orphan tag=${resultText(taggedOrphan)}; gc=${resultText(garbageCollect)}; sibling after=${resultText(retainedSiblingImage)}; orphan tags=${resultText(orphanTagsAfterGc)}`,
     ).toBe(true);
 
     progress.phase("uninstall alternate gateway without disrupting default");
