@@ -81,7 +81,7 @@ describe("patchOpenClawInferenceConfig", () => {
       mode: "merge",
       providers: {
         inference: {
-          baseUrl: "https://inference.local/v1",
+          baseUrl: "https://integrate.api.nvidia.com/v1",
           apiKey: "unused",
           api: "openai-completions",
           models: [
@@ -89,6 +89,7 @@ describe("patchOpenClawInferenceConfig", () => {
               id: "nvidia/nemotron-3-super-120b-a12b",
               name: "inference/nvidia/nemotron-3-super-120b-a12b",
               reasoning: true,
+              compat: { supportsStore: false },
             },
             {
               id: "moonshotai/kimi-k2.6",
@@ -150,11 +151,15 @@ describe("patchOpenClawInferenceConfig", () => {
     });
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
-        baseUrl: "https://inference.local/v1",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
         apiKey: "unused",
         api: "openai-completions",
         models: [
-          { id: "nvidia/new-model", name: "inference/nvidia/new-model" },
+          {
+            id: "nvidia/new-model",
+            name: "inference/nvidia/new-model",
+            compat: { supportsStore: false },
+          },
           { id: "old-model", name: "inference/nvidia/old-model" },
           { id: "secondary-model", name: "inference/nvidia/secondary-model" },
         ],
@@ -202,10 +207,16 @@ describe("patchOpenClawInferenceConfig", () => {
         mode: "merge",
         providers: {
           inference: {
-            baseUrl: "https://inference.local/v1",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
             apiKey: "unused",
             api: "openai-completions",
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
+            models: [
+              {
+                id: "nvidia/model-a",
+                name: "inference/nvidia/model-a",
+                compat: { supportsStore: false },
+              },
+            ],
           },
         },
       },

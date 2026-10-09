@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveMessagingPlanAuthority } from "../../../messaging/plan-authority";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
@@ -25,6 +29,62 @@ const resourceProfiles: [string, { cpu: string; memory: string } | null][] = [
 ];
 
 describe("sandbox create intent machine boundary", () => {
+  beforeEach(() => {
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-intent-")),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
+    vi.unstubAllEnvs();
+  });
+
+  it("attaches the internal native NVIDIA provider while retaining the logical selection", async () => {
+    const session = createSession({ sandboxName: "native-nvidia" });
+    const nativeNvidiaProviderAttachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "11111111-2222-4333-8444-555555555555",
+    };
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name: string) => ({
+        name,
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        webSearchEnabled: false,
+        toolDisclosure: "progressive" as const,
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+        nativeNvidiaProviderAttachment,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      sandboxName: "native-nvidia",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "native-nvidia",
+        inferenceProvider: "nemoclaw-nvidia-prod-v1",
+        nativeNvidiaProviderAttachment,
+      }),
+    );
+    expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
+      sandboxName: "native-nvidia",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+  });
+
   it("rejects deterministic create conflicts before resume recreation mutates state (#6226)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";

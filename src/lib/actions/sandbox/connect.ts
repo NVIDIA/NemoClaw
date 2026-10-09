@@ -88,6 +88,7 @@ import {
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
+  createSandboxStartErrorGrace,
   ensureLiveSandboxOrExit,
   buildHermesPortableCommandAuthority,
   defaultPortableDemoStateDir,
@@ -121,6 +122,8 @@ import {
   type ProbeTimingRecorder,
   publicationFromDecision,
   publishLaunchReadiness,
+  getNativeNvidiaProviderAttachment,
+  requireNativeNvidiaInferenceHealth,
   settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
@@ -1714,6 +1717,17 @@ async function ensureSandboxInferenceRouteUnlocked(
     assertNoOpenShellGatewayEndpointOverride();
     const { provider, model } = inference;
     const gatewayName = getPersistedSandboxTargetGatewayName(sb);
+    const nativeNvidiaAttachment = getNativeNvidiaProviderAttachment(sb);
+    if (nativeNvidiaAttachment) {
+      await requireNativeNvidiaInferenceHealth({
+        sandboxName,
+        gatewayName,
+        agentName: agent?.name,
+        entry: sb,
+        deps: {},
+      });
+      return { sandbox: sb, routeHealthy: true };
+    }
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
@@ -1865,6 +1879,9 @@ async function ensureSandboxInferenceRoute(
   if (!snapshot) return { sandbox: null, routeHealthy: null };
   if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
     return { sandbox: snapshot, routeHealthy: null };
+  if (getNativeNvidiaProviderAttachment(snapshot)) {
+    return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
+  }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);
   return withGatewayRouteMutationLock(gatewayName, () => {
     const lockedSnapshot = readConnectSandbox(sandboxName);
@@ -1963,16 +1980,6 @@ type WaitForSandboxReadyOptions = {
   successLogs?: readonly string[];
 };
 
-// OpenShell can transiently publish `Error` immediately after `sandbox start`
-// before the same sandbox advances through `Provisioning` to `Ready`. Its list
-// output exposes no structured transition reason. A caller opts into twenty
-// three-second grace polls only after it starts the container; every other
-// terminal phase still fails immediately, and a persistent Error fails after
-// the bound. Remove this compatibility exception once OpenShell exposes a
-// structured restart signal or guarantees that post-start recovery never emits
-// the terminal Error phase.
-const START_INITIAL_ERROR_GRACE_POLLS = 20;
-
 // Readiness budget for the repair paths that wait for a restarted sandbox
 // before they touch in-sandbox processes or host forwards. A cold agent boot on
 // a constrained host can exceed the interactive budget, and `start` and
@@ -2034,9 +2041,9 @@ export async function waitForSandboxReadyOrExit(
   if (status && /^unknown$/i.test(status)) {
     await failIfGatewayBlocksConnectReadiness(sandboxName);
   }
-  let remainingInitialErrorGracePolls =
-    allowInitialErrorAfterStart && status === "Error" ? START_INITIAL_ERROR_GRACE_POLLS - 1 : 0;
-  if (status && TERMINAL_SANDBOX_PHASES.has(status) && remainingInitialErrorGracePolls === 0) {
+  const allowInitialError = createSandboxStartErrorGrace(allowInitialErrorAfterStart);
+  const initialErrorAllowed = allowInitialError(status);
+  if (status && TERMINAL_SANDBOX_PHASES.has(status) && !initialErrorAllowed) {
     failConnectReadinessTerminalPhase(sandboxName, `is in '${status}'`, {
       inspectDockerIdentity: allowDockerRuntimeInspection,
       retryCommand,
@@ -2067,12 +2074,7 @@ export async function waitForSandboxReadyOrExit(
       await failIfGatewayBlocksConnectReadiness(sandboxName);
     }
     if (cur !== "unknown") everSeen = true;
-    const waitingThroughInitialError = cur === "Error" && remainingInitialErrorGracePolls > 0;
-    if (waitingThroughInitialError) {
-      remainingInitialErrorGracePolls -= 1;
-    } else {
-      remainingInitialErrorGracePolls = 0;
-    }
+    const waitingThroughInitialError = allowInitialError(cur);
     if (TERMINAL_SANDBOX_PHASES.has(cur) && !waitingThroughInitialError) {
       failConnectReadinessTerminalPhase(sandboxName, `entered '${cur}'`, {
         inspectDockerIdentity: allowDockerRuntimeInspection,

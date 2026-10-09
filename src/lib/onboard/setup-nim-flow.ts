@@ -565,7 +565,10 @@ function prepareManagedLlamaCppMenu(input: {
   const { deps, gpu, requestedProvider } = input;
   const platform = gpu?.platform;
   const candidate =
-    platform === "spark" || platform === "n1x" || requestedProvider === "install-llama-cpp";
+    platform === "spark" ||
+    platform === "n1x" ||
+    gpu?.stationGb300WslProduct === true ||
+    requestedProvider === "install-llama-cpp";
   const runtimeProviderId = candidate ? deps.getRuntimeProvider().identity.id : undefined;
   const discovery = candidate
     ? discoverManagedLlamaCppSafely(
@@ -583,6 +586,11 @@ function prepareManagedLlamaCppMenu(input: {
       `  Managed llama.cpp is unavailable on this N1x host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
     );
   }
+  if (gpu?.stationGb300WslProduct === true && resolution?.kind === "rejected") {
+    deps.note(
+      `  Managed llama.cpp is unavailable on this Station GB300 WSL host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
+    );
+  }
   return {
     resolution,
     options: buildManagedLlamaCppOptions({ candidate, requestedProvider, discovery }),
@@ -596,7 +604,7 @@ function platformDefaultProviderKey(input: {
   requestedModel: string | null;
 }): "install-llama-cpp" | "install-ollama" | "install-vllm" | undefined {
   if (
-    input.gpu?.platform === "n1x" &&
+    (input.gpu?.platform === "n1x" || input.gpu?.stationGb300WslProduct === true) &&
     !input.requestedModel &&
     input.managedLlamaCpp?.kind === "selected"
   ) {
@@ -765,6 +773,14 @@ function requestedVllmServingProfileModel(
 ): RequestedServingProfileModel | null {
   const requested = (resolve ?? resolveRequestedServingProfileModel)();
   return requested?.backend === "vllm" ? requested : null;
+}
+
+/** A model match on an existing endpoint does not prove its recipe or image. */
+function installedVllmServingProfileProvenance(
+  managedInstall: boolean,
+  profile: RequestedServingProfileModel | null,
+): ServingProfileProvenance | null {
+  return managedInstall ? (profile?.provenance ?? null) : null;
 }
 
 /** Preserve explicit route intent while converting a known catalog alias to its served name. */
@@ -1481,6 +1497,9 @@ export function createSetupNim(
         }
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
+          const requestedServingProfile = requestedVllmServingProfileModel(
+            deps.resolveRequestedServingProfileModel,
+          );
           state.model = resolveInitialVllmSelectionModel({
             preparedState: preparedVllmState,
             requestedProvider,
@@ -1497,9 +1516,7 @@ export function createSetupNim(
           const result = await deps.handleVllmSelection(state, {
             managedInstall: preparedVllmState !== null,
             sparkHost: gpu?.spark === true,
-            servingProfileModel: requestedVllmServingProfileModel(
-              deps.resolveRequestedServingProfileModel,
-            ),
+            servingProfileModel: requestedServingProfile,
           });
           ({
             model,
@@ -1512,6 +1529,10 @@ export function createSetupNim(
           } = state);
           vllmModelIdentity = state.vllmModelIdentity;
           if (result === "retry-selection") continue selectionLoop;
+          selectedServingProfileProvenance = installedVllmServingProfileProvenance(
+            preparedVllmState !== null,
+            requestedServingProfile,
+          );
           break;
         } else if (selected.key === "routed") {
           const state = createSelectionState();

@@ -367,6 +367,7 @@ check("disabled", False)
 
   it.each([
     ["OPENAI_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
+    ["NEMOCLAW_ATTACHED_PROVIDER_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
     ["NOTES", "metadata API_KEY=ABCDEFGHIJKL"],
     ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
     ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
@@ -460,6 +461,7 @@ check("disabled", False)
         PATH: process.env.PATH,
         PYTHONPATH: tempDir,
         DEEPAGENTS_CODE_OPENAI_API_KEY: "nemoclaw-managed-inference",
+        NEMOCLAW_ATTACHED_PROVIDER_API_KEY: "nemoclaw-openshell-provider",
         SLACK_BOT_TOKEN: ["xoxb", "1234567890abcdef"].join("-"),
         DEEPAGENTS_CODE_LANGSMITH_TRACING: "true",
         DEEPAGENTS_CODE_LANGSMITH_TRACING_V2: "true",
@@ -478,6 +480,48 @@ check("disabled", False)
     expect(result.stdout).toContain(
       "managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual",
     );
+  });
+
+  it.each(["openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY", undefined])(
+    "maps the legacy native credential key only when a current binding exists [%#] (#12822)",
+    (placeholder) => {
+      const tempDir = createPatchedPackageFixture();
+      const validation = String.raw`
+import os
+from deepagents_code import _nemoclaw_managed as managed
+managed.assert_safe_runtime()
+assert os.environ.get("NEMOCLAW_ATTACHED_PROVIDER_API_KEY") == (os.environ.get("NVIDIA_INFERENCE_API_KEY") or None)
+managed._assert_safe_environment()
+`;
+      const result = spawnSync("python3", ["-c", validation], {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          NVIDIA_INFERENCE_API_KEY: placeholder,
+          NEMOCLAW_ATTACHED_PROVIDER_API_KEY: "nemoclaw-openshell-provider",
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it("rejects a legacy placeholder that does not match the current native binding (#12822)", () => {
+    const tempDir = createPatchedPackageFixture();
+    const result = spawnSync("python3", ["-m", "deepagents_code"], {
+      env: {
+        PATH: process.env.PATH,
+        PYTHONPATH: tempDir,
+        NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v3_NVIDIA_INFERENCE_API_KEY",
+        NEMOCLAW_ATTACHED_PROVIDER_API_KEY: "openshell:resolve:env:v2_NVIDIA_INFERENCE_API_KEY",
+      },
+      encoding: "utf8",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "runtime environment variable NEMOCLAW_ATTACHED_PROVIDER_API_KEY",
+    );
+    expect(result.stdout).not.toContain("managed-posture-ok");
   });
 
   it.each([

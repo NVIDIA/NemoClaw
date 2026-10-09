@@ -169,11 +169,13 @@ The Podman path does not enable the Docker-specific managed llama.cpp or Windows
 
 ## Set Up Local Inference (Optional)
 
-If the installer offers Express on WSL, a qualifying N1x WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
+If the installer offers Express on WSL, a qualifying N1x or Station GB300 WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
 The installer leaves inference selection to onboarding.
-Onboarding requires Linux ARM64 WSL, one GPU whose normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
-The Windows chassis model does not participate in managed llama.cpp selection.
-If N1x readiness does not match before managed selection starts, Windows Express selects WSL-local Ollama.
+Onboarding requires Linux ARM64 WSL, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+N1x qualification also requires one GPU whose normalized identity is `NVIDIA RTX Spark N1X`, `NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)`, or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
+Station GB300 qualification instead requires a bounded matching Windows product observation and a proof that reconciles every reported GPU and includes an `NVIDIA GB300` device.
+For N1x, the Windows chassis model does not participate in managed llama.cpp selection.
+If neither platform's readiness matches before managed selection starts, Windows Express selects WSL-local Ollama.
 If a required check fails after managed selection starts, onboarding stops before installation.
 Other WSL hosts also use WSL-local Ollama for Express installation.
 

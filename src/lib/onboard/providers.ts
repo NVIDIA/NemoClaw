@@ -18,6 +18,10 @@ const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
 const {
+  getNativeNvidiaProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} = require("../state/registry/native-nvidia-provider-authority");
+const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
@@ -389,6 +393,15 @@ async function providerExistsInGateway(name, runOpenshell) {
   throw new Error(result.error.message);
 }
 
+function setupInferenceProviderDeps(runOpenshell) {
+  return {
+    providerExistsInGateway,
+    providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeNvidiaProviderAuthority,
+    setNativeNvidiaProviderAuthority,
+  };
+}
+
 /**
  * Recheck current OpenShell sandbox identity before each provider command.
  * Commands in one provider operation can be separated by
@@ -594,6 +607,7 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   upsertProvider,
+  setupInferenceProviderDeps,
   providerExistsInGateway,
   readGatewayProviderMetadata,
   getSandboxInferenceConfig,

@@ -116,3 +116,54 @@ export function makePreparedRecoveryManifest() {
     },
   };
 }
+
+/** Model a native provider retained across backup, optionally replaced before deletion. */
+export function nativeProviderRebuildScenario(replaced: boolean) {
+  const providerName = "nemoclaw-nvidia-prod-v1";
+  const profile = "nemoclaw-nvidia-inference-v1";
+  const id = "11111111-2222-4333-8444-555555555555";
+  let backedUp = false;
+  const reads: string[] = [];
+  const overrides = {
+    sandboxEntry: {
+      provider: "nvidia-prod",
+      model: "test/model",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      nativeNvidiaProviderAttachment: {
+        schemaVersion: 1,
+        providerName,
+        profileId: profile,
+        providerId: id,
+      },
+    },
+    hydrateCredentialEnv: () => null,
+    beforeBackup: () => {
+      backedUp = true;
+    },
+    runOpenshell: (args: string[]) => {
+      if (args[0] !== "provider") return undefined;
+      let stdout: string;
+      if (args[1] === "get") {
+        reads.push(args[2]!);
+        stdout = [
+          `Name: ${providerName}`,
+          `Type: ${profile}`,
+          "Credential keys: NVIDIA_INFERENCE_API_KEY",
+          "Config keys: <none>",
+          `Id: ${backedUp && replaced ? "22222222-2222-4333-8444-555555555555" : id}`,
+          "Resource version: 1",
+        ].join("\n");
+      } else if (args[1] === "list") {
+        stdout = JSON.stringify([
+          {
+            name: providerName,
+            credential_keys: ["NVIDIA_INFERENCE_API_KEY"],
+            credential_expires_at_ms: {},
+          },
+        ]);
+      } else return undefined;
+      return { status: 0, stdout, output: stdout, stderr: "" };
+    },
+  };
+  return { overrides, reads, providerName };
+}

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildChain } from "./dashboard/contract.js";
 import { probeOnboardInferenceInvocation, verifyDeployment } from "./verify-deployment.js";
 
@@ -35,6 +35,30 @@ function makeModelsRouteDeps(code: string, overrides: Record<string, unknown> = 
 }
 
 describe("verifyDeployment inference route model-catalog validation", () => {
+  it("uses the native NVIDIA invocation instead of probing inference.local", async () => {
+    const scripts: string[] = [];
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
+    const result = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeModelsRouteDeps("000", {
+        executeSandboxCommand: async (_name: string, script: string) => {
+          scripts.push(script);
+          return { status: 0, stdout: "200", stderr: "" };
+        },
+        probeInferenceInvocation,
+      }),
+      {
+        ...NO_RETRY,
+        inferenceRouteContext: { provider: "nvidia-prod" },
+      },
+    );
+
+    expect(result.verification.inferenceRouteWorking).toBe(true);
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(scripts.join("\n")).not.toContain("inference.local");
+  });
+
   it("fails the deployment when the models route returns HTTP 404 (#10543)", async () => {
     const result = await verifyDeployment("my-sandbox", buildChain(), makeModelsRouteDeps("404"), {
       ...NO_RETRY,

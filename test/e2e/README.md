@@ -186,11 +186,12 @@ These are two required acceptance executions, not retries; either failure remain
 OpenClaw feature tests use the shared explicit admin-approval fixture before native operations
 that require elevated scopes. It approves only the request ID emitted by the current sandbox's
 non-admin CLI, after the existing selector verifies that device and its requested scopes.
-The fixture transfers its approval script through non-terminal `exec --stdin`, then runs the
-verified script bytes in a subshell of the prepared `connect` shell. The subshell inherits its
-approval wrapper while isolating the script's exit and cleanup trap. This preserves the credential boundary
-without feeding a bulk script through terminal line editing. Cleanup removes the temporary
-script after success or failure; a cleanup failure also fails the fixture. The fixture checks
+The fixture transfers its approval script through non-terminal `exec --stdin`. The exact-request
+path then starts an interactive shell through `openshell sandbox exec` for the named gateway and
+runs the verified script bytes in that prepared shell's non-interactive interpreter. The
+interpreter inherits the approval wrapper while isolating the script's exit and cleanup trap. This
+preserves the credential boundary without feeding a bulk script through terminal line editing.
+Cleanup removes the temporary script after success or failure; a cleanup failure also fails the fixture. The fixture checks
 the transferred bytes against the host's digest before evaluation and rejects a replaced script.
 Managed-image activation retains its cron-consumer proof. Feature setup can stop after the exact
 approval and verify the grant through its own native operation, avoiding an unrelated cron job or
@@ -1046,10 +1047,11 @@ OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
 
-On Docker, managed-image activation also adopts the published OpenClaw and
-Hermes digests through `--from-image`. It confirms OpenShell readiness, the
-durable external-image receipt, NemoClaw destruction, and shared image
-retention. The external-image check does not run on Podman.
+On Docker and rootless Podman, managed-image activation also adopts the
+published OpenClaw and Hermes digests through `--from-image`. It confirms
+OpenShell readiness, the durable external-image receipt, identity-drift
+rejection before replacement, rebuild from the recorded digest, NemoClaw
+destruction, and shared image retention.
 
 ## Device-auth health classification
 
@@ -1175,7 +1177,7 @@ lanes:
 
 - `common-egress-agent`;
 - `hermes-e2e`, including dashboard coverage, and `hermes-discord`;
-- the Anthropic-compatible `hermes-inference-switch` mode;
+- the native NVIDIA `hermes-inference-switch` mode;
 - the Hermes shards of `security-posture` and `channels-stop-start`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
@@ -1505,7 +1507,7 @@ concrete job executions.
 - `channels-stop-start` with the `hermes` shard
 - `hermes-discord`
 - `hermes-e2e`, including dashboard coverage
-- `hermes-inference-switch` with the `anthropic` mode
+- `hermes-inference-switch` with the `native-nvidia` mode
 - `security-posture` with the `hermes` shard
 
 The two extra instrumented executions come from the 3 `common-egress-agent`
@@ -1742,6 +1744,11 @@ capability unchanged to an audited subprocess boundary; do not replace it with
 a custom, copied, or no-op adapter.
 
 ## Push and Manual PR E2E
+
+The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens
+and a local inference fixture. It leaves the default pre-recreation backup enabled and checks
+that `/sandbox/work/credential-preserve.txt` retains its contents after changing the Telegram
+token. This proves the workspace-preservation boundary, not external messaging authentication.
 
 E2E does not run automatically for pull requests.
 Pull requests retain deterministic CI, including the `e2e-support` Vitest project.

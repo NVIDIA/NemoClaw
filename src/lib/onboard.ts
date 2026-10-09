@@ -1987,9 +1987,9 @@ async function handleRemoteProviderSelection(
     if (isNonInteractive()) {
       state.skipHostInferenceSmoke =
         await buildCredentialReuse.resolveNonInteractiveBuildCredential({
-          provider: state.provider,
           helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
-          recoveredFromSandbox,
+          recovery: args,
+          getSandbox: registry.getSandbox,
           providerExistsInGateway: (name) =>
             providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
         });
@@ -2319,7 +2319,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     unloadOllamaModels,
     hermesProviderAuth,
     getHermesToolGatewayBroker,
-    providerExistsInGateway,
+    ...onboardProviders.setupInferenceProviderDeps(runOpenshell),
     normalizeHermesAuthMethod,
     resolveHermesNousApiKey,
     checkHermesProviderStoreReachable,
