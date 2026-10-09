@@ -58,8 +58,9 @@ const TEST_SYSTEM_PATH = buildIsolatedSystemPath();
 export function runInstallerFunction(
   scenario: { tmp: string; fakeBin: string; prefixBin: string },
   extraEnv: Record<string, string | undefined> = {},
+  command = 'ensure_cli_shim "nemoclaw-acp"',
 ) {
-  const cmd = `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1; ensure_cli_shim "nemoclaw-acp"`;
+  const cmd = `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1; ${command}`;
   return spawnSync(BASH_BIN, ["-c", cmd], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
@@ -80,6 +81,14 @@ function writeExecutable(target: string, contents: string): void {
 
 function writeNodeForwarder(target: string): void {
   writeExecutable(target, `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+}
+
+function fixtureGitEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+}
+
+function runFixtureGit(args: string[]): string {
+  return execFileSync("git", args, { encoding: "utf-8", env: fixtureGitEnv() });
 }
 
 export function createPackagedCliTree(prefix: string): { fakeBin: string; prefixBin: string } {
@@ -141,9 +150,9 @@ export function createManagedSourceNemoClawAcp(home: string, prefix: string): st
       bin: { "nemoclaw-acp": "./dist/lib/acp/main.js" },
     }),
   );
-  execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-C", packageRoot, "init", "--quiet"]);
-  execFileSync("git", ["-C", packageRoot, "add", "package.json"]);
-  execFileSync("git", [
+  runFixtureGit(["-c", "core.hooksPath=/dev/null", "-C", packageRoot, "init", "--quiet"]);
+  runFixtureGit(["-C", packageRoot, "add", "package.json"]);
+  runFixtureGit([
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
@@ -159,9 +168,7 @@ export function createManagedSourceNemoClawAcp(home: string, prefix: string): st
     "-m",
     "fixture managed NemoClaw source",
   ]);
-  const sourceRevision = execFileSync("git", ["-C", packageRoot, "rev-parse", "HEAD"], {
-    encoding: "utf-8",
-  }).trim();
+  const sourceRevision = runFixtureGit(["-C", packageRoot, "rev-parse", "HEAD"]).trim();
   fs.mkdirSync(path.dirname(acpEntry), { recursive: true });
   fs.writeFileSync(
     path.join(packageRoot, "dist", "build-identity.json"),
@@ -201,21 +208,6 @@ export function createNpmManagedNemoClawAcp(prefix: string, reportedVersion = "0
   );
   fs.symlinkSync("../lib/node_modules/nemoclaw/dist/lib/acp/main.js", binEntry);
   return binEntry;
-}
-
-export function symlinkNpmManagedAcpMetadata(
-  prefix: string,
-  metadata: "package" | "identity",
-): void {
-  const packageRoot = path.join(prefix, "lib", "node_modules", "nemoclaw");
-  const metadataPath =
-    metadata === "package"
-      ? path.join(packageRoot, "package.json")
-      : path.join(packageRoot, "dist", "build-identity.json");
-  const targetPath = path.join(prefix, `external-${metadata}.json`);
-  fs.copyFileSync(metadataPath, targetPath);
-  fs.unlinkSync(metadataPath);
-  fs.symlinkSync(targetPath, metadataPath);
 }
 
 export function createCleanManagedSourceAcpWorkTree(home: string, destination: string): void {

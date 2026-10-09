@@ -2537,23 +2537,16 @@ try {
   const resolved = fs.realpathSync(candidate);
   const cliRelativePath = path.join("dist", "lib", "acp", "main.js");
   let packageRoot;
-  let managedSource = false;
-  const npmPackageSuffix = path.join("node_modules", "nemoclaw", cliRelativePath);
-  if (resolved.endsWith(`${path.sep}${npmPackageSuffix}`)) {
-    packageRoot = resolved.slice(0, -cliRelativePath.length - 1);
-  } else {
-    const expectedSourceRoot = path.join(expectedStateRoot, "source");
-    if (!path.isAbsolute(expectedStateRoot)) process.exit(1);
-    const stateStat = fs.lstatSync(expectedStateRoot);
-    const sourceStat = fs.lstatSync(expectedSourceRoot);
-    if (!stateStat.isDirectory() || stateStat.isSymbolicLink() ||
-        !sourceStat.isDirectory() || sourceStat.isSymbolicLink() ||
-        (stateStat.uid !== uid || sourceStat.uid !== uid)) process.exit(1);
-    packageRoot = fs.realpathSync(expectedSourceRoot);
-    if (packageRoot !== path.dirname(path.dirname(path.dirname(path.dirname(resolved))))) process.exit(1);
-    if (resolved !== path.join(packageRoot, cliRelativePath)) process.exit(1);
-    managedSource = true;
-  }
+  const expectedSourceRoot = path.join(expectedStateRoot, "source");
+  if (!path.isAbsolute(expectedStateRoot)) process.exit(1);
+  const stateStat = fs.lstatSync(expectedStateRoot);
+  const sourceStat = fs.lstatSync(expectedSourceRoot);
+  if (!stateStat.isDirectory() || stateStat.isSymbolicLink() ||
+      !sourceStat.isDirectory() || sourceStat.isSymbolicLink() ||
+      (stateStat.uid !== uid || sourceStat.uid !== uid)) process.exit(1);
+  packageRoot = fs.realpathSync(expectedSourceRoot);
+  if (packageRoot !== path.dirname(path.dirname(path.dirname(path.dirname(resolved))))) process.exit(1);
+  if (resolved !== path.join(packageRoot, cliRelativePath)) process.exit(1);
   const packageStat = fs.lstatSync(packageRoot);
   if (!packageStat.isDirectory() || packageStat.isSymbolicLink() || packageStat.uid !== uid) process.exit(1);
   const packageFile = path.join(packageRoot, "package.json");
@@ -2570,48 +2563,35 @@ try {
   if (!publicVersionPattern.test(pkg.version ?? "")) process.exit(1);
   if (!publicVersionPattern.test(identity.nemoclawVersion ?? "")) process.exit(1);
   if (!/^[0-9a-f]{40,64}$/.test(identity.sourceRevision ?? "")) process.exit(1);
-  if (managedSource) {
-    const gitDir = path.join(packageRoot, ".git");
-    const gitStat = fs.lstatSync(gitDir);
-    if (!gitStat.isDirectory() || gitStat.isSymbolicLink() || gitStat.uid !== uid) process.exit(1);
-    const gitEnv = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (!key.startsWith("GIT_") && value !== undefined) gitEnv[key] = value;
-    }
-    const gitOptions = {
-      encoding: "utf8",
-      env: gitEnv,
-      maxBuffer: 64 * 1024,
-      timeout: 3000,
-    };
-    const revision = execFileSync(
-      "git",
-      ["-C", packageRoot, "rev-parse", "--verify", "HEAD^{commit}"],
-      gitOptions,
-    ).trim();
-    if (revision !== identity.sourceRevision) process.exit(1);
-    execFileSync(
-      "git",
-      ["-C", packageRoot, "diff", "--quiet", "--ignore-submodules", "--"],
-      gitOptions,
-    );
-    execFileSync(
-      "git",
-      ["-C", packageRoot, "diff", "--cached", "--quiet", "--ignore-submodules", "--"],
-      gitOptions,
-    );
+  const gitDir = path.join(packageRoot, ".git");
+  const gitStat = fs.lstatSync(gitDir);
+  if (!gitStat.isDirectory() || gitStat.isSymbolicLink() || gitStat.uid !== uid) process.exit(1);
+  const gitEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("GIT_") && value !== undefined) gitEnv[key] = value;
   }
-  const versionOutput = execFileSync(process.execPath, [resolved, "--version"], {
+  const gitOptions = {
     encoding: "utf8",
-    env: {
-      HOME: process.env.HOME ?? "",
-      NO_COLOR: "1",
-      PATH: path.dirname(process.execPath),
-    },
+    env: gitEnv,
     maxBuffer: 64 * 1024,
     timeout: 3000,
-  }).trim();
-  if (versionOutput !== identity.nemoclawVersion) process.exit(1);
+  };
+  const revision = execFileSync(
+    "git",
+    ["-C", packageRoot, "rev-parse", "--verify", "HEAD^{commit}"],
+    gitOptions,
+  ).trim();
+  if (revision !== identity.sourceRevision) process.exit(1);
+  execFileSync(
+    "git",
+    ["-C", packageRoot, "diff", "--quiet", "--ignore-submodules", "--"],
+    gitOptions,
+  );
+  execFileSync(
+    "git",
+    ["-C", packageRoot, "diff", "--cached", "--quiet", "--ignore-submodules", "--"],
+    gitOptions,
+  );
   const candidateAfter = fs.lstatSync(candidate);
   const resolvedAfter = fs.realpathSync(candidate);
   const executableAfter = fs.statSync(resolved);
@@ -2632,8 +2612,10 @@ is_installer_managed_cli_shim() {
   local path_prefix path_middle path_suffix exec_prefix exec_suffix
   local -a lines=()
 
-  [[ -n "$shim_path" && -n "$cli_bin" && -n "$canonical_cli_path" ]] || return 1
-  [[ -f "$shim_path" && ! -L "$shim_path" && -e "$canonical_cli_path" ]] || return 1
+  [[ -n "$shim_path" && -n "$cli_bin" ]] || return 1
+  [[ -n "$canonical_cli_path" || "$cli_bin" == "nemoclaw-acp" ]] || return 1
+  [[ -f "$shim_path" && ! -L "$shim_path" ]] || return 1
+  [[ (-n "$canonical_cli_path" && -e "$canonical_cli_path") || "$cli_bin" == "nemoclaw-acp" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     lines[${#lines[@]}]="$line"
     [[ "${#lines[@]}" -le 3 ]] || return 1
@@ -2666,8 +2648,13 @@ is_installer_managed_cli_shim() {
   [[ "$exec_line" == "$exec_prefix"*"$exec_suffix" ]] || return 1
   shim_cli_path="${exec_line#"$exec_prefix"}"
   shim_cli_path="${shim_cli_path%"$exec_suffix"}"
-  [[ "$shim_cli_path" == */"$cli_bin" && -e "$shim_cli_path" ]] || return 1
-  [[ "$shim_cli_path" -ef "$canonical_cli_path" ]] && return 0
+  [[ "$shim_cli_path" == */"$cli_bin" ]] || return 1
+  if [[ "$cli_bin" == "nemoclaw-acp" && -n "$canonical_cli_path" &&
+    "$shim_cli_path" == "$canonical_cli_path" ]]; then
+    return 0
+  fi
+  [[ -e "$shim_cli_path" ]] || return 1
+  [[ -n "$canonical_cli_path" && "$shim_cli_path" -ef "$canonical_cli_path" ]] && return 0
   [[ "$cli_bin" == "nemoclaw-acp" ]] && is_nemoclaw_owned_acp_cli_target "$shim_cli_path"
 }
 
