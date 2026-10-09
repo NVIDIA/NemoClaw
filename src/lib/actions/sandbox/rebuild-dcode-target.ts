@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { GATEWAY_PORT } from "../../core/ports";
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
+import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
