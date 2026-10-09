@@ -95,7 +95,8 @@ The lock records the exact version, registry URL, and integrity for every transi
 The production runtime and official channel packages select OpenClaw 2026.9.5.
 The reviewed runtime lock is the primary audit identity; no replacement identity remains.
 The archive inventory includes only the selected runtime and official plugin versions.
-The completed cutover removes the superseded 2026.9.2 archive records introduced by the preceding trust stage.
+The production audit inventory excludes superseded 2026.9.2 archives.
+Channel manifests retain their reviewed 2026.9.2 integrity and tarball records while installed sandboxes can still select that runtime.
 The dependency-review test compares the archive inventory with the production runtime lock.
 
 WeChat retains its separately reviewed 2.4.9 plugin and Zod 4.4.3 graph.

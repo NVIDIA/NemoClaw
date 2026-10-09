@@ -79,10 +79,52 @@ function createDockerRootApplyFixture(
       managedStartupE2eProfile("openclaw", false, true, true),
     ),
   });
-  return { request, runtimeProvider };
+  return { request, runtimeProvider, execute };
 }
 
 describe("provider-owned managed startup root application", () => {
+  it("retains the startup hold when the previous OpenClaw owner cannot be observed safely", () => {
+    const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+    fixture.execute.mockImplementation(({ command }) => ({
+      status: command.includes("python3") ? 1 : 0,
+      stdout: command.includes("--shared-state-transaction-status") ? "pending\n" : "",
+      stderr: "",
+    }));
+    expect(() =>
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider: fixture.runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request: fixture.request,
+        environment: {},
+      }),
+    ).toThrow("OpenClaw owner lease did not settle before managed startup");
+    expect(fixture.execute.mock.calls.map(([call]) => call.command)).toHaveLength(3);
+  });
+
+  it("does not inspect owner leases again after the managed transaction is committed", () => {
+    const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+    fixture.execute.mockImplementation(({ command }) => ({
+      status: 0,
+      stdout: command.includes("--shared-state-transaction-status") ? "committed\n" : "",
+      stderr: "",
+    }));
+    expect(
+      applyProviderManagedStartupRootRequest({
+        runtimeProvider: fixture.runtimeProvider,
+        sandboxName: SANDBOX_NAME,
+        sandboxId: SANDBOX_ID,
+        bootstrapIdentity: "c".repeat(64),
+        request: fixture.request,
+        environment: {},
+      })?.containerId,
+    ).toBe(CONTAINER_ID);
+    expect(fixture.execute.mock.calls.some(([call]) => call.command.includes("python3"))).toBe(
+      false,
+    );
+  });
+
   it("waits for the exact OpenShell container to appear after create returns", () => {
     const resolveTarget = vi
       .fn<() => { resourceHandle: string }>()
