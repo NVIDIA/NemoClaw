@@ -4,13 +4,13 @@
 
 use super::*;
 
-pub(super) fn package_inputs(tools: &Tools<'_>, platform: &str) -> Result<()> {
+pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
     let output = fs::File::create(".build/ci/lifecycle-inputs.tar")?;
     // Leave compression to the artifact uploader; gzip in this debug build is slow.
     let mut archive = tar::Builder::new(output);
-    // Tar preserves executable permissions across artifact upload/download.
+    // Tar preserves executable permissions across artifact upload/download. The
+    // bundle job uploads dist/PLATFORM separately, so it can build in parallel.
     for directory in [
-        Path::new("dist").join(platform),
         protoc_directory(tools.protobuf),
         nextest_directory(tools.nextest),
     ] {
