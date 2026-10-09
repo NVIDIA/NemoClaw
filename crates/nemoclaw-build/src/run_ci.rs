@@ -255,12 +255,17 @@ fn run_step(
     Ok(())
 }
 
+/// Budgets fail CI only on the Linux runners they were measured on.
+fn enforces_budgets() -> bool {
+    std::env::consts::OS == "linux" && std::env::var_os("GITHUB_ACTIONS").is_some()
+}
+
 /// Report where a test step, or its lifecycle `partition`, spent its time,
 /// from the JUnit report it wrote after `begun`, and add the report to the
-/// GitHub job summary.
-fn report_timing(step: Step, partition: Option<&str>, begun: Instant) {
+/// GitHub job summary. Returns what exceeds the step's budget, if any.
+fn report_timing(step: Step, partition: Option<&str>, begun: Instant) -> Vec<String> {
     let Some((profile, file)) = step.junit() else {
-        return;
+        return Vec::new();
     };
     let path = Path::new("target").join("nextest").join(profile).join(file);
     let started = std::time::SystemTime::now() - begun.elapsed();
@@ -269,9 +274,12 @@ fn report_timing(step: Step, partition: Option<&str>, begun: Instant) {
         .and_then(|metadata| metadata.modified())
         .is_ok_and(|modified| modified >= started);
     if !fresh {
-        return;
+        return Vec::new();
     }
-    let report = match std::fs::read_to_string(&path)
+    let budgets = std::fs::read_to_string(".config/test-budgets.yaml")
+        .map_err(|error| error.to_string())
+        .and_then(|yaml| ci::timing::Budgets::parse(&yaml));
+    let (mut report, budget, over) = match std::fs::read_to_string(&path)
         .map_err(|error| error.to_string())
         .and_then(|xml| ci::timing::Run::parse(&xml))
     {
@@ -280,13 +288,40 @@ fn report_timing(step: Step, partition: Option<&str>, begun: Instant) {
                 Some(partition) => format!("{} partition {partition}", step.name()),
                 None => step.name().to_owned(),
             };
-            run.report(&label, 15)
+            let budget = budgets
+                .as_ref()
+                .ok()
+                .and_then(|budgets| budgets.get(step.name()));
+            let over = budget.map(|budget| run.over(budget)).unwrap_or_default();
+            (run.report(&label, 15), budget, over)
         }
         Err(error) => {
             eprintln!("cannot read test timings from {}: {error}", path.display());
-            return;
+            return Vec::new();
         }
     };
+    if let Err(error) = &budgets {
+        report.push_str(&format!("\nCannot read the test budgets: {error}\n"));
+    }
+    if let Some(budget) = budget {
+        use std::fmt::Write as _;
+        let enforced = if enforces_budgets() {
+            ""
+        } else {
+            " (reported only; budgets apply on Linux CI runners)"
+        };
+        let _ = writeln!(
+            report,
+            "\nBudget: {} s wall, {} s per test{enforced}.",
+            budget.wall_seconds, budget.test_seconds
+        );
+        if over.is_empty() {
+            report.push_str("Within budget.\n");
+        }
+        for line in &over {
+            let _ = writeln!(report, "- Over budget: {line}");
+        }
+    }
     eprintln!("{report}");
     if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
         use std::io::Write;
@@ -299,6 +334,7 @@ fn report_timing(step: Step, partition: Option<&str>, begun: Instant) {
             eprintln!("cannot write the job summary: {error}");
         }
     }
+    if enforces_budgets() { over } else { Vec::new() }
 }
 
 pub(super) async fn run_steps(
@@ -353,7 +389,18 @@ pub(super) async fn run_steps(
             run_step(&tools, &platform, step, partition, archive_file)
         };
         let elapsed = begun.elapsed().as_secs();
-        report_timing(step, partition, begun);
+        let over = report_timing(step, partition, begun);
+        let result = result.and_then(|()| {
+            if over.is_empty() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{} exceeded its time budget in .config/test-budgets.yaml",
+                    step.name()
+                )
+                .into())
+            }
+        });
         if let Err(error) = result {
             eprintln!("FAILED {} after {elapsed}s: {error}", step.name());
             eprintln!("Rerun it with: cargo ci {}", step.name());
