@@ -450,6 +450,12 @@ def validate_env_file(path: str) -> int:
         print(f"[SECURITY] Refusing Hermes startup because {exc}", file=sys.stderr)
         return 1
 
+    return _validate_env_bytes(raw)
+
+
+def _validate_env_bytes(raw: bytes) -> int:
+    """Check the content of a Hermes .env against the secret boundary."""
+
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -582,6 +588,19 @@ def _validate_runtime_env(source: dict[str, str]) -> int:
 def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
     return _validate_runtime_env(source)
+
+
+def validate_env_text(stream: BinaryIO) -> int:
+    """Validate candidate .env content received on stdin; no path is opened."""
+
+    raw = stream.read(MAX_ENV_BYTES + 1)
+    if len(raw) > MAX_ENV_BYTES:
+        print(
+            f"[SECURITY] Refusing Hermes startup because the env text exceeds the {MAX_ENV_BYTES}-byte limit",
+            file=sys.stderr,
+        )
+        return 1
+    return _validate_env_bytes(raw)
 
 
 def validate_runtime_env_json(stream: BinaryIO) -> int:
@@ -795,6 +814,10 @@ def main(argv: list[str]) -> int:
     )
     env_file_parser.add_argument("path", help="Path to the .env file to validate")
     sub.add_parser(
+        "env-text",
+        help="Validate Hermes .env content read from stdin",
+    )
+    sub.add_parser(
         "runtime-env",
         help="Validate the current process environment",
     )
@@ -809,6 +832,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.mode == "env-file":
         return validate_env_file(args.path)
+    if args.mode == "env-text":
+        return validate_env_text(sys.stdin.buffer)
     if args.mode == "mask-config-output":
         return mask_config_output(sys.stdin, sys.stdout)
     if args.mode == "runtime-env-json":
