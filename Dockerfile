@@ -699,7 +699,7 @@ COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts scripts/validate-openclaw-tool-search.mts /scripts/
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
-COPY --chmod=0444 src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
@@ -1547,12 +1547,12 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # Config inputs precede the cached plugin install.
 COPY scripts/generate-openclaw-config.mts scripts/validate-openclaw-tool-search.mts /scripts/
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
-COPY --chmod=0444 src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
+COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 
 RUN chmod 755 /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \
-    && chmod 444 /src/lib/*.ts \
+    && chmod 444 /src/lib/*.ts /src/lib/inference/native-local/agent-config.ts \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
@@ -1949,8 +1949,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts /src /src/lib \
-    && chmod 444 /src/lib/*.ts \
-        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+    && chmod 444 /src/lib/*.ts /src/lib/inference/native-local/agent-config.ts \
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
