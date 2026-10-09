@@ -11,7 +11,7 @@ cargo ci
 
 The command needs the pinned Rust toolchain and a C linker.
 It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
-It then runs formatting, Clippy, the workspace tests and doctests, the schema check, a native bundle build, and the bundle lifecycle tests, stopping at the first failure.
+It then runs formatting, Clippy, the workspace tests and doctests, the schema check, a bundle build, and the bundle lifecycle tests, stopping at the first failure.
 A warm run on Linux ARM64 takes about ten minutes, mostly in the workspace and lifecycle tests.
 
 Run one step with `cargo ci STEP`, for example `cargo ci lifecycle`.
@@ -31,7 +31,7 @@ On native Linux with Docker Buildx and the [containerd image store](../build.md#
 Run `cargo ci build` and `cargo ci bundle` first.
 The step downloads the pinned kind executable by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
 It builds an agent image from this checkout (Pi on ARM64, OpenClaw on AMD64), exports its metadata bundle, and loads the image into the cluster by digest.
-It then runs three live tests and both chart-render tests in the `live-kind` nextest profile with the verified native bundle; no Helm CLI is required.
+It then runs three live tests and both chart-render tests in the `live-kind` nextest profile with the verified bundle; no Helm CLI is required.
 The render tests check that Kubernetes keeps the chart's gateway UID and OpenShift uses the observed namespace UID and group while retaining `runAsNonRoot`.
 The gateway test runs OpenTofu and its Helm provider with an empty `PATH`, installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
 It removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.

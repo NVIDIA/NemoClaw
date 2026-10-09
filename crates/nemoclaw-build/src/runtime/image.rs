@@ -119,7 +119,7 @@ fn inspect(docker: &Path, reference: &str) -> Result<Image> {
 mod tests {
     use super::*;
     #[test]
-    #[ignore = "requires explicit NEMOCLAW_TEST_RUNTIME_IMAGE=1 and Docker with containerd; builds and removes one owned scratch image"]
+    #[ignore = "requires NEMOCLAW_TEST_RUNTIME_IMAGE=1 and Docker with containerd; builds and removes one owned scratch image"]
     fn runtime_archive_loads_with_its_exported_digest() {
         assert_eq!(
             std::env::var("NEMOCLAW_TEST_RUNTIME_IMAGE").as_deref(),

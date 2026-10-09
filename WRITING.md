@@ -13,6 +13,8 @@ Preserve literal code, commands, identifiers, output, product names, and quotati
 - Use familiar words, active verbs, and consistent terms.
 - Name the actor, action, and object; put conditions before dependent instructions.
 - Keep sentences focused and remove repetition, filler, and unsupported judgments.
+- Keep a modifier only when it distinguishes something relevant to the passage; if every Y in context is X, write Y.
+- Give each qualifier one meaning and name the distinction directly instead of writing ordinary, real, or deterministic; never imply a mode, option, or command that does not exist.
 - Include technical detail when it changes a decision or explains a constraint.
 - Use lists for steps or parallel facts, and tables for comparisons.
 - Use `must` for requirements, `may` for permission, `can` for capability, and `should` for recommendations.

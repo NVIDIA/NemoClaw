@@ -241,7 +241,7 @@ The SDK requires the gateway's independent storage binding, the compiler orders 
 Missing or substituted bound credentials and gateway storage stop planning; reproducible model caches can be rebuilt.
 
 The shared [OpenShell lifecycle contract](../../crates/nemoclaw-openshell/src/lifecycle.rs) distinguishes retained workspace identity, stateful sandboxes, and reconstructible registrations and configuration.
-Sandbox files and conversation history have no separately retained storage, so ordinary apply refuses sandbox deletion or replacement.
+Sandbox files and conversation history have no separately retained storage, so apply refuses sandbox deletion or replacement.
 It also refuses to recreate a missing sandbox binding.
 Explicit destroy deletes those files even though the OpenShell workspace remains.
 The [retention reference](../state.md#deletion-and-retention) lists what survives.

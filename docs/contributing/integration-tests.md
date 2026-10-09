@@ -116,7 +116,7 @@ A failed assertion reports the OpenTofu diagnostic; rerun after correcting the m
 
 ## Ollama and Platform Fixtures
 
-Managed Ollama's deterministic runtime, provider, and SDK tests use local registry, capacity, configuration, and runtime-plan fixtures, not live containers or model downloads.
+Managed Ollama's runtime, provider, and SDK tests use local registry, capacity, configuration, and runtime-plan fixtures, not live containers or model downloads.
 They cover immutable model resolution, bounded readiness, retained storage, service references, independent installer resources, and provider connection resolution:
 
 ```sh
@@ -251,7 +251,7 @@ NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
 The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `nemoclaw_inference_storage`; no SDK compiler or deployment coordinator runs.
 The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
 Missing or substituted credential volumes must stop apply before compute creation and preserve state.
-Teardown sets the container count to zero while keeping both volume declarations; ordinary `tofu destroy` is deliberately blocked by their retention rules.
+Teardown sets the container count to zero while keeping both volume declarations; `tofu destroy` is deliberately blocked by their retention rules.
 The test removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
 The container's Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
 

@@ -21,7 +21,7 @@ use kube::config::{KubeConfigOptions, Kubeconfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// NemoClaw resources surrounding the native Helm release.
+/// NemoClaw resources surrounding the Helm release.
 pub const STORAGE_KIND: &str = "kubernetes_storage";
 pub const AUTH_KIND: &str = "kubernetes_auth";
 pub const GATEWAY_KIND: &str = "kubernetes_gateway";

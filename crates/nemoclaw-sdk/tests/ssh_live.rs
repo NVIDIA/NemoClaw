@@ -4,7 +4,7 @@
 use nemoclaw_provider::docker::Engine;
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE and NEMOCLAW_TEST_ENGINE_ID; read-only real SSH/Docker"]
+#[ignore = "requires NEMOCLAW_TEST_SSH_ENGINE and NEMOCLAW_TEST_ENGINE_ID; read-only real SSH/Docker"]
 async fn ssh_observes_the_selected_daemon_and_confirmed_absence() {
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
     let expected = std::env::var("NEMOCLAW_TEST_ENGINE_ID").unwrap();
@@ -26,7 +26,7 @@ async fn ssh_observes_the_selected_daemon_and_confirmed_absence() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE configured to reject authentication, host trust or transport"]
+#[ignore = "requires NEMOCLAW_TEST_SSH_ENGINE configured to reject authentication, host trust or transport"]
 async fn ssh_failure_is_an_observation_error_never_absence() {
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
     assert!(engine.info().await.is_err());
@@ -40,7 +40,7 @@ async fn ssh_failure_is_an_observation_error_never_absence() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE and NEMOCLAW_TEST_SSH_CONTAINER; writes only to an experiment-labeled stopped container"]
+#[ignore = "requires NEMOCLAW_TEST_SSH_ENGINE and NEMOCLAW_TEST_SSH_CONTAINER; writes only to an experiment-labeled stopped container"]
 async fn ssh_upload_and_streamed_download_preserve_container_identity() {
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();
     let id = std::env::var("NEMOCLAW_TEST_SSH_CONTAINER").unwrap();
@@ -77,7 +77,7 @@ async fn ssh_upload_and_streamed_download_preserve_container_identity() {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 or AMD64 NVIDIA host; read-only remote host collection"]
+#[ignore = "requires NEMOCLAW_TEST_SSH_ENGINE on a Linux ARM64 or AMD64 NVIDIA host; read-only remote host collection"]
 async fn ssh_capacity_belongs_to_the_selected_docker_host() {
     use nemoclaw_provider::hardware::{HostObserver, SshHost};
     let engine = Engine::connect(&std::env::var("NEMOCLAW_TEST_SSH_ENGINE").unwrap()).unwrap();

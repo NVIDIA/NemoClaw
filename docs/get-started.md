@@ -124,7 +124,7 @@ nemoclaw export --state-dir .local/first-deployment/state --output .local/first-
 ```
 
 Use the export only if the command succeeds.
-It contains configuration and credential references, not native files or conversation history.
+It contains configuration and credential references, not agent files or conversation history.
 See [unchanged apply and recovery](usage.md#updates-and-recovery) before using it for subsequent operations.
 
 ## 5. Access the Agent
@@ -149,7 +149,7 @@ When you no longer need the sandbox, preview removal:
 nemoclaw plan --destroy --state-dir .local/first-deployment/state
 ```
 
-Read [destroy behavior](usage.md#destroy) and preserve needed native data before executing the deletion command there with this state directory.
+Read [destroy behavior](usage.md#destroy) and preserve needed agent data before executing the deletion command there with this state directory.
 Destroy has no confirmation prompt and deletes sandbox files and conversation history.
 It removes the deployment's provider registrations and agent configuration; the external gateway and inference service remain under their operators' control.
 Keep the local state for tracked retained resources and any interrupted teardown.
