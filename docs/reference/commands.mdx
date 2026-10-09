@@ -273,6 +273,34 @@ For NVIDIA Endpoints, it verifies that the recorded NemoClaw-owned provider atta
 A custom NVIDIA provider profile or endpoint override cannot be included in an export.
 If OpenShell cannot supply the required evidence, the command stops without writing output.
 
+Config export rejects a sandbox with direct sandbox GPU access enabled.
+Onboarding enables this access by default when it detects an NVIDIA GPU on the host.
+The `--no-sandbox-gpu` flag disables direct NVIDIA GPU access inside the sandbox and removes this export blocker.
+
+<Warning>
+The `--recreate-sandbox` flag deletes the existing sandbox before onboarding creates its replacement.
+NemoClaw archives the complete native home and workspace first, and stops before deleting the original if that archive fails.
+</Warning>
+
+For the following command, replace `<agent>` with the sandbox's existing agent.
+Run this command to remove the GPU export blocker from an existing sandbox:
+
+```bash
+$$nemoclaw onboard --fresh --name <sandbox> --agent <agent> --recreate-sandbox --no-sandbox-gpu
+```
+
+If onboarding stops after the `Journaled replacement` message, rerun the same command.
+Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
+
+Run this command to create a new sandbox without the GPU export blocker:
+
+```bash
+$$nemoclaw onboard --fresh --name <sandbox> --agent <agent> --no-sandbox-gpu
+```
+
+Then run `$$nemoclaw config export <sandbox> --output -` to confirm that the direct sandbox GPU finding no longer appears.
+Other unsupported capabilities can still block the export.
+
 Write a file on Linux:
 
 ```bash
