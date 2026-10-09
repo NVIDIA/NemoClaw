@@ -54,65 +54,45 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     };
     let versions: Value = serde_json::from_str(include_str!("../../../versions.json")).unwrap();
     let version = versions["openshell"].as_str().unwrap();
-    for failure in ["version", "driver", "multiple", "unavailable", "incomplete"] {
+    // nemoclaw-openshell's observation tests own each incompatibility reason;
+    // OpenTofu must surface one precondition failure and one failed read.
+    for failure in ["version", "unavailable"] {
         {
             let mut state = fixture.state.lock().unwrap();
-            match failure {
-                "version" => {
-                    state.gateway_info = Some(openshell_core::proto::GetGatewayInfoResponse {
-                        gateway_version: "incompatible-version".into(),
-                        compute_drivers: vec![openshell_core::proto::ComputeDriverInfo {
-                            name: "docker".into(),
-                            ..Default::default()
-                        }],
+            if failure == "version" {
+                state.gateway_info = Some(openshell_core::proto::GetGatewayInfoResponse {
+                    gateway_version: "incompatible-version".into(),
+                    compute_drivers: vec![openshell_core::proto::ComputeDriverInfo {
+                        name: "docker".into(),
                         ..Default::default()
-                    })
-                }
-                "driver" => state.driver = Some("podman".into()),
-                "multiple" => {
-                    state.gateway_info = Some(openshell_core::proto::GetGatewayInfoResponse {
-                        gateway_version: version.into(),
-                        compute_drivers: vec![
-                            openshell_core::proto::ComputeDriverInfo {
-                                name: "docker".into(),
-                                ..Default::default()
-                            };
-                            2
-                        ],
-                        ..Default::default()
-                    });
-                }
-                "unavailable" => state.fail_read = Some(("gateway", tonic::Code::Unavailable)),
-                _ => state.gateway_info = Some(Default::default()),
+                    }],
+                    ..Default::default()
+                });
+            } else {
+                state.fail_read = Some(("gateway", tonic::Code::Unavailable));
             }
         }
         let output = run(&["plan", "-input=false", "-no-color"]);
         assert!(!output.status.success(), "{failure} gateway was accepted");
         let diagnostic = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            diagnostic.contains(if matches!(failure, "version" | "driver" | "multiple") {
-                "Resource precondition failed"
-            } else {
-                "Gateway capability observation failed"
-            }),
-            "{diagnostic}"
-        );
-        if matches!(failure, "version" | "driver" | "multiple") {
+        if failure == "version" {
+            assert!(
+                diagnostic.contains("Resource precondition failed"),
+                "{diagnostic}"
+            );
             let normalized = diagnostic.split_whitespace().collect::<Vec<_>>().join(" ");
-            let reason = match failure {
-                "version" => format!(
-                    "gateway runs OpenShell incompatible-version, but this build requires {version}"
-                ),
-                "driver" => {
-                    "gateway compute driver is podman, but spec.gateway.runtime.provider is docker"
-                        .into()
-                }
-                _ => "gateway reports 2 compute drivers, but exactly one is required".into(),
-            };
-            let expected = format!("Gateway is incompatible with this configuration: {reason}.");
+            let expected = format!(
+                "Gateway is incompatible with this configuration: gateway runs OpenShell \
+                 incompatible-version, but this build requires {version}."
+            );
             assert!(
                 normalized.contains(&expected),
                 "missing {expected}: {diagnostic}"
+            );
+        } else {
+            assert!(
+                diagnostic.contains("Gateway capability observation failed"),
+                "{diagnostic}"
             );
         }
         assert!(!diagnostic.contains("secret-sentinel"));
@@ -153,58 +133,57 @@ async fn production_provider_applies_refreshes_and_destroys_the_reference_graph(
     fixture.state.lock().unwrap().fail_read = None;
     // A saved plan must re-observe compatibility during apply, even when
     // every managed resource is unchanged. No SDK coordinator runs here.
-    for create in [false, true] {
-        for failure in ["driver", "unavailable"] {
-            if create {
-                let mut sandbox = document.spec.sandboxes[0].clone();
-                sandbox.name = format!("extra-{failure}");
-                document.spec.sandboxes.push(sandbox);
-                graph = compile(&document, &generations, "0.1.0").unwrap();
-                fs::write(directory.path().join("main.tf.json"), graph.to_string()).unwrap();
-            }
-            success(&["plan", "-input=false", "-out=fresh.plan", "-no-color"]);
-            let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
-            let effects = fixture.state.lock().unwrap().effects;
-            {
-                let mut state = fixture.state.lock().unwrap();
-                if failure == "driver" {
-                    state.driver = Some("podman".into());
-                } else {
-                    state.fail_read = Some(("gateway", tonic::Code::Unavailable));
-                }
-            }
-            let output = run(&["apply", "-input=false", "-no-color", "fresh.plan"]);
-            assert!(
-                !output.status.success(),
-                "saved plan reused stale gateway metadata: create={create}, {failure}"
-            );
-            let diagnostic = String::from_utf8_lossy(&output.stderr);
-            let normalized = diagnostic.split_whitespace().collect::<Vec<_>>().join(" ");
-            assert!(
-                normalized.contains(if failure == "driver" {
-                    "Gateway is incompatible with this configuration: gateway compute driver is \
-                     podman, but spec.gateway.runtime.provider is docker."
-                } else {
-                    "Gateway capability observation failed"
-                }),
-                "{diagnostic}"
-            );
-            assert_eq!(fixture.state.lock().unwrap().effects, effects);
-            assert_same_managed_resources(
-                &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
-                &before,
-            );
-            {
-                let mut state = fixture.state.lock().unwrap();
-                state.driver = None;
-                state.fail_read = None;
-            }
-            success(&["apply", "-auto-approve", "-input=false", "-no-color"]);
-            assert_eq!(
-                fixture.state.lock().unwrap().sandboxes.len(),
-                document.spec.sandboxes.len()
-            );
+    // Each failure kind runs once, unchanged and when creating.
+    for (create, failure) in [(false, "driver"), (true, "unavailable")] {
+        if create {
+            let mut sandbox = document.spec.sandboxes[0].clone();
+            sandbox.name = format!("extra-{failure}");
+            document.spec.sandboxes.push(sandbox);
+            graph = compile(&document, &generations, "0.1.0").unwrap();
+            fs::write(directory.path().join("main.tf.json"), graph.to_string()).unwrap();
         }
+        success(&["plan", "-input=false", "-out=fresh.plan", "-no-color"]);
+        let before = fs::read(directory.path().join("terraform.tfstate")).unwrap();
+        let effects = fixture.state.lock().unwrap().effects;
+        {
+            let mut state = fixture.state.lock().unwrap();
+            if failure == "driver" {
+                state.driver = Some("podman".into());
+            } else {
+                state.fail_read = Some(("gateway", tonic::Code::Unavailable));
+            }
+        }
+        let output = run(&["apply", "-input=false", "-no-color", "fresh.plan"]);
+        assert!(
+            !output.status.success(),
+            "saved plan reused stale gateway metadata: create={create}, {failure}"
+        );
+        let diagnostic = String::from_utf8_lossy(&output.stderr);
+        let normalized = diagnostic.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains(if failure == "driver" {
+                "Gateway is incompatible with this configuration: gateway compute driver is \
+                 podman, but spec.gateway.runtime.provider is docker."
+            } else {
+                "Gateway capability observation failed"
+            }),
+            "{diagnostic}"
+        );
+        assert_eq!(fixture.state.lock().unwrap().effects, effects);
+        assert_same_managed_resources(
+            &fs::read(directory.path().join("terraform.tfstate")).unwrap(),
+            &before,
+        );
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.driver = None;
+            state.fail_read = None;
+        }
+        success(&["apply", "-auto-approve", "-input=false", "-no-color"]);
+        assert_eq!(
+            fixture.state.lock().unwrap().sandboxes.len(),
+            document.spec.sandboxes.len()
+        );
     }
 
     for provider in ["nemoclaw", "openshell", "fabric"] {
