@@ -1439,6 +1439,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     // A serialized re-onboard can neither replace the row under the read nor
     // select the captured model before this cleanup runs.
     expect(events).toEqual([
+      "read-prior-route", // Agent support admission; cleanup reads the route again under the lock.
       "lock-enter",
       "read-prior-route",
       "read-prior-route",

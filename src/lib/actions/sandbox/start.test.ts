@@ -355,7 +355,10 @@ describe("startSandbox native lifecycle", () => {
       await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
       expect(commands).toHaveLength(1);
       expect(commands[0]).toContain(`${binding.endpointUrl}/chat/completions`);
-      expect(commands[0]).toContain("openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+      expect(commands[0]).not.toContain("openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+      expect(commands[0]).toContain(
+        'AUTH_HEADER="Authorization: Bearer ${NEMOCLAW_LOCAL_INFERENCE_TOKEN}"',
+      );
       expect(commands[0]).not.toContain("inference.local");
     },
   );
