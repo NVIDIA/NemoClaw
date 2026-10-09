@@ -13,7 +13,7 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
-import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
+import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia/contract";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
