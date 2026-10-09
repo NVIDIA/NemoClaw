@@ -22,6 +22,7 @@ import { VLLM_LOCAL_CREDENTIAL_ENV } from "./serving/vllm-credential-contract";
 
 export { isSafeModelId };
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
+export { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";
 export {
   detachNativeNvidiaProvider,
   ensureNativeNvidiaProvider,
