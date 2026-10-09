@@ -592,11 +592,13 @@ export async function runRebuildPostRestorePhase(
       await rebuildOnboardDependencies.verifyRebuiltOpenClawCompatibleEndpoint({
         sandboxName,
         provider: recreatedEntry.provider,
+        nativeCustomProviderAttachment: recreatedEntry.nativeCustomProviderAttachment,
         model: recreatedEntry.model ?? "",
         endpointUrl: recreatedEntry.endpointUrl,
         credentialEnv: recreatedEntry.credentialEnv,
         environment: buildSandboxCommandEnvironment(mcpRuntimeSelection),
-        gatewayName: mcpRuntimeSelection?.gatewayName,
+        gatewayName:
+          mcpRuntimeSelection?.gatewayName ?? getPersistedSandboxTargetGatewayName(recreatedEntry),
       });
     } catch {
       console.error(`  OpenClaw inference verification failed after rebuilding '${sandboxName}'.`);

@@ -17,7 +17,12 @@ type RebuildCompatibleEndpointSmokeOptions = Pick<
   Parameters<
     typeof import("../../onboard/compatible-endpoint-smoke").verifyCompatibleEndpointSandboxSmoke
   >[0],
-  "sandboxName" | "provider" | "model" | "endpointUrl" | "credentialEnv"
+  | "sandboxName"
+  | "provider"
+  | "model"
+  | "endpointUrl"
+  | "credentialEnv"
+  | "nativeCustomProviderAttachment"
 > & { environment: NodeJS.ProcessEnv; gatewayName?: string };
 
 type RebuildOnboardModule = {

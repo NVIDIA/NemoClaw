@@ -1749,8 +1749,9 @@ The existing `inference-routing` target's TC-INF-11 onboards its public HTTPS fi
 with a sandbox-specific native provider. It verifies a fresh OpenClaw turn after stop/start,
 selected `inference get` and status, DNS pinning, redirect rejection, executable denial,
 detach/reattach, and provider/route deletion. A second native sandbox proves that selected
-detach/delete preserves peer access. Its 95-minute test deadline contains both 40-minute
-onboarding bounds and 15 minutes for the lifecycle; the target adds 20 minutes of job headroom.
+detach/delete preserves peer access. Its 170-minute test deadline contains both 40-minute
+onboarding bounds, 80 minutes for lifecycle operations, and 10 minutes of test headroom.
+The target adds 20 minutes of job headroom, for a 190-minute target budget.
 These are maximum deadlines, not expected durations. The fixture owns both sandboxes,
 the public tunnel, DNS restoration, and local servers.
 

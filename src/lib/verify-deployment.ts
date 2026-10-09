@@ -18,10 +18,12 @@
  */
 
 import os from "node:os";
+import type { SandboxInferenceInvocationInput } from "./actions/sandbox/inference-invocation-probe";
 
 import { parseVersionFromText } from "./adapters/openshell/client";
 import {
   runSandboxInferenceInvocationProbe,
+  verifyNativeCustomStatusAttachment,
   type SandboxInferenceRouteHealthContext,
 } from "./actions/sandbox/inference-route-health";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
@@ -32,6 +34,7 @@ import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
 import {
+  shouldDiagnoseCustomOpenClawRuntime,
   buildCustomOpenClawRuntimeFailureHints,
   classifyOpenClawRuntimeFailure,
   type SandboxCommandExecutor,
@@ -267,6 +270,7 @@ type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
  */
 export type InferenceRouteContext = {
   provider?: string | null;
+  nativeCustomProviderAttachment?: SandboxInferenceInvocationInput["nativeCustomProviderAttachment"];
 };
 
 function toRouteHealthContext(context: InferenceRouteContext): SandboxInferenceRouteHealthContext {
@@ -395,7 +399,8 @@ async function verifyInferenceRoute(
   sleep: (ms: number) => Promise<void>,
   context: InferenceRouteContext,
 ): Promise<InferenceRouteProbe> {
-  if (isNativeNvidiaProvider(context.provider)) {
+  if (isNativeNvidiaProvider(context.provider) || context.nativeCustomProviderAttachment) {
+    const label = context.nativeCustomProviderAttachment ? "native custom" : "native NVIDIA";
     const invocation = await retryUntilAsync(
       async () => (await deps.probeInferenceInvocation?.()) ?? null,
       {
@@ -407,18 +412,18 @@ async function verifyInferenceRoute(
     if (invocation?.ok) {
       return {
         status: "ok",
-        detail: "native NVIDIA inference served an agent request",
+        detail: `${label} inference served an agent request`,
         httpCode: 200,
       };
     }
     const reason = invocation?.detail ?? "no inference request confirmed the selected model";
     return {
       status: "unhealthy",
-      detail: `native NVIDIA inference did not serve an agent request: ${reason}`,
+      detail: `${label} inference did not serve an agent request: ${reason}`,
       httpCode: 0,
       hint:
-        "The sandbox-attached NVIDIA provider could not serve the selected model. Confirm the " +
-        "NVIDIA credential and model, then re-run: nemoclaw <sandbox> status.",
+        `The sandbox-attached ${label} provider could not serve the selected model. Confirm the ` +
+        "credential and model, then re-run: nemoclaw <sandbox> status.",
     };
   }
   const routeContext = toRouteHealthContext(context);
@@ -718,6 +723,33 @@ function buildMessagingHint(messaging: MessagingBridgeStatus): string {
  * Returns a structured result with pass/fail for each link and
  * actionable diagnostics on failure.
  */
+/** Wire onboarding verification to its recorded provider authority. */
+export function verifyOnboardDeployment(
+  sandboxName: string,
+  chain: DashboardDeliveryChain,
+  context: InferenceInvocationContext & { fromDockerfile?: string | null },
+  deps: VerifyDeploymentDeps,
+): Promise<VerifyDeploymentResult> {
+  return verifyDeployment(
+    sandboxName,
+    chain,
+    {
+      ...deps,
+      probeInferenceInvocation: () => probeOnboardInferenceInvocation(context),
+    },
+    {
+      diagnoseCustomOpenClawRuntime: shouldDiagnoseCustomOpenClawRuntime(
+        context.fromDockerfile,
+        context.agentName,
+      ),
+      inferenceRouteContext: {
+        provider: context.provider,
+        nativeCustomProviderAttachment: context.nativeCustomProviderAttachment,
+      },
+    },
+  );
+}
+
 export async function verifyDeployment(
   sandboxName: string,
   chain: DashboardDeliveryChain,
@@ -900,6 +932,7 @@ export type InferenceInvocationContext = {
   model: string | null;
   provider: string | null;
   preferredInferenceApi: string | null;
+  nativeCustomProviderAttachment?: SandboxInferenceInvocationInput["nativeCustomProviderAttachment"];
 };
 
 /**
@@ -913,10 +946,23 @@ export async function probeOnboardInferenceInvocation(
   context: InferenceInvocationContext,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { model, provider } = context;
+  const { nativeCustomProviderAttachment } = context;
   if (!model || !provider) {
     return { ok: false, detail: "no provider and model were recorded for this sandbox" };
   }
+  if (nativeCustomProviderAttachment) {
+    try {
+      await verifyNativeCustomStatusAttachment({
+        gatewayName: context.gatewayName,
+        sandboxName: context.sandboxName,
+        expected: nativeCustomProviderAttachment,
+      });
+    } catch {
+      return { ok: false, detail: "native custom provider attachment could not be verified" };
+    }
+  }
   const result = await runSandboxInferenceInvocationProbe({
+    nativeCustomProviderAttachment,
     sandboxName: context.sandboxName,
     gatewayName: context.gatewayName,
     agentName: context.agentName ?? null,
