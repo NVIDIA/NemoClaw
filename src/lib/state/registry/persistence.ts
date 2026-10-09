@@ -8,6 +8,8 @@ import { isDeferredN1xManagedVllmAcceptanceRoute } from "../../domain/sandbox/n1
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
+import { normalizeNativeCustomProviderAuthorities } from "./native-custom-provider-authority-state";
+import { normalizeNativeCustomProviderAttachment } from "../../inference/native-custom";
 import { normalizeNativeNvidiaProviderAuthorities } from "./native-nvidia-provider-authority-state";
 import {
   cloneSandboxMessagingState,
@@ -125,6 +127,9 @@ export function save(data: SandboxRegistry): void {
 function normalizeRegistry(value: unknown): SandboxRegistry {
   const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeCustomProviderAuthorities = normalizeNativeCustomProviderAuthorities(
+    data.nativeCustomProviderAuthorities,
+  );
   const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
     data.nativeNvidiaProviderAuthorities,
   );
@@ -144,6 +149,8 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeCustomProviderAuthorities)
+    base.nativeCustomProviderAuthorities = nativeCustomProviderAuthorities;
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }
@@ -152,6 +159,9 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const nativeCustomProviderAuthorities = normalizeNativeCustomProviderAuthorities(
+    data.nativeCustomProviderAuthorities,
+  );
   const nativeNvidiaProviderAuthorities = normalizeNativeNvidiaProviderAuthorities(
     data.nativeNvidiaProviderAuthorities,
   );
@@ -174,6 +184,8 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
+  if (nativeCustomProviderAuthorities)
+    base.nativeCustomProviderAuthorities = nativeCustomProviderAuthorities;
   if (nativeNvidiaProviderAuthorities) {
     base.nativeNvidiaProviderAuthorities = nativeNvidiaProviderAuthorities;
   }
@@ -181,6 +193,13 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
+  const nativeCustomProviderAttachment = normalizeNativeCustomProviderAttachment(
+    entry.nativeCustomProviderAttachment,
+    entry.name,
+  );
+  if (entry.nativeCustomProviderAttachment !== undefined && !nativeCustomProviderAttachment) {
+    throw new Error("Cannot load a sandbox with invalid native custom provider authority");
+  }
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -207,6 +226,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
     nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
+    nativeCustomProviderAttachment: _nativeCustomProviderAttachment,
     mcp: _legacyMcp,
     ...rest
   } = policyEntry as SandboxEntry & {
@@ -216,6 +236,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
+    ...(nativeCustomProviderAttachment ? { nativeCustomProviderAttachment } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
@@ -245,6 +266,13 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     livePhase?: string | null;
     providerCredentialHashes?: unknown;
   };
+  const nativeCustomProviderAttachment = normalizeNativeCustomProviderAttachment(
+    durable.nativeCustomProviderAttachment,
+    durable.name,
+  );
+  if (durable.nativeCustomProviderAttachment !== undefined && !nativeCustomProviderAttachment) {
+    throw new Error("Cannot save a sandbox with invalid native custom provider authority");
+  }
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(durable.workload, "save");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -271,6 +299,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
     nativeNvidiaProviderAuthority: _legacyNativeNvidiaProviderAuthority,
+    nativeCustomProviderAttachment: _nativeCustomProviderAttachment,
     mcp: _legacyMcp,
     ...rest
   } = policyEntry as SandboxEntry & {
@@ -280,6 +309,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   };
   return {
     ...rest,
+    ...(nativeCustomProviderAttachment ? { nativeCustomProviderAttachment } : {}),
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(workload ? { workload } : {}),
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),

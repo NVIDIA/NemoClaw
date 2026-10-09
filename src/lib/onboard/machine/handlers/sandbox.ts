@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeCustomProviderAttachment } from "../../../inference/native-custom";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
@@ -139,12 +140,22 @@ function nativeNvidiaCreateIntentFields(
 ): {
   inferenceProvider: string | null;
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeCustomProviderAttachment?: SandboxEntry["nativeCustomProviderAttachment"];
 } {
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );
   return {
-    inferenceProvider: nativeInferenceProviderForSandbox(provider),
+    inferenceProvider:
+      normalizeNativeCustomProviderAttachment(entry?.nativeCustomProviderAttachment)
+        ?.providerName ?? nativeInferenceProviderForSandbox(provider),
+    ...(entry?.nativeCustomProviderAttachment
+      ? {
+          nativeCustomProviderAttachment: normalizeNativeCustomProviderAttachment(
+            entry.nativeCustomProviderAttachment,
+          ),
+        }
+      : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
   };
 }
@@ -372,6 +383,7 @@ export interface SandboxStateOptions<
       sandboxName: string;
       inferenceProvider?: string | null;
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+      nativeCustomProviderAttachment?: SandboxEntry["nativeCustomProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;

@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeCustomProviderAttachment,
+  verifyNativeCustomProviderAttachment,
+  type NativeCustomProviderAttachment,
+} from "../../../inference/native-custom";
+import { getSandboxInferenceConfig } from "../../../inference/config";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { createCliOpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter-cli";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../../adapters/openshell/sandbox-command";
@@ -81,6 +87,11 @@ export interface LaunchReadinessHealthDeps {
     sandboxName: string;
     gatewayName: string;
     expected: NativeNvidiaProviderAttachment;
+  }) => Promise<void>;
+  verifyNativeCustomAttachment?: (input: {
+    sandboxName: string;
+    gatewayName: string;
+    expected: NativeCustomProviderAttachment;
   }) => Promise<void>;
   recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
   recordObservationFailure?: (stage: LaunchReadinessObservationStage) => void;
@@ -209,6 +220,69 @@ export function getNativeNvidiaProviderAttachment(
   entry: SandboxEntry,
 ): NativeNvidiaProviderAttachment | null {
   return normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment) ?? null;
+}
+
+/** Presence selects the native path even when damaged authority must be rejected. */
+export function hasNativeInferenceProviderAttachment(entry: SandboxEntry): boolean {
+  return (
+    entry.nativeCustomProviderAttachment !== undefined ||
+    entry.nativeNvidiaProviderAttachment !== undefined
+  );
+}
+
+export async function requireNativeInferenceHealth(
+  input: Parameters<typeof requireNativeNvidiaInferenceHealth>[0],
+): Promise<boolean> {
+  if (input.entry.nativeCustomProviderAttachment === undefined) {
+    if (
+      input.entry.nativeNvidiaProviderAttachment !== undefined &&
+      !getNativeNvidiaProviderAttachment(input.entry)
+    )
+      throw new LaunchReadinessEvidenceError();
+    return requireNativeNvidiaInferenceHealth(input);
+  }
+  const expected = normalizeNativeCustomProviderAttachment(
+    input.entry.nativeCustomProviderAttachment,
+    input.sandboxName,
+  );
+  if (!expected || input.entry.nativeNvidiaProviderAttachment !== undefined)
+    throw new LaunchReadinessEvidenceError();
+  const provider = normalizedString(input.entry.provider);
+  const model = normalizedString(input.entry.model);
+  const api = normalizedString(input.entry.preferredInferenceApi);
+  if (!provider || !model) throw new LaunchReadinessEvidenceError();
+  try {
+    getSandboxInferenceConfig(model, provider, api, expected);
+  } catch {
+    throw new LaunchReadinessEvidenceError();
+  }
+  if (input.deps.verifyNativeCustomAttachment) {
+    await input.deps.verifyNativeCustomAttachment({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      expected,
+    });
+  } else {
+    await verifyNativeCustomProviderAttachment({
+      adapter: createCliOpenShellProviderAdapter(),
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected,
+    });
+  }
+  const invocation = await (
+    input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe
+  )({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    agentName: input.agentName,
+    provider,
+    model,
+    preferredInferenceApi: api,
+    nativeCustomProviderAttachment: expected,
+  });
+  if (!invocation.ok) throw new LaunchReadinessObservationError("health", "inference request");
+  return true;
 }
 
 export async function requireNativeNvidiaInferenceHealth(input: {
@@ -349,9 +423,9 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inferenceStartedAt = performance.now();
-    if (getNativeNvidiaProviderAttachment(entry)) {
+    if (hasNativeInferenceProviderAttachment(entry)) {
       try {
-        await requireNativeNvidiaInferenceHealth({
+        await requireNativeInferenceHealth({
           sandboxName,
           gatewayName,
           agentName,

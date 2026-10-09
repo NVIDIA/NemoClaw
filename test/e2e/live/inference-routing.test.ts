@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getSandbox } from "../../../src/lib/state/registry.ts";
+import { normalizeNativeCustomProviderAttachment } from "../../../src/lib/inference/native-custom/index.ts";
+import {
+  buildHttpsPinRouteLoopbackBaseUrl,
+  computeHttpsPinRouteId,
+} from "../../../src/lib/inference/https-pin-runtime.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,6 +15,7 @@ import path from "node:path";
 
 import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+  CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -34,6 +42,7 @@ import {
   expectOpenAiChatThroughSandbox,
   hasRawNodeStackTrace,
   inferenceSandboxName,
+  nativeCustomChatCommand,
   onboardSandbox,
   redactedResultText,
   requireLivePrerequisites,
@@ -814,13 +823,13 @@ test(
 test(
   "TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)",
   {
-    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    timeout: CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm live inference prerequisites",
         "clear the HTTPS pin sandbox",
         "start the public HTTPS compatible endpoint",
-        "onboard with the placeholder endpoint",
+        "onboard the native HTTPS endpoint",
         "switch to the DNS-backed HTTPS endpoint",
         "verify pinned route isolation and DNS rebinding",
         "verify private redirect rejection",
@@ -876,22 +885,17 @@ test(
         "a real chat completion round-trips through the pinned TLS connection to the public endpoint",
         "a DNS rebind of the upstream hostname after inference set does not redirect adapter traffic",
         "an upstream redirect to a private target is rejected without relaying Location or reaching the target",
+        "a fresh native agent turn succeeds after stop/start using the saved attachment",
+        "unapproved executables and detached attachments cannot authorize an upstream request",
+        "selected detach/delete leaves an independently attached peer working",
+        "destroy removes the owned provider and HTTPS route",
       ],
       endpointUrl,
       model,
     });
-    // Onboarding's own SSRF preflight (assertEndpointResolvesPublic) only
-    // rejects private/internal addresses; it does not fail closed on
-    // DNS-backed HTTPS the way the HTTPS Pin Runtime adapter's call site does,
-    // and onboarding never wires that adapter itself (only
-    // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
-    // the `inference set --endpoint-url` path). Onboard with a disposable
-    // plain-HTTP placeholder endpoint first -- the same shape TC-INF-09 already
-    // onboards successfully with -- then switch to the DNS-backed HTTPS
-    // endpoint through `inference set --endpoint-url`, the actual #6141 call
-    // site this test exercises.
-    // Advertise localhost so onboarding exercises its host-bridge rewrite, but
-    // listen beyond host loopback so the resulting sandbox route can reach it.
+    // Keep a private sink solely for the redirect-denial proof. Fresh hosted
+    // onboarding below exercises the native provider instead of migrating the
+    // existing host-local placeholder contract covered by TC-INF-09.
     const placeholder = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "placeholder",
@@ -904,26 +908,26 @@ test(
       requireAuthModels: true,
     });
     cleanup.add("close https-pin onboarding placeholder endpoint", () => placeholder.close());
-    progress.phase("onboard with the placeholder endpoint");
+    progress.phase("onboard the native HTTPS endpoint");
     const onboard = await onboardSandbox(
       artifacts,
       sandboxName,
       {
         COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_ENDPOINT_URL: placeholder.baseUrl,
+        NEMOCLAW_ENDPOINT_URL: endpointUrl,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PREFERRED_API: "openai-completions",
         NEMOCLAW_PROVIDER: "custom",
       },
       [apiKey],
-      "tc-inf-11-onboard-https-pin-placeholder",
+      "tc-inf-11-onboard-native-https-pin",
       progress,
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
     await captureOpenClawPairingDiagnosticsAfterFailedOnboard(onboard, sandbox, sandboxName, [
       apiKey,
     ]);
-    expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");
+    expectOnboardSuccess(onboard, "TC-INF-11 native https-pin endpoint onboard");
     await approveOpenClawAdminScope(
       host,
       sandbox,
@@ -963,6 +967,14 @@ test(
       inferenceSet.exitCode,
       `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,
     ).toBe(0);
+    const registered = getSandbox(sandboxName)!;
+    const receipt = normalizeNativeCustomProviderAttachment(
+      registered?.nativeCustomProviderAttachment,
+      sandboxName,
+    )!;
+    expect(receipt, "Fresh HTTPS onboarding must publish native authority").toBeDefined();
+    expect(receipt.transport?.kind).toBe("https-pin");
+    expect(registered.gatewayName).toBe(receipt.transport?.gatewayName);
     progress.phase("verify pinned route isolation and DNS rebinding");
     // OpenShell's own network-policy view is a second, independent witness:
     // it must never learn the real upstream hostname either, only the local
@@ -977,12 +989,8 @@ test(
     expect(policy.exitCode, policyText).toBe(0);
     expect(policyText).not.toContain(endpointHostname);
     const sandboxRequestOffset = fake.requests().length;
-    // OpenShell 0.0.85 refreshes the sandbox-side inference bundle every five
-    // seconds. Because this switch intentionally keeps the same provider/model
-    // identity while replacing only its endpoint binding, an immediate request
-    // can still use the placeholder route cached before `inference set`. Poll
-    // through two refresh intervals, but accept success only after the real
-    // pinned upstream records the authenticated request.
+    // Poll only the read-only request and require authenticated traffic at
+    // the real pinned upstream; provider identity alone cannot prove routing.
     let routeProbeAttempt = 0;
     await expect
       .poll(
@@ -993,7 +1001,8 @@ test(
             sandboxName,
             model,
             [apiKey],
-            `https-pin-endpoint-inference-local-chat-${routeProbeAttempt}`,
+            `https-pin-endpoint-native-chat-${routeProbeAttempt}`,
+            receipt,
           );
           return fake
             .requests()
@@ -1008,6 +1017,199 @@ test(
         { interval: 5_000, timeout: 11_000 },
       )
       .toBe(true);
+    const stopped = await runNemoclawCli([sandboxName, "stop"], {
+      artifacts,
+      artifactName: "tc-inf-11-stop-native",
+      env: buildAvailabilityProbeEnv(),
+      progress,
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    });
+    expect(stopped.exitCode, redactedResultText(stopped)).toBe(0);
+    const started = await runNemoclawCli([sandboxName, "start"], {
+      artifacts,
+      artifactName: "tc-inf-11-start-native-p1",
+      env: buildAvailabilityProbeEnv(),
+      progress,
+      redactionValues: [apiKey],
+      timeoutMs: 240_000,
+    });
+    expect(started.exitCode, redactedResultText(started)).toBe(0);
+    const selected = await runNemoclawCli([sandboxName, "inference", "get", "--json"], {
+      artifacts,
+      artifactName: "tc-inf-11-native-readback",
+      env: buildAvailabilityProbeEnv(),
+      progress,
+      redactionValues: [apiKey],
+      timeoutMs: 30_000,
+    });
+    expect(selected.exitCode, redactedResultText(selected)).toBe(0);
+    expect(JSON.parse(selected.stdout)).toMatchObject({
+      provider: "compatible-endpoint",
+      model,
+    });
+    const status = await runNemoclawCli([sandboxName, "status"], {
+      artifacts,
+      artifactName: "tc-inf-11-native-status",
+      env: buildAvailabilityProbeEnv(),
+      progress,
+      redactionValues: [apiKey],
+      timeoutMs: 60_000,
+    });
+    expect(status.exitCode, redactedResultText(status)).toBe(0);
+    const nativeTurn = await sandbox.exec(
+      sandboxName,
+      [
+        "nemoclaw-start",
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--session-id",
+        `native-custom-p1-${Date.now()}`,
+        "-m",
+        "Reply with only: PONG",
+      ],
+      {
+        artifactName: "tc-inf-11-fresh-native-agent-after-start",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 240_000,
+      },
+    );
+    expect(nativeTurn.exitCode, resultText(nativeTurn)).toBe(0);
+    expect(parseOpenClawAgentText(nativeTurn.stdout)).toMatch(/PONG/u);
+    const peerName = inferenceSandboxName("e2e-https-peer");
+    cleanup.add(`strict native HTTPS peer cleanup for ${peerName}`, () =>
+      cleanupSandbox(host, sandbox, peerName, { strict: true }),
+    );
+    await cleanupSandbox(host, sandbox, peerName);
+    const peerOnboard = await onboardSandbox(
+      artifacts,
+      peerName,
+      {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_ENDPOINT_URL: endpointUrl,
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      [apiKey],
+      "tc-inf-11-onboard-native-peer",
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(peerOnboard, "TC-INF-11 native HTTPS peer onboard");
+    const peerReceipt = normalizeNativeCustomProviderAttachment(
+      getSandbox(peerName)?.nativeCustomProviderAttachment,
+      peerName,
+    )!;
+    expect(peerReceipt, "Peer onboarding must publish native authority").toBeDefined();
+    expect(peerReceipt.providerName).not.toBe(receipt.providerName);
+    expect(peerReceipt.providerId).not.toBe(receipt.providerId);
+    expect(peerReceipt.endpointUrl).not.toBe(receipt.endpointUrl);
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      peerName,
+      model,
+      [apiKey],
+      "https-pin-native-peer-before-detach",
+      peerReceipt,
+    );
+    const securityPayload = JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "Reply with only: PONG" }],
+      max_tokens: 50,
+    });
+    const copiedCurl = await sandbox.exec(
+      sandboxName,
+      ["sh", "-c", 'cp "$(command -v curl)" /tmp/nemoclaw-unapproved-curl'],
+      {
+        artifactName: "tc-inf-11-copy-unapproved-client",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(copiedCurl.exitCode, resultText(copiedCurl)).toBe(0);
+    const deniedRequestOffset = fake.requests().length;
+    const unapproved = await sandbox.exec(
+      sandboxName,
+      nativeCustomChatCommand(
+        receipt,
+        securityPayload,
+        ["--fail"],
+        "/tmp/nemoclaw-unapproved-curl",
+      ),
+      {
+        artifactName: "tc-inf-11-unapproved-executable-denied",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 90_000,
+      },
+    );
+    expect(unapproved.exitCode, resultText(unapproved)).not.toBe(0);
+    expect(fake.requests()).toHaveLength(deniedRequestOffset);
+    let restoreAttachment: () => Promise<void> = async () => {
+      const restored = await sandbox.openshell(
+        ["sandbox", "provider", "attach", sandboxName, receipt.providerName],
+        {
+          artifactName: "tc-inf-11-cleanup-restore-provider",
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(restored.exitCode, resultText(restored)).toBe(0);
+    };
+    cleanup.add(`restore pending native attachment for ${sandboxName}`, () => restoreAttachment());
+    const detach = await sandbox.openshell(
+      ["sandbox", "provider", "detach", sandboxName, receipt.providerName],
+      {
+        artifactName: "tc-inf-11-detach-native-provider",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(detach.exitCode, resultText(detach)).toBe(0);
+    const revokedRequestOffset = fake.requests().length;
+    const revoked = await sandbox.exec(
+      sandboxName,
+      nativeCustomChatCommand(receipt, securityPayload, ["--fail"]),
+      {
+        artifactName: "tc-inf-11-detached-credential-denied",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 90_000,
+      },
+    );
+    expect(revoked.exitCode, resultText(revoked)).not.toBe(0);
+    expect(fake.requests()).toHaveLength(revokedRequestOffset);
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      peerName,
+      model,
+      [apiKey],
+      "https-pin-native-peer-after-selected-detach",
+      peerReceipt,
+    );
+    const attach = await sandbox.openshell(
+      ["sandbox", "provider", "attach", sandboxName, receipt.providerName],
+      {
+        artifactName: "tc-inf-11-restore-native-provider",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(attach.exitCode, resultText(attach)).toBe(0);
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      sandboxName,
+      model,
+      [apiKey],
+      "https-pin-native-after-reattach",
+      receipt,
+    );
+    restoreAttachment = async () => undefined;
     // The assertions above only prove the *initial* `inference set` reached
     // the real target. They do not prove the adapter is resistant to a DNS
     // record changing after the route is already pinned -- the exact
@@ -1035,6 +1237,7 @@ test(
       model,
       [apiKey],
       "https-pin-endpoint-dns-rebinding-chat",
+      receipt,
     );
     expect(
       fake
@@ -1059,21 +1262,12 @@ test(
     });
     const redirect = await sandbox.exec(
       sandboxName,
-      [
-        "curl",
-        "-sS",
+      nativeCustomChatCommand(receipt, redirectPayload, [
         "--include",
         "--location",
         "--max-redirs",
         "3",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        redirectPayload,
-      ],
+      ]),
       {
         artifactName: "tc-inf-11-private-redirect-rejection",
         env: buildAvailabilityProbeEnv(),
@@ -1087,5 +1281,76 @@ test(
     expect(redirectText).toContain("redirect_blocked");
     expect(redirectText.toLowerCase()).not.toContain("location:");
     expect(placeholder.requests()).toHaveLength(privateTargetRequestOffset);
+    const routeId = computeHttpsPinRouteId(
+      registered.gatewayName!,
+      "compatible-endpoint",
+      endpointUrl,
+      sandboxName,
+    );
+    const localRoute = `${buildHttpsPinRouteLoopbackBaseUrl(routeId)}/v1/chat/completions`;
+    const routeBeforeDestroy = await host.command("curl", ["-sS", "--include", localRoute], {
+      artifactName: "tc-inf-11-owned-route-before-destroy",
+      timeoutMs: 30_000,
+    });
+    expect(routeBeforeDestroy.exitCode, resultText(routeBeforeDestroy)).toBe(0);
+    expect(routeBeforeDestroy.stdout).toMatch(/HTTP\/1\.[01] 401/u);
+    const destroyed = await runNemoclawCli([sandboxName, "destroy", "--yes"], {
+      artifacts,
+      artifactName: "tc-inf-11-destroy-native",
+      env: buildAvailabilityProbeEnv(),
+      progress,
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    });
+    expect(destroyed.exitCode, redactedResultText(destroyed)).toBe(0);
+    const providerAfterDestroy = await sandbox.openshell(
+      ["provider", "get", receipt.providerName],
+      {
+        artifactName: "tc-inf-11-provider-absent-after-destroy",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(providerAfterDestroy.exitCode, resultText(providerAfterDestroy)).not.toBe(0);
+    expect(resultText(providerAfterDestroy)).toMatch(
+      /\bNotFound\b|\bnot\s+found\b|does\s+not\s+exist/iu,
+    );
+    const routeAfterDestroy = await host.command("curl", ["-sS", "--include", localRoute], {
+      artifactName: "tc-inf-11-owned-route-absent-after-destroy",
+      timeoutMs: 30_000,
+    });
+    expect(routeAfterDestroy.exitCode, resultText(routeAfterDestroy)).toBe(0);
+    expect(routeAfterDestroy.stdout).toMatch(/HTTP\/1\.[01] 404/u);
+    expect(routeAfterDestroy.stdout).toContain("route_not_found");
+    fake.setChatRedirect(null);
+    await expectOpenAiChatThroughSandbox(
+      sandbox,
+      peerName,
+      model,
+      [apiKey],
+      "https-pin-native-peer-after-selected-destroy",
+      peerReceipt,
+    );
+    await cleanupSandbox(host, sandbox, peerName, { strict: true });
+    const peerProviderAfterDestroy = await sandbox.openshell(
+      ["provider", "get", peerReceipt.providerName],
+      {
+        artifactName: "tc-inf-11-peer-provider-absent-after-destroy",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(peerProviderAfterDestroy.exitCode, resultText(peerProviderAfterDestroy)).not.toBe(0);
+    expect(resultText(peerProviderAfterDestroy)).toMatch(
+      /\bNotFound\b|\bnot\s+found\b|does\s+not\s+exist/iu,
+    );
+    await artifacts.target.complete({
+      id: "https-pin-runtime-adapter-dns-backed-endpoint",
+      sandboxName,
+      peerName,
+      profileId: receipt.profileId,
+      providerId: receipt.providerId,
+      peerProviderId: peerReceipt.providerId,
+    });
   },
 );

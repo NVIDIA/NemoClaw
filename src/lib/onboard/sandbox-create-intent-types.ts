@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxHostMount } from "../state/registry/types";
+import type { NativeCustomProviderAttachment } from "../inference/native-custom";
 import type { NativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
@@ -49,6 +50,7 @@ export type SandboxCreateIntent = {
   readonly sandboxName: string;
   readonly inferenceProvider: string | null;
   readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  readonly nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
   readonly activeMessagingChannels: readonly string[];
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
   readonly reusableMessagingProviders: readonly string[];
@@ -71,6 +73,7 @@ export type ResolveSandboxCreateIntentInput = {
   sandboxName: string;
   inferenceProvider?: string | null;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
   hostLocalInferenceRouteOnly?: boolean;
   channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;

@@ -31,6 +31,13 @@ export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
 
+// The native HTTPS lifecycle owns two fresh sandboxes plus restart, denial,
+// revocation and deletion. Keep both onboarding deadlines and lifecycle headroom.
+export const CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS =
+  2 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + 15 * MINUTE_MS;
+export const CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES =
+  (CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
+
 // The typed DCode target runs onboarding, its invalid-credential lifecycle,
 // state validation, and the ordered cloud checks. Those checks can consume 96
 // minutes of command deadlines before automatic config export; retain the same

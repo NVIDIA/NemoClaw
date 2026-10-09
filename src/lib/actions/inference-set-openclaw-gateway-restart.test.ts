@@ -109,6 +109,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
@@ -255,6 +264,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
@@ -318,6 +336,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
@@ -379,6 +406,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",

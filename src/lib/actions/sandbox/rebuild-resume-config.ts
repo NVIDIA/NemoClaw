@@ -9,6 +9,11 @@
 // env or global session. Extracted from rebuild.ts so the trust-boundary logic
 // is auditable on its own (PRA-5).
 
+import {
+  normalizeNativeCustomProviderAttachment,
+  type NativeCustomProviderAttachment,
+} from "../../inference/native-custom";
+import { getSandboxInferenceConfig } from "../../inference/config";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import {
@@ -47,6 +52,7 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
  */
 export interface RebuildResumeConfig {
   readonly nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  readonly nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
   readonly agent: string | null;
   readonly provider: string;
   readonly model: string;
@@ -249,7 +255,29 @@ export function prepareRebuildResumeConfig(
     bail("Malformed native NVIDIA provider attachment; sandbox is untouched");
     return null;
   }
+  const nativeCustomProviderAttachment = normalizeNativeCustomProviderAttachment(
+    sb.nativeCustomProviderAttachment,
+    sandboxName,
+  );
+  if (sb.nativeCustomProviderAttachment !== undefined) {
+    if (!nativeCustomProviderAttachment || nativeNvidiaProviderAttachment) {
+      bail("Malformed or conflicting native custom provider attachment; sandbox is untouched");
+      return null;
+    }
+    try {
+      getSandboxInferenceConfig(
+        trustedSelection.model,
+        trustedSelection.provider,
+        trustedSelection.preferredInferenceApi,
+        nativeCustomProviderAttachment,
+      );
+    } catch {
+      bail("Native custom inference selection disagrees with its authority; sandbox is untouched");
+      return null;
+    }
+  }
   return {
+    ...(nativeCustomProviderAttachment ? { nativeCustomProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     agent: rebuildAgent,
     provider: trustedSelection.provider,

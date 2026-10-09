@@ -232,9 +232,9 @@ def _contains_other_platform_secret(value: str, platform: str) -> bool:
 
 def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
     if name == "NEMOCLAW_ATTACHED_PROVIDER_API_KEY":
-        if value != os.environ.get("NVIDIA_INFERENCE_API_KEY"):
+        name = {"compatible-endpoint": "COMPATIBLE_API_KEY", "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY"}.get(_managed_upstream_provider(), "NVIDIA_INFERENCE_API_KEY")
+        if value != os.environ.get(name):
             return False
-        name = "NVIDIA_INFERENCE_API_KEY"
     if name == "OPENSHELL_TLS_KEY" or not _MCP_ENV_NAME.fullmatch(name):
         return False
     canonical = f"{_OPENSHELL_ENV_PLACEHOLDER_PREFIX}{name}"
@@ -242,6 +242,8 @@ def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
         rf"{re.escape(_OPENSHELL_ENV_PLACEHOLDER_PREFIX)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(name)}",
         value,
     )
+    if name in {"COMPATIBLE_API_KEY", "COMPATIBLE_ANTHROPIC_API_KEY"}:
+        return generation_scoped is not None
     return value == canonical or generation_scoped is not None
 
 
@@ -1080,12 +1082,17 @@ def managed_inference_base_url() -> str:
 
 def managed_inference_api_key(base_url: str) -> str:
     """Select the non-secret credential for the validated image-owned route."""
-    if base_url != "https://integrate.api.nvidia.com/v1":
+    if urlsplit(base_url).hostname == "inference.local":
         return "nemoclaw-managed-inference"
-    name = "NVIDIA_INFERENCE_API_KEY"
+    upstream = _managed_upstream_provider()
+    name = {"compatible-endpoint": "COMPATIBLE_API_KEY", "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY"}.get(upstream)
+    if name is None:
+        if base_url != "https://integrate.api.nvidia.com/v1":
+            return "nemoclaw-managed-inference"
+        name = "NVIDIA_INFERENCE_API_KEY"
     value = os.environ.get(name, "")
     if not _is_openshell_placeholder_for_name(name, value):
-        raise RuntimeError("native NVIDIA inference requires an OpenShell credential placeholder")
+        raise RuntimeError("native inference requires its OpenShell credential placeholder")
     return value
 
 
@@ -1507,8 +1514,9 @@ def assert_safe_runtime() -> None:
     _assert_safe_auth_state()
     # Whole-home rebuild restores can retain the old native api_key_env field.
     # Remove this alias when supported stored configs have retired that field.
-    native_placeholder = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
-    if _is_openshell_placeholder_for_name("NVIDIA_INFERENCE_API_KEY", native_placeholder):
+    native_key = {"compatible-endpoint": "COMPATIBLE_API_KEY", "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY"}.get(_managed_upstream_provider(), "NVIDIA_INFERENCE_API_KEY")
+    native_placeholder = os.environ.get(native_key, "")
+    if _is_openshell_placeholder_for_name(native_key, native_placeholder):
         os.environ["NEMOCLAW_ATTACHED_PROVIDER_API_KEY"] = native_placeholder
     else:
         os.environ.pop("NEMOCLAW_ATTACHED_PROVIDER_API_KEY", None)

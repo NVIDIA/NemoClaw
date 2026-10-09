@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retireNativeCustomProviders } from "../../inference/native-custom/cleanup";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -1092,6 +1093,16 @@ async function destroySandboxUnlocked(
   const deleteSucceededOrAlreadyGone = deleteResult.kind !== "failed" || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
+  }
+  if (deleteSucceededOrAlreadyGone && sandbox?.nativeCustomProviderAttachment !== undefined) {
+    try {
+      await retireNativeCustomProviders({ gatewayName: cleanupGatewayName, sandboxName });
+    } catch {
+      preparedManagedLlamaCppCleanup?.abort();
+      throw new Error(
+        "Sandbox deletion was confirmed, but native custom provider cleanup could not be verified. Ownership authority and registry state are retained; retry destroy after reconciling gateway access.",
+      );
+    }
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     abortPreparedCleanupOnError(() =>

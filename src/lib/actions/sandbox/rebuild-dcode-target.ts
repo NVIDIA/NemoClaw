@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeCustomProviderAttachment,
+  type NativeCustomProviderAttachment,
+} from "../../inference/native-custom";
 import { GATEWAY_PORT } from "../../core/ports";
 import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import {
@@ -14,7 +18,9 @@ export const DCODE_AGENT_NAME = "langchain-deepagents-code";
 export type DcodeRebuildRegistryEntry = SandboxGatewayBinding & {
   agent?: string | null;
   dashboardPort?: number | null;
+  name?: string;
   nativeNvidiaProviderAttachment?: unknown;
+  nativeCustomProviderAttachment?: unknown;
 };
 
 export type DcodeRebuildResumeConfig = {
@@ -25,6 +31,7 @@ export type DcodeRebuildResumeConfig = {
 };
 
 export type ResolvedDcodeRebuildTarget = {
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
   nativeProvider?: boolean;
   agent: typeof DCODE_AGENT_NAME;
   gatewayName: string;
@@ -64,7 +71,14 @@ export function resolveDcodeRebuildTarget(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${gatewayPort}.`,
     );
   }
+  const custom = normalizeNativeCustomProviderAttachment(
+    entry.nativeCustomProviderAttachment,
+    entry.name,
+  );
+  if (entry.nativeCustomProviderAttachment !== undefined && !custom)
+    throw new Error("DCode rebuild native custom authority is malformed.");
   return {
+    ...(custom ? { nativeCustomProviderAttachment: custom } : {}),
     agent: DCODE_AGENT_NAME,
     gatewayName,
     gatewayPort,

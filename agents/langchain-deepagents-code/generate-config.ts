@@ -161,11 +161,20 @@ function providerConfigLines(
   model: string,
   baseUrl: string,
   reasoningEffort: ReasoningEffort | null,
+  upstreamProvider: string,
 ): string[] {
+  const customKey =
+    upstreamProvider === "compatible-endpoint"
+      ? "COMPATIBLE_API_KEY"
+      : upstreamProvider === "compatible-anthropic-endpoint"
+        ? "COMPATIBLE_ANTHROPIC_API_KEY"
+        : null;
   const apiKeyEnv =
     baseUrl === NVIDIA_HOSTED_NATIVE_ENDPOINT
       ? ATTACHED_PROVIDER_API_KEY_ENV
-      : MANAGED_INFERENCE_API_KEY_ENV;
+      : customKey && new URL(baseUrl).hostname !== "inference.local"
+        ? customKey
+        : MANAGED_INFERENCE_API_KEY_ENV;
   return [
     `[models.providers.${provider}]`,
     `models = ${tomlArray([model])}`,
@@ -198,7 +207,13 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
     "[models]",
     `default = ${tomlString(defaultModel)}`,
     "",
-    ...providerConfigLines(provider, model, settings.baseUrl, settings.reasoningEffort),
+    ...providerConfigLines(
+      provider,
+      model,
+      settings.baseUrl,
+      settings.reasoningEffort,
+      settings.upstreamProvider,
+    ),
     "",
     "[update]",
     "check = false",

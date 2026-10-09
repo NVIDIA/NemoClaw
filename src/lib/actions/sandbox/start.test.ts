@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../../inference/native-custom";
+import {
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../../inference/native-nvidia";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -748,5 +756,141 @@ describe("startSandbox native lifecycle", () => {
 
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(delayInferenceInvocationProbe).not.toHaveBeenCalled();
+  });
+});
+
+describe("start inference attachment authority (#12636)", () => {
+  async function customReceipt() {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "my-sandbox",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-responses",
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    return customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "immutable-provider",
+    });
+  }
+
+  it("carries verified custom endpoint authority into the restart request", async () => {
+    const receipt = await customReceipt();
+    const verify = vi.fn(async () => undefined);
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    const h = harness({ verifyNativeCustomAttachment: verify, probeInferenceInvocation: probe });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        provider: "compatible-endpoint",
+        model: "model",
+        gatewayName: "nemoclaw-19080",
+        preferredInferenceApi: "openai-responses",
+        nativeCustomProviderAttachment: receipt,
+      }),
+    );
+    expect(await startSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
+    expect(verify).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      sandboxName: "my-sandbox",
+      expected: receipt,
+    });
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeCustomProviderAttachment: receipt }),
+      {},
+      95_000,
+    );
+    expect(verify.mock.invocationCallOrder[0]).toBeLessThan(probe.mock.invocationCallOrder[0]);
+  });
+
+  it("does not invoke inference when attachment authority cannot be verified", async () => {
+    const receipt = await customReceipt();
+    const probe = vi.fn();
+    const h = harness({
+      verifyNativeCustomAttachment: vi.fn(async () => {
+        throw new Error("untrusted provider detail");
+      }),
+      probeInferenceInvocation: probe,
+    });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        provider: "compatible-endpoint",
+        model: "model",
+        preferredInferenceApi: "openai-responses",
+        nativeCustomProviderAttachment: receipt,
+      }),
+    );
+    expect(await startSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 1 });
+    expect(probe).not.toHaveBeenCalled();
+    expect(h.log.mock.calls.flat().join(" ")).not.toContain("untrusted provider detail");
+  });
+
+  it("rejects another sandbox's valid receipt before observation or invocation", async () => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "other-sandbox",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-completions",
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "other-id",
+    });
+    const verify = vi.fn();
+    const probe = vi.fn();
+    const h = harness({ verifyNativeCustomAttachment: verify, probeInferenceInvocation: probe });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        provider: "compatible-endpoint",
+        model: "model",
+        nativeCustomProviderAttachment: receipt,
+      }),
+    );
+    expect(await startSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 1 });
+    expect(verify).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed saved receipt without falling back to the shared route", async () => {
+    const receipt = await customReceipt();
+    const verify = vi.fn();
+    const probe = vi.fn();
+    const h = harness({ verifyNativeCustomAttachment: verify, probeInferenceInvocation: probe });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        provider: "compatible-endpoint",
+        model: "model",
+        nativeCustomProviderAttachment: { ...receipt, endpointUrl: "https://other.example.com" },
+      }),
+    );
+    expect(await startSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 1 });
+    expect(verify).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("preserves the native NVIDIA restart path after verifying its receipt", async () => {
+    const receipt = {
+      schemaVersion: 1 as const,
+      profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      providerId: "nvidia-immutable",
+    } as const;
+    const verify = vi.fn(async () => undefined);
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    const h = harness({ verifyNativeNvidiaAttachment: verify, probeInferenceInvocation: probe });
+    h.getSandbox.mockReturnValue(
+      sandbox({ provider: "nvidia-prod", model: "model", nativeNvidiaProviderAttachment: receipt }),
+    );
+    expect(await startSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeProvider: true }),
+      {},
+      95_000,
+    );
   });
 });

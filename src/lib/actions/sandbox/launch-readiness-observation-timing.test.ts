@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../../inference/native-custom";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -202,6 +206,54 @@ describe("launch readiness observation timing", () => {
         model: "nvidia/nemotron-3-super-120b-a12b",
         nativeProvider: true,
       }),
+    );
+  });
+
+  it("publishes custom native readiness using its selected attachment and endpoint authority (#12636)", async () => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-completions",
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "custom-provider-id",
+    });
+    const customEntry: SandboxEntry = {
+      ...entry(),
+      provider: "compatible-endpoint",
+      model: "custom-model",
+      endpointUrl: receipt.endpointUrl,
+      credentialEnv: receipt.credentialEnv,
+      preferredInferenceApi: receipt.api,
+      nativeCustomProviderAttachment: receipt,
+    };
+    const currentDeps = publicationDeps(vi.fn(), (_name, _gateway, _port, _epoch, identity) =>
+      lease(identity),
+    );
+    const capture = vi.fn(currentDeps.capture!);
+    const verify = vi.fn(async () => undefined);
+    const invoke = vi.fn(async () => ({ ok: true }) as const);
+    currentDeps.getSandbox = () => customEntry;
+    currentDeps.capture = capture;
+    currentDeps.verifyNativeCustomAttachment = verify;
+    currentDeps.inferenceInvocationProbe = invoke;
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toEqual({ kind: "published" });
+    expect(capture.mock.calls.some(([args]) => args[0] === "inference")).toBe(false);
+    expect(verify).toHaveBeenCalledWith({
+      sandboxName: SANDBOX,
+      gatewayName: GATEWAY,
+      expected: receipt,
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeCustomProviderAttachment: receipt, model: "custom-model" }),
     );
   });
 

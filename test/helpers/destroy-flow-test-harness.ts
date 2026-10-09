@@ -842,3 +842,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     withModelRouterPortLifecycleLockSpy,
   };
 }
+
+/** Use the existing destroy-module loader so the spy observes the consumer's module identity. */
+export function spyOnNativeCustomDestroyCleanup(
+  action: typeof import("../../src/lib/inference/native-custom/cleanup").retireNativeCustomProviders,
+) {
+  const cleanup = requireSource(
+    "../../inference/native-custom/cleanup.js",
+  ) as typeof import("../../src/lib/inference/native-custom/cleanup");
+  return vi.spyOn(cleanup, "retireNativeCustomProviders").mockImplementation(action);
+}

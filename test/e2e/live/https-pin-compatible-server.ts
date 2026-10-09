@@ -12,6 +12,7 @@ import {
   writeJsonResponse as jsonResponse,
   listenServer as listenOnRandomPort,
   readRequestBody,
+  writeSseEvents,
 } from "../fixtures/http-protocol.ts";
 import type { StartedHttpServer } from "./mcp-bridge-servers.ts";
 
@@ -124,6 +125,36 @@ export async function startFakeHttpsCompatibleServer(options: {
       if (chatRedirectLocation) {
         res.writeHead(302, { Location: chatRedirectLocation });
         res.end();
+        return;
+      }
+      const payload = JSON.parse(body || "{}") as { stream?: boolean };
+      if (payload.stream) {
+        const chunk = {
+          id: "chatcmpl-https-pin",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: options.model,
+        };
+        writeSseEvents(
+          res,
+          [
+            [
+              undefined,
+              {
+                ...chunk,
+                choices: [
+                  {
+                    index: 0,
+                    delta: { role: "assistant", content: chatContent },
+                    finish_reason: null,
+                  },
+                ],
+              },
+            ],
+            [undefined, { ...chunk, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }],
+          ],
+          true,
+        );
         return;
       }
       jsonResponse(res, 200, {

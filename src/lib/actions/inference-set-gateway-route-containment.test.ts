@@ -274,7 +274,13 @@ describe("runtime shared gateway route containment", () => {
   });
 
   it("refreshes peers after async endpoint validation before route mutation (#6315)", async () => {
-    const alpha = entry("alpha");
+    const alpha = entry("alpha", {
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "http://alpha.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
     const peer = entry("late-peer", {
       provider: "compatible-endpoint",
       model: "custom/model",
@@ -641,7 +647,14 @@ describe("runtime shared gateway route containment", () => {
     const deps = createDeps({
       config: { model: {} },
       entries: [
-        entry("hermes", { agent: "hermes", provider: "hermes-provider", model: "old-model" }),
+        entry("hermes", {
+          agent: "hermes",
+          provider: "compatible-endpoint",
+          model: "old-model",
+          endpointUrl: "https://old-compatible.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+        }),
         entry("stopped-hermes-peer", {
           agent: "hermes",
           provider: "compatible-anthropic-endpoint",

@@ -7,7 +7,7 @@ export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
   name: string;
-  api_key: typeof HERMES_PROXY_REWRITE_SENTINEL;
+  api_key: string;
   discover_models: true;
   api?: string;
   base_url?: string;
@@ -26,7 +26,7 @@ export type HermesManagedRouting = {
     default: string;
     provider: "custom";
     base_url: string;
-    api_key: typeof HERMES_PROXY_REWRITE_SENTINEL;
+    api_key: string;
     api_mode?: string;
     context_length?: number;
   };
@@ -40,6 +40,7 @@ export type HermesManagedRoute = {
   upstreamProvider: string;
   inferenceApi: string;
   contextWindow?: number | null;
+  credentialReference?: string;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -79,6 +80,30 @@ export function applyHermesManagedRoute(
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
+  const nativeCustom =
+    new URL(route.baseUrl).hostname !== "inference.local" &&
+    ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(route.upstreamProvider);
+  let apiKey = nativeCustom
+    ? `sk-OPENSHELL-RESOLVE-ENV-${route.upstreamProvider === "compatible-endpoint" ? "COMPATIBLE_API_KEY" : "COMPATIBLE_ANTHROPIC_API_KEY"}`
+    : HERMES_PROXY_REWRITE_SENTINEL;
+  if (route.credentialReference !== undefined) {
+    const key =
+      route.upstreamProvider === "compatible-endpoint"
+        ? "COMPATIBLE_API_KEY"
+        : "COMPATIBLE_ANTHROPIC_API_KEY";
+    if (
+      !nativeCustom ||
+      !new RegExp(`^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${key}$`, "u").test(
+        route.credentialReference,
+      )
+    )
+      throw new Error(
+        "Hermes native custom inference requires its matching issued credential reference.",
+      );
+    apiKey =
+      "sk-OPENSHELL-RESOLVE-ENV-" +
+      route.credentialReference.slice("openshell:resolve:env:".length);
+  }
   const previousUpstream = isObjectRecord(config._nemoclaw_upstream)
     ? config._nemoclaw_upstream
     : {};
@@ -89,7 +114,7 @@ export function applyHermesManagedRoute(
     default: route.model,
     provider: "custom",
     base_url: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
   };
   if (apiMode) modelConfig.api_mode = apiMode;
   if (route.contextWindow !== null && route.contextWindow !== undefined) {
@@ -100,7 +125,7 @@ export function applyHermesManagedRoute(
   const providerConfig: Record<string, unknown> = {
     name: providerName,
     api: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
     default_model: route.model,
     discover_models: true,
   };
@@ -109,7 +134,7 @@ export function applyHermesManagedRoute(
   const customProvider: Record<string, unknown> = {
     name: providerName,
     base_url: route.baseUrl,
-    api_key: HERMES_PROXY_REWRITE_SENTINEL,
+    api_key: apiKey,
     discover_models: true,
   };
   if (apiMode) customProvider.api_mode = apiMode;

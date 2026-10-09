@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { normalizeInferenceSelection } from "../../inference/selection";
+import { normalizeNativeCustomProviderAttachment } from "../../inference/native-custom";
 import { BUILD_ENDPOINT_URL } from "../../inference/provider-models";
 import {
   normalizeNativeNvidiaProviderAttachment,
@@ -545,6 +546,7 @@ function expectedManagedStartupProfile(entry: ObservedExportRegistry): ManagedSt
     selected.provider,
     selected.model,
     selected.preferredInferenceApi,
+    normalizeNativeCustomProviderAttachment(entry.nativeCustomProviderAttachment, entry.name),
   );
   const projection = EXPORT_AGENT_PROFILE_PROJECTIONS[agent](inference);
   const search = exportWebSearchBinding(entry);
@@ -809,39 +811,86 @@ function classifyManagedStartupProfile(
   return [...findings, ...classifyProfileEquality(profile, supported)];
 }
 
+function nativeCustomEndpointEvidenceMatchesRoute(
+  snapshot: QualifiedExportSnapshot,
+): boolean | null {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence!;
+  if (evidence.source.kind !== "managed-profile") return null;
+  const custom = normalizeNativeCustomProviderAttachment(
+    snapshot.registry.nativeCustomProviderAttachment,
+    snapshot.registry.name,
+  );
+  if (custom)
+    return isDeepStrictEqual(
+      [
+        evidence.source.profileId,
+        evidence.provider.name,
+        evidence.provider.id,
+        inference.provider,
+        inference.api,
+        inference.endpoint,
+        evidence.endpoint,
+        inference.credentialEnv,
+      ],
+      [
+        custom.profileId,
+        custom.providerName,
+        custom.providerId,
+        custom.credentialEnv === "COMPATIBLE_API_KEY"
+          ? "compatible-endpoint"
+          : "compatible-anthropic-endpoint",
+        custom.api,
+        custom.transport?.sourceEndpointUrl ?? custom.endpointUrl,
+        custom.endpointUrl,
+        custom.credentialEnv,
+      ],
+    );
+  return null;
+}
+
+function nativeNvidiaEndpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence!;
+  if (evidence.source.kind !== "managed-profile") return false;
+  const receipt = normalizeNativeNvidiaProviderAttachment(
+    snapshot.registry.nativeNvidiaProviderAttachment,
+  );
+  return (
+    receipt !== undefined &&
+    isDeepStrictEqual(
+      [
+        evidence.source.profileId,
+        evidence.provider.name,
+        evidence.provider.id,
+        inference.provider,
+        inference.api,
+        inference.endpoint,
+        evidence.endpoint,
+        inference.credentialEnv,
+      ],
+      [
+        NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+        receipt.providerName,
+        receipt.providerId,
+        NVIDIA_HOSTED_LOGICAL_PROVIDER,
+        "openai-completions",
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        NVIDIA_HOSTED_NATIVE_ENDPOINT,
+        NVIDIA_HOSTED_CREDENTIAL_ENV,
+      ],
+    )
+  );
+}
+
 function endpointEvidenceMatchesRoute(snapshot: QualifiedExportSnapshot): boolean {
   const { inference } = snapshot;
   const evidence = inference.endpointEvidence;
   if (!evidence) return false;
   if (evidence.source.kind === "managed-profile") {
-    const receipt = normalizeNativeNvidiaProviderAttachment(
-      snapshot.registry.nativeNvidiaProviderAttachment,
-    );
-    return (
-      receipt !== undefined &&
-      isDeepStrictEqual(
-        [
-          evidence.source.profileId,
-          evidence.provider.name,
-          evidence.provider.id,
-          inference.provider,
-          inference.api,
-          inference.endpoint,
-          evidence.endpoint,
-          inference.credentialEnv,
-        ],
-        [
-          NVIDIA_HOSTED_NATIVE_PROFILE_ID,
-          receipt.providerName,
-          receipt.providerId,
-          NVIDIA_HOSTED_LOGICAL_PROVIDER,
-          "openai-completions",
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_NATIVE_ENDPOINT,
-          NVIDIA_HOSTED_CREDENTIAL_ENV,
-        ],
-      )
-    );
+    const custom = nativeCustomEndpointEvidenceMatchesRoute(snapshot);
+    if (custom !== null) return custom;
+    return nativeNvidiaEndpointEvidenceMatchesRoute(snapshot);
   }
   if (evidence.source.kind === "builtin-profile") {
     return (
@@ -916,9 +965,9 @@ function validateSandboxIdentity(
 
 function sandboxProviderAttachmentsMatch(snapshot: QualifiedExportSnapshot): boolean {
   const { registry: entry, sandbox, inference } = snapshot;
-  const nativeReceipt = normalizeNativeNvidiaProviderAttachment(
-    entry.nativeNvidiaProviderAttachment,
-  );
+  const nativeReceipt =
+    normalizeNativeCustomProviderAttachment(entry.nativeCustomProviderAttachment, entry.name) ??
+    normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment);
   const inferenceAttachment = nativeReceipt?.providerName ?? inference.provider;
   const additionalProviders = sandbox.providerNames.filter((name) => name !== inferenceAttachment);
   const webSearch = exportWebSearchBinding(entry);
@@ -1238,8 +1287,27 @@ function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): Exp
 
 function expectedEndpointProviderName(snapshot: QualifiedExportSnapshot): string {
   return (
+    normalizeNativeCustomProviderAttachment(
+      snapshot.registry.nativeCustomProviderAttachment,
+      snapshot.registry.name,
+    )?.providerName ??
     normalizeNativeNvidiaProviderAttachment(snapshot.registry.nativeNvidiaProviderAttachment)
-      ?.providerName ?? snapshot.inference.provider
+      ?.providerName ??
+    snapshot.inference.provider
+  );
+}
+
+function requiresSafeExportEndpoint(snapshot: QualifiedExportSnapshot): boolean {
+  const { inference } = snapshot;
+  const evidence = inference.endpointEvidence!;
+  return (
+    inference.topology !== "managed" &&
+    inference.provider !== "ollama-local" &&
+    !normalizeNativeCustomProviderAttachment(
+      snapshot.registry.nativeCustomProviderAttachment,
+      snapshot.registry.name,
+    )?.transport &&
+    !isValidNemoClawInferenceEndpoint(evidence.endpoint)
   );
 }
 
@@ -1257,11 +1325,7 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
   }
   const findings: ExportFinding[] = [];
 
-  if (
-    inference.topology !== "managed" &&
-    inference.provider !== "ollama-local" &&
-    !isValidNemoClawInferenceEndpoint(evidence.endpoint)
-  )
+  if (requiresSafeExportEndpoint(snapshot))
     findings.push(
       finding(
         "source.inference.endpoint",
@@ -1269,7 +1333,11 @@ function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFind
         "The live inference endpoint evidence is invalid or unsafe.",
       ),
     );
-  if (evidence.endpoint !== inference.endpoint)
+  const custom = normalizeNativeCustomProviderAttachment(
+    snapshot.registry.nativeCustomProviderAttachment,
+    snapshot.registry.name,
+  );
+  if (evidence.endpoint !== (custom?.endpointUrl ?? inference.endpoint))
     findings.push(
       finding(
         "spec.inferenceProviders[].endpoint",

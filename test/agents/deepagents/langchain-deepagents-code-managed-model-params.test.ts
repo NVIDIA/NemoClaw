@@ -170,3 +170,57 @@ print("native-managed-constructor-placeholder-ok")
     expect(reportedResult).toBeGreaterThan(resolverContract);
   });
 });
+
+describe("native custom DCode constructor (#12636)", () => {
+  it("uses the issued custom credential and preserves the legacy shared route", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const baseUrlFile = path.join(tempDir, "managed-inference-base-url");
+    fs.chmodSync(baseUrlFile, 0o644);
+    fs.writeFileSync(baseUrlFile, "https://api.example.com/v1\n");
+    fs.chmodSync(baseUrlFile, 0o444);
+    const providerFile = path.join(tempDir, "managed-upstream-provider");
+    fs.chmodSync(providerFile, 0o644);
+    fs.writeFileSync(providerFile, "compatible-endpoint\n");
+    fs.chmodSync(providerFile, 0o444);
+    const validation = `
+import os
+from deepagents_code import config
+name = "COMPATIBLE_API_KEY"
+for value in ("openshell:resolve:env:v12_COMPATIBLE_API_KEY", "openshell:resolve:env:s" + "a" * 64 + "_COMPATIBLE_API_KEY"):
+    os.environ[name] = value
+    result = config._get_provider_kwargs("openai", model_name="custom-model")
+    assert result["api_key"] == value
+    assert result["base_url"] == "https://api.example.com/v1"
+for value in ("raw-secret", "openshell:resolve:env:COMPATIBLE_API_KEY", "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY"):
+    os.environ[name] = value
+    try:
+        config._get_provider_kwargs("openai", model_name="custom-model")
+    except RuntimeError as error:
+        assert value not in str(error)
+    else:
+        raise AssertionError("accepted unbound credential")
+print("custom-native-placeholder-ok")
+`;
+    expect(
+      execFileSync("python3", ["-c", validation], {
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        encoding: "utf8",
+      }),
+    ).toContain("custom-native-placeholder-ok");
+    const route = path.join(tempDir, "managed-inference-base-url");
+    fs.chmodSync(route, 0o644);
+    fs.writeFileSync(route, "https://inference.local/v1\n");
+    fs.chmodSync(route, 0o444);
+    expect(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          'from deepagents_code import config; assert config._get_provider_kwargs("openai")["api_key"] == "nemoclaw-managed-inference"; print("legacy-ok")',
+        ],
+        { env: { PATH: process.env.PATH, PYTHONPATH: tempDir }, encoding: "utf8" },
+      ),
+    ).toContain("legacy-ok");
+  });
+});

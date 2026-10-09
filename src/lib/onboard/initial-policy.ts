@@ -7,6 +7,8 @@ import { TextDecoder } from "node:util";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
+import { buildNativeCustomSandboxPolicy } from "../inference/native-custom/network-policy";
+import type { NativeCustomProviderAttachment } from "../inference/native-custom";
 import { NVIDIA_HOSTED_NATIVE_PROVIDER } from "../inference/native-nvidia/contract";
 import { buildNativeNvidiaSandboxPolicy } from "../inference/native-nvidia/network-policy";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
@@ -324,6 +326,7 @@ function createPolicyTempCleanup(policyPath: string, expectedPrefix: string): ()
 
 type InitialPolicyOptions = {
   inferenceProvider?: string | null;
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
   directGpu?: boolean;
   dockerGpuPatch?: boolean;
   hostGpuAvailable?: boolean;
@@ -498,6 +501,14 @@ function resolveInitialSandboxCreatePolicy(
     }
   };
   try {
+    if (options.nativeCustomProviderAttachment) {
+      if (options.inferenceProvider !== options.nativeCustomProviderAttachment.providerName)
+        throw new Error("Custom provider policy and attachment identity disagree.");
+      adoptPolicy(
+        buildNativeCustomSandboxPolicy(basePolicy, options.nativeCustomProviderAttachment),
+        "nemoclaw-native-custom-policy",
+      );
+    }
     if (options.inferenceProvider === NVIDIA_HOSTED_NATIVE_PROVIDER) {
       adoptPolicy(buildNativeNvidiaSandboxPolicy(basePolicy), "nemoclaw-native-inference-policy");
     }

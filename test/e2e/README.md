@@ -1743,6 +1743,23 @@ to the console. Pass the fixture-provided frozen, canonical `progress`
 capability unchanged to an audited subprocess boundary; do not replace it with
 a custom, copied, or no-op adapter.
 
+## Native custom hosted inference
+
+The existing `inference-routing` target's TC-INF-11 onboards its public HTTPS fixture
+with a sandbox-specific native provider. It verifies a fresh OpenClaw turn after stop/start,
+selected `inference get` and status, DNS pinning, redirect rejection, executable denial,
+detach/reattach, and provider/route deletion. A second native sandbox proves that selected
+detach/delete preserves peer access. Its 95-minute test deadline contains both 40-minute
+onboarding bounds and 15 minutes for the lifecycle; the target adds 20 minutes of job headroom.
+These are maximum deadlines, not expected durations. The fixture owns both sandboxes,
+the public tunnel, DNS restoration, and local servers.
+
+The existing Bedrock OpenClaw and Hermes targets exercise their actual agents through
+native attachments while retaining the host adapter's AWS credential custody and API translation.
+Host-local fixtures retain their existing shared-route contract. Deterministic receipt,
+profile, rollback, and malformed-authority cases stay in source tests. Live success requires
+candidate-bound execution evidence; fixture or source-test success does not establish it.
+
 ## Push and Manual PR E2E
 
 The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens

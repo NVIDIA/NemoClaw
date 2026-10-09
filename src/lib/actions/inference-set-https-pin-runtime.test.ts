@@ -96,7 +96,9 @@ function failRegistryReadAfterTwoCalls(
   return () => (listCalls++ < 2 ? originalListSandboxes() : failRegistryRead());
 }
 
-describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
+// Existing beta custom registrations retain the shared-route owner; native
+// hosted switches are covered by inference-set-native-custom-flow.test.ts.
+describe("legacy custom HTTPS-pin route credential handoff (#6141)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     delete process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
@@ -132,10 +134,10 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         entry: {
           name: "alpha",
           agent: "openclaw",
-          provider: "nvidia-prod",
+          provider: "compatible-endpoint",
           model: "nvidia/model-a",
         },
-        session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+        session: baseSession({ provider: "compatible-endpoint", model: "nvidia/model-a" }),
         ensureHttpsPinRuntimeAdapter: adapter,
         captureOpenshell: capture,
       });
@@ -208,7 +210,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
-        provider: "hermes-provider",
+        provider: "compatible-anthropic-endpoint",
         model: "old-model",
       },
       defaultSandbox: "hermes",
@@ -303,10 +305,10 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "old-model",
       },
-      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      session: baseSession({ provider: "compatible-endpoint", model: "old-model" }),
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
       captureOpenshell: capture,
     });
@@ -385,7 +387,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "old-model",
       },
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
@@ -426,7 +428,13 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       ]),
     );
     expect(selectionMutations[1]?.[0]).toEqual(
-      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "old-model",
+        "--no-verify",
+      ]),
     );
   });
 
@@ -560,10 +568,10 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "old-model",
       },
-      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      session: baseSession({ provider: "compatible-endpoint", model: "old-model" }),
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
       captureOpenshell: capture,
     });
@@ -649,10 +657,10 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "old-model",
       },
-      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      session: baseSession({ provider: "compatible-endpoint", model: "old-model" }),
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
       captureOpenshell: capture,
     });
@@ -672,7 +680,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     const message = (failure as Error).message;
     expect(message).toContain("provider update failed");
     expect(message).toContain(
-      "Failed to restore the previous OpenShell inference selection 'nvidia-prod' / 'old-model': " +
+      "Failed to restore the previous OpenShell inference selection 'compatible-endpoint' / 'old-model': " +
         "the restore command exited with status 1",
     );
     expect(message).toContain(
@@ -693,7 +701,13 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       ]),
     );
     expect(selectionMutations[1]?.[0]).toEqual(
-      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "old-model",
+        "--no-verify",
+      ]),
     );
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -712,7 +726,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "old-model",
       },
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
@@ -750,7 +764,13 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     );
     expect(selectionMutations).toHaveLength(2);
     expect(selectionMutations[1]?.[0]).toEqual(
-      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "old-model",
+        "--no-verify",
+      ]),
     );
   });
 
@@ -763,7 +783,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     });
     const deps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      entry: { name: "alpha", agent: "openclaw", provider: "compatible-endpoint", model: "old" },
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
       captureOpenshell: capture,
       updateSandbox: () => false,

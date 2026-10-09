@@ -815,7 +815,7 @@ async function assertNoBedrockLeaks(options: {
 }
 
 test(
-  "bedrock runtime compatible Anthropic endpoint routes through managed inference.local",
+  "bedrock runtime compatible Anthropic endpoint serves the native agent through its attached provider",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
@@ -892,7 +892,7 @@ test(
         "the selected runtime, python3, source CLI, and OpenShell are available",
         "bedrock-runtime.us-east-1.amazonaws.com maps to the host fake endpoint",
         "non-interactive anthropicCompatible onboarding completes for OpenClaw and Hermes",
-        "the selected agent-native runtime path returns PONG through inference.local",
+        "the selected agent-native runtime path returns PONG through its native custom provider",
         "fake Bedrock Runtime endpoint observes authenticated Converse traffic",
         "the OpenClaw path observes authenticated ConverseStream traffic",
         "bounded sandbox credential, config, environment, and process-argument probes contain no forbidden Bedrock values",

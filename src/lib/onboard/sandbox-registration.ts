@@ -13,6 +13,7 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
+import { normalizeNativeCustomProviderAttachment } from "../inference/native-custom";
 import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia/contract";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
@@ -76,6 +77,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeCustomProviderAttachment?: SandboxEntry["nativeCustomProviderAttachment"];
   deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -214,6 +216,14 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const nativeCustomProviderAttachment = normalizeNativeCustomProviderAttachment(
+    input.nativeCustomProviderAttachment,
+    input.sandboxName,
+  );
+  if (input.nativeCustomProviderAttachment !== undefined && !nativeCustomProviderAttachment)
+    throw new RuntimeProviderSelectionError(
+      "Sandbox native custom provider attachment failed closed validation.",
+    );
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     input.nativeNvidiaProviderAttachment,
   );
@@ -272,6 +282,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeCustomProviderAttachment ? { nativeCustomProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
@@ -351,8 +362,13 @@ export function prepareCreatedSandboxRegistration(
     input.nativeNvidiaProviderAttachment !== undefined
       ? input.nativeNvidiaProviderAttachment
       : pending?.nativeNvidiaProviderAttachment;
+  const pendingNativeCustomProviderAttachment =
+    input.nativeCustomProviderAttachment ?? pending?.nativeCustomProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    ...(pendingNativeCustomProviderAttachment
+      ? { nativeCustomProviderAttachment: pendingNativeCustomProviderAttachment }
+      : {}),
     inferenceSelection: pendingRoute
       ? { ...input.inferenceSelection, ...pendingRoute }
       : input.inferenceSelection,

@@ -430,6 +430,7 @@ function routeImpactWarningOrThrow(options: {
 }
 
 export function prepareInferenceSetRoute(options: {
+  nativeCustom?: boolean;
   entry: SandboxEntry;
   sandboxName: string;
   provider: string;
@@ -458,7 +459,10 @@ export function prepareInferenceSetRoute(options: {
       : null,
     sandboxCustomCompatibleCredentialEnv(options.entry, options.provider),
   );
-  const preliminaryExplicitMetadata = explicit.metadata;
+  const preliminaryExplicitMetadata =
+    options.nativeCustom && explicit.metadata && explicit.sourceEndpointUrl
+      ? { ...explicit.metadata, endpointUrl: explicit.sourceEndpointUrl }
+      : explicit.metadata;
   const preliminaryRegistryMetadata = registryMetadataForProviderSwitch({
     entry: options.entry,
     provider: options.provider,

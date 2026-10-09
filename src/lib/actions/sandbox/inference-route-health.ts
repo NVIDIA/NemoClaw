@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  verifyNativeCustomProviderAttachment,
+  type NativeCustomProviderAttachment,
+} from "../../inference/native-custom";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
@@ -54,6 +58,19 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
     return;
   }
   await verifyNativeNvidiaProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    target: { kind: "named", gatewayName: input.gatewayName },
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
+export async function verifyNativeCustomStatusAttachment(input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: NativeCustomProviderAttachment;
+}): Promise<void> {
+  await verifyNativeCustomProviderAttachment({
     adapter: createCliOpenShellProviderAdapter(),
     target: { kind: "named", gatewayName: input.gatewayName },
     sandboxName: input.sandboxName,

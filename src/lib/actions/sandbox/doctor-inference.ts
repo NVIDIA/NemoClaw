@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
+import type { NativeCustomProviderAttachment } from "../../inference/native-custom";
+import {
+  requireNativeInferenceHealth,
+  type LaunchReadinessHealthDeps,
+} from "./launch-readiness/health";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import {
@@ -32,6 +37,8 @@ export type DoctorInferenceRoute = {
   recordedEndpointUrl?: string | null;
   agentName?: string | null;
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
+  preferredInferenceApi?: string | null;
 };
 
 type ManagedLlamaCppDoctorDeps = {
@@ -78,6 +85,7 @@ export function collectManagedLlamaCppDoctorChecks(
 }
 
 type DoctorInferenceDeps = {
+  nativeCustomHealthDeps?: LaunchReadinessHealthDeps;
   gatewayName?: string | null;
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
@@ -86,6 +94,57 @@ type DoctorInferenceDeps = {
   /** False for terminal agents that do not have a long-running gateway serving process. */
   includeServingProcessCheck?: boolean;
 };
+
+async function collectNativeCustomRouteProbe(
+  sandboxName: string,
+  route: DoctorInferenceRoute,
+  sandboxReachable: boolean,
+  deps: DoctorInferenceDeps,
+): Promise<ProviderHealthStatus> {
+  const base = {
+    providerLabel: "Native custom route",
+    endpoint: "selected native custom inference endpoint",
+    probeLabel: "native custom",
+  };
+  if (!sandboxReachable || !deps.gatewayName) {
+    return {
+      ...base,
+      ok: false,
+      probed: false,
+      detail: "the selected sandbox or named gateway is not reachable",
+    };
+  }
+  try {
+    await requireNativeInferenceHealth({
+      sandboxName,
+      gatewayName: deps.gatewayName,
+      agentName: route.agentName || undefined,
+      entry: {
+        name: sandboxName,
+        provider: route.provider,
+        model: route.model,
+        preferredInferenceApi: route.preferredInferenceApi,
+        nativeCustomProviderAttachment: route.nativeCustomProviderAttachment,
+        nativeNvidiaProviderAttachment: route.nativeNvidiaProviderAttachment,
+      },
+      deps: deps.nativeCustomHealthDeps ?? {},
+    });
+    return {
+      ...base,
+      ok: true,
+      probed: true,
+      detail: "the selected model served a request through its verified native custom attachment",
+    };
+  } catch {
+    return {
+      ...base,
+      ok: false,
+      probed: false,
+      failureLabel: "unreachable",
+      detail: "the selected native custom attachment or inference request could not be verified",
+    };
+  }
+}
 
 async function collectNativeNvidiaRouteProbe(
   sandboxName: string,
@@ -315,16 +374,23 @@ export async function collectInferenceChecks(
   const effortCheck = reasoningEffortCheck(route);
   if (effortCheck) checks.push(effortCheck);
   const nativeNvidia = isNativeNvidiaProvider(route.provider);
-  const routeProbe = nativeNvidia
-    ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
-    : await collectInferenceRouteProbe(
-        sandboxName,
-        sandboxReachable,
-        deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
-        deps.gatewayName,
-      );
+  const nativeCustom = route.nativeCustomProviderAttachment !== undefined;
+  const routeProbe = nativeCustom
+    ? await collectNativeCustomRouteProbe(sandboxName, route, sandboxReachable, deps)
+    : nativeNvidia
+      ? await collectNativeNvidiaRouteProbe(sandboxName, route, sandboxReachable, deps)
+      : await collectInferenceRouteProbe(
+          sandboxName,
+          sandboxReachable,
+          deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
+          deps.gatewayName,
+        );
   pushInferenceHealthCheck(checks, routeProbe, {
-    label: nativeNvidia ? "Inference route (native NVIDIA)" : "Inference route (gateway)",
+    label: nativeCustom
+      ? "Inference route (native custom)"
+      : nativeNvidia
+        ? "Inference route (native NVIDIA)"
+        : "Inference route (gateway)",
   });
   for (const diagnostic of collectProviderHealthDiagnostics(
     route,

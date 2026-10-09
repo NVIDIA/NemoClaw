@@ -10,6 +10,7 @@ import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/prov
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { ensureNativeCustomProviderAttached } from "../../inference/native-custom";
 import {
   ensureNativeNvidiaProviderAttached,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
@@ -241,4 +242,22 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
       deps,
     );
   }
+}
+
+export async function verifyNativeCustomAttachmentAfterCreate(input: {
+  sandboxName: string;
+  gatewayName: string;
+  inferenceProvider: string | null;
+  expected: SandboxEntry["nativeCustomProviderAttachment"];
+  deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (!input.expected) return;
+  if (input.inferenceProvider !== input.expected.providerName)
+    throw new Error("Custom provider create identity disagrees with its receipt.");
+  await ensureNativeCustomProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
 }

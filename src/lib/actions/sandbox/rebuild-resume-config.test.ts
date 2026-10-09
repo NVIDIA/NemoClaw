@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../../inference/native-custom";
 import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -924,3 +928,46 @@ describe("persisted native NVIDIA rebuild authority", () => {
     },
   );
 });
+
+it.each(["matching", "malformed", "other-sandbox", "wrong-api"])(
+  "validates native custom rebuild authority before destructive work (%s) (#12636)",
+  async (state) => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "custom-id",
+    });
+    const selected = entry({
+      provider: "compatible-endpoint",
+      model: "model",
+      endpointUrl: prepared.endpointUrl,
+      preferredInferenceApi: state === "wrong-api" ? "openai-responses" : prepared.api,
+      credentialEnv: receipt.credentialEnv,
+      nativeCustomProviderAttachment:
+        state === "malformed"
+          ? {}
+          : state === "other-sandbox"
+            ? { ...receipt, sandboxName: "peer" }
+            : receipt,
+    });
+    const prepare = () =>
+      prepareRebuildResumeConfig("alpha", selected, "openclaw", noopLog, throwingBail);
+    let restored: unknown;
+    let failure: unknown;
+    try {
+      restored = prepare()?.nativeCustomProviderAttachment;
+    } catch (error) {
+      failure = error;
+    }
+    expect(restored).toEqual(state === "matching" ? receipt : undefined);
+    expect(failure instanceof Error).toBe(state !== "matching");
+  },
+);

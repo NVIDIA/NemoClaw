@@ -973,7 +973,13 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey:
+        new URL(inferenceBaseUrl).hostname !== "inference.local" &&
+        ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(
+          env.NEMOCLAW_UPSTREAM_PROVIDER || "",
+        )
+          ? `openshell:resolve:env:${env.NEMOCLAW_UPSTREAM_PROVIDER === "compatible-endpoint" ? "COMPATIBLE_API_KEY" : "COMPATIBLE_ANTHROPIC_API_KEY"}`
+          : "unused",
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,

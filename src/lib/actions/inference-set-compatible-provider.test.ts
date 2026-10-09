@@ -127,6 +127,8 @@ async function runRejectedCompatibleSwitchScenario(options: {
   return { deps, probeSandboxRoute };
 }
 
+// Native hosted selection is covered by inference-set-native-custom-flow.test.ts.
+// Existing beta registrations below preserve their shared-route recovery contract.
 describe("runInferenceSet compatible providers", () => {
   afterEach(() => vi.unstubAllEnvs());
 
@@ -306,7 +308,7 @@ describe("runInferenceSet compatible providers", () => {
     ["an HTTPS IP-literal", "https://198.51.100.10/v1", "https://198.51.100.10/v1"],
     ["a DNS-pinned HTTP", "http://compatible.example/v1", "http://198.51.100.10/v1"],
   ])(
-    "creates an absent direct compatible provider for %s endpoint (#7725)",
+    "recovers an absent legacy direct compatible provider for %s endpoint (#7725)",
     async (_kind, endpointUrl, validatedEndpointUrl) => {
       let providerCreated = false;
       const captureOpenshell = vi.fn((args: string[]) => {
@@ -354,11 +356,11 @@ describe("runInferenceSet compatible providers", () => {
         entry: {
           name: "alpha",
           agent: "openclaw",
-          provider: "nvidia-prod",
+          provider: "compatible-endpoint",
           model: "nvidia/model-a",
         },
         session: baseSession({
-          provider: "nvidia-prod",
+          provider: "compatible-endpoint",
           model: "nvidia/model-a",
         }),
         captureOpenshell,
@@ -460,10 +462,10 @@ describe("runInferenceSet compatible providers", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
       },
-      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+      session: baseSession({ provider: "compatible-endpoint", model: "nvidia/model-a" }),
       captureOpenshell,
       rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
       resolveCredentialValue: () => "real-upstream-secret",
@@ -519,10 +521,10 @@ describe("runInferenceSet compatible providers", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
       },
-      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+      session: baseSession({ provider: "compatible-endpoint", model: "nvidia/model-a" }),
       captureOpenshell,
       rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
       resolveCredentialValue: () => "real-upstream-secret",
@@ -594,11 +596,11 @@ describe("runInferenceSet compatible providers", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
       },
       session: baseSession({
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
       }),
       captureOpenshell,
@@ -752,7 +754,7 @@ describe("runInferenceSet compatible providers", () => {
     ).toBe(false);
   });
 
-  it("preserves explicit inference API through the final registry sync", async () => {
+  it("preserves explicit inference API through legacy registry sync", async () => {
     let providerVersion = 1;
     const captureOpenshell = vi.fn((args: string[]) => {
       switch (`${args[0]}:${args[1]}`) {
@@ -785,11 +787,11 @@ describe("runInferenceSet compatible providers", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
       },
       session: baseSession({
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
         endpointUrl: "https://integrate.api.nvidia.com/v1",
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
@@ -1284,7 +1286,7 @@ describe("runInferenceSet compatible providers", () => {
         entry: {
           name: "alpha",
           agent: "openclaw",
-          provider: "nvidia-prod",
+          provider,
           model: "nvidia/model-a",
         },
         rewriteConfigUrlsWithDnsPinning: (value) =>

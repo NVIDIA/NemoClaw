@@ -32,6 +32,70 @@ function upstream(overrides: Partial<ProviderHealthStatus> = {}): ProviderHealth
 }
 
 describe("doctor inference checks", () => {
+  it("checks native custom attachment and selected-model invocation without consulting the shared route (#12636)", async () => {
+    const { prepareNativeCustomProfile, customAttachmentFromPrepared } =
+      await import("../../inference/native-custom");
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://api.example.com/v1",
+      api: "openai-completions",
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "custom-provider",
+    });
+    const verify = vi.fn(async () => undefined);
+    const invoke = vi.fn(async () => ({
+      ok: true,
+      detail: "served",
+      httpStatus: 200,
+      endpoint: "selected",
+    }));
+    const shared = vi.fn(async () => gateway(true));
+    const route = {
+      provider: "compatible-endpoint",
+      model: "model-a",
+      preferredInferenceApi: "openai-completions",
+      nativeCustomProviderAttachment: receipt,
+    };
+    const deps = {
+      gatewayName: "nemoclaw",
+      probeProviderHealthImpl: () => upstream(),
+      probeSandboxInferenceGatewayHealthImpl: shared,
+      nativeCustomHealthDeps: {
+        verifyNativeCustomAttachment: verify,
+        inferenceInvocationProbe: invoke,
+      },
+      includeServingProcessCheck: false,
+    };
+    const checks = await collectInferenceChecks("alpha", route, true, deps);
+    expect(checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native custom)", status: "ok" }),
+    );
+    expect(verify).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      expected: receipt,
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "model-a", nativeCustomProviderAttachment: receipt }),
+    );
+    expect(shared).not.toHaveBeenCalled();
+
+    invoke.mockClear();
+    verify.mockRejectedValueOnce(new Error("private upstream diagnostic"));
+    const failed = await collectInferenceChecks("alpha", route, true, deps);
+    expect(failed).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native custom)", status: "fail" }),
+    );
+    expect(invoke).not.toHaveBeenCalled();
+    expect(shared).not.toHaveBeenCalled();
+    expect(JSON.stringify(failed)).not.toContain("private upstream diagnostic");
+  });
   it.each([
     ["nvidia-prod", "nvidia/nemotron", "ok"],
     ["nvidia-prod", "unknown", "warn"],

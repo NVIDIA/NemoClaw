@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+  CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
+  CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
   CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
   DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
@@ -128,8 +130,8 @@ describe("onboard final-handoff timeout contract", () => {
   it.each([
     [
       "inference-routing",
-      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-      ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+      CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
+      CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
   ] as const)(

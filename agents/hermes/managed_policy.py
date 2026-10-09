@@ -92,9 +92,20 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
     has_routing = any(
         key in config for key in ("model", "providers", "custom_providers", "_nemoclaw_upstream")
     )
-    if has_routing and policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
+    upstream = config.get("_nemoclaw_upstream", {}).get("provider")
+    key = {"compatible-endpoint": "COMPATIBLE_API_KEY", "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY"}.get(upstream)
+    base_url = config.get("model", {}).get("base_url", "")
+    from urllib.parse import urlsplit
+    expected_key = (
+        f"sk-OPENSHELL-RESOLVE-ENV-{key}"
+        if key and urlsplit(base_url).hostname != "inference.local"
+        else HERMES_PROXY_REWRITE_SENTINEL
+    )
+    if has_routing and policy_value(config, "model.api_key") != expected_key:
         raise ManagedPolicyError(
-            "managed policy model.api_key must use the OpenShell proxy rewrite sentinel"
+            "managed policy model.api_key must use its selected OpenShell credential reference"
+            if key and urlsplit(base_url).hostname != "inference.local"
+            else "managed policy model.api_key must use the OpenShell proxy rewrite sentinel"
         )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
