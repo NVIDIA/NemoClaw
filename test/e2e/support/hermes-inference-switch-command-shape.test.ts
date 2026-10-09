@@ -20,7 +20,6 @@ import {
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
   hostedInstallModel,
-  env,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
@@ -43,6 +42,13 @@ import {
 
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  async function nativeSwitchHelpers() {
+    vi.stubEnv("NEMOCLAW_E2E_USE_HOSTED_INFERENCE", "0");
+    vi.stubEnv("NEMOCLAW_MODEL", undefined);
+    vi.resetModules();
+    return import("../live/hermes-inference-switch-helpers.ts");
+  }
 
   function matchesApiKeyShape(line: string): boolean {
     return (
@@ -164,7 +170,7 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("accepts only the native NVIDIA credential reference on the native route", () => {
-    const [command, ...args] = apiKeyShapeCommand();
+    const [command, ...args] = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
     const matches = (input: string) =>
       spawnSync(command, args.slice(0, -1), { input, encoding: "utf8" }).status === 0;
     expect(matches("  api_key: ${NVIDIA_INFERENCE_API_KEY}\n")).toBe(true);
@@ -203,12 +209,14 @@ describe("Hermes inference switch command shape", () => {
     ).toBe("initial-hosted-model");
   });
 
-  it("derives the native baseline model from the install environment", () => {
+  it("derives the native baseline model from the install environment", async () => {
+    const { env } = await nativeSwitchHelpers();
     const installEnv = env("nvapi-public-fixture-key");
     expect(hostedInstallModel(installEnv)).toBe("nvidia/nemotron-3-super-120b-a12b");
   });
 
   it("keeps the public proxy-resolution credential on the public NVIDIA endpoint", async () => {
+    const { prepareProxyResolutionRoute } = await nativeSwitchHelpers();
     const command = vi.fn().mockResolvedValue({
       exitCode: 0,
       stderr: "",
@@ -220,9 +228,20 @@ describe("Hermes inference switch command shape", () => {
       mockBaseline: undefined,
       redactionValues: ["nvapi-public-fixture-key"],
     });
-    expect(command.mock.calls[0]?.[1]).toContain(
-      "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
-    );
+    expect(command.mock.calls[0]).toEqual([
+      "openshell",
+      expect.arrayContaining([
+        "provider",
+        "create",
+        "--credential",
+        "NVIDIA_INFERENCE_API_KEY",
+        "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
+      ]),
+      expect.objectContaining({
+        env: expect.objectContaining({ NVIDIA_INFERENCE_API_KEY: "nvapi-public-fixture-key" }),
+        redactionValues: ["nvapi-public-fixture-key"],
+      }),
+    ]);
   });
 
   it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
