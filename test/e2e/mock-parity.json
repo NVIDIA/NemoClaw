@@ -197,7 +197,11 @@
     },
     {
       "live": "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      "liveOnlyReason": "Requires real provider credentials to prove provider responses and sandbox credential isolation"
+      "liveSources": ["test/e2e/live/inference-routing-credential-scan.ts"],
+      "fast": [
+        "test/e2e/support/hosted-credential-scan.test.ts",
+        "test/e2e/support/hosted-inference-workflow-selection.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/full-e2e.test.ts",
