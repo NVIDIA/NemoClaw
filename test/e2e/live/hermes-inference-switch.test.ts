@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { testTimeout } from "../../helpers/timeouts.ts";
+import { DEFAULT_CLOUD_MODEL } from "../../../src/lib/inference/config.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -189,7 +190,7 @@ test(
     expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
     expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
-      model: hostedInstallModel(installEnv),
+      model: mockBaseline ? hostedInstallModel(installEnv) : DEFAULT_CLOUD_MODEL,
     });
     const baselineSession = structuredClone(registryState().session);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
