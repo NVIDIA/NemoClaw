@@ -21,6 +21,65 @@ const successfulNeeds = {
 };
 
 describe("release qualification", () => {
+  it("records a skipped image gate without claiming image qualification", ({ onTestFinished }) => {
+    const directory = mkdtempSync(path.join(tmpdir(), "e2e-independent-result-"));
+    onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+    const outputPath = path.join(directory, "result.json");
+    assertReleaseQualification(
+      JSON.stringify({
+        "generate-matrix": { result: "success" },
+        "base-image-publication": { result: "skipped" },
+        gateway: { result: "success" },
+      }),
+      '["gateway"]',
+      { outputPath, runId: "123", attempt: "1" },
+      false,
+    );
+    const receipt = JSON.parse(readFileSync(outputPath, "utf8"));
+    expect(receipt.status).toBe("pass");
+    expect(receipt.managedImageRequired).toBe(false);
+    expect(receipt.selectedWorkflowJobs).toEqual(["gateway"]);
+    expect(receipt.results).toContainEqual({ job: "base-image-publication", result: "skipped" });
+  });
+  it("accepts a deliberately skipped image prerequisite only for an independent selection", () => {
+    const needs = {
+      ...successfulNeeds,
+      "base-image-publication": { result: "skipped" },
+      gateway: { result: "success" },
+    };
+    expect(failedReleaseQualificationJobs(needs, ["gateway"], false)).toEqual([]);
+    expect(failedReleaseQualificationJobs(needs, ["gateway"])).toEqual(["base-image-publication"]);
+    expect(
+      failedReleaseQualificationJobs(
+        { ...needs, gateway: { result: "skipped" } },
+        ["gateway"],
+        false,
+      ),
+    ).toEqual(["gateway"]);
+    expect(
+      failedReleaseQualificationJobs(
+        { ...needs, "generate-matrix": { result: "failure" } },
+        ["gateway"],
+        false,
+      ),
+    ).toEqual(["generate-matrix"]);
+  });
+  it.each(["failure", "cancelled", undefined])(
+    "rejects image prerequisite result %s even for an independent selection",
+    (result) => {
+      expect(
+        failedReleaseQualificationJobs(
+          {
+            ...successfulNeeds,
+            gateway: { result: "success" },
+            "base-image-publication": { result },
+          },
+          ["gateway"],
+          false,
+        ),
+      ).toEqual(["base-image-publication"]);
+    },
+  );
   it("records passing PR evidence and refuses to overwrite it (#11489)", ({ onTestFinished }) => {
     const directory = mkdtempSync(path.join(tmpdir(), "e2e-result-"));
     onTestFinished(() => rmSync(directory, { recursive: true, force: true }));

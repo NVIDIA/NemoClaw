@@ -146,7 +146,12 @@ The existing `Relevant E2E` job uploads `review-queue-e2e-result-<run-id>-<attem
 Its kind is `nemoclaw-review-queue-e2e-result-v1`. `dispatchArtifact` references the existing dispatch artifact from the same run and attempt.
 Verify both artifact envelopes and the dispatch identity before accepting results. A payload reference alone proves no identity.
 `release-qualification.mts` records selected workflow jobs and their GitHub `needs` results before enforcing its existing success check.
-PR evidence requires a nonempty selection. Every selected job, `base-image-publication`, and `generate-matrix` must succeed.
+PR evidence requires a nonempty selection. Every selected job and `generate-matrix` must succeed.
+`base-image-publication` must succeed unless the trusted planner determines that no selected job
+depends on managed images. Only then may it be skipped; the receipt records
+`managedImageRequired: false` and preserves its actual `skipped` result. Missing, failed, or
+cancelled publication is never accepted through this exception. Full release qualification
+still requires publication success.
 Each matrix group includes its fan-out executions. A pass requires every selected group to succeed.
 Missing, skipped, or cancelled groups are unknown. A failed selected group or controller produces `fail`.
 This aggregate proves the whole dispatched set; it does not attribute a group failure to an individual selector within that group.
