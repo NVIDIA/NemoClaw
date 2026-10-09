@@ -12,6 +12,7 @@ members = [
     "crates/nemoclaw-discovery",
     "crates/nemoclaw-provider",
     "crates/nemoclaw-e2e",
+    "crates/nemoclaw-oaths",
     "crates/nemoclaw-cli",
     "crates/nemoclaw-runtime",
     "crates/nemoclaw-build",

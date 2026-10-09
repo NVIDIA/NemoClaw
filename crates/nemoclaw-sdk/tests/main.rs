@@ -22,8 +22,6 @@ mod compile;
 mod config;
 #[path = "config_choices.rs"]
 mod config_choices;
-#[path = "config_diagnostics.rs"]
-mod config_diagnostics;
 #[path = "config_input.rs"]
 mod config_input;
 #[path = "config_kinds.rs"]
