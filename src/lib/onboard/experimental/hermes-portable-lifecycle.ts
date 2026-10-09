@@ -12,6 +12,7 @@ import {
   fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
   observeOpenShellSandboxId,
+  parseStrictOpenShellSandboxListJson,
 } from "../../adapters/openshell/sandbox-identity";
 import {
   classifyOpenShellSandboxPresence,
@@ -609,6 +610,7 @@ interface QualifiedHermesPortableLifecycle {
   readonly capturePolicy: HermesPortablePolicyCapture;
   readonly rawCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
   readonly openShellPhase: string;
+  readonly openShellErrorRestartable: boolean;
   readonly commandBudget?: (maximumMs: number) => number;
   readonly hasTransactionAuthority: boolean;
   readonly assertTransactionCurrent: () => void;
@@ -867,6 +869,7 @@ function observeOpenShellIdentity(
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
   readonly phase: string;
+  readonly errorRestartable: boolean;
 } {
   const gateway = capture(
     ["sandbox", "list", "-g", receipt.gatewayName, "-o", "json"],
@@ -907,7 +910,51 @@ function observeOpenShellIdentity(
   ) {
     fail("OpenShell sandbox identity disagrees with the receipt container");
   }
-  return { sandboxId, liveIdentityFingerprint, phase: listed.phase };
+  const row = parseStrictOpenShellSandboxListJson(String(gateway.stdout))?.find(
+    (candidate) => candidate.id === sandboxId && candidate.name === receipt.sandboxName,
+  );
+  return {
+    sandboxId,
+    liveIdentityFingerprint,
+    phase: listed.phase,
+    errorRestartable: isRestartableOpenShellError(row),
+  };
+}
+
+function isRestartableOpenShellError(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  if (row.phase !== "Error" || row.workspace !== PODMAN_SANDBOX_WORKSPACE) return false;
+  const provisioning = row.provisioning;
+  if (provisioning && typeof provisioning === "object" && !Array.isArray(provisioning)) {
+    const record = provisioning as Record<string, unknown>;
+    if (record.timeout_time != null) {
+      return (
+        typeof record.timeout_time === "string" &&
+        Number.isFinite(Date.parse(record.timeout_time)) &&
+        typeof record.cleanup_completed_time === "string" &&
+        Number.isFinite(Date.parse(record.cleanup_completed_time))
+      );
+    }
+  }
+  // Match the pinned gateway's failed-main-process predicate; it rechecks under its lifecycle lock.
+  return (
+    typeof row.exit_code === "number" &&
+    Number.isInteger(row.exit_code) &&
+    Array.isArray(row.conditions) &&
+    row.conditions.some(
+      (condition: unknown) =>
+        !!condition &&
+        typeof condition === "object" &&
+        "type" in condition &&
+        condition.type === "Ready" &&
+        "status" in condition &&
+        typeof condition.status === "string" &&
+        condition.status.toLowerCase() === "false" &&
+        "reason" in condition &&
+        condition.reason === "MainProcessFailed",
+    )
+  );
 }
 
 function policyCapture(
@@ -1101,6 +1148,7 @@ async function qualify(
     rawCapture,
     capturePolicy,
     openShellPhase: liveIdentity.phase,
+    openShellErrorRestartable: liveIdentity.errorRestartable,
     commandBudget: options.commandBudget,
     hasTransactionAuthority,
     assertTransactionCurrent,
@@ -1648,18 +1696,19 @@ export async function recoverHermesPortableSandboxLifecycle(
   }
   primaryFailureClass = "container-start";
   const wasRunning = qualified.container.authority.running;
-  const needsStart = !wasRunning || qualified.openShellPhase === "Stopped";
+  const needsStart =
+    !wasRunning || qualified.openShellPhase === "Stopped" || qualified.openShellErrorRestartable;
   timing.setContainerAction(wasRunning ? "reused" : "unknown");
   let rollbackAuthority = qualified;
   let startedByRecovery = false;
   try {
     if (
-      qualified.openShellPhase === "Error" ||
+      (qualified.openShellPhase === "Error" && !qualified.openShellErrorRestartable) ||
       (!wasRunning && qualified.openShellPhase === "Ready")
     ) {
       fail(
         `cannot recover saved OpenShell phase ${qualified.openShellPhase} with receipt-owned container ${qualified.container.status}. ` +
-          "The current OpenShell start API requires Stopped and cannot repair this mismatch. " +
+          "No supported OpenShell start transition was established for this state. " +
           "Preserve startup diagnostics and resolve the saved state through OpenShell before retrying launch.",
       );
     }

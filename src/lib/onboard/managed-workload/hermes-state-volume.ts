@@ -129,6 +129,8 @@ function genericDeps(
     ...(deps.runDocker && !runtimeProvider ? { runContainerEngine: deps.runDocker } : {}),
     ...(runtimeProvider ? { runtimeProvider } : {}),
     ...(deps.registerExitCleanup ? { registerExitCleanup: deps.registerExitCleanup } : {}),
+    ...(deps.migrationStateDir ? { migrationStateDir: deps.migrationStateDir } : {}),
+    ...(deps.runMigrationEngine ? { runMigrationEngine: deps.runMigrationEngine } : {}),
   };
 }
 
@@ -151,7 +153,7 @@ export function prepareManagedHermesStateVolume(
   return {
     mount: scope.mounts[0] as ManagedHermesStateVolumeMount,
     reused: scope.reused[0] === true,
-    volumeName: root.resourceIdentity,
+    volumeName: scope.mounts[0].source,
     cleanupIncompleteCreate: () =>
       scope.cleanupIncompleteCreate()[0] ?? { status: "not-applicable" },
     commit: () => scope.commit(),
@@ -162,7 +164,11 @@ export function removeManagedHermesStateVolume(
   context: ManagedHermesStateVolumeContext,
   deps: Pick<
     ManagedHermesStateVolumeDeps,
-    "runDocker" | "runtimeProvider" | "runtimeProviders"
+    | "runDocker"
+    | "runtimeProvider"
+    | "runtimeProviders"
+    | "migrationStateDir"
+    | "runMigrationEngine"
   > = {},
 ): ManagedHermesStateVolumeCleanupResult {
   if (!requiresManagedHermesStateVolume(context, deps.runtimeProviders, deps.runtimeProvider)) {
@@ -180,7 +186,11 @@ export function removeManagedAgentStateVolumes(
   context: ManagedHermesStateVolumeContext,
   deps: Pick<
     ManagedHermesStateVolumeDeps,
-    "runDocker" | "runtimeProvider" | "runtimeProviders"
+    | "runDocker"
+    | "runtimeProvider"
+    | "runtimeProviders"
+    | "migrationStateDir"
+    | "runMigrationEngine"
   > = {},
 ): readonly ManagedAgentStateVolumeCleanupResult[] {
   const runtimeProvider = selectedRuntimeProvider(

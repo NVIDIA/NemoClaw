@@ -83,6 +83,7 @@ import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import type { ExternalImageWorkloadSource } from "../workload/source";
 import {
   prepareManagedStateVolumes,
+  preflightManagedStateVolumes,
   removeManagedStateVolumes,
   type ManagedStateVolumeDeps,
 } from "./managed-state-volumes";
@@ -150,22 +151,26 @@ export function createManagedStateVolumeOnboardLifecycle(
   },
   deps: ManagedStateVolumeDeps = {},
 ): ManagedStateVolumeOnboardLifecycle {
-  const scope = prepareManagedStateVolumes(
-    { roots: input.roots },
-    {
-      ...deps,
-      ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
-    },
-  );
-  const managedStateMountDriverId = scope
-    ? input.runtimeProvider?.workload.managedStateMountDriverId
-    : undefined;
-  if (scope && !managedStateMountDriverId) {
+  const volumeDeps = {
+    ...deps,
+    ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
+  };
+  const roots = input.roots;
+  const mountDriverId = volumeDeps.runtimeProvider?.workload.managedStateMountDriverId;
+  if (
+    roots.length > 0 &&
+    volumeDeps.runtimeProvider?.containerEngine.supported !== false &&
+    !mountDriverId
+  )
     throw new Error("Managed state volumes require provider-owned mount projection.");
-  }
+  preflightManagedStateVolumes({ roots: input.roots }, volumeDeps);
+  let scope: ReturnType<typeof prepareManagedStateVolumes> | undefined;
   return {
     roots: input.roots,
     materializeSandboxCreatePlan(input, materialize) {
+      // The source deletion has completed before materialization. Never copy an attached volume.
+      scope ??= prepareManagedStateVolumes({ roots }, volumeDeps);
+      const managedStateMountDriverId = scope ? mountDriverId : undefined;
       return materialize({
         ...input,
         managedStateMounts: scope?.mounts,

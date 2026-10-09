@@ -10,6 +10,11 @@ import path from "node:path";
 import { runTarListing } from "../../../state/tar-listing";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
+import {
+  resolveMigratedManagedStateRoot,
+  verifyMigratedManagedStateRoot,
+} from "../../../onboard/managed-workload/managed-state-volume-migration";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../../adapters/openshell/sandbox-ssh-host";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
   confirmHostLocalInferenceAuthority,
@@ -343,18 +348,29 @@ export async function prepareStoppedAgentState(
   const authority = captureSnapshotAuthority(entry, dependencies);
   const runtime = authority?.runtimeSnapshot;
   if (!runtime || runtime.lifecycleState !== "stopped" || !authority.workload) return null;
-  const capture = prepareSandboxStoppedStateCapture(
-    dependencies.requireProvider(entry),
-    entry,
-    runtime,
-    {
-      nativeRoot: "/sandbox",
-      managedStateRoots:
-        authority.workload.kind === "managed-image"
-          ? managedStartupStateRootOwnership({ agent: agentName, sandboxName })
-          : [],
-    },
-  );
+  const provider = dependencies.requireProvider(entry);
+  const migrationContext = {
+    providerId: provider.identity.id,
+    workspace: process.env.OPENSHELL_WORKSPACE ?? OPENSHELL_DEFAULT_WORKSPACE,
+  };
+  const originalRoots =
+    authority.workload.kind === "managed-image"
+      ? managedStartupStateRootOwnership({ agent: agentName, sandboxName })
+      : [];
+  const resolveRoots = () =>
+    originalRoots.map((root) => {
+      const engine = provider.containerEngine;
+      if (engine.supported)
+        verifyMigratedManagedStateRoot(root, migrationContext, (args, timeout) =>
+          engine.capture("workload-cleanup", args, timeout),
+        );
+      return resolveMigratedManagedStateRoot(root, migrationContext);
+    });
+  const selectedRoots = resolveRoots();
+  const capture = prepareSandboxStoppedStateCapture(provider, entry, runtime, {
+    nativeRoot: "/sandbox",
+    managedStateRoots: selectedRoots,
+  });
   if (!capture) return null;
   const assertCurrent = (): void => {
     const current = getSandbox(sandboxName);
@@ -365,6 +381,8 @@ export async function prepareStoppedAgentState(
     ) {
       rejectStoppedState("Stopped source registration changed during recovery.");
     }
+    if (!isDeepStrictEqual(resolveRoots(), selectedRoots))
+      rejectStoppedState("Managed state volume selection changed during recovery.");
     authority.validateBeforePublish?.();
     capture.assertCurrent();
   };
