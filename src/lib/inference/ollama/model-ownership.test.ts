@@ -9,12 +9,14 @@ import { describe, expect, it } from "vitest";
 import {
   clearPendingOllamaModelCleanup,
   decideOllamaModelOwnership,
+  discoverOllamaModelOwnership,
   exclusivelyHeldOllamaModel,
   loadPendingOllamaModelCleanup,
   type OllamaModelHolder,
   type OllamaModelRoute,
   persistPendingOllamaModelCleanup,
   supersededOllamaModel,
+  supersededOllamaModelWithActivePeers,
 } from "./model-ownership";
 import { isLocalOllamaRouteOwner } from "./model-ownership";
 
@@ -131,6 +133,113 @@ describe("supersededOllamaModel", () => {
         "127.0.0.1",
       ),
     ).toBe("llama3");
+  });
+});
+
+describe("supersededOllamaModelWithActivePeers", () => {
+  it("releases a superseded model despite stale or incomplete matching registry rows", () => {
+    const inactivePeer = holder({ name: "incomplete-reservation" });
+    expect(
+      supersededOllamaModelWithActivePeers(
+        holder(),
+        route("qwen2.5:1.5b"),
+        [inactivePeer],
+        new Set(),
+      ),
+    ).toBe("llama3");
+  });
+
+  it("protects the model while a matching sibling is active", () => {
+    const activePeer = holder({ name: "active-peer", model: "llama3:latest" });
+    expect(
+      supersededOllamaModelWithActivePeers(
+        holder(),
+        route("qwen2.5:1.5b"),
+        [holder(), activePeer],
+        new Set(["active-peer"]),
+      ),
+    ).toBeNull();
+  });
+
+  it("protects a same-named active peer registered under another gateway", () => {
+    const previous = holder({ gatewayName: "current-gateway" });
+    const peer = holder({ gatewayName: "other-gateway" });
+
+    expect(
+      supersededOllamaModelWithActivePeers(
+        previous,
+        route("qwen2.5:1.5b"),
+        [peer],
+        new Set([peer.name]),
+      ),
+    ).toBeNull();
+  });
+
+  it("does not treat a same-named row with incomplete gateway identity as the subject", () => {
+    const previous = holder();
+    const peer = holder({ gatewayName: "other-gateway" });
+
+    expect(
+      supersededOllamaModelWithActivePeers(
+        previous,
+        route("qwen2.5:1.5b"),
+        [peer],
+        new Set([peer.name]),
+      ),
+    ).toBeNull();
+  });
+
+  it("preserves an active model selected through the same local daemon", () => {
+    expect(
+      supersededOllamaModelWithActivePeers(holder(), route("llama3:latest"), [holder()], new Set()),
+    ).toBeNull();
+  });
+});
+
+describe("discoverOllamaModelOwnership", () => {
+  it("does not leak a live same-name peer across gateway roots", () => {
+    const stoppedMatchingPeer = holder({
+      name: "duplicate-peer",
+      model: "llama3",
+      gatewayName: "gateway-stopped",
+    });
+    const activeDifferentModelPeer = holder({
+      name: "duplicate-peer",
+      model: "llama3:8b",
+      gatewayName: "gateway-live",
+    });
+    const discovery = discoverOllamaModelOwnership(
+      [stoppedMatchingPeer, activeDifferentModelPeer],
+      {},
+      (gateway) => ({
+        status: 0,
+        output: gateway === "gateway-live" ? "live" : "stopped",
+      }),
+      {
+        parseLiveSandboxEntries: (output) => [
+          {
+            name: "duplicate-peer",
+            phase: output === "live" ? "Ready" : "Stopped",
+          },
+        ],
+        resolvePersistedSandboxOwnershipGateway: (peer) => peer.gatewayName ?? "default",
+      },
+    );
+
+    expect(discovery.ok).toBe(true);
+    const successfulDiscovery = discovery as Extract<typeof discovery, { readonly ok: true }>;
+    const activePeers = successfulDiscovery.activePeers as ReadonlySet<OllamaModelHolder>;
+    expect(successfulDiscovery.activeSandboxNames).toEqual(new Set(["duplicate-peer"]));
+    expect(activePeers).toEqual(new Set([activeDifferentModelPeer]));
+    expect(
+      decideOllamaModelOwnership(
+        holder({ name: "alpha", model: "llama3" }),
+        [stoppedMatchingPeer, activeDifferentModelPeer],
+        successfulDiscovery.activeSandboxNames,
+        null,
+        activePeers,
+      ),
+    ).toEqual({ kind: "exclusive", model: "llama3", stalePeers: ["duplicate-peer"] });
   });
 });
 

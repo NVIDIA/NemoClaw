@@ -1111,11 +1111,8 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         persistAndProbeOllamaProxy: async () => {},
         applyLocalInferenceRoute: options.applyLocalInferenceRoute,
         getSandbox: options.getSandbox,
-        listSandboxes: () => ({
-          sandboxes:
-            typeof options.sandboxes === "function" ? options.sandboxes() : options.sandboxes,
-          defaultSandbox: null,
-        }),
+        listOllamaModelOwnershipPeers: () =>
+          typeof options.sandboxes === "function" ? options.sandboxes() : options.sandboxes,
         unloadOllamaModels: options.unloadOllamaModels,
         localInference: {
           validateOllamaModelWithToolsOverride: () => ({ ok: true }),
@@ -1168,7 +1165,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         { ok: true },
       );
 
-      expect(clearReceipt).toHaveBeenCalledWith(finalRoutes);
+      expect(clearReceipt).toHaveBeenCalledWith([]);
       expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
     } finally {
       fs.rmSync(stateRoot, { recursive: true, force: true });
@@ -1402,9 +1399,9 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         getOllamaProxyToken: () => "proxy-token",
         persistAndProbeOllamaProxy: async () => {},
         getSandbox,
-        listSandboxes: () => {
+        listOllamaModelOwnershipPeers: () => {
           events.push("peer-scan");
-          return { sandboxes: [priorEntry], defaultSandbox: null };
+          return [priorEntry];
         },
         unloadOllamaModels,
         withOllamaModelOwnershipLock: (operation) => {

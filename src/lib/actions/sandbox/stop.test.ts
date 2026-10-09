@@ -260,6 +260,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
     ).toEqual({
       ok: true,
       activeSandboxNames: new Set(["active-peer", "transient-peer"]),
+      activePeers: new Set([activePeer, transientPeer]),
       gatewayChecks: [
         {
           activeSandboxes: ["active-peer", "transient-peer"],

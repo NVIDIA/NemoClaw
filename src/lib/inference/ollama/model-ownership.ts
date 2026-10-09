@@ -3,7 +3,9 @@
 
 import path from "node:path";
 
+import { listInferenceRouteOwnersAcrossGatewayRoots } from "../../state/registry/cross-port";
 import type { SandboxEntry } from "../../state/registry";
+import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import {
   isLocalOllamaRouteOwner,
   readLocalAdapterJsonFile,
@@ -93,9 +95,41 @@ export function clearPendingOllamaModelCleanup(
 }
 
 /** The registry fields an Ollama GPU-release decision reads. */
-export type OllamaModelHolder = Pick<SandboxEntry, "name" | "provider" | "model" | "endpointUrl">;
+export type OllamaModelHolder = Pick<
+  SandboxEntry,
+  "name" | "provider" | "model" | "endpointUrl" | "gatewayName" | "gatewayPort"
+>;
 
 export type OllamaModelRoute = Pick<SandboxEntry, "provider" | "model" | "endpointUrl">;
+
+export type OllamaActiveOwnershipDiscovery =
+  | {
+      readonly ok: true;
+      /** Names for logs and legacy callers; ownership decisions prefer the rows below. */
+      readonly activeSandboxNames: ReadonlySet<string>;
+      /** Live peer rows retain gateway identity when names collide across roots. */
+      readonly activePeers?: ReadonlySet<OllamaModelHolder>;
+      readonly gatewayChecks: readonly {
+        readonly activeSandboxes: readonly string[];
+        readonly gateway: string;
+      }[];
+    }
+  | { readonly ok: false; readonly message: string };
+
+export type OllamaActiveOwnershipDiscoveryFn = (
+  peers: readonly OllamaModelHolder[],
+  environment: NodeJS.ProcessEnv,
+) => OllamaActiveOwnershipDiscovery;
+
+export type OllamaOwnershipPhaseCapture = (
+  gatewayName: string,
+  environment: NodeJS.ProcessEnv,
+) => { readonly output: string; readonly status: number | null };
+
+export type OllamaOwnershipDiscoveryDeps = {
+  readonly parseLiveSandboxEntries?: typeof parseLiveSandboxEntries;
+  readonly resolvePersistedSandboxOwnershipGateway?: (sandbox: OllamaModelHolder) => string;
+};
 
 export type OllamaModelOwnershipDecision =
   | { readonly kind: "missing-model" }
@@ -115,10 +149,15 @@ export type OllamaModelOwnershipDecision =
  * Decide whether this sandbox's Ollama model has another active owner.
  *
  * Registry rows persist after a sandbox stops and can also contain incomplete
- * onboarding reservations. Callers must supply the sandbox names that a live
- * runtime probe found in Ready or Running phase. A matching registry row that
- * is not in that set is evidence to report, not an owner that blocks release.
+ * onboarding reservations. Callers should supply the peer rows found in Ready
+ * or Running phase. A matching row absent from that live set is evidence to
+ * report, not an owner that blocks release; the names set remains as a legacy
+ * fallback for callers that do not provide gateway-aware peer rows.
  */
+export function listOllamaModelOwnershipPeersAcrossGatewayRoots(): SandboxEntry[] {
+  return listInferenceRouteOwnersAcrossGatewayRoots();
+}
+
 export function matchingOllamaModelPeers<T extends OllamaModelHolder>(
   sandbox: OllamaModelHolder,
   peers: readonly T[],
@@ -126,13 +165,33 @@ export function matchingOllamaModelPeers<T extends OllamaModelHolder>(
 ): T[] {
   const model = sandbox.model?.trim();
   if (!model) return [];
-  return peers.filter(
-    (peer) =>
-      peer.name !== sandbox.name &&
+  return peers.filter((peer) => {
+    const gatewayPortsKnown =
+      peer.gatewayPort !== null &&
+      peer.gatewayPort !== undefined &&
+      sandbox.gatewayPort !== null &&
+      sandbox.gatewayPort !== undefined;
+    const gatewayNamesKnown =
+      peer.gatewayName !== null &&
+      peer.gatewayName !== undefined &&
+      sandbox.gatewayName !== null &&
+      sandbox.gatewayName !== undefined;
+    const peerHasGatewayIdentity = peer.gatewayName != null || peer.gatewayPort != null;
+    const sandboxHasGatewayIdentity = sandbox.gatewayName != null || sandbox.gatewayPort != null;
+    const sameSandbox =
+      peer.name === sandbox.name &&
+      (gatewayPortsKnown
+        ? peer.gatewayPort === sandbox.gatewayPort
+        : gatewayNamesKnown
+          ? peer.gatewayName === sandbox.gatewayName
+          : !peerHasGatewayIdentity && !sandboxHasGatewayIdentity);
+    return (
+      !sameSandbox &&
       isLocalOllamaRouteOwner(peer, selectedHost) &&
       !!peer.model &&
-      ollamaModelRefsMatch(peer.model, model),
-  );
+      ollamaModelRefsMatch(peer.model, model)
+    );
+  });
 }
 
 export function decideOllamaModelOwnership(
@@ -140,22 +199,25 @@ export function decideOllamaModelOwnership(
   peers: readonly OllamaModelHolder[],
   activeSandboxNames: ReadonlySet<string>,
   selectedHost: OllamaHostRoute | null = null,
+  activePeers?: ReadonlySet<OllamaModelHolder>,
 ): OllamaModelOwnershipDecision {
   const model = sandbox.model?.trim();
   if (!model) return { kind: "missing-model" };
 
   const matchingPeers = matchingOllamaModelPeers(sandbox, peers, selectedHost);
-  const activePeers = matchingPeers
-    .filter((peer) => activeSandboxNames.has(peer.name))
+  const isActive = (peer: OllamaModelHolder): boolean =>
+    activePeers ? activePeers.has(peer) : activeSandboxNames.has(peer.name);
+  const activePeerNames = matchingPeers
+    .filter(isActive)
     .map((peer) => peer.name)
     .sort();
   const stalePeers = matchingPeers
-    .filter((peer) => !activeSandboxNames.has(peer.name))
+    .filter((peer) => !isActive(peer))
     .map((peer) => peer.name)
     .sort();
 
-  return activePeers.length > 0
-    ? { kind: "shared-active", model, activePeers, stalePeers }
+  return activePeerNames.length > 0
+    ? { kind: "shared-active", model, activePeers: activePeerNames, stalePeers }
     : { kind: "exclusive", model, stalePeers };
 }
 
@@ -163,6 +225,85 @@ export function decideOllamaModelOwnership(
  * Conservative compatibility helper for callers that do not probe live state.
  * Every matching registry peer remains protected on those paths.
  */
+export function discoverOllamaModelOwnership(
+  peers: readonly OllamaModelHolder[],
+  environment: NodeJS.ProcessEnv,
+  capturePhases: OllamaOwnershipPhaseCapture,
+  deps: OllamaOwnershipDiscoveryDeps = {},
+): OllamaActiveOwnershipDiscovery {
+  const parseEntries = deps.parseLiveSandboxEntries ?? parseLiveSandboxEntries;
+  if (peers.length === 0) {
+    return { ok: true, activeSandboxNames: new Set(), activePeers: new Set(), gatewayChecks: [] };
+  }
+  const resolveGateway = deps.resolvePersistedSandboxOwnershipGateway;
+  if (!resolveGateway) {
+    return {
+      ok: false,
+      message: "could not resolve a sibling gateway: gateway binding resolver is unavailable",
+    };
+  }
+
+  const peersByGateway = new Map<string, OllamaModelHolder[]>();
+  try {
+    for (const peer of peers) {
+      const gateway = resolveGateway(peer);
+      const gatewayPeers = peersByGateway.get(gateway) ?? [];
+      gatewayPeers.push(peer);
+      peersByGateway.set(gateway, gatewayPeers);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: `could not resolve a sibling gateway: ${detail}` };
+  }
+
+  const activeSandboxNames = new Set<string>();
+  const activePeers = new Set<OllamaModelHolder>();
+  const gatewayChecks: Array<{ activeSandboxes: string[]; gateway: string }> = [];
+  for (const [gateway, gatewayPeers] of peersByGateway) {
+    let result;
+    try {
+      result = capturePhases(gateway, environment);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { ok: false, message: `OpenShell could not list gateway '${gateway}': ${detail}` };
+    }
+    if (result.status !== 0) {
+      const detail = result.output.trim().replace(/\s+/g, " ").slice(0, 300);
+      return {
+        ok: false,
+        message: `OpenShell could not list sandbox phases on gateway '${gateway}'${
+          detail ? `: ${detail}` : ""
+        }`,
+      };
+    }
+    const phases = new Map(parseEntries(result.output).map((entry) => [entry.name, entry.phase]));
+    const activeSandboxes: string[] = [];
+    for (const peer of gatewayPeers) {
+      const phase = phases.get(peer.name);
+      if (
+        phase === undefined ||
+        phase === "Stopped" ||
+        phase === "Error" ||
+        phase === "Failed" ||
+        phase === "Evicted"
+      ) {
+        continue;
+      }
+      if (phase === null || phase === "Unknown") {
+        return {
+          ok: false,
+          message: `OpenShell returned no usable phase for sibling '${peer.name}' on gateway '${gateway}'`,
+        };
+      }
+      activeSandboxNames.add(peer.name);
+      activePeers.add(peer);
+      activeSandboxes.push(peer.name);
+    }
+    gatewayChecks.push({ activeSandboxes, gateway });
+  }
+  return { ok: true, activeSandboxNames, activePeers, gatewayChecks };
+}
+
 export function exclusivelyHeldOllamaModel(
   sandbox: OllamaModelHolder,
   peers: readonly OllamaModelHolder[],
@@ -189,6 +330,31 @@ export function exclusivelyHeldOllamaModel(
  * Comparing model refs is strictly conservative: it can only miss a release,
  * never evict a model the new route still uses.
  */
+export function supersededOllamaModelWithActivePeers(
+  previous: OllamaModelHolder | null,
+  next: OllamaModelRoute,
+  peers: readonly OllamaModelHolder[],
+  activeSandboxNames: ReadonlySet<string>,
+  selectedHost: OllamaHostRoute | null = null,
+  activePeers?: ReadonlySet<OllamaModelHolder>,
+): string | null {
+  if (!previous || !isLocalOllamaRouteOwner(previous, selectedHost)) return null;
+  const ownership = decideOllamaModelOwnership(
+    previous,
+    peers,
+    activeSandboxNames,
+    selectedHost,
+    activePeers,
+  );
+  if (ownership.kind !== "exclusive") return null;
+  const nextModel = next.model?.trim();
+  if (!nextModel) return null;
+  return isLocalOllamaRouteOwner(next, selectedHost) &&
+    ollamaModelRefsMatch(ownership.model, nextModel)
+    ? null
+    : ownership.model;
+}
+
 export function supersededOllamaModel(
   previous: OllamaModelHolder | null,
   next: OllamaModelRoute,

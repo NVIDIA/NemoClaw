@@ -488,7 +488,12 @@ export function createDirectSetupInferenceHarnessFactory(
       // the production defaults never read the developer's real registry or
       // curl a live Ollama daemon.
       getSandbox: () => null,
-      listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+      listOllamaModelOwnershipPeers: () => [],
+      discoverActiveOllamaSandboxNames: (peers) => ({
+        ok: true,
+        activeSandboxNames: new Set(peers.map((peer) => peer.name)),
+        gatewayChecks: [],
+      }),
       unloadOllamaModels,
       withOllamaModelOwnershipLock: (operation) => operation(),
       ...options.overrides,
