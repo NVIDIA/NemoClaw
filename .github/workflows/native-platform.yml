@@ -23,7 +23,7 @@ env:
   CARGO_INCREMENTAL: "0"
 jobs:
   build:
-    name: Build and deterministic tests
+    name: Build and test
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     outputs:
@@ -41,11 +41,11 @@ jobs:
         run: cargo ci clippy
       - name: Build test executables
         run: cargo ci build
-      - name: Run deterministic tests
+      - name: Run tests
         run: cargo ci test
       - name: Check generated configuration schema and reference
         run: cargo ci schema
-      - name: Build and verify native bundle
+      - name: Build and verify bundle
         run: cargo ci bundle
       # Windows has few lifecycle fixtures; transferring an archive costs more
       # than running them here. Unix fixtures run on two independent workers.
@@ -100,7 +100,8 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: .build/ci
-      - name: Restore executable permissions
+      # Tar preserves the executable permissions that artifact transfer drops.
+      - name: Extract lifecycle inputs
         run: tar -xf .build/ci/lifecycle-inputs.tar
       - name: Execute lifecycle partition without compiling
         env:

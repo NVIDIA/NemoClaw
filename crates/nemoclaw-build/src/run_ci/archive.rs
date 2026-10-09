@@ -6,7 +6,7 @@ use super::*;
 
 pub(super) fn package_inputs(tools: &Tools<'_>, platform: &str) -> Result<()> {
     let output = fs::File::create(".build/ci/lifecycle-inputs.tar")?;
-    // Let the artifact uploader compress this tar with its optimized codec.
+    // Leave compression to the artifact uploader; gzip in this debug build is slow.
     let mut archive = tar::Builder::new(output);
     // Tar preserves executable permissions across artifact upload/download.
     for directory in [

@@ -69,9 +69,9 @@ The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-test
 
 ## Test Runner
 
-All native CI platforms use cargo-nextest 0.9.144 for ordinary tests and the explicitly configured bundle fixtures.
+Every `CI / Native` platform uses cargo-nextest 0.9.144 for both the `ci` and `lifecycle` profiles.
 `cargo ci tools` installs its prebuilt executable after checksum verification; installation cannot fall back to compiling it.
-`cargo ci test` runs the ordinary tests with the `ci` profile and then the doctests.
+`cargo ci test` runs tests not marked `#[ignore]` with the `ci` profile, then the doctests.
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
 CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
@@ -96,7 +96,7 @@ cargo ci lifecycle --partition hash:2/2
 
 To reproduce the Unix archive handoff, run `cargo ci archive` after building.
 It writes `.build/ci/lifecycle.tar.zst` and `.build/ci/lifecycle-inputs.tar`.
-The first contains only binaries selected by the lifecycle profile and their nextest metadata; the second preserves the bundle, pinned tools, CI runner, provider helpers, and their executable permissions.
+The first contains only binaries selected by the lifecycle profile and their nextest metadata; the second preserves the bundle, pinned tools, `nemoclaw-build` executable, provider helpers, and their executable permissions.
 Copy both archives into `.build/ci` in a separate checkout of the same revision on the same operating system and architecture, then run:
 
 ```sh

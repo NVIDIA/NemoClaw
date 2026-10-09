@@ -53,7 +53,7 @@ exit "${CARGO_RESULT:-0}"
             .args(args)
             .current_dir(self.0.path())
             .env("CARGO", self.0.path().join("bin/cargo"))
-            .env("CARGO_LIST", r#"{"rust-suites":{"selected-suite":{"testcases":{"selected":{"filter-match":{"status":"matches"}}}},"ordinary-suite":{"testcases":{"ordinary":{"filter-match":{"status":"mismatch"}}}}}}"#)
+            .env("CARGO_LIST", r#"{"rust-suites":{"selected-suite":{"testcases":{"selected":{"filter-match":{"status":"matches"}}}},"unselected-suite":{"testcases":{"unselected":{"filter-match":{"status":"mismatch"}}}}}}"#)
             .env("PROTOC", self.0.path().join("bin/protoc"))
             .env("PATH", self.0.path().join("bin"))
             .env("TEST_PLATFORM", "linux_arm64")
