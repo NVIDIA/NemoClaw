@@ -69,7 +69,7 @@ For an explicit endpoint with a supported application protocol, choose TLS handl
 | `enforcement: enforce` | Enforce the configured application-level request rules on inspected traffic |
 | `enforcement: audit`, or omit `enforcement` | Audit application-level decisions rather than block requests based on those rules |
 
-`tls: terminate` and `tls: passthrough` are rejected by OpenShell v0.1.2.
+`tls: terminate` and `tls: passthrough` are rejected by OpenShell v0.1.3.
 Remove either field to keep automatic TLS handling.
 
 Destination and executable grants still determine which connections are allowed.
@@ -78,7 +78,7 @@ Do not choose `tls: skip` for an endpoint that relies on those controls, includi
 Use explicit `enforcement: enforce` when the policy must reject disallowed inspected requests.
 The checked-in example uses that enforcement setting with automatic TLS handling.
 
-The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
+The [pinned parser](https://github.com/NVIDIA/OpenShell/blob/e1f3c82caa3ed3b65de22889ae7ef32a774878ef/crates/openshell-supervisor-network/src/l7/mod.rs) and [proxy](https://github.com/NVIDIA/OpenShell/blob/e1f3c82caa3ed3b65de22889ae7ef32a774878ef/crates/openshell-supervisor-network/src/proxy.rs) define these behaviors.
 The [SDK policy validator](../crates/nemoclaw-openshell/src/policy.rs) accepts only supported field combinations; a field's presence in the schema does not bypass protocol validation.
 Live enforcement and application trust on your host remain qualification requirements.
 Follow [policy change constraints](#verify-and-change-the-configuration) before changing a deployed policy.
@@ -86,7 +86,7 @@ Follow [policy change constraints](#verify-and-change-the-configuration) before 
 ## Use an Upstream Proxy
 
 OpenShell owns the workload's proxy environment and routes traffic through its policy proxy.
-Configure an upstream corporate proxy through the external gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-supervisor-network/src/upstream_proxy.rs).
+Configure an upstream corporate proxy through the external gateway's OpenShell compute-driver settings, following the [pinned upstream proxy contract](https://github.com/NVIDIA/OpenShell/blob/e1f3c82caa3ed3b65de22889ae7ef32a774878ef/crates/openshell-supervisor-network/src/upstream_proxy.rs).
 At this revision, chaining applies to TLS CONNECT traffic; plain HTTP still connects directly.
 NemoClaw does not expose this driver setting for managed gateways.
 
@@ -105,7 +105,7 @@ A successful unchanged reapply preserves the sandbox identity and creates no rep
 Export compares the observed policy and launch settings with retained intent and checks that a ready sandbox has loaded the matching policy revision.
 OpenShell can persist supervisor-added filesystem grants in the active policy revision without recording their source.
 NemoClaw accepts only the bounded baseline additions checked by this version; other differences or incomplete observations stop export and preserve state.
-OpenShell v0.1.2 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
+OpenShell v0.1.3 applies GPU filesystem additions inside the workload without writing them back to the gateway policy.
 This removes the upstream cause of suspected GPU false drift; live GPU export and reapply remain unverified.
 Missing policy observations or drift do not produce a partial configuration.
 
