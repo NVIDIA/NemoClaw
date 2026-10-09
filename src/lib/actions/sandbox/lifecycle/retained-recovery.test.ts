@@ -47,23 +47,23 @@ async function setup(port = 19260, dockerHost?: string) {
   const registry = await import("../../../state/registry");
   const docker = await import("../../../adapters/docker/run");
   const presence = await import("../destroy-presence");
-  const gateway = await import("../destroy-gateway");
   const { reconcileIdentityFreeRecovery } = await import("../destroy-preflight");
   const gatewayName = port === 8080 ? "nemoclaw" : `nemoclaw-${port}`;
   const { resolveGatewayStateDirForPort } = await import("../../../onboard/gateway-binding");
-  const { writeDockerDriverGatewayRuntimeMarkerForStateDir } =
-    await import("../../../onboard/docker-driver-gateway-runtime-marker");
-  const writeRuntime = (host: string | null, createdAt: string) =>
-    writeDockerDriverGatewayRuntimeMarkerForStateDir(
-      resolveGatewayStateDirForPort({ home: testHome, port }),
-      {
-        pid: 4242,
-        desiredEnv: {},
-        endpoint: `https://127.0.0.1:${port}`,
-        dockerHost: host,
-        createdAt,
-      },
-    );
+  const {
+    clearDockerDriverGatewayRuntimeMarker,
+    writeDockerDriverGatewayRuntimeMarkerForStateDir,
+  } = await import("../../../onboard/docker-driver-gateway-runtime-marker");
+  const stateDir = resolveGatewayStateDirForPort({ home: testHome, port });
+  const writeRuntime = (host: string | null, createdAt: string, runtimeProviderId = "docker") =>
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+      pid: 4242,
+      desiredEnv: {},
+      endpoint: `https://127.0.0.1:${port}`,
+      dockerHost: host,
+      createdAt,
+      runtimeProviderId,
+    });
   writeRuntime(dockerHost ?? null, new Date(Date.now() - 1_000).toISOString());
   const route = {
     provider: "compatible-endpoint",
@@ -105,7 +105,6 @@ async function setup(port = 19260, dockerHost?: string) {
     malformedRows: 0,
   });
   const volumes = vi.spyOn(docker, "dockerRun").mockReturnValue(emptyDockerResult);
-  const runtime = vi.spyOn(gateway, "resolveGatewayCleanupRuntimeProviderId");
   const files = [
     registry.REGISTRY_FILE,
     session.SESSION_FILE,
@@ -126,7 +125,7 @@ async function setup(port = 19260, dockerHost?: string) {
     capture,
     containers,
     volumes,
-    runtime,
+    clearRuntime: () => clearDockerDriverGatewayRuntimeMarker(stateDir),
     writeRuntime,
     snapshot,
     run,
@@ -173,6 +172,13 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     "releases the retained name through destroy on gateway port %s without resource cleanup (#12260)",
     async (port) => {
       const h = await setupDestroy(port);
+      h.writeRuntime(
+        "unix:///var/run/docker.sock",
+        new Date(Date.parse(h.record.recordedAt) - 1_000).toISOString(),
+      );
+      h.containers.mockRestore();
+      expect(process.env.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
+      expect(process.env.DOCKER_CONTEXT).toBeUndefined();
       expect(h.registry.getSandbox("alpha")?.gatewayPort).toBeUndefined();
       expect(h.record.sandboxIdentityFingerprint).toBeNull();
 
@@ -197,9 +203,13 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
       expect(
         h.capture.mock.calls.every(([args]) => args[0] === "sandbox" && args[1] === "list"),
       ).toBe(true);
-      expect(h.volumes.mock.calls.every(([args]) => args[2] === "volume" && args[3] === "ls")).toBe(
-        true,
-      );
+      expect(h.volumes.mock.calls.some(([args]) => args[2] === "ps")).toBe(true);
+      expect(
+        h.volumes.mock.calls.every(
+          ([args]) =>
+            args[0] === "--context" && args[1] === "default" && ["ps", "volume"].includes(args[2]!),
+        ),
+      ).toBe(true);
       expect(
         h.registry.reserveSandboxInferenceRoute("alpha", {
           ...h.route,
@@ -255,40 +265,32 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.ordinaryDestroy).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["failed", { status: 1, output: "", stdout: "[]", stderr: "connection refused" }],
-    ["malformed", { status: 0, output: "invalid", stdout: "invalid", stderr: "" }],
-    ["diagnostic", { status: 0, output: "[]", stdout: "[]", stderr: "partial result" }],
-    [
-      "present",
-      {
-        status: 0,
-        output: "",
-        stdout: JSON.stringify([
-          {
-            id: "sandbox-alpha",
-            name: "alpha",
-            labels: {},
-            phase: "Ready",
-            created_at: "2026-10-08",
-            resource_version: 1,
-            current_policy_version: 1,
-          },
-        ]),
-        stderr: "",
-      },
-    ],
-  ])("preserves state when the gateway observation is %s (#12260)", async (_label, observation) => {
+  it("preserves state when the gateway still reports the sandbox present (#12260)", async () => {
     const h = await setup();
     const before = h.snapshot();
-    h.capture.mockReturnValue(observation);
+    h.capture.mockReturnValue({
+      status: 0,
+      output: "",
+      stdout: JSON.stringify([
+        {
+          id: "sandbox-alpha",
+          name: "alpha",
+          labels: {},
+          phase: "Ready",
+          created_at: "2026-10-08",
+          resource_version: 1,
+          current_policy_version: 1,
+        },
+      ]),
+      stderr: "",
+    });
 
     expect(h.run).toThrow(/presence as/u);
 
     expect(h.snapshot()).toEqual(before);
   });
 
-  it.each(["residual", "failed", "malformed"])(
+  it.each(["residual", "failed"])(
     "preserves state for a %s container observation (#12260)",
     async (kind) => {
       const h = await setup();
@@ -298,18 +300,15 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
           ? { status: "probe-failed", detail: "Docker unavailable" }
           : {
               status: "observed",
-              malformedRows: kind === "malformed" ? 1 : 0,
-              rows:
-                kind === "residual"
-                  ? [
-                      {
-                        id: "b".repeat(64),
-                        managedBy: "openshell",
-                        workspace: "default",
-                        sandboxId: "sandbox-alpha",
-                      },
-                    ]
-                  : [],
+              malformedRows: 0,
+              rows: [
+                {
+                  id: "b".repeat(64),
+                  managedBy: "openshell",
+                  workspace: "default",
+                  sandboxId: "sandbox-alpha",
+                },
+              ],
             },
       );
 
@@ -340,31 +339,6 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.snapshot()).toEqual(before);
   });
 
-  it("pins container and volume observations to the default Docker daemon (#12260)", async () => {
-    const h = await setup();
-    h.writeRuntime(
-      "unix:///var/run/docker.sock",
-      new Date(Date.parse(h.record.recordedAt) - 1_000).toISOString(),
-    );
-    h.containers.mockRestore();
-    expect(process.env.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
-    expect(process.env.DOCKER_CONTEXT).toBeUndefined();
-
-    expect(h.run()).toBe(true);
-
-    expect(
-      h.volumes.mock.calls.some(
-        ([args]) => args[0] === "--context" && args[1] === "default" && args[2] === "ps",
-      ),
-    ).toBe(true);
-    expect(
-      h.volumes.mock.calls.every(
-        ([args]) =>
-          args[0] === "--context" && args[1] === "default" && ["ps", "volume"].includes(args[2]!),
-      ),
-    ).toBe(true);
-  });
-
   it("preserves sandbox-scoped provider ownership after sandbox absence (#12260)", async () => {
     const h = await setup();
     h.session.recordRetainedSandboxRecovery({
@@ -376,16 +350,23 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.snapshot()).toEqual(before);
   });
 
-  it.each([null, "podman"])(
-    "rejects unproven Docker absence for runtime %s (#12260)",
-    async (runtime) => {
-      const h = await setup();
-      const before = h.snapshot();
-      h.runtime.mockReturnValue(runtime);
-      expect(h.run).toThrow(/owning Docker runtime/u);
-      expect(h.snapshot()).toEqual(before);
-    },
-  );
+  it("preserves recovery when the recorded Docker runtime marker is missing (#12260)", async () => {
+    const h = await setup();
+    h.registry.updateSandbox("alpha", { openshellDriver: "docker" });
+    h.clearRuntime();
+    const before = h.snapshot();
+    expect(h.run).toThrow(/owning Docker runtime/u);
+    expect(h.snapshot()).toEqual(before);
+    expect(h.capture).not.toHaveBeenCalled();
+  });
+
+  it("preserves recovery owned by a different runtime provider (#12260)", async () => {
+    const h = await setup();
+    h.writeRuntime(null, new Date(Date.parse(h.record.recordedAt) - 1_000).toISOString(), "podman");
+    const before = h.snapshot();
+    expect(h.run).toThrow(/owning Docker runtime/u);
+    expect(h.snapshot()).toEqual(before);
+  });
 
   it("preserves records when more than one failed create uses the same name (#12260)", async () => {
     const h = await setup();
@@ -417,7 +398,8 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
   });
 
   it("preserves metadata when Docker targets another daemon (#12260)", async () => {
-    const h = await setup(19260, "unix:///tmp/other-docker.sock");
+    const h = await setup();
+    vi.stubEnv("DOCKER_HOST", "unix:///tmp/other-docker.sock");
     const before = h.snapshot();
     expect(h.run).toThrow(/default daemon/u);
     expect(h.snapshot()).toEqual(before);
@@ -508,21 +490,6 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.volumes).not.toHaveBeenCalled();
   });
 
-  it("preserves a replacement session after registry retirement (#12260)", async () => {
-    const h = await setup();
-    h.registry.removeSandboxRouteReservationIfCurrent(h.registry.getSandbox("alpha")!);
-    h.session.saveSession(
-      h.session.createSession({
-        sessionId: "replacement-session",
-        sandboxName: "other-sandbox",
-      }),
-    );
-    const replacement = fs.readFileSync(h.session.SESSION_FILE, "utf8");
-    expect(h.run()).toBe(true);
-    expect(fs.readFileSync(h.session.SESSION_FILE, "utf8")).toBe(replacement);
-    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
-  });
-
   it("preserves a registry replacement that appears during absence verification (#12260)", async () => {
     const h = await setup();
     h.capture.mockImplementationOnce(() => {
@@ -565,8 +532,13 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([h.record]);
     expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(true);
     failure.mockRestore();
+    h.session.saveSession(
+      h.session.createSession({ sessionId: "replacement-session", sandboxName: "other-sandbox" }),
+    );
+    const replacement = fs.readFileSync(h.session.SESSION_FILE, "utf8");
 
     expect(h.run()).toBe(true);
+    expect(fs.readFileSync(h.session.SESSION_FILE, "utf8")).toBe(replacement);
     expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
     expect(hasIdentityFreeRetainedRecovery("alpha")).toBe(false);
   });

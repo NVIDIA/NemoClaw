@@ -14,7 +14,6 @@ import { resolveNemoclawStateGatewayPort } from "../../../state/paths";
 import type * as Registry from "../../../state/registry";
 import {
   classifySandboxInferenceRouteReservation,
-  isPendingReservationForSession,
   isRouteOnlySandboxReservation,
 } from "../../../state/registry/route-reservation";
 import { resolveGatewayCleanupRuntimeProviderId } from "../destroy-gateway";
@@ -108,18 +107,13 @@ function requireReservationOwner(
   session: OnboardSession.Session | null,
   state: RecoveryState,
 ): void {
+  const { name, gatewayName, gatewayPort } = entry;
   if (
     session?.status !== "recovery_required" ||
     session.sandboxName !== record.sandboxName ||
     session.cancellationRecovery?.reason !== record.reason ||
     !state.session.retainedSandboxRecoveryMatchesSession(record, session) ||
-    !isPendingReservationForSession(entry, session.sessionId) ||
-    state.registryEntryGatewayPort({
-      name: entry.name,
-      gatewayName: entry.gatewayName,
-      gatewayPort: entry.gatewayPort,
-    }) !== record.gatewayPort ||
-    entry.gatewayName !== record.gatewayName ||
+    state.registryEntryGatewayPort({ name, gatewayName, gatewayPort }) !== record.gatewayPort ||
     entry.hostLocalInferenceReceipt != null ||
     entry.nativeNvidiaProviderAttachment !== undefined ||
     classifySandboxInferenceRouteReservation(
@@ -211,10 +205,8 @@ export function reconcileIdentityFreeRecovery(
     if (entry) requireReservationOwner(record, entry, sessionState.loadSession(), state);
     // Legacy state retirement must succeed while the recovery authority is still available for retry.
     state.retireRemovedImmutabilityState?.();
-    if (entry) {
-      if (!registry.removeSandboxRouteReservationIfCurrent(entry)) {
-        refuse(sandboxName, "the registry changed during absence verification");
-      }
+    if (entry && !registry.removeSandboxRouteReservationIfCurrent(entry)) {
+      refuse(sandboxName, "the registry changed during absence verification");
     }
     if (registry.getSandbox(sandboxName) !== null) {
       refuse(sandboxName, "a registry entry appeared during reconciliation");
