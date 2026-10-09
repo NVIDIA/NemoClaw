@@ -117,8 +117,8 @@ async function setup(port = 19260) {
   };
 }
 
-async function setupDestroy() {
-  const h = await setup();
+async function setupDestroy(port = 19260) {
+  const h = await setup(port);
   const preflight = await import("../destroy-preflight");
   const reconcile = preflight.reconcileIdentityFreeRecovery;
   vi.spyOn(preflight, "reconcileIdentityFreeRecovery").mockImplementation(
@@ -153,39 +153,45 @@ async function setupDestroy() {
 }
 
 describe.skipIf(process.platform !== "linux")("identity-free retained recovery", () => {
-  it("releases the retained name through destroy without entering resource cleanup (#12260)", async () => {
-    const h = await setupDestroy();
+  it.each([8080, 19260])(
+    "releases the retained name through destroy on gateway port %s without resource cleanup (#12260)",
+    async (port) => {
+      const h = await setupDestroy(port);
+      expect(h.registry.getSandbox("alpha")?.gatewayPort).toBeUndefined();
+      expect(h.record.sandboxIdentityFingerprint).toBeNull();
 
-    await expect(h.destroy()).resolves.toBeUndefined();
+      await expect(h.destroy()).resolves.toBeUndefined();
 
-    expect(h.capture).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", h.record.gatewayName, "--output", "json"],
-      expect.objectContaining({ ignoreError: true, includeStreams: true }),
-    );
-    expect(h.registry.getSandbox("alpha")).toBeNull();
-    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
-    expect(h.session.loadSession()?.cancellationRecovery).toBeNull();
-    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
-    expect(h.exit).not.toHaveBeenCalled();
-    expect(h.log).toHaveBeenCalledWith(
-      "  Cleared retained recovery for 'alpha'. No sandbox resources were removed.",
-    );
-  });
-
-  it("retires removed Shields state when destroy clears identity-free recovery (#12260)", async () => {
-    const h = await setupDestroy();
-    fs.writeFileSync(h.legacyState, "{}\n", { mode: 0o600 });
-    expect(h.assertMigrationClear).toThrow(/state record from the removed Shields feature/u);
-
-    await expect(h.destroy()).resolves.toBeUndefined();
-
-    expect(fs.existsSync(h.legacyState)).toBe(false);
-    expect(h.registry.getSandbox("alpha")).toBeNull();
-    expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
-    expect(h.ordinaryDestroy).not.toHaveBeenCalled();
-    expect(h.exit).not.toHaveBeenCalled();
-    expect(h.assertMigrationClear).not.toThrow();
-  });
+      expect(h.capture).toHaveBeenCalledWith(
+        ["sandbox", "list", "-g", h.record.gatewayName, "--output", "json"],
+        expect.objectContaining({ ignoreError: true, includeStreams: true }),
+      );
+      expect(h.registry.getSandbox("alpha")).toBeNull();
+      expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
+      expect(h.session.loadSession()).toMatchObject({
+        status: "failed",
+        sandboxName: null,
+        cancellationRecovery: null,
+      });
+      expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+      expect(h.exit).not.toHaveBeenCalled();
+      expect(h.log).toHaveBeenCalledWith(
+        "  Cleared retained recovery for 'alpha'. No sandbox resources were removed.",
+      );
+      expect(
+        h.capture.mock.calls.every(([args]) => args[0] === "sandbox" && args[1] === "list"),
+      ).toBe(true);
+      expect(h.volumes.mock.calls.every(([args]) => args[2] === "volume" && args[3] === "ls")).toBe(
+        true,
+      );
+      expect(
+        h.registry.reserveSandboxInferenceRoute("alpha", {
+          ...h.route,
+          reservationSessionId: "new-session",
+        }),
+      ).toBe(true);
+    },
+  );
 
   it("preserves recovery for retry when removed Shields state retirement fails (#12260)", async () => {
     const h = await setupDestroy();
@@ -215,6 +221,7 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.registry.getSandbox("alpha")).toBeNull();
     expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
     expect(h.ordinaryDestroy).not.toHaveBeenCalled();
+    expect(h.assertMigrationClear).not.toThrow();
   });
 
   it("preserves legacy state and recovery when destroy cannot verify gateway absence (#12260)", async () => {
@@ -231,37 +238,6 @@ describe.skipIf(process.platform !== "linux")("identity-free retained recovery",
     expect(h.volumes).not.toHaveBeenCalled();
     expect(h.ordinaryDestroy).not.toHaveBeenCalled();
   });
-
-  it.each([8080, 19260])(
-    "releases the retained sandbox name after verified absence on gateway port %s (#12260)",
-    async (port) => {
-      const h = await setup(port);
-      expect(h.registry.getSandbox("alpha")?.gatewayPort).toBeUndefined();
-      expect(h.record.sandboxIdentityFingerprint).toBeNull();
-
-      expect(h.run()).toBe(true);
-
-      expect(h.registry.getSandbox("alpha")).toBeNull();
-      expect(h.session.listRetainedSandboxRecoveryRecords()).toEqual([]);
-      expect(h.session.loadSession()).toMatchObject({
-        status: "failed",
-        sandboxName: null,
-        cancellationRecovery: null,
-      });
-      expect(
-        h.capture.mock.calls.every(([args]) => args[0] === "sandbox" && args[1] === "list"),
-      ).toBe(true);
-      expect(h.volumes.mock.calls.every(([args]) => args[2] === "volume" && args[3] === "ls")).toBe(
-        true,
-      );
-      expect(
-        h.registry.reserveSandboxInferenceRoute("alpha", {
-          ...h.route,
-          reservationSessionId: "new-session",
-        }),
-      ).toBe(true);
-    },
-  );
 
   it.each([
     ["failed", { status: 1, output: "", stdout: "[]", stderr: "connection refused" }],
