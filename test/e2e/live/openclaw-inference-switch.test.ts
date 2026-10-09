@@ -1144,6 +1144,10 @@ test(
       scenarioLabel: "OpenClaw inference switch",
     });
 
+    const publicApiKey =
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
+        : null;
     const useMockBaseline =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
@@ -1152,10 +1156,9 @@ test(
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startMockOpenClawBaselineProvider(progress)
       : undefined;
-    const publicApiKey =
-      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
-        : null;
+    cleanup.trackDisposable("close baseline inference provider", async () => {
+      await baselineProvider?.close();
+    });
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig({
@@ -1176,9 +1179,6 @@ test(
     );
     cleanup.trackDisposable("close switched Anthropic provider", async () => {
       await mockProvider?.close();
-    });
-    cleanup.trackDisposable("close baseline inference provider", async () => {
-      await baselineProvider?.close();
     });
     const customDockerfile = writeCustomOpenClawDockerfile(home);
     cleanup.trackGateway(host, "nemoclaw", {

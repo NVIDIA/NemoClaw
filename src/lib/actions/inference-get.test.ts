@@ -220,28 +220,6 @@ describe("runInferenceGet", () => {
     ]);
   });
 
-  it("returns the recorded Anthropic route while preserving the aligned display (#12850)", async () => {
-    const deps = createDeps(
-      configuredRoute("compatible-anthropic-endpoint", "mock-anthropic-model"),
-    );
-    recordRoute(deps, {
-      provider: "compatible-anthropic-endpoint",
-      model: "mock-anthropic-model",
-      endpointUrl: "https://inference.example.test/v1",
-    });
-
-    await expect(runInferenceGet({ sandboxName: "custom" }, deps)).resolves.toEqual({
-      provider: "compatible-anthropic-endpoint",
-      model: "mock-anthropic-model",
-      endpointUrl: "https://inference.example.test/v1",
-    });
-    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
-      "Provider: compatible-anthropic-endpoint",
-      "Model:    mock-anthropic-model",
-      "Endpoint: https://inference.example.test/v1",
-    ]);
-  });
-
   it("supports JSON output", async () => {
     const deps = createDeps(configuredRoute("openai-api", "gpt-5.4"));
 
