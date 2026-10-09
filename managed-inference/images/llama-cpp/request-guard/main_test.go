@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -76,6 +77,79 @@ func TestForwardStdioRejectsUnavailableGuard(t *testing.T) {
 	}
 	if output.Len() != 0 {
 		t.Fatal("unavailable request guard emitted a response")
+	}
+}
+
+func TestForwardStdioReturnsAfterResponseWithOpenInput(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptError := listener.Accept()
+		if acceptError != nil {
+			serverDone <- acceptError
+			return
+		}
+		defer connection.Close()
+		request := make([]byte, len("guarded request"))
+		if _, readError := io.ReadFull(connection, request); readError != nil {
+			serverDone <- readError
+			return
+		}
+		_, serverDoneError := connection.Write([]byte("guarded response"))
+		serverDone <- serverDoneError
+	}()
+	input, writer := io.Pipe()
+	defer writer.Close()
+	result := make(chan error, 1)
+	var output bytes.Buffer
+	go func() { result <- forwardStdio(input, &output, listener.Addr().String()) }()
+	if _, err := writer.Write([]byte("guarded request")); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("forward request: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("forwarder waited for stdin after the guard completed its response")
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("guard exchange: %v", err)
+	}
+	if output.String() != "guarded response" {
+		t.Fatalf("unexpected response: %q", output.String())
+	}
+}
+
+func TestForwardStdioReportsCompletedInputError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		connection, acceptError := listener.Accept()
+		if acceptError != nil {
+			serverDone <- acceptError
+			return
+		}
+		defer connection.Close()
+		_, readError := io.ReadAll(connection)
+		serverDone <- readError
+	}()
+	var output bytes.Buffer
+	err = forwardStdio(iotest.ErrReader(fmt.Errorf("injected input failure")), &output, listener.Addr().String())
+	if err == nil || err.Error() != "request guard request forwarding failed" {
+		t.Fatalf("unexpected input forwarding result: %v", err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("guard exchange: %v", err)
 	}
 }
 

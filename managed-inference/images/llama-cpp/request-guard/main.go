@@ -48,15 +48,21 @@ func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	inputDone := make(chan error, 1)
 	go func() {
 		_, copyError := io.Copy(connection, input)
-		_ = connection.(*net.TCPConn).CloseWrite()
 		inputDone <- copyError
+		_ = connection.(*net.TCPConn).CloseWrite()
 	}()
 	_, outputError := io.Copy(output, connection)
 	if outputError != nil {
 		return errors.New("request guard response forwarding failed")
 	}
-	if inputError := <-inputDone; inputError != nil {
-		return errors.New("request guard request forwarding failed")
+	// The guard can finish a response before Docker closes stdin. The command
+	// exits with the response rather than waiting for more client input.
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			return errors.New("request guard request forwarding failed")
+		}
+	default:
 	}
 	return nil
 }
