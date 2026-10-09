@@ -10,7 +10,7 @@ import os
 import re
 import stat
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
 MANAGED_POLICY_SCHEMA_VERSION = 3
@@ -118,6 +118,16 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
             _ = url.port
         except (TypeError, ValueError):
             raise ManagedPolicyError("managed policy model.base_url is invalid") from None
+        if (
+            not native_nvidia
+            and "%" in (url.hostname or "")
+            and url.scheme.lower() == "https"
+            and unquote(url.hostname or "").lower() == "integrate.api.nvidia.com"
+            and url.port in (None, 443)
+        ):
+            raise ManagedPolicyError(
+                "Native NVIDIA inference requires https://integrate.api.nvidia.com/v1."
+            )
         expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
         if policy_value(config, "model.api_key") != expected_key:
             raise ManagedPolicyError(

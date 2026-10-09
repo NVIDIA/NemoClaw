@@ -19,5 +19,20 @@ export function managedInferenceApiKey<T extends string>(
   if (/^https:\/\/integrate\.api\.nvidia\.com(?::(?:0*443)?)?(?:[/?#]|(?![\s\S]))/u.test(route)) {
     throw new Error("Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.");
   }
+  if (baseUrl.includes("%")) {
+    let parsed: URL;
+    try {
+      parsed = new URL(baseUrl);
+    } catch {
+      return fallback;
+    }
+    if (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "integrate.api.nvidia.com" &&
+      parsed.port === ""
+    ) {
+      throw new Error("Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.");
+    }
+  }
   return fallback;
 }
