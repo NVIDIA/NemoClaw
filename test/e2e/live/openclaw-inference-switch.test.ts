@@ -533,6 +533,10 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
   return result.stdout.trim();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function getRouteOutput(host: HostCliClient, home: string): Promise<ShellProbeResult> {
   return runNemoclaw(host, home, ["inference", "get"], {
     artifactName: "nemoclaw-inference-get-after-switch",
@@ -1315,8 +1319,10 @@ test(
     const route = await getRouteOutput(host, home);
     expect(route.exitCode, resultText(route)).toBe(0);
     const plainRoute = stripAnsi(resultText(route));
-    expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
-    expect(plainRoute).toContain(`Model: ${SWITCH_MODEL}`);
+    // The CLI aligns the label columns; the exact rendering contract is owned by
+    // src/lib/actions/inference-get.test.ts, so accept one or more spaces here.
+    expect(plainRoute).toMatch(new RegExp(`Provider: +${escapeRegExp(SWITCH_PROVIDER)}\\b`));
+    expect(plainRoute).toMatch(new RegExp(`Model: +${escapeRegExp(SWITCH_MODEL)}\\b`));
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
