@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { v00116Pins, v012Pins } from "./openshell-release-fixtures";
+import { selectHistoricalGatewayProcessReader } from "./prepared-gateway-runtime";
 
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,
@@ -178,7 +179,11 @@ export function removeV00106OperationalTrust(source: string): string {
 export function prepareReleaseFixtureRuntime(repoRoot: string, root: string): void {
   const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
   const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
-  const source = fs.readFileSync(path.join(repoRoot, runtimePath), "utf8");
+  // The 0.1.2 release fixture predates the shared process reader. Keep its
+  // operational runtime bytes on the independently trusted historical template.
+  const source = selectHistoricalGatewayProcessReader(
+    fs.readFileSync(path.join(repoRoot, runtimePath), "utf8"),
+  );
   const prepared = source.replace(
     /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
     candidatePins.trim(),

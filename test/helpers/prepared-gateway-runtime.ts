@@ -3,14 +3,23 @@
 
 import assert from "node:assert/strict";
 
-export function selectPreparedGatewayRuntime(source: string): string {
-  // Keep this historical preparation fixture on its already trusted executable reader.
-  const historicalSource = source
-    .replace('import { readGatewayProcEntry } from "./gateway/process-proc-entry";\n', "")
+export function selectHistoricalGatewayProcessReader(source: string): string {
+  const currentImport = 'import { readGatewayProcEntry } from "./gateway/process-proc-entry";\n';
+  const currentReader =
+    '  function readProcessExe(pid: number): string | null {\n    return readGatewayProcEntry(pid, "exe");\n  }';
+  assert.ok(source.includes(currentImport), "historical process reader import boundary");
+  assert.ok(source.includes(currentReader), "historical process reader body boundary");
+  return source
+    .replace(currentImport, "")
     .replace(
-      '  function readProcessExe(pid: number): string | null {\n    return readGatewayProcEntry(pid, "exe");\n  }',
+      currentReader,
       "  function readProcessExe(pid: number): string | null {\n    try {\n      const procExePath = `/proc/${pid}/exe`;\n      if (!fs.existsSync(procExePath)) return null;\n      return fs.readlinkSync(procExePath);\n    } catch {\n      return null;\n    }\n  }",
     );
+}
+
+export function selectPreparedGatewayRuntime(source: string): string {
+  // Keep this historical preparation fixture on its already trusted executable reader.
+  const historicalSource = selectHistoricalGatewayProcessReader(source);
   return [
     [
       "  getDockerDriverGatewayPid(): number | null;",

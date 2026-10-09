@@ -37,7 +37,7 @@ async function uninstallWithHostGatewayOwnedBy(uid: number): Promise<{
         ? ok(`${HOST_GATEWAY_PID}\n`)
         : notFound()
       : command === "ps"
-        ? (psResults.get(args.at(-1) ?? "") ?? notFound())
+        ? (psResults.get(args.includes("stat=") ? "stat=" : (args.at(-1) ?? "")) ?? notFound())
         : command === "openshell" && args.join(" ") === "gateway list -o json"
           ? ok("[]")
           : ok();
