@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isRouteOnlySandboxReservation } from "../state/registry/route-reservation";
 import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import {
@@ -83,9 +84,14 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
   // separate PR. Without that signal nothing restores state onto the
   // replacement, so this path never opens a journal or asks for a source proof.
   if (!installerRestoreOnRecreateFromEnv(process.env)) {
-    console.warn(
-      `  Registry entry exists for '${input.sandboxName}' but installer restore flag not set — skipping pre-upgrade backup select.`,
-    );
+    // Inference setup reserves a route before the create flow reaches this
+    // selection. That route-only placeholder is not a prior sandbox registry
+    // entry and should not trigger a backup/recreate diagnostic.
+    if (input.registryEntry && !isRouteOnlySandboxReservation(input.registryEntry)) {
+      console.warn(
+        `  Registry entry exists for '${input.sandboxName}' but installer restore flag not set — skipping pre-upgrade backup select.`,
+      );
+    }
     return null;
   }
   const sourceProof = input.sourceProof();

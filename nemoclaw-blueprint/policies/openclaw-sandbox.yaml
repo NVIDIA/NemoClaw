@@ -79,6 +79,21 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
 
+  # Native NVIDIA verification probes use curl; permit only the chat request
+  # and model-list health check they need. The nvidia grant remains OpenClaw-only.
+  nvidia_inference_probe:
+    name: nvidia_inference_probe
+    endpoints:
+      - host: integrate.api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: GET, path: "/v1/models" }
+    binaries:
+      - { path: /usr/bin/curl }
+
   # ── Managed inference route ──────────────────────────────────────────
   # inference.local is the OpenShell gateway's internal virtual hostname;
   # the gateway proxies it to the configured provider (OpenAI, NVIDIA, etc.).

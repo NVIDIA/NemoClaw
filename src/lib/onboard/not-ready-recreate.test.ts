@@ -283,6 +283,35 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
   });
 
+  it("does not describe a route-only create reservation as an existing sandbox", () => {
+    expect(
+      select({
+        registryEntry: {
+          name: "my-assistant",
+          pendingRouteReservation: true,
+          reservationSessionId: "session-create",
+          provider: "nvidia-prod",
+          model: "model",
+        },
+      }),
+    ).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+  });
+
+  it("retains the warning for an existing sandbox during a route reservation", () => {
+    expect(
+      select({
+        registryEntry: {
+          name: "my-assistant",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          pendingRouteReservation: true,
+        },
+      }),
+    ).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
+  });
+
   it("does not ask for a source proof when installer restore intent is unset (#7736)", () => {
     const onProofRequested = vi.fn();
 

@@ -82,6 +82,10 @@ const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
 const OPENSHELL_SANDBOX_NOT_READY =
   /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/iu;
+const OPENSHELL_TRANSIENT_EXEC_RESOURCE_ERROR =
+  /^(?:(?:[^:\s]+:\s*)?fork:\s*(?:retry:\s*)?Resource temporarily unavailable)(?:\s+(?:(?:[^:\s]+:\s*)?fork:\s*(?:retry:\s*)?Resource temporarily unavailable))*$/iu;
+const OPENSHELL_TRANSIENT_EXEC_RELAY_ERROR =
+  /(?:exec relay closed before the command reported an exit status|h2 protocol error: error reading a body from connection)/iu;
 
 function createPortableRuntimePatch(
   input: SandboxGpuCreateFlowInput,
@@ -127,12 +131,25 @@ async function rollbackNativeGpuFailureForFallback(
   await runtimePatch.rollbackManagedStartupAfterCreateFailure();
 }
 
-function normalizedOpenShellCommandOutput(result: { stdout?: unknown; stderr?: unknown }): string {
-  return `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`
+function normalizeOpenShellCommandText(output: string): string {
+  return output
     .replace(ANSI_RE, "")
     .replace(/[×│]/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+function normalizedOpenShellCommandOutput(result: { stdout?: unknown; stderr?: unknown }): string {
+  return normalizeOpenShellCommandText(
+    `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`,
+  );
+}
+
+function isTransientOpenShellExecReadinessFailure(output: string): boolean {
+  return (
+    OPENSHELL_TRANSIENT_EXEC_RESOURCE_ERROR.test(output) ||
+    OPENSHELL_TRANSIENT_EXEC_RELAY_ERROR.test(output)
+  );
 }
 
 type OpenShellSandboxIdentityProbe =
@@ -332,12 +349,20 @@ async function checkSandboxExecutableReadiness(
     timeoutKillSignal: "SIGKILL",
   });
   if (result.outcome.kind === "failed") {
-    return "probe_failed";
+    const errorMessage = normalizeOpenShellCommandText(result.outcome.error.message);
+    const output = normalizedOpenShellCommandOutput(result);
+    return result.outcome.error.kind === "timeout" ||
+      isTransientOpenShellExecReadinessFailure(errorMessage) ||
+      isTransientOpenShellExecReadinessFailure(output)
+      ? "not_ready"
+      : "probe_failed";
   }
   if (result.outcome.signal) return "probe_failed";
   if (result.outcome.exitCode === 0) return "ready";
   const output = normalizedOpenShellCommandOutput(result);
-  return output.trim().length === 0 || OPENSHELL_SANDBOX_NOT_READY.test(output)
+  return output.trim().length === 0 ||
+    OPENSHELL_SANDBOX_NOT_READY.test(output) ||
+    isTransientOpenShellExecReadinessFailure(output)
     ? "not_ready"
     : "probe_failed";
 }

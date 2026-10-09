@@ -61,7 +61,14 @@ function runProbeCommandWithBody(
   parentDirectory: string = tmpdir(),
   probeInput: SandboxInferenceInvocationInput = input,
   probeEnvironment: NodeJS.ProcessEnv = {},
-): { stdout: string; argv: string[] } {
+): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  argv: string[];
+  curlConfig: string;
+  curlInvoked: boolean;
+} {
   const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
   try {
     const bin = path.join(dir, "bin");
@@ -72,6 +79,7 @@ function runProbeCommandWithBody(
       [
         "#!/bin/sh",
         `printf '%s\\n' "$@" > ${JSON.stringify(path.join(dir, "argv.txt"))}`,
+        `cat > ${JSON.stringify(path.join(dir, "curl-config.txt"))}`,
         'out=""; prev=""',
         'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
         `cat ${JSON.stringify(path.join(dir, "body.txt"))} > "$out"`,
@@ -83,9 +91,15 @@ function runProbeCommandWithBody(
       encoding: "utf8",
       env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}`, ...probeEnvironment },
     });
+    const argvPath = path.join(dir, "argv.txt");
+    const configPath = path.join(dir, "curl-config.txt");
     return {
+      status: run.status,
       stdout: run.stdout || "",
-      argv: readFileSync(path.join(dir, "argv.txt"), "utf8").trimEnd().split("\n"),
+      stderr: run.stderr || "",
+      argv: existsSync(argvPath) ? readFileSync(argvPath, "utf8").trimEnd().split("\n") : [],
+      curlConfig: existsSync(configPath) ? readFileSync(configPath, "utf8") : "",
+      curlInvoked: existsSync(argvPath),
     };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -123,6 +137,39 @@ describe("sandbox inference invocation probe", () => {
     }
   });
 
+  it("ignores personal curl configuration for native NVIDIA credential requests", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-native-curl-config-"));
+    try {
+      const trace = path.join(dir, "hostile-trace");
+      writeFileSync(path.join(dir, ".curlrc"), `trace = "${trace}"\n`);
+      const command = buildSandboxInferenceInvocationCommand({
+        ...input,
+        provider: "nvidia-prod",
+        nativeProvider: true,
+      }).replace(
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        "http://127.0.0.1:1/v1/chat/completions",
+      );
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          HOME: dir,
+          CURL_HOME: dir,
+          XDG_CONFIG_HOME: dir,
+          NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY",
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toMatch(/^curl-error:\d+\n$/);
+      expect(existsSync(trace)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
     const command = buildSandboxInferenceInvocationCommand(input);
 
@@ -137,15 +184,13 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain("-o /dev/null");
   });
 
-  it("probes native NVIDIA through the attached provider without exposing the host credential", () => {
-    const command = buildSandboxInferenceInvocationCommand({
-      ...input,
-      provider: "nvidia-prod",
-      nativeProvider: true,
-    });
+  it("uses the sandbox NVIDIA credential through curl config stdin, not argv", () => {
+    const probeInput = { ...input, provider: "nvidia-prod", nativeProvider: true };
+    const command = buildSandboxInferenceInvocationCommand(probeInput);
 
     expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
     expect(command).toContain('AUTH_HEADER="Authorization: Bearer ${NVIDIA_INFERENCE_API_KEY}"');
+    expect(command).toContain("curl -q --config -");
     expect(command).not.toContain("https://inference.local");
     expect(command).not.toContain("NVIDIA_API_KEY");
     expect(command).toContain("openshell:resolve:env:");
@@ -169,10 +214,56 @@ describe("sandbox inference invocation probe", () => {
     );
 
     expect(result.stdout).toBe(`200\n${servedBody}`);
-    expect(result.argv).toContain(`Authorization: Bearer ${placeholder}`);
+    expect(result.argv.join(" ")).not.toContain(`Authorization: Bearer ${placeholder}`);
+    expect(result.curlConfig).toBe(`header = "Authorization: Bearer ${placeholder}"\n`);
     expect(result.argv.at(-1)).toBe("https://integrate.api.nvidia.com/v1/chat/completions");
     expect(JSON.parse(result.argv[result.argv.indexOf("--data-binary") + 1]).model).toBe(model);
     expect(result.argv.join("\n")).not.toContain("nemoclaw-openshell-provider");
+  });
+
+  it("uses the sandbox NVIDIA credential through curl config stdin, not argv", () => {
+    const probeInput = { ...input, provider: "nvidia-prod", nativeProvider: true };
+    const command = buildSandboxInferenceInvocationCommand(probeInput);
+    expect(command).toContain("https://integrate.api.nvidia.com/v1/chat/completions");
+    expect(command).toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(command).toContain("curl -q --config -");
+    expect(command).not.toContain("nemoclaw-openshell-provider");
+    expect(command).not.toContain("https://inference.local");
+    expect(command).not.toContain("NVIDIA_API_KEY");
+
+    const fixtureCredential = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+    const result = runProbeCommandWithBody("200", '{"choices":[]}', tmpdir(), probeInput, {
+      NVIDIA_INFERENCE_API_KEY: fixtureCredential,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.argv).toContain("--config");
+    expect(result.argv).toContain("-");
+    expect(result.argv.join(" ")).not.toContain(fixtureCredential);
+    expect(result.curlConfig).toBe(`header = "Authorization: Bearer ${fixtureCredential}"\n`);
+    expect(result.stdout).not.toContain(fixtureCredential);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["quote", 'nvapi-test"invalid'],
+    ["backslash", "nvapi-test\\invalid"],
+    ["space", "nvapi test"],
+    ["newline", "nvapi-test\ninvalid"],
+    ["control", "nvapi-test\u0001invalid"],
+    ["non-ASCII", "nvapi-test-é"],
+  ])("fails closed before curl for %s native NVIDIA credentials", (_kind, credential) => {
+    const probeInput = { ...input, provider: "nvidia-prod", nativeProvider: true };
+    const result = runProbeCommandWithBody("200", "", tmpdir(), probeInput, {
+      NVIDIA_INFERENCE_API_KEY: credential,
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.curlInvoked).toBe(false);
+    expect(result.argv).toEqual([]);
+    expect(result.curlConfig).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
   });
 
   it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {

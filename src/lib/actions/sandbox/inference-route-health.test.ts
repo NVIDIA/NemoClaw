@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
+import { shellQuote } from "../../runner";
 import {
   DCODE_MANAGED_EXEC_LAUNCHER,
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
@@ -24,6 +29,51 @@ describe("sandbox inference route health", () => {
       stderr: "",
     })),
   });
+
+  function nativeNvidiaProbeScript(executor: OpenShellSandboxBufferedCommandExecutor): string {
+    const request = vi.mocked(executor.runBuffered).mock.calls[0]?.[0];
+    const command = request?.command;
+    expect(typeof command?.[2]).toBe("string");
+    return command?.[2] as string;
+  }
+
+  function runNativeNvidiaProbeScript(script: string, credential: string) {
+    const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-native-nvidia-probe-"));
+    try {
+      const argvPath = path.join(dir, "argv.txt");
+      const configPath = path.join(dir, "curl-config.txt");
+      const curlPath = path.join(dir, "curl");
+      writeFileSync(
+        curlPath,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "$@" > ${shellQuote(argvPath)}`,
+          `cat > ${shellQuote(configPath)}`,
+          "printf '200'",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const command = script.replace("/usr/bin/curl", shellQuote(curlPath));
+      const run = spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH || "/usr/bin:/bin",
+          NVIDIA_INFERENCE_API_KEY: credential,
+        },
+      });
+      const invoked = existsSync(argvPath);
+      return {
+        status: run.status,
+        stdout: run.stdout || "",
+        stderr: run.stderr || "",
+        invoked,
+        argv: invoked ? readFileSync(argvPath, "utf8").trimEnd().split("\n") : [],
+        curlConfig: existsSync(configPath) ? readFileSync(configPath, "utf8") : "",
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 
   it.each([200, 401, 403])(
     "reports a reachable route for final HTTP responses [case %#]",
@@ -118,7 +168,7 @@ describe("sandbox inference route health", () => {
     });
   });
 
-  it("probes native NVIDIA models through the attached provider placeholder", async () => {
+  it("probes native NVIDIA models with the sandbox credential through curl config stdin", async () => {
     const commandExecutor = makeExecutor("OK 200");
 
     const result = await probeSandboxNativeNvidiaModelsHealth("alpha", {
@@ -126,6 +176,9 @@ describe("sandbox inference route health", () => {
       agentName: "openclaw",
       commandExecutor,
     });
+    const script = nativeNvidiaProbeScript(commandExecutor);
+    const fixtureCredential = "openshell:resolve:env:v123_NVIDIA_INFERENCE_API_KEY";
+    const shellResult = runNativeNvidiaProbeScript(script, fixtureCredential);
 
     expect(result).toMatchObject({
       ok: true,
@@ -136,9 +189,40 @@ describe("sandbox inference route health", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("NVIDIA_INFERENCE_API_KEY")],
+        command: ["sh", "-c", expect.stringMatching(/NVIDIA_INFERENCE_API_KEY[\s\S]*--config -/)],
       }),
     );
+    expect(shellResult.status).toBe(0);
+    expect(shellResult.stdout).toBe("OK 200");
+    expect(shellResult.argv.join(" ")).not.toContain(fixtureCredential);
+    expect(shellResult.curlConfig).toBe(`header = "Authorization: Bearer ${fixtureCredential}"\n`);
+    expect(`${shellResult.stdout}${shellResult.stderr}`).not.toContain(fixtureCredential);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["quote", 'nvapi-test"invalid'],
+    ["backslash", "nvapi-test\\invalid"],
+    ["space", "nvapi test"],
+    ["newline", "nvapi-test\ninvalid"],
+    ["control", "nvapi-test\u0001invalid"],
+    ["non-ASCII", "nvapi-test-é"],
+  ])("fails closed before curl for %s native NVIDIA credentials", async (_kind, credential) => {
+    const commandExecutor = makeExecutor("OK 200");
+    await probeSandboxNativeNvidiaModelsHealth("alpha", {
+      gatewayName: "nemoclaw-19080",
+      agentName: "openclaw",
+      commandExecutor,
+    });
+
+    const result = runNativeNvidiaProbeScript(nativeNvidiaProbeScript(commandExecutor), credential);
+
+    expect(result.status).toBe(2);
+    expect(result.invoked).toBe(false);
+    expect(result.argv).toEqual([]);
+    expect(result.curlConfig).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
   });
 });
 

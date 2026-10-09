@@ -158,6 +158,19 @@ function readMessageValue(line: string): string | null {
   return text.slice(markerIndex + "message:".length).trim();
 }
 
+function isExactUnqualifiedSandboxNotFoundMessage(line: string): boolean {
+  const text = stripDiagnosticPrefixes(line);
+  const codeMatch =
+    /^code\s*[:=]\s*(?:NotFound|(["'`])(?:NotFound|Some requested entity was not found)\1)\s*,\s*message:\s*(["'`])([^"'`]+)\2$/iu.exec(
+      text,
+    );
+  if (codeMatch) return codeMatch[3] === "sandbox not found";
+  const statusMatch = /^(?:NotFound|(["'`])NotFound\1)\s*,\s*message:\s*(["'`])([^"'`]+)\2$/iu.exec(
+    text,
+  );
+  return statusMatch?.[3] === "sandbox not found";
+}
+
 function lineReportsTargetedProviderGetNotFound(line: string): boolean {
   const text = stripDiagnosticPrefixes(line);
   if (normalizedNotFoundSuffix(text) === "provider not found") return true;
@@ -240,6 +253,26 @@ export function reportsExactProviderNotFound(
   }
 
   return diagnosticLines.every((line) => providerNameFromNotFoundLine(line) === providerName);
+}
+
+/**
+ * Accept only a single structured NotFound diagnostic whose exact message omits
+ * the sandbox name. The caller must bind it to the sandbox operand it issued.
+ */
+export function reportsUnqualifiedSandboxNotFound(
+  output: string,
+  diagnosticLimit: number,
+): boolean {
+  if (output.length > diagnosticLimit) return false;
+  const lines = output.split(/\r?\n/).map(stripIssueDecoration).filter(Boolean);
+  const line = lines[0] ?? "";
+  const status = structuredStatusValue(line);
+  return (
+    lines.length === 1 &&
+    !lineReportsMissingGateway(line) &&
+    normalizeStatus(status ?? "") === "notfound" &&
+    isExactUnqualifiedSandboxNotFoundMessage(line)
+  );
 }
 
 /** A missing sandbox permits cleanup only when every diagnostic names the requested sandbox. */

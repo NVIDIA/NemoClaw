@@ -623,7 +623,121 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
-  it("keeps an empty recreated-sandbox executable response inside the readiness wait (#12698)", async () => {
+  it.each([
+    ["empty output", "completed", "", 1],
+    [
+      "fork resource unavailable",
+      "completed",
+      "bash: fork: retry: Resource temporarily unavailable\nbash: fork: Resource temporarily unavailable",
+      254,
+    ],
+    [
+      "fork resource error message",
+      "failed",
+      "bash: fork: retry: Resource temporarily unavailable",
+      1,
+    ],
+    [
+      "ANSI and trailing newline fork error message",
+      "failed",
+      "\u001b[31mbash: fork: retry: Resource temporarily unavailable\u001b[0m\n",
+      1,
+    ],
+    [
+      "relay closed before command status",
+      "failed",
+      "exec relay closed before the command reported an exit status",
+      1,
+    ],
+    ["timed out exec", "timeout", "OpenShell command timed out", 1],
+    [
+      "HTTP/2 relay body error",
+      "completed",
+      "h2 protocol error: error reading a body from connection",
+      1,
+    ],
+  ] as const)(
+    "keeps %s inside the readiness wait (#12698)",
+    async (_kind, outcomeKind, diagnostic, exitCode) => {
+      const input = createInput();
+      const patch = createPatch();
+      mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+      input.sandboxGpuConfig = {
+        ...input.sandboxGpuConfig,
+        mode: "0",
+        sandboxGpuEnabled: false,
+      };
+      input.gpuRoutePlan = "none";
+      input.initialGpuRoute = "none";
+      input.persistStartupCommand = true;
+      input.requiredUlimits = [
+        { name: "nproc", soft: 512, hard: 512 },
+        { name: "nofile", soft: 65_536, hard: 65_536 },
+      ];
+      const deps = createDeps();
+      vi.mocked(deps.runOpenshell).mockImplementation(
+        createSequencedOpenShellRunner([
+          [
+            "sandbox get -g nemoclaw alpha",
+            [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
+          ],
+        ]),
+      );
+      const firstProbeResult =
+        outcomeKind === "timeout"
+          ? {
+              outcome: {
+                kind: "failed" as const,
+                error: { kind: "timeout" as const, message: diagnostic },
+              },
+              stdout: "",
+              stderr: "",
+            }
+          : outcomeKind === "failed"
+            ? {
+                outcome: {
+                  kind: "failed" as const,
+                  error: { kind: "invocation" as const, message: diagnostic },
+                },
+                stdout: "",
+                stderr: "",
+              }
+            : {
+                outcome: { kind: "completed" as const, exitCode, signal: null },
+                stdout: "",
+                stderr: diagnostic,
+              };
+      vi.mocked(deps.commandExecutor.runBuffered)
+        .mockResolvedValueOnce(firstProbeResult)
+        .mockResolvedValueOnce({
+          outcome: { kind: "completed", exitCode: 0, signal: null },
+          stdout: "",
+          stderr: "",
+        });
+      mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+        await expect(options.checkReadyIdentity?.(() => 90_000)).resolves.toBe("not_ready");
+        await expect(options.checkReadyIdentity?.(() => 90_000)).resolves.toBe("ready");
+        return { ready: true, reason: "ready", failurePhase: null };
+      });
+
+      await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+        route: "none",
+      });
+
+      expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
+      expect(deps.commandExecutor.runBuffered).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ timeoutMilliseconds: 15_000 }),
+      );
+      expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+      expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+    },
+  );
+
+  it("does not start sandbox exec after the readiness budget expires following identity", async () => {
     const input = createInput();
     const patch = createPatch();
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
@@ -648,20 +762,15 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
         ],
       ]),
     );
-    vi.mocked(deps.commandExecutor.runBuffered)
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 1, signal: null },
-        stdout: "",
-        stderr: "",
-      })
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 0, signal: null },
-        stdout: "",
-        stderr: "",
-      });
+    vi.mocked(deps.commandExecutor.runBuffered).mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 0, signal: null },
+      stdout: "",
+      stderr: "",
+    });
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
-      await expect(options.checkReadyIdentity?.()).resolves.toBe("not_ready");
-      await expect(options.checkReadyIdentity?.()).resolves.toBe("ready");
+      const remaining = vi.fn().mockReturnValueOnce(1).mockReturnValueOnce(0);
+      await expect(options.checkReadyIdentity?.(remaining)).resolves.toBe("not_ready");
+      await expect(options.checkReadyIdentity?.(() => 1_000)).resolves.toBe("ready");
       return { ready: true, reason: "ready", failurePhase: null };
     });
 
@@ -669,12 +778,11 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       route: "none",
     });
 
-    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(2);
-    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledTimes(1);
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMilliseconds: 1_000 }),
     );
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
   });
 
   it("preserves a native non-terminal startup command after create ownership ends", async () => {
