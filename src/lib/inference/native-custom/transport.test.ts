@@ -48,6 +48,25 @@ function attachment(
   });
 }
 
+it("rejects missing upstream credentials before profile admission or adapter activation (#12636)", async () => {
+  const admit = vi.fn(async () => {});
+  const ensure = httpsAdapter();
+  const lookup = vi.fn(input.lookup);
+  await expect(
+    prepareNativeCustomInference(
+      { ...input, credentialValue: null, lookup },
+      {
+        admitProfile: admit,
+        ensureHttpsAdapter: ensure,
+        discoverAllowedSourceCidrs: () => ["172.18.0.0/16"],
+      },
+    ),
+  ).rejects.toThrow("exact recorded native attachment");
+  expect(lookup).not.toHaveBeenCalled();
+  expect(admit).not.toHaveBeenCalled();
+  expect(ensure).not.toHaveBeenCalled();
+});
+
 it("admits the native profile before handing upstream credentials to a sandbox-scoped HTTPS route (#12636)", async () => {
   const ensure = httpsAdapter();
   const admit = vi.fn(async () => {

@@ -110,6 +110,10 @@ export async function prepareNativeCustomInference(
     input.provider === "compatible-anthropic-endpoint"
       ? classifyCustomAnthropicEndpoint(input.endpointUrl)
       : null;
+  if (classification?.kind !== "bedrock-runtime" && !input.credentialValue?.trim())
+    throw new Error(
+      "A host credential is required to configure provider. Keyless native custom reuse requires the exact recorded native attachment; a shared beta route cannot authorize it.",
+    );
   let transport: NativeCustomAdapterTransport;
   let endpointUrl: string;
   let token: string;

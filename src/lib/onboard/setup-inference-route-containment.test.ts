@@ -5,79 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkGatewayRouteCompatibility } from "../inference/gateway-route-compatibility";
 import type { SandboxEntry } from "../state/registry";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
-import type {
-  OpenShellProviderAdapter,
-  OpenShellProviderMetadata,
-} from "../adapters/openshell/provider-adapter";
-import type { NativeCustomProviderAttachment } from "../inference/native-custom";
-import { buildHttpsPinRouteBaseUrl, computeHttpsPinRouteId } from "../inference/https-pin-runtime";
-
-function nativeCustomDeps() {
-  const providers = new Map<string, OpenShellProviderMetadata>();
-  const authorities = new Map<string, NativeCustomProviderAttachment>();
-  const adapter = {
-    importProviderProfile: vi.fn(async () => ({ ok: true })),
-    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
-    getProvider: vi.fn(
-      async ({ providerName }: Parameters<OpenShellProviderAdapter["getProvider"]>[0]) =>
-        providers.has(providerName)
-          ? { ok: true, value: providers.get(providerName)! }
-          : { ok: false, error: { kind: "command", reason: "not_found", message: "missing" } },
-    ),
-    createProvider: vi.fn(
-      async (request: Parameters<OpenShellProviderAdapter["createProvider"]>[0]) => {
-        providers.set(request.name, {
-          name: request.name,
-          type: request.type,
-          credentialKeys: request.credentials.map((credential) => credential.name),
-          configKeys: [],
-          revision: { id: `id-${request.name}`, resourceVersion: 1 },
-        });
-        return { ok: true };
-      },
-    ),
-  } as unknown as OpenShellProviderAdapter;
-  return {
-    providerAdapter: adapter,
-    getSandbox: () => null,
-    getNativeCustomProviderAuthority: (_gateway: string, name: string) => authorities.get(name),
-    setNativeCustomProviderAuthority: (
-      _gateway: string,
-      receipt: NativeCustomProviderAttachment,
-    ) => {
-      authorities.set(receipt.providerName, receipt);
-    },
-    nativeCustomTransportDeps: {
-      discoverAllowedSourceCidrs: () => ["172.18.0.0/16"],
-      ensureHttpsAdapter: vi.fn(
-        async (
-          options: Parameters<
-            NonNullable<
-              NonNullable<SetupInferenceDeps["nativeCustomTransportDeps"]>["ensureHttpsAdapter"]
-            >
-          >[0],
-        ) => {
-          const routeId = computeHttpsPinRouteId(
-            options.gatewayName,
-            options.provider,
-            options.endpointUrl,
-            options.sandboxName,
-          );
-          const pins = await options.lookup!(new URL(options.endpointUrl).hostname, { all: true });
-          return {
-            routeId,
-            baseUrl: buildHttpsPinRouteBaseUrl(routeId),
-            localBaseUrl: "http://127.0.0.1/route",
-            logPath: "/tmp/adapter.log",
-            credentialEnv: "ADAPTER_TOKEN",
-            token: `token-${routeId}`,
-            pinnedAddresses: pins.map((pin) => pin.address),
-          };
-        },
-      ) as NonNullable<SetupInferenceDeps["nativeCustomTransportDeps"]>["ensureHttpsAdapter"],
-    },
-  };
-}
+import { createNativeCustomSetupDependencies } from "../../../test/support/setup-inference-test-harness";
 
 const revalidateSandboxIdentity = () => undefined;
 const successfulInferenceRouteMutator = (
@@ -116,7 +44,7 @@ describe("onboard shared gateway route containment", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("reuses an owned native adapter receipt without rotating host credentials or the shared route (#12636)", async () => {
-    const native = nativeCustomDeps();
+    const native = createNativeCustomSetupDependencies();
     let recorded: SandboxEntry | null = null;
     let credential = "host-credential";
     const shared = successfulInferenceRouteMutator();
@@ -217,7 +145,7 @@ describe("onboard shared gateway route containment", () => {
     });
     const verifyOnboardInferenceSmoke = vi.fn();
     const setupInference = createSetupInference({
-      ...nativeCustomDeps(),
+      ...createNativeCustomSetupDependencies(),
       checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
       withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
@@ -450,7 +378,7 @@ describe("onboard shared gateway route containment", () => {
         checkGatewayRouteCompatibility({ ...request, sandboxes: [peer] }),
     );
     const setupInference = createSetupInference({
-      ...nativeCustomDeps(),
+      ...createNativeCustomSetupDependencies(),
       checkGatewayRouteCompatibility: compatibility,
       step: vi.fn(),
       resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],

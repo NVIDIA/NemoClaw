@@ -18,7 +18,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
 describe("onboard recovered remote-provider credential reuse", () => {
   it(
-    "re-applies an exact compatible route without exporting or directly validating its gateway credential",
+    "refuses to use a shared beta credential to recreate a fresh native custom route",
     testTimeoutOptions(90_000),
     () => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-remote-recreate-", {
@@ -161,36 +161,22 @@ const { setupNim, setupInference } = require(${onboardPath});
         });
         const output = result.output;
 
-        assert.equal(result.status, 0, output);
-        assert.match(output, /Reusing existing gateway credential for 'compatible-endpoint'/);
-        assert.match(output, /Reusing existing gateway credential; skipping host inference smoke/);
-        assert.match(output, /"skipHostInferenceSmoke":true/);
-        assert.match(output, /"reuseGatewayCredentialWithoutLocalKey":true/);
+        assert.notEqual(result.status, 0, output);
+        assert.match(
+          output,
+          /Keyless native custom reuse requires the exact recorded native attachment/,
+        );
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";
-        const curlUrls = curlLog
-          .split(/\s+/u)
-          .filter((value) => value.startsWith("http://") || value.startsWith("https://"))
-          .map((value) => {
-            const parsed = new URL(value);
-            return `${parsed.protocol}//${parsed.hostname}:${parsed.port}${parsed.pathname}${parsed.search}`;
-          });
-        assert.deepEqual(
-          curlUrls,
-          [],
-          `remote recovery must not run unrelated local endpoint probes: ${curlLog}`,
+        assert.equal(
+          curlLog,
+          "",
+          "rejected legacy credential reuse must not probe an upstream endpoint",
         );
         const openshellLog = fs.readFileSync(openshellLogPath, "utf8");
-        assert.match(openshellLog, /provider get -g nemoclaw compatible-endpoint/);
-        assert.match(
-          openshellLog,
-          /inference set -g nemoclaw --no-verify --provider compatible-endpoint/,
-        );
         assert.ok(
-          !openshellLog.includes("provider update -g nemoclaw compatible-endpoint"),
-          openshellLog,
+          !/provider (create|update)|inference set|provider profile import/.test(openshellLog),
+          "a shared beta credential must not authorize fresh native profile or route mutation",
         );
-        assert.ok(!openshellLog.includes("OPENAI_BASE_URL="), openshellLog);
-        assert.ok(!openshellLog.includes("--credential"), openshellLog);
 
         fs.writeFileSync(openshellLogPath, "");
         const overrideResult = runOnboardProcess([scriptPath], {
