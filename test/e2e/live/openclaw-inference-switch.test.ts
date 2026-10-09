@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../../../src/lib/inference-credential.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -618,7 +619,22 @@ async function readAndAssertOpenClawConfig(
 ): Promise<OpenClawModelConfig | undefined> {
   const configResult = await sandbox.exec(
     SANDBOX_NAME,
-    ["cat", "/sandbox/.openclaw/openclaw.json"],
+    expected.nativeNvidia
+      ? [
+          "node",
+          "-e",
+          [
+            'const fs = require("node:fs");',
+            'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
+            "const provider = config.models?.providers?.inference;",
+            // Keep this comparison inside the sandbox: ShellProbe redacts
+            // credential-shaped JSON fields before returning stdout.
+            `require("node:assert/strict").ok(provider?.apiKey === ${JSON.stringify(NVIDIA_INFERENCE_PLACEHOLDER)}, "native credential reference mismatch");`,
+            "delete provider.apiKey;",
+            "process.stdout.write(JSON.stringify(config));",
+          ].join(" "),
+        ]
+      : ["cat", "/sandbox/.openclaw/openclaw.json"],
     {
       artifactName: expected.artifactName,
       env: commandEnv(home),
@@ -641,7 +657,7 @@ async function readAndAssertOpenClawConfig(
         ? "https://inference.local"
         : "https://inference.local/v1",
   );
-  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "${NVIDIA_INFERENCE_API_KEY}" : "unused");
+  expect(provider?.apiKey).toBe(expected.nativeNvidia ? undefined : "unused");
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
