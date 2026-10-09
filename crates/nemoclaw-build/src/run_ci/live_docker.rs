@@ -68,7 +68,9 @@ impl Owned {
 impl Drop for Owned {
     fn drop(&mut self) {
         // Covers a run that stopped before calling `remove`.
-        let _ = self.remove();
+        if let Err(error) = self.remove() {
+            eprintln!("{error}");
+        }
     }
 }
 
@@ -103,10 +105,8 @@ const RETAINED: [(&str, &[&str], &[&str]); 3] = [
     ),
 ];
 
-/// Gateway tests retain storage by design, and OpenShell deletes a sandbox's
-/// objects with the sandbox. For each UID, note sandbox objects left in its
-/// gateway's namespace, remove them and the objects labelled with the UID,
-/// then fail naming anything that was left or remains.
+/// Remove each UID's labelled objects and its gateway's sandbox objects, then
+/// fail naming any sandbox object OpenShell left and anything that remains.
 fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> {
     let list = |args: &[&str], filter: &str| -> Option<Vec<String>> {
         let output = docker()
@@ -127,23 +127,17 @@ fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> 
     for uid in uids {
         let filters = [sandbox_filter(uid), format!("label={UID_LABEL}={uid}")];
         for (kind, ls, _) in RETAINED {
-            match list(ls, &filters[0]) {
-                Some(ids) => problems.extend(
-                    ids.into_iter()
-                        .map(|id| format!("{kind} {id} left in the sandbox namespace")),
-                ),
-                None => problems.push(format!("unlisted {kind}s with {}", filters[0])),
-            }
+            problems.extend(
+                list(ls, &filters[0])
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|id| format!("{kind} {id} left in the sandbox namespace")),
+            );
         }
         for (_, ls, rm) in RETAINED {
             for filter in &filters {
                 for id in list(ls, filter).unwrap_or_default() {
-                    let _ = docker()
-                        .args(rm)
-                        .arg(&id)
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .status();
+                    let _ = docker().args(rm).arg(&id).stdout(Stdio::null()).status();
                 }
             }
         }
@@ -154,7 +148,7 @@ fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> 
                         ids.into_iter()
                             .map(|id| format!("{kind} {id} remains after removal")),
                     ),
-                    None => problems.push(format!("unlisted {kind}s with {filter}")),
+                    None => problems.push(format!("cannot list {kind}s with {filter}")),
                 }
             }
         }
@@ -372,12 +366,11 @@ pub(super) fn run_live_docker(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
-    /// A Docker CLI over a file of `kind id key=value` lines. More strictly
-    /// than Docker, it refuses to remove a volume or network while any
-    /// container remains. It also refuses to remove the IDs in `stuck` and to
-    /// list the kinds in `unlistable`.
+    /// A Docker CLI over `kind id key=value [running]` lines. Like Docker, it
+    /// needs `--all` for stopped containers and `--force` for running ones.
+    /// Unlike Docker, it refuses volume and network removal while any container
+    /// remains. It cannot remove `stuck` IDs or list `unlistable` kinds.
     fn fake_docker(
         directory: &Path,
         resources: &str,
@@ -390,37 +383,53 @@ mod tests {
         let script = directory.join("docker");
         fs::write(
             &script,
-            r#"#!/bin/sh
-cd "$(dirname "$0")" || exit 1
+            r#"cd "$(dirname "$0")" || exit 1
 for last; do :; done
+case " $* " in *" --all "*) all=1 ;; *) all= ;; esac
+case " $* " in *" --force "*) force=1 ;; *) force= ;; esac
 case "$1 $2" in
 "container ls" | "volume ls" | "network ls")
     grep -qx "$1" unlistable && exit 1
-    awk -v kind="$1" -v label="${last#label=}" '$1 == kind && $3 == label { print $2 }' resources ;;
+    awk -v kind="$1" -v label="${last#label=}" -v all="$all" \
+        '$1 == kind && $3 == label && (all || kind != "container" || $4 == "running") { print $2 }' \
+        resources ;;
 "container rm" | "volume rm" | "network rm")
     grep -qx "$last" stuck && exit 1
     [ "$1" = container ] || ! grep -q '^container ' resources || exit 1
-    grep -v " $last " resources > remaining
+    [ -n "$force" ] || ! grep -qx "container $last .* running" resources || exit 1
+    grep -v "^$1 $last " resources > remaining
     mv remaining resources ;;
 *) exit 2 ;;
 esac
 "#,
         )
         .unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        // Executing a file just written races the forks of parallel tests.
         move || {
-            let mut command = Command::new(&script);
-            command.stdin(Stdio::null());
+            let mut command = Command::new("sh");
+            command.arg(&script).stdin(Stdio::null());
             command
         }
     }
 
+    #[cfg(feature = "sdk")]
     #[test]
     fn the_sandbox_namespace_is_the_managed_gateway_name() {
-        // The gateway in crates/nemoclaw-provider/src/managed/reference.json.
+        let uid = live::uuid().unwrap();
+        let document = live::gateway_document(&GatewayInputs {
+            name: "live-gateway",
+            uid: &uid,
+            port: 17950,
+            subnet: "172.30.202.0/24",
+            image: &format!("nc-live@sha256:{}", "a".repeat(64)),
+            harness: "nvidia.fabric.pi",
+        });
+        let workspace = nemoclaw_sdk::config::Document::parse(document.as_bytes())
+            .unwrap()
+            .workspace();
         assert_eq!(
-            sandbox_filter("302ff5e1-088d-42ce-959f-4ff4c3570c13"),
-            "label=openshell.ai/sandbox-namespace=nc-68d203b0c7e6083f-gateway"
+            sandbox_filter(&uid),
+            format!("label={SANDBOX_NAMESPACE_LABEL}={workspace}-gateway")
         );
     }
 
@@ -444,7 +453,7 @@ esac
         let directory = tempfile::tempdir().unwrap();
         let sandbox = sandbox_filter("a").replacen("label=", "", 1);
         let resources = format!(
-            "volume v1 {UID_LABEL}=a\nvolume s1 {sandbox}\ncontainer s2 {sandbox}\n\
+            "volume v1 {UID_LABEL}=a\nvolume s1 {sandbox}\ncontainer s2 {sandbox} running\n\
              volume kept {UID_LABEL}=other\n"
         );
         let docker = fake_docker(directory.path(), &resources, "", "");
@@ -488,7 +497,7 @@ esac
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains(&format!("unlisted volumes with label={UID_LABEL}=a")),
+            error.contains(&format!("cannot list volumes with label={UID_LABEL}=a")),
             "{error}"
         );
     }
