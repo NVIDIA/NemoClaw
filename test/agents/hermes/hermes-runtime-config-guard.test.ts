@@ -689,33 +689,67 @@ with tempfile.TemporaryDirectory() as tmp:
     );
   });
 
-  it("validates the candidate .env without handing the installed validator a temp path (#12510)", () => {
+  it.each([
+    { outcome: "writes", extra: "", accepted: true },
+    { outcome: "rejects", extra: "OTHER_SECRET=raw-candidate-secret\n", accepted: false },
+  ])("$outcome refreshed provider bytes after stdin validation (#12510)", ({ extra, accepted }) => {
+    const original = `# café\nMSTEAMS_APP_PASSWORD=openshell:resolve:env:MSTEAMS_APP_PASSWORD\n${extra}`;
+    const candidate = `# café\nMSTEAMS_APP_PASSWORD=openshell:resolve:env:v2_MSTEAMS_APP_PASSWORD\n${extra}`;
     const result = runPythonHarness(`${loadGuardModule}
+import json
 import os
+from pathlib import Path
 import tempfile
 
-# Stand-in for the installed validator: like the real one in installed mode it
-# refuses \`env-file\` for any path other than /sandbox/.hermes/.env.
-validator = "\\n".join([
-    "import sys",
-    "if sys.argv[1] == 'env-file' and sys.argv[2] != '/sandbox/.hermes/.env':",
-    "    print('[SECURITY] the installed validator only accepts the canonical Hermes env path', file=sys.stderr)",
-    "    raise SystemExit(1)",
-    "raise SystemExit(0)",
-])
 with tempfile.TemporaryDirectory() as tmp:
-    path = os.path.join(tmp, "validator.py")
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(validator)
-    guard._validate_env_text_with_boundary(
-        "TEAMS_CLIENT_SECRET=openshell:resolve:env:v2_MSTEAMS_APP_PASSWORD\\n", path
-    )
-print("validated")
+    home = Path(tmp)
+    env_path = home / ".env"
+    config_path = home / "config.yaml"
+    hash_path = home / ".config-hash"
+    received_path = home / "validator.stdin"
+    validator_path = home / "validator.py"
+    boundary_path = Path(sys.argv[1]).with_name("validate-env-secret-boundary.py")
+    original = ${JSON.stringify(original)}
+    env_path.write_bytes(original.encode("utf-8"))
+    config_path.write_text("model: {}\\n", encoding="utf-8")
+    guard._write_hash(str(hash_path), guard._hash_text(str(config_path), str(env_path))[0])
+    before_hash = hash_path.read_bytes()
+    before_stat = env_path.stat()
+    validator_path.write_text("\\n".join([
+        "import pathlib, subprocess, sys",
+        "assert sys.argv[1:] == ['env-text']",
+        "candidate = sys.stdin.buffer.read()",
+        f"pathlib.Path({str(received_path)!r}).write_bytes(candidate)",
+        f"raise SystemExit(subprocess.run([sys.executable, {str(boundary_path)!r}, 'env-text'], input=candidate, check=False).returncode)",
+    ]), encoding="utf-8")
+    os.environ["MSTEAMS_APP_PASSWORD"] = "openshell:resolve:env:v2_MSTEAMS_APP_PASSWORD"
+    error = ""
+    try:
+        guard.provider_placeholders(tmp, str(hash_path), "compat", None, str(validator_path))
+    except guard.UnsafePathError as exc:
+        error = str(exc)
+    after_stat = env_path.stat()
+    guard._verify_strict_hash(tmp, str(hash_path))
+    print(json.dumps({
+        "received": received_path.read_bytes().decode("utf-8"),
+        "env_text": env_path.read_text(encoding="utf-8"),
+        "env_unchanged": (before_stat.st_ino, before_stat.st_mtime_ns, before_stat.st_size)
+            == (after_stat.st_ino, after_stat.st_mtime_ns, after_stat.st_size),
+        "hash_changed": hash_path.read_bytes() != before_hash,
+        "error": error,
+    }))
 `);
 
-    expect(result.stderr).not.toContain("canonical Hermes env path");
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("validated");
+    const proof = JSON.parse(result.stdout);
+    expect(proof.received).toBe(candidate);
+    expect(proof.env_text).toBe(accepted ? candidate : original);
+    expect(proof.env_unchanged).toBe(!accepted);
+    expect(proof.hash_changed).toBe(accepted);
+    expect(proof.error).toBe(
+      accepted ? "" : "Hermes provider placeholder refresh would violate the secret boundary",
+    );
+    expect(result.stderr).not.toContain("raw-candidate-secret");
   });
 
   it.each([
