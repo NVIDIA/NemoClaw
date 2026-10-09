@@ -7,6 +7,24 @@ import type { ConfigObject } from "../security/credential-filter";
 import { patchHermesInferenceConfig } from "./inference-set";
 
 describe("patchHermesInferenceConfig", () => {
+  it("replaces every credential when switching to native NVIDIA inference and back", () => {
+    const config: ConfigObject = {};
+    patchHermesInferenceConfig(config, "vllm-local", "local-model");
+    patchHermesInferenceConfig(config, "nvidia-prod", "nvidia/test-model");
+    const placeholder = "${NVIDIA_INFERENCE_API_KEY}";
+    expect(config).toMatchObject({
+      model: { api_key: placeholder },
+      providers: { "nvidia-prod": { api_key: placeholder } },
+      custom_providers: [{ api_key: placeholder }],
+    });
+    patchHermesInferenceConfig(config, "vllm-local", "local-model");
+    expect(config).toMatchObject({
+      model: { base_url: "https://inference.local/v1", api_key: HERMES_PROXY_REWRITE_SENTINEL },
+      providers: { "vllm-local": { api_key: HERMES_PROXY_REWRITE_SENTINEL } },
+      custom_providers: [{ api_key: HERMES_PROXY_REWRITE_SENTINEL }],
+    });
+  });
+
   it("updates the complete Hermes route for the selected provider", () => {
     const config: ConfigObject = {
       model: {
@@ -147,7 +165,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://integrate.api.nvidia.com/v1",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      api_key: "${NVIDIA_INFERENCE_API_KEY}",
     });
   });
 

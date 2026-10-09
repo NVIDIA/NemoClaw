@@ -149,7 +149,7 @@ const expectConfigured: Record<Agent, (config: any) => void> = {
   hermes(config) {
     expect(config.model.default).toBe("fixture/model");
     expect(config.model.provider).toBe("custom");
-    expect(config.model.api_key).toBe("sk-OPENSHELL-PROXY-REWRITE");
+    expect(config.model.api_key).toBe("${NVIDIA_INFERENCE_API_KEY}");
   },
 };
 type InferenceSetCalls = ReturnType<typeof createDeps>["calls"];
