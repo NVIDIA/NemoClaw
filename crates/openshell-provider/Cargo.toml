@@ -31,5 +31,7 @@ tokio-util.workspace = true
 tonic.workspace = true
 
 [dev-dependencies]
+nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
+serde_json.workspace = true
 prost.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A read client for one Docker or Podman engine, over a local socket or SSH.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "engine_tests.rs"]
 mod tests;
 use bollard::{
@@ -54,8 +54,7 @@ impl Engine {
         }
     }
 
-    // Only Unix transports, a local socket or SSH, construct an engine client.
-    #[cfg(unix)]
+    /// An engine client reached at `endpoint`: a local socket on Unix, or SSH.
     pub fn new(api: bollard::Docker, endpoint: &str) -> Self {
         Self {
             api,

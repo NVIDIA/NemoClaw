@@ -38,15 +38,7 @@ It uses a built-in OpenTofu resource to exercise the generated precondition and 
 
 Test the runtime bundle and live serving backend separately.
 
-Test the production provider's full OpenShell resource graph against the local gRPC fixture:
-
-```sh
-NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration opentofu_openshell:: -- --ignored
-```
-
-These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
+The [OpenShell provider contract](#openshell-provider-contract) tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
 The `gateway_readiness::` tests use the same explicit OpenTofu/provider paths with local engine and OpenShell fixtures.
 It checks prompt managed-gateway exit diagnostics, bootstrap state retained after failure, corrected retry, unchanged-apply rechecks, and teardown with the readiness data source omitted.
 Its bootstrap identity is a built-in OpenTofu resource; it creates no live container.
@@ -81,6 +73,36 @@ The fixture returns protocol responses; it does not establish live agent inferen
 The export fixture checks provider refresh failures through OpenTofu, unchanged deployment state and configuration, and export without inference credentials or Fabric health requests.
 The web-search lifecycle case covers Brave and Tavily at deployment, sandbox, and agent scope, including profile and sandbox-grant drift.
 The mixed-search export case checks shared registrations, unused definitions, export without search keys, unchanged reapply, and rejected provider-type or credential-reference drift without changes to saved state.
+
+## OpenShell Provider Contract
+
+The `openshell-provider` crate's `contract` tests apply each fixture in `crates/openshell-provider/tests/contract/fixtures` through OpenTofu against a fake OpenShell gateway from `nemoclaw-test-fixtures`.
+Each fixture must plan no managed changes after it is applied, and teardown must remove every sandbox, provider registration, and profile while the gateway keeps the workspace:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p openshell-provider --test contract -- --ignored
+```
+
+Its `capabilities` tests check gateway preconditions and saved-plan rechecks, and its `standalone` tests apply authored OpenShell resources from `tests/contract/standalone` through lost replies, foreign or missing objects, bootstrap endpoints, and registration rotation.
+The fixtures are the OpenShell resources the SDK compiles for each example with an external gateway, excluding examples whose credentials are read from a managed service's container.
+`nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
+
+## Fabric Provider Contract
+
+The `fabric-provider` crate's `contract` tests run each Fabric type through OpenTofu with the same paths:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+  cargo test -p fabric-provider --test contract -- --ignored
+```
+
+`fabric_agent_configuration` applies a Pi configuration to a sandbox from `tests/contract/fixtures`. An invalid configuration fails validation at its field without repeating the value. The configuration updates without replacing the sandbox, a stopped host is reconfigured, and a lost reply is not retried.
+`fabric_sandbox_readiness` reports the configured agent ready, and not ready while its health fails, without writing to the sandbox.
+`fabric_capabilities` reads a fake Docker engine's image metadata. A compatible image reports its runtime binaries, while another platform, or a read policy without the runtime's paths, is unsupported, and a missing image is unknown.
+A coverage test requires a contract test for every Fabric type.
 
 ## Standalone Sandbox Completion
 

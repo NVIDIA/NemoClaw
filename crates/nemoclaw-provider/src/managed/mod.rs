@@ -10,7 +10,7 @@ pub(crate) use backend::service_engine;
 mod gateway_storage;
 mod keys;
 mod mutation;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod planning_tests;
 pub use backend::{ManagedBackend, connection_endpoint, runtime_engine};
 

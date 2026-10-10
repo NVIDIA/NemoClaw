@@ -7,7 +7,7 @@ pub mod credentials;
 mod endpoint;
 #[cfg(feature = "client")]
 mod engine;
-#[cfg(all(test, unix, feature = "client"))]
+#[cfg(all(test, feature = "client"))]
 mod fixture;
 #[cfg(feature = "client")]
 mod ssh;
@@ -16,7 +16,7 @@ mod storage;
 pub use endpoint::validate_engine_endpoint;
 #[cfg(feature = "client")]
 pub use engine::{Direct, Engine, Engines, archive, is_missing, optional, remote};
-#[cfg(all(feature = "client", unix))]
+#[cfg(feature = "client")]
 pub use ssh::command as ssh_command;
 pub use storage::{GENERATION_LABEL, OWNER_LABEL, Storage};
 #[cfg(feature = "client")]

@@ -173,5 +173,5 @@ impl CapacityCheck {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

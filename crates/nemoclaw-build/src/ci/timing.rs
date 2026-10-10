@@ -2,7 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Where test time goes, read from a nextest JUnit report.
 
+use serde::Deserialize;
 use std::{collections::BTreeMap, fmt::Write};
+
+/// A test step's wall-clock budget, and the limit for any one test in it.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Budget {
+    pub wall_seconds: u64,
+    pub test_seconds: u64,
+}
+
+/// Budgets by test step name, as `.config/test-budgets.yaml` records them.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct Budgets(BTreeMap<String, Budget>);
+
+impl Budgets {
+    /// Read budgets from YAML.
+    ///
+    /// # Errors
+    /// Returns an error for malformed budgets.
+    pub fn parse(yaml: &str) -> Result<Self, String> {
+        serde_saphyr::from_str(yaml).map_err(|error| format!("invalid test budgets: {error}"))
+    }
+
+    /// The budget of the step named `step`.
+    #[must_use]
+    pub fn get(&self, step: &str) -> Option<Budget> {
+        self.0.get(step).copied()
+    }
+}
 
 /// One test's result.
 #[derive(Clone, Debug, PartialEq)]
@@ -54,6 +83,32 @@ impl Run {
             wall_seconds,
             tests,
         })
+    }
+
+    /// What exceeds `budget`: the run's wall time, then each test over the
+    /// limit, slowest first.
+    #[must_use]
+    pub fn over(&self, budget: Budget) -> Vec<String> {
+        let mut over = Vec::new();
+        if self.wall_seconds > budget.wall_seconds as f64 {
+            over.push(format!(
+                "{:.1} s wall exceeds the {} s budget",
+                self.wall_seconds, budget.wall_seconds
+            ));
+        }
+        let mut tests: Vec<_> = self
+            .tests
+            .iter()
+            .filter(|test| test.seconds > budget.test_seconds as f64)
+            .collect();
+        tests.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
+        over.extend(tests.into_iter().map(|test| {
+            format!(
+                "{} {} took {:.1} s; the limit is {} s",
+                test.binary, test.name, test.seconds, budget.test_seconds
+            )
+        }));
+        over
     }
 
     /// A Markdown report: totals, then the `rows` slowest test modules of

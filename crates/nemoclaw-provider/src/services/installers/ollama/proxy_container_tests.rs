@@ -16,7 +16,7 @@ async fn proxy_compute_changes_preserve_bound_credential_storage() {
         engine: String::new(),
     };
     let volume = json!({"Name":storage.name,"Labels":{crate::managed::OWNER_LABEL:storage.owner,crate::managed::GENERATION_LABEL:storage.generation},"Driver":"local","Scope":"local","Options":{},"CreatedAt":"created","Mountpoint":"/var/lib/docker/volumes/auth/_data"});
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         assert_eq!(
             request.method, "GET",
             "credential storage must not be recreated"

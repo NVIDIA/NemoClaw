@@ -4,7 +4,6 @@ terraform {
   required_version = "= 1.12.6"
   required_providers {
     openshell = { source = "registry.opentofu.org/nvidia/openshell" }
-    fabric    = { source = "registry.opentofu.org/nvidia/fabric" }
   }
 }
 variable "endpoint" { type = string }
@@ -13,10 +12,6 @@ variable "binaries" { type = list(string) }
 variable "enabled" { default = true }
 variable "destroying" { default = false }
 variable "image" { default = "fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
-provider "fabric" {
-  endpoint = var.endpoint
-  destroy  = var.destroying
-}
 provider "openshell" {
   endpoint = var.endpoint
   destroy  = var.destroying
@@ -56,5 +51,17 @@ resource "openshell_sandbox" "agent" {
   agent_runtime       = "fabric"
   runtime_json   = var.runtime_json
   provider_names = [openshell_provider_registration.inference[0].name]
-@POLICY@
+  policy {
+    managed "nemoclaw-inference-local-fcb7b1f1af3733764900def4" {
+      endpoints {
+        access = "full"
+        allowed_ips = ["127.0.0.1/32"]
+        host = "127.0.0.1"
+        path = "/v1/**"
+        port = 11434
+        protocol = "rest"
+      }
+      name = "nemoclaw-inference-local-fcb7b1f1af3733764900def4"
+    }
+  }
 }

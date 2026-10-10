@@ -27,7 +27,7 @@ async fn retained_gateway_storage_requires_complete_owned_credentials_without_mu
         spec.gateway_config(data_path).into_bytes(),
     )));
     let configured = configuration.clone();
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         assert_eq!(
             request.method, "GET",
             "gateway storage observation mutated Docker"
@@ -189,7 +189,7 @@ async fn missing_persistent_key_never_imports_or_generates_for_an_existing_gatew
     spec.layout = 0;
     let requests = Arc::new(Mutex::new(Vec::new()));
     let seen = requests.clone();
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         assert_eq!(request.method, "GET", "missing key must not cause a write");
         seen.lock().unwrap().push(request.path.clone());
         if request.path.contains("/archive?") {
@@ -223,7 +223,7 @@ async fn missing_persistent_key_never_imports_or_generates_for_an_existing_gatew
 
 #[tokio::test]
 async fn gateway_prerequisites_can_be_checked_without_storage_or_resource_reads() {
-    let fixture = Fixture::start(|request| {
+    let fixture = Fixture::engine(|request| {
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/info");
         Some((200, br#"{"ID":"engine"}"#.to_vec()))

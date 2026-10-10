@@ -278,6 +278,6 @@ mod tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "gateway_tests.rs"]
 mod gateway_tests;

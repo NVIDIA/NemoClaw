@@ -439,7 +439,7 @@ async fn openshift_waits_for_namespace_annotations_before_writing_issuer_objects
 }
 
 #[tokio::test]
-async fn a_legacy_openshift_receipt_is_incomplete_until_its_identity_is_recorded() {
+async fn an_openshift_issuer_without_a_recorded_namespace_identity_is_rejected() {
     let objects = cluster();
     let directory = tempfile::tempdir().unwrap();
     let (_fixture, operations) = operations(&objects, directory.path()).await;
@@ -457,24 +457,26 @@ async fn a_legacy_openshift_receipt_is_incomplete_until_its_identity_is_recorded
         .unwrap();
     receipt.namespace_identity = None;
     receipt.save(&operations.state).unwrap();
-    let legacy = operations
-        .read(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
-        .await
-        .unwrap();
-    assert_eq!(legacy.running, Some(false));
-    assert_eq!(legacy.gateway_values.as_deref(), Some("{}"));
-    let restored = operations
-        .ensure(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
-        .await
-        .unwrap();
-    assert_eq!(restored.running, Some(true));
-    assert_eq!(restored.gateway_values, initial.gateway_values);
+    // The issuer is written only after the identity, so this receipt is not one
+    // that ensure produces; neither read nor ensure repairs it.
+    assert!(
+        operations
+            .read(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
+            .await
+            .is_err()
+    );
+    assert!(
+        operations
+            .ensure(&spec_on(AUTH_KIND, "openshift"), initial.id.as_deref())
+            .await
+            .is_err()
+    );
     assert!(
         Receipt::load(&operations.state, OWNER, NAME)
             .unwrap()
             .unwrap()
             .namespace_identity
-            .is_some()
+            .is_none()
     );
 }
 

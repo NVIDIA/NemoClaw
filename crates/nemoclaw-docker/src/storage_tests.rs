@@ -19,7 +19,7 @@ async fn model_storage_recovers_lost_creation_and_never_recreates_bound_data() {
         ..Default::default()
     }));
     let shared = state.clone();
-    let fixture=Fixture::start(move |request|{
+    let fixture=Fixture::engine(move |request|{
         let mut state=shared.lock().unwrap();
         let (code,value)=match (request.method.as_str(),request.path.as_str()) {
             ("GET","/info")=>(200,json!({"ID":"engine"})),
@@ -74,7 +74,7 @@ async fn changed_connection_cannot_adopt_an_identical_volume_on_a_different_daem
     let start = |id: &'static str, volume: Value| async move {
         let identity = Arc::new(Mutex::new((id, 200)));
         let current = identity.clone();
-        let fixture = Fixture::start(move |request| {
+        let fixture = Fixture::engine(move |request| {
             assert_eq!(
                 request.method, "GET",
                 "identity mismatch reached a mutation"

@@ -27,7 +27,7 @@ fn timestamp(value: &str) -> Result<OffsetDateTime, Error> {
         .map_err(|_| Error::State("runtime observation timestamp is incomplete"))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(super) async fn runtime_phase(
     engine: &Engine,
     observed: &crate::managed::RuntimeObservation,
@@ -93,5 +93,5 @@ pub(super) async fn phase(
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

@@ -394,7 +394,7 @@ A failed apply may record new observations and condition results while retaining
 After correcting compatibility or access, reapply the same configuration with its retained state.
 Teardown omits the capability gates so a version or driver mismatch alone does not prevent cleanup.
 
-[Gateway protocol tests](../crates/nemoclaw-e2e/tests/opentofu_openshell.rs) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
+[OpenShell contract tests](../crates/openshell-provider/tests/contract) exercise the production provider and pinned OpenTofu without SDK orchestration: early planning errors, saved-plan drift, unchanged apply, failed observation, recovery, and teardown.
 [Deployment fixtures](../crates/nemoclaw-e2e/tests/deployment.rs) and [Fabric lifecycle fixtures](../crates/nemoclaw-e2e/tests/fabric_deployment.rs) verify that the SDK uses the same apply-time protection.
 Fabric configuration writes are owned by `fabric_agent_configuration`; unchanged apply preserves the active runtime handle.
 Its `config_json` is the canonical public Fabric configuration, separate from immutable sandbox identity.

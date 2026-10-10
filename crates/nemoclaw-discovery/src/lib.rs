@@ -16,7 +16,6 @@ pub use engine::{Direct, Engine, Engines, gateway_engine_info, is_missing, optio
 pub use facts::{observe_engine, observe_hardware};
 pub use inference::observe_endpoint;
 pub use local::local_engine_candidates;
-#[cfg(unix)]
 pub use nemoclaw_docker::ssh_command;
 pub use nemoclaw_fabric::{judge_image, observe_fabric};
 

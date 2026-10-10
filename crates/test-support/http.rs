@@ -49,6 +49,24 @@ impl Fixture {
             task,
         }
     }
+    /// Serve a Docker-style engine API at an endpoint NemoClaw reaches on this
+    /// platform: a Unix socket, or elsewhere `ssh://127.0.0.1:PORT`, which
+    /// the `nemoclaw-fixture-ssh` relay forwards to a loopback port.
+    pub async fn engine(
+        handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+    ) -> Self {
+        #[cfg(unix)]
+        {
+            Self::start(handler).await
+        }
+        #[cfg(not(unix))]
+        {
+            relay_as_ssh();
+            let mut fixture = Self::start_tcp(handler).await;
+            fixture.endpoint = fixture.endpoint.replacen("http://", "ssh://", 1);
+            fixture
+        }
+    }
     /// Serve on an ephemeral loopback port; `endpoint` is `http://127.0.0.1:PORT`.
     pub async fn start_tcp(
         mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
@@ -67,6 +85,36 @@ impl Fixture {
             task,
         }
     }
+}
+/// Install the relay as `ssh` beside this test executable, once. Windows
+/// resolves a bare program name in the launching executable's directory
+/// before `PATH`, so the engine client reaches the relay without changing the
+/// environment. The relay is built beside the test executables' `deps`.
+#[cfg(not(unix))]
+fn relay_as_ssh() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let executable = std::env::current_exe().unwrap();
+        let deps = executable.parent().unwrap();
+        let relay = deps.parent().unwrap().join(format!(
+            "nemoclaw-fixture-ssh{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        assert!(
+            relay.is_file(),
+            "{} is missing; build it with cargo build -p nemoclaw-test-fixtures",
+            relay.display()
+        );
+        // Other test executables install it too; replace it atomically.
+        let staged = deps.join(format!("ssh-{}.tmp", std::process::id()));
+        std::fs::copy(&relay, &staged).unwrap();
+        let installed = deps.join(format!("ssh{}", std::env::consts::EXE_SUFFIX));
+        if std::fs::rename(&staged, &installed).is_err() {
+            // A running relay keeps the file open; the installed copy serves.
+            let _ = std::fs::remove_file(&staged);
+            assert!(installed.is_file());
+        }
+    });
 }
 async fn serve(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,
