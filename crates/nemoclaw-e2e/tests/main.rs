@@ -41,8 +41,6 @@ mod provider_protocol;
 mod remote_service;
 #[path = "sandbox_readiness.rs"]
 mod sandbox_readiness;
-// The fixture engine listens on a Unix socket.
-#[cfg(unix)]
 #[path = "service_capacity.rs"]
 mod service_capacity;
 #[path = "service_readiness.rs"]

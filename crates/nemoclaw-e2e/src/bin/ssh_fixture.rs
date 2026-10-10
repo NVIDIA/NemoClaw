@@ -564,9 +564,25 @@ fn create(state: &mut Value, fixture: &Value, request: &Request) -> (u16, Body) 
     (201, Body::Json(json!({"Id": id, "Warnings": []})))
 }
 
+/// The fixture's state directory: NEMOCLAW_TEST_REMOTE, or the path that
+/// [`nemoclaw_e2e::install_ssh_simulator`] records beside this executable for
+/// callers that do not pass the environment on.
+fn root() -> PathBuf {
+    if let Some(root) = std::env::var_os("NEMOCLAW_TEST_REMOTE") {
+        return root.into();
+    }
+    let recorded = std::env::current_exe()
+        .unwrap()
+        .with_file_name(nemoclaw_e2e::SSH_SIMULATOR_ROOT);
+    PathBuf::from(
+        fs::read_to_string(&recorded)
+            .unwrap_or_else(|_| panic!("set NEMOCLAW_TEST_REMOTE or write {}", recorded.display()))
+            .trim_end(),
+    )
+}
+
 fn main() -> ExitCode {
-    let root =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_REMOTE").expect("NEMOCLAW_TEST_REMOTE"));
+    let root = root();
     let mut control = read_json(&root.join("control.json"));
     if flag(&control, "transport_failure") {
         return ExitCode::from(255);

@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
 
 use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
@@ -18,13 +17,12 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     assert!(tofu.is_absolute() && provider.is_absolute());
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
-    fs::create_dir(root.join("bin")).unwrap();
-    std::os::unix::fs::symlink(
+    nemoclaw_e2e::install_ssh_simulator(
         std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
             .expect("Cargo sets the fixture executable path"),
-        root.join("bin/ssh"),
-    )
-    .unwrap();
+        &root.join("bin"),
+        root,
+    );
     for (file, value) in [
         ("engine.json", json!({"effects":0})),
         ("fixture.json", json!({})),
@@ -89,14 +87,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
             .command()
             .args(args)
             .env("NEMOCLAW_TEST_REMOTE", root)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    root.join("bin").display(),
-                    std::env::var("PATH").unwrap()
-                ),
-            )
+            .env("PATH", nemoclaw_e2e::path_with(&root.join("bin")))
             .output()
             .unwrap();
         assert_eq!(

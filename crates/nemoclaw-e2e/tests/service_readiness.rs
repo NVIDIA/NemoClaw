@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
 
 use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
@@ -25,13 +24,12 @@ async fn standalone_readiness(proxy: bool) {
     assert!(tofu.is_absolute() && provider.is_absolute());
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
-    fs::create_dir(root.join("bin")).unwrap();
-    std::os::unix::fs::symlink(
+    nemoclaw_e2e::install_ssh_simulator(
         std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
             .expect("Cargo sets the fixture executable path"),
-        root.join("bin/ssh"),
-    )
-    .unwrap();
+        &root.join("bin"),
+        root,
+    );
     let document = Document::parse(
         include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
     )
@@ -135,14 +133,7 @@ async fn standalone_readiness(proxy: bool) {
             .command()
             .args(args)
             .env("NEMOCLAW_TEST_REMOTE", root)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    root.join("bin").display(),
-                    std::env::var("PATH").unwrap()
-                ),
-            )
+            .env("PATH", nemoclaw_e2e::path_with(&root.join("bin")))
             .output()
             .unwrap();
         assert_eq!(
