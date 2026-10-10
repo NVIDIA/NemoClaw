@@ -3235,6 +3235,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
           buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
           verifyDeployment: async (name, chain) => {
+            const recordedSandbox = registry.getSandbox(name);
             const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
             return verifyDeploymentModule.verifyDeployment(
               name,
@@ -3248,6 +3249,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   providerExistsInGateway(providerName),
                 probeInferenceInvocation: () =>
                   verifyDeploymentModule.probeOnboardInferenceInvocation({
+                    ...recordedSandbox,
                     ...liveFinalFlowContext,
                     sandboxName: name,
                     gatewayName: GATEWAY_NAME,
@@ -3260,9 +3262,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     liveFinalFlowContext.fromDockerfile,
                     agent?.name,
                   ),
-                inferenceRouteContext: {
-                  provider: liveFinalFlowContext.provider,
-                },
+                inferenceRouteContext: recordedSandbox ?? liveFinalFlowContext,
               },
             );
           },

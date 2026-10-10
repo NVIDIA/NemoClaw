@@ -10,7 +10,7 @@
  *   1. Gateway reachable (HTTP /health returns 200 or 401)
  *   2. Gateway version retrieval
  *   3. Dashboard port reachable from the host (port forward working)
- *   4. Inference route working (sandbox can reach inference.local)
+ *   4. The recorded native or retained shared inference route works
  *   5. Messaging bridges healthy (if configured)
  *
  * Fixes #2342 — users no longer see "AGENT IS LIVE" followed by
@@ -22,6 +22,7 @@ import os from "node:os";
 import { parseVersionFromText } from "./adapters/openshell/client";
 import {
   runSandboxInferenceInvocationProbe,
+  verifyNativeHostedStatusAttachment,
   type SandboxInferenceRouteHealthContext,
 } from "./actions/sandbox/inference-route-health";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
@@ -31,6 +32,7 @@ import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 
 import { retryUntilAsync } from "./core/retry";
 import { isNativeNvidiaProvider } from "./inference/native-nvidia";
+import { requireHostedProviderAttachment } from "./inference/native-provider/hosted-attachment";
 import {
   buildCustomOpenClawRuntimeFailureHints,
   classifyOpenClawRuntimeFailure,
@@ -267,6 +269,7 @@ type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
  */
 export type InferenceRouteContext = {
   provider?: string | null;
+  nativeHostedProviderAttachment?: unknown;
 };
 
 function toRouteHealthContext(context: InferenceRouteContext): SandboxInferenceRouteHealthContext {
@@ -395,7 +398,22 @@ async function verifyInferenceRoute(
   sleep: (ms: number) => Promise<void>,
   context: InferenceRouteContext,
 ): Promise<InferenceRouteProbe> {
-  if (isNativeNvidiaProvider(context.provider)) {
+  let hostedAttachment;
+  try {
+    hostedAttachment = requireHostedProviderAttachment(
+      context.nativeHostedProviderAttachment,
+      context.provider,
+    );
+  } catch {
+    return {
+      status: "unhealthy",
+      detail: "Invalid native hosted provider attachment",
+      httpCode: 0,
+      hint: "Restore the recorded provider ownership before retrying onboarding.",
+    };
+  }
+  if (isNativeNvidiaProvider(context.provider) || hostedAttachment) {
+    const label = hostedAttachment ? (context.provider?.trim() ?? "hosted") : "NVIDIA";
     const invocation = await retryUntilAsync(
       async () => (await deps.probeInferenceInvocation?.()) ?? null,
       {
@@ -407,18 +425,18 @@ async function verifyInferenceRoute(
     if (invocation?.ok) {
       return {
         status: "ok",
-        detail: "native NVIDIA inference served an agent request",
+        detail: `native ${label} inference served an agent request`,
         httpCode: 200,
       };
     }
     const reason = invocation?.detail ?? "no inference request confirmed the selected model";
     return {
       status: "unhealthy",
-      detail: `native NVIDIA inference did not serve an agent request: ${reason}`,
+      detail: `native ${label} inference did not serve an agent request: ${reason}`,
       httpCode: 0,
       hint:
-        "The sandbox-attached NVIDIA provider could not serve the selected model. Confirm the " +
-        "NVIDIA credential and model, then re-run: nemoclaw <sandbox> status.",
+        `The sandbox-attached ${label} provider could not serve the selected model. Confirm the ` +
+        `${label} credential and model, then re-run: nemoclaw <sandbox> status.`,
     };
   }
   const routeContext = toRouteHealthContext(context);
@@ -893,7 +911,7 @@ export function formatVerificationDiagnostics(result: VerifyDeploymentResult): s
   return lines;
 }
 
-export type InferenceInvocationContext = {
+export type InferenceInvocationContext = InferenceRouteContext & {
   sandboxName: string;
   gatewayName: string;
   agentName: string | null | undefined;
@@ -904,8 +922,8 @@ export type InferenceInvocationContext = {
 
 /**
  * The standard `probeInferenceInvocation` dependency: send one bounded
- * inference request over the gateway route, using the same probe `status`
- * runs. Onboarding wires this so supported OpenRouter adapter routes that
+ * inference request over the recorded native or retained shared route, using
+ * the same probe `status` runs. Onboarding wires this so legacy OpenRouter routes that
  * answer HTTP 404 by design are accepted only on the evidence of a served
  * request (#12621).
  */
@@ -916,6 +934,24 @@ export async function probeOnboardInferenceInvocation(
   if (!model || !provider) {
     return { ok: false, detail: "no provider and model were recorded for this sandbox" };
   }
+  let hostedAttachment;
+  try {
+    hostedAttachment = requireHostedProviderAttachment(
+      context.nativeHostedProviderAttachment,
+      provider,
+    );
+    if (hostedAttachment)
+      await verifyNativeHostedStatusAttachment({
+        gatewayName: context.gatewayName,
+        sandboxName: context.sandboxName,
+        expected: hostedAttachment,
+      });
+  } catch {
+    return {
+      ok: false,
+      detail: "the recorded native hosted provider attachment could not be verified",
+    };
+  }
   const result = await runSandboxInferenceInvocationProbe({
     sandboxName: context.sandboxName,
     gatewayName: context.gatewayName,
@@ -923,7 +959,8 @@ export async function probeOnboardInferenceInvocation(
     provider,
     model,
     preferredInferenceApi: context.preferredInferenceApi,
-    ...(isNativeNvidiaProvider(provider) ? { nativeProvider: true } : {}),
+    ...(isNativeNvidiaProvider(provider) || hostedAttachment ? { nativeProvider: true } : {}),
+    ...(hostedAttachment?.endpointUrl ? { nativeEndpointUrl: hostedAttachment.endpointUrl } : {}),
   });
   return result.ok ? { ok: true } : { ok: false, detail: result.detail };
 }
