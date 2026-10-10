@@ -65,6 +65,7 @@ pub(super) async fn run_live_kind(
     pins: &Pins,
     platform: &str,
     configure: &dyn Fn(&mut Command),
+    archive: Option<&Path>,
 ) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the Kubernetes live tests run on Linux only".into());
@@ -181,13 +182,19 @@ pub(super) async fn run_live_kind(
         &image,
     ]))?;
 
-    let [args] = Step::LiveKind.cargo_args() else {
-        unreachable!("live-kind is one nextest command")
+    let mut command = match archive {
+        Some(archive) => archived(Step::LiveKind, archive, configure)?,
+        None => {
+            let [args] = Step::LiveKind.cargo_args() else {
+                unreachable!("live-kind is one nextest command")
+            };
+            let mut command = cargo();
+            configure(&mut command);
+            command.args(*args);
+            command
+        }
     };
-    let mut command = cargo();
-    configure(&mut command);
     command
-        .args(*args)
         .env("NEMOCLAW_TEST_KUBECONFIG", &kubeconfig)
         .env("NEMOCLAW_TEST_KUBE_CONTEXT", format!("kind-{name}"))
         .env("NEMOCLAW_TEST_BUNDLE", &bundle)

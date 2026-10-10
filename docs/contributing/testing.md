@@ -63,10 +63,10 @@ Superseded PR runs are cancelled, and their `Test / PLATFORM` checks report as c
 The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
 Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
 Documentation and dependency pushes finish; newer pushes replace older pending runs.
-The live jobs start once their platform's bundle job finishes and use that bundle instead of building their own.
+Like the lifecycle workers, the live jobs run their platform's archived test executables and bundle, so they compile nothing.
 They run on pull requests that can affect them, `v1` pushes, `run-live/` branch pushes, and manual runs.
 A live failure fails that platform's `Test / PLATFORM` check, as a lifecycle failure does.
-On a pull request, each live job first runs `nemoclaw-build changes live` and skips its remaining steps when the change cannot affect the suite.
+On a pull request, `Build and test` runs `nemoclaw-build changes live`, and both live jobs skip when the change cannot affect them.
 A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
 [Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suite.
 Run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` after committing to see the decision.

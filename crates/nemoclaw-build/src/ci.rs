@@ -23,7 +23,8 @@ pub enum Step {
     Schema,
     Bundle,
     Lifecycle,
-    /// Package built lifecycle tests and their inputs for another runner; opt-in.
+    /// Package built lifecycle tests, Linux live tests, and their inputs for
+    /// other runners; opt-in.
     Archive,
     /// Docker live tests; opt-in, never part of the default run.
     LiveDocker,

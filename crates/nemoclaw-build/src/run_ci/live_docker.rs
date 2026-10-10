@@ -246,6 +246,7 @@ pub(super) fn run_live_docker(
     pins: &Pins,
     platform: &str,
     configure: &dyn Fn(&mut Command),
+    archive: Option<&Path>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
@@ -279,10 +280,16 @@ pub(super) fn run_live_docker(
     let junit = Path::new("target").join("nextest").join(profile).join(file);
     let mut reports = Vec::new();
     let mut nextest = |filter: &str, document: Option<&str>| -> Result<()> {
-        let mut command = cargo();
-        configure(&mut command);
+        let mut command = match archive {
+            Some(archive) => archived(Step::LiveDocker, archive, configure)?,
+            None => {
+                let mut command = cargo();
+                configure(&mut command);
+                command.args(*args);
+                command
+            }
+        };
         command
-            .args(*args)
             .args(["-E", filter])
             .envs(shared.iter().map(|(key, value)| (key, value)));
         if let Some(document) = document {

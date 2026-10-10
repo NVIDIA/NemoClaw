@@ -32,7 +32,17 @@ if [ "$1" = build ]; then
     exit 0
 fi
 if [ "$1 $2" = 'nextest list' ]; then
-    printf '%s\n' "$CARGO_LIST"
+    previous=
+    profile=
+    for argument; do
+        [ "$previous" = --profile ] && profile=$argument
+        previous=$argument
+    done
+    case $profile in
+        live-docker) printf '%s\n' "${CARGO_LIST_LIVE_DOCKER:-$CARGO_LIST}" ;;
+        live-kind) printf '%s\n' "${CARGO_LIST_LIVE_KIND:-$CARGO_LIST}" ;;
+        *) printf '%s\n' "$CARGO_LIST" ;;
+    esac
     exit "${CARGO_RESULT:-0}"
 fi
 printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_TEST_TOFU" "$NEMOCLAW_TEST_PROVIDER" > inputs
@@ -75,6 +85,31 @@ exit "${CARGO_RESULT:-0}"
     fn arguments(&self) -> String {
         fs::read_to_string(self.0.path().join("arguments")).unwrap()
     }
+
+    /// Write the files the build step leaves for `ci archive` to package.
+    fn seed_build_outputs(&self) {
+        for path in [
+            "dist/linux_arm64/bin/nemoclaw",
+            "dist/linux_arm64/libexec/tofu",
+            ".tools/protoc-36.1/bin/protoc",
+            ".tools/nextest-0.9.144/cargo-nextest",
+            "target/debug/terraform-provider-nemoclaw",
+            "target/debug/terraform-provider-openshell",
+            "target/debug/terraform-provider-fabric",
+            "target/debug/nemoclaw-fixture-ssh",
+        ] {
+            let file = self.0.path().join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, path).unwrap();
+            fs::set_permissions(file, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+}
+
+fn suite(id: &str) -> String {
+    format!(
+        r#"{{"rust-suites":{{"{id}":{{"testcases":{{"case":{{"filter-match":{{"status":"matches"}}}}}}}}}}}}"#
+    )
 }
 
 #[test]
@@ -144,20 +179,20 @@ fn archived_lifecycle_uses_the_checkout_without_building_again() {
 
 #[test]
 fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
-    for args in [
-        vec!["--partition", "hash:1/2"],
-        vec!["test", "--partition", "hash:1/2"],
-        vec!["fmt", "--archive-file", "tests.tar.zst"],
-        vec!["--archive-file", "tests.tar.zst"],
+    let partition = "--partition requires ci lifecycle";
+    let archive = "--archive-file requires ci lifecycle, live-docker, or live-kind";
+    for (args, expected) in [
+        (vec!["--partition", "hash:1/2"], partition),
+        (vec!["test", "--partition", "hash:1/2"], partition),
+        (vec!["live-docker", "--partition", "hash:1/2"], partition),
+        (vec!["fmt", "--archive-file", "tests.tar.zst"], archive),
+        (vec!["--archive-file", "tests.tar.zst"], archive),
     ] {
         let fixture = Fixture::new();
         let output = fixture.run(&args);
         assert!(!output.status.success());
         let error = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            error.contains("--partition and --archive-file require ci lifecycle"),
-            "{error}"
-        );
+        assert!(error.contains(expected), "{error}");
         assert!(!fixture.0.path().join("arguments").exists());
         assert!(!fixture.0.path().join(".build").exists());
     }
@@ -166,21 +201,7 @@ fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
 #[test]
 fn archive_packages_tools_and_provider_helpers_but_leaves_the_bundle_to_its_own_job() {
     let fixture = Fixture::new();
-    for path in [
-        "dist/linux_arm64/bin/nemoclaw",
-        "dist/linux_arm64/libexec/tofu",
-        ".tools/protoc-36.1/bin/protoc",
-        ".tools/nextest-0.9.144/cargo-nextest",
-        "target/debug/terraform-provider-nemoclaw",
-        "target/debug/terraform-provider-openshell",
-        "target/debug/terraform-provider-fabric",
-        "target/debug/nemoclaw-fixture-ssh",
-    ] {
-        let file = fixture.0.path().join(path);
-        fs::create_dir_all(file.parent().unwrap()).unwrap();
-        fs::write(&file, path).unwrap();
-        fs::set_permissions(file, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    fixture.seed_build_outputs();
     // Tool discovery uses the fixture's explicit PROTOC and cargo commands.
     let output = fixture.run(&["archive"]);
     assert!(
@@ -217,6 +238,63 @@ fn archive_packages_tools_and_provider_helpers_but_leaves_the_bundle_to_its_own_
         fs::read(unpacked.path().join(".build/ci/nemoclaw-build")).unwrap(),
         fs::read(env!("CARGO_BIN_EXE_nemoclaw-build")).unwrap()
     );
+}
+
+#[test]
+fn linux_archives_also_hold_the_live_suites_so_live_jobs_need_not_compile() {
+    let fixture = Fixture::new();
+    fixture.seed_build_outputs();
+    let output = fixture
+        .command(&["archive"])
+        .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
+        .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = fixture.arguments();
+    assert!(
+        args.contains(
+            "--filterset\nbinary_id(=docker-suite) | binary_id(=kind-suite) | binary_id(=selected-suite)\n"
+        ),
+        "{args}"
+    );
+}
+
+#[test]
+fn other_platforms_archive_only_the_lifecycle_suite_because_live_suites_need_linux() {
+    let fixture = Fixture::new();
+    fixture.seed_build_outputs();
+    let output = fixture
+        .command(&["archive"])
+        .env("TEST_PLATFORM", "darwin_arm64")
+        .env("CARGO_LIST_LIVE_DOCKER", suite("docker-suite"))
+        .env("CARGO_LIST_LIVE_KIND", suite("kind-suite"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = fixture.arguments();
+    assert!(
+        args.contains("--filterset\nbinary_id(=selected-suite)\n"),
+        "{args}"
+    );
+}
+
+#[test]
+fn live_suites_accept_an_archive_of_their_tests() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["live-docker", "--archive-file", "tests.tar.zst"]);
+    assert!(!output.status.success());
+    // It gets past option validation and stops at the missing bundle.
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("build the bundle first"), "{error}");
 }
 
 #[test]

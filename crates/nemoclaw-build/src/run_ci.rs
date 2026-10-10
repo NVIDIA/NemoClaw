@@ -175,7 +175,7 @@ fn run_step(
     match step {
         Step::Tools => unreachable!("tools install in-process"),
         Step::LiveDocker => {
-            return live_docker::run_live_docker(tools.pins, platform, &configure);
+            return live_docker::run_live_docker(tools.pins, platform, &configure, archive_file);
         }
         Step::LiveKind => unreachable!("live-kind runs asynchronously"),
         Step::Schema | Step::Bundle => {
@@ -200,33 +200,21 @@ fn run_step(
         fs::create_dir_all(".build/ci")?;
     }
     let archive_filter = if step == Step::Archive {
-        Some(archive::selected_binaries(&configure)?)
+        Some(archive::selected_binaries(&configure, platform)?)
     } else {
         None
     };
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     for args in step.cargo_args() {
-        let mut command = cargo();
-        configure(&mut command);
-        if let Some(archive) = archive_file {
-            fs::create_dir_all(".build/ci/extracted")?;
-            command
-                .args([
-                    "nextest",
-                    "run",
-                    "--profile",
-                    "lifecycle",
-                    "--run-ignored",
-                    "only",
-                ])
-                .arg("--archive-file")
-                .arg(archive)
-                .arg("--workspace-remap")
-                .arg(std::env::current_dir()?)
-                .args(["--extract-to", ".build/ci/extracted", "--extract-overwrite"]);
-        } else {
-            command.args(*args);
-        }
+        let mut command = match archive_file {
+            Some(archive) => archived(step, archive, &configure)?,
+            None => {
+                let mut command = cargo();
+                configure(&mut command);
+                command.args(*args);
+                command
+            }
+        };
         if let Some(filter) = &archive_filter {
             command.args(["--filterset", filter]);
         }
@@ -267,6 +255,32 @@ fn run_step(
         archive::package_inputs(tools)?;
     }
     Ok(())
+}
+
+/// Run a test step's executables from a nextest `archive` against this
+/// checkout, without compiling them.
+fn archived(step: Step, archive: &Path, configure: &dyn Fn(&mut Command)) -> Result<Command> {
+    let (profile, _) = step
+        .junit()
+        .ok_or_else(|| format!("{} runs no tests", step.name()))?;
+    fs::create_dir_all(".build/ci/extracted")?;
+    let mut command = cargo();
+    configure(&mut command);
+    command
+        .args([
+            "nextest",
+            "run",
+            "--profile",
+            profile,
+            "--run-ignored",
+            "only",
+        ])
+        .arg("--archive-file")
+        .arg(archive)
+        .arg("--workspace-remap")
+        .arg(std::env::current_dir()?)
+        .args(["--extract-to", ".build/ci/extracted", "--extract-overwrite"]);
+    Ok(command)
 }
 
 /// Budgets fail CI only on the Linux runners they were measured on.
@@ -362,8 +376,13 @@ pub(super) async fn run_steps(
     partition: Option<&str>,
     archive_file: Option<&Path>,
 ) -> Result<()> {
-    if (partition.is_some() || archive_file.is_some()) && selected != Some("lifecycle") {
-        return Err("--partition and --archive-file require ci lifecycle".into());
+    if partition.is_some() && selected != Some("lifecycle") {
+        return Err("--partition requires ci lifecycle".into());
+    }
+    if archive_file.is_some()
+        && !matches!(selected, Some("lifecycle" | "live-docker" | "live-kind"))
+    {
+        return Err("--archive-file requires ci lifecycle, live-docker, or live-kind".into());
     }
     let tools = Tools {
         pins,
@@ -403,7 +422,7 @@ pub(super) async fn run_steps(
             let configure = |command: &mut Command| {
                 command.env("PROTOC", &protoc).env("PATH", &path);
             };
-            live_kind::run_live_kind(tools.pins, &platform, &configure).await
+            live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file).await
         } else {
             run_step(&tools, &platform, step, partition, archive_file)
         };

@@ -37,10 +37,13 @@ jobs:
     timeout-minutes: 60
     outputs:
       artifact: ${{ steps.identity.outputs.artifact }}
+      live: ${{ steps.changes.outputs.live }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The second commit is a pull request merge commit's base.
+          fetch-depth: 2
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
@@ -64,6 +67,21 @@ jobs:
         run: cargo ci schema
       - name: Archive lifecycle executables and inputs
         run: cargo ci archive
+      # Deciding here lets the live jobs skip without starting a runner.
+      - name: Decide whether this change can affect the live suites
+        id: changes
+        if: inputs.live
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # Pushes and manual runs always run the live suites.
+          if [ "$EVENT" != pull_request ]; then
+            echo live=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base=$(git rev-parse HEAD^1)
+          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+            changes live --base "$base" >> "$GITHUB_OUTPUT"
       - name: Identify lifecycle artifact
         id: identity
         run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
@@ -188,41 +206,39 @@ jobs:
           tar -xf .build/ci/lifecycle-inputs.tar "$tool"
           "$tool" lifecycle-timing .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
-  # The live suites reuse this platform's bundle instead of building their own,
-  # so they start when it is ready. Like the lifecycle shards, they count toward
-  # the platform's required Test / PLATFORM check.
+  # Like the lifecycle shards, the live suites run this platform's archived test
+  # executables and bundle, compile nothing, and count toward the platform's
+  # required Test / PLATFORM check.
   live-docker:
     name: Live / Docker
-    if: inputs.live
-    needs: bundle
+    needs: [build, bundle]
+    if: inputs.live && needs.build.outputs.live == 'true'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The second commit is a pull request merge commit's base.
-          fetch-depth: 2
       - uses: ./.github/actions/live-suite
         with:
           platform: ${{ inputs.platform }}
           suite: live-docker
+          tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
 
   live-kind:
     name: Live / Kind
-    if: inputs.live
-    needs: bundle
+    needs: [build, bundle]
+    if: inputs.live && needs.build.outputs.live == 'true'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The second commit is a pull request merge commit's base.
-          fetch-depth: 2
       - uses: ./.github/actions/live-suite
         with:
           platform: ${{ inputs.platform }}
           suite: live-kind
+          tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
