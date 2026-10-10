@@ -290,7 +290,7 @@ export function createPhases(
       toSessionUpdates: (updates) => updates as NonNullable<SessionUpdates>,
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
-      checkAndRecoverSandboxProcesses: vi.fn(async () => true),
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({ healthy: true as const })),
       settleOrdinaryOpenClawPairing: vi.fn(async () => ({ kind: "settled" as const })),
       ordinaryOpenClawPairingIncompleteMessage: vi.fn(
         () => "OpenClaw onboarding is incomplete; resume onboarding.",

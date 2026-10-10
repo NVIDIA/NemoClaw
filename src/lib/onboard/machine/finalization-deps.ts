@@ -56,6 +56,11 @@ export type OrdinaryOpenClawPairingSettlementResult =
         | "scope-upgrade-watcher-unavailable";
     };
 
+/** Outcome of the final sandbox process check; a failure names the check that did not pass. */
+export type SandboxProcessCheckResult =
+  | { readonly healthy: true }
+  | { readonly healthy: false; readonly reason: string };
+
 type OrdinaryOpenClawPairingIncompleteReason = Extract<
   OrdinaryOpenClawPairingSettlementResult,
   { kind: "incomplete" }
@@ -433,7 +438,7 @@ export const finalizationHandlerDeps = {
     name: string,
     options: { quiet: boolean },
     portableSupervisorEnvironment?: NodeJS.ProcessEnv,
-  ): Promise<boolean> {
+  ): Promise<SandboxProcessCheckResult> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     const target = finalizationHandlerRuntime
       .loadLaunchReadiness()
@@ -445,10 +450,10 @@ export const finalizationHandlerDeps = {
         target.gatewayName,
       );
       if (startup === false) {
-        console.error(
-          `  OpenClaw startup did not settle for '${name}' on gateway '${target.gatewayName}'.`,
-        );
-        return false;
+        return {
+          healthy: false,
+          reason: `OpenClaw startup did not settle on gateway '${target.gatewayName}'`,
+        };
       }
     }
     const recover = () =>
@@ -461,24 +466,34 @@ export const finalizationHandlerDeps = {
       const controlPlaneReady = await processRecovery.waitForRecreatedSandboxOpenShellReady(name);
       if (controlPlaneReady) result = await recover();
     }
-    const healthy =
-      result.checked === true &&
-      (result.wasRunning !== false || result.recovered === true) &&
-      !("secretBoundaryRefused" in result && result.secretBoundaryRefused === true);
-    if (!healthy) {
-      const detail =
+    const boundedDetail = (detail: unknown) => sanitizeWedgeLogLine(String(detail)).slice(0, 1000);
+    if ("secretBoundaryRefused" in result && result.secretBoundaryRefused === true) {
+      const refusal =
         "secretBoundaryReason" in result && result.secretBoundaryReason
-          ? result.secretBoundaryReason
-          : "recoveryFailureDetail" in result && result.recoveryFailureDetail
-            ? result.recoveryFailureDetail
-            : result.checked !== true
-              ? "process inspection incomplete"
-              : "gateway recovery failed";
-      console.error(
-        `  Sandbox recovery for '${name}' failed: ${sanitizeWedgeLogLine(String(detail)).slice(0, 1000)}`,
-      );
+          ? boundedDetail(result.secretBoundaryReason)
+          : "no reason was reported";
+      return {
+        healthy: false,
+        reason: `the secret-boundary check refused the sandbox (${refusal})`,
+      };
     }
-    return healthy;
+    if (result.checked !== true) {
+      return {
+        healthy: false,
+        reason: "the gateway process inside the sandbox could not be inspected",
+      };
+    }
+    if (result.wasRunning === false && result.recovered !== true) {
+      const failure =
+        "recoveryFailureDetail" in result && result.recoveryFailureDetail
+          ? ` (${boundedDetail(result.recoveryFailureDetail)})`
+          : "";
+      return {
+        healthy: false,
+        reason: `the gateway process was not running and could not be restarted${failure}`,
+      };
+    }
+    return { healthy: true };
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

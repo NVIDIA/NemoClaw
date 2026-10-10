@@ -3,7 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { finalizationHandlerDeps, finalizationHandlerRuntime } from "../finalization-deps";
+import {
+  finalizationHandlerDeps,
+  finalizationHandlerRuntime,
+  type SandboxProcessCheckResult,
+} from "../finalization-deps";
 
 import type { SessionUpdates } from "../../../state/onboard-session";
 import type { PreparedExternalComponent } from "../../external-component";
@@ -64,7 +68,7 @@ function createDeps(
     setDefaultSandbox: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
-    recoverProcesses: vi.fn(async () => true),
+    recoverProcesses: vi.fn(async (): Promise<SandboxProcessCheckResult> => ({ healthy: true })),
     settleOrdinaryPairing: vi.fn(async () => ({ kind: "settled" as const })),
     ordinaryPairingIncompleteMessage: vi.fn(
       () => "OpenClaw onboarding is incomplete; resume onboarding.",
@@ -513,9 +517,9 @@ describe("finalization handlers", () => {
 
   it("relies on process recovery to restore the default OpenClaw dashboard forward", async () => {
     let forwardLive = false;
-    const recoverProcesses = vi.fn(async () => {
+    const recoverProcesses = vi.fn(async (): Promise<SandboxProcessCheckResult> => {
       forwardLive = true;
-      return true;
+      return { healthy: true };
     });
     const verify = vi.fn(async () => ({ ok: forwardLive }));
     const { deps } = createDeps({
@@ -863,6 +867,46 @@ describe("finalization handlers", () => {
   });
 });
 
+describe("failed process check during finalization", () => {
+  const reason = "the gateway process inside the sandbox could not be inspected";
+
+  it("names the failed check when finalizing pauses (#12604)", async () => {
+    const { deps, calls } = createDeps({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({ healthy: false as const, reason })),
+    });
+
+    const result = await handleFinalizationPhase(baseOptions(deps));
+
+    expect(result.stateResult).toMatchObject({
+      type: "pause",
+      metadata: { state: "finalizing", reason: "recovery_check_incomplete" },
+    });
+    expect(calls.error).toHaveBeenCalledWith(
+      `  Onboarding for 'my-assistant' is incomplete: ${reason}. Inspect with nemoclaw my-assistant doctor, resolve the reported problem, then resume onboarding with nemoclaw onboard --resume.`,
+    );
+  });
+
+  it("records the failed check in post-verify diagnostics (#12604)", async () => {
+    const { deps, calls } = createDeps({
+      checkAndRecoverSandboxProcesses: vi.fn(async () => ({ healthy: false as const, reason })),
+    });
+
+    const result = await handlePostVerifyState(baseOptions(deps));
+
+    expect(result).toMatchObject({
+      deploymentHealthy: false,
+      stateResult: {
+        type: "pause",
+        metadata: { state: "post_verify", reason: "recovery_check_incomplete" },
+      },
+    });
+    expect(result.verificationDiagnostics).toEqual([
+      expect.stringContaining(`is incomplete: ${reason}.`),
+    ]);
+    expect(calls.verify).not.toHaveBeenCalled();
+  });
+});
+
 describe("secret-boundary refusal during finalization", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -901,7 +945,11 @@ describe("secret-boundary refusal during finalization", () => {
         metadata: { state: phase, reason: "recovery_check_incomplete" },
       });
       expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
-      expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("secret-boundary"));
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "is incomplete: the secret-boundary check refused the sandbox (unexpected-marker).",
+        ),
+      );
       expect(calls.error).toHaveBeenCalledWith(
         expect.stringContaining("nemoclaw my-assistant doctor"),
       );

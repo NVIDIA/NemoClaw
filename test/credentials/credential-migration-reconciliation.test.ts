@@ -74,7 +74,7 @@ async function finalizeMigration(
       toSessionUpdates: (updates) => updates,
       removeLegacyCredentialsFile: () => removeLegacyCredentialsFile(stagedLegacyValues),
       cleanupStaleHostFiles: () => undefined,
-      checkAndRecoverSandboxProcesses: async () => true,
+      checkAndRecoverSandboxProcesses: async () => ({ healthy: true as const }),
       settleOrdinaryOpenClawPairing: async () => ({ kind: "settled" }),
       ordinaryOpenClawPairingIncompleteMessage: () =>
         "OpenClaw onboarding is incomplete; resume onboarding.",

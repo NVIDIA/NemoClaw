@@ -13,7 +13,10 @@ import type {
 } from "../../external-component/activation";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
-import type { OrdinaryOpenClawPairingSettlementResult } from "../finalization-deps";
+import type {
+  OrdinaryOpenClawPairingSettlementResult,
+  SandboxProcessCheckResult,
+} from "../finalization-deps";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -68,7 +71,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     checkAndRecoverSandboxProcesses(
       sandboxName: string,
       options: { quiet: boolean },
-    ): Promise<boolean>;
+    ): Promise<SandboxProcessCheckResult>;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
@@ -218,8 +221,8 @@ function logTerminalReadyBlock(
   }
 }
 
-function recoveryIncompleteMessage(sandboxName: string): string {
-  return `Onboarding for '${sandboxName}' is incomplete because a required process or secret-boundary check did not pass. Inspect with ${CLI_NAME} ${sandboxName} doctor, resolve the reported problem, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+function recoveryIncompleteMessage(sandboxName: string, reason: string): string {
+  return `Onboarding for '${sandboxName}' is incomplete: ${reason}. Inspect with ${CLI_NAME} ${sandboxName} doctor, resolve the reported problem, then resume onboarding with ${CLI_NAME} onboard --resume.`;
 }
 
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
@@ -314,8 +317,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   }
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover before verification (#3573).
-    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      deps.error(`  ${recoveryIncompleteMessage(sandboxName)}`);
+    const processCheck = await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    if (!processCheck.healthy) {
+      deps.error(`  ${recoveryIncompleteMessage(sandboxName, processCheck.reason)}`);
       deps.reportDeploymentReadiness(false);
       return {
         stateResult: pauseOnboardMachine(
@@ -433,8 +437,9 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   }
   if (manageDashboard) {
     // Recheck after pairing and on resume, including Hermes secret-boundary enforcement.
-    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      const message = recoveryIncompleteMessage(sandboxName);
+    const processCheck = await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    if (!processCheck.healthy) {
+      const message = recoveryIncompleteMessage(sandboxName, processCheck.reason);
       deps.error(`  ${message}`);
       deps.reportDeploymentReadiness(false);
       return {

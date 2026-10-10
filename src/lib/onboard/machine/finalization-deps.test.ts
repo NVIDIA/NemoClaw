@@ -823,7 +823,7 @@ describe("finalization process-recovery refusal propagation", () => {
 
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ healthy: true });
     expect(order).toEqual(["native-startup", "process-recovery"]);
     expect(waitForStartedNativeGatewayProcess).toHaveBeenCalledExactlyOnceWith(
       "alpha",
@@ -833,7 +833,6 @@ describe("finalization process-recovery refusal propagation", () => {
   });
 
   it("pauses before recovery when initial OpenClaw startup does not settle", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const recover = vi.fn();
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: () => ({ gatewayName: "nemoclaw" }),
@@ -846,13 +845,14 @@ describe("finalization process-recovery refusal propagation", () => {
 
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      healthy: false,
+      reason: "OpenClaw startup did not settle on gateway 'nemoclaw'",
+    });
     expect(recover).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("startup did not settle"));
   });
 
   it("reports bounded redacted recovery failure details even in quiet onboarding", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(async () => ({
         checked: true,
@@ -865,11 +865,14 @@ describe("finalization process-recovery refusal propagation", () => {
       waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
       waitForStartedNativeGatewayProcess: vi.fn(async () => true),
     });
-    await expect(
-      finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(false);
-    const diagnostic = error.mock.calls.flat().join("\n");
-    expect(diagnostic).toContain("transport failed");
+    const result = await finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", {
+      quiet: true,
+    });
+    expect(result.healthy).toBe(false);
+    const diagnostic = result.healthy ? "" : result.reason;
+    expect(diagnostic).toContain(
+      "the gateway process was not running and could not be restarted (transport failed",
+    );
     expect(diagnostic).not.toContain("secret-value");
     expect(diagnostic.length).toBeLessThan(1100);
   });
@@ -893,7 +896,7 @@ describe("finalization process-recovery refusal propagation", () => {
         { quiet: true },
         environment,
       ),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ healthy: true });
     expect(recover).toHaveBeenCalledExactlyOnceWith("fresh-hermes", {
       quiet: true,
       portableSupervisorEnvironment: environment,
@@ -914,7 +917,10 @@ describe("finalization process-recovery refusal propagation", () => {
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      healthy: false,
+      reason: "the gateway process inside the sandbox could not be inspected",
+    });
     expect(recover).toHaveBeenCalledTimes(2);
   });
 
@@ -942,7 +948,7 @@ describe("finalization process-recovery refusal propagation", () => {
 
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ healthy: true });
     expect(waitForReady).toHaveBeenCalledExactlyOnceWith("alpha");
     expect(recover).toHaveBeenCalledTimes(2);
   });
@@ -972,7 +978,10 @@ describe("finalization process-recovery refusal propagation", () => {
         { quiet: true },
         { HOME: "/home/kiosk" },
       ),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      healthy: false,
+      reason: "the gateway process was not running and could not be restarted",
+    });
   });
 
   it("allows checked terminal recovery without a gateway process (#11758)", async () => {
@@ -989,7 +998,7 @@ describe("finalization process-recovery refusal propagation", () => {
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ healthy: true });
   });
 
   it.each([
@@ -1016,7 +1025,10 @@ describe("finalization process-recovery refusal propagation", () => {
       });
       await expect(
         finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-      ).resolves.toBe(false);
+      ).resolves.toEqual({
+        healthy: false,
+        reason: `the secret-boundary check refused the sandbox (${secretBoundaryReason})`,
+      });
       expect(recover).toHaveBeenCalledExactlyOnceWith("alpha", { quiet: true });
     },
   );
@@ -1034,7 +1046,7 @@ describe("finalization process-recovery refusal propagation", () => {
     });
     await expect(
       finalizationHandlerDeps.checkAndRecoverSandboxProcesses("alpha", { quiet: true }),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ healthy: true });
   });
 });
 
