@@ -6364,7 +6364,7 @@ jobs:
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}
     permissions:
       actions: read
       contents: read
@@ -6386,6 +6386,13 @@ jobs:
         env:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           TEST_MATRIX: ${{ needs.generate-matrix.outputs.test_matrix }}
+          JOB_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          JOB_CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
+          JOB_BASE_SHA: ${{ inputs.base_sha }}
+          JOB_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MATRIX_RESULT: ${{ needs.generate-matrix.result }}
+          SELECTED_WORKFLOW_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}

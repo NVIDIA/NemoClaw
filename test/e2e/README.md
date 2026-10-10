@@ -2189,6 +2189,10 @@ Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANT
 `NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, or `NEMOCLAW_HERMES_MODEL` to an approved model.
 Missing credentials or models fail before onboarding. A selected test that skips cannot produce passing evidence.
 The existing controller binds artifacts to the tested source revision and trusted workflow revision.
+For an authorized hosted-provider candidate run, the trusted reporter comments on the PR after the selected jobs finish.
+It rechecks the open PR's head, base, and repository before posting the candidate commit, workflow commit, selected results, and artifact link.
+The artifacts retain scenario evidence and per-sandbox `cleanup.json` when produced. Inspect cleanup outcomes separately; missing evidence is not a pass.
+A changed PR head or base rejects the comment. Other candidate dispatches retain their existing artifact-only reporting path.
 For a manual same-repository PR run, GitHub workflow-dispatch permission authorizes the operator.
 The controller verifies the open PR, repository, candidate commit, base commit, and workflow revision before credential forwarding.
 Review the complete candidate diff and approve the selected credential source before dispatch.
