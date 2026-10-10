@@ -9,6 +9,15 @@ use std::{
 };
 use tempfile::TempDir;
 
+/// Where Unix sockets are missing, fake engines are reached over SSH. Windows
+/// resolves a bare program name in the launching executable's directory
+/// before `PATH`, so providers copied here run the relay as `ssh`.
+fn install_ssh_relay(directory: &Path) {
+    if cfg!(not(unix)) {
+        fs::copy(crate::ssh_relay(), directory.join(crate::executable("ssh"))).unwrap();
+    }
+}
+
 pub struct TofuWorkspace {
     directory: TempDir,
     tofu: PathBuf,
@@ -34,6 +43,7 @@ impl TofuWorkspace {
                 fs::copy(sibling, directory.path().join(binary)).unwrap();
             }
         }
+        install_ssh_relay(directory.path());
         let path = serde_json::to_string(directory.path()).unwrap();
         let overrides = ["nemoclaw", "openshell", "fabric"]
             .map(|name| format!("\"registry.opentofu.org/nvidia/{name}\" = {path}"))
@@ -62,6 +72,7 @@ impl TofuWorkspace {
             )
             .unwrap();
         }
+        install_ssh_relay(directory.path());
         let path = serde_json::to_string(directory.path()).unwrap();
         let overrides = providers
             .iter()

@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
 
 use crate::{http_fixture as docker, openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
@@ -26,7 +25,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
     let (container_name, container_owner) = (name.clone(), owner.clone());
     let running = Arc::new(AtomicBool::new(false));
     let status = running.clone();
-    let engine = docker::Fixture::start(move |request| {
+    let engine = docker::Fixture::engine(move |request| {
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/containers/bound/json");
         let active = status.load(Ordering::SeqCst);

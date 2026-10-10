@@ -217,7 +217,6 @@ fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
     );
 }
 
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn production_provider_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {
@@ -230,7 +229,7 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
     assert!(provider.is_absolute());
     let mode = Arc::new(Mutex::new("normal"));
     let shared = mode.clone();
-    let fixture = nemoclaw_e2e::http_fixture::Fixture::start(move |request| {
+    let fixture = nemoclaw_e2e::http_fixture::Fixture::engine(move |request| {
         assert_eq!(request.method, "GET", "planning or rejected apply mutated Docker");
         let mode = *shared.lock().unwrap();
         let response = match request.path.split('?').next().unwrap() {

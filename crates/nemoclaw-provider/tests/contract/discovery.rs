@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
 
 use crate::http_fixture as transport;
 use crate::tofu::TofuWorkspace;
@@ -28,7 +27,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
     let seen = requests.clone();
     let catalog = FabricCatalog::bundled();
     let catalog_json = serde_json::to_string(&catalog).unwrap();
-    let fixture = transport::Fixture::start(move |request| {
+    let fixture = transport::Fixture::engine(move |request| {
         assert_eq!(request.method, "GET");
         assert!(request.body.is_empty());
         seen.fetch_add(1, Ordering::SeqCst);
@@ -42,13 +41,19 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
     }).await;
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
+    // An engine nothing serves: a missing socket, or a closed loopback port.
+    let unreachable = if cfg!(unix) {
+        format!("unix://{}", root.join("missing.sock").display())
+    } else {
+        "ssh://127.0.0.1:1".to_owned()
+    };
     let config = json!({
         "terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"},"fabric":{"source":"nvidia/fabric"}}},
         "provider":{"nemoclaw":{},"fabric":{}},
         "data":{
             "nemoclaw_engine_capabilities":{
                 "present":{"engine":fixture.endpoint,"compute_driver":"docker"},
-                "unknown":{"engine":format!("unix://{}",root.join("missing.sock").display()),"compute_driver":"docker"}
+                "unknown":{"engine":unreachable,"compute_driver":"docker"}
             },
             "fabric_capabilities":{
                 "present":{"engine":fixture.endpoint,"image":"labeled:image"},
@@ -104,7 +109,7 @@ async fn authored_fabric_requirements_take_the_configuration_and_policy_reads_se
         std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
     );
     let catalog_json = serde_json::to_string(&FabricCatalog::bundled()).unwrap();
-    let fixture = transport::Fixture::start(move |request| {
+    let fixture = transport::Fixture::engine(move |request| {
         let body = match request.path.as_str() {
             "/images/labeled:image/json" => json!({"Id":"sha256:fixture", "Config":{"Labels":{IMAGE_CATALOG_LABEL:catalog_json}}}),
             other => panic!("unexpected engine query {other}"),
@@ -202,7 +207,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
     let current = mode.clone();
     let requests = Arc::new(AtomicUsize::new(0));
     let seen = requests.clone();
-    let fixture=transport::Fixture::start(move |request| {
+    let fixture=transport::Fixture::engine(move |request| {
         assert_eq!(request.method,"GET");
         assert!(request.body.is_empty());
         seen.fetch_add(1,Ordering::SeqCst);
