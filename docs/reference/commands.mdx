@@ -2885,6 +2885,15 @@ Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms th
 
 </AgentOnly>
 
+<AgentOnly variant="deepagents">
+
+### `$$nemoclaw <name> sessions`
+
+Session listing is not supported for LangChain Deep Agents Code sandboxes.
+The command reports an unsupported-capability error and exits with status `1` before running an in-sandbox command.
+
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
 
 ### `$$nemoclaw <name> sessions`
@@ -2907,6 +2916,15 @@ List Hermes conversation sessions in the sandbox. NemoClaw invokes `hermes sessi
 $$nemoclaw my-assistant sessions
 $$nemoclaw my-assistant sessions --source cli --limit 20
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+### `$$nemoclaw <name> sessions list`
+
+Session listing is not supported for LangChain Deep Agents Code sandboxes.
+The command reports an unsupported-capability error and exits with status `1` before running an in-sandbox command.
 
 </AgentOnly>
 
