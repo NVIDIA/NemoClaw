@@ -184,7 +184,8 @@ describe("runInferenceSet Hermes routing", () => {
       expect.objectContaining({
         action: "inference_set",
         sandbox: "hermes",
-        reason: "inference set hermes:hermes-provider:openai/gpt-5.4-mini",
+        reason:
+          "inference set hermes:hermes-provider:openai/gpt-5.4-mini (gateway restart completed)",
       }),
     );
     expect(result).toMatchObject({
@@ -195,7 +196,7 @@ describe("runInferenceSet Hermes routing", () => {
       providerKey: "inference",
       configChanged: true,
     });
-    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("hermes", "nemoclaw");
     expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
       "hermes-provider",
       "openai/gpt-5.4-mini",

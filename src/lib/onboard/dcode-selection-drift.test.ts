@@ -22,6 +22,7 @@ function driftDeps(
   return {
     getGatewayName: () => "nemoclaw-18081",
     requestedEndpointUrl,
+    nativeProvider: true,
     commandExecutor: bufferedExecutor(run),
   };
 }
@@ -70,6 +71,90 @@ function identity(
 }
 
 describe("live DCode selection drift", () => {
+  it.each([
+    [
+      "openai-api",
+      "openai",
+      "openai-api",
+      "openai:model-a",
+      "https://api.openai.com/v1",
+      "https://inference.local/v1",
+    ],
+    [
+      "anthropic-prod",
+      "anthropic",
+      "anthropic-prod",
+      "openai:model-a",
+      "https://api.anthropic.com",
+      "https://inference.local",
+    ],
+    [
+      "gemini-api",
+      "inference",
+      "gemini-api",
+      "openai:model-a",
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "https://inference.local/v1",
+    ],
+    [
+      "openrouter-api",
+      "inference",
+      "openrouter",
+      "openrouter:model-a",
+      "https://openrouter.ai/api/v1",
+      "https://inference.local/v1",
+    ],
+    [
+      "hermes-provider",
+      "inference",
+      "hermes-provider",
+      "openai:model-a",
+      "https://login-selected.example/v1",
+      "https://inference.local/v1",
+    ],
+  ])(
+    "validates %s against its recorded attachment route",
+    async (provider, route, identityProvider, model, nativeEndpoint, sharedEndpoint) => {
+      let endpoint = sharedEndpoint;
+      const read = createDcodeSelectionDriftReader(
+        bufferedExecutor(() =>
+          identity({
+            Route: route,
+            Provider: identityProvider,
+            Model: model,
+            Endpoint: endpoint,
+          }),
+        ),
+        () => "nemoclaw-18081",
+      );
+      expect(await read("alpha", provider, "model-a", null, nativeEndpoint, false)).toMatchObject({
+        changed: false,
+        unknown: false,
+      });
+      expect(await read("alpha", provider, "model-a", null, nativeEndpoint, true)).toMatchObject({
+        changed: true,
+        providerChanged: true,
+        unknown: false,
+      });
+      endpoint = nativeEndpoint;
+      expect(await read("alpha", provider, "model-a", null, nativeEndpoint, true)).toMatchObject({
+        changed: false,
+        unknown: false,
+      });
+      expect(await read("alpha", provider, "model-a", null, nativeEndpoint, false)).toMatchObject({
+        changed: true,
+        providerChanged: true,
+        unknown: false,
+      });
+    },
+  );
+
+  it("preserves the existing native NVIDIA route without a hosted attachment", () => {
+    expect(
+      getExpectedDcodeInferenceIdentity("nvidia-prod", "model-a", null, null, false),
+    ).toMatchObject({ endpoint: "https://integrate.api.nvidia.com/v1" });
+  });
+
   it("limits the managed identity contract to stock DCode images (#6311)", () => {
     expect(usesManagedDcodeIdentity("langchain-deepagents-code", null)).toBe(true);
     expect(usesManagedDcodeIdentity("langchain-deepagents-code", "/tmp/Dockerfile")).toBe(false);
@@ -154,6 +239,7 @@ describe("live DCode selection drift", () => {
         "nvidia/nemotron-3-ultra-550b-a55b",
         null,
         "https://openrouter.ai/api/v1/",
+        false,
       ),
     ).toMatchObject({
       changed: false,
@@ -185,6 +271,7 @@ describe("live DCode selection drift", () => {
         "nvidia/nemotron-3-ultra-550b-a55b",
         null,
         endpointUrl,
+        false,
       ),
     ).toMatchObject({
       changed: true,
@@ -211,6 +298,7 @@ describe("live DCode selection drift", () => {
         "model-a",
         null,
         "https://example.test/v1",
+        false,
       ),
     ).toMatchObject({
       changed: false,
@@ -255,7 +343,11 @@ describe("live DCode selection drift", () => {
         "nvidia-prod",
         "nvidia/nemotron-3-super-120b-a12b",
         null,
-        { commandExecutor, getGatewayName: () => "nemoclaw-18081" },
+        {
+          commandExecutor,
+          getGatewayName: () => "nemoclaw-18081",
+          nativeProvider: true,
+        },
       ),
     ).toEqual({
       changed: false,
