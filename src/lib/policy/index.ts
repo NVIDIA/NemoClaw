@@ -498,7 +498,7 @@ function getPresetValidationWarning(
     return [
       "Jira preset validation uses per-binary policy signals.",
       "Node HTTPS is allowed for Atlassian API traffic:",
-      "node -e \"require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))\"",
+      "node -e \"require('https').get('https://api.atlassian.com', r => { console.log(r.statusCode); r.resume(); })\"",
       "curl is intentionally not in the preset binary allowlist. Avoid plain",
       "curl -s probes for auth.atlassian.com: Atlassian can return an empty",
       "redirect body, which looks the same as a blocked request. Empty curl -s",
