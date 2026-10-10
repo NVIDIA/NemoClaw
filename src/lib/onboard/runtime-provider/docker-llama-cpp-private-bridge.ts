@@ -4,20 +4,26 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const PROCESS_EXIT_WAIT_MS = 5_000;
 const PROCESS_EXIT_POLL_MS = 50;
+const STARTUP_WAIT_MS = 10_000;
+const STARTUP_READY = "READY";
+const STARTUP_FAILED = "FAILED";
 const SLEEP_ARRAY = new Int32Array(new SharedArrayBuffer(4));
 
 export interface DockerLlamaCppPrivateBridgeAuthority {
   readonly transactionId: string;
   readonly apiKeyPath: string;
   readonly targetHost: string;
+  readonly containerId?: string;
+  readonly dockerAuthorityId?: string;
   readonly targetPort: number;
   readonly listenPort: number;
-  readonly bindAddresses: readonly ["127.0.0.1", string];
+  readonly bindAddresses: readonly ["127.0.0.1"] | readonly ["127.0.0.1", string];
 }
 
 export interface DockerLlamaCppPrivateBridgeController {
@@ -29,6 +35,7 @@ export interface DockerLlamaCppPrivateBridgeController {
 
 export interface DockerLlamaCppPrivateBridgeDependencies {
   readonly spawnProcess?: typeof spawn;
+  readonly dockerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly processIsAlive?: (pid: number) => boolean;
   readonly signalProcess?: (pid: number, signal: NodeJS.Signals) => void;
   readonly listProcessIds?: () => readonly number[];
@@ -63,11 +70,15 @@ function normalizeAuthority(
     !path.isAbsolute(value.apiKeyPath) ||
     value.apiKeyPath.includes("\0") ||
     path.normalize(value.apiKeyPath) !== value.apiKeyPath ||
-    !isPrivateIpv4(value.targetHost) ||
-    value.bindAddresses.length !== 2 ||
     value.bindAddresses[0] !== "127.0.0.1" ||
-    !isPrivateIpv4(value.bindAddresses[1]) ||
-    value.bindAddresses[1] === value.targetHost
+    !(value.targetHost === "127.0.0.1"
+      ? value.bindAddresses.length === 1 &&
+        SHA256.test(value.containerId ?? "") &&
+        /^docker:[a-f0-9]{64}$/u.test(value.dockerAuthorityId ?? "")
+      : isPrivateIpv4(value.targetHost) &&
+        value.bindAddresses.length === 2 &&
+        isPrivateIpv4(value.bindAddresses[1]) &&
+        value.bindAddresses[1] !== value.targetHost)
   ) {
     throw new Error("Docker llama.cpp private bridge authority is invalid.");
   }
@@ -75,9 +86,14 @@ function normalizeAuthority(
     transactionId: value.transactionId,
     apiKeyPath: value.apiKeyPath,
     targetHost: value.targetHost,
+    ...(value.containerId === undefined
+      ? {}
+      : { containerId: value.containerId, dockerAuthorityId: value.dockerAuthorityId }),
     targetPort: exactPort(value.targetPort, "target port"),
     listenPort: exactPort(value.listenPort, "listen port"),
-    bindAddresses: Object.freeze([...value.bindAddresses]) as readonly ["127.0.0.1", string],
+    bindAddresses: Object.freeze([
+      ...value.bindAddresses,
+    ]) as DockerLlamaCppPrivateBridgeAuthority["bindAddresses"],
   });
 }
 
@@ -94,10 +110,15 @@ function bridgeArguments(authorityValue: DockerLlamaCppPrivateBridgeAuthority): 
     String(authority.targetPort),
     "--listen-port",
     String(authority.listenPort),
-    "--bind-address",
-    authority.bindAddresses[0],
-    "--bind-address",
-    authority.bindAddresses[1],
+    ...(authority.containerId === undefined
+      ? []
+      : [
+          "--container-id",
+          authority.containerId,
+          "--docker-authority",
+          authority.dockerAuthorityId!,
+        ]),
+    ...authority.bindAddresses.flatMap((address) => ["--bind-address", address]),
   ]);
 }
 
@@ -143,6 +164,39 @@ function exactArgv(left: readonly string[] | null, right: readonly string[]): bo
 
 function defaultSleep(milliseconds: number): void {
   Atomics.wait(SLEEP_ARRAY, 0, 0, milliseconds);
+}
+
+function openStartupDescriptor(): number {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-bridge-start-"));
+  const statusPath = path.join(directory, "status");
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      statusPath,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.unlinkSync(statusPath);
+    fs.rmdirSync(directory);
+    return descriptor;
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function waitForStartup(descriptor: number, sleep: (milliseconds: number) => void): void {
+  const status = Buffer.alloc(STARTUP_FAILED.length);
+  const deadline = Date.now() + STARTUP_WAIT_MS;
+  while (Date.now() < deadline) {
+    const length = fs.readSync(descriptor, status, 0, status.length, 0);
+    const result = status.toString("utf8", 0, length);
+    if (result === STARTUP_READY) return;
+    if (result === STARTUP_FAILED) break;
+    sleep(PROCESS_EXIT_POLL_MS);
+  }
+  throw new Error("Docker llama.cpp private bridge failed to bind its listeners.");
 }
 
 function defaultOpenApiKeyDescriptor(apiKeyPath: string): number {
@@ -277,21 +331,34 @@ export function createDockerLlamaCppPrivateBridgeController(
       const stale = transactionProcessIds(authority.transactionId);
       if (stale.length > 0) stopProcessIds(stale);
       const apiKeyDescriptor = openApiKeyDescriptor(authority.apiKeyPath);
-      let child: ChildProcess;
+      let apiKeyOpen = true;
+      let startupDescriptor: number | undefined;
       try {
-        child = spawnProcess(process.execPath, [scriptPath, ...bridgeArguments(authority)], {
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore", apiKeyDescriptor],
-          shell: false,
-          env: {},
-        });
-      } finally {
+        startupDescriptor = openStartupDescriptor();
+        const child: ChildProcess = spawnProcess(
+          process.execPath,
+          [scriptPath, ...bridgeArguments(authority)],
+          {
+            detached: true,
+            stdio: ["ignore", "ignore", "ignore", apiKeyDescriptor, startupDescriptor],
+            shell: false,
+            env: authority.containerId === undefined ? {} : { ...dependencies.dockerEnvironment },
+          },
+        );
+        apiKeyOpen = false;
         closeApiKeyDescriptor(apiKeyDescriptor);
+        if (!Number.isInteger(child.pid) || !child.pid || child.pid < 1) {
+          throw new Error("Docker llama.cpp private bridge did not return a process identity.");
+        }
+        waitForStartup(startupDescriptor, sleep);
+        child.unref();
+      } catch (error) {
+        stopProcessIds(transactionProcessIds(authority.transactionId));
+        throw error;
+      } finally {
+        if (apiKeyOpen) closeApiKeyDescriptor(apiKeyDescriptor);
+        if (startupDescriptor !== undefined) fs.closeSync(startupDescriptor);
       }
-      if (!Number.isInteger(child.pid) || !child.pid || child.pid < 1) {
-        throw new Error("Docker llama.cpp private bridge did not return a process identity.");
-      }
-      child.unref();
     },
     assertRunning(authorityValue: DockerLlamaCppPrivateBridgeAuthority) {
       requireOne(normalizeAuthority(authorityValue));

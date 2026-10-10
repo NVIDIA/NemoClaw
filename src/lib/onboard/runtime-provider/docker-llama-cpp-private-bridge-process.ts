@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Duplex, Readable, Writable } from "node:stream";
+import { createDockerOperationAuthority } from "./docker-operation-authority";
 import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -8,6 +10,7 @@ import net from "node:net";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const API_KEY_FILE_DESCRIPTOR = 3;
+const STARTUP_STATUS_DESCRIPTOR = 4;
 const AUTH_MODE = "api-key-fd3";
 const UPSTREAM_CONTINUE_TIMEOUT_MS = 30_000;
 const UNAUTHORIZED_BODY = `${JSON.stringify({
@@ -21,9 +24,11 @@ const UNAUTHORIZED_BODY = `${JSON.stringify({
 export interface LlamaCppPrivateBridgeArguments {
   readonly transactionId: string;
   readonly targetHost: string;
+  readonly containerId?: string;
+  readonly dockerAuthorityId?: string;
   readonly targetPort: number;
   readonly listenPort: number;
-  readonly bindAddresses: readonly ["127.0.0.1", string];
+  readonly bindAddresses: readonly ["127.0.0.1"] | readonly ["127.0.0.1", string];
 }
 
 function exactPort(value: string, label: string): number {
@@ -71,6 +76,8 @@ export function parseLlamaCppPrivateBridgeArguments(
     "--target-port",
     "--listen-port",
     "--bind-address",
+    "--container-id",
+    "--docker-authority",
   ]);
   if ([...values.keys()].some((key) => !supported.has(key))) {
     throw new Error("private bridge received an unsupported argument");
@@ -78,23 +85,29 @@ export function parseLlamaCppPrivateBridgeArguments(
   if (
     !SHA256.test(transactionId) ||
     one("--auth-mode") !== AUTH_MODE ||
-    !isPrivateIpv4(targetHost) ||
-    bindAddresses.length !== 2 ||
     bindAddresses[0] !== "127.0.0.1" ||
-    !isPrivateIpv4(bindAddresses[1]!) ||
-    bindAddresses[1] === targetHost
+    !(targetHost === "127.0.0.1"
+      ? bindAddresses.length === 1 &&
+        SHA256.test(one("--container-id")) &&
+        /^docker:[a-f0-9]{64}$/u.test(one("--docker-authority"))
+      : isPrivateIpv4(targetHost) &&
+        bindAddresses.length === 2 &&
+        isPrivateIpv4(bindAddresses[1]!) &&
+        bindAddresses[1] !== targetHost)
   ) {
     throw new Error("private bridge authority is invalid");
   }
   return Object.freeze({
     transactionId,
     targetHost,
+    ...(targetHost === "127.0.0.1"
+      ? { containerId: one("--container-id"), dockerAuthorityId: one("--docker-authority") }
+      : {}),
     targetPort: exactPort(one("--target-port"), "target port"),
     listenPort: exactPort(one("--listen-port"), "listen port"),
-    bindAddresses: Object.freeze(["127.0.0.1", bindAddresses[1]!]) as readonly [
-      "127.0.0.1",
-      string,
-    ],
+    bindAddresses: Object.freeze([
+      ...bindAddresses,
+    ]) as LlamaCppPrivateBridgeArguments["bindAddresses"],
   });
 }
 
@@ -181,7 +194,10 @@ function writeUpstreamUnavailable(
 }
 
 function createLlamaCppPrivateBridgeRequestHandler(
-  authority: Pick<LlamaCppPrivateBridgeArguments, "targetHost" | "targetPort">,
+  authority: Pick<
+    LlamaCppPrivateBridgeArguments,
+    "targetHost" | "targetPort" | "containerId" | "dockerAuthorityId"
+  >,
   apiKey: string,
 ): http.RequestListener {
   if (
@@ -192,6 +208,17 @@ function createLlamaCppPrivateBridgeRequestHandler(
   }
   const targetPort = exactPort(String(authority.targetPort), "target port");
   const canonicalAuthorization = `Bearer ${apiKey}`;
+  const docker =
+    authority.containerId === undefined
+      ? undefined
+      : createDockerOperationAuthority("host-local-inference");
+  if (
+    docker &&
+    (!SHA256.test(authority.containerId!) ||
+      docker.engine.authorityId !== authority.dockerAuthorityId)
+  ) {
+    throw new Error("private bridge Docker authority changed");
+  }
 
   return (request, response) => {
     const healthProbe = isUnauthenticatedHealthProbe(request);
@@ -218,27 +245,72 @@ function createLlamaCppPrivateBridgeRequestHandler(
       clearTimeout(continueTimer);
       continueTimer = undefined;
     };
-    const upstream = http.request(
-      {
-        headers,
-        host: authority.targetHost,
-        method: request.method,
-        path: request.url,
-        port: targetPort,
-      },
-      (upstreamResponse) => {
-        clearContinueTimer();
-        upstreamResponded = true;
-        request.unpipe(upstream);
-        request.resume();
-        response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
-        upstreamResponse.once("error", () => response.destroy());
-        upstreamResponse.pipe(response);
-        upstreamResponse.once("end", () => {
-          if (!upstream.writableEnded) upstream.destroy();
-        });
-      },
-    );
+    let upstream: http.ClientRequest;
+    try {
+      upstream = http.request(
+        {
+          headers,
+          ...(docker === undefined
+            ? {}
+            : {
+                createConnection: () => {
+                  const child = docker.spawn(
+                    [
+                      "exec",
+                      "-i",
+                      authority.containerId!,
+                      "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+                      "--stdio-forward",
+                      "--listen-port",
+                      String(targetPort),
+                    ],
+                    {
+                      stdio: ["pipe", "pipe", "ignore"],
+                      timeout: 30 * 60 * 1000,
+                      killSignal: "SIGKILL",
+                    },
+                  );
+                  if (!child.stdin || !child.stdout)
+                    throw new Error("private bridge stream unavailable");
+                  const stream = Duplex.fromWeb({
+                    writable: Writable.toWeb(child.stdin),
+                    readable: Readable.toWeb(child.stdout),
+                  });
+                  child.once("error", () =>
+                    stream.destroy(new Error("request guard forwarding failed")),
+                  );
+                  child.once("exit", (code) => {
+                    if (code !== 0) stream.destroy(new Error("request guard forwarding failed"));
+                  });
+                  stream.once("close", () => {
+                    if (child.exitCode === null) child.kill("SIGKILL");
+                  });
+                  return stream as net.Socket;
+                },
+              }),
+          host: authority.targetHost,
+          method: request.method,
+          path: request.url,
+          port: targetPort,
+        },
+        (upstreamResponse) => {
+          clearContinueTimer();
+          upstreamResponded = true;
+          request.unpipe(upstream);
+          request.resume();
+          response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+          upstreamResponse.once("error", () => response.destroy());
+          upstreamResponse.pipe(response);
+          upstreamResponse.once("end", () => {
+            if (!upstream.writableEnded) upstream.destroy();
+          });
+        },
+      );
+    } catch {
+      request.resume();
+      writeUpstreamUnavailable(response);
+      return;
+    }
     const forwardRequestBody = () => {
       if (forwardingRequestBody || upstreamResponded) return;
       forwardingRequestBody = true;
@@ -289,7 +361,10 @@ function createLlamaCppPrivateBridgeRequestHandler(
 }
 
 export function createLlamaCppPrivateBridgeServer(
-  authority: Pick<LlamaCppPrivateBridgeArguments, "targetHost" | "targetPort">,
+  authority: Pick<
+    LlamaCppPrivateBridgeArguments,
+    "targetHost" | "targetPort" | "containerId" | "dockerAuthorityId"
+  >,
   apiKey: string,
 ): http.Server {
   const handler = createLlamaCppPrivateBridgeRequestHandler(authority, apiKey);
@@ -302,6 +377,7 @@ export function createLlamaCppPrivateBridgeServer(
 export async function runLlamaCppPrivateBridge(
   authority: LlamaCppPrivateBridgeArguments,
   apiKey: string,
+  onReady?: () => void,
 ): Promise<void> {
   const servers = authority.bindAddresses.map(() =>
     createLlamaCppPrivateBridgeServer(authority, apiKey),
@@ -333,6 +409,7 @@ export async function runLlamaCppPrivateBridge(
           }),
       ),
     );
+    onReady?.();
     await new Promise<void>((_resolve, reject) => {
       for (const server of servers) server.once("error", reject);
     });
@@ -344,14 +421,32 @@ export async function runLlamaCppPrivateBridge(
 }
 
 if (require.main === module) {
+  let startupReported = false;
+  const reportStartup = (status: "READY" | "FAILED") => {
+    if (startupReported) return;
+    startupReported = true;
+    try {
+      fs.writeSync(STARTUP_STATUS_DESCRIPTOR, status);
+    } catch {
+      // The parent may have timed out and closed its startup descriptor.
+    } finally {
+      try {
+        fs.closeSync(STARTUP_STATUS_DESCRIPTOR);
+      } catch {
+        // The descriptor may already be closed after a failed write.
+      }
+    }
+  };
   Promise.resolve()
     .then(() =>
       runLlamaCppPrivateBridge(
         parseLlamaCppPrivateBridgeArguments(process.argv.slice(2)),
         readPrivateBridgeApiKey(),
+        () => reportStartup("READY"),
       ),
     )
     .catch((error: unknown) => {
+      reportStartup("FAILED");
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     });

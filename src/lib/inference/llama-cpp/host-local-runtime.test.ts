@@ -549,3 +549,14 @@ describe("llama.cpp host-local runtime materializer", () => {
     ).toThrow("disabled-surface contract");
   });
 });
+
+describe("Docker Desktop WSL request-guard transport", () => {
+  it("keeps both guard and upstream ports private for Docker exec (#12285)", () => {
+    const argv = buildLlamaCppRequestGuardDockerArgv(contract(), {
+      ...bindings(),
+      stdioForward: true,
+    });
+    expect(valuesAfter(argv, "--publish")).toEqual([]);
+    expect(valuesAfter(argv, "--upstream-port")).toEqual(["8082"]);
+  });
+});

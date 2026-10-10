@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { createHash } from "node:crypto";
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
@@ -137,4 +139,40 @@ export function contract(): LlamaCppHostLocalLaunchContract {
       ui: "disabled",
     },
   };
+}
+
+export function modelFilesystemIdentity(modelPath: string) {
+  const status = fs.lstatSync(modelPath, { bigint: true });
+  return {
+    ctimeNs: status.ctimeNs,
+    dev: status.dev,
+    ino: status.ino,
+    mtimeNs: status.mtimeNs,
+    size: status.size,
+  };
+}
+
+export function replaceModelWithSameSizeContent(modelPath: string) {
+  const replacement = `${modelPath}.replacement`;
+  fs.writeFileSync(replacement, Buffer.alloc(MODEL_CONTENT.length, 0x62), { mode: 0o600 });
+  fs.renameSync(replacement, modelPath);
+}
+
+export function keyRootIdentitySha256(apiKeyRoot: string): string {
+  const status = fs.lstatSync(apiKeyRoot, { bigint: true });
+  return rawDigest({
+    schemaVersion: 1,
+    identities: [
+      {
+        dev: status.dev.toString(),
+        ino: status.ino.toString(),
+        uid: status.uid.toString(),
+        gid: status.gid.toString(),
+        nlink: status.nlink.toString(),
+        mode: (status.mode & 0o777n).toString(8),
+        mtimeNs: status.mtimeNs.toString(),
+        ctimeNs: status.ctimeNs.toString(),
+      },
+    ],
+  });
 }

@@ -104,6 +104,8 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly imageReference: string;
   /** Fixed host bridge port for product installs; omitted only by isolated qualification. */
   readonly hostPort?: number;
+  /** Docker Desktop WSL reaches the guard through the qualified Docker exec transport. */
+  readonly stdioForward?: true;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
   readonly network: {

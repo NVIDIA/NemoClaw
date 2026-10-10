@@ -348,6 +348,25 @@ function parseLabels(value: unknown): Readonly<Record<string, string>> {
   return Object.freeze(labels);
 }
 
+function assertPrivatePorts(
+  hostConfig: Record<string, unknown>,
+  networkSettings: Record<string, unknown>,
+  contract: LlamaCppHostLocalLaunchContract,
+  mode: DockerContainerInspectionMode,
+): void {
+  if (mode === "cleanup") return;
+  const ports = record(networkSettings.Ports, "Docker llama.cpp published ports");
+  const configured = record(hostConfig.PortBindings, "Docker llama.cpp configured ports");
+  const key = `${String(contract.serve.port)}/tcp`;
+  if (Object.keys(configured).length !== 0) {
+    throw new Error("Docker llama.cpp container must not configure published ports.");
+  }
+  if (Object.keys(ports).some((port) => port !== key) || (key in ports && ports[key] !== null)) {
+    throw new Error("Docker llama.cpp container must not publish ports from its internal network.");
+  }
+  return;
+}
+
 function parseInspection(
   output: string,
   contract: LlamaCppHostLocalLaunchContract,
@@ -390,23 +409,7 @@ function parseInspection(
       : (mode !== "runtime" || state.Running === false) && attachedIp === ""
         ? null
         : exactPrivateIpv4(attachedIp, "Docker llama.cpp container address");
-  if (mode !== "cleanup") {
-    const ports = record(networkSettings.Ports, "Docker llama.cpp published ports");
-    const portKey = `${String(contract.serve.port)}/tcp`;
-    const configuredPorts = record(hostConfig.PortBindings, "Docker llama.cpp configured ports");
-    if (Object.keys(configuredPorts).length !== 0) {
-      throw new Error("Docker llama.cpp container must not configure published ports.");
-    }
-    const portKeys = Object.keys(ports);
-    if (
-      portKeys.some((key) => key !== portKey) ||
-      (portKeys.includes(portKey) && ports[portKey] !== null)
-    ) {
-      throw new Error(
-        "Docker llama.cpp container must not publish ports from its internal network.",
-      );
-    }
-  }
+  assertPrivatePorts(hostConfig, networkSettings, contract, mode);
   if (!Array.isArray(source.Mounts)) {
     throw new Error("Docker llama.cpp inspection returned malformed mounts.");
   }
@@ -773,6 +776,26 @@ function createArguments(
   specSha256: string,
   transactionId: string,
 ): readonly string[] {
+  if (options.bindings.stdioForward) {
+    const capability = requireSuccess(
+      "request guard stdio capability inspection",
+      options.engine.capture(
+        [
+          "image",
+          "inspect",
+          "--format",
+          '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"}}',
+          options.bindings.imageReference,
+        ],
+        INSPECT_TIMEOUT_MS,
+      ),
+    );
+    if (capability.trim() !== "1") {
+      throw new Error(
+        "Docker Desktop WSL llama.cpp requires an image with guarded stdio forwarding.",
+      );
+    }
+  }
   const run = buildLlamaCppRequestGuardDockerArgv(options.contract, options.bindings);
   if (run[0] !== "run" || run[1] !== "--detach") {
     throw new Error("Docker llama.cpp materializer returned an unsupported launch operation.");
@@ -835,6 +858,7 @@ function specificationDigest(
       sizeBytes: options.plan.acquisition.source.file.sizeBytes,
     },
     network: options.bindings.network,
+    ...(options.bindings.stdioForward ? { stdioForward: true } : {}),
     ownerLabel: options.bindings.ownerLabel,
     probeImageReference: options.probeImageReference,
     readinessTimeoutSeconds: options.readinessTimeoutSeconds,
@@ -986,13 +1010,15 @@ function privateBridgeAuthority(
   return Object.freeze({
     transactionId: journal.transactionId,
     apiKeyPath: options.bindings.apiKeyHostPath,
-    targetHost: container.containerIp,
+    targetHost: options.bindings.stdioForward ? "127.0.0.1" : container.containerIp,
     targetPort: options.contract.serve.port,
+    ...(options.bindings.stdioForward
+      ? { containerId: container.id, dockerAuthorityId: options.engine.authorityId }
+      : {}),
     listenPort: options.bindings.hostPort,
-    bindAddresses: Object.freeze(["127.0.0.1", gateway.gatewayIp]) as readonly [
-      "127.0.0.1",
-      string,
-    ],
+    bindAddresses: options.bindings.stdioForward
+      ? Object.freeze(["127.0.0.1"] as const)
+      : Object.freeze(["127.0.0.1", gateway.gatewayIp] as const),
   });
 }
 
@@ -1083,7 +1109,7 @@ function probePrivateBridge(
       "--network",
       gateway.name,
       "--add-host",
-      `${ENDPOINT_HOST}:${gateway.gatewayIp}`,
+      `${ENDPOINT_HOST}:${options.bindings.stdioForward ? "host-gateway" : gateway.gatewayIp}`,
       "--entrypoint",
       "curl",
       options.probeImageReference,
@@ -1098,6 +1124,7 @@ function probePrivateBridge(
       !sandboxProbe.error &&
       CURL_CONNECTIVITY_FAILURE_EXIT_CODES.has(sandboxProbe.status) &&
       subnet &&
+      !options.bindings.stdioForward &&
       !validateUfwRuleOperands(subnet, gateway.gatewayIp, port)
     ) {
       const remediation = formatHostServiceUnreachableMessage(
@@ -1370,7 +1397,7 @@ function writePreparedReceipt(
   return committed;
 }
 
-export function createDockerLlamaCppManagedLifecycle(
+function createDockerLlamaCppLifecycleForTopology(
   options: DockerLlamaCppManagedLifecycleOptions,
   dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
 ): DockerLlamaCppManagedLifecycle {
@@ -2071,6 +2098,64 @@ export function createDockerLlamaCppManagedLifecycle(
       return Object.freeze({
         recovered: Object.freeze(recovered),
         failures: Object.freeze(failures),
+      });
+    },
+  });
+}
+
+/** Keep recorded no-publication runtimes controllable without changing their pinned image or receipt. */
+export function createDockerLlamaCppManagedLifecycle(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
+): DockerLlamaCppManagedLifecycle {
+  const current = createDockerLlamaCppLifecycleForTopology(options, dependencies);
+  if (!options.bindings.stdioForward) return current;
+  const legacy = { ...options, bindings: { ...options.bindings, stdioForward: undefined } };
+  const isLegacy = (journal: HostLocalCreateJournalRecord): boolean =>
+    journal.specSha256 ===
+    specificationDigest(legacy, journal.apiKeyRootIdentitySha256, journal.receiptTargetSha256);
+  const forReceipt = (value: HostLocalInferenceReceipt): DockerLlamaCppManagedLifecycle => {
+    const receipt = normalizeHostLocalInferenceReceipt(value);
+    const journal =
+      receipt.runtime.kind === "container" && receipt.runtime.model !== undefined
+        ? options.journalStore.load(receipt.runtime.model.generation)
+        : null;
+    return journal !== null && isLegacy(journal)
+      ? createDockerLlamaCppLifecycleForTopology(legacy, dependencies)
+      : current;
+  };
+  const recoverTopology = (writer: HostLocalInferenceReceiptWriter, old: boolean) =>
+    createDockerLlamaCppLifecycleForTopology(
+      {
+        ...(old ? legacy : options),
+        journalStore: {
+          ...options.journalStore,
+          list: () => options.journalStore.list().filter((journal) => isLegacy(journal) === old),
+        },
+      },
+      dependencies,
+    ).recoverUnfinished(writer);
+  return Object.freeze({
+    ...current,
+    runtime: Object.freeze({
+      ...current.runtime,
+      inspectManaged: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.inspectManaged(receipt),
+      stopManaged: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.stopManaged(receipt),
+      preserveForRebuild: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.preserveForRebuild(receipt),
+      prepareDestroy: (receipt: HostLocalInferenceReceipt) =>
+        forReceipt(receipt).runtime.prepareDestroy(receipt),
+      destroy: (receipt: HostLocalInferenceReceipt) => forReceipt(receipt).runtime.destroy(receipt),
+    }),
+    resume: (receipt: HostLocalInferenceReceipt) => forReceipt(receipt).resume(receipt),
+    recoverUnfinished: (writer: HostLocalInferenceReceiptWriter) => {
+      const previous = recoverTopology(writer, true);
+      const next = recoverTopology(writer, false);
+      return Object.freeze({
+        recovered: Object.freeze([...previous.recovered, ...next.recovered]),
+        failures: Object.freeze([...previous.failures, ...next.failures]),
       });
     },
   });
