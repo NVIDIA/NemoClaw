@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::tofu::TofuWorkspace;
+use crate::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
@@ -18,12 +18,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     // Beside the providers, where Windows finds it before the relay on PATH.
-    nemoclaw_e2e::install_ssh_simulator(
-        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
-            .expect("Cargo sets the fixture executable path"),
-        root,
-        root,
-    );
+    nemoclaw_test_fixtures::ssh::install_simulator(root, root);
     for (file, value) in [
         ("engine.json", json!({"effects":0})),
         ("fixture.json", json!({})),
@@ -32,7 +27,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
         fs::write(root.join(file), value.to_string()).unwrap();
     }
     let document =
-        Document::parse(include_bytes!("../../../examples/spark/two-models.yaml").as_slice())
+        Document::parse(include_bytes!("../../../../examples/spark/two-models.yaml").as_slice())
             .unwrap();
     let mut value = serde_json::to_value(document).unwrap();
     value["spec"]["gateway"] = json!({"management":"external", "endpoint":"http://127.0.0.1:1"});
@@ -88,7 +83,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
             .command()
             .args(args)
             .env("NEMOCLAW_TEST_REMOTE", root)
-            .env("PATH", nemoclaw_e2e::path_with(root))
+            .env("PATH", nemoclaw_test_fixtures::path_with(root))
             .output()
             .unwrap();
         assert_eq!(

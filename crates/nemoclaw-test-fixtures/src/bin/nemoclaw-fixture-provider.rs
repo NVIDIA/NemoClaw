@@ -1,5 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+//! A fixture `nemoclaw` provider whose `provider` and `inference_service`
+//! resources keep their state in files under `NEMOCLAW_FIXTURE_DIR`, so tests
+//! drive OpenTofu through read failures, drift, absence, and partial creation.
+//! The `mode` file there selects the behavior.
 
 use async_trait::async_trait;
 use nemoclaw_sdk::ObservationError;

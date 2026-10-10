@@ -2807,12 +2807,18 @@ dependencies = [
 name = "nemoclaw-test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "http",
+ "nemoclaw-runtime",
+ "nemoclaw-sdk",
+ "nemoclaw-tofu",
  "openshell-core",
  "prost",
  "rustls",
  "serde_json",
+ "tar",
  "tempfile",
+ "tf-provider",
  "tokio",
  "tokio-stream",
  "tonic",
