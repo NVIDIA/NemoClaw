@@ -5,7 +5,11 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import { inspectPolicyMutationContext, setPolicyDocument } from "../../policy";
 import { parseOpenShellPolicy } from "../../adapters/openshell/policy-boundary";
-import { profileFromCustomAttachment, type NativeCustomProviderAttachment } from "./index";
+import {
+  normalizeNativeCustomProviderAttachment,
+  profileFromCustomAttachment,
+  type NativeCustomProviderAttachment,
+} from "./index";
 
 export function buildNativeCustomSandboxPolicy(
   basePolicy: string,
@@ -38,16 +42,26 @@ function nativeCustomPolicyEntry(receipt: NativeCustomProviderAttachment) {
 }
 
 /** Replace only the endpoint entry proven by the prior or selected attachment. */
-function replaceNativeCustomSandboxPolicy(
+export function replaceNativeCustomSandboxPolicy(
   basePolicy: string,
-  previous: NativeCustomProviderAttachment | undefined,
-  next: NativeCustomProviderAttachment | undefined,
+  previous: unknown,
+  next: unknown,
+  sandboxName?: string,
 ): string {
+  const receipt = (value: unknown) => {
+    if (value === undefined) return undefined;
+    const normalized = normalizeNativeCustomProviderAttachment(value, sandboxName);
+    if (!normalized)
+      throw new Error("Cannot rebuild with invalid native custom provider authority.");
+    return normalized;
+  };
+  const previousReceipt = receipt(previous);
+  const nextReceipt = receipt(next);
   const parsed = { ...parseOpenShellPolicy(basePolicy).policy };
   const key = "native_custom_inference";
   const existing = parsed.network_policies?.[key];
-  const prior = previous ? nativeCustomPolicyEntry(previous) : undefined;
-  const desired = next ? nativeCustomPolicyEntry(next) : undefined;
+  const prior = previousReceipt ? nativeCustomPolicyEntry(previousReceipt) : undefined;
+  const desired = nextReceipt ? nativeCustomPolicyEntry(nextReceipt) : undefined;
   if (
     existing !== undefined &&
     !isDeepStrictEqual(existing, prior) &&

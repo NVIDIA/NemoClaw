@@ -31,6 +31,7 @@ export type SelectionDrift = {
   requestedProvider?: string | null;
   requestedModel?: string | null;
   unknown: boolean;
+  nativeCustomChanged?: boolean;
 };
 
 type RunOpenshellForSelection = (

@@ -84,6 +84,24 @@ async function verifyFreshNativeDeepAgentsEndpoint(
   expect(receipt).toMatchObject({ api: "openai-completions", endpointUrl: endpoint.baseUrl });
   const env = buildAvailabilityProbeEnv();
   delete env.COMPATIBLE_API_KEY;
+  const stopped = await runNemoclawCli([sandboxName, "stop"], {
+    artifactName: "tc-inf-11-native-dcode-stop",
+    artifacts,
+    env,
+    progress,
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
+  });
+  expect(stopped.exitCode, redactedResultText(stopped)).toBe(0);
+  const restarted = await runNemoclawCli([sandboxName, "start"], {
+    artifactName: "tc-inf-11-native-dcode-start",
+    artifacts,
+    env,
+    progress,
+    redactionValues: [apiKey],
+    timeoutMs: 240_000,
+  });
+  expect(restarted.exitCode, redactedResultText(restarted)).toBe(0);
   const offset = endpoint.requests().length;
   const turn = await sandbox.exec(
     sandboxName,

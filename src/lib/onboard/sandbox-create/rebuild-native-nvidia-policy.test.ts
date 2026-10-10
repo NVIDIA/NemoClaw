@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -14,7 +14,12 @@ import {
   type NativeCustomProviderAttachment,
 } from "../../inference/native-custom";
 import { prepareInitialSandboxCreatePolicy } from "../initial-policy";
-import { selectRebuildCreatePolicy } from "./orchestration";
+import { buildNativeCustomSandboxPolicy } from "../../inference/native-custom/network-policy";
+import {
+  beginRecreateDeleteAfterPolicyPreflight,
+  selectRebuildCreatePolicy,
+} from "./orchestration";
+import { readValidatedRebuildPolicySource } from "./rebuild-policy-handoff";
 
 const roots: string[] = [];
 const cleanups: Array<() => boolean | undefined> = [];
@@ -116,12 +121,12 @@ describe("native NVIDIA rebuild policy", () => {
   });
 });
 
-async function customAttachment() {
+async function customAttachment(endpointUrl = "https://api.example.com/v1") {
   const prepared = await prepareNativeCustomProfile({
     sandboxName: "dp",
     provider: "compatible-endpoint",
     api: "openai-completions",
-    endpointUrl: "https://api.example.com/v1",
+    endpointUrl,
     lookup: async () => [{ address: "8.8.8.8", family: 4 }],
   });
   return customAttachmentFromPrepared(prepared, {
@@ -133,6 +138,111 @@ async function customAttachment() {
 }
 
 describe("native custom rebuild policy", () => {
+  it("reconciles an owned endpoint change before deletion and preserves the source policy (#12636)", async () => {
+    const previous = await customAttachment();
+    const next = await customAttachment("https://next.example.com/v1");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-rebuild-preflight-"));
+    roots.push(root);
+    const livePath = path.join(root, "live.yaml");
+    const source = buildNativeCustomSandboxPolicy(
+      YAML.stringify({ version: 1, network_policies: { host_rule: hostPolicy } }),
+      previous,
+    );
+    fs.writeFileSync(livePath, source);
+    let captured: ReturnType<typeof readValidatedRebuildPolicySource> | undefined;
+    const beginDelete = vi.fn(() => {
+      expect(captured?.document).toContain("next.example.com");
+      expect(captured?.document).not.toContain("api.example.com");
+      return "source";
+    });
+    beginRecreateDeleteAfterPolicyPreflight({
+      capturePolicySource: () => {
+        captured = readValidatedRebuildPolicySource(livePath, {
+          sandboxName: "dp",
+          previous,
+          next,
+        });
+      },
+      beginDelete,
+    });
+    const replacement = prepareInitialSandboxCreatePolicy(
+      path.resolve(
+        import.meta.dirname,
+        "../../../../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+      ),
+      [],
+      {
+        agentName: "openclaw",
+        inferenceProvider: next.providerName,
+        nativeCustomProviderAttachment: next,
+      },
+    );
+    cleanups.push(() => replacement.cleanup?.());
+    const selected = selectRebuildCreatePolicy(
+      livePath,
+      replacement,
+      [],
+      [],
+      [],
+      "openclaw",
+      null,
+      "dp",
+      [],
+      captured!.document,
+      next.providerName,
+      next,
+    );
+    cleanups.push(() => selected.cleanup?.());
+    expect(beginDelete).toHaveBeenCalledOnce();
+    expect(
+      YAML.parse(fs.readFileSync(selected.policyPath, "utf8")).network_policies.host_rule,
+    ).toEqual(hostPolicy);
+    expect(fs.readFileSync(livePath, "utf8")).toBe(source);
+  });
+
+  it.each(["unowned", "malformed", "foreign"] as const)(
+    "rejects %s authority before deletion (#12636)",
+    async (kind) => {
+      const previous = await customAttachment();
+      const next = await customAttachment("https://next.example.com/v1");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-rebuild-denial-"));
+      roots.push(root);
+      const livePath = path.join(root, "live.yaml");
+      const ownedSource = buildNativeCustomSandboxPolicy(
+        "version: 1\nnetwork_policies: {}\n",
+        previous,
+      );
+      const scenario =
+        kind === "unowned"
+          ? {
+              source: YAML.stringify({
+                version: 1,
+                network_policies: { native_custom_inference: hostPolicy },
+              }),
+              previous,
+            }
+          : {
+              source: ownedSource,
+              previous: kind === "malformed" ? {} : { ...previous, sandboxName: "foreign" },
+            };
+      fs.writeFileSync(livePath, scenario.source);
+      const beginDelete = vi.fn();
+      expect(() =>
+        beginRecreateDeleteAfterPolicyPreflight({
+          capturePolicySource: () =>
+            readValidatedRebuildPolicySource(livePath, {
+              sandboxName: "dp",
+              previous: scenario.previous,
+              next,
+            }),
+          beginDelete,
+        }),
+      ).toThrow(/ownership could not be verified|invalid native custom provider authority/);
+      expect(beginDelete).not.toHaveBeenCalled();
+      expect(fs.readFileSync(livePath, "utf8")).toBe(scenario.source);
+    },
+  );
+
   it("adds the selected endpoint rule without replacing host rules (#12636)", async () => {
     const attachment = await customAttachment();
     const result = rebuild(attachment.providerName, undefined, attachment);

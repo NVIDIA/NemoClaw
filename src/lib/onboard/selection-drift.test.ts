@@ -12,9 +12,139 @@ import {
   getSelectionDrift,
   readSandboxSelectionConfig,
 } from "./selection-drift";
+import { withNativeCustomSelectionDrift } from "./sandbox-create/provider-publication";
 import { requiresSelectionRecreate } from "./dcode-selection-drift";
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../inference/native-custom";
 
 const tmpRoots: string[] = [];
+
+async function nativeReceipt(
+  endpointUrl = "http://8.8.8.8/v1",
+  api: "openai-completions" | "openai-responses" = "openai-completions",
+) {
+  const prepared = await prepareNativeCustomProfile({
+    sandboxName: "alpha",
+    provider: "compatible-endpoint",
+    endpointUrl,
+    api,
+  });
+  return customAttachmentFromPrepared(prepared, {
+    schemaVersion: 1,
+    profileId: prepared.profile.id,
+    providerName: prepared.providerName,
+    providerId: `id-${prepared.providerName}`,
+  });
+}
+
+describe("native custom selection drift", () => {
+  const unchanged = {
+    changed: false,
+    providerChanged: false,
+    modelChanged: false,
+    existingProvider: "compatible-endpoint",
+    existingModel: "model-a",
+    unknown: false,
+  };
+
+  it.each([
+    [false, "endpoint"],
+    [true, "endpoint"],
+    [false, "api"],
+    [true, "api"],
+    [false, "identity"],
+    [true, "identity"],
+  ] as const)("recreates native %s %s drift (#12636)", async (managedDcode, change) => {
+    const previous = await nativeReceipt();
+    const next =
+      change === "endpoint"
+        ? await nativeReceipt("http://12.12.12.12/v1")
+        : change === "api"
+          ? await nativeReceipt(undefined, "openai-responses")
+          : { ...previous, providerId: "replaced-provider-id" };
+    const drift = withNativeCustomSelectionDrift(unchanged, {
+      sandboxName: "alpha",
+      previous,
+      next,
+      replacementRequested: true,
+    });
+    expect(drift).toMatchObject({ changed: true, unknown: false, nativeCustomChanged: true });
+    expect(requiresSelectionRecreate(drift, managedDcode)).toBe(true);
+  });
+
+  it("reuses matching native authority and preserves an unrequested selection (#12636)", async () => {
+    const previous = await nativeReceipt();
+    expect(
+      withNativeCustomSelectionDrift(unchanged, {
+        sandboxName: "alpha",
+        previous,
+        next: { ...previous },
+        replacementRequested: true,
+      }),
+    ).toBe(unchanged);
+    expect(
+      withNativeCustomSelectionDrift(unchanged, {
+        sandboxName: "alpha",
+        previous,
+        replacementRequested: false,
+      }),
+    ).toBe(unchanged);
+    expect(
+      withNativeCustomSelectionDrift(unchanged, {
+        sandboxName: "alpha",
+        replacementRequested: true,
+      }),
+    ).toBe(unchanged);
+  });
+
+  it("requires recreation when switching away from a custom attachment (#12636)", async () => {
+    expect(
+      withNativeCustomSelectionDrift(unchanged, {
+        sandboxName: "alpha",
+        previous: await nativeReceipt(),
+        replacementRequested: true,
+      }),
+    ).toMatchObject({ changed: true, nativeCustomChanged: true });
+  });
+
+  it.each(["null", "malformed", "foreign"] as const)(
+    "rejects %s recorded authority before reuse (#12636)",
+    async (kind) => {
+      const next = await nativeReceipt();
+      const previous =
+        kind === "null" ? null : kind === "malformed" ? {} : { ...next, sandboxName: "foreign" };
+      expect(() =>
+        withNativeCustomSelectionDrift(unchanged, {
+          sandboxName: "alpha",
+          previous,
+          next,
+          replacementRequested: true,
+        }),
+      ).toThrow(/invalid native custom provider authority/);
+      expect(() =>
+        withNativeCustomSelectionDrift(unchanged, {
+          sandboxName: "alpha",
+          previous,
+          replacementRequested: false,
+        }),
+      ).toThrow(/invalid native custom provider authority/);
+    },
+  );
+
+  it("rejects malformed requested authority before reuse (#12636)", async () => {
+    const previous = await nativeReceipt();
+    expect(() =>
+      withNativeCustomSelectionDrift(unchanged, {
+        sandboxName: "alpha",
+        previous,
+        next: {},
+        replacementRequested: true,
+      }),
+    ).toThrow(/invalid native custom provider authority/);
+  });
+});
 
 function tmpRoot(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-selection-test-"));

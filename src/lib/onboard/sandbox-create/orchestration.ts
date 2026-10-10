@@ -86,6 +86,7 @@ import {
   sandboxCreateBoundaryFromPendingIdentity,
 } from "./identity-boundary";
 import {
+  withNativeCustomSelectionDrift,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   usesNativeNvidiaProvider,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
@@ -2142,6 +2143,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       capturedRebuildPolicySource = readValidatedRebuildPolicySource(
         createIntent.rebuildPolicySourcePath,
+        resolvedCreateIntent.inferenceProvider !== null ||
+          resolvedCreateIntent.nativeCustomProviderAttachment
+          ? {
+              sandboxName,
+              previous: recreateRegistryEntry?.nativeCustomProviderAttachment,
+              next: resolvedCreateIntent.nativeCustomProviderAttachment,
+            }
+          : undefined,
       );
       return capturedRebuildPolicySource;
     };
@@ -2342,7 +2351,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
       const needsProviderMigration =
         hasMessagingTokens && providerExistence.some(({ token, exists }) => token && !exists);
-      const selectionDrift = isManagedDcodeAgent
+      const recordedSelectionDrift = isManagedDcodeAgent
         ? await readManagedDcodeCreateSelectionDrift(
             {
               sandboxName,
@@ -2354,6 +2363,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             readDcodeSelectionDrift,
           )
         : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
+      const selectionDrift = withNativeCustomSelectionDrift(recordedSelectionDrift, {
+        sandboxName,
+        previous: existingEntry?.nativeCustomProviderAttachment,
+        next: resolvedCreateIntent.nativeCustomProviderAttachment,
+        replacementRequested: resolvedCreateIntent.inferenceProvider !== null,
+      });
       const actionableSelectionDrift = requiresSelectionRecreate(
         selectionDrift,
         isManagedDcodeAgent,

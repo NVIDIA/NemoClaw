@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import { replaceNativeCustomSandboxPolicy } from "../../inference/native-custom/network-policy";
 
 import {
   parseOpenShellPolicy,
@@ -40,11 +41,22 @@ export function parseRebuildPolicyProviderNames(policyDocument: string): string[
   return [...providers];
 }
 
-export function readValidatedRebuildPolicySource(policySourcePath: string): {
+export function readValidatedRebuildPolicySource(
+  policySourcePath: string,
+  customReplacement?: { sandboxName: string; previous?: unknown; next?: unknown },
+): {
   readonly document: string;
   readonly providers: readonly string[];
 } {
-  const document = fs.readFileSync(policySourcePath, "utf8");
+  let document = fs.readFileSync(policySourcePath, "utf8");
+  if (customReplacement) {
+    document = replaceNativeCustomSandboxPolicy(
+      document,
+      customReplacement.previous,
+      customReplacement.next,
+      customReplacement.sandboxName,
+    );
+  }
   return { document, providers: parseRebuildPolicyProviderNames(document) };
 }
 

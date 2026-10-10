@@ -776,33 +776,43 @@ describe("start inference attachment authority (#12636)", () => {
     });
   }
 
-  it("carries verified custom endpoint authority into the restart request", async () => {
-    const receipt = await customReceipt();
-    const verify = vi.fn(async () => undefined);
-    const probe = vi.fn(async () => ({ ok: true }) as const);
-    const h = harness({ verifyNativeCustomAttachment: verify, probeInferenceInvocation: probe });
-    h.getSandbox.mockReturnValue(
-      sandbox({
-        provider: "compatible-endpoint",
-        model: "model",
+  it.each([
+    ["ordinary agent", undefined],
+    ["Deep Agents Code", "langchain-deepagents-code"],
+  ] as const)(
+    "carries verified custom endpoint authority into the %s restart request",
+    async (_label, agent) => {
+      const receipt = await customReceipt();
+      const verify = vi.fn(async () => undefined);
+      const probe = vi.fn(async () => ({ ok: true }) as const);
+      const h = harness({ verifyNativeCustomAttachment: verify, probeInferenceInvocation: probe });
+      h.getSandbox.mockReturnValue(
+        sandbox({
+          ...(agent ? { agent } : {}),
+          provider: "compatible-endpoint",
+          model: "model",
+          gatewayName: "nemoclaw-19080",
+          preferredInferenceApi: "openai-responses",
+          nativeCustomProviderAttachment: receipt,
+        }),
+      );
+      expect(await startSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
+      expect(verify).toHaveBeenCalledWith({
         gatewayName: "nemoclaw-19080",
-        preferredInferenceApi: "openai-responses",
-        nativeCustomProviderAttachment: receipt,
-      }),
-    );
-    expect(await startSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
-    expect(verify).toHaveBeenCalledWith({
-      gatewayName: "nemoclaw-19080",
-      sandboxName: "my-sandbox",
-      expected: receipt,
-    });
-    expect(probe).toHaveBeenCalledWith(
-      expect.objectContaining({ nativeCustomProviderAttachment: receipt }),
-      {},
-      95_000,
-    );
-    expect(verify.mock.invocationCallOrder[0]).toBeLessThan(probe.mock.invocationCallOrder[0]);
-  });
+        sandboxName: "my-sandbox",
+        expected: receipt,
+      });
+      expect(probe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nativeCustomProviderAttachment: receipt,
+          ...(agent ? { agentName: agent } : {}),
+        }),
+        {},
+        95_000,
+      );
+      expect(verify.mock.invocationCallOrder[0]).toBeLessThan(probe.mock.invocationCallOrder[0]);
+    },
+  );
 
   it("does not invoke inference when attachment authority cannot be verified", async () => {
     const receipt = await customReceipt();
