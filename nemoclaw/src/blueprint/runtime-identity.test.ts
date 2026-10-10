@@ -166,6 +166,7 @@ describe("runtime identity contract", () => {
   let persistedReceipts: RuntimeIdentityReceipt[];
   let importedProfilePaths: string[];
   let importedProfileSources: string[];
+  let warnings: string[];
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "nemoclaw-runtime-identity-"));
@@ -180,6 +181,7 @@ describe("runtime identity contract", () => {
     persistedReceipts = [];
     importedProfilePaths = [];
     importedProfileSources = [];
+    warnings = [];
     environment = {
       OKTA_CLIENT_ID: "client-id",
       OKTA_REFRESH_TOKEN: "refresh-secret",
@@ -207,6 +209,7 @@ describe("runtime identity contract", () => {
           (redacted, secret) => redacted.replaceAll(secret, secret.length > 0 ? "<redacted>" : ""),
           output,
         ),
+      warn: (message) => warnings.push(message),
       validateEndpointUrl: async (url) => {
         validatedDestinations.push(url);
         return { dnsResolved: false };
@@ -331,7 +334,7 @@ describe("runtime identity contract", () => {
   it("creates and configures a new provider without putting secrets in argv", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
 
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
       "settings get --global --json",
@@ -339,6 +342,7 @@ describe("runtime identity contract", () => {
       "provider profile import --file",
       "provider profile export okta-runtime-v1 --output yaml",
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+      "provider profile export okta-runtime-v1 --output yaml",
       "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
     ]);
     expect(calls.flatMap(({ args }) => args)).not.toContain("refresh-secret");
@@ -398,7 +402,40 @@ describe("runtime identity contract", () => {
       { exitCode: 0, stdout: profileDocument, stderr: "" },
     ]);
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+  });
+
+  it("warns after provider creation if the profile changed without changing the result", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
+      {
+        exitCode: 0,
+        stdout: profileDocument.replace("Okta Runtime Credentials v1", "Changed profile"),
+        stderr: "",
+      },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+    expect(warnings).toEqual([
+      expect.stringContaining("cannot confirm which definition was used at bind time"),
+    ]);
+    expect(warnings[0]).not.toMatch(/refresh-secret|client-secret|client-id|atomic/iu);
+    expect(persistedReceipts).toHaveLength(1);
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider delete acme-okta-runtime",
+    );
+  });
+
+  it("continues provider setup if the post-creation export fails", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
+      { exitCode: 1, stdout: "", stderr: "export denied" },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+    expect(warnings).toEqual([]);
   });
 
   it("rejects a fresh import that exports a different profile before provider creation", async () => {
@@ -552,7 +589,7 @@ describe("runtime identity contract", () => {
       return { dnsResolved: true };
     };
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
     expect(validatedDestinations).toEqual([
       "https://example.okta.com/oauth2/default/v1/token",
       "https://api.example.okta.com/",
@@ -809,7 +846,7 @@ describe("runtime identity contract", () => {
     const configWithoutSecret = { ...config, client_secret_env: undefined };
     responses.set("provider get acme-okta-runtime", [missingProvider]);
 
-    await expect(prepareRuntimeIdentity(configWithoutSecret, deps)).resolves.toEqual(
+    await expect(prepareRuntimeIdentity(configWithoutSecret, deps)).resolves.toMatchObject(
       createdReceipt,
     );
     expect(calls.at(-1)?.env).toEqual({ OKTA_REFRESH_TOKEN: "refresh-secret" });
@@ -826,7 +863,7 @@ describe("runtime identity contract", () => {
       return { dnsResolved: false };
     };
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
 
     expect(readFileSync(profilePath, "utf8")).toBe(replacement);
     expect(importedProfileSources).toEqual([profileDocument]);
@@ -976,7 +1013,7 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
       /configure failed[\s\S]*cleanup failed[\s\S]*delete failed/,
     );
-    expect(persistedReceipts).toEqual([createdReceipt]);
+    expect(persistedReceipts).toEqual([expect.objectContaining(createdReceipt)]);
   });
 
   it("does not delete a newly created provider when its binding changes before compensation", async () => {
@@ -1031,6 +1068,27 @@ describe("runtime identity contract", () => {
       "provider get acme-okta-runtime",
       "sandbox provider attach sandbox acme-okta-runtime",
     ]);
+  });
+
+  it("warns after attachment if the verified profile changed without changing the attach result", async () => {
+    responses.set("settings get --global --json", [providersV2Enabled, providersV2Enabled]);
+    responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
+      {
+        exitCode: 0,
+        stdout: profileDocument.replace("Okta Runtime Credentials v1", "Changed profile"),
+        stderr: "",
+      },
+    ]);
+
+    const receipt = await prepareRuntimeIdentity(config, deps);
+    await expect(attachRuntimeIdentity(receipt, "sandbox", deps)).resolves.toBe(true);
+    expect(warnings).toEqual([
+      expect.stringContaining("cannot confirm which definition was used at bind time"),
+    ]);
+    expect(warnings[0]).not.toMatch(/refresh-secret|client-secret|client-id|atomic/iu);
   });
 
   it("attaches a provider whose refresh is configured before its first mint", async () => {

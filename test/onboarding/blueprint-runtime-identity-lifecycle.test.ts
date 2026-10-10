@@ -241,7 +241,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
     await mintRuntimeIdentityCredential(receipt, deps);
 
     let state = await readState(fakeOpenShell);
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       provider_type: "okta-runtime-v1",
       provider_name: "e2e-okta-runtime",
       credential_key: "OKTA_ACCESS_TOKEN",

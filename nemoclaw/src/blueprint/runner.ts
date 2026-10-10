@@ -1231,6 +1231,7 @@ function runtimeIdentityCommandDeps(gateway: string): RuntimeIdentityCommandDeps
   return {
     run: (args, options) => runRuntimeIdentityCommand(args, options, gateway),
     formatError: boundedCommandError,
+    warn: (message) => log(`Warning: ${message}`),
   };
 }
 
