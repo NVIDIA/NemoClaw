@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import readline from "node:readline";
-
 import { markPromptActive } from "../core/prompt-activity";
+import {
+  createStdinPromptInterface,
+  type PromptInterruptSignal,
+  raisePromptInterrupt,
+} from "../core/prompt-terminal";
 
 export interface MessagingChannelSelectorEntry {
   readonly id: string;
@@ -188,12 +191,12 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
       resolve();
     }
 
-    function interrupt(signal: NodeJS.Signals): void {
+    function interrupt(signal: PromptInterruptSignal): void {
       if (finished) return;
       finished = true;
       cleanup();
       reject(Object.assign(new Error("Prompt interrupted"), { code: signal }));
-      process.kill(process.pid, signal);
+      raisePromptInterrupt(signal);
     }
 
     function fail(error: unknown): void {
@@ -281,7 +284,7 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
 
     // Hold background heartbeat output while this prompt owns the terminal;
     // released in cleanup() on every settle path. (#6651)
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createStdinPromptInterface();
     const releasePromptActivity = markPromptActive();
     let finished = false;
 
@@ -313,7 +316,7 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
     try {
       rl.on("SIGINT", () => {
         rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-        process.kill(process.pid, "SIGINT");
+        raisePromptInterrupt();
       });
       rl.on("close", () => {
         if (finished) return;
