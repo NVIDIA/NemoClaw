@@ -191,7 +191,7 @@ describe("native custom credential reset ownership", () => {
               ],
             ],
       );
-      expect(providerAdapter.deleteProvider.mock.calls).toEqual(
+      expect(vi.mocked(providerAdapter.deleteProvider).mock.calls).toEqual(
         recorded ? [] : [[expect.objectContaining({ providerName: "compatible-endpoint" })]],
       );
     },
