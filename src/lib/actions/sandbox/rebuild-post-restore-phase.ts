@@ -57,6 +57,28 @@ export {
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
 
+/**
+ * The interactive CLI rebuild bail prints and calls process.exit, which skips
+ * every finally between the callsite and the process edge — stranding held
+ * OpenClaw maintenance windows mid-rebuild (#12919). While the pipeline holds
+ * a gateway-down window it therefore bails by throwing this sentinel instead:
+ * unwinding runs each finally on the way out (the same semantics the
+ * throwOnError callers already rely on), and the pipeline's boundary catch
+ * then delegates to the real bail with the original message and exit code.
+ * Defined here — the phase whose doctor-window finally the sentinel exists to
+ * protect, and already part of the pipeline's runtime import surface — so the
+ * fix adds no new dependency edge to the pipeline's guarded fan-out.
+ */
+export class RebuildBailSentinel extends Error {
+  constructor(
+    message: string,
+    readonly code: number | undefined,
+  ) {
+    super(message);
+    this.name = "RebuildBailSentinel";
+  }
+}
+
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,
   writeLine: (message: string) => void = console.error,
@@ -350,6 +372,9 @@ export async function runRebuildPostRestorePhase(
         effectiveMessagingPlan = finalizedMessagingPlan;
       }
     } catch (error) {
+      // A bail already carries its own message; translating it here would
+      // replace the operator-facing reason mid-unwind (#12919).
+      if (error instanceof RebuildBailSentinel) throw error;
       bail(
         `Could not finalize pending messaging removals after rebuild: ${
           error instanceof Error ? error.message : String(error)

@@ -29,7 +29,7 @@ import * as restoreWindow from "./runtime/openclaw-lifecycle";
 import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
-import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
+import { RebuildBailSentinel, runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { createRebuildCommandContext } from "./rebuild-preflight-confirmation";
 
 const processRecovery = restoreWindow;
@@ -329,6 +329,33 @@ describe("rebuild post-restore phase", () => {
       expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     },
   );
+
+  it("aborts the OpenClaw maintenance window before a sentinel bail escapes the phase (#12919)", async () => {
+    agentName = "openclaw";
+    vi.mocked(rebuildMessaging.reapplyMessagingManifestBeforeAgentStart).mockImplementationOnce(
+      async () => {
+        order.push("messaging");
+        throw new Error("injected reapply failure");
+      },
+    );
+    // The pipeline supplies a sentinel-throwing bail while it holds the
+    // gateway-down window; the phase must unwind its abort before that bail
+    // escapes, exactly as it does for the throwOnError callers.
+    const args = {
+      ...input(),
+      bail: (message: string, code?: number) => {
+        throw new RebuildBailSentinel(message, code);
+      },
+    };
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toThrow(
+      "Messaging manifest config reapply failed during rebuild.",
+    );
+
+    expect(order).toEqual(["maintenance-begin", "messaging", "doctor-abort"]);
+    expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+  });
 
   it("completes offline restoration before one native final start (#7102, #9946, #11764)", async () => {
     await runRebuildPostRestorePhase(input());

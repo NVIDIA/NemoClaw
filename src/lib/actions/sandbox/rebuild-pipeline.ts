@@ -37,6 +37,7 @@ import {
   writeRebuildMcpHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
+import type { RebuildBail } from "./rebuild-credential-preflight";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
@@ -52,6 +53,7 @@ import {
   HermesCronRestoreIncompleteError,
   printHermesCronRestoreRecoveryCommand,
   recoverHermesCronRestore,
+  RebuildBailSentinel,
   runHermesCronRestoreTransaction,
   runRebuildPostRestorePhase,
 } from "./rebuild-post-restore-phase";
@@ -222,7 +224,7 @@ async function rebuildSandboxUnlocked(
     stoppedSource,
     releaseOnboardLock,
     log,
-    bail,
+    bail: exitBail,
   } = preflight;
   const {
     resumeConfig,
@@ -243,6 +245,14 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  // #12919: the CLI bail exits the process, which would skip every finally
+  // below — including the OpenClaw maintenance-window release held across the
+  // destructive phases. Bail by sentinel instead so unwinding releases held
+  // windows exactly as the throwOnError callers already experience; the
+  // boundary catch delegates to the real bail (exitBail) afterwards.
+  const bail: RebuildBail = (message, code) => {
+    throw new RebuildBailSentinel(message, code);
+  };
   // A stopped source has no live DCode route to probe. Keep the replacement,
   // registry, image, and gateway-schema checks, but use the same route-probe
   // exemption at every destructive-boundary revalidation that preflight used.
@@ -716,6 +726,9 @@ async function rebuildSandboxUnlocked(
             }
             log(`Hermes cron restore recovery for accepted replacement: ${outcome}`);
           } catch (error) {
+            // A bail already carries its own message; translating it here
+            // would replace the operator-facing reason mid-unwind (#12919).
+            if (error instanceof RebuildBailSentinel) throw error;
             console.error("");
             console.error(
               `  Hermes cron restore could not validate and release the accepted replacement: ${rebuildFailureDetail(error)}`,
@@ -1000,6 +1013,9 @@ async function rebuildSandboxUnlocked(
               hermesCronRestoreIdentity = transaction.identity;
               return transaction.result;
             } catch (error) {
+              // A bail already carries its own message; translating it here
+              // would replace the operator-facing reason mid-unwind (#12919).
+              if (error instanceof RebuildBailSentinel) throw error;
               console.error("");
               console.error(
                 error instanceof HermesCronRestoreIncompleteError
@@ -1043,8 +1059,17 @@ async function rebuildSandboxUnlocked(
       retainPolicyHandoffForRecovery = false;
     } finally {
       if (sourceOpenClawDoctorWindow) {
-        await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
+        const retainedSourceWindow = sourceOpenClawDoctorWindow;
         sourceOpenClawDoctorWindow = null;
+        try {
+          await releaseRebuildSourceOpenClawWindow(retainedSourceWindow);
+        } catch (releaseError) {
+          // A failing release must not mask the failure already unwinding —
+          // the boundary still needs to see the original bail or error.
+          console.error(
+            `  Warning: the OpenClaw maintenance window could not be released: ${rebuildFailureDetail(releaseError)}`,
+          );
+        }
       }
       const handoffManifest = rebuildPolicyHandoffManifest;
       if (
@@ -1065,6 +1090,19 @@ async function rebuildSandboxUnlocked(
         );
       }
     }
+  } catch (error) {
+    if (error instanceof RebuildBailSentinel) {
+      // Every finally above — the OpenClaw maintenance-window release, the
+      // recovery-handoff cleanups, the onboard lock — has already unwound by
+      // the time a bail sentinel reaches this boundary, so delegating here
+      // cannot strand them the way an in-flight process.exit would (#12919).
+      // Preserve the original call arity: code-less bails keep reaching the
+      // real bail as single-argument calls (the CLI default stays exit 1).
+      return error.code === undefined
+        ? exitBail(error.message)
+        : exitBail(error.message, error.code);
+    }
+    throw error;
   } finally {
     if (stoppedSource)
       runBestEffortRebuildCleanup(
