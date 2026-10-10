@@ -1018,6 +1018,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "catalogue-standard",
     "catalogue-nvidia-api",
     "catalogue-nvidia-inference",
+    "catalogue-hosted-inference",
     "catalogue-github-read",
   ]) {
     const catalogue = workflow.jobs[jobName] ?? {};
@@ -1121,6 +1122,7 @@ const STOCK_ONBOARDING_CATALOGUE_JOBS = [
   "catalogue-standard",
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
+  "catalogue-hosted-inference",
   "catalogue-github-read",
 ] as const;
 
@@ -1344,7 +1346,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       if (
         job.if !==
-        "${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}"
+        "${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}"
       ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }
@@ -1363,6 +1365,20 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
         );
       }
       requireNode24GithubScript(errors, report, "report-to-pr");
+      const candidateReportEnv = {
+        JOB_CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+        JOB_CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
+        JOB_BASE_SHA: "${{ inputs.base_sha }}",
+        JOB_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+        WORKFLOW_SHA: "${{ github.workflow_sha }}",
+        MATRIX_RESULT: "${{ needs.generate-matrix.result }}",
+        SELECTED_WORKFLOW_JOBS: "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}",
+      };
+      for (const [key, value] of Object.entries(candidateReportEnv)) {
+        if (report.env?.[key] !== value) {
+          errors.push(`report-to-pr must bind ${key} to the trusted dispatch context`);
+        }
+      }
       const reportScript = String(report.with?.script ?? "");
       if (!passesNeedsAsEnvironmentData(report)) {
         errors.push(
