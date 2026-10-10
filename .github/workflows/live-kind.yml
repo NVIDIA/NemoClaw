@@ -43,6 +43,11 @@ jobs:
           persist-credentials: false
           # The second commit is a pull request merge commit's base.
           fetch-depth: 2
+      # Restore dependencies first, so deciding compiles the build tool from the cache.
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ matrix.platform }}
+          save-cache: "false"
       - name: Decide whether this change can affect the live suites
         id: changes
         env:
@@ -56,11 +61,6 @@ jobs:
           base=$(git rev-parse HEAD^1)
           cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
             changes live --base "$base" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/setup-rust
-        if: steps.changes.outputs.live == 'true'
-        with:
-          platform: ${{ matrix.platform }}
-          save-cache: "false"
       - name: Build test executables
         if: steps.changes.outputs.live == 'true'
         run: cargo ci build
