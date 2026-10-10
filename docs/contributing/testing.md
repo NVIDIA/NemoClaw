@@ -96,7 +96,7 @@ The `test-`, `lifecycle-`, `live-docker-`, and `live-kind-` timing artifacts con
 | Step | Wall budget | Per-test limit |
 |---|---|---|
 | `test` | 45 s | 8 s |
-| `lifecycle`, each partition | 360 s | 120 s |
+| `lifecycle`, each partition | 300 s | 90 s |
 | `live-docker` | 360 s | 180 s |
 | `live-kind` | 270 s | 120 s |
 
