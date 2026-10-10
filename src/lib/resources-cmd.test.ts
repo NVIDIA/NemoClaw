@@ -48,6 +48,7 @@ describe("resources-cmd", () => {
     expect(() => resolveResourceValue("0%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("101%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("12.5%", 16, "cpu")).toThrow("integer between 1% and 100%");
+    expect(() => resolveResourceValue("%25", 16, "cpu")).toThrow("integer between 1% and 100%");
   });
 
   it("resolves profiles against Kubernetes allocatable capacity when available", () => {
@@ -198,11 +199,13 @@ describe("resources-cmd", () => {
     expect(args).toEqual(["sandbox", "create"]);
   });
 
-  it("gracefully skips resource flags when profile resolution fails", () => {
+  it("rejects an invalid percentage instead of skipping supported resource flags", () => {
     const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
     const args = ["sandbox", "create"];
 
-    expect(appendResourceFlags(args, { cpu: "bogus%", memory: "25%" }, openshell)).toBe(false);
+    expect(() => appendResourceFlags(args, { cpu: "bogus%", memory: "25%" }, openshell)).toThrow(
+      "Invalid percentage 'bogus%': must be an integer between 1% and 100%",
+    );
     expect(args).toEqual(["sandbox", "create"]);
   });
 });
