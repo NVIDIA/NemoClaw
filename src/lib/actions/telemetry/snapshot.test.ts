@@ -251,3 +251,109 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
   });
   expect(isOperationEvent(event)).toBe(true);
 });
+
+const nativeModelCases = [
+  {
+    agent: "hermes",
+    configPath: "/sandbox/.hermes/config.yaml",
+    validConfig:
+      "model:\n  default: Qwen/Qwen3.6-27B-FP8\n  provider: anthropic\n  api_mode: anthropic_messages\n",
+    invalidConfig: "model:\n  default: 42\n",
+    modelId: "Qwen/Qwen3.6-27B-FP8",
+    providerProfile: "anthropic",
+    apiFamily: "anthropic-messages",
+  },
+  {
+    agent: "langchain-deepagents-code",
+    configPath: "/sandbox/.deepagents/config.toml",
+    validConfig:
+      '[models]\ndefault = "openai:nvidia/nemotron-3-ultra-550b-a55b"\n[models.providers.openai.params]\nuse_responses_api = true\n',
+    invalidConfig: '[models]\ndefault = "invalid"\n',
+    modelId: "nvidia/nemotron-3-ultra-550b-a55b",
+    providerProfile: "openai",
+    apiFamily: "openai-responses",
+  },
+] as const;
+
+async function collectNativeConfiguration(agent: string, configPath: string, rawConfig: string) {
+  mocks.readRegistry.mockReturnValue({
+    defaultSandbox: null,
+    sandboxes: {
+      native: { name: "native", agent, gatewayPort: 8080 },
+    },
+  });
+  const responses: Record<string, string> = {
+    [JSON.stringify(["uname", "-s"])]: "Linux",
+    [JSON.stringify(["cat", configPath])]: rawConfig,
+  };
+  const read = vi.fn(async ({ command }: { command: readonly string[] }) => {
+    return (
+      responses[JSON.stringify(command)] ?? Promise.reject(new Error("Unexpected sandbox command"))
+    );
+  });
+  mocks.createReader.mockReturnValue({
+    read,
+    observeInferenceRoute: vi.fn(async () => ({ ok: true, value: { state: "unconfigured" } })),
+    dispose: vi.fn(),
+  });
+  const event = await collectOperationEvent(
+    {
+      operation: "sandbox_rebuild",
+      startedAt: "2026-10-09T00:00:00.000Z",
+      completedAt: "2026-10-09T00:00:01.000Z",
+      outcome: "completed",
+      state: "applied",
+      scope: "sandbox",
+      installedVersion: "1.2.3",
+      targets: [
+        {
+          scope: "sandbox",
+          sandboxName: "native",
+          gatewayName: "nemoclaw",
+          outcome: "completed",
+          state: "applied",
+        },
+      ],
+    },
+    { signal: new AbortController().signal, deadlineAt: Date.now() + 10_000 },
+  );
+  expect(read).toHaveBeenCalledWith(
+    expect.objectContaining({ sandboxName: "native", command: ["cat", configPath] }),
+    expect.objectContaining({ workspace: "native" }),
+  );
+  expect(read).toHaveBeenCalledTimes(2);
+  return event;
+}
+
+it.each(nativeModelCases)(
+  "reports the $agent native model, provider, and API family (#12859)",
+  async ({ agent, configPath, validConfig, modelId, providerProfile, apiFamily }) => {
+    const event = await collectNativeConfiguration(agent, configPath, validConfig);
+    expect(event.parameters.configurations[0]).toMatchObject({
+      agentHarnessId: agent,
+      agentsStatus: "reported",
+      defaultAgentModel: { agentPosition: 0, modelPosition: 0, status: "reported" },
+      agents: [
+        {
+          modelsStatus: "reported",
+          models: [{ modelId, modelStatus: "reported", providerProfile, apiFamily }],
+        },
+      ],
+    });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
+it.each(nativeModelCases)(
+  "marks a malformed $agent native model as a collection error (#12859)",
+  async ({ agent, configPath, invalidConfig }) => {
+    const event = await collectNativeConfiguration(agent, configPath, invalidConfig);
+    expect(event.parameters.configurations[0]).toMatchObject({
+      agentHarnessId: agent,
+      status: "collection_error",
+      agentsStatus: "collection_error",
+      defaultAgentModel: { status: "collection_error" },
+    });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
