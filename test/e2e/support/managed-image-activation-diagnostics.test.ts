@@ -39,6 +39,7 @@ import {
   summarizeOnboardFailureStartupSignals,
   waitForManagedActivationSandboxDeletion,
   waitForManagedActivationSandboxAbsence,
+  verifyExactCleanup,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 import { pendingAdminRequestId } from "../fixtures/issue-4462-admin-approval-evidence.ts";
 
@@ -190,6 +191,72 @@ printf '%s\n' "$@" >"$MANAGED_ACTIVATION_FIXTURE/openclaw-args"
 }
 
 describe("managed image activation failure diagnostics", () => {
+  it.each([
+    {
+      boundary: "OpenShell query",
+      listStatus: 1,
+      engineStatus: 0,
+      listed: false,
+      container: false,
+    },
+    { boundary: "engine query", listStatus: 0, engineStatus: 1, listed: false, container: false },
+    {
+      boundary: "OpenShell absence",
+      listStatus: 0,
+      engineStatus: 0,
+      listed: true,
+      container: false,
+    },
+    {
+      boundary: "container absence",
+      listStatus: 0,
+      engineStatus: 0,
+      listed: false,
+      container: true,
+    },
+  ])("cleanup polling rejects failed $boundary evidence", async (scenario) => {
+    vi.useFakeTimers();
+    const list = vi.fn(async () => ({
+      exitCode: scenario.listStatus,
+      stderr: "",
+      stdout: scenario.listed ? "mi-act-hermes 1m Deleting\n" : "NAME CREATED PHASE\n",
+    }));
+    const command = vi.fn(async () => ({
+      exitCode: scenario.engineStatus,
+      stderr: "",
+      stdout: scenario.container ? "a".repeat(64) : "",
+    }));
+    try {
+      const assertion = expect(
+        verifyExactCleanup({ command } as never, { list } as never, "mi-act-hermes", {}),
+      ).rejects.toThrow(scenario.listStatus || scenario.engineStatus ? /failed/ : /exhausted/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cleanup polling succeeds only after both inventories show absence", async () => {
+    vi.useFakeTimers();
+    const list = vi.fn(async () => ({ exitCode: 0, stderr: "", stdout: "NAME CREATED PHASE\n" }));
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "a".repeat(64) })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
+    try {
+      const assertion = expect(
+        verifyExactCleanup({ command } as never, { list } as never, "mi-act-hermes", {}),
+      ).resolves.toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
+      expect(list).toHaveBeenCalledTimes(2);
+      expect(command).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["docker", "podman"] as const)("selects full sandbox IDs through %s", async (engine) => {
     const result = { exitCode: 0, stdout: `${"a".repeat(64)}\n`, stderr: "" };
     const command = vi.fn(async () => result);

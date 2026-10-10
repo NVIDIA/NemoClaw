@@ -9,6 +9,7 @@ import {
   managedStateVolumeMigrationPhase,
   migrateManagedStateVolume,
   preflightLegacyManagedStateVolume,
+  reconcileManagedStateVolumeMigration,
   resolveMigratedManagedStateRoot,
   retireManagedStateVolumeMigration,
   verifyMigratedManagedStateRoot,
@@ -243,8 +244,12 @@ export function preflightManagedStateVolumes(
     throw new Error("Managed state volume requires an exact OpenShell workspace.");
   }
   for (const original of input.roots) {
-    const root = engine ? resolveMigratedManagedStateRoot(original, context, true) : original;
     const phase = engine ? managedStateVolumeMigrationPhase(original, context) : null;
+    if (engine && (phase === "copying" || phase === "retryable")) {
+      reconcileManagedStateVolumeMigration(original, context, engine, true);
+      continue;
+    }
+    const root = engine ? resolveMigratedManagedStateRoot(original, context, true) : original;
     if (engine && phase === "verified") verifyMigratedManagedStateRoot(original, context, engine);
     const observed = inspectVolume(root, run);
     if (observed.status === "failed")
@@ -308,6 +313,7 @@ export function prepareManagedStateVolumes(
   try {
     for (const original of input.roots) {
       const prepare = () => {
+        if (engine) reconcileManagedStateVolumeMigration(original, context, engine);
         let root = engine ? resolveMigratedManagedStateRoot(original, context, true) : original;
         const migrationPhase = engine ? managedStateVolumeMigrationPhase(original, context) : null;
         if (engine && migrationPhase === "verified")
@@ -356,7 +362,7 @@ export function prepareManagedStateVolumes(
           if (
             engine &&
             before.status === "observed" &&
-            migrationPhase === null &&
+            (migrationPhase === null || migrationPhase === "retryable") &&
             verified.labels["openshell.ai/sandbox-attachable"] === undefined &&
             verified.labels["openshell.ai/sandbox-attachable-workspace"] === undefined
           ) {
@@ -433,6 +439,12 @@ export function removeManagedStateVolumes(
   return Object.freeze(
     input.roots.map((original) => {
       const remove = (): ManagedStateVolumeCleanupResult => {
+        const phase = engine ? managedStateVolumeMigrationPhase(original, context) : null;
+        if (engine && (phase === "copying" || phase === "retryable")) {
+          reconcileManagedStateVolumeMigration(original, context, engine);
+          retireManagedStateVolumeMigration(original, context);
+          return { status: "absent", retainedVolumeName: original.resourceIdentity };
+        }
         const root = engine ? resolveMigratedManagedStateRoot(original, context, true) : original;
         if (engine && managedStateVolumeMigrationPhase(original, context) === "retired") {
           if (inspectVolume(root, run).status === "absent")

@@ -299,7 +299,9 @@ An unavailable or different version ends the rebuild with a nonzero status inste
 <AgentOnly variant="openclaw">
 
 After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
-If verification fails, NemoClaw exits nonzero and does not report a successful rebuild.
+When the selected provider is **Other OpenAI-compatible endpoint**, rebuild starts the restored OpenClaw configuration and verifies the selected inference route.
+If either verification fails, NemoClaw exits nonzero, preserves the backup, and does not report a successful rebuild.
+Correct the reported configuration or route error, then rerun `$$nemoclaw <sandbox-name> rebuild --yes`.
 
 </AgentOnly>
 

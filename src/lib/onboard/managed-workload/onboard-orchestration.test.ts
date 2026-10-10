@@ -790,6 +790,47 @@ describe("managed workload onboard orchestration", () => {
     });
   });
 
+  it("managed receipts retain shared ownership and catalog provenance", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw-openclaw@sha256:${"a".repeat(64)}`;
+    const source = { release: "v0.0.100", revision: "b".repeat(40), cohort: "ghrun-123-1" };
+    const { workloadReceipt } = resolveOnboardSandboxWorkloadReceipt({
+      runtime: {
+        ensurePreparedProfile: () => ({
+          encodedProfile: "fixture-profile",
+          startupProfileSha256: "c".repeat(64),
+          credentialProxyReplayRequired: false,
+        }),
+      },
+      workload: {
+        source: {
+          kind: "managed-image",
+          reference,
+          contract: {
+            platform: "linux/amd64",
+            source,
+            capabilityContractVersion: 1,
+            startupProfileContractVersion: 1,
+          },
+        },
+      },
+      registryImageRef: null,
+      prebuildImageRef: null,
+      firstCreateOutput: "",
+      createOutput: "",
+      buildId: "unused",
+      extractBuiltImageRef: vi.fn(),
+      resolveSandboxImageTagFromCreateOutput: vi.fn(),
+    } as never);
+    expect(workloadReceipt).toMatchObject({
+      kind: "managed-image",
+      reference,
+      shared: true,
+      release: source.release,
+      sourceRevision: source.revision,
+      sourceCohort: source.cohort,
+    });
+  });
+
   it("requires the registered external-image receipt to match the requested digest", () => {
     const first = `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`;
     const second = `ghcr.io/example/openclaw@sha256:${"b".repeat(64)}`;

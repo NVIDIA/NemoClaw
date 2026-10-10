@@ -2,9 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test } from "../fixtures/e2e-test.ts";
-import { qualifyManagedImageActivation } from "./managed-image-activation-e2e-helpers.ts";
+import {
+  qualifyManagedImageActivation,
+  qualifyManagedVolumeMigration,
+} from "./managed-image-activation-e2e-helpers.ts";
 
 const TIMEOUT_MS = 75 * 60_000;
+
+test(
+  "legacy managed state survives real engine copy failure and migration (#12603)",
+  {
+    timeout: 10 * 60_000,
+    meta: {
+      e2ePhases: [
+        "create owned legacy state on the selected container engine",
+        "reject a failed real helper then migrate and select retained state",
+        "record real-engine migration evidence",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, progress }) => {
+    await qualifyManagedVolumeMigration({ artifacts, cleanup, progress });
+  },
+);
 
 test(
   "candidate CLI activates managed images without builds and the selected runtime adopts public agent digests (#7744, #11932, #12241)",

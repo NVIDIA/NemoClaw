@@ -153,7 +153,7 @@ export function assertMcpCredentialBoundaryRuntimeVersion(
 // key and exposes or executes the provider value outside the intended request.
 // sourceBoundary: the versioned JSON manifest pins OpenShell-owned keys to the
 // shipped source commit; NemoClaw owns host and agent runtime-control rejects.
-// whyNotSourceFix: v0.0.116 intentionally projects bound credential placeholders
+// whyNotSourceFix: OpenShell intentionally projects bound credential placeholders
 // and does not advertise safe credential-name capabilities at runtime.
 // regressionTest: the mcp-bridge-input validation/runtime suites check every
 // pinned and runtime key; package contracts require version alignment.

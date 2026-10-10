@@ -196,10 +196,135 @@ describe("retained managed volume migration", () => {
     expect(h.volumes.size).toBe(2);
     expect(managedStateVolumeMigrationPhase(h.root, h.context)).toBe("copying");
     expect(() => resolveMigratedManagedStateRoot(h.root, h.context)).toThrow("incomplete copy");
-    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow("incomplete copy");
     expect(h.calls.filter((args) => args[0] === "start")).toHaveLength(1);
     expect(h.calls.filter((args) => args[0] === "rm")).toHaveLength(1);
     expect(h.calls.some((args) => args[0] === "volume" && args[1] === "rm")).toBe(false);
+  });
+
+  it.each(["createStatus", "copyStatus", "throwStart", "cleanupStatus"] as const)(
+    "reconciles %s on retry without adopting partial data or changing the original",
+    (failure) => {
+      const h = harness();
+      const original = JSON.stringify(h.source);
+      Object.assign(h.controls, { [failure]: failure === "throwStart" ? true : 1 });
+      expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow();
+      const before = h.calls.length;
+      preflightManagedStateVolumes(h.input, h.deps);
+      expect(
+        h.calls
+          .slice(before)
+          .every((args) => !["rm", "create", "start"].includes(args[0]!) && args[1] !== "rm"),
+      ).toBe(true);
+      Object.assign(h.controls, {
+        createStatus: 0,
+        copyStatus: 0,
+        throwStart: false,
+        cleanupStatus: 0,
+      });
+      const scope = prepareManagedStateVolumes(h.input, h.deps)!;
+      scope.commit();
+      expect(h.volumes.get(scope.mounts[0]!.source)!.bytes).toBe(h.source.bytes);
+      expect(JSON.stringify(h.source)).toBe(original);
+      expect(managedStateVolumeMigrationPhase(h.root, h.context)).toBe("verified");
+      expect(h.calls.filter((args) => args[0] === "volume" && args[1] === "rm")).toEqual([
+        ["volume", "rm", scope.mounts[0]!.source],
+      ]);
+    },
+  );
+
+  it.each(["helper", "source", "destination", "attachment", "missing-fingerprint"])(
+    "refuses reconciliation after %s drift without removing resources",
+    (drift) => {
+      const h = harness();
+      h.controls.cleanupStatus = 1;
+      expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow();
+      const journal = JSON.parse(fs.readFileSync(h.journalFile(), "utf8"));
+      const changes: Record<string, () => void> = {
+        helper: () => {
+          h.controls.helperOverride = { Name: "/foreign" };
+        },
+        source: () => {
+          h.source.CreatedAt = new Date().toISOString();
+        },
+        destination: () => {
+          h.volumes.get(journal.destination)!.CreatedAt = new Date().toISOString();
+        },
+        attachment: () => {
+          h.attached.add(journal.destination);
+        },
+        "missing-fingerprint": () => {
+          journal.destinationFingerprint = null;
+          fs.writeFileSync(h.journalFile(), JSON.stringify(journal));
+        },
+      };
+      changes[drift]!();
+      h.controls.cleanupStatus = 0;
+      const before = h.calls.length;
+      expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow(h.journalFile());
+      expect(h.calls.slice(before).some((args) => args[0] === "rm" || args[1] === "rm")).toBe(
+        false,
+      );
+      expect(h.volumes.size).toBe(2);
+      expect(h.source.bytes).toBe("retained user state");
+    },
+  );
+
+  it("removal retires the failed attempt without deleting or resurrecting the original", () => {
+    const h = harness();
+    h.controls.copyStatus = 1;
+    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow();
+    expect(removeManagedStateVolumes(h.input, h.deps)).toEqual([
+      { status: "absent", retainedVolumeName: h.source.Name },
+    ]);
+    expect(managedStateVolumeMigrationPhase(h.root, h.context)).toBe("retired");
+    expect(h.volumes.size).toBe(1);
+    expect(removeManagedStateVolumes(h.input, h.deps)).toEqual([
+      { status: "absent", retainedVolumeName: h.source.Name },
+    ]);
+    h.controls.copyStatus = 0;
+    const fresh = prepareManagedStateVolumes(h.input, h.deps)!;
+    expect(fresh.mounts[0]!.source).not.toBe(h.source.Name);
+    expect(h.volumes.get(fresh.mounts[0]!.source)!.bytes).toBe("");
+    expect(h.source.bytes).toBe("retained user state");
+    fresh.commit();
+  });
+
+  it("keeps copying state when partial destination removal is unproven", () => {
+    const h = harness();
+    h.controls.copyStatus = 1;
+    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow();
+    h.controls.keepRemovedVolume = true;
+    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow(
+      "absence was not established",
+    );
+    expect(managedStateVolumeMigrationPhase(h.root, h.context)).toBe("copying");
+    expect(h.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+    expect(h.source.bytes).toBe("retained user state");
+  });
+
+  it("reconciles a lost removal response before retrying the copy", () => {
+    const h = harness();
+    h.controls.copyStatus = 1;
+    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow();
+    h.controls.volumeRemoveStatus = 1;
+    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow(h.journalFile());
+    expect(h.volumes.size).toBe(1);
+    expect(managedStateVolumeMigrationPhase(h.root, h.context)).toBe("copying");
+    h.controls.volumeRemoveStatus = 0;
+    h.controls.copyStatus = 0;
+    expect(prepareManagedStateVolumes(h.input, h.deps)!.mounts[0]!.source).not.toBe(h.source.Name);
+    expect(h.source.bytes).toBe("retained user state");
+  });
+
+  it("preflights a source still attached to the sandbox but refuses cleanup before its removal", () => {
+    const h = harness();
+    h.controls.copyStatus = 1;
+    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow();
+    h.attached.add(h.source.Name);
+    preflightManagedStateVolumes(h.input, h.deps);
+    const before = h.calls.length;
+    expect(() => prepareManagedStateVolumes(h.input, h.deps)).toThrow("still attached");
+    expect(h.calls.slice(before).some((args) => args[0] === "rm" || args[1] === "rm")).toBe(false);
   });
 
   it("rejects an unreceipted destination rather than overwriting its data", () => {

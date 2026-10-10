@@ -19,6 +19,7 @@
  * ports never collide.
  */
 
+import os from "node:os";
 import type { GatewayReuseState } from "../state/gateway";
 import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
@@ -27,7 +28,9 @@ import {
   resolveGatewayCompatContainerName,
   resolveGatewayName,
 } from "./gateway-binding/identity";
-import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
+import { DEFAULT_GATEWAY_PORT, resolveDockerDriverGatewayBinding } from "./gateway/state-dir";
+
+export { resolveDockerDriverGatewayBinding };
 
 export {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
@@ -44,6 +47,7 @@ export {
   isManagedGatewayStateRootReservation,
   managedGatewayStateRootOwnershipFailure,
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
+  removeDockerDriverGatewayBinding,
   resolveGatewayStateDirForPort,
   resolveGatewayStateDirName,
   UnsafeGatewayStateDirectoryError,
@@ -277,4 +281,23 @@ export function createDynamicGatewayRuntimeHelpers(deps: DynamicGatewayRuntimeDe
     waitForGatewayHttpReady,
     isGatewayTcpReady,
   };
+}
+
+/** Supply recovered network inputs through the runtime's existing dependency hook. */
+export function createGatewayEnvLoader(
+  module: typeof import("./docker-driver-gateway-env"),
+): () => typeof import("./docker-driver-gateway-env") {
+  return () => ({
+    ...module,
+    buildDockerDriverGatewayEnv: (options) =>
+      module.buildDockerDriverGatewayEnv({
+        ...options,
+        dockerNetworkName:
+          resolveDockerDriverGatewayBinding(
+            process.env,
+            os.homedir(),
+            options.gatewayPort ?? DEFAULT_GATEWAY_PORT,
+          ).dockerNetworkName ?? options.dockerNetworkName,
+      }),
+  });
 }

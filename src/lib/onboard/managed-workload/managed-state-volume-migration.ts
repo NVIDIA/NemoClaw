@@ -33,8 +33,9 @@ type Journal = {
   binding: string;
   source: string;
   destination: string;
-  phase: "copying" | "verified" | "retired";
+  phase: "copying" | "retryable" | "verified" | "retired";
   helper: string;
+  helperId?: string;
   sourceFingerprint: string;
   destinationFingerprint: string | null;
   copySha256: string | null;
@@ -100,9 +101,10 @@ function readJournal(root: Root, context: ManagedVolumeMigrationContext): Journa
       value.binding !== expected.binding ||
       value.source !== root.resourceIdentity ||
       value.destination !== expected.destination ||
-      !["copying", "verified", "retired"].includes(value.phase) ||
+      !["copying", "retryable", "verified", "retired"].includes(value.phase) ||
       typeof value.helper !== "string" ||
       !NAME.test(value.helper) ||
+      (value.helperId !== undefined && !HASH.test(value.helperId)) ||
       typeof value.sourceFingerprint !== "string" ||
       !HASH.test(value.sourceFingerprint) ||
       !(
@@ -115,7 +117,7 @@ function readJournal(root: Root, context: ManagedVolumeMigrationContext): Journa
         (typeof value.copySha256 === "string" && HASH.test(value.copySha256))
       ) ||
       (value.phase === "verified" && value.destinationFingerprint === null) ||
-      (value.phase !== "verified" && value.destinationFingerprint !== null)
+      (["retryable", "retired"].includes(value.phase) && value.destinationFingerprint !== null)
     )
       fail("invalid migration journal");
     return value;
@@ -145,6 +147,16 @@ function save(root: Root, context: ManagedVolumeMigrationContext, journal: Journ
   ensureConfigDir(path.dirname(file));
   rejectSymlinksOnPath(file);
   writeConfigFile(file, journal);
+}
+function migrationError(
+  root: Root,
+  context: ManagedVolumeMigrationContext,
+  journal: Journal,
+  error: unknown,
+): Error {
+  return new Error(
+    `Managed state migration stopped. Journal: ${identity(root, context).file}; source: ${journal.source}; destination: ${journal.destination}; helper: ${journal.helperId ?? journal.helper}. Original retained. Retry onboarding for scoped reconciliation; if it stops, resolve the reported identity or attachment conflict: ${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 function checked(run: MigrationEngine, args: readonly string[], timeoutMs = 30_000): string {
   const result = run(args, timeoutMs);
@@ -250,6 +262,135 @@ export function preflightLegacyManagedStateVolume(root: Root, run: MigrationEngi
   requireLabels(source, root.ownershipLabels);
 }
 
+/** Inspect a failed attempt before deleting a sandbox; only materialization may reconcile it. */
+export function reconcileManagedStateVolumeMigration(
+  root: Root,
+  context: ManagedVolumeMigrationContext,
+  run: MigrationEngine,
+  inspectOnly = false,
+): void {
+  withManagedStateVolumeLock(root, context, () => {
+    const journal = readJournal(root, context);
+    if (!journal || !["copying", "retryable"].includes(journal.phase)) return;
+    try {
+      const source = inspectVolume(run, journal.source);
+      requireLabels(source, root.ownershipLabels);
+      if (fingerprint(source) !== journal.sourceFingerprint) fail("source identity changed");
+      const exists = () =>
+        checked(run, ["volume", "ls", "--format", "{{.Name}}"])
+          .split(/\r?\n/u)
+          .includes(journal.destination);
+      const verifyDestination = () => {
+        const destination = inspectVolume(run, journal.destination);
+        requireLabels(destination, {
+          ...root.ownershipLabels,
+          ...approval(context),
+          [MIGRATION_LABEL]: journal.binding,
+        });
+        if (
+          !journal.destinationFingerprint ||
+          fingerprint(destination) !== journal.destinationFingerprint
+        )
+          fail("partial destination identity is unrecorded or changed");
+      };
+      const destinationExists = exists();
+      if (destinationExists) verifyDestination();
+      const helpers = checked(run, [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=${journal.helper}`,
+        "--format",
+        "{{.ID}}",
+      ]);
+      let helperId: string | undefined;
+      if (helpers) {
+        if (!HASH.test(helpers) || (journal.helperId && helpers !== journal.helperId))
+          fail("helper identity changed");
+        const helper = JSON.parse(
+          checked(run, ["container", "inspect", "--format", "{{json .}}", helpers]),
+        );
+        const mounts = helper.Mounts;
+        if (
+          helper.Id !== helpers ||
+          helper.Name?.replace(/^\//u, "") !== journal.helper ||
+          helper.Config?.Labels?.[MIGRATION_LABEL] !== journal.binding ||
+          helper.Config?.Image !== MANAGED_STATE_COPY_IMAGE ||
+          JSON.stringify(helper.Config?.Entrypoint) !== JSON.stringify(["/usr/local/bin/node"]) ||
+          JSON.stringify(helper.Config?.Cmd) !==
+            JSON.stringify(["-e", managedStateVolumeCopyProgram()]) ||
+          !Array.isArray(mounts) ||
+          mounts.length !== 2 ||
+          !mounts.some(
+            (m: Record<string, unknown>) =>
+              m.Type === "volume" &&
+              m.Name === journal.source &&
+              m.Destination === "/source" &&
+              m.RW === false,
+          ) ||
+          !mounts.some(
+            (m: Record<string, unknown>) =>
+              m.Type === "volume" &&
+              m.Name === journal.destination &&
+              m.Destination === "/destination" &&
+              m.RW === true,
+          )
+        )
+          fail("helper ownership or mounts changed");
+        helperId = helpers;
+      }
+      // A failed cleanup can leave only this attempt's helper attached. Never stop other users.
+      for (const name of [journal.source, journal.destination]) {
+        if (inspectOnly && name === journal.source) continue;
+        const users = checked(run, [
+          "ps",
+          "--all",
+          "--no-trunc",
+          "--filter",
+          `volume=${name}`,
+          "--format",
+          "{{.ID}}",
+        ]);
+        if (users.split(/\r?\n/u).some((id) => id && id !== helperId))
+          fail(`volume ${name} is still attached to another container`);
+      }
+      if (inspectOnly) return;
+      if (helperId) checked(run, ["rm", "--force", helperId]);
+      if (
+        checked(run, [
+          "ps",
+          "--all",
+          "--no-trunc",
+          "--filter",
+          `name=${journal.helper}`,
+          "--format",
+          "{{.ID}}",
+        ])
+      )
+        fail("helper absence was not established");
+      requireUnused(run, journal.source);
+      requireUnused(run, journal.destination);
+      if (fingerprint(inspectVolume(run, journal.source)) !== journal.sourceFingerprint)
+        fail("source identity changed during reconciliation");
+      if (destinationExists) {
+        verifyDestination();
+        // This unselected partial copy belongs to this journal, not the retained original.
+        checked(run, ["volume", "rm", journal.destination]);
+      }
+      if (exists()) fail("partial destination absence was not established");
+      save(root, context, {
+        ...journal,
+        phase: "retryable",
+        destinationFingerprint: null,
+        copySha256: null,
+      });
+    } catch (error) {
+      throw migrationError(root, context, journal, error);
+    }
+  });
+}
+
 /** Read-only selection used by create, rebuild, snapshot and destruction. */
 export function resolveMigratedManagedStateRoot<T extends Root>(
   root: T,
@@ -257,9 +398,11 @@ export function resolveMigratedManagedStateRoot<T extends Root>(
   allowRetired = false,
 ): T {
   const journal = readJournal(root, context);
-  if (!journal) return root;
+  if (!journal || journal.phase === "retryable") return root;
   if (journal.phase === "copying")
-    fail("an incomplete copy requires reconciliation; it will not be adopted or retried");
+    fail(
+      `an incomplete copy is unselected; retry onboarding to reconcile journal ${identity(root, context).file}`,
+    );
   if (journal.phase === "retired" && !allowRetired) fail("the migrated volume was retired");
   return {
     ...root,
@@ -282,7 +425,8 @@ export function retireManagedStateVolumeMigration(
 ): void {
   withManagedStateVolumeLock(root, context, () => {
     const journal = readJournal(root, context);
-    if (!journal || journal.phase !== "verified") fail("no verified migration can be retired");
+    if (!journal || !["verified", "retryable"].includes(journal.phase))
+      fail("no verified or reconciled migration can be retired");
     save(root, context, { ...journal, phase: "retired", destinationFingerprint: null });
   });
 }
@@ -337,142 +481,154 @@ export function migrateManagedStateVolume(
   run: MigrationEngine,
 ): Root {
   const scope = identity(root, context);
-  return withManagedStateVolumeLock(root, context, () => {
-    const prior = readJournal(root, context);
-    if (prior) {
-      if (prior.phase !== "verified") fail("prior migration requires reconciliation");
-      verifyMigratedManagedStateRoot(root, context, run);
-      return resolveMigratedManagedStateRoot(root, context);
-    }
-    const source = inspectVolume(run, root.resourceIdentity);
-    requireLabels(source, root.ownershipLabels);
-    const labels = source.Labels as Record<string, unknown>;
-    if (
-      labels["openshell.ai/sandbox-attachable"] !== undefined ||
-      labels["openshell.ai/sandbox-attachable-workspace"] !== undefined
-    )
-      fail("conflicting legacy approval labels");
-    requireUnused(run, root.resourceIdentity);
-    const existing = checked(run, ["volume", "ls", "--format", "{{.Name}}"]);
-    if (existing.split(/\r?\n/u).includes(scope.destination))
-      fail("migration destination already exists without a receipt");
-    // Pull by the existing immutable helper digest, before creating destination data.
-    const image = run(["image", "inspect", MANAGED_STATE_COPY_IMAGE], 30_000);
-    if (image.status !== 0 || image.error)
-      checked(run, ["pull", "--quiet", MANAGED_STATE_COPY_IMAGE], 120_000);
-    const helper = `nemoclaw-volume-copy-${randomUUID()}`;
-    const journal: Journal = {
-      schemaVersion: 1,
-      binding: scope.binding,
-      source: root.resourceIdentity,
-      destination: scope.destination,
-      phase: "copying",
-      helper,
-      sourceFingerprint: fingerprint(source),
-      destinationFingerprint: null,
-      copySha256: null,
-    };
-    save(root, context, journal);
-    const destinationLabels = {
-      ...root.ownershipLabels,
-      ...approval(context),
-      [MIGRATION_LABEL]: scope.binding,
-    };
-    checked(run, [
-      "volume",
-      "create",
-      ...Object.entries(destinationLabels).flatMap(([key, value]) => [
-        "--label",
-        `${key}=${value}`,
-      ]),
-      scope.destination,
-    ]);
-    const destination = inspectVolume(run, scope.destination);
-    requireLabels(destination, destinationLabels);
-    requireUnused(run, root.resourceIdentity);
-    requireUnused(run, scope.destination);
-    if (fingerprint(inspectVolume(run, root.resourceIdentity)) !== journal.sourceFingerprint)
-      fail("source identity changed");
-    const helperId = checked(run, [
-      "create",
-      "--name",
-      helper,
-      "--pull",
-      "never",
-      "--network",
-      "none",
-      "--read-only",
-      "--user",
-      "0:0",
-      "--security-opt",
-      "no-new-privileges",
-      "--cap-drop",
-      "ALL",
-      "--cap-add",
-      "DAC_OVERRIDE",
-      "--cap-add",
-      "CHOWN",
-      "--cap-add",
-      "FOWNER",
-      "--cap-add",
-      "FSETID",
-      "--pids-limit",
-      "64",
-      "--label",
-      `${MIGRATION_LABEL}=${scope.binding}`,
-      "--mount",
-      `type=volume,src=${root.resourceIdentity},dst=/source,readonly,volume-nocopy`,
-      "--mount",
-      `type=volume,src=${scope.destination},dst=/destination,volume-nocopy`,
-      "--entrypoint",
-      "/usr/local/bin/node",
-      MANAGED_STATE_COPY_IMAGE,
-      "-e",
-      managedStateVolumeCopyProgram(),
-    ]);
-    if (!HASH.test(helperId)) fail("helper creation returned an ambiguous identity");
-    let result: ReturnType<MigrationEngine>;
-    try {
-      result = run(["start", "--attach", helperId], COPY_TIMEOUT_MS);
-    } finally {
-      // Remove only the full helper ID returned by this creation, never a shared name or volume.
-      checked(run, ["rm", "--force", helperId]);
-      const remaining = checked(run, [
-        "ps",
-        "--all",
-        "--no-trunc",
-        "--filter",
-        `id=${helperId}`,
-        "--format",
-        "{{.ID}}",
+  let attempt: Journal | undefined;
+  try {
+    return withManagedStateVolumeLock(root, context, () => {
+      reconcileManagedStateVolumeMigration(root, context, run);
+      const prior = readJournal(root, context);
+      if (prior && prior.phase !== "retryable") {
+        if (prior.phase !== "verified") fail("prior migration requires reconciliation");
+        verifyMigratedManagedStateRoot(root, context, run);
+        return resolveMigratedManagedStateRoot(root, context);
+      }
+      const source = inspectVolume(run, root.resourceIdentity);
+      requireLabels(source, root.ownershipLabels);
+      const labels = source.Labels as Record<string, unknown>;
+      if (
+        labels["openshell.ai/sandbox-attachable"] !== undefined ||
+        labels["openshell.ai/sandbox-attachable-workspace"] !== undefined
+      )
+        fail("conflicting legacy approval labels");
+      requireUnused(run, root.resourceIdentity);
+      const existing = checked(run, ["volume", "ls", "--format", "{{.Name}}"]);
+      if (existing.split(/\r?\n/u).includes(scope.destination))
+        fail("migration destination already exists without a receipt");
+      // Pull by the existing immutable helper digest, before creating destination data.
+      const image = run(["image", "inspect", MANAGED_STATE_COPY_IMAGE], 30_000);
+      if (image.status !== 0 || image.error)
+        checked(run, ["pull", "--quiet", MANAGED_STATE_COPY_IMAGE], 120_000);
+      const helper = `nemoclaw-volume-copy-${randomUUID()}`;
+      const journal: Journal = {
+        schemaVersion: 1,
+        binding: scope.binding,
+        source: root.resourceIdentity,
+        destination: scope.destination,
+        phase: "copying",
+        helper,
+        sourceFingerprint: fingerprint(source),
+        destinationFingerprint: null,
+        copySha256: null,
+      };
+      attempt = journal;
+      save(root, context, journal);
+      const destinationLabels = {
+        ...root.ownershipLabels,
+        ...approval(context),
+        [MIGRATION_LABEL]: scope.binding,
+      };
+      checked(run, [
+        "volume",
+        "create",
+        ...Object.entries(destinationLabels).flatMap(([key, value]) => [
+          "--label",
+          `${key}=${value}`,
+        ]),
+        scope.destination,
       ]);
-      if (remaining !== "") fail("helper absence was not established");
-    }
-    if (result.status !== 0 || result.error)
-      fail("copy did not finish; partial destination remains unselected");
-    const copied = JSON.parse(String(result.stdout ?? "")) as {
-      schemaVersion?: unknown;
-      sha256?: unknown;
-    };
-    if (
-      copied.schemaVersion !== 1 ||
-      typeof copied.sha256 !== "string" ||
-      !HASH.test(copied.sha256)
-    )
-      fail("copy verification receipt is invalid");
-    requireUnused(run, root.resourceIdentity);
-    requireUnused(run, scope.destination);
-    if (
-      fingerprint(inspectVolume(run, root.resourceIdentity)) !== journal.sourceFingerprint ||
-      fingerprint(inspectVolume(run, scope.destination)) !== fingerprint(destination)
-    )
-      fail("volume identity changed during copying");
-    save(root, context, {
-      ...journal,
-      phase: "verified",
-      destinationFingerprint: fingerprint(destination),
-      copySha256: copied.sha256,
+      const destination = inspectVolume(run, scope.destination);
+      requireLabels(destination, destinationLabels);
+      journal.destinationFingerprint = fingerprint(destination);
+      save(root, context, journal);
+      requireUnused(run, root.resourceIdentity);
+      requireUnused(run, scope.destination);
+      if (fingerprint(inspectVolume(run, root.resourceIdentity)) !== journal.sourceFingerprint)
+        fail("source identity changed");
+      const helperId = checked(run, [
+        "create",
+        "--name",
+        helper,
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--read-only",
+        "--user",
+        "0:0",
+        "--security-opt",
+        "no-new-privileges",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "DAC_OVERRIDE",
+        "--cap-add",
+        "CHOWN",
+        "--cap-add",
+        "FOWNER",
+        "--cap-add",
+        "FSETID",
+        "--pids-limit",
+        "64",
+        "--label",
+        `${MIGRATION_LABEL}=${scope.binding}`,
+        "--mount",
+        `type=volume,src=${root.resourceIdentity},dst=/source,readonly,volume-nocopy`,
+        "--mount",
+        `type=volume,src=${scope.destination},dst=/destination,volume-nocopy`,
+        "--entrypoint",
+        "/usr/local/bin/node",
+        MANAGED_STATE_COPY_IMAGE,
+        "-e",
+        managedStateVolumeCopyProgram(),
+      ]);
+      if (!HASH.test(helperId)) fail("helper creation returned an ambiguous identity");
+      journal.helperId = helperId;
+      save(root, context, journal);
+      let result: ReturnType<MigrationEngine>;
+      try {
+        result = run(["start", "--attach", helperId], COPY_TIMEOUT_MS);
+      } finally {
+        // Remove only the full helper ID returned by this creation, never a shared name or volume.
+        checked(run, ["rm", "--force", helperId]);
+        const remaining = checked(run, [
+          "ps",
+          "--all",
+          "--no-trunc",
+          "--filter",
+          `id=${helperId}`,
+          "--format",
+          "{{.ID}}",
+        ]);
+        if (remaining !== "") fail("helper absence was not established");
+      }
+      if (result.status !== 0 || result.error)
+        fail("copy did not finish; partial destination remains unselected");
+      const copied = JSON.parse(String(result.stdout ?? "")) as {
+        schemaVersion?: unknown;
+        sha256?: unknown;
+      };
+      if (
+        copied.schemaVersion !== 1 ||
+        typeof copied.sha256 !== "string" ||
+        !HASH.test(copied.sha256)
+      )
+        fail("copy verification receipt is invalid");
+      requireUnused(run, root.resourceIdentity);
+      requireUnused(run, scope.destination);
+      if (
+        fingerprint(inspectVolume(run, root.resourceIdentity)) !== journal.sourceFingerprint ||
+        fingerprint(inspectVolume(run, scope.destination)) !== fingerprint(destination)
+      )
+        fail("volume identity changed during copying");
+      save(root, context, {
+        ...journal,
+        phase: "verified",
+        destinationFingerprint: fingerprint(destination),
+        copySha256: copied.sha256,
+      });
+      return resolveMigratedManagedStateRoot(root, context);
     });
-    return resolveMigratedManagedStateRoot(root, context);
-  });
+  } catch (error) {
+    if (attempt) throw migrationError(root, context, attempt, error);
+    throw error;
+  }
 }

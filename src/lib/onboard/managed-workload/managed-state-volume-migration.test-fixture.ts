@@ -7,6 +7,10 @@ import path from "node:path";
 import { vi } from "vitest";
 import { managedStartupStateRoots } from "../managed-startup/state-roots";
 import type { MigrationEngine } from "./managed-state-volume-migration";
+import {
+  MANAGED_STATE_COPY_IMAGE,
+  managedStateVolumeCopyProgram,
+} from "./managed-state-volume-copy";
 
 type Volume = {
   Name: string;
@@ -53,10 +57,13 @@ export function createMigrationHarness(agent: "openclaw" | "hermes" = "openclaw"
   const helperId = "a".repeat(64);
   let helper: string[] | undefined;
   const controls = {
+    createStatus: 0,
     copyStatus: 0,
     throwStart: false,
     cleanupStatus: 0,
     keepRemovedVolume: false,
+    volumeRemoveStatus: 0,
+    helperOverride: {} as Record<string, unknown>,
     afterCopy: () => {},
   };
   const run: MigrationEngine = (args) => {
@@ -81,7 +88,7 @@ export function createMigrationHarness(agent: "openclaw" | "hermes" = "openclaw"
     }
     if (args[0] === "volume" && args[1] === "rm") {
       if (!controls.keepRemovedVolume) volumes.delete(args.at(-1)!);
-      return ok();
+      return { status: controls.volumeRemoveStatus };
     }
     if (args[0] === "ps") {
       const filter = args[args.indexOf("--filter") + 1]!;
@@ -89,14 +96,37 @@ export function createMigrationHarness(agent: "openclaw" | "hermes" = "openclaw"
         filter.startsWith("volume=")
           ? attached.has(filter.slice(7))
             ? "b".repeat(64)
-            : ""
+            : helper
+              ? helperId
+              : ""
           : helper
             ? helperId
             : "",
       );
     }
+    if (args[0] === "container" && args[1] === "inspect" && helper) {
+      const label = helper[helper.indexOf("--label") + 1]!.split("=");
+      return ok(
+        JSON.stringify({
+          Id: helperId,
+          Name: `/${helper[helper.indexOf("--name") + 1]}`,
+          Config: {
+            Image: MANAGED_STATE_COPY_IMAGE,
+            Entrypoint: ["/usr/local/bin/node"],
+            Cmd: ["-e", managedStateVolumeCopyProgram()],
+            Labels: { [label[0]!]: label[1] },
+          },
+          Mounts: [
+            { Type: "volume", Name: source.Name, Destination: "/source", RW: false },
+            { Type: "volume", Name: [...volumes.keys()][1], Destination: "/destination", RW: true },
+          ],
+          ...controls.helperOverride,
+        }),
+      );
+    }
     if (args[0] === "image" || args[0] === "pull") return ok();
     if (args[0] === "create") {
+      if (controls.createStatus !== 0) return { status: controls.createStatus };
       helper = [...args];
       return ok(helperId);
     }
