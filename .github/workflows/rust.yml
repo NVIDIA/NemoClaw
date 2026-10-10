@@ -3,7 +3,9 @@
 name: CI / Native
 on:
   push:
-    branches: [v1]
+    # Push a run-live/ branch to run every job, including the live suites,
+    # outside a pull request; dispatch needs this file on the default branch.
+    branches: [v1, run-live/**]
   pull_request:
     branches: [v1]
   workflow_dispatch:
@@ -20,11 +22,13 @@ jobs:
     with:
       runner: ubuntu-24.04-arm
       platform: linux_arm64
+      live: true
   linux_amd64:
     uses: ./.github/workflows/native-platform.yml
     with:
       runner: ubuntu-24.04
       platform: linux_amd64
+      live: true
   darwin_arm64:
     uses: ./.github/workflows/native-platform.yml
     with:
