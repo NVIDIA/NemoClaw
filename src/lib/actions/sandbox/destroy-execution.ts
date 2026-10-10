@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { finishTelemetryOperation, recordTelemetryTarget } from "../telemetry/operation";
-
+import { retireUnselectedNativeLocalProviders } from "../../inference/native-local/selection";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
+import { listNativeLocalProviderAuthorities } from "../../state/registry/native-local-provider-authority";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -895,6 +897,9 @@ export async function executeSandboxDestroy({
       pendingCreateIdentity?.gatewayName ??
       destroyRuntimeSelection?.gatewayName ??
       deleteGatewayName;
+    const hasNativeLocalAuthority =
+      Boolean(sandbox?.nativeLocalProviderAttachment) ||
+      listNativeLocalProviderAuthorities(sandboxName, effectiveDeleteGatewayName).length > 0;
     // A successful preflight absence is already the required OpenShell
     // lifecycle proof. Do not issue a later mutable-name delete that could
     // target a same-name replacement created after that observation.
@@ -960,6 +965,7 @@ export async function executeSandboxDestroy({
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
+      !hasNativeLocalAuthority &&
       portableContainerAuthority === undefined;
 
     if (deleteFailed && !forcedLocalCleanup) {
@@ -973,7 +979,7 @@ export async function executeSandboxDestroy({
         gatewayUnreachable,
         ...(timedOut ? { timedOut: true as const } : {}),
         hostLocalInferenceOwnershipRequiresGateway:
-          gatewayUnreachable && hasHostLocalInferenceOwnership,
+          gatewayUnreachable && (hasHostLocalInferenceOwnership || hasNativeLocalAuthority),
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
         portableLifecycleOwnershipRequiresGateway:
@@ -1120,4 +1126,17 @@ export async function recordDestroyCompletion(
     state,
   });
   if (exitCode !== undefined) await finishTelemetryOperation(exitCode);
+}
+
+/** Retire native credentials only after the caller confirms sandbox deletion. */
+export async function retireDestroyedSandboxNativeLocalProvider(
+  sandbox: SandboxEntry,
+  gatewayName: string,
+): Promise<void> {
+  await retireUnselectedNativeLocalProviders({
+    adapter: createManagedProviderAdapter(),
+    destroyedAttachment: sandbox.nativeLocalProviderAttachment,
+    sandboxName: sandbox.name,
+    gatewayName,
+  });
 }

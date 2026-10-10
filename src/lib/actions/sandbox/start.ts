@@ -164,6 +164,9 @@ async function checkStartedSandboxInference(
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    ...(sandbox.nativeLocalProviderAttachment
+      ? { nativeLocalProviderAttachment: sandbox.nativeLocalProviderAttachment }
+      : {}),
   };
   const probe = () =>
     (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(

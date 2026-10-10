@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { attachNativeLocalExportFixture } from "../../../../test/support/native-local-export-fixture";
 import {
   raw,
   mockSupportedLiveSource,
@@ -53,9 +54,13 @@ function ollamaProbe(observed: ObservedOllamaProxy) {
   };
 }
 
-function mockOllamaSource(model: string = "qwen3.5:9b") {
+function mockOllamaSource(model: string = "qwen3.5:9b", native = false) {
   vi.spyOn(os, "platform").mockReturnValue("linux");
-  const { source, observed } = ollamaSource(model);
+  const { source, observed } = ollamaSource(
+    model,
+    {},
+    native ? "http://host.openshell.internal:11440/v1" : undefined,
+  );
   mockSupportedLiveSource(3, 3, source);
   const effective = configuration();
   effective.policy.network_policies.api.endpoints = [
@@ -103,6 +108,99 @@ function mockOllamaSource(model: string = "qwen3.5:9b") {
 }
 
 describe("attached Ollama export pipeline", () => {
+  it("exports native Ollama through its existing service without reading credentials or a shared route (#12558)", async () => {
+    const { source } = mockOllamaSource("qwen2.5:0.5b", true);
+    const native = attachNativeLocalExportFixture(source);
+    const exported = await exportLiveSource();
+    expect(exported.result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = exported.writeStdout.mock.calls[0]![0];
+    expect(asExportedConfig(YAML.parse(yaml)).spec.inferenceProviders).toEqual([
+      { name: "local", provider: "openai", api: "openai-completions", serviceRef: "ollama-auth" },
+    ]);
+    expect(yaml).not.toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+    expect(native.readCredential).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("refuses a native profile that changes throughout export observation (#12558)", async () => {
+    const { source } = mockOllamaSource("qwen2.5:0.5b", true);
+    const native = attachNativeLocalExportFixture(source);
+    let revision = 5n;
+    raw.getProviderProfile.mockImplementation(async () => ({
+      profile: { ...native.profile, resourceVersion: ++revision },
+    }));
+    const exported = await exportLiveSource();
+    expect(exported.result).toMatchObject({ ok: false });
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+    expect(native.readCredential).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "provider ID",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.provider.metadata.id = "replacement-id";
+      },
+    },
+    {
+      name: "profile host",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.endpoint.host = "other.internal";
+      },
+    },
+    {
+      name: "profile permissions",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.endpoint.access = "full";
+      },
+    },
+    {
+      name: "profile IPs",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.endpoint.allowedIps = ["0.0.0.0/0"];
+      },
+    },
+    {
+      name: "credential environment",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.profile.credentials = [];
+      },
+    },
+    {
+      name: "profile binding",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.provider.profileWorkspace = "other";
+      },
+    },
+    {
+      name: "profile revision",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.profile.resourceVersion = 0n;
+      },
+    },
+    {
+      name: "attachment",
+      mutate: () => {
+        raw.getSandbox.mockResolvedValue(inventory());
+      },
+    },
+    {
+      name: "receipt",
+      mutate: (f: ReturnType<typeof attachNativeLocalExportFixture>) => {
+        f.receipt.sandboxName = "other";
+      },
+    },
+  ])("refuses native Ollama export when $name drifts (#12558)", async ({ mutate }) => {
+    const { source } = mockOllamaSource("qwen2.5:0.5b", true);
+    const native = attachNativeLocalExportFixture(source);
+    mutate(native);
+    const exported = await exportLiveSource();
+    expect(exported.result).toMatchObject({ ok: false });
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+    expect(native.readCredential).not.toHaveBeenCalled();
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       name: "selected non-default model",

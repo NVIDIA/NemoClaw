@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ensureNativeLocalProviderAttached } from "../../inference/native-local/profile";
+
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
   OpenShellProviderAdapter,
@@ -84,6 +86,21 @@ export async function verifyNativeNvidiaAttachmentAfterCreate(input: {
   await ensureNativeNvidiaProviderAttached({
     adapter: resolveProviderAdapter(input.deps),
     target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
+}
+
+export async function verifyNativeLocalAttachmentAfterCreate(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly expected: NonNullable<SandboxEntry["nativeLocalProviderAttachment"]>;
+  readonly deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (input.expected.gatewayName !== input.gatewayName)
+    throw new Error("Native local provider gateway authority changed.");
+  await ensureNativeLocalProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
     sandboxName: input.sandboxName,
     expected: input.expected,
   });

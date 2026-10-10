@@ -92,7 +92,12 @@ export function getExpectedDcodeInferenceIdentity(
 ): DcodeInferenceIdentity | null {
   if (requestedModel === null) return null;
 
-  const route = getSandboxInferenceConfig(requestedModel, requestedProvider, preferredInferenceApi);
+  const route = getSandboxInferenceConfig(
+    requestedModel,
+    requestedProvider,
+    preferredInferenceApi,
+    requestedEndpointUrl,
+  );
   const managedIdentity = resolveManagedDcodeIdentity(
     requestedProvider,
     requestedModel,

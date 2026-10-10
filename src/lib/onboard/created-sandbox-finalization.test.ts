@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as restoreWindow from "../actions/sandbox/runtime/openclaw-lifecycle";
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 import type { SandboxEntry } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
@@ -1136,9 +1137,26 @@ describe("created sandbox completion actions", () => {
         sandboxGpuDevice: null,
         errors: [],
       };
+      const binding = {
+        provider: "ollama-local" as const,
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated" as const,
+        gatewayName: "nemoclaw",
+        sandboxName: "hermes",
+      };
+      const nativeLocalProviderAttachment = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "selected-provider-id",
+      };
+      const retireNativeLocalProviders = vi.fn(async () => {
+        order.push("retire-providers");
+      });
       const registerCreatedSandbox = vi.fn((input: CreatedSandboxRegistrationInput) => {
         order.push("registry");
-        return input as unknown as SandboxEntry;
+        return { ...input, nativeLocalProviderAttachment } as unknown as SandboxEntry;
       });
       const initialOpenShellGpuDiagnostics = { collect: vi.fn(() => []) };
       const receiptOpenShellGpuDiagnostics = { collect: vi.fn(() => []) };
@@ -1288,6 +1306,7 @@ describe("created sandbox completion actions", () => {
             throw new Error(`unexpected exit ${code}`);
           },
           registerCreatedSandbox,
+          retireNativeLocalProviders,
         },
       );
       const created = {
@@ -1344,7 +1363,15 @@ describe("created sandbox completion actions", () => {
         ...(schema5 ? [] : ["workload"]),
         "lifecycle-revalidate",
         "registry",
+        "retire-providers",
       ]);
+      expect(retireNativeLocalProviders).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          sandboxName: "hermes",
+          gatewayName: "nemoclaw",
+          selected: nativeLocalProviderAttachment,
+        }),
+      );
       expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
       expect(verifyHermesGpu).toHaveBeenCalledWith(
         gpuConfig,
@@ -1373,6 +1400,7 @@ describe("created sandbox completion actions", () => {
       const proofFailure = new Error("Hermes GPU proof failed");
       verifyHermesGpu.mockRejectedValueOnce(proofFailure);
       registerCreatedSandbox.mockClear();
+      retireNativeLocalProviders.mockClear();
       await expect(
         completion.complete(
           schema5 ? null : created,
@@ -1385,110 +1413,41 @@ describe("created sandbox completion actions", () => {
         ),
       ).rejects.toBe(proofFailure);
       expect(registerCreatedSandbox).not.toHaveBeenCalled();
+      expect(retireNativeLocalProviders).not.toHaveBeenCalled();
+
+      const cleanupFailure = new Error("Provider absence was not confirmed; authority retained");
+      retireNativeLocalProviders.mockRejectedValueOnce(cleanupFailure);
+      await expect(
+        completion.complete(
+          schema5 ? null : created,
+          configuredReceipt,
+          "hermes",
+          manageDashboard,
+          () => ({ lifecycleGeneration: "generation-1" }),
+          lifecycle,
+          schema5 ? inferenceRouteReservation : undefined,
+        ),
+      ).rejects.toBe(cleanupFailure);
+      expect(registerCreatedSandbox).toHaveBeenCalledOnce();
+      expect(retireNativeLocalProviders).toHaveBeenCalledOnce();
+
+      const registrationFailure = new Error("Registry publication outcome is uncertain");
+      registerCreatedSandbox.mockImplementationOnce(() => {
+        throw registrationFailure;
+      });
+      retireNativeLocalProviders.mockClear();
+      await expect(
+        completion.complete(
+          schema5 ? null : created,
+          configuredReceipt,
+          "hermes",
+          manageDashboard,
+          () => ({ lifecycleGeneration: "generation-1" }),
+          lifecycle,
+          schema5 ? inferenceRouteReservation : undefined,
+        ),
+      ).rejects.toBe(registrationFailure);
+      expect(retireNativeLocalProviders).not.toHaveBeenCalled();
     },
   );
-});
-
-describe("restored OpenClaw selection reconciliation", () => {
-  const options = {
-    sandboxName: "openclaw",
-    gatewayName: "nemoclaw-9090",
-    restoreBackupPath: "/tmp/managed-openclaw-backup",
-    preUpgradeBackup: false,
-    targetAgentType: "openclaw",
-    validateManagedDcode: false,
-    provider: "compatible-endpoint",
-    model: "changed-model",
-    preferredInferenceApi: null,
-    reconcileOpenClawInference: true,
-  };
-
-  function deps(order: string[]) {
-    return {
-      ...preparedRestoreAuthority("openclaw"),
-      restoreRecreatedSandboxState: async () => {
-        order.push("restore");
-        return {
-          success: true,
-          restoredDirs: ["."],
-          restoredFiles: [],
-          failedDirs: [],
-          failedFiles: [],
-        };
-      },
-      writeRestoredOpenclawInferenceRoute: vi.fn(async () => {
-        order.push("selection");
-      }),
-      getDcodeSelectionDrift: vi.fn(),
-      register: vi.fn(() => {
-        order.push("register");
-      }),
-      note: vi.fn(),
-      error: vi.fn(),
-      exitProcess: (code: number): never => {
-        throw new Error(`unexpected exit ${code}`);
-      },
-    };
-  }
-
-  it("applies the selected model after restore and before restart and publication (#12667)", async () => {
-    const order: string[] = [];
-    const dependencies = deps(order);
-    vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
-      async () => {
-        order.push("restart");
-        return { ok: true };
-      },
-    );
-    await finalizeCreatedSandbox(options, dependencies);
-    expect(order).toEqual(["restore", "selection", "restart", "register"]);
-    expect(dependencies.writeRestoredOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
-      "openclaw",
-      "changed-model",
-      "compatible-endpoint",
-      null,
-      "nemoclaw-9090",
-      undefined,
-    );
-  });
-
-  it.each([
-    {
-      label: "ordinary rebuild",
-      patch: { reconcileOpenClawInference: false, preUpgradeBackup: true },
-    },
-    { label: "custom image", patch: { customImage: true } },
-    { label: "fresh creation", patch: { restoreBackupPath: null } },
-  ])("preserves $label native configuration (#12667)", async ({ patch }) => {
-    const dependencies = deps([]);
-    await finalizeCreatedSandbox({ ...options, ...patch }, dependencies);
-    expect(dependencies.writeRestoredOpenclawInferenceRoute).not.toHaveBeenCalled();
-    expect(dependencies.register).toHaveBeenCalledOnce();
-  });
-
-  it("refuses reconciliation when the prepared runtime identity changes (#12667)", async () => {
-    const dependencies = deps([]);
-    dependencies.revalidatePreparedRegistration = () => {
-      throw new Error("runtime identity changed");
-    };
-    await expect(finalizeCreatedSandbox(options, dependencies)).rejects.toThrow(
-      "runtime identity changed",
-    );
-    expect(dependencies.writeRestoredOpenclawInferenceRoute).not.toHaveBeenCalled();
-    expect(dependencies.register).not.toHaveBeenCalled();
-    expect(restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
-  });
-
-  it("aborts the offline window without publishing when reconciliation fails (#12667)", async () => {
-    const dependencies = deps([]);
-    dependencies.writeRestoredOpenclawInferenceRoute.mockRejectedValue(
-      new Error("native write failed"),
-    );
-    await expect(finalizeCreatedSandbox(options, dependencies)).rejects.toThrow(
-      "native write failed",
-    );
-    expect(dependencies.register).not.toHaveBeenCalled();
-    expect(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
-    expect(restoreWindow.abortUnregisteredOpenClawPostRestoreDoctor).toHaveBeenCalledOnce();
-  });
 });

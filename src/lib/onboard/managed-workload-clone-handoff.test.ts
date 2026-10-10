@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
@@ -34,6 +35,21 @@ const PORTABLE_PROFILE = {
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: false,
 } as const satisfies RuntimeProviderWorkloadProfile;
+
+const localBinding = {
+  provider: "ollama-local",
+  endpointUrl: "http://host.openshell.internal:11434/v1",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  authMode: "sentinel",
+  gatewayName: "nemoclaw",
+  sandboxName: "alpha",
+} as const;
+const localReceipt = {
+  ...localBinding,
+  ...nativeLocalIdentity(localBinding),
+  schemaVersion: 1 as const,
+  providerId: "owned-local-provider",
+};
 
 function provider(providerId: "docker" | "mxc"): RuntimeProviderBundle {
   return providerId === "docker"
@@ -178,6 +194,12 @@ function prepare(
 }
 
 describe("prepareManagedWorkloadCloneHandoff", () => {
+  it("refuses to copy a native local provider attachment to another sandbox (#12558)", () => {
+    const entry = source("openclaw", "docker");
+    entry.nativeLocalProviderAttachment = localReceipt;
+    expect(() => prepare(entry, provider("docker"))).toThrow(/cannot be cloned/);
+  });
+
   it.each([
     ["docker", "openclaw"],
     ["docker", "hermes"],

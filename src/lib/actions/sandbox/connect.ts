@@ -1718,7 +1718,7 @@ async function ensureSandboxInferenceRouteUnlocked(
     const { provider, model } = inference;
     const gatewayName = getPersistedSandboxTargetGatewayName(sb);
     const nativeNvidiaAttachment = getNativeNvidiaProviderAttachment(sb);
-    if (nativeNvidiaAttachment) {
+    if (nativeNvidiaAttachment || sb.nativeLocalProviderAttachment !== undefined) {
       await requireNativeNvidiaInferenceHealth({
         sandboxName,
         gatewayName,
@@ -1879,7 +1879,10 @@ async function ensureSandboxInferenceRoute(
   if (!snapshot) return { sandbox: null, routeHealthy: null };
   if (registry.getSandboxEntryInference(snapshot).kind !== "configured")
     return { sandbox: snapshot, routeHealthy: null };
-  if (getNativeNvidiaProviderAttachment(snapshot)) {
+  if (
+    getNativeNvidiaProviderAttachment(snapshot) ||
+    snapshot.nativeLocalProviderAttachment !== undefined
+  ) {
     return ensureSandboxInferenceRouteUnlocked(sandboxName, agent, { quiet });
   }
   const gatewayName = getPersistedSandboxTargetGatewayName(snapshot);

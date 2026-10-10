@@ -62,6 +62,7 @@ function sanitizeDockerArg(value: unknown): string {
 }
 
 export interface HermesPortableDockerfileBuildSettings {
+  readonly nativeEndpointUrl?: string;
   readonly baseImageRef?: string;
   readonly model: string;
   readonly provider: string | null;
@@ -128,6 +129,7 @@ export function renderHermesPortableDockerfileBuildSettings(
     input.model,
     input.provider,
     input.preferredInferenceApi,
+    input.nativeEndpointUrl,
   );
   const replacements = [
     ["NEMOCLAW_MODEL", input.model],

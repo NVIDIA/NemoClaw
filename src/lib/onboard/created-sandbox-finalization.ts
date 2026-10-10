@@ -4,6 +4,8 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import type { retireUnselectedNativeLocalProviders } from "../inference/native-local/selection";
+
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import {
   hermesDashboardStateMigrationRecoveryGuidance,
@@ -28,6 +30,7 @@ import {
   type RestoreResult,
 } from "../state/sandbox";
 import { cliName } from "./branding";
+import { retireUnselectedCreatedSandboxProviders } from "./sandbox-create/provider-retirement";
 import { writeRestoredOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
@@ -172,6 +175,7 @@ export interface CreatedSandboxCompletionDeps extends Omit<
   CreatedSandboxFinalizationDeps,
   "prepareRegistration" | "register" | "revalidatePreparedRegistration"
 > {
+  readonly retireNativeLocalProviders?: typeof retireUnselectedNativeLocalProviders;
   readonly prepareCreatedSandboxRegistration?: typeof prepareCreatedSandboxRegistration;
   readonly registerCreatedSandbox?: typeof registerCreatedSandbox;
   readonly registerPreparedCreatedSandbox?: typeof registerPreparedCreatedSandbox;
@@ -551,12 +555,23 @@ export function createCreatedSandboxCompletionActions(
             )(await registrationInput(true), prepared),
           register: async (prepared) => {
             const input = await registrationInput(prepared !== undefined);
-            return prepared
+            const registered = prepared
               ? (deps.registerPreparedCreatedSandbox ?? registerPreparedCreatedSandbox)(
                   input,
                   prepared,
                 )
               : (deps.registerCreatedSandbox ?? registerCreatedSandbox)(input);
+            // Reservation is too early: the former sandbox may still need its provider.
+            // Retirement failure retains the committed selection and cleanup authority.
+            await retireUnselectedCreatedSandboxProviders(
+              {
+                sandboxName: input.sandboxName,
+                gatewayName: input.gatewayName,
+                selected: registered.nativeLocalProviderAttachment,
+              },
+              deps.retireNativeLocalProviders,
+            );
+            return registered;
           },
         },
       );

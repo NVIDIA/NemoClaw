@@ -1,6 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  NativeLocalProvider,
+  NativeLocalProviderAttachment,
+} from "../inference/native-local/contract";
+import {
+  requireNativeProviderPolicy,
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInference,
+  usesNativeLocalInferenceForAgent,
+  prepareNativeLocalSelection,
+  retireUnreservedNativeLocalProvider,
+  gatewayReachableCompatibleEndpointUrl,
+} from "./inference-providers";
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import { canonicalEndpoint } from "../core/url-utils";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
@@ -206,6 +219,7 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  requireNativeProviderPolicy?: typeof requireNativeProviderPolicy;
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
@@ -237,6 +251,9 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // by hand, so every read below must stay optional-chained.
   getSandbox?: typeof import("../state/registry").getSandbox;
   listSandboxes?: typeof import("../state/registry").listSandboxes;
+  getNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").getNativeLocalProviderAuthority;
+  setNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").setNativeLocalProviderAuthority;
+  clearNativeLocalProviderAuthority?: typeof import("../state/registry/native-local-provider-authority").clearNativeLocalProviderAuthority;
   getNativeNvidiaProviderAuthority?: typeof import("../state/registry").getNativeNvidiaProviderAuthority;
   setNativeNvidiaProviderAuthority?: typeof import("../state/registry").setNativeNvidiaProviderAuthority;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult | void;
@@ -635,6 +652,41 @@ function releaseSupersededOllamaModel(
   if (authorityRefusal) throw authorityRefusal;
 }
 
+async function rejectNativeLocalSetupFailure(input: {
+  error: unknown;
+  attachment?: NativeLocalProviderAttachment;
+  reservationEntered: boolean;
+  sandboxName: string | null;
+  gatewayName: string;
+  deps: SetupInferenceDeps;
+}): Promise<never> {
+  if (
+    input.attachment &&
+    !input.reservationEntered &&
+    input.deps.providerAdapter &&
+    input.sandboxName
+  ) {
+    try {
+      await retireUnreservedNativeLocalProvider({
+        adapter: input.deps.providerAdapter,
+        expected: input.attachment,
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        getSandbox: input.deps.getSandbox,
+        clearAuthority: input.deps.clearNativeLocalProviderAuthority,
+      });
+    } catch (cleanupError) {
+      throw new Error(
+        `${hostLocalInferenceFailureDetail(input.error, input.deps)}\n  Native local provider cleanup was not confirmed: ${hostLocalInferenceFailureDetail(cleanupError, input.deps)}`,
+        { cause: input.error },
+      );
+    }
+  }
+  if (input.error instanceof HostLocalInferenceBranchExit)
+    return input.deps.exitProcess(input.error.code);
+  throw input.error;
+}
+
 export function createSetupInference(
   defaults: SetupInferenceDeps,
   overrides: Partial<SetupInferenceDeps> = {},
@@ -656,6 +708,15 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
+    const selectingNativeLocal = usesNativeLocalInferenceForAgent(
+      options.agentName ??
+        options.hostLocalInference?.request.application ??
+        (sandboxName ? deps.getSandbox?.(sandboxName)?.agent : undefined),
+      provider,
+      endpointUrl,
+    );
+    if (selectingNativeLocal)
+      await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
@@ -681,7 +742,7 @@ export function createSetupInference(
           );
           return deps.exitProcess(1);
         }
-        if (!isNativeNvidiaProvider(provider)) {
+        if (!isNativeNvidiaProvider(provider) && !selectingNativeLocal) {
           const observedRoute = await deps.inferenceRouteObserver.observeInferenceRoute({
             target: { kind: "named", gatewayName },
           });
@@ -770,12 +831,14 @@ export function createSetupInference(
         const hostLocalProviderErrors: string[] = [];
         const hostLocalSelection = options.hostLocalInference;
         let routeReserved = false;
+        let nativeLocalReservationEntered = false;
         let hostLocalInferenceReceipt: string | null = null;
         let hostLocalInferenceProvenance:
           | import("../state/registry/types").SandboxEntry["hostLocalInferenceProvenance"]
           | undefined;
         let hostLocalInferenceGatewayPortAuthority: number | undefined;
         let hostLocalInferenceRuntimeProviderId: string | undefined;
+        let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
@@ -795,6 +858,7 @@ export function createSetupInference(
             reservationSessionId: options.reservationSessionId,
             hostLocalInferenceReceipt,
             ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
             ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
             ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
               ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
@@ -806,6 +870,8 @@ export function createSetupInference(
           if (releaseAbandonedRouteReservation(name, route)) {
             deps.log(`  Released an abandoned inference route reservation for sandbox '${name}'.`);
           }
+          // A failed response can follow a durable registry write. Retain authority once publication starts.
+          nativeLocalReservationEntered = true;
           const reserved = deps.updateSandbox(name, route);
           routeReserved = reserved;
           return reserved;
@@ -816,11 +882,12 @@ export function createSetupInference(
           gatewayName,
           revalidateSandboxIdentity,
         );
-        const providerExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
-          ? (code: number): never => {
-              throw new HostLocalInferenceBranchExit(code);
-            }
-          : deps.exitProcess;
+        const providerExitProcess: CommonDeps["exitProcess"] =
+          hostLocalSelection || selectingNativeLocal
+            ? (code: number): never => {
+                throw new HostLocalInferenceBranchExit(code);
+              }
+            : deps.exitProcess;
         const ambiguousRouteExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
           ? (code: number): never => {
               throw new HostLocalInferenceBranchExit(code, true);
@@ -833,12 +900,61 @@ export function createSetupInference(
           : deps.error;
         const selectedUpsertProvider: CommonDeps["upsertProvider"] = async (...args) => {
           revalidateSandboxIdentity?.("register the inference provider");
+          if (selectingNativeLocal) {
+            if (!sandboxName) throw new Error("Native local inference requires a sandbox.");
+            if (hostLocalGatewayMutation?.registerNativeProvider) {
+              nativeLocalProviderAttachment =
+                await hostLocalGatewayMutation.registerNativeProvider();
+              return { ok: true };
+            }
+            if (!deps.providerAdapter)
+              throw new Error("Native local inference requires a provider adapter.");
+            const [name, , sourceCredentialEnv, selectedEndpoint, env] = args;
+            const recorded = deps.getSandbox?.(sandboxName);
+            if (
+              recorded &&
+              recorded.pendingRouteReservation !== true &&
+              usesNativeLocalInference(recorded.provider, recorded.endpointUrl) &&
+              !normalizeNativeLocalProviderAttachment(recorded.nativeLocalProviderAttachment)
+            ) {
+              throw new Error("Recreate this beta sandbox before using native local inference.");
+            }
+            const value = env?.[sourceCredentialEnv] ?? null;
+            const hostReachableEndpoint =
+              hostLocalRoute?.gatewayProviderBaseUrl ??
+              gatewayReachableCompatibleEndpointUrl(name, selectedEndpoint);
+            if (typeof hostReachableEndpoint !== "string")
+              throw new Error("Native local inference endpoint is missing.");
+            nativeLocalProviderAttachment = await prepareNativeLocalSelection({
+              adapter: deps.providerAdapter,
+              binding: {
+                provider: name as NativeLocalProvider,
+                endpointUrl: hostReachableEndpoint,
+                authMode:
+                  (name === "ollama-local" && value === "ollama") ||
+                  (name === "vllm-local" && value === "dummy")
+                    ? "sentinel"
+                    : "authenticated",
+                gatewayName,
+                sandboxName,
+              },
+              credentialValue: value,
+              ownedProxy:
+                (name === "ollama-local" && !hostLocalRoute && deps.shouldFrontOllamaWithProxy()) ||
+                (name === "compatible-endpoint" &&
+                  sourceCredentialEnv === deps.ollamaProxyCredentialEnv),
+              readAuthority: deps.getNativeLocalProviderAuthority,
+              writeAuthority: deps.setNativeLocalProviderAuthority,
+            });
+            return { ok: true };
+          }
           const upsertProvider = hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
           return await upsertProvider(...args);
         };
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
           inferenceRouteMutator: revalidatingInferenceRouteMutator,
+          nativeLocalInference: selectingNativeLocal,
           gatewayName,
           upsertProvider: selectedUpsertProvider,
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
@@ -1065,19 +1181,25 @@ export function createSetupInference(
                 getLocalProviderBaseUrl: hostLocalRoute
                   ? () => hostLocalRoute.gatewayProviderBaseUrl
                   : deps.getLocalProviderBaseUrl,
-                applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
-                  hostLocalRoute
-                    ? {
-                        ...deps,
-                        exitProcess: commonDeps.exitProcess,
-                        error: commonDeps.error,
-                      }
-                    : deps,
-                  revalidatingInferenceRouteMutator,
-                  gatewayName,
-                  revalidateSandboxIdentity,
-                  ambiguousRouteExitProcess,
-                ),
+                applyLocalInferenceRoute: selectingNativeLocal
+                  ? async () => {
+                      if (!nativeLocalProviderAttachment)
+                        throw new Error("Native local provider registration was not confirmed.");
+                      return false;
+                    }
+                  : resolveLocalInferenceRouteApplier(
+                      hostLocalRoute
+                        ? {
+                            ...deps,
+                            exitProcess: commonDeps.exitProcess,
+                            error: commonDeps.error,
+                          }
+                        : deps,
+                      revalidatingInferenceRouteMutator,
+                      gatewayName,
+                      revalidateSandboxIdentity,
+                      ambiguousRouteExitProcess,
+                    ),
                 run: deps.run,
                 VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
                 getManagedVllmProviderBinding: hostLocalRoute
@@ -1123,19 +1245,25 @@ export function createSetupInference(
                   getLocalProviderBaseUrl: hostLocalRoute
                     ? () => hostLocalRoute.gatewayProviderBaseUrl
                     : deps.getLocalProviderBaseUrl,
-                  applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
-                    hostLocalRoute
-                      ? {
-                          ...deps,
-                          exitProcess: commonDeps.exitProcess,
-                          error: commonDeps.error,
-                        }
-                      : deps,
-                    revalidatingInferenceRouteMutator,
-                    gatewayName,
-                    revalidateSandboxIdentity,
-                    ambiguousRouteExitProcess,
-                  ),
+                  applyLocalInferenceRoute: selectingNativeLocal
+                    ? async () => {
+                        if (!nativeLocalProviderAttachment)
+                          throw new Error("Native local provider registration was not confirmed.");
+                        return false;
+                      }
+                    : resolveLocalInferenceRouteApplier(
+                        hostLocalRoute
+                          ? {
+                              ...deps,
+                              exitProcess: commonDeps.exitProcess,
+                              error: commonDeps.error,
+                            }
+                          : deps,
+                        revalidatingInferenceRouteMutator,
+                        gatewayName,
+                        revalidateSandboxIdentity,
+                        ambiguousRouteExitProcess,
+                      ),
                   run: deps.run,
                   shouldFrontOllamaWithProxy: hostLocalRoute
                     ? () => false
@@ -1190,7 +1318,10 @@ export function createSetupInference(
         try {
           const providerResult = await setupSelectedProvider();
           if (providerResult) return providerResult;
-          if (!nativeNvidiaProviderAttachment) commonDeps.verifyInferenceRoute(provider, model);
+          if (selectingNativeLocal && !nativeLocalProviderAttachment)
+            throw new Error("Native local provider registration was not confirmed.");
+          if (!nativeNvidiaProviderAttachment && !nativeLocalProviderAttachment)
+            commonDeps.verifyInferenceRoute(provider, model);
           if (hostLocalRoute) {
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
@@ -1275,7 +1406,16 @@ export function createSetupInference(
           shouldLogSuccessfulRoute = true;
           return { ok: true as const };
         } catch (error) {
-          if (!hostLocalRoute || !hostLocalSelection) throw error;
+          if (!hostLocalRoute || !hostLocalSelection) {
+            return rejectNativeLocalSetupFailure({
+              error,
+              attachment: nativeLocalProviderAttachment,
+              reservationEntered: nativeLocalReservationEntered,
+              sandboxName,
+              gatewayName,
+              deps,
+            });
+          }
           emitHostLocalInferenceFailure(
             hostLocalSelection.runtimeProviderId,
             error instanceof HostLocalInferenceBranchExit

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeLocalProviderAttachment } from "../../inference/native-local/contract";
+
 import type { InferenceSelection } from "../../inference/selection";
 import type { NativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import type {
@@ -145,6 +147,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   managedStartupProtocol?: "identity-bound" | "legacy-unbound";
   /** Canonical provider-neutral receipt for an out-of-sandbox inference runtime. */
   hostLocalInferenceReceipt?: string | null;
+  /** Exact host-local provider identity attached to this sandbox. */
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   /** Exact OpenShell provider identity attached for native NVIDIA hosted inference. */
   nativeNvidiaProviderAttachment?: NativeNvidiaProviderAttachment;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
@@ -246,6 +250,8 @@ export interface SandboxRegistry {
   defaultSandbox: string | null;
   defaultSelectionRevision?: number;
   extraProviders?: string[];
+  /** NemoClaw-owned host-local provider identities keyed by provider name. */
+  nativeLocalProviderAuthorities?: Record<string, NativeLocalProviderAttachment>;
   /** Exact NemoClaw-owned native NVIDIA provider identity for each OpenShell gateway. */
   nativeNvidiaProviderAuthorities?: Record<string, NativeNvidiaProviderAttachment>;
 }

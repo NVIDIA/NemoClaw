@@ -593,3 +593,53 @@ export function recordInferenceSetFailure(
     gatewayName,
   );
 }
+
+export { retireUnselectedNativeLocalProviders } from "../inference/native-local/selection";
+
+// Provider selection owns attachment preparation and compensation for both paths.
+export {
+  prepareNativeLocalSwitch,
+  rollbackNativeLocalSelection,
+  prepareNativeLocalSelectionBoundary,
+  detachPreviousNativeLocalBeforePublish,
+  nativeLocalSelectionRegistryFields,
+} from "./inference/native-local";
+export { requireNativeProviderPolicy } from "../adapters/openshell/provider-policy";
+export {
+  usesNativeLocalInference,
+  normalizeNativeLocalProviderAttachment,
+} from "../inference/native-local/contract";
+export {
+  detachNativeLocalProvider,
+  ensureNativeLocalProviderAttached,
+} from "../inference/native-local/profile";
+
+/** Restore only a distinct observed shared route; native providers own their compensation. */
+export async function restoreSharedInferenceSelection(input: {
+  nativeSelection: boolean;
+  rollbackRoute: { provider: string; model: string } | null;
+  provider: string;
+  model: string;
+  gatewayName: string;
+  mutator: import("../adapters/openshell/inference-route").OpenShellInferenceRouteMutator;
+}): Promise<string | null> {
+  if (input.nativeSelection) return null;
+  const rollbackRoute = input.rollbackRoute;
+  if (!rollbackRoute) return "the pre-mutation gateway route was not configured";
+  if (rollbackRoute.provider === input.provider && rollbackRoute.model === input.model) {
+    return (
+      `the route observed immediately before this attempt already selected '${input.provider}' / '${input.model}', ` +
+      "so there is no distinct prior inference selection to restore"
+    );
+  }
+  const result = await input.mutator.setInferenceRoute({
+    target: { kind: "named", gatewayName: input.gatewayName },
+    route: rollbackRoute,
+    verification: "skip",
+  });
+  if (result.ok) return null;
+  if (!result.ambiguous && result.error.kind === "command" && result.error.exitCode !== null) {
+    return `the restore command exited with status ${String(result.error.exitCode)}`;
+  }
+  return result.error.message;
+}

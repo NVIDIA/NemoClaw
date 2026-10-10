@@ -289,6 +289,33 @@ describe("textContainsHighConfidenceCredential", () => {
   });
 });
 
+describe.each([
+  ["raw text", textContainsCredential],
+  ["high-confidence text", textContainsHighConfidenceCredential],
+] as const)("native local placeholder in %s", (_name, scan) => {
+  const sentinel = "sk-OPENSHELL-RESOLVE-ENV-NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+
+  it.each([
+    ["literal", sentinel],
+    ["bundled source", `const accepted = new Set(["${sentinel}"]);`],
+    ["configuration", JSON.stringify({ apiKey: sentinel })],
+    ["authorization", `Authorization: Bearer ${sentinel}`],
+  ])("preserves the exact non-secret reference in %s", (_context, text) => {
+    expect(scan(text)).toBe(false);
+  });
+
+  it.each([
+    `${sentinel}-secret`,
+    `${sentinel}_SECRET`,
+    sentinel.replace("INFERENCE_TOKEN", "OTHER_TOKEN"),
+    sentinel.toLowerCase(),
+    `_${sentinel}`,
+    `${sentinel} sk-proj-0123456789abcdefghij`,
+  ])("still rejects credential material or altered references: %s", (text) => {
+    expect(scan(text)).toBe(true);
+  });
+});
+
 describe("textContainsCredential", () => {
   it.each([
     "request failed: Authorization: Bearer opaqueCredentialPayloadZ1234567890",

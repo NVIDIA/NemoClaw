@@ -186,3 +186,41 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     );
   });
 });
+
+it.each(["v42", `s${"a".repeat(64)}`])(
+  "preserves native credential identity %s through startup and a later shell",
+  (identity) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-native-"));
+    tempDirs.push(dir);
+    const fixture = makeStartScriptFixture(dir);
+    const reference = `openshell:resolve:env:${identity}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
+    const result = spawnSync(
+      fixture.scriptPath,
+      ["sh", "-c", 'printf "NATIVE_REF=%s\\n" "$NEMOCLAW_LOCAL_INFERENCE_TOKEN"'],
+      {
+        env: { ...process.env, NEMOCLAW_LOCAL_INFERENCE_TOKEN: reference },
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`NATIVE_REF=${reference}`);
+    const laterReference = "openshell:resolve:env:v43_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    const shell = spawnSync(
+      "bash",
+      [
+        "-c",
+        'source "$1"; printf "%s" "$NEMOCLAW_LOCAL_INFERENCE_TOKEN"',
+        "fixture",
+        fixture.envFile,
+      ],
+      {
+        env: { ...process.env, NEMOCLAW_LOCAL_INFERENCE_TOKEN: laterReference },
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(shell.status, shell.stderr).toBe(0);
+    expect(shell.stdout).toBe(laterReference);
+  },
+);

@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  usesNativeLocalInference,
+} from "../../inference/native-local/contract";
+
 import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
@@ -22,6 +27,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "lifecycleLiveIdentityFingerprint",
   "model",
   "name",
+  "nativeLocalProviderAttachment",
   "nativeNvidiaProviderAttachment",
   "openshellDriver",
   "pendingRouteReservation",
@@ -82,6 +88,11 @@ function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   if (entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean") {
     return false;
   }
+  if (
+    entry.nativeLocalProviderAttachment !== undefined &&
+    !normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment)
+  )
+    return false;
   if (
     entry.nativeNvidiaProviderAttachment !== undefined &&
     !normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
@@ -188,11 +199,13 @@ export function isPublishedSandboxRegistration(entry: { pendingRouteReservation?
 
 /** True when an entry participates in the inference route shared by its gateway. */
 export function isSharedGatewayRouteParticipant(entry: {
+  nativeLocalProviderAttachment?: unknown;
   pendingRouteReservation?: true;
   createdAt?: string;
   provider?: string | null;
   model?: string | null;
 }): boolean {
+  if (normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment)) return false;
   if (isPublishedSandboxRegistration(entry)) return true;
   return (
     isRouteOnlySandboxReservation(entry) &&
@@ -347,4 +360,20 @@ export function sandboxRegistrationMatchesInferenceRouteReservation(
       normalizeSandboxInferenceRouteSelection(reservation.authority.selection),
     )
   );
+}
+
+export { normalizeNativeLocalProviderAttachment };
+
+/** Keep a native attachment only when reusing its recorded route and gateway. */
+export function retainedNativeLocalProviderAttachment(
+  existing: SandboxEntry | undefined,
+  selection: Pick<InferenceSelection, "provider" | "endpointUrl"> & { gatewayName: string },
+): SandboxEntry["nativeLocalProviderAttachment"] {
+  return existing &&
+    usesNativeLocalInference(selection.provider, selection.endpointUrl) &&
+    selection.provider === existing.provider &&
+    selection.endpointUrl === existing.endpointUrl &&
+    selection.gatewayName === existing.gatewayName
+    ? existing.nativeLocalProviderAttachment
+    : undefined;
 }

@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
+
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../inference/native-local/agent-config";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
@@ -49,6 +55,7 @@ export type SandboxInferenceInvocationInput = {
   model: string;
   preferredInferenceApi: string | null;
   nativeProvider?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
 };
 
 export type SandboxInferenceInvocationResult =
@@ -82,10 +89,20 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   headers: string[];
   payload: Record<string, unknown>;
 } {
+  const local = normalizeNativeLocalProviderAttachment(input.nativeLocalProviderAttachment);
+  if (
+    input.nativeLocalProviderAttachment &&
+    (!local ||
+      local.sandboxName !== input.sandboxName ||
+      local.provider !== input.provider ||
+      (input.gatewayName && local.gatewayName !== input.gatewayName))
+  )
+    throw new Error("Native local inference probe authority changed.");
   const config = getSandboxInferenceConfig(
     input.model,
     input.provider,
     input.preferredInferenceApi,
+    local?.endpointUrl ?? null,
   );
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
   const baseUrl = (
@@ -95,7 +112,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
         ? "https://inference.local/v1"
         : config.inferenceBaseUrl
   ).replace(/\/+$/u, "");
-  const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+  const apiBaseUrl = local || baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
   if (config.inferenceApi === "anthropic-messages") {
     return {
       endpoint: `${apiBaseUrl}/messages`,
@@ -142,15 +159,19 @@ export function buildSandboxInferenceInvocationCommand(
 ): string {
   const request = buildProbeRequest(input);
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const useNativeLocal = Boolean(
+    normalizeNativeLocalProviderAttachment(input.nativeLocalProviderAttachment),
+  );
   const headerArgs =
     ["Content-Type: application/json", ...request.headers]
       .map((header) => `-H ${shellQuote(header)}`)
-      .join(" ") + (useNativeNvidia ? ' -H "$AUTH_HEADER"' : "");
+      .join(" ") + (useNativeNvidia || useNativeLocal ? ' -H "$AUTH_HEADER"' : "");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
     ...(useNativeNvidia ? [NATIVE_NVIDIA_AUTH_HEADER_SCRIPT] : []),
+    ...(useNativeLocal ? [NATIVE_LOCAL_AUTH_HEADER_SCRIPT] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
     `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
@@ -261,6 +282,8 @@ export async function probeSandboxInferenceInvocation(
       input.model,
       input.provider,
       input.preferredInferenceApi,
+      normalizeNativeLocalProviderAttachment(input.nativeLocalProviderAttachment)?.endpointUrl ??
+        null,
     ).inferenceApi;
     if (httpStatus !== null && validateInferenceResponseBody(inferenceApi, body).ok) {
       return { ok: true };

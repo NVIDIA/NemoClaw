@@ -1,13 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import {
+  nativeLocalIdentity,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  type NativeLocalBinding,
+} from "../inference/native-local/contract";
+import * as nativeProfile from "../inference/native-local/profile";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellSandboxBufferedCommandRequest } from "../adapters/openshell/sandbox-command";
 import {
+  runProviderNeutralScript,
+  providerNeutralResponses,
   runSmokeScript,
   writeFakeCurl,
   writeFakeSleep,
@@ -123,173 +130,6 @@ const allAgentProofAuthorities = [
   },
 ] as const satisfies readonly { agentName: string; authority: ProviderNeutralAuthority }[];
 
-function providerNeutralResponses(
-  model: string,
-  includeToolCall = true,
-  toolArguments: unknown = "{}",
-): unknown[] {
-  return [
-    { model, choices: [{ message: { content: "PONG" } }] },
-    {
-      model,
-      choices: [
-        {
-          message: {
-            tool_calls: includeToolCall
-              ? [
-                  {
-                    function: {
-                      name: "nemoclaw_route_probe",
-                      arguments: toolArguments,
-                    },
-                  },
-                ]
-              : [],
-          },
-        },
-      ],
-    },
-  ];
-}
-
-function runProviderNeutralScript(options: {
-  authority: ProviderNeutralAuthority;
-  model?: string;
-  script?: string;
-  responses?: unknown[];
-  denial?: unknown;
-  denialBytes?: readonly number[];
-  denialOversized?: boolean;
-  directError?: "connection-refused" | "dns" | "timeout";
-  managedProxyResponses?: unknown[];
-}) {
-  const model = options.model ?? "qwen3.5-9b";
-  const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
-  const responses = options.responses ?? providerNeutralResponses(model);
-  const denial =
-    options.denial ??
-    ({
-      error: "policy_denied",
-      detail: `POST ${directAuthority}/v1/chat/completions not permitted by policy`,
-    } satisfies Record<string, string>);
-  const denialBytes =
-    options.denialBytes ?? Array.from(Buffer.from(JSON.stringify(denial), "utf8"));
-  const denialBody = options.denialOversized
-    ? 'b"x" * 1048577'
-    : `bytes(${JSON.stringify(denialBytes)})`;
-  const prelude = `
-import atexit
-import errno
-import io
-import json
-import socket
-import time
-import urllib.error
-import urllib.request
-
-responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
-managed_proxy_responses = json.loads(${JSON.stringify(
-    JSON.stringify(options.managedProxyResponses ?? []),
-  )})
-managed_proxy_enabled = ${options.managedProxyResponses === undefined ? "False" : "True"}
-denial_bytes = ${denialBody}
-inference_request_tokens = []
-direct_request_count = []
-direct_request_urls = []
-managed_proxy_request_count = []
-managed_proxy_request_urls = []
-sleep_delays = []
-direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
-
-def emit_request_evidence():
-    print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
-    print("DIRECT_REQUEST_COUNT=" + str(len(direct_request_count)))
-    print("DIRECT_REQUEST_URLS=" + ",".join(direct_request_urls))
-    print("MANAGED_PROXY_REQUEST_COUNT=" + str(len(managed_proxy_request_count)))
-    print("MANAGED_PROXY_REQUEST_URLS=" + ",".join(managed_proxy_request_urls))
-    print("SLEEP_DELAYS=" + ",".join(str(value) for value in sleep_delays))
-
-atexit.register(emit_request_evidence)
-
-class FakeResponse:
-    def __init__(self, status, payload):
-        self.status = status
-        self.payload_source = payload
-        self.payload = json.dumps(payload).encode("utf-8")
-    def __enter__(self):
-        return self
-    def __exit__(self, exc_type, exc, traceback):
-        return False
-    def read(self, size=-1):
-        if isinstance(self.payload_source, dict) and self.payload_source.get("__oversized__") is True:
-            return b"x" * (size if size >= 0 else 1048577)
-        return self.payload if size < 0 else self.payload[:size]
-
-class FakeOpener:
-    def open(self, request, timeout):
-        if request.full_url.startswith("https://inference.local/"):
-            if not responses:
-                raise RuntimeError("test response queue exhausted")
-            request_data = json.loads(request.data.decode("utf-8"))
-            inference_request_tokens.append(
-                request_data.get("max_tokens", request_data.get("max_completion_tokens"))
-            )
-            return FakeResponse(200, responses.pop(0))
-        direct_request_count.append(1)
-        direct_request_urls.append(request.full_url)
-        if direct_error == "connection-refused":
-            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
-        if direct_error == "dns":
-            raise urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "not known"))
-        if direct_error == "timeout":
-            raise urllib.error.URLError(TimeoutError("timed out"))
-        raise urllib.error.HTTPError(
-            request.full_url,
-            403,
-            "Forbidden",
-            {},
-            io.BytesIO(denial_bytes),
-        )
-
-class ManagedProxyOpener:
-    def open(self, request, timeout):
-        managed_proxy_request_count.append(1)
-        managed_proxy_request_urls.append(request.full_url)
-        if not managed_proxy_responses:
-            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
-        request_data = json.loads(request.data.decode("utf-8"))
-        inference_request_tokens.append(
-            request_data.get("max_tokens", request_data.get("max_completion_tokens"))
-        )
-        return FakeResponse(200, managed_proxy_responses.pop(0))
-
-def build_test_opener(*handlers):
-    proxy_disabled = any(
-        isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
-        for handler in handlers
-    )
-    if managed_proxy_enabled and not proxy_disabled:
-        return ManagedProxyOpener()
-    return FakeOpener()
-
-urllib.request.build_opener = build_test_opener
-time.sleep = lambda seconds: sleep_delays.append(seconds)
-`;
-  const script =
-    options.script ?? buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
-  return spawnSync("python3", ["-c", `${prelude}\n${script}`], {
-    encoding: "utf8",
-    env:
-      options.managedProxyResponses === undefined
-        ? process.env
-        : {
-            ...process.env,
-            HTTPS_PROXY: "http://openshell-runtime-proxy.invalid:8080",
-            NO_PROXY: "",
-          },
-  });
-}
-
 describe("compatible endpoint sandbox smoke helpers", () => {
   const providerMetadata = (name: string): string =>
     [
@@ -314,7 +154,12 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         stderr: "",
       })),
     };
-    const smoke = createCompatibleEndpointSmoke(defaultRun, executor, (value) => value);
+    const smoke = createCompatibleEndpointSmoke(
+      defaultRun,
+      executor,
+      (value) => value,
+      () => null,
+    );
     await smoke.verify(
       { sandboxName: "smoke-sandbox", provider: "compatible-endpoint", model: "baseline" },
       scopedRun,
@@ -346,6 +191,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       () => ({ status: testCase.status, stdout: providerMetadata("compatible-endpoint") }),
       executor,
       (value) => value,
+      () => null,
     );
     try {
       await expect(
@@ -768,6 +614,46 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).toContain("ProxyHandler({})");
     expect(script).not.toContain("curl");
   });
+
+  it.each(["v42", `s${"a".repeat(64)}`])(
+    "preserves issued native credential identity %s in content and tool requests (#12558)",
+    (identity) => {
+      const binding: NativeLocalBinding = {
+        provider: "ollama-local",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+        authMode: "sentinel",
+        gatewayName: "nemoclaw",
+        sandboxName: "native",
+      };
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "owned",
+      };
+      const authority = allAgentProofAuthorities[0].authority;
+      const result = runProviderNeutralScript({
+        authority,
+        script: buildProviderNeutralInferenceSandboxSmokeScript("qwen3.5-9b", authority, receipt),
+        inferenceUrl: `${binding.endpointUrl}/chat/completions`,
+        expectedAuthorization: `Bearer openshell:resolve:env:${identity}_${NATIVE_LOCAL_CREDENTIAL_ENV}`,
+        runtimeEnvironment: {
+          [NATIVE_LOCAL_CREDENTIAL_ENV]: `openshell:resolve:env:${identity}_${NATIVE_LOCAL_CREDENTIAL_ENV}`,
+        },
+        denial: {
+          error: "policy_denied",
+          detail: "POST host.openshell.internal:11434/v1/nemoclaw-denied not permitted by policy",
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+      expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+      expect(result.stdout).toContain(
+        "DIRECT_REQUEST_URLS=http://host.openshell.internal:11434/v1/nemoclaw-denied",
+      );
+    },
+  );
 
   it.each(allAgentProofAuthorities)(
     "executes exact model, required tool, and policy-deny proof for $agentName",
@@ -1455,4 +1341,86 @@ JSON
     expect(command).toContain("\n");
     expect(command).not.toContain("base64.b64decode");
   });
+});
+
+it("reports the native provider identity when a verified lookup subsequently fails (#12558)", async () => {
+  const binding = {
+    provider: "vllm-local",
+    sandboxName: "native",
+    gatewayName: "nemoclaw",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+    authMode: "authenticated",
+  } as const;
+  const receipt = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned-provider-id",
+  };
+  const verification = vi
+    .spyOn(nativeProfile, "verifyNativeLocalProviderAttachment")
+    .mockResolvedValue(receipt);
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const runOpenshell = vi.fn().mockReturnValue({ status: 1, stderr: "provider query failed" });
+  try {
+    await expect(
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "native",
+        provider: "vllm-local",
+        model: "model-a",
+        nativeLocalProviderAttachment: receipt,
+        runOpenshell,
+        sandboxCommandExecutor: bufferedExecutorThrough(runOpenshell),
+        redact: (value) => value,
+        onFailure: () => {
+          throw new Error("verification failed");
+        },
+      }),
+    ).rejects.toThrow("verification failed");
+    const diagnostics = error.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain(receipt.providerName);
+    expect(diagnostics).toContain("Native sandbox inference");
+    expect(diagnostics).not.toContain("inference.local");
+    expect(diagnostics).not.toContain("Compatible endpoint provider");
+  } finally {
+    verification.mockRestore();
+    error.mockRestore();
+    log.mockRestore();
+  }
+});
+
+it.each([
+  "",
+  "short",
+  "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  "openshell:resolve:env:v42_OTHER_KEY",
+  "openshell:resolve:env:v42_NEMOCLAW_LOCAL_INFERENCE_TOKEN\n",
+])("refuses invalid native smoke reference %# without a request", (reference) => {
+  const binding: NativeLocalBinding = {
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+    credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+    authMode: "sentinel",
+    gatewayName: "nemoclaw",
+    sandboxName: "native",
+  };
+  const receipt = {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "owned",
+  };
+  const authority = allAgentProofAuthorities[0].authority;
+  const result = runProviderNeutralScript({
+    authority,
+    script: buildProviderNeutralInferenceSandboxSmokeScript("qwen3.5-9b", authority, receipt),
+    runtimeEnvironment: { [NATIVE_LOCAL_CREDENTIAL_ENV]: reference },
+  });
+  expect(result.status).toBe(2);
+  expect(result.stderr.trim()).toBe(
+    "Native local inference requires an issued credential reference",
+  );
+  expect(result.stdout).not.toContain("INFERENCE_SMOKE_OK");
 });
