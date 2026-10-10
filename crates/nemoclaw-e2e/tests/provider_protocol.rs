@@ -217,6 +217,8 @@ fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
     );
 }
 
+// A managed gateway needs a local engine, which only Unix clients reach.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
 async fn production_provider_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {
