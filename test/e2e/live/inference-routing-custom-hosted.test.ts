@@ -16,10 +16,13 @@ import {
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
+import { expect, test, type E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { verifyFreshNativeAnthropicEndpoint } from "./inference-routing-native-anthropic.ts";
 import { verifyFreshNativeHermesEndpoint } from "./inference-routing-native-hermes.ts";
-import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import {
+  startFakeOpenAiCompatibleServer,
+  type FakeOpenAiCompatibleServer,
+} from "../fixtures/fake-openai-compatible.ts";
 
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
@@ -45,6 +48,79 @@ import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 
 // Native custom hosted lifecycle evidence has its own bounded catalogue job.
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
+async function verifyFreshNativeDeepAgentsEndpoint(
+  fixtures: E2ETargetFixtures,
+  endpoint: FakeOpenAiCompatibleServer,
+  apiKey: string,
+  model: string,
+): Promise<void> {
+  const { artifacts, cleanup, host, progress, sandbox } = fixtures;
+  const sandboxName = inferenceSandboxName("e2e-native-dcode");
+  cleanup.add(`strict native Deep Agents cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+  );
+  const onboard = await onboardSandbox(
+    artifacts,
+    sandboxName,
+    {
+      NEMOCLAW_AGENT: "langchain-deepagents-code",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: endpoint.baseUrl,
+      NEMOCLAW_MODEL: model,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      COMPATIBLE_API_KEY: apiKey,
+    },
+    [apiKey],
+    "tc-inf-11-onboard-native-dcode",
+    progress,
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+  );
+  expectOnboardSuccess(onboard, "TC-INF-11 fresh native Deep Agents onboard");
+  const receipt = normalizeNativeCustomProviderAttachment(
+    getSandbox(sandboxName)?.nativeCustomProviderAttachment,
+    sandboxName,
+  )!;
+  expect(receipt).toMatchObject({ api: "openai-completions", endpointUrl: endpoint.baseUrl });
+  const env = buildAvailabilityProbeEnv();
+  delete env.COMPATIBLE_API_KEY;
+  const offset = endpoint.requests().length;
+  const turn = await sandbox.exec(
+    sandboxName,
+    ["dcode", "-n", "Reply with the fixture response.", "--json"],
+    {
+      artifactName: "tc-inf-11-native-dcode-fresh-agent-turn",
+      env,
+      redactionValues: [apiKey],
+      timeoutMs: 180_000,
+    },
+  );
+  expect(turn.exitCode, resultText(turn)).toBe(0);
+  const response = JSON.parse(turn.stdout);
+  expect(response.data).toMatchObject({ status: "success", exit_code: 0 });
+  expect(response.data.response.trim()).toBe("PONG");
+  expect(
+    endpoint
+      .requests()
+      .slice(offset)
+      .some(
+        (request) =>
+          request.auth === "ok" &&
+          request.method === "POST" &&
+          request.path === "/v1/chat/completions" &&
+          request.model === model,
+      ),
+  ).toBe(true);
+  await cleanupSandbox(host, sandbox, sandboxName, { strict: true });
+  const absent = await sandbox.openshell(["provider", "get", receipt.providerName], {
+    artifactName: "tc-inf-11-native-dcode-provider-absent",
+    env,
+    timeoutMs: 30_000,
+  });
+  expect(absent.exitCode, resultText(absent)).not.toBe(0);
+  expect(resultText(absent)).toMatch(/\bNotFound\b|\bnot\s+found\b|does\s+not\s+exist/iu);
+  await artifacts.writeJson("tc-inf-11-native-dcode-receipt.json", receipt);
+}
 
 test(
   "TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)",
@@ -121,6 +197,7 @@ test(
         "destroy removes the owned provider and HTTPS route",
         "fresh native Anthropic onboarding serves authenticated Messages from an agent turn",
         "ordinary native Hermes serves a fresh authenticated OpenAI request after restart",
+        "fresh native Deep Agents Code consumes an authenticated OpenAI response",
       ],
       endpointUrl,
       model,
@@ -698,6 +775,7 @@ test(
     ).toBe(true);
     await verifyFreshNativeAnthropicEndpoint(fixtures, { sandboxName, apiKey, publicHttpAddress });
     await verifyFreshNativeHermesEndpoint(fixtures, { endpoint: publicHttp, apiKey, model });
+    await verifyFreshNativeDeepAgentsEndpoint(fixtures, publicHttp, apiKey, model);
     progress.phase("verify final native provider cleanup");
     await cleanupSandbox(host, sandbox, peerName, { strict: true });
     const peerProviderAfterDestroy = await sandbox.openshell(

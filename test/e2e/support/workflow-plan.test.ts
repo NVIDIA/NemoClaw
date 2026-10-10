@@ -313,7 +313,7 @@ describe("E2E workflow plan", () => {
     const lifecycle = rows.find((row) => row.id === "inference-routing-custom-hosted");
     expect(lifecycle?.shard).toBe("custom-hosted");
     expect(catalogueTarget("inference-routing-custom-hosted").agentRuntime).toBe(
-      "openclaw + hermes",
+      "openclaw + hermes + langchain-deepagents-code",
     );
   });
 
