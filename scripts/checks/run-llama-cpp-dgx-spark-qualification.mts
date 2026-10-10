@@ -823,7 +823,9 @@ function inspectBuiltImage(
   return { digest, imageId, reference };
 }
 
-function resolveRequestGuardAddress(names: RuntimeNames): string {
+export function resolveRequestGuardAddress(
+  names: Pick<RuntimeNames, "containerName" | "networkName" | "registryOwner">,
+): string {
   if (
     dockerContainerOwner(names.containerName) !== names.registryOwner ||
     dockerNetworkOwner(names.networkName) !== names.registryOwner
