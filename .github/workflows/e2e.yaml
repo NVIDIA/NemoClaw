@@ -3305,6 +3305,7 @@ jobs:
       credential_boundary: selected hosted inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
+      hosted_inference_model: ${{ vars[matrix.model_env] }}
       runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
       checkout_sha: ${{ inputs.checkout_sha }}
       workflow_sha: ${{ inputs.workflow_sha }}

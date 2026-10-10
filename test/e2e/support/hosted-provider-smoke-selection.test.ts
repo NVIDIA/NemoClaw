@@ -15,7 +15,10 @@ import {
   E2E_TARGET_CATALOGUE,
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
-import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import {
+  buildE2eWorkflowPlan,
+  validateE2eWorkflowPlan,
+} from "../../../tools/e2e/workflow-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
 
 import { requireProviderSmokeSelected } from "../live/inference-routing-helpers.ts";
@@ -194,6 +197,10 @@ it.each(HOSTED_PROVIDER_SMOKE_CASES)("routes only the approved $label model", (s
   const step = profile.jobs.run.steps.find(
     (entry: { name?: string }) => entry.name === "Run catalogue E2E target",
   );
+  const plan = buildE2eWorkflowPlan({ targets: `hosted-inference-${selected.selector}` });
+  const matrix = plan.catalogueMatrices["hosted-inference"][0]!;
+  expect(matrix.model_env).toBe(selected.modelEnv);
+  expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   const observed = execFileSync(
     process.execPath,
     [
@@ -201,14 +208,17 @@ it.each(HOSTED_PROVIDER_SMOKE_CASES)("routes only the approved $label model", (s
       `
     const { readFileSync } = require("node:fs");
     const { runInNewContext } = require("node:vm");
-    const { expression, context } = JSON.parse(readFileSync(0, "utf8"));
+    const { expression, callerExpression, context } = JSON.parse(readFileSync(0, "utf8"));
+    context.inputs.hosted_inference_model = runInNewContext(callerExpression.slice(3, -2), context, { timeout: 1000 });
     process.stdout.write(runInNewContext(expression.slice(3, -2), context, { timeout: 1000 }));
   `,
     ],
     {
       input: JSON.stringify({
         expression: step.env.HOSTED_INFERENCE_MODEL,
+        callerExpression: workflow.jobs["catalogue-hosted-inference"].with.hosted_inference_model,
         context: {
+          matrix,
           inputs: { catalogue_id: `hosted-inference-${selected.selector}` },
           vars: Object.fromEntries(
             HOSTED_PROVIDER_SMOKE_CASES.map((provider) => [
@@ -224,6 +234,10 @@ it.each(HOSTED_PROVIDER_SMOKE_CASES)("routes only the approved $label model", (s
     },
   );
   expect(observed).toBe(`approved-${selected.selector}`);
+  matrix.model_env = "UNRELATED_MODEL";
+  expect(() => validateE2eWorkflowPlan(plan)).toThrow("invalid output schema");
+  delete matrix.model_env;
+  expect(() => validateE2eWorkflowPlan(plan)).toThrow("invalid output schema");
 });
 
 describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label local smoke prerequisites", (selected) => {

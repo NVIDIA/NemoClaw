@@ -108,6 +108,7 @@ export interface E2eCatalogueTarget {
 }
 
 export interface E2eCatalogueMatrixRow {
+  model_env?: string;
   id: string;
   execution_id: string;
   runtime_provider: E2eRuntimeProvider;
@@ -1894,6 +1895,13 @@ export function catalogueMatrix(
     .filter((entry) => entry.profile === profile)
     .flatMap((entry) =>
       e2eRuntimeProviders(entry.gatewayRuntimes, gatewayRuntimes).map((runtimeProvider) => ({
+        ...(profile === "hosted-inference"
+          ? {
+              model_env: HOSTED_PROVIDER_SMOKE_CASES.find(
+                (selected) => entry.id === `hosted-inference-${selected.selector}`,
+              )!.modelEnv,
+            }
+          : {}),
         id: entry.id,
         execution_id: runtimeExecutionId(entry.id, entry.shard, runtimeProvider),
         runtime_provider: runtimeProvider,

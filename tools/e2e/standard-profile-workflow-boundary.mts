@@ -195,6 +195,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       workload_source: "${{ needs.generate-matrix.outputs.workload_source }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
+      hosted_inference_model:
+        contract.job === "catalogue-hosted-inference" ? "${{ vars[matrix.model_env] }}" : undefined,
       target_id: "${{ matrix.target_id }}",
       runner:
         "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}",
@@ -276,13 +278,23 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     trusted_main: "boolean",
   };
   if (
-    Object.keys(inputs).sort().join(",") !== Object.keys(requiredInputs).sort().join(",") ||
+    Object.keys(inputs).sort().join(",") !==
+      [...Object.keys(requiredInputs), "hosted_inference_model"].sort().join(",") ||
     Object.entries(requiredInputs).some(
       ([name, type]) =>
         record(inputs[name]).required !== true || record(inputs[name]).type !== type,
     )
   ) {
     errors.push("standard E2E profile must require its exact execution-plan inputs");
+  }
+  if (
+    !isDeepStrictEqual(record(inputs.hosted_inference_model), {
+      required: false,
+      type: "string",
+      default: "",
+    })
+  ) {
+    errors.push("standard E2E profile must accept an optional selected hosted model");
   }
   const acceptedSecrets = [
     "DOCKERHUB_TOKEN",
@@ -672,6 +684,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const execute = requireStep(errors, workflowSteps, "Run catalogue E2E target");
+  if (record(execute?.env).HOSTED_INFERENCE_MODEL !== "${{ inputs.hosted_inference_model }}") {
+    errors.push("standard E2E profile must use the caller-selected hosted model");
+  }
   const executeEnv = record(execute?.env);
   if (
     !String(execute?.run).includes('if [ "$INSTALL_MODE" != "none" ]; then') ||

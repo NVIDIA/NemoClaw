@@ -48,6 +48,10 @@ on:
       credential_boundary:
         required: true
         type: string
+      hosted_inference_model:
+        required: false
+        type: string
+        default: ""
       catalogue_id:
         required: true
         type: string
@@ -534,7 +538,7 @@ jobs:
           INSTALL_MODE: ${{ inputs.install_mode }}
           CATALOGUE_ID: ${{ inputs.catalogue_id }}
           HOSTED_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.HOSTED_INFERENCE_API_KEY || '' }}
-          HOSTED_INFERENCE_MODEL: ${{ inputs.catalogue_id == 'hosted-inference-openai' && vars.NEMOCLAW_OPENAI_MODEL || inputs.catalogue_id == 'hosted-inference-anthropic' && vars.NEMOCLAW_ANTHROPIC_MODEL || inputs.catalogue_id == 'hosted-inference-gemini' && vars.NEMOCLAW_GEMINI_MODEL || inputs.catalogue_id == 'hosted-inference-openrouter' && vars.NEMOCLAW_OPENROUTER_MODEL || inputs.catalogue_id == 'hosted-inference-hermes' && vars.NEMOCLAW_HERMES_MODEL || '' }}
+          HOSTED_INFERENCE_MODEL: ${{ inputs.hosted_inference_model }}
           TEST_FILE: ${{ inputs.test_file }}
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
