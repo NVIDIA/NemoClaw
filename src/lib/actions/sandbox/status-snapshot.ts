@@ -38,6 +38,7 @@ import {
 } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { redact } from "../../security/redact";
+import type { Session } from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
   findSandboxAcrossGatewayRoots,
@@ -334,6 +335,7 @@ interface CollectSandboxStatusSnapshotDeps {
   getGatewayPresets?: GetGatewayPresets;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
   verifyNativeNvidiaProviderAttachmentImpl?: VerifyNativeNvidiaStatusAttachment;
+  loadOnboardSessionForStatus?: () => Session | null;
 }
 
 function sanitizedStatusDetail(error: unknown): string {
@@ -343,6 +345,27 @@ function sanitizedStatusDetail(error: unknown): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 240);
+}
+
+/**
+ * The registry is the status authority, but a resumed run can leave the
+ * sandbox-scoped model recorded only in the onboarding session (#12864).
+ * Only a session bound to this exact sandbox may speak for it. The session
+ * loader is caller-injected because this module's import fan-out and
+ * onboard-session's fan-in both sit at their architecture budgets.
+ */
+function readSessionRecordedModel(
+  sandboxName: string,
+  loadOnboardSession: (() => Session | null) | null,
+): string | null {
+  try {
+    const session = loadOnboardSession?.() ?? null;
+    if (!session || session.sandboxName !== sandboxName) return null;
+    const model = typeof session.model === "string" ? session.model.trim() : "";
+    return model.length > 0 ? model : null;
+  } catch {
+    return null;
+  }
 }
 
 function processRecoveryFailure(
@@ -463,6 +486,10 @@ export async function collectSandboxStatusSnapshot(
   const sb = Object.hasOwn(opts, "sandboxEntry")
     ? (opts.sandboxEntry ?? null)
     : getSandbox(sandboxName);
+  const sessionRecordedModel = readSessionRecordedModel(
+    sandboxName,
+    opts.deps?.loadOnboardSessionForStatus ?? null,
+  );
   const initialPreflight =
     opts.preflight ??
     (sb?.stopped
@@ -592,7 +619,7 @@ export async function collectSandboxStatusSnapshot(
       sb,
       lookup,
       rpcIssue,
-      currentModel: (sb && sb.model) || "unknown",
+      currentModel: (sb && sb.model) || sessionRecordedModel || "unknown",
       currentProvider: (sb && sb.provider) || "unknown",
       recordedRoute: sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null,
       liveRoute: null,
@@ -612,7 +639,11 @@ export async function collectSandboxStatusSnapshot(
   // Model/provider are sandbox-scoped status fields, so prefer the durable
   // route recorded for this sandbox. The live shared route is shown separately
   // as drift instead of being mislabeled as this sandbox's configuration.
-  const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
+  // When the durable route lost its model, the bound onboarding session is the
+  // only remaining record of the selection (#12864).
+  const currentModel = sb
+    ? sb.model || sessionRecordedModel || "unknown"
+    : (live && live.model) || sessionRecordedModel || "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
   let nativeNvidiaAttachmentFailure: string | null = null;
   if (!suppressInferenceProbe && lookup.state === "present" && nativeNvidia && sb) {

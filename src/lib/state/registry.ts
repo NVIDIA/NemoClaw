@@ -798,6 +798,31 @@ function changesHostLocalInferenceLifecycleAuthority(
   );
 }
 
+/**
+ * Keep the host-local lifecycle guard from discarding unrelated fields: a
+ * rejected write must still apply everything outside the guarded authority
+ * (#12864). The provenance key itself is always dropped, and authority fields
+ * drift only matters for entries that currently carry provenance.
+ */
+function reduceUpdatesOutsideHostLocalInferenceAuthority(
+  current: SandboxEntry,
+  updates: Partial<SandboxEntry>,
+): Partial<SandboxEntry> {
+  const { hostLocalInferenceProvenance: _rejected, ...rest } = updates;
+  if (!current.hostLocalInferenceProvenance) return rest;
+  const applicable: Partial<SandboxEntry> = {};
+  for (const [field, value] of Object.entries(rest)) {
+    if (
+      HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS.has(field as keyof SandboxEntry) &&
+      !isDeepStrictEqual(value, current[field as keyof SandboxEntry])
+    ) {
+      continue;
+    }
+    (applicable as Record<string, unknown>)[field] = value;
+  }
+  return applicable;
+}
+
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
@@ -816,11 +841,15 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     if (Object.prototype.hasOwnProperty.call(updates, "name") && updates.name !== name) {
       return false;
     }
-    if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    const next = normalizeSandboxPolicyAttribution({ ...current, ...updates });
+    let applicable = updates;
+    if (changesHostLocalInferenceLifecycleAuthority(current, updates)) {
+      applicable = reduceUpdatesOutsideHostLocalInferenceAuthority(current, updates);
+      if (Object.keys(applicable).length === 0) return false;
+    }
+    const next = normalizeSandboxPolicyAttribution({ ...current, ...applicable });
     if (
       current.deferredN1xManagedVllmAccepted === true &&
-      Object.entries(updates).some(
+      Object.entries(applicable).some(
         ([field, value]) =>
           DEFERRED_N1X_ROUTE_AUTHORITY_FIELDS.has(field as keyof SandboxEntry) &&
           !isDeepStrictEqual(value, current[field as keyof SandboxEntry]),

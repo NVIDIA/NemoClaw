@@ -75,6 +75,9 @@ export interface IncompleteOnboarding {
   step: string | null;
   interrupted: boolean;
   resumable: true;
+  /** True when a route-only reservation backs the row; false when the resumable
+   * session file is the authority (#12864). */
+  routeReserved: boolean;
 }
 
 export interface ListSandboxesCommandDeps {
@@ -246,21 +249,26 @@ function projectIncompleteOnboarding(
     return null;
   }
   const reservation = sandboxes.find((sandbox) => sandbox.name === session.sandboxName) ?? null;
-  if (
-    !reservation ||
-    !isRouteOnlySandboxReservation(reservation) ||
-    !isPendingReservationForSession(reservation, session.sessionId)
-  ) {
+  const routeReserved =
+    reservation !== null &&
+    isRouteOnlySandboxReservation(reservation) &&
+    isPendingReservationForSession(reservation, session.sessionId);
+  // A route-only reservation speaks only for the session that owns it (#10097).
+  // Otherwise the resumable session file itself is the incomplete-onboarding
+  // authority (#12864): an interrupted run whose sandbox is already registered
+  // or whose reservation was consumed still needs its resume hint surfaced.
+  if (reservation && isRouteOnlySandboxReservation(reservation) && !routeReserved) {
     return null;
   }
   return {
-    name: safeStatusString(reservation.name) ?? reservation.name,
+    name: safeStatusString(session.sandboxName) ?? session.sandboxName,
     status: session.status,
     step: safeStatusString(
       session.failure?.step ?? session.lastStepStarted ?? session.lastCompletedStep,
     ),
     interrupted: session.failure?.interrupted === true,
     resumable: true,
+    routeReserved,
   };
 }
 
@@ -276,7 +284,11 @@ function renderIncompleteOnboardingText(
   const step = incomplete.step ? ` at ${incomplete.step}` : "";
   log("  Incomplete onboarding:");
   log(`    ${incomplete.name}  ${state}${step}`);
-  log("      NemoClaw reserved the inference route but did not register the sandbox.");
+  log(
+    incomplete.routeReserved
+      ? "      NemoClaw reserved the inference route but did not register the sandbox."
+      : "      NemoClaw did not finish onboarding this sandbox.",
+  );
   log(`      Resume with \`${CLI_NAME} onboard --resume\`.`);
   log("");
 }

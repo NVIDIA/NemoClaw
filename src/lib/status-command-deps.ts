@@ -33,6 +33,11 @@ import { getHermesPortableHostAuthorityEntryCount } from "./state/portable-unins
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
 
+// Sandbox status needs the onboarding session only as a fallback for the
+// sandbox-scoped model (#12864); hosting that loader here keeps both the
+// sandbox status action and onboard-session inside their import budgets.
+export { loadSession as loadOnboardSessionForStatus } from "./state/onboard-session";
+
 const INVENTORY_POLICY_PROBE_TIMEOUT_MS = 2_000;
 
 function captureOpenshell(
