@@ -288,7 +288,7 @@ function validSandboxActionsText(): string {
   return sandboxActionList().filter(Boolean).join(", ");
 }
 
-function shouldExecuteViaNativeArgv(
+export function shouldExecuteViaNativeArgv(
   result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>,
 ): boolean {
   // Native argv remains useful for fabricated unknown child routes so oclif owns
@@ -296,9 +296,14 @@ function shouldExecuteViaNativeArgv(
   // ID to avoid flexible-taxonomy reinterpreting positional args under WSL.
   const helpArgs =
     result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
-  if (hasHelpFlag(helpArgs)) return false;
+  const isRegisteredCommand = getRegisteredOclifCommandMetadata(result.commandId) !== null;
+  // A help request against a topic-only ID (e.g. "sandbox:policy", which only
+  // registers children like "sandbox:policy:add") must fall through to native
+  // argv so oclif's flexible run() resolves it as a topic and lists its
+  // subcommands, instead of the exact-ID lookup throwing "not found".
+  if (hasHelpFlag(helpArgs)) return !isRegisteredCommand;
   if (result.commandId.startsWith("root:")) return false;
-  if (getRegisteredOclifCommandMetadata(result.commandId)) return false;
+  if (isRegisteredCommand) return false;
   return true;
 }
 function printDispatchUsageError(
