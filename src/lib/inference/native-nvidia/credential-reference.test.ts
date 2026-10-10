@@ -57,6 +57,7 @@ it.each([
     await expect(resolveNativeNvidiaCredentialReference(scope, capture)).rejects.toThrow(
       "Native NVIDIA inference has no matching supervisor-issued credential reference.",
     );
+    expect(capture).toHaveBeenCalledTimes(1);
   },
 );
 
@@ -66,4 +67,52 @@ it("rejects invalid NVIDIA sandbox scope before execution (#12636)", async () =>
     resolveNativeNvidiaCredentialReference({ ...scope, gatewayName: "bad;scope" }, capture),
   ).rejects.toThrow("Invalid native NVIDIA credential scope.");
   expect(capture).not.toHaveBeenCalled();
+});
+
+it("waits for a newly attached NVIDIA credential to reach fresh sandbox execs (#12636)", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const reference = "openshell:resolve:env:v12_NVIDIA_INFERENCE_API_KEY";
+    const capture = vi
+      .fn(async () => ({ status: 0, stdout: "", stderr: "", output: "" }))
+      .mockImplementationOnce(async () => ({ status: 0, stdout: "", stderr: "", output: "" }))
+      .mockImplementationOnce(async () => ({ status: 0, stdout: "", stderr: "", output: "" }))
+      .mockImplementationOnce(async () => ({
+        status: 0,
+        stdout: reference,
+        stderr: "",
+        output: reference,
+      }));
+    const result = expect(resolveNativeNvidiaCredentialReference(scope, capture)).resolves.toBe(
+      reference,
+    );
+    void result.catch(() => {});
+    await vi.advanceTimersByTimeAsync(2_000);
+    await result;
+    expect(capture).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("bounds waiting for an absent NVIDIA credential without leaking diagnostics (#12636)", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const capture = vi.fn(async () => ({
+      status: 0,
+      stdout: "",
+      stderr: "private diagnostic",
+      output: "",
+    }));
+    const result = expect(resolveNativeNvidiaCredentialReference(scope, capture)).rejects.toThrow(
+      "Native NVIDIA inference has no matching supervisor-issued credential reference.",
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await result;
+    expect(capture.mock.calls.length).toBeGreaterThan(1);
+    expect(capture.mock.calls.length).toBeLessThanOrEqual(31);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });

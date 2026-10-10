@@ -72,3 +72,22 @@ it("rejects an invalid credential scope before sandbox execution (#12636)", asyn
   ).rejects.toThrow("Invalid native custom credential scope");
   expect(capture).not.toHaveBeenCalled();
 });
+
+it("waits for the selected custom credential projection before config synchronization (#12636)", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const reference = "openshell:resolve:env:v12_COMPATIBLE_API_KEY";
+    const capture = vi
+      .fn(async () => ({ status: 0, stdout: reference, stderr: "", output: reference }))
+      .mockImplementationOnce(async () => ({ status: 0, stdout: "", stderr: "", output: "" }));
+    const result = expect(resolveNativeCustomCredentialReference(scope, capture)).resolves.toBe(
+      reference,
+    );
+    void result.catch(() => {});
+    await vi.advanceTimersByTimeAsync(1_000);
+    await result;
+    expect(capture).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});

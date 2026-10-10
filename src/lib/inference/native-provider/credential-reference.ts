@@ -34,30 +34,44 @@ export async function resolveNativeProviderCredentialReference(
     );
   const label = input.credentialEnv === "NVIDIA_INFERENCE_API_KEY" ? "NVIDIA" : "custom";
   const script = `printf '%s' "\${${input.credentialEnv}}"`;
-  const pending = capture(
-    [
-      "sandbox",
-      "exec",
-      "-g",
-      input.gatewayName,
-      "--name",
-      input.sandboxName,
-      "--",
-      "sh",
-      "-lc",
-      script,
-    ],
-    { ignoreError: true, includeStreams: true, timeout: 15_000 },
-  );
-  const result = await (label === "NVIDIA"
-    ? pending.catch(() => {
-        throw new Error("Native NVIDIA credential reference could not be read.");
-      })
-    : pending);
-  const value = (result.stdout ?? "").trim();
-  if (result.status !== 0 || !isNativeProviderCredentialReference(value, input.credentialEnv))
-    throw new Error(
-      `Native ${label} inference has no matching supervisor-issued credential reference.`,
+  // OpenShell projects attached provider credentials on its background poll.
+  // Read fresh child environments for at most 30 seconds; only absence can
+  // converge. A failed command or nonempty unissued value remains an error.
+  const deadline = performance.now() + 30_000;
+  while (performance.now() < deadline) {
+    const pending = capture(
+      [
+        "sandbox",
+        "exec",
+        "-g",
+        input.gatewayName,
+        "--name",
+        input.sandboxName,
+        "--",
+        "sh",
+        "-lc",
+        script,
+      ],
+      {
+        ignoreError: true,
+        includeStreams: true,
+        timeout: Math.min(15_000, Math.max(1, Math.ceil(deadline - performance.now()))),
+      },
     );
-  return value;
+    const result = await (label === "NVIDIA"
+      ? pending.catch(() => {
+          throw new Error("Native NVIDIA credential reference could not be read.");
+        })
+      : pending);
+    const value = (result.stdout ?? "").trim();
+    if (result.status !== 0) break;
+    if (isNativeProviderCredentialReference(value, input.credentialEnv)) return value;
+    if (value) break;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(1_000, remaining)));
+  }
+  throw new Error(
+    `Native ${label} inference has no matching supervisor-issued credential reference.`,
+  );
 }
