@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../../test/helpers/mock-gateway-proc-files";
 import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
 
 import { classifyManagedGatewayPortConflict } from "../../readiness/gateway-production";
@@ -150,12 +151,13 @@ function mockZombieServiceProcess(environment: Record<string, string>) {
   vi.spyOn(fs, "readFileSync").mockImplementation(
     (file, options) => files.get(String(file)) ?? readFile(file, options),
   );
+  const procFiles = mockGatewayProcFiles(files);
   mockGatewayProcTaskDir(`${proc}/task`, [String(PID), String(PID + 1)]);
   const realpath = fs.realpathSync.native;
   vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
     String(file) === `${sibling}/exe` ? GATEWAY_BIN : realpath(file, options),
   );
-  return { files, sibling };
+  return { files, sibling, procFiles };
 }
 
 describe("native Podman gateway readiness", () => {
@@ -188,7 +190,7 @@ describe("native Podman gateway readiness", () => {
         ...base.readProcessEnvironment(),
         NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
       };
-      const { files, sibling } = mockZombieServiceProcess(environment);
+      const { files, sibling, procFiles } = mockZombieServiceProcess(environment);
       const run = base.runHost;
       const deps = {
         ...base,
@@ -203,8 +205,8 @@ describe("native Podman gateway readiness", () => {
       expect(observed.listenerScan).toEqual({ pids: [PID], unverifiedPids: [], complete: true });
       expect(observed.targetBoundListenerPids).toEqual([PID]);
       expect(observed.versionCompatibility).toBe("compatible");
-      expect(fs.readFileSync).toHaveBeenCalledWith(`${sibling}/cmdline`, "utf8");
-      expect(fs.readFileSync).toHaveBeenCalledWith(`${sibling}/environ`, "utf8");
+      expect(procFiles.openedPaths).toContain(`${sibling}/cmdline`);
+      expect(procFiles.openedPaths).toContain(`${sibling}/environ`);
       expect(fs.realpathSync.native).toHaveBeenCalledWith(`${sibling}/exe`);
 
       files.set(

@@ -6,12 +6,29 @@ import fs from "node:fs";
 type GatewayProcEntry = "cmdline" | "environ" | "exe";
 // Recovery must fail closed instead of making unbounded synchronous proc reads.
 const MAX_ZOMBIE_SIBLING_PROBES = 64;
+const MAX_PROC_ENTRY_BYTES = 64 * 1024;
+
+function readBoundedText(file: string): string | null {
+  const fd = fs.openSync(file, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(MAX_PROC_ENTRY_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const count = fs.readSync(fd, buffer, length, buffer.length - length, null);
+      if (count === 0) return buffer.toString("utf8", 0, length);
+      length += count;
+    }
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 function readEntry(directory: string, entry: GatewayProcEntry): string | null {
   try {
     return entry === "exe"
       ? fs.realpathSync.native(`${directory}/exe`)
-      : fs.readFileSync(`${directory}/${entry}`, "utf8");
+      : readBoundedText(`${directory}/${entry}`);
   } catch {
     return null;
   }
@@ -26,7 +43,7 @@ export function readGatewayProcEntry(pid: number, entry: GatewayProcEntry): stri
   try {
     if (
       process.platform !== "linux" ||
-      !/^State:\s+Z\b/m.test(fs.readFileSync(`${root}/status`, "utf8"))
+      !/^State:\s+Z\b/m.test(readBoundedText(`${root}/status`) ?? "")
     ) {
       return value;
     }

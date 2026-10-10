@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../../test/helpers/mock-gateway-proc-files";
 import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
 import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../../onboard/docker-driver-gateway-runtime-marker";
 
@@ -331,6 +332,7 @@ describe("OpenShell gateway drift preflight", () => {
         vi.spyOn(fs, "readFileSync").mockImplementation(
           (file, options) => files.get(String(file)) ?? readFile(file, options),
         );
+        mockGatewayProcFiles(files);
         mockGatewayProcTaskDir(`${proc}/task`, [String(pid), String(tid)]);
         vi.spyOn(process, "kill").mockReturnValue(true);
 

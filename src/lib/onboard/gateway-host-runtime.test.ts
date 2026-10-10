@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
+import { mockGatewayProcFiles } from "../../../test/helpers/mock-gateway-proc-files";
 import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -521,6 +522,7 @@ describe("gateway host runtime attachment probe", () => {
         ? ("State:\tZ (zombie)\n" as never)
         : (JSON.stringify(DECLARATION) as never),
     );
+    mockGatewayProcFiles(new Map([[`${proc}/status`, "State:\tZ (zombie)\n"]]));
     mockGatewayProcTaskDir(`${proc}/task`, [
       String(SYSTEMD_GATEWAY_PID),
       String(SYSTEMD_GATEWAY_PID + 1),

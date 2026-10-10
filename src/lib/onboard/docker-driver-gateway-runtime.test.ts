@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../test/helpers/mock-gateway-proc-files";
 import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
 import { createGatewayEnvLoader } from "./gateway-binding";
@@ -379,6 +380,12 @@ describe("docker-driver gateway runtime helpers", () => {
             : candidate === replacementEnvironment
               ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
               : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
+        mockGatewayProcFiles(
+          new Map([
+            [replacementCmdline, `${gatewayBin}\0`],
+            [replacementEnvironment, `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`],
+          ]),
+        );
 
         expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
       });
@@ -612,6 +619,7 @@ describe("docker-driver gateway runtime helpers", () => {
         procFileContents.get(String(candidate)) ??
         originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
     );
+    mockGatewayProcFiles(procFileContents);
     vi.spyOn(fs.realpathSync, "native").mockImplementation(
       ((candidate, options) =>
         procLinks.get(String(candidate)) ??
@@ -649,6 +657,7 @@ describe("docker-driver gateway runtime helpers", () => {
         files.get(String(candidate)) ??
         readFile(candidate, options as never)) as typeof fs.readFileSync,
     );
+    mockGatewayProcFiles(files);
     mockGatewayProcTaskDir(`/proc/${String(pid)}/task`, [String(pid), "12353"]);
     const realpath = fs.realpathSync.native.bind(fs.realpathSync);
     vi.spyOn(fs.realpathSync, "native").mockImplementation(((candidate, options) =>
@@ -774,6 +783,7 @@ describe("docker-driver gateway runtime helpers", () => {
           procFileContents.get(String(candidate)) ??
           originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
       );
+      mockGatewayProcFiles(procFileContents);
       vi.spyOn(fs.realpathSync, "native").mockImplementation(((candidate, options) =>
         String(candidate) === `/proc/${pid}/exe`
           ? gatewayBin

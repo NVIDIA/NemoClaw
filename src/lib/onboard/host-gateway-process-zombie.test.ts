@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../test/helpers/mock-gateway-proc-files";
 import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 
 import {
@@ -79,6 +80,7 @@ function fixture() {
   vi.spyOn(fs, "readFileSync").mockImplementation(
     (file, options) => files.get(String(file)) ?? readFile(file, options),
   );
+  const procFiles = mockGatewayProcFiles(files);
   const taskDirectory = mockGatewayProcTaskDir(`${proc}/task`, [String(pid), String(tid)]);
   const realpath = fs.realpathSync.native;
   vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
@@ -107,7 +109,7 @@ function fixture() {
     gatewayName: "nemoclaw-18080",
     gatewayPort: 18080,
   };
-  return { files, outputs, kill, deps, target, stateDir, taskDirectory };
+  return { files, outputs, kill, deps, target, stateDir, taskDirectory, procFiles };
 }
 
 function stopScoped(f: ReturnType<typeof fixture>) {
@@ -181,20 +183,32 @@ describe.runIf(process.platform === "linux")("gateway identity after leader exit
 
     f.taskDirectory.setEntries([String(pid), ...emptyTids, String(tid)]);
     f.taskDirectory.resetCounts();
-    vi.mocked(fs.readFileSync).mockClear();
+    f.procFiles.openedPaths.length = 0;
     expect(readGatewayProcEntry(pid, "environ")).toBeNull();
     expect(f.taskDirectory.reads).toBeLessThanOrEqual(65);
     expect(f.taskDirectory.closes).toBe(1);
     expect(
-      vi
-        .mocked(fs.readFileSync)
-        .mock.calls.filter(
-          ([file]) => String(file).startsWith(`${proc}/task/`) && String(file).endsWith("/environ"),
-        ),
+      f.procFiles.openedPaths.filter(
+        (file) => file.startsWith(`${proc}/task/`) && file.endsWith("/environ"),
+      ),
     ).toHaveLength(64);
     expect(stopScoped(f).ownershipFailures).toHaveLength(1);
     expect(f.kill).not.toHaveBeenCalled();
   });
+
+  it.each(["cmdline", "environ"] as const)(
+    "refuses an oversized sibling %s instead of trusting partial identity",
+    (entry) => {
+      const f = fixture();
+      f.files.set(`${proc}/${entry}`, "");
+      f.files.set(
+        `${task}/${entry}`,
+        `${f.files.get(`${task}/${entry}`)}FILLER=${"x".repeat(65_536)}`,
+      );
+      expect(stopScoped(f).ownershipFailures).toHaveLength(1);
+      expect(f.kill).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps an empty environment for a non-zombie leader", () => {
     const f = fixture();

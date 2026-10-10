@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../../test/helpers/mock-gateway-proc-files";
 import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
 import {
   withProvenManagedGatewayProcess,
@@ -280,6 +281,7 @@ describe("uninstall OpenShell gateway user service", () => {
       vi.spyOn(fs, "readFileSync").mockImplementation(
         (file, options) => files.get(String(file)) ?? readFile(file, options),
       );
+      const procFiles = mockGatewayProcFiles(files);
       mockGatewayProcTaskDir(`${proc}/task`, [String(pid), String(pid + 1)]);
       const realpath = fs.realpathSync.native;
       vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
@@ -323,7 +325,7 @@ describe("uninstall OpenShell gateway user service", () => {
         "my-assistant",
       ]);
       expect(fs.realpathSync.native).toHaveBeenCalledWith(`${sibling}/exe`);
-      expect(fs.readFileSync).toHaveBeenCalledWith(`${sibling}/environ`, "utf8");
+      expect(procFiles.openedPaths).toContain(`${sibling}/environ`);
       expect(fs.existsSync(servicePath)).toBe(false);
     },
   );
