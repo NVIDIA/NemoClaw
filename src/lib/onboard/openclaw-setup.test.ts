@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildConfig } from "../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../../test/helpers/openclaw-env-fixture";
 import {
   customAttachmentFromPrepared,
   prepareNativeCustomProfile,
@@ -453,9 +455,25 @@ describe("restored native OpenClaw inference fields", () => {
       });
       const reference = `openshell:resolve:env:v3_${key}`;
       const resolve = vi.fn(async () => reference);
+      const generated = buildConfig({
+        ...baseOpenClawGenerationEnv(),
+        NEMOCLAW_PROVIDER_KEY: slot,
+        NEMOCLAW_PRIMARY_MODEL_REF: `${slot}/original-model`,
+        NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+        NEMOCLAW_INFERENCE_API: api,
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_AGENT_TIMEOUT: "317",
+      });
       const config = {
+        ...generated,
         channels: { telegram: { enabled: true } },
-        models: { providers: { other: { models: [{ id: "fallback" }] } } },
+        models: {
+          ...generated.models,
+          providers: {
+            ...generated.models.providers,
+            other: { models: [{ id: "fallback" }] },
+          },
+        },
       };
       const writeValues = vi.fn();
       const write = createOpenclawInferenceRouteWriter({
@@ -471,10 +489,22 @@ describe("restored native OpenClaw inference fields", () => {
           baseUrl: endpoint,
           api,
           apiKey: reference,
-          models: [expect.objectContaining({ id: "changed-model" })],
+          timeoutSeconds: 317,
+          models: expect.arrayContaining([expect.objectContaining({ id: "changed-model" })]),
         },
         other: { models: [{ id: "fallback" }] },
       });
+      expect(config).toMatchObject({ agents: { defaults: { timeoutSeconds: 317 } } });
+      expect(writeValues).toHaveBeenCalledWith(
+        "openclaw",
+        expect.arrayContaining([
+          {
+            dotpath: `models.providers.${slot}`,
+            value: expect.objectContaining({ timeoutSeconds: 317, apiKey: reference }),
+          },
+        ]),
+        "nemoclaw-9090",
+      );
       expect(config.channels.telegram.enabled).toBe(true);
       expect(resolve).toHaveBeenCalledExactlyOnceWith({
         sandboxName: "openclaw",
