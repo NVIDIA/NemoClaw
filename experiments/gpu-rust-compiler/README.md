@@ -23,9 +23,13 @@ requested CUDA pass. A faster pass does not establish a faster NemoClaw build.
 
 ## Run the GPU experiment in GitHub Actions
 
-Open or update the draft PR from `experiment/gpu-rust-compiler` into `v1`.
-That starts `.github/workflows/gpu-compiler-experiment.yml`; rerun its Actions
-run to repeat the same head. Manual dispatch is unavailable until a workflow
+Keep [PR #12951](https://github.com/NVIDIA/NemoClaw/pull/12951) open as a draft
+from `experiment/gpu-rust-compiler` into `v1`, then push a signed commit to that
+NVIDIA-owned branch. That starts `.github/workflows/gpu-compiler-experiment.yml`;
+rerun its Actions run to repeat the current head. The hosted CPU job first
+requires that the draft PR's repository, branches, and head SHA match this push.
+NVIDIA's GPU runner rejects `pull_request` events, so this experiment uses the
+trusted branch push route. Manual dispatch is unavailable until a workflow
 exists on the default branch, and this experiment will not be merged.
 The workflow builds the native frontend on a hosted Linux runner, then verifies
 CUDA inside its validation image on the repository's GPU runner. It

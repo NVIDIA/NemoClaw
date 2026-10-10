@@ -4,13 +4,13 @@
 name: Experiment / GPU Rust compiler
 
 on:
-  pull_request:
-    branches: [v1]
-    types: [opened, reopened, synchronize]
+  # NVIDIA self-hosted runners accept trusted branch pushes, not PR events.
+  push:
+    branches: [experiment/gpu-rust-compiler]
     paths:
       - .github/workflows/gpu-compiler-experiment.yml
       - experiments/gpu-rust-compiler/**
-  # A new workflow starts from the draft PR event. Manual dispatch requires the
+  # A new workflow starts from the branch push. Manual dispatch requires the
   # workflow on the repository's default branch; this PR will not be merged.
   workflow_dispatch:
 
@@ -18,16 +18,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: gpu-compiler-experiment-${{ github.event.pull_request.number || github.ref }}
+  group: gpu-compiler-experiment-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
   run:
     shell: bash
-    working-directory: experiments/gpu-rust-compiler
 
 env:
-  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CANDIDATE_SHA: ${{ github.sha }}
   CARGO_INCREMENTAL: "0"
 
 jobs:
@@ -35,18 +34,30 @@ jobs:
     name: Experiment / Native CPU frontend
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
-      ((github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw' &&
-        github.event.pull_request.head.ref == 'experiment/gpu-rust-compiler' &&
-        github.event.pull_request.base.ref == 'v1' &&
-        github.event.pull_request.draft == true) ||
-       (github.event_name == 'workflow_dispatch' &&
-        github.ref == 'refs/heads/experiment/gpu-rust-compiler'))
+      github.ref == 'refs/heads/experiment/gpu-rust-compiler' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       frontend-artifact: ${{ steps.identity.outputs.artifact }}
     steps:
+      - name: Require the open draft experiment PR at this exact head
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/NVIDIA/NemoClaw/pulls/12951 | jq --exit-status \
+            --arg sha "$CANDIDATE_SHA" '
+              .number == 12951 and .state == "open" and .draft == true
+              and .base.repo.full_name == "NVIDIA/NemoClaw" and .base.ref == "v1"
+              and .head.repo.full_name == "NVIDIA/NemoClaw"
+              and .head.ref == "experiment/gpu-rust-compiler" and .head.sha == $sha
+            ' > /dev/null
+
       - name: Check out the exact experiment head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,6 +65,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify source and record build tools
+        working-directory: experiments/gpu-rust-compiler
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
@@ -64,6 +76,7 @@ jobs:
           clang --version > results/clang-native.txt
 
       - name: Build and test the independent frontend
+        working-directory: experiments/gpu-rust-compiler
         run: |
           set -euo pipefail
           cargo +1.98.1 test --locked --manifest-path compiler/Cargo.toml --target-dir .build/compiler
@@ -78,6 +91,7 @@ jobs:
 
       - name: Identify the exact-head frontend artifact
         id: identity
+        working-directory: experiments/gpu-rust-compiler
         run: |
           printf 'artifact=gpu-compiler-frontend-%s-%s-%s\n' \
             "$CANDIDATE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
@@ -121,6 +135,7 @@ jobs:
           path: experiments/gpu-rust-compiler/.build/compiler/release/
 
       - name: Verify source and frontend provenance
+        working-directory: experiments/gpu-rust-compiler
         env:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -142,12 +157,14 @@ jobs:
             > results/ci-provenance.json
 
       - name: Record the GPU and container engine
+        working-directory: experiments/gpu-rust-compiler
         run: |
           set -euo pipefail
           nvidia-smi > results/nvidia-smi-host.txt 2>&1
           docker version > results/docker-version.txt 2>&1
 
       - name: Build the local CUDA validation environment
+        working-directory: experiments/gpu-rust-compiler
         run: |
           set -euo pipefail
           docker build --pull --file cuda/validation.Dockerfile \
@@ -155,6 +172,7 @@ jobs:
           docker image inspect "$CONTAINER_IMAGE" > results/container-image.json
 
       - name: Verify CUDA and compile the supported subset
+        working-directory: experiments/gpu-rust-compiler
         run: |
           set -euo pipefail
           docker run --rm --gpus all --network none --read-only \
@@ -200,4 +218,5 @@ jobs:
 
       - name: Remove the local experiment image
         if: always()
+        working-directory: .
         run: docker image rm "$CONTAINER_IMAGE" || true
