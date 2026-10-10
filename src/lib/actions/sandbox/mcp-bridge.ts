@@ -23,6 +23,7 @@ import {
 } from "./mcp-bridge-destroy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { MCP_BRIDGE_SUBCOMMANDS_USAGE } from "./mcp-bridge/usage";
 import {
   type McpRebuildPreparation,
   prepareMcpBridgesForAbsentSandboxRebuild as prepareMcpBridgesForAbsentSandboxRebuildLifecycle,
@@ -381,7 +382,7 @@ FLAGS
       return;
     default:
       console.log(`USAGE
-  nemoclaw <name> mcp <add|update|list|status|restart|remove|migrate> [args...]`);
+  nemoclaw <name> mcp ${MCP_BRIDGE_SUBCOMMANDS_USAGE} [args...]`);
   }
 }
 
@@ -515,7 +516,7 @@ export async function dispatchMcpBridgeCommand(
       }
       default:
         throw new McpBridgeError(
-          "Usage: nemoclaw <sandbox> mcp <add|update|list|status|restart|remove|migrate> [args...]",
+          `Usage: nemoclaw <sandbox> mcp ${MCP_BRIDGE_SUBCOMMANDS_USAGE} [args...]`,
           2,
         );
     }

@@ -44,4 +44,21 @@ describe("sandbox MCP oclif command", () => {
       { throwOnError: true },
     );
   });
+
+  it("lists update in the static usage", () => {
+    expect(SandboxMcpCommand.usage).toEqual([
+      "<name> <add|update|list|status|restart|remove|migrate> [args...]",
+    ]);
+  });
+
+  it("lists update in the missing-sandbox error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await SandboxMcpCommand.run([], rootDir);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Usage: nemoclaw <sandbox> mcp <add|update|list|status|restart|remove|migrate> [args...]",
+    );
+    errorSpy.mockRestore();
+  });
 });
