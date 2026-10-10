@@ -209,7 +209,7 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     );
   });
 
-  it("keeps PR reporting and scorecards disabled for PR E2E runs", () => {
+  it("rejects unrestricted candidate reporting and candidate scorecards", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["report-to-pr"].if =
       "${{ always() && github.event_name == 'workflow_dispatch' }}";
@@ -221,6 +221,25 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
         "report-to-pr must run only for manual workflow dispatches",
         "scorecard must run after pushes and manual E2E runs dispatched against main",
       ]),
+    );
+  });
+
+  it.each([
+    "JOB_CHECKOUT_SHA",
+    "JOB_CHECKOUT_REPOSITORY",
+    "JOB_BASE_SHA",
+    "JOB_WORKFLOW_SHA",
+    "WORKFLOW_SHA",
+    "MATRIX_RESULT",
+    "SELECTED_WORKFLOW_JOBS",
+  ])("rejects a candidate reporter without its %s binding", (key) => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    delete report.env![key];
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      `report-to-pr must bind ${key} to the trusted dispatch context`,
     );
   });
 
