@@ -48,6 +48,10 @@ on:
       credential_boundary:
         required: true
         type: string
+      hosted_inference_model:
+        required: false
+        type: string
+        default: ""
       catalogue_id:
         required: true
         type: string
@@ -113,6 +117,8 @@ on:
       NVIDIA_API_KEY:
         required: false
       NVIDIA_INFERENCE_API_KEY:
+        required: false
+      HOSTED_INFERENCE_API_KEY:
         required: false
 
 permissions:
@@ -426,7 +432,7 @@ jobs:
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Install reviewed OpenShell SDK archive without package credentials
-        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6
+        uses: NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae
 
       - name: Restore exact-commit CLI artifact
         if: ${{ inputs.restore_cli }}
@@ -531,6 +537,8 @@ jobs:
         env:
           INSTALL_MODE: ${{ inputs.install_mode }}
           CATALOGUE_ID: ${{ inputs.catalogue_id }}
+          HOSTED_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.HOSTED_INFERENCE_API_KEY || '' }}
+          HOSTED_INFERENCE_MODEL: ${{ inputs.hosted_inference_model }}
           TEST_FILE: ${{ inputs.test_file }}
           NVIDIA_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}

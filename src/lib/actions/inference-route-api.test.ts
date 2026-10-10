@@ -40,7 +40,6 @@ function session(overrides: Partial<Session> = {}): Session {
     routerCredentialHash: null,
     webSearchConfig: null,
     messagingPlan: null,
-    migratedLegacyValueHashes: null,
     hermesToolGateways: null,
     gpuPassthrough: false,
     telegramConfig: null,

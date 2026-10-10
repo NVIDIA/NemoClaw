@@ -4,7 +4,10 @@
   "entries": [
     {
       "live": "test/e2e/live/brave-search.test.ts",
-      "liveSources": ["test/e2e/live/brave-search-helpers.ts", "test/e2e/fixtures/brave-backend.ts"],
+      "liveSources": [
+        "test/e2e/live/brave-search-helpers.ts",
+        "test/e2e/fixtures/brave-backend.ts"
+      ],
       "fast": [
         "test/onboarding/brave-search-integration.test.ts",
         "test/e2e/support/brave-search-isolation.test.ts",
@@ -189,12 +192,21 @@
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
-        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/hosted-provider-smoke-selection.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      "liveOnlyReason": "Requires real provider credentials to prove provider responses and sandbox credential isolation"
+      "liveSources": [
+        "test/e2e/live/inference-routing-credential-scan.ts",
+        "test/e2e/fixtures/hermes-api-command.ts"
+      ],
+      "fast": [
+        "test/e2e/support/hosted-provider-smoke-selection.test.ts",
+        "test/e2e/support/hosted-credential-scan.test.ts",
+        "test/e2e/support/hosted-inference-workflow-selection.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/full-e2e.test.ts",
@@ -210,6 +222,7 @@
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
+        "src/lib/onboard/gateway-host-runtime.test.ts",
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "test/agents/openclaw/openclaw-container-restart-patch.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
@@ -534,6 +547,7 @@
     {
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
+        "src/lib/actions/maintenance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -644,9 +658,14 @@
     },
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
-      "liveSources": ["test/e2e/live/hermes-inference-switch-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/hermes-inference-switch-helpers.ts",
+        "test/e2e/live/public-nvidia-switch-provider.ts"
+      ],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
+        "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -815,19 +834,23 @@
       "liveSources": [
         "test/e2e/live/openclaw-inference-switch-helpers.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
+        "test/e2e/live/public-nvidia-switch-provider.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
         "test/e2e/fixtures/managed-image-receipt.ts"
       ],
       "fast": [
+        "src/lib/actions/inference-set-patch-openclaw.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/inference-switch-workflow-boundary.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
+        "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/security/admin-approval-helper.test.ts",
         "test/e2e/support/hosted-inference.test.ts"
       ]
@@ -915,7 +938,10 @@
         "src/lib/onboard/runtime-provider/docker-stopped-state-capture.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts"
       ],
-      "liveSources": ["test/e2e/live/openclaw-stopped-recovery.ts"]
+      "liveSources": [
+        "test/e2e/live/openclaw-stopped-recovery.ts",
+        "test/e2e/live/openclaw-restoration.ts"
+      ]
     },
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
@@ -1004,7 +1030,8 @@
       "live": "test/e2e/live/token-rotation.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/e2e-phase-environment.test.ts"
       ]
     },
     {

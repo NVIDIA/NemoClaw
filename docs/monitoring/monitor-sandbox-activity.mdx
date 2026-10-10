@@ -27,7 +27,7 @@ Run the status command to view sandbox state, gateway health, and the active inf
 $$nemoclaw <name> status
 ```
 
-`$$nemoclaw <name> status` probes `https://inference.local/v1/models` from inside the sandbox as the authoritative inference check.
+`$$nemoclaw <name> status` probes the selected provider path from inside the sandbox as the authoritative inference check. Shared providers use `https://inference.local/v1/models`. NVIDIA Endpoints uses the sandbox-attached OpenShell provider at `https://integrate.api.nvidia.com/v1` and verifies it with an inference request.
 For local Ollama and local vLLM routes, it also prints labeled host-side backend diagnostics that help identify which hop failed.
 
 Review these output fields.

@@ -19,6 +19,7 @@ type SandboxLike = { name?: string; model?: string | null; provider?: string | n
 type StopAllOptions = {
   sandboxName: string;
   cleanupOllamaModels?: boolean;
+  stopCloudflared?: boolean;
   unloadOllamaModels?: () => OllamaUnloadResult | void;
 };
 
@@ -32,6 +33,7 @@ function buildDeps(
       | "getSandbox"
       | "listSandboxes"
       | "stopAll"
+      | "migrateLegacyCloudflaredState"
       | "unloadOllamaModels"
       | "loadPendingOllamaModelCleanup"
       | "clearPendingOllamaModelCleanup"
@@ -69,6 +71,7 @@ function buildDeps(
         stopAllCalls.push(opts);
         return opts.cleanupOllamaModels === false ? undefined : opts.unloadOllamaModels?.();
       }),
+      migrateLegacyCloudflaredState: vi.fn(() => false),
       unloadOllamaModels: vi.fn((onlyModels?: readonly string[]) => {
         unloadCalls += 1;
         unloadArgs.push(onlyModels);
@@ -106,6 +109,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       expect.objectContaining({
         sandboxName: "regression-2717",
         cleanupOllamaModels: true,
+        stopCloudflared: false,
         unloadOllamaModels: expect.any(Function),
       }),
     );
@@ -122,6 +126,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       expect.objectContaining({
         sandboxName: "regression-2717",
         cleanupOllamaModels: false,
+        stopCloudflared: false,
         unloadOllamaModels: expect.any(Function),
       }),
     ]);
@@ -138,6 +143,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       expect.objectContaining({
         sandboxName: "regression-2717",
         cleanupOllamaModels: true,
+        stopCloudflared: false,
         unloadOllamaModels: expect.any(Function),
       }),
     ]);

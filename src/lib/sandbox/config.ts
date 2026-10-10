@@ -14,6 +14,16 @@
 
 import type { AgentConfigTarget } from "./agent-config";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/client";
+import {
+  recordTelemetryTarget,
+  isTelemetryConfigurationKey,
+  persistConfigurationTelemetry,
+  configSetUnsupportedAgentMessage,
+} from "./config-telemetry";
+export {
+  isTelemetryConfigurationKey,
+  retireNativeConfigurationTelemetry,
+} from "./config-telemetry";
 
 export type { AgentConfigTarget } from "./agent-config";
 
@@ -1151,27 +1161,13 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   }
 
   const target = resolveAgentConfig(sandboxName);
-  if (target.agentName === "openclaw") {
-    configFail([
-      "  config set is not available for OpenClaw because OpenClaw owns its configuration.",
-      `  Connect to the sandbox and use the native command instead: openclaw config set ${shellQuote(configKey)} <value>`,
-    ]);
-  }
-  // dcode bakes its config into the sandbox image at build time, so — unlike
-  // Hermes — it has no host-side config-mutation path (the same reason
-  // inference set refuses it, #6321). config get now reads TOML, but refuse
-  // config set cleanly and point at the only way to change it: re-onboard. #6548
-  if (target.agentName !== "hermes" && target.format === "toml") {
-    const { CLI_NAME } = require("../cli/branding");
-    configFail(
-      `  config set is not available for '${target.agentName}': its config is baked into the sandbox image at build time. To change it, re-onboard with the new selection (e.g. ${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh).`,
-    );
-  }
-  if (target.agentName !== "hermes") {
-    configFail(
-      `  config set is available only for Hermes; '${target.agentName}' config was not changed. Use the agent's native configuration command.`,
-    );
-  }
+  const unsupportedAgent = configSetUnsupportedAgentMessage(
+    target,
+    sandboxName,
+    configKey,
+    shellQuote,
+  );
+  if (unsupportedAgent) configFail(unsupportedAgent);
   // Read current config
   console.log(`  Reading ${target.agentName} config...`);
   const config = readSandboxConfig(sandboxName, target);
@@ -1241,6 +1237,14 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
         throw error;
       }
       if (!confirmed) {
+        if (isTelemetryConfigurationKey(configKey)) {
+          recordTelemetryTarget({
+            scope: "configuration",
+            sandboxName,
+            outcome: "cancelled",
+            state: "unchanged",
+          });
+        }
         configFail("  Aborted.");
       }
     }
@@ -1263,6 +1267,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
+  let telemetryPersistenceVerified = true;
+  const telemetryMetadataErrors: import("../domain/telemetry/event").TelemetryMetadataError[] = [];
   // Re-read under the sandbox mutation lock and enforce the source digest.
   await withSandboxMutationLock(sandboxName, () => {
     const currentConfig = readSandboxConfig(sandboxName, target);
@@ -1278,6 +1284,32 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
     console.log(`  Writing config to sandbox (${target.configPath})...`);
     writeSandboxConfig(sandboxName, target, currentConfig);
+    telemetryPersistenceVerified = persistConfigurationTelemetry(
+      sandboxName,
+      configKey,
+      currentConfig,
+      Object.is(oldValue, safeValue) && !opts.restart ? undefined : true,
+      !Object.is(oldValue, safeValue),
+    );
+    if (!telemetryPersistenceVerified) {
+      telemetryMetadataErrors.push({ category: "native_model_source" });
+      if (!Object.is(oldValue, safeValue) || opts.restart)
+        telemetryMetadataErrors.push({ category: "configuration_apply_state" });
+    }
+    if (isTelemetryConfigurationKey(configKey)) {
+      recordTelemetryTarget({
+        scope: "configuration",
+        sandboxName,
+        outcome: Object.is(oldValue, safeValue) && !opts.restart ? "no_change" : "completed",
+        state: Object.is(oldValue, safeValue) && !opts.restart ? "unchanged" : "pending",
+        ...(!telemetryPersistenceVerified
+          ? {
+              verificationStatus: "collection_error" as const,
+              metadataErrors: telemetryMetadataErrors,
+            }
+          : {}),
+      });
+    }
     appendAuditEntry({
       action: "config_set",
       sandbox: sandboxName,
@@ -1290,7 +1322,36 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Restart if requested
   if (opts.restart) {
-    await restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
+    try {
+      await restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
+    } catch (error) {
+      if (isTelemetryConfigurationKey(configKey)) {
+        recordTelemetryTarget({
+          scope: "configuration",
+          sandboxName,
+          outcome: "failed",
+          state: "partial",
+        });
+      }
+      throw error;
+    }
+    const pendingStateSaved = persistConfigurationTelemetry(sandboxName, configKey, null, false);
+    if (!pendingStateSaved) telemetryMetadataErrors.push({ category: "configuration_apply_state" });
+    telemetryPersistenceVerified = pendingStateSaved && telemetryPersistenceVerified;
+    if (isTelemetryConfigurationKey(configKey)) {
+      recordTelemetryTarget({
+        scope: "configuration",
+        sandboxName,
+        outcome: "completed",
+        state: "applied",
+        ...(!telemetryPersistenceVerified
+          ? {
+              verificationStatus: "collection_error" as const,
+              metadataErrors: telemetryMetadataErrors,
+            }
+          : {}),
+      });
+    }
   } else {
     console.log("");
     for (const line of buildConfigSetRestartGuidance(sandboxName)) {

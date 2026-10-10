@@ -103,7 +103,6 @@ function registrationDeps(
     updateSession,
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),
-    persistMigratedLegacyKeys: vi.fn(),
   };
 }
 
@@ -456,7 +455,6 @@ describe("credential provider registration", () => {
 
       expect(result).toEqual({ ok: true });
       expect(deps.migratedLegacyKeys.has("COMPATIBLE_API_KEY")).toBe(expectedMigrated);
-      expect(deps.persistMigratedLegacyKeys).toHaveBeenCalledOnce();
       expect(runOpenshell).toHaveBeenCalledWith(
         expect.arrayContaining(["-g", "alternate-gateway"]),
         expect.any(Object),
@@ -526,7 +524,6 @@ describe("credential provider registration", () => {
 
     expect(result.ok).toBe(false);
     expect(deps.migratedLegacyKeys).toEqual(new Set());
-    expect(deps.persistMigratedLegacyKeys).not.toHaveBeenCalled();
   });
 
   it("updates exact Brave and messaging providers and records secret-free receipts (#6743)", async () => {
@@ -940,57 +937,6 @@ describe("credential provider registration", () => {
         createdProviderNames: [],
         replacedProviderNames: [typedProviderName],
       });
-    } finally {
-      cleanup.mockRestore();
-      apply.mockRestore();
-    }
-  });
-
-  it("retains replacement evidence when migration receipt persistence fails (#9806)", async () => {
-    const providerName = "alpha-discord-bridge";
-    const apply = vi.spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell").mockResolvedValue({
-      upserted: [
-        {
-          channelId: "discord",
-          credentialId: "DISCORD_BOT_TOKEN",
-          providerName,
-          envKey: "DISCORD_BOT_TOKEN",
-          action: "update",
-        },
-      ],
-      reused: [],
-      missing: [],
-      replacedProviderNames: [providerName],
-      providerNames: [providerName],
-      sandboxCreateProviderArgs: ["--provider", providerName],
-    });
-    const cleanup = vi.spyOn(MessagingSetupApplier, "cleanupProvidersAtOpenShell");
-    const deps = registrationDeps(vi.fn(), { stagedCredentialProviders: [] } as unknown as Session);
-    deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
-    deps.persistMigratedLegacyKeys = vi.fn(() => {
-      throw new Error("receipt persistence failed");
-    });
-    const registration = createCredentialProviderRegistration(deps);
-
-    try {
-      const failure = await registration
-        .applyMessagingProviders([
-          {
-            name: providerName,
-            envKey: "DISCORD_BOT_TOKEN",
-            token: DISCORD_SECRET,
-            providerType: "generic",
-          },
-        ])
-        .catch((error: unknown) => error);
-
-      expect(failure).toMatchObject({
-        message: "receipt persistence failed",
-        mutatedProviderNames: [providerName],
-        createdProviderNames: [],
-        replacedProviderNames: [providerName],
-      });
-      expect(cleanup).not.toHaveBeenCalled();
     } finally {
       cleanup.mockRestore();
       apply.mockRestore();

@@ -23,8 +23,8 @@ export const E2E_ACTION_PROVENANCE = {
   },
   stageNativePodmanToolchains: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@dfb7fb7c0ae86b2926ec6e896bec72bacd9b23a2",
-    contentSha256: "60e4a4e39c06c9de3c2e64caaafcb232e0742c5a9afa7a9b472a9ee086123897",
+      "NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@5ec38cfc369b3dac4df5207d8dda20805a72cbda",
+    contentSha256: "d3dabde64d2e406daacc701b75a3b12168a81a9d6900ab7171effcf6cebd040c",
   },
   restoreCliArtifact: {
     reference:
@@ -33,7 +33,7 @@ export const E2E_ACTION_PROVENANCE = {
   },
   reviewedSdkInstall: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@f880dd17b871a9a9440aa8468b55e96a4541dfd6",
+      "NVIDIA/NemoClaw/.github/actions/install-reviewed-openshell-sdk@697af6ed24d88e7a8cbb0409acde3398e12f8eae",
     contentSha256: "09f77858c4025bdef9c3ffb184a53041c9be8cc87f7853c403f22ea70391228b",
   },
   uploadArtifacts: {
@@ -63,6 +63,6 @@ export const E2E_ACTION_PROVENANCE = {
 
 export const E2E_JOB_POLICY = {
   cliArtifactProducer: "generate-matrix",
-  prepareNoBuild: ["managed-image-multiarch-startup"],
-  prepareTrustedBuild: ["managed-image-protected-runtime"],
+  prepareNoBuild: ["managed-image-multiarch-startup", "managed-image-protected-runtime"],
+  prepareTrustedBuild: [],
 } as const;
