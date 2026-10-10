@@ -120,6 +120,7 @@ import {
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  initialOpenClawToolDisclosure,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -1863,12 +1864,10 @@ class SandboxStateFlow<
     deferSandboxEffectsUntilIdentityVerification: boolean,
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
+    const registeredEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeInferenceCreateIntentFields(
-        this.options.provider,
-        this.deps.getSandboxRegistryEntry(sandboxName),
-      ),
+      ...nativeInferenceCreateIntentFields(this.options.provider, registeredEntry),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
@@ -1881,11 +1880,24 @@ class SandboxStateFlow<
       hostMounts: this.options.hostMounts,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     });
+    const recreate = requiresSandboxRecreation(decision, this.options.recreateSandbox(false));
     return {
       resolved,
-      recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
+      recreate,
       ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
-      toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      toolDisclosure:
+        initialOpenClawToolDisclosure({
+          fresh:
+            decision.kind === "create" &&
+            !this.options.resume &&
+            !recreate &&
+            !this.options.fromDockerfile,
+          agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+          provider: this.options.provider,
+          entry: registeredEntry,
+          sessionId: state.session?.sessionId,
+          env: this.options.env,
+        }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
