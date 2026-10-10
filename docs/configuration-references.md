@@ -52,7 +52,7 @@ See [multiple model choices](inference.md#give-an-agent-multiple-model-choices) 
 Multiple OpenClaw agents can reference the same provider and integration; distinct inline instances are not shared implicitly.
 
 Agent `auth.method` requires credentials from every selected routed provider.
-See [Hermes authentication](inference.md#authenticate-hermes-through-the-provider) for credential handling and migration from `auth.providerRef`.
+See [Hermes authentication](inference.md#authenticate-hermes-through-the-provider) for credential handling.
 
 ## Reference a Harness Configuration
 
