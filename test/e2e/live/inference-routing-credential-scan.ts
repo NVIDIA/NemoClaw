@@ -15,23 +15,27 @@ const digest = value => crypto.createHash("sha256").update(salt).update(value).d
 const contains = (data, width, expected) => data.some((_, offset) =>
   offset + width <= data.length && digest(data.subarray(offset, offset + width)) === expected,
 );
-const environment = execFileSync("env");
-const processes = execFileSync("ps", ["aux"]);
-const sample = execFileSync("sh", ["-lc", "find /tmp /sandbox /home -type f -size -1M 2>/dev/null | head -200"])
-  .toString().trim().split("\n").filter(Boolean);
-const files = sample.flatMap(file => {
-  try { return [fs.readFileSync(file).subarray(0, 64 * 1024)]; } catch { return []; }
-});
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-scan-"));
 try {
   const canary = Buffer.from("nemoclaw-scan-canary-" + crypto.randomUUID());
-  const file = path.join(root, "canary");
-  fs.writeFileSync(file, canary, { mode: 0o600 });
+  const canaryFile = path.join(root, "canary");
+  fs.writeFileSync(canaryFile, canary, { mode: 0o600 });
+  const environment = execFileSync("env");
+  const processes = execFileSync("ps", ["aux"]);
+  const sample = execFileSync("sh", [
+    "-lc", 'find "$1" /tmp /sandbox /home -type f -size -1M 2>/dev/null | head -200',
+    "credential-scan", root,
+  ]).toString().trim().split("\n").filter(Boolean);
+  const observations = sample.flatMap(file => {
+    try { return [{ file, data: fs.readFileSync(file).subarray(0, 64 * 1024) }]; }
+    catch { return []; }
+  });
+  const files = observations.filter(entry => entry.file !== canaryFile).map(entry => entry.data);
   console.log(JSON.stringify({
     environmentClean: environment.length > 0 && !contains(environment, length, fingerprint),
     processesClean: processes.length > 0 && !contains(processes, length, fingerprint),
     sampledFilesClean: files.length > 0 && !files.some(data => contains(data, length, fingerprint)),
-    canaryDetected: contains(fs.readFileSync(file), canary.length, digest(canary)),
+    canaryDetected: observations.some(entry => contains(entry.data, canary.length, digest(canary))),
     sampledFileCount: files.length,
   }));
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
