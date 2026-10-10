@@ -95,6 +95,15 @@ packet ABI, prefix-sum bounds, device ownership and completion fencing. No
 evident CUDA compilation defect was found. This Mac has no nvcc or CUDA headers;
 actual CUDA compilation and execution remain required runner checks.
 
+The first Linux hosted run exposed Rust's `.so`-named linker script beside its
+actual shared library. The SHA-verified official Rust 1.98.1 Linux archive contains
+a 42-byte `INPUT(libLLVM.so.22.1-rust-1.98.1-stable)` script and a
+199,557,488-byte ELF. Discovery now checks native binary headers rather than
+counting both filename matches. Different native libraries still fail as
+ambiguous. Static ELF inspection found all 29 required C-API symbols and confirmed
+LLVM 22.1.8 from `LLVMGetVersion` instructions; it did not execute Linux code.
+Archive SHA256: `e974f036b28565f37c0f3bd92ddefa809bee16c04f9dcf07b9ed96e05aaaf7c4`.
+
 ## Pinned inputs and tools
 
 | Item | Identity |
@@ -130,6 +139,6 @@ tools/libraries in any compiler-size comparison. The entire development archive
 is build infrastructure, not an appropriate estimate of a final compiler
 distribution. Later complete Mac runtime-file accounting uses the compact helper
 and reuses Rust's shared LLVM. The compiler plus required adapters/kernels totals
-235,124,841 bytes versus the 222,966,640-byte baseline (+5.453%), within the +50%
+235,129,353 bytes versus the 222,966,640-byte baseline (+5.455%), within the +50%
 allowance. It includes the additional Metal libraries actually linked by the
 runtime executables. This Mac measurement does not qualify Linux/CUDA asset size.

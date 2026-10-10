@@ -117,9 +117,9 @@ driver time 199.692 seconds; no speedup is established. The earlier forced-O0
 variant compiled and ran but produced 55,215,120 bytes (+76.5%) and correctly
 failed the size gate. Both observations retain their separate reports.
 
-Separate Mac runtime-file accounting measures 235,124,841 bytes for the compiler
+Separate Mac runtime-file accounting measures 235,129,353 bytes for the compiler
 and required adapters/kernels, against the 222,966,640-byte pinned compiler
-baseline: +5.453%, within the separate compiler allowance. It includes the
+baseline: +5.455%, within the separate compiler allowance. It includes the
 actually linked Metal libraries and counts shared LLVM once. Unchanged Cargo,
 standard libraries, system frameworks, caches, benchmarks, and development tools
 are outside this compiler-runtime comparison. Linux/CUDA asset accounting is

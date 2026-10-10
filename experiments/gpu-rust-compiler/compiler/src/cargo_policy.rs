@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -381,6 +381,8 @@ fn backend_tool(path: &Option<PathBuf>, name: &str) -> Result<BackendTool, Strin
 fn pinned_llvm_library(sysroot: &Path) -> Result<BackendTool, String> {
     let directory = sysroot.join("lib");
     let mut paths = Vec::new();
+    let mut matched = Vec::new();
+    let mut ignored = Vec::new();
     for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name();
@@ -390,13 +392,41 @@ fn pinned_llvm_library(sysroot: &Path) -> Result<BackendTool, String> {
             || (name.starts_with("libLLVM") && (name.ends_with(".so") || name.contains(".so.")))
         {
             let path = fs::canonicalize(entry.path()).map_err(|e| e.to_string())?;
+            matched.push(name.into_owned());
+            // Official Linux Rust also ships a .so-named GNU linker script.
+            // dlopen needs its ELF target, so filenames alone cannot select a
+            // compiler runtime library. Keep distinct native images ambiguous.
+            let mut magic = [0u8; 4];
+            let bytes = fs::File::open(&path)
+                .and_then(|mut file| file.read(&mut magic))
+                .map_err(|e| format!("Inspect shared-library candidate {}: {e}", path.display()))?;
+            if bytes != 4
+                || !matches!(
+                    magic,
+                    [0x7f, b'E', b'L', b'F']
+                        | [0xce, 0xfa, 0xed, 0xfe]
+                        | [0xcf, 0xfa, 0xed, 0xfe]
+                        | [0xfe, 0xed, 0xfa, 0xce]
+                        | [0xfe, 0xed, 0xfa, 0xcf]
+                        | [0xca, 0xfe, 0xba, 0xbe]
+                        | [0xca, 0xfe, 0xba, 0xbf]
+                        | [0xbe, 0xba, 0xfe, 0xca]
+                        | [0xbf, 0xba, 0xfe, 0xca]
+                )
+            {
+                ignored.push(path);
+                continue;
+            }
             if !paths.contains(&path) {
                 paths.push(path);
             }
         }
     }
     if paths.len() != 1 {
-        return Err("Pinned sysroot must identify exactly one Rust LLVM shared library".into());
+        matched.sort();
+        paths.sort();
+        ignored.sort();
+        return Err(format!("Pinned sysroot must identify exactly one native Rust LLVM shared library in {}; matched filenames {:?}; native candidates {} {:?}; ignored non-native files {:?}",directory.display(),matched,paths.len(),paths,ignored));
     }
     backend_tool(&Some(paths.remove(0)), "pinned Rust LLVM shared library")
 }
@@ -1503,9 +1533,54 @@ mod tests {
         let path = directory();
         fs::create_dir(path.join("lib")).unwrap();
         let library = path.join("lib/libLLVM-22-rust-1.98.1-stable.so");
-        fs::write(&library, b"protocol library fixture").unwrap();
+        fs::write(&library, b"\x7fELFprotocol library fixture").unwrap();
         let resolved = pinned_llvm_library(&path).unwrap();
         assert_eq!(resolved.path, fs::canonicalize(library).unwrap());
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn pinned_library_discovery_selects_native_llvm_beside_official_linux_linker_script() {
+        let path = directory();
+        fs::create_dir(path.join("lib")).unwrap();
+        let library = path.join("lib/libLLVM.so.22.1-rust-1.98.1-stable");
+        fs::write(&library, b"\x7fELFprotocol native-library fixture").unwrap();
+        fs::write(
+            path.join("lib/libLLVM-22-rust-1.98.1-stable.so"),
+            b"INPUT(libLLVM.so.22.1-rust-1.98.1-stable)\n",
+        )
+        .unwrap();
+        assert_eq!(
+            pinned_llvm_library(&path).unwrap().path,
+            fs::canonicalize(&library).unwrap()
+        );
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn pinned_library_discovery_rejects_distinct_native_images_with_candidate_diagnostics() {
+        let path = directory();
+        fs::create_dir(path.join("lib")).unwrap();
+        fs::write(
+            path.join("lib/libLLVM.so.22.1-first"),
+            b"\x7fELFfirst native image fixture",
+        )
+        .unwrap();
+        fs::write(
+            path.join("lib/libLLVM-second.so"),
+            b"\x7fELFsecond native image fixture",
+        )
+        .unwrap();
+        let error = pinned_llvm_library(&path).unwrap_err();
+        assert!(error.contains("native candidates 2"), "{error}");
+        assert!(
+            error.contains("libLLVM.so.22.1-first") && error.contains("libLLVM-second.so"),
+            "{error}"
+        );
+        assert!(
+            error.contains(path.join("lib").to_str().unwrap()),
+            "{error}"
+        );
         fs::remove_dir_all(path).unwrap();
     }
 

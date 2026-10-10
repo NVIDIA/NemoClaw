@@ -10,6 +10,7 @@ use std::{
     env,
     ffi::{CStr, CString, OsString},
     fs,
+    io::Read,
     os::raw::{c_char, c_int, c_uint, c_void},
     path::{Path, PathBuf},
     process::Command,
@@ -357,6 +358,38 @@ fn llvm_library_filename(name: &str) -> bool {
         || (name.starts_with("libLLVM") && (name.ends_with(".so") || name.contains(".so.")))
 }
 
+fn native_library_header(path: &Path) -> Result<bool, String> {
+    let mut file = fs::File::open(path)
+        .map_err(|e| format!("read LLVM library candidate {}: {e}", path.display()))?;
+    let mut magic = [0u8; 4];
+    match file.read_exact(&mut magic) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "read LLVM library header {}: {error}",
+                path.display()
+            ))
+        }
+    }
+    // Official Linux Rust1.98.1 includes a 42-byte INPUT(...) GNU ld script
+    // whose .so name resembles the real ELF. Scripts are link-time inputs,
+    // not a second dlopen-able runtime. Keep ELF and Mach-O/fat candidates;
+    // the loader and exact C-API version checks perform final qualification.
+    Ok(matches!(
+        magic,
+        [0x7f, b'E', b'L', b'F']
+            | [0xce, 0xfa, 0xed, 0xfe]
+            | [0xcf, 0xfa, 0xed, 0xfe]
+            | [0xfe, 0xed, 0xfa, 0xce]
+            | [0xfe, 0xed, 0xfa, 0xcf]
+            | [0xca, 0xfe, 0xba, 0xbe]
+            | [0xbe, 0xba, 0xfe, 0xca]
+            | [0xca, 0xfe, 0xba, 0xbf]
+            | [0xbf, 0xba, 0xfe, 0xca]
+    ))
+}
+
 fn library_path() -> Result<PathBuf, String> {
     if let Some(path) = env::var_os("RUST_LLVM_LIBRARY") {
         if path.is_empty() {
@@ -376,22 +409,29 @@ fn library_path() -> Result<PathBuf, String> {
     }
     let text = String::from_utf8(output.stdout).map_err(|_| "pinned sysroot path is not UTF-8")?;
     let directory = PathBuf::from(text.trim()).join("lib");
+    discover_library(&directory)
+}
+
+fn discover_library(directory: &Path) -> Result<PathBuf, String> {
     let mut candidates = vec![];
-    for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
+    let mut non_native = vec![];
+    for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if llvm_library_filename(&name) {
             let path = fs::canonicalize(entry.path()).map_err(|e| e.to_string())?;
-            if !candidates.contains(&path) {
+            if !native_library_header(&path)? {
+                non_native.push(path);
+            } else if !candidates.contains(&path) {
                 candidates.push(path);
             }
         }
     }
     if candidates.len() != 1 {
         return Err(format!(
-            "expected one Rust LLVM shared library in {}; set RUST_LLVM_LIBRARY explicitly",
-            directory.display()
+            "expected one native Rust LLVM shared library in {}; native candidates: {:?}; ignored non-native candidates: {:?}; set RUST_LLVM_LIBRARY explicitly",
+            directory.display(),candidates,non_native
         ));
     }
     Ok(candidates.remove(0))
@@ -561,5 +601,50 @@ mod tests {
         ] {
             assert!(!super::llvm_library_filename(name), "{name}");
         }
+    }
+
+    #[test]
+    fn linux_gnu_linker_script_is_not_counted_as_a_runtime_shared_library() {
+        let stage = super::Stage::new(&std::env::temp_dir().join("llvm-audit.o")).unwrap();
+        let library = stage.0.join("libLLVM.so.22.1-rust-1.98.1-stable");
+        let script = stage.0.join("libLLVM-22-rust-1.98.1-stable.so");
+        std::fs::write(&library, b"\x7fELF-binary-fixture").unwrap();
+        std::fs::write(&script, b"INPUT(libLLVM.so.22.1-rust-1.98.1-stable)\n").unwrap();
+        let selected = super::discover_library(&stage.0).unwrap();
+        assert_eq!(selected, std::fs::canonicalize(library).unwrap());
+    }
+
+    #[test]
+    fn distinct_native_candidates_remain_ambiguous_instead_of_selecting_arbitrary_bytes() {
+        let stage = super::Stage::new(&std::env::temp_dir().join("llvm-ambiguous.o")).unwrap();
+        std::fs::write(
+            stage.0.join("libLLVM.so.22.1-rust-1.98.1-stable"),
+            b"\x7fELF-first",
+        )
+        .unwrap();
+        std::fs::write(stage.0.join("libLLVM-22-other.so"), b"\x7fELF-second").unwrap();
+        let error = super::discover_library(&stage.0).unwrap_err();
+        assert!(error.contains("native candidates"));
+        assert!(error.contains("libLLVM-22-other.so"));
+    }
+
+    #[test]
+    #[ignore = "requires the hash-verified official Linux Rust1.98.1 archive extraction"]
+    fn official_linux_archive_resolves_the_runtime_elf_and_ignores_its_linker_script() {
+        let directory = std::path::PathBuf::from(
+            std::env::var_os("NEMO_LLVM_AUDIT_DIRECTORY")
+                .expect("set NEMO_LLVM_AUDIT_DIRECTORY to extracted rustc/lib"),
+        );
+        let real = directory.join("libLLVM.so.22.1-rust-1.98.1-stable");
+        let script = directory.join("libLLVM-22-rust-1.98.1-stable.so");
+        assert_eq!(std::fs::metadata(&real).unwrap().len(), 199_557_488);
+        assert_eq!(
+            std::fs::read(&script).unwrap(),
+            b"INPUT(libLLVM.so.22.1-rust-1.98.1-stable)\n"
+        );
+        assert_eq!(
+            super::discover_library(&directory).unwrap(),
+            std::fs::canonicalize(real).unwrap()
+        );
     }
 }
