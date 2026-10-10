@@ -256,7 +256,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("without an atomic OpenShell delete-by-identity primitive"),
+        expect.stringContaining("Retained sandbox identity could not be inspected"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -380,7 +380,7 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
-    "does not delete a live retained sandbox when Docker identity is absent (#10547)",
+    "preserves live recovery when OpenShell identity cannot be inspected (#10863)",
     { timeout: 30_000 },
     async () => {
       const recovery = retainedRecoveryRecord();
@@ -398,7 +398,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("cannot bind a mutable-name delete to the retained record"),
+        expect.stringContaining("sandbox identity could not be inspected"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -410,12 +410,13 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
-    "does not issue mutable-name deletion for a live retained sandbox with matching identity (#10547)",
+    "destroys a live retained sandbox with matching identity (#10863)",
     { timeout: 30_000 },
     async () => {
       const recovery = retainedRecoveryRecord();
       const containerId = "a".repeat(64);
       const harness = createDestroyHarness({
+        liveListOutput: "Id: sb-alpha",
         dockerRunResult: {
           status: 0,
           stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
@@ -427,39 +428,26 @@ describe("destroySandbox retained recovery flow", () => {
         retainedRecoveryRecords: [recovery],
       });
 
-      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-        "process.exit(1)",
-      );
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-      expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("cannot bind a mutable-name delete to the retained record"),
-      );
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", recovery.gatewayName, "alpha"],
         expect.anything(),
       );
-      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
-      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
     },
   );
 
   it(
-    "still fails closed for a live retained sandbox even with a proven-matching OpenShell identity (#10863)",
+    "destroys a matching live retained sandbox without a host Docker container (#10863)",
     { timeout: 30_000 },
     async () => {
-      // OpenShell exposes no atomic delete-by-identity primitive, so no
-      // amount of identity proof inside NemoClaw can close the window where
-      // another OpenShell client replaces the sandbox under the same name
-      // between the last read and OpenShell processing the delete. Automatic
-      // deletion of a live retained sandbox is therefore always fail-closed,
-      // even when the live OpenShell id matches the retained record.
       const recovery = retainedRecoveryRecord("sandbox-alpha");
-      const containerId = "a".repeat(64);
       const harness = createDestroyHarness({
-        dockerRunResult: {
-          status: 0,
-          stdout: `${containerId}\topenshell\tdefault\tsandbox-alpha`,
-        },
+        liveListOutput: "Id: sandbox-alpha",
+        dockerRunResult: { status: 0, stdout: "" },
         registryEntryOverrides: {
           lifecycleGeneration: recovery.lifecycleGeneration!,
           lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
@@ -467,24 +455,15 @@ describe("destroySandbox retained recovery flow", () => {
         retainedRecoveryRecords: [recovery],
       });
 
-      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-        "process.exit(1)",
-      );
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-      expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("cannot bind a mutable-name delete to the retained record"),
-      );
-      expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
-        "openshell sandbox delete",
-      );
-      expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining(`openshell sandbox list -g ${recovery.gatewayName} -o json`),
-      );
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", recovery.gatewayName, "alpha"],
         expect.anything(),
       );
-      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
     },
   );
 
@@ -513,6 +492,85 @@ describe("destroySandbox retained recovery flow", () => {
       expect(exitSpy).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["a replacement sandbox", "Id: sandbox-replacement", undefined],
+    ["unknown presence", "Id: sb-alpha", { status: 1, stdout: "", stderr: "" }],
+  ])(
+    "preserves retained identity when OpenShell reports %s (#10863)",
+    async (_scenario, liveListOutput, sandboxListResult) => {
+      const recovery = retainedRecoveryRecord();
+      const harness = createDestroyHarness({
+        liveListOutput,
+        dockerRunResult: { status: 0, stdout: "" },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+        ...(sandboxListResult ? { sandboxListResult } : {}),
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.events).toEqual([]);
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses retained identity drift at the delete boundary (#10863)", async () => {
+    const recovery = retainedRecoveryRecord();
+    const harness = createDestroyHarness({
+      dockerRunResult: { status: 0, stdout: "" },
+      registryEntryOverrides: {
+        lifecycleGeneration: recovery.lifecycleGeneration!,
+        lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+      },
+      retainedRecoveryRecords: [recovery],
+    });
+    let identityReads = 0;
+    harness.captureOpenshellSpy.mockImplementation((args: string[]) => {
+      identityReads += Number(args[0] === "sandbox" && args[1] === "get");
+      return {
+        status: 0,
+        output: `Id: ${identityReads < 5 ? "sb-alpha" : "sandbox-replacement"}`,
+      };
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toContain("detach");
+    expect(harness.events).not.toContain("delete");
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Retained sandbox identity changed at the delete boundary"),
+    );
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves matching retained recovery after deletion fails (#10863)", async () => {
+    const recovery = retainedRecoveryRecord();
+    const harness = createDestroyHarness({
+      liveListOutput: "Id: sb-alpha",
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+      dockerRunResult: { status: 0, stdout: "" },
+      registryEntryOverrides: {
+        lifecycleGeneration: recovery.lifecycleGeneration!,
+        lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+      },
+      retainedRecoveryRecords: [recovery],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
+
+    expect(harness.events).toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["present", undefined, "reports a sandbox present"],

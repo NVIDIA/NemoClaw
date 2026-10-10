@@ -4,9 +4,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -33,6 +35,89 @@ const (
 	maximumOutputTokens   = 1024 * 1024
 	maximumTimeoutSeconds = 24 * 60 * 60
 )
+
+// Docker exec reaches this process through the daemon when an internal network
+// cannot publish a host port. The HTTP request guard still owns authentication.
+func forwardStdio(input io.Reader, output io.Writer, address string) error {
+	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		return errors.New("request guard is unavailable")
+	}
+	defer connection.Close()
+	inputReader := bufio.NewReader(input)
+	requestLine, readError := inputReader.ReadSlice('\n')
+	if readError != nil {
+		return errors.New("request guard request forwarding failed")
+	}
+	separator := bytes.IndexByte(requestLine, ' ')
+	if separator < 1 {
+		return errors.New("request guard request forwarding failed")
+	}
+	request := &http.Request{Method: string(requestLine[:separator])}
+	requestLine = bytes.Clone(requestLine)
+
+	inputDone := make(chan error, 1)
+	go func() {
+		_, copyError := io.Copy(connection, io.MultiReader(bytes.NewReader(requestLine), inputReader))
+		inputDone <- copyError
+	}()
+	responseDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(connection)
+		for {
+			response, readError := http.ReadResponse(reader, request)
+			if readError != nil {
+				responseDone <- readError
+				return
+			}
+			writeError := response.Write(output)
+			_ = response.Body.Close()
+			if writeError != nil {
+				responseDone <- writeError
+				return
+			}
+			if response.StatusCode >= 200 || response.StatusCode == http.StatusSwitchingProtocols {
+				responseDone <- nil
+				return
+			}
+		}
+	}()
+	var outputError error
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			_ = connection.Close()
+			<-responseDone
+			return errors.New("request guard request forwarding failed")
+		}
+		outputError = <-responseDone
+	case outputError = <-responseDone:
+	}
+	if outputError != nil {
+		return errors.New("request guard response forwarding failed")
+	}
+	// The guard can finish a response before Docker closes stdin. The command
+	// exits with the response rather than waiting for more client input.
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			return errors.New("request guard request forwarding failed")
+		}
+	default:
+	}
+	return nil
+}
+
+func stdioForwardAddress(args []string) (string, error) {
+	if len(args) != 3 || args[0] != "--stdio-forward" || args[1] != "--listen-port" {
+		return "", errors.New("stdio forwarding requires --listen-port")
+	}
+	port, err := strconv.Atoi(args[2])
+	if err != nil || port < 1 || port > 65535 {
+		return "", errors.New("stdio forwarding listen port is invalid")
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
+}
 
 type guardConfig struct {
 	apiKey                string
@@ -604,40 +689,32 @@ func newHTTPServer(config guardConfig, handler http.Handler) *http.Server {
 	}
 }
 
-func validateAPIKeyFile(path string) error {
+func loadAPIKeyFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return errors.New("request guard API-key file is unavailable")
+		return "", errors.New("request guard API-key file is unavailable")
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("request guard API-key file is not a regular file")
+		return "", errors.New("request guard API-key file is not a regular file")
 	}
-	var firstByte [1]byte
-	if count, err := file.Read(firstByte[:]); count != 1 || err != nil {
-		return errors.New("request guard API-key file is empty or unreadable")
+	keyBytes, keyError := io.ReadAll(io.LimitReader(file, 66))
+	key := strings.TrimSpace(string(keyBytes))
+	_, decodeError := hex.DecodeString(key)
+	if keyError != nil || decodeError != nil || len(key) != 64 || len(keyBytes) > 65 || key != strings.ToLower(key) {
+		return "", errors.New("request guard credential is invalid")
 	}
-	return nil
+	return key, nil
 }
 
 func run(config guardConfig, command []string) int {
-	if err := validateAPIKeyFile(llamaServerAPIKeyPath); err != nil {
+	key, err := loadAPIKeyFile(llamaServerAPIKeyPath)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
-	credential, err := os.Open(llamaServerAPIKeyPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "request guard credential is unavailable")
-		return 1
-	}
-	keyBytes, keyError := io.ReadAll(io.LimitReader(credential, 66))
-	_ = credential.Close()
-	config.apiKey = strings.TrimSpace(string(keyBytes))
-	if keyError != nil || len(config.apiKey) != 64 || len(keyBytes) > 65 {
-		fmt.Fprintln(os.Stderr, "request guard credential is invalid")
-		return 1
-	}
+	config.apiKey = key
 	listener, err := net.Listen("tcp", net.JoinHostPort(config.listenHost, strconv.Itoa(config.listenPort)))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "request guard could not bind its declared listener")
@@ -696,6 +773,18 @@ func run(config guardConfig, command []string) int {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--stdio-forward" {
+		address, err := stdioForwardAddress(os.Args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(2)
+		}
+		if err := forwardStdio(os.Stdin, os.Stdout, address); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	config, command, err := parseConfig(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

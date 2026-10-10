@@ -299,7 +299,9 @@ An unavailable or different version ends the rebuild with a nonzero status inste
 <AgentOnly variant="openclaw">
 
 After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
-If verification fails, NemoClaw exits nonzero and does not report a successful rebuild.
+When the selected provider is **Other OpenAI-compatible endpoint**, rebuild starts the restored OpenClaw configuration and verifies the selected inference route.
+If either verification fails, NemoClaw exits nonzero, preserves the backup, and does not report a successful rebuild.
+Correct the reported configuration or route error, then rerun `$$nemoclaw <sandbox-name> rebuild --yes`.
 
 </AgentOnly>
 
@@ -312,10 +314,21 @@ For these providers, a provider that no longer exposes the recorded credential k
 A provider that exposes the recorded credential key without an expiration entry is treated as non-expiring. That credential or one with a future expiration continues through the remaining preflight checks.
 Hermes Provider uses its separate authentication and credential-binding checks; this expiration-metadata guard does not apply to it.
 
+For remote providers other than Hermes Provider and Amazon Bedrock, preflight validates a nonempty API key supplied through the host environment.
+NemoClaw checks that key against the provider endpoint before replacement-image preparation or backup.
+It validates the key again immediately before sandbox deletion.
+When validation fails, rebuild stops without deleting the existing sandbox, including with `--force`.
+A valid credential stored in OpenShell does not bypass validation of a supplied host key.
+
 Use the recovery guidance that matches the reported check:
 
 - Verify the sandbox name when its registry entry is missing.
 - Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
+- Correct the exported API key when rebuild reports `the host inference credential could not be validated`.
+  To reuse a credential already stored in OpenShell, unset its host environment variable instead.
+  For NVIDIA Endpoints, this variable is `NVIDIA_INFERENCE_API_KEY`.
+  Confirm that the provider endpoint is reachable.
+  Then retry `rebuild`.
 - Refresh the named OpenShell credential or rerun `$$nemoclaw onboard` when rebuild reports an expired provider credential.
 - Re-register the provider or rerun `$$nemoclaw onboard` with the correct credential when the provider no longer exposes the recorded credential key, then retry `rebuild`.
 - Restore gateway connectivity and authentication when rebuild cannot verify the recorded provider.

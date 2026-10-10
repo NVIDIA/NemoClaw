@@ -582,10 +582,10 @@ const {
   shouldUseOpenshellDevChannel,
   supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
   enableBindMounts: onboardSessionBootstrap.isDockerBindMountsEnabled,
+  loadDockerDriverGatewayEnv: gatewayBinding.createGatewayEnvLoader(dockerDriverGatewayEnv),
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
-
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -1989,9 +1989,9 @@ async function handleRemoteProviderSelection(
     if (isNonInteractive()) {
       state.skipHostInferenceSmoke =
         await buildCredentialReuse.resolveNonInteractiveBuildCredential({
-          provider: state.provider,
           helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
-          recoveredFromSandbox,
+          recovery: args,
+          getSandbox: registry.getSandbox,
           providerExistsInGateway: (name) =>
             providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
         });

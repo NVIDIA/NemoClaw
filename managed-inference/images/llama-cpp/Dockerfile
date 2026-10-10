@@ -172,6 +172,7 @@ ENV CUDA_CACHE_PATH=/tmp/nemoclaw-cuda-cache \
 
 LABEL org.opencontainers.image.source="https://github.com/NVIDIA/NemoClaw" \
       io.nvidia.nemoclaw.inference-server.request-guard.authentication="managed-bearer-v1" \
+      io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward="1" \
       org.opencontainers.image.revision="${NEMOCLAW_REVISION}" \
       org.opencontainers.image.title="NemoClaw llama.cpp server" \
       org.opencontainers.image.description="NemoClaw-owned CUDA llama-server runtime" \

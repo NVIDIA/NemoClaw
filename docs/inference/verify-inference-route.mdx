@@ -87,6 +87,11 @@ For OpenClaw, this leaves time for client overhead before its 2.5-second provide
 </AgentOnly>
 A transport failure, an unsupported models-route HTTP 404, or HTTP 5xx leaves the onboarding session retryable at final verification.
 For a supported OpenRouter agent, onboarding accepts the adapter's catalog 404 only after a bounded inference request validates the selected model.
+<AgentOnly variant="deepagents">
+When Deep Agents Code onboarding resumes with OpenRouter, NemoClaw restarts a stopped adapter and requires a successful bounded inference request.
+If adapter recovery or inference validation fails, onboarding remains incomplete.
+Correct the reported adapter or route error, then rerun `$$nemoclaw onboard --resume`.
+</AgentOnly>
 Onboarding retries any other 404 within its startup budget, then reports the missing model catalog and exits nonzero if the failure persists.
 Confirm the provider and model configuration and restore the endpoint's `/v1/models` route.
 Run `$$nemoclaw onboard --resume` to verify the retained session again without rebuilding a healthy sandbox.

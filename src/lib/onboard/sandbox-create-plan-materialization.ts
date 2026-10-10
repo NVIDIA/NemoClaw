@@ -238,6 +238,7 @@ export function prepareSandboxCreatePolicy(
         ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
+      inferenceProvider: intent.inferenceProvider,
       // Channel presets bind `{sandboxName}-<channel>-bridge`; without the name,
       // composing them throws.
       sandboxName: intent.sandboxName,
@@ -366,7 +367,6 @@ export async function materializeSandboxCreatePlan({
   skipProviderEffects = false,
   messagingTokenDefs,
   messagingConfig,
-  runProviderPreDeleteCleanup,
   upsertMessagingProviders,
   getHermesToolGatewayProviderName,
   discloseInitialSandboxPolicy,
@@ -422,7 +422,6 @@ export async function materializeSandboxCreatePlan({
   const activateProviderEffects = async (
     revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<readonly string[]> => {
-    await runProviderPreDeleteCleanup(revalidateSandboxIdentity);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
         ...(await upsertMessagingProviders(enabledMessagingTokenDefs, {
