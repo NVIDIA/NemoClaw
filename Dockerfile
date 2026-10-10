@@ -644,6 +644,7 @@ COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openc
 COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /usr/local/lib/nemoclaw/npm12.mts
 COPY scripts/lib/patch-openclaw-container-restart.mts /usr/local/lib/nemoclaw/patch-openclaw-container-restart.mts
 COPY scripts/lib/patch-openclaw-worker-proxy.mts /usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts
+COPY scripts/lib/patch-openclaw-explicit-proxy.mts /usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
 COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts
@@ -1096,24 +1097,18 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
 # Files that define withStrictGuardedFetchMode locally without an export
 # (e.g. mattermost.js) keep their original strict behavior.
 #
-# === Patch 2: env-gated bypass for assertExplicitProxyAllowed ===
-# OpenClaw 2026.4.2 added assertExplicitProxyAllowed() in fetch-guard,
-# which validates the explicit proxy URL by passing the proxy hostname
-# through resolvePinnedHostnameWithPolicy() with the *target's* SsrfPolicy.
-# When the target uses hostnameAllowlist (Telegram media policy:
-# `["api.telegram.org"]`), the proxy hostname (e.g. 10.200.0.1) gets
-# rejected with "Blocked hostname (not in allowlist)". This is an upstream
-# OpenClaw design flaw: a proxy is infrastructure, not a fetch target, and
-# should not be filtered through the target's allowlist.
+# === Patch 2: validate the configured OpenShell explicit proxy ===
+# assertExplicitProxyAllowed() validates the proxy hostname through the
+# native SSRF policy. The OpenShell proxy is private infrastructure, so its
+# address needs a separate authorization from the requested target.
 #
-# Inject an early-return guarded by `process.env.OPENSHELL_SANDBOX === "1"`
-# so the bypass only activates inside an OpenShell sandbox runtime, which
-# is what NemoClaw deploys into. OpenShell injects this env var when it
-# starts a sandbox pod; any consumer running the same openclaw bundle
-# outside an OpenShell sandbox (bare-metal, another wrapper) does not have
-# OPENSHELL_SANDBOX set and keeps the full upstream SSRF check. The L7
-# proxy itself enforces per-endpoint network policy inside the sandbox,
-# so the trust boundary for SSRF protection is unchanged.
+# Inside an OpenShell sandbox, permit only the endpoint recorded in the
+# root-owned openclaw-proxy-url file. Image builds create that file from the
+# configured proxy arguments; managed startup replaces it from the validated
+# profile. Process environment overrides cannot select a different proxy.
+# Both the readable bundles and worker use the same descriptor-checked guard.
+# Outside OpenShell, retain native validation. The selected L7 proxy still
+# enforces the target network policy; this exception covers only its address.
 #
 # Image-level `ENV` does NOT work here: OpenShell controls the pod env at
 # runtime and image ENV vars set by Dockerfile are stripped. OPENSHELL_SANDBOX
@@ -1149,9 +1144,8 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
 # === Removal criteria ===
 # Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
 #   when all media-fetch callsites unconditionally pass useEnvProxy.
-# Patch 2: drop when OpenClaw fixes assertExplicitProxyAllowed to skip the
-#   target hostname allowlist for the proxy hostname check (or exposes config
-#   to disable the check).
+# Patch 2: drop when OpenClaw supports validating the configured OpenShell
+#   proxy against an authority that sandbox processes cannot override.
 # Patch 2b: drop when OpenClaw ships a reviewed web_fetch trusted-proxy SSRF
 #   policy surface that can allow host.openshell.internal without allowing
 #   broader private/special-use hostnames.
@@ -1215,16 +1209,16 @@ RUN set -eu; \
             patch_fail "Patch 1 cannot safely skip"; \
         fi; \
     fi; \
-    # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
+    # --- Patch 2: constrain assertExplicitProxyAllowed to the owned endpoint --- \
     fg_assert="$(grep -RIlE --include='*.js' --include='*.mjs' --exclude='worker.mjs' 'async function assertExplicitProxyAllowed' "$OC_DIST" || true)"; \
     if [ -n "$fg_assert" ]; then \
         patched_assert=0; \
         for f in $fg_assert; do \
-            if grep -q 'process.env.OPENSHELL_SANDBOX === "1"' "$f"; then \
+            if grep -q 'nemoclaw: validated OpenShell explicit proxy' "$f"; then \
                 echo "INFO: Patch 2 already present in $f"; \
             else \
-                sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |' "$f"; \
-                grep -Eq 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$f" \
+                node /usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts "$f"; \
+                grep -q 'nemoclaw: validated OpenShell explicit proxy' "$f" \
                     || patch_fail "Patch 2 verification failed for $f"; \
                 patched_assert=1; \
             fi; \
@@ -2035,6 +2029,10 @@ os.chmod(path, 0o600)"
 # .openclaw layout even when sandbox-base:latest has not been rebuilt yet.
 # hadolint ignore=DL3002
 USER root
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && printf 'http://%s:%s\n' "$NEMOCLAW_PROXY_HOST" "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/openclaw-proxy-url \
+    && chown root:root /usr/local/share/nemoclaw/openclaw-proxy-url \
+    && chmod 0444 /usr/local/share/nemoclaw/openclaw-proxy-url
 # hadolint ignore=DL4006
 RUN set -eu; \
     config_dir=/sandbox/.openclaw; \

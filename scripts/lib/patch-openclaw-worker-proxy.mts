@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { OPENCLAW_EXPLICIT_PROXY_GUARD } from "./patch-openclaw-explicit-proxy.mts";
 
 // The 2026.9.5 worker embeds minified copies of the modules patched in Dockerfile.
 // Match reviewed expressions exactly: guessing renamed locals can corrupt the
@@ -16,7 +17,7 @@ const PATCHES = [
   ],
   [
     "async function assertExplicitProxyAllowed(Ot,Zt,_n,Dn,kn){",
-    'async function assertExplicitProxyAllowed(Ot,Zt,_n,Dn,kn){if(process.env.OPENSHELL_SANDBOX === "1")return;/* nemoclaw: worker explicit proxy */',
+    `async function assertExplicitProxyAllowed(Ot,Zt,_n,Dn,kn){${OPENCLAW_EXPLICIT_PROXY_GUARD}/* nemoclaw: worker explicit proxy */`,
   ],
   [
     "return fetchWithSsrFGuard(_n?withTrustedEnvProxyGuardedFetchMode(kn):withStrictGuardedFetchMode(kn))",

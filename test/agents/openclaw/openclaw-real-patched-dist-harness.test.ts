@@ -225,6 +225,10 @@ function dockerfilePatchCommand(dist: string): string {
       "/usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts",
       JSON.stringify(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-worker-proxy.mts")),
     )
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts",
+      shellQuote(path.join(REPO_ROOT, "scripts/lib/patch-openclaw-explicit-proxy.mts")),
+    )
     .replaceAll("/usr/local/lib/nemoclaw/extract-semver", shellQuote(OPENCLAW_VERSION_EXTRACTOR));
 }
 
@@ -567,7 +571,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
             "managed llama.cpp compact tool catalog patch output",
           );
           [
-            "nemoclaw: env-gated bypass",
+            "nemoclaw: validated OpenShell explicit proxy",
             "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
             "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
             'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',

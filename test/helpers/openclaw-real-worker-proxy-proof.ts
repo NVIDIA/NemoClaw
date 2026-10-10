@@ -32,7 +32,7 @@ export function runRealOpenClawWorkerProxyProof(options: ProofOptions): void {
   );
   fs.writeFileSync(
     proofModule,
-    `${observedSource}\ninit_web_fetch(); export {createWebFetchTool};\n`,
+    `${observedSource}\ninit_web_fetch(); export {createWebFetchTool, assertExplicitProxyAllowed};\n`,
   );
   fs.writeFileSync(
     proofScript,
@@ -51,7 +51,7 @@ const networkFetch = async (url, init) => {
 // mode selection, dispatcher construction, and response handling still run.
 networkFetch.mock = {};
 globalThis.fetch = networkFetch;
-const { createWebFetchTool } = await import(pathToFileURL(${JSON.stringify(proofModule)}));
+const { createWebFetchTool, assertExplicitProxyAllowed } = await import(pathToFileURL(${JSON.stringify(proofModule)}));
 const cases = [
   { id: "sandbox-host", sandbox: true, proxy: true, host: "host.openshell.internal", allowed: true },
   { id: "sandbox-public", sandbox: true, proxy: true, host: "public.example", allowed: true },
@@ -90,7 +90,51 @@ for (const scenario of cases) {
   }], scenario.id);
   assert.deepEqual(policy, { allowedHostnames: ["keep.example"], allowRfc2544BenchmarkRange: true }, scenario.id);
 }
-console.log("real worker web_fetch proxy proof: 6 scenarios passed");
+// Supply root-file observations at the filesystem boundary. The real bundled
+// guard, URL parser, ownership checks, and denial path remain in the call.
+// CI runs without uid 0; these observations do not claim image ownership proof.
+const getBuiltinModule = process.getBuiltinModule;
+let trustedProxy = "http://10.200.0.1:3128\\n";
+let fileUid = 0;
+let closed = 0;
+const proxyFs = {
+  constants: getBuiltinModule("node:fs").constants,
+  openSync(file, flags) {
+    assert.equal(file, "/usr/local/share/nemoclaw/openclaw-proxy-url");
+    assert.ok(flags & this.constants.O_NOFOLLOW);
+    return 713;
+  },
+  fstatSync(fd) {
+    assert.equal(fd, 713);
+    return { isFile: () => true, uid: fileUid, gid: 0, mode: 0o100444, nlink: 1,
+      size: Buffer.byteLength(trustedProxy), mtimeMs: 1, ctimeMs: 1 };
+  },
+  readSync(fd, bytes) {
+    assert.equal(fd, 713);
+    return Buffer.from(trustedProxy).copy(bytes);
+  },
+  closeSync(fd) { assert.equal(fd, 713); closed++; },
+};
+process.getBuiltinModule = (name) => name === "node:fs" ? proxyFs : getBuiltinModule(name);
+process.env.OPENSHELL_SANDBOX = "1";
+process.env.NEMOCLAW_PROXY_HOST = "attacker.example";
+process.env.HTTP_PROXY = "http://attacker.example:3128";
+try {
+  const invoke = (proxyUrl) => assertExplicitProxyAllowed({ mode: "explicit-proxy", proxyUrl });
+  await invoke("http://10.200.0.1:3128");
+  for (const url of ["http://attacker.example:3128", "http://10.0.0.1:3128", "http://169.254.169.254:3128", "http://user:secret@10.200.0.1:3128", "http://10.200.0.1:3128/path"]) {
+    await assert.rejects(invoke(url), /root-owned OpenShell proxy endpoint/);
+  }
+  trustedProxy = "http://custom.internal:3129\\n";
+  await invoke("http://custom.internal:3129/");
+  await assert.rejects(invoke("http://10.200.0.1:3128"), /root-owned OpenShell proxy endpoint/);
+  fileUid = 1000;
+  await assert.rejects(invoke("http://custom.internal:3129"), /root-owned OpenShell proxy endpoint/);
+  assert.equal(closed, 9);
+} finally {
+  process.getBuiltinModule = getBuiltinModule;
+}
+console.log("real worker web_fetch proxy proof: 6 scenarios passed; 9 explicit-proxy checks passed");
 `,
   );
   try {

@@ -12,6 +12,10 @@ import {
 } from "../../../scripts/lib/patch-openclaw-worker-proxy.mts";
 
 import { OPENCLAW_WORKER_PROXY_SOURCE as SOURCE } from "../../fixtures/openclaw-worker-proxy";
+import {
+  OPENCLAW_EXPLICIT_PROXY_GUARD,
+  patchOpenClawExplicitProxyText,
+} from "../../../scripts/lib/patch-openclaw-explicit-proxy.mts";
 
 interface Runtime {
   namespace: { withStrictGuardedFetchMode(): (value: object) => { mode: string } };
@@ -25,14 +29,61 @@ interface Runtime {
   timeout: number;
 }
 
-function runtime(sandbox: boolean): Runtime {
-  return vm.runInNewContext(patchOpenClawWorkerProxyText(SOURCE), {
-    process: { env: sandbox ? { OPENSHELL_SANDBOX: "1" } : {} },
-    URL,
-  }) as Runtime;
+function runtime(
+  sandbox: boolean,
+  endpoint = "http://10.200.0.1:3128\n",
+  metadata: Record<string, unknown> = {},
+  worker = true,
+): Runtime {
+  const contents = Buffer.from(endpoint);
+  const proxyFs = {
+    constants: fs.constants,
+    openSync(file: string, flags: number) {
+      expect(file).toBe("/usr/local/share/nemoclaw/openclaw-proxy-url");
+      expect(flags & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
+      return 17;
+    },
+    fstatSync: () => ({
+      isFile: () => true,
+      uid: 0,
+      gid: 0,
+      mode: 0o100444,
+      nlink: 1,
+      size: contents.length,
+      mtimeMs: 1,
+      ctimeMs: 1,
+      ...metadata,
+    }),
+    readSync: (_fd: number, buffer: Buffer) => contents.copy(buffer),
+    closeSync: vi.fn(),
+  };
+  return vm.runInNewContext(
+    (worker ? patchOpenClawWorkerProxyText : patchOpenClawExplicitProxyText)(SOURCE),
+    {
+      process: {
+        env: {
+          ...(sandbox ? { OPENSHELL_SANDBOX: "1" } : {}),
+          HTTP_PROXY: "http://attacker:9",
+          NEMOCLAW_PROXY_HOST: "attacker",
+        },
+        getBuiltinModule: () => proxyFs,
+      },
+      Buffer,
+      URL,
+    },
+  ) as Runtime;
 }
 
 describe("OpenClaw 2026.9.5 worker proxy compatibility", () => {
+  it("binds the shared guard to exactly one native validator entrypoint", () => {
+    const patched = patchOpenClawExplicitProxyText(SOURCE);
+    expect(patchOpenClawExplicitProxyText(patched)).toBe(patched);
+    expect(() => patchOpenClawExplicitProxyText(SOURCE + SOURCE)).toThrow(/one reviewed/);
+    expect(() => patchOpenClawExplicitProxyText("no validator")).toThrow(/one reviewed/);
+    expect(() => patchOpenClawExplicitProxyText(OPENCLAW_EXPLICIT_PROXY_GUARD + SOURCE)).toThrow(
+      /outside/,
+    );
+  });
   it("is idempotent and rejects missing, duplicate, and changed expressions", () => {
     const patched = patchOpenClawWorkerProxyText(SOURCE);
     expect(patchOpenClawWorkerProxyText(patched)).toBe(patched);
@@ -45,13 +96,80 @@ describe("OpenClaw 2026.9.5 worker proxy compatibility", () => {
     ).toThrow(/Unreviewed/);
   });
 
-  it("allows the explicit sandbox proxy while preserving native validation outside it", async () => {
+  it.each([true, false])("allows only the owned proxy with worker=%s", async (worker) => {
     await expect(
-      runtime(true).assertExplicitProxyAllowed({ mode: "explicit-proxy" }),
+      runtime(true, undefined, {}, worker).assertExplicitProxyAllowed({
+        mode: "explicit-proxy",
+        proxyUrl: "http://10.200.0.1:3128",
+      }),
     ).resolves.toBeUndefined();
     await expect(
-      runtime(false).assertExplicitProxyAllowed({ mode: "explicit-proxy" }),
+      runtime(true, "http://custom.internal:3129\n", {}, worker).assertExplicitProxyAllowed({
+        mode: "explicit-proxy",
+        proxyUrl: "http://custom.internal:3129/",
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      runtime(false, undefined, {}, worker).assertExplicitProxyAllowed({
+        mode: "explicit-proxy",
+        proxyUrl: "http://10.200.0.1:3128",
+      }),
     ).rejects.toThrow("native proxy check");
+  });
+
+  describe.each([true, false])("explicit proxy rejection with worker=%s", (worker) => {
+    it.each([
+      undefined,
+      "invalid",
+      "http://10.0.0.1:3128",
+      "http://169.254.169.254:3128",
+      "http://127.0.0.1:3128",
+      "http://public.example:3128",
+      "http://attacker:9",
+      "http://10.200.0.1:3129",
+      "https://10.200.0.1:3128",
+      "http://user:secret@10.200.0.1:3128",
+      "http://10.200.0.1:3128/path",
+      "http://10.200.0.1:3128/?x=1",
+      "http://10.200.0.1:3128/#x",
+    ])("rejects the unrelated endpoint %s", async (proxyUrl) => {
+      await expect(
+        runtime(true, undefined, {}, worker).assertExplicitProxyAllowed({
+          mode: "explicit-proxy",
+          proxyUrl,
+        }),
+      ).rejects.toThrow("root-owned OpenShell proxy endpoint");
+    });
+  });
+
+  it.each([
+    { uid: 1000 },
+    { gid: 1000 },
+    { mode: 0o100644 },
+    { nlink: 2 },
+    { size: 513 },
+    { isFile: () => false },
+  ])("rejects unsafe proxy authority %j", async (metadata) => {
+    await expect(
+      runtime(true, undefined, metadata).assertExplicitProxyAllowed({
+        mode: "explicit-proxy",
+        proxyUrl: "http://10.200.0.1:3128",
+      }),
+    ).rejects.toThrow("root-owned OpenShell proxy endpoint");
+  });
+
+  it.each([
+    "",
+    "http://10.200.0.1:3128\nextra",
+    "http://user:secret@10.200.0.1:3128\n",
+    "http://10.200.0.1:99999\n",
+  ])("rejects malformed proxy authority %j", async (endpoint) => {
+    await expect(
+      runtime(true, endpoint).assertExplicitProxyAllowed({
+        mode: "explicit-proxy",
+        proxyUrl: "http://10.200.0.1:3128",
+      }),
+    ).rejects.toThrow("root-owned OpenShell proxy endpoint");
   });
 
   it.each([

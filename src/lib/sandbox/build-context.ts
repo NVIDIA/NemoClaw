@@ -383,6 +383,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "patch-openclaw-worker-proxy.mts"),
     path.join(stagedScriptsDir, "lib", "patch-openclaw-worker-proxy.mts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-openclaw-explicit-proxy.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-openclaw-explicit-proxy.mts"),
+  );
   // Dockerfile copies this OpenClaw MCP patch into the optimized build context.
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-mcp-npx.mts"),
