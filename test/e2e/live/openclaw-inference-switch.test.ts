@@ -669,15 +669,14 @@ async function readAndAssertOpenClawConfig(
   );
   // The fresh sandbox exec verifies the scoped native handle before removing
   // it from output, so credentials never reach test artifacts.
-  if (expected.nativeNvidia) {
-    expect(provider?.apiKey).toBeUndefined();
-  } else {
-    expect(provider?.apiKey).toMatch(
-      expected.nativeCustomEndpoint
+  expect(provider?.apiKey === undefined).toBe(expected.nativeNvidia === true);
+  expect(provider?.apiKey ?? "").toMatch(
+    expected.nativeNvidia
+      ? /^$/u
+      : expected.nativeCustomEndpoint
         ? /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_COMPATIBLE_API_KEY$/u
         : /^unused$/u,
-    );
-  }
+  );
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
