@@ -26,8 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-docs
-      - name: Test documentation generation and publication guards
-        run: "cargo test --locked -p nemoclaw-build --test integration -- docs:: fern::"
+      # CI / Native runs the docs:: and fern:: tests with the rest of the workspace.
       - name: Check generated reference, local links, and Fern routes
         run: cargo run --locked -p nemoclaw-build -- fern check
       # Publication jobs run this binary, built from the same commit in this run,
