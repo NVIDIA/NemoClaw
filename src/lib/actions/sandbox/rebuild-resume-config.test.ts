@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../../inference/native-custom";
 import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../../state/onboard-session.js");
+const registryPersistence = requireDist("../../state/registry/persistence.js");
 const {
   isLocalInferenceProvider,
   getRebuildCredentialEnvFromRegistry,
@@ -924,3 +929,75 @@ describe("persisted native NVIDIA rebuild authority", () => {
     },
   );
 });
+
+it.each([
+  "matching",
+  "matching-port",
+  "malformed",
+  "other-sandbox",
+  "wrong-api",
+  "missing-gateway",
+  "replaced-gateway",
+  "malformed-gateway",
+  "other-gateway",
+])(
+  "validates native custom rebuild authority before destructive work (%s) (#12636)",
+  async (state) => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "custom-id",
+    });
+    const gatewayName = state === "matching-port" ? "nemoclaw-9001" : "nemoclaw";
+    vi.spyOn(registryPersistence, "load").mockReturnValue({
+      sandboxes: {},
+      nativeCustomProviderAuthorities: {
+        [state === "other-gateway" ? "peer" : gatewayName]: {
+          ...(state === "missing-gateway"
+            ? {}
+            : {
+                [receipt.providerName]:
+                  state === "malformed-gateway"
+                    ? {}
+                    : state === "replaced-gateway"
+                      ? { ...receipt, providerId: "replacement-id" }
+                      : receipt,
+              }),
+        },
+      },
+    });
+    const selected = entry({
+      gatewayName,
+      provider: "compatible-endpoint",
+      model: "model",
+      endpointUrl: prepared.endpointUrl,
+      preferredInferenceApi: state === "wrong-api" ? "openai-responses" : prepared.api,
+      credentialEnv: receipt.credentialEnv,
+      nativeCustomProviderAttachment:
+        state === "malformed"
+          ? {}
+          : state === "other-sandbox"
+            ? { ...receipt, sandboxName: "peer" }
+            : receipt,
+    });
+    const prepare = () =>
+      prepareRebuildResumeConfig("alpha", selected, "openclaw", noopLog, throwingBail);
+    let restored: unknown;
+    let failure: unknown;
+    try {
+      restored = prepare()?.nativeCustomProviderAttachment;
+    } catch (error) {
+      failure = error;
+    }
+    expect(restored).toEqual(state.startsWith("matching") ? receipt : undefined);
+    expect(failure instanceof Error).toBe(!state.startsWith("matching"));
+  },
+);

@@ -1784,6 +1784,34 @@ to the console. Pass the fixture-provided frozen, canonical `progress`
 capability unchanged to an audited subprocess boundary; do not replace it with
 a custom, copied, or no-op adapter.
 
+## Native custom-hosted inference
+
+The `inference-routing` selector includes the retained routing target and
+`inference-routing-custom-hosted`, which uses the distinct `custom-hosted` shard.
+Each target keeps its own execution deadline and artifact identity.
+
+The `inference-routing-custom-hosted` target's TC-INF-11 onboards its public HTTPS fixture
+with a sandbox-specific native provider. It verifies a fresh OpenClaw turn after stop/start,
+selected `inference get` and status, DNS pinning, redirect rejection, executable denial,
+detach/reattach, and provider/route deletion. A second native sandbox proves that selected
+detach/delete preserves peer access. After direct public HTTP verification, a fresh native
+Anthropic sandbox proves an authenticated Messages request from a fresh OpenClaw turn.
+An ordinary native Hermes sandbox uses the same authenticated public HTTP fixture and proves
+a fresh OpenAI request after stop/start, with native endpoint and scoped credential configuration.
+A fresh native Deep Agents Code sandbox uses the same fixture and proves an authenticated
+selected-model request and response from its installed CLI before scoped cleanup.
+Its 330-minute test deadline contains five 40-minute onboarding bounds, 120 minutes for
+lifecycle operations, and 10 minutes of test headroom.
+The target adds 20 minutes of job headroom, for a 350-minute target budget.
+These are maximum deadlines, not expected durations. The fixture owns all selected sandboxes,
+the public tunnel, DNS restoration, and local servers.
+
+The existing Bedrock OpenClaw and Hermes targets exercise their actual agents through
+native attachments while retaining the host adapter's AWS credential custody and API translation.
+Host-local fixtures retain their existing shared-route contract. Deterministic receipt,
+profile, rollback, and malformed-authority cases stay in source tests. Live success requires
+candidate-bound execution evidence; fixture or source-test success does not establish it.
+
 ## Push and Manual PR E2E
 
 The `token-rotation` target uses real OpenShell sandbox recreation with test messaging tokens

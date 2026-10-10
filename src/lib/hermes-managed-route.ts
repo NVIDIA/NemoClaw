@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
+import { managedInferenceApiKey } from "./inference-credential.ts";
 
 // The inference.local route replaces this non-secret sentinel at egress.
 // Native NVIDIA routing instead expands the supervisor-issued environment handle.
@@ -9,7 +9,7 @@ export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
   name: string;
-  api_key: typeof HERMES_PROXY_REWRITE_SENTINEL | typeof NVIDIA_INFERENCE_PLACEHOLDER;
+  api_key: string;
   discover_models: true;
   api?: string;
   base_url?: string;
@@ -28,7 +28,7 @@ export type HermesManagedRouting = {
     default: string;
     provider: "custom";
     base_url: string;
-    api_key: typeof HERMES_PROXY_REWRITE_SENTINEL | typeof NVIDIA_INFERENCE_PLACEHOLDER;
+    api_key: string;
     api_mode?: string;
     context_length?: number;
   };
@@ -42,6 +42,7 @@ export type HermesManagedRoute = {
   upstreamProvider: string;
   inferenceApi: string;
   contextWindow?: number | null;
+  credentialReference?: string;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -81,7 +82,30 @@ export function applyHermesManagedRoute(
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
-  const apiKey = managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  const nativeCustom =
+    new URL(route.baseUrl).hostname !== "inference.local" &&
+    ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(route.upstreamProvider);
+  let apiKey = nativeCustom
+    ? `sk-OPENSHELL-RESOLVE-ENV-${route.upstreamProvider === "compatible-endpoint" ? "COMPATIBLE_API_KEY" : "COMPATIBLE_ANTHROPIC_API_KEY"}`
+    : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  if (route.credentialReference !== undefined) {
+    const key =
+      route.upstreamProvider === "compatible-endpoint"
+        ? "COMPATIBLE_API_KEY"
+        : "COMPATIBLE_ANTHROPIC_API_KEY";
+    if (
+      !nativeCustom ||
+      !new RegExp(`^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${key}$`, "u").test(
+        route.credentialReference,
+      )
+    )
+      throw new Error(
+        "Hermes native custom inference requires its matching issued credential reference.",
+      );
+    apiKey =
+      "sk-OPENSHELL-RESOLVE-ENV-" +
+      route.credentialReference.slice("openshell:resolve:env:".length);
+  }
   const previousUpstream = isObjectRecord(config._nemoclaw_upstream)
     ? config._nemoclaw_upstream
     : {};

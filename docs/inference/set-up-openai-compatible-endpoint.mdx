@@ -13,8 +13,11 @@ content:
 Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/completions` or a compatible `/v1/responses` API.
 Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
 
-The agent connects to `inference.local` inside the sandbox.
-OpenShell forwards that traffic to the endpoint configured during onboarding.
+Fresh hosted endpoints use an OpenShell provider attached to the selected sandbox.
+The agent uses an issued placeholder credential; OpenShell injects the host-held credential only for the admitted endpoint and API.
+Public HTTP endpoints and admitted HTTPS IP-literal endpoints use the sandbox-attached provider directly.
+DNS-backed HTTPS endpoints use the host's pinned TLS adapter.
+Host-local endpoints and existing shared-route sandboxes continue to use `inference.local`.
 
 ## Start the Server
 
@@ -62,7 +65,7 @@ Use a host-routable URL such as `http://localhost:8000/v1` when you want onboard
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
-Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
+These host-local inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
 For authenticated endpoints, NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those authenticated URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.

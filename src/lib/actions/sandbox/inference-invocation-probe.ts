@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type NativeCustomProviderAttachment,
+  normalizeNativeCustomProviderAttachment,
+} from "../../inference/native-custom";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
@@ -49,6 +53,7 @@ export type SandboxInferenceInvocationInput = {
   model: string;
   preferredInferenceApi: string | null;
   nativeProvider?: boolean;
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
 };
 
 export type SandboxInferenceInvocationResult =
@@ -82,10 +87,19 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   headers: string[];
   payload: Record<string, unknown>;
 } {
+  if (
+    input.nativeCustomProviderAttachment &&
+    !normalizeNativeCustomProviderAttachment(
+      input.nativeCustomProviderAttachment,
+      input.sandboxName,
+    )
+  )
+    throw new Error("Native custom inference authority does not match the selected sandbox.");
   const config = getSandboxInferenceConfig(
     input.model,
     input.provider,
     input.preferredInferenceApi,
+    input.nativeCustomProviderAttachment,
   );
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
   const baseUrl = (
@@ -137,20 +151,38 @@ export function resolveSandboxInferenceInvocationEndpoint(
   return buildProbeRequest(input).endpoint;
 }
 
+/** Require an identity-bound supervisor placeholder; never accept a host secret or bare alias. */
+function nativeCustomAuthHeaderScript(receipt: NativeCustomProviderAttachment): string {
+  const authority = normalizeNativeCustomProviderAttachment(receipt);
+  if (!authority) throw new Error("Invalid native custom inference attachment authority.");
+  const key = authority.credentialEnv;
+  const prefix = authority.api === "anthropic-messages" ? "x-api-key: " : "Authorization: Bearer ";
+  return [
+    `case "\${${key}:-}" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac`,
+    `printf '%s' "\${${key}:-}" | LC_ALL=C grep -Eq '^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_${key}$' || exit 2`,
+    `AUTH_HEADER="${prefix}\${${key}}"`,
+  ].join("; ");
+}
+
 export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
 ): string {
   const request = buildProbeRequest(input);
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const authScript = input.nativeCustomProviderAttachment
+    ? nativeCustomAuthHeaderScript(input.nativeCustomProviderAttachment)
+    : useNativeNvidia
+      ? NATIVE_NVIDIA_AUTH_HEADER_SCRIPT
+      : null;
   const headerArgs =
     ["Content-Type: application/json", ...request.headers]
       .map((header) => `-H ${shellQuote(header)}`)
-      .join(" ") + (useNativeNvidia ? ' -H "$AUTH_HEADER"' : "");
+      .join(" ") + (authScript ? ' -H "$AUTH_HEADER"' : "");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
-    ...(useNativeNvidia ? [NATIVE_NVIDIA_AUTH_HEADER_SCRIPT] : []),
+    ...(authScript ? [authScript] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
     `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,
@@ -261,6 +293,7 @@ export async function probeSandboxInferenceInvocation(
       input.model,
       input.provider,
       input.preferredInferenceApi,
+      input.nativeCustomProviderAttachment,
     ).inferenceApi;
     if (httpStatus !== null && validateInferenceResponseBody(inferenceApi, body).ok) {
       return { ok: true };

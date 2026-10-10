@@ -17,7 +17,6 @@ import { createLocalInferenceRouteApplier } from "../../src/lib/onboard/local-in
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import {
-  bedrockRuntimeOnboard,
   type CommandEntry,
   createDirectSetupInferenceHarness,
   parseStdoutJson,
@@ -25,6 +24,7 @@ import {
 } from "../helpers/onboard-split-context";
 import {
   createDirectCommandRouter,
+  createNativeCustomSetupDependencies,
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
@@ -95,9 +95,9 @@ describe("onboard helpers", () => {
       },
     );
   });
-  it("routes Bedrock Runtime custom Anthropic endpoints through the hidden OpenAI adapter", async () => {
+  it("binds fresh Bedrock Runtime authority to the existing OpenAI adapter", async () => {
     await withProcessEnv({ COMPATIBLE_ANTHROPIC_API_KEY: "bedrock-bearer" }, async () => {
-      const updateSandbox = vi.fn(() => true);
+      const updateSandbox = vi.fn<SetupInferenceDeps["updateSandbox"]>(() => true);
       const ensureAdapter = vi.fn(async () => ({
         baseUrl: "http://host.openshell.internal:11436/v1",
         localBaseUrl: "http://127.0.0.1:11436/v1",
@@ -106,18 +106,14 @@ describe("onboard helpers", () => {
         region: "us-east-1",
         logPath: "/tmp/bedrock-adapter.log",
       }));
-      const setupBedrockRuntimeInference = bedrockRuntimeOnboard.setupBedrockRuntimeInference;
+      const native = createNativeCustomSetupDependencies();
       const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.join(" ") === "provider get -g nemoclaw compatible-anthropic-endpoint"
-            ? { status: 1, stdout: "", stderr: "" }
-            : undefined,
         overrides: {
+          ...native,
           updateSandbox,
-          bedrockRuntimeOnboard: {
-            setupBedrockRuntimeInference: (
-              input: Parameters<typeof setupBedrockRuntimeInference>[0],
-            ) => setupBedrockRuntimeInference({ ...input, ensureAdapter }),
+          nativeCustomTransportDeps: {
+            ...native.nativeCustomTransportDeps,
+            ensureBedrockAdapter: ensureAdapter,
           },
         },
       });
@@ -132,62 +128,53 @@ describe("onboard helpers", () => {
           "compatible-anthropic-endpoint",
           "https://bedrock-runtime.us-east-1.amazonaws.com",
           "COMPATIBLE_ANTHROPIC_API_KEY",
+          null,
+          [],
+          { preferredInferenceApi: "openai-completions" },
         );
       } finally {
         error.mockRestore();
         log.mockRestore();
       }
 
-      const commands = harness.commands;
-      const providerCommand = commands.find((entry) => /provider create/.test(entry.command));
-      assert.ok(providerCommand, "expected hidden adapter provider registration");
-      assert.match(providerCommand.command, /--name compatible-anthropic-endpoint/);
-      assert.match(providerCommand.command, /--type openai/);
-      assert.match(providerCommand.command, /--credential NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN/);
-      assert.match(
-        providerCommand.command,
-        /OPENAI_BASE_URL=http:\/\/host\.openshell\.internal:11436\/v1/,
+      const receipt = updateSandbox.mock.lastCall?.[1]?.nativeCustomProviderAttachment;
+      expect(receipt).toMatchObject({
+        sandboxName: "test-box",
+        api: "openai-completions",
+        endpointUrl: "http://host.openshell.internal:11436/v1",
+        transport: {
+          kind: "bedrock-runtime",
+          region: "us-east-1",
+          sourceEndpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        },
+      });
+      expect(native.providerAdapter.createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          name: receipt?.providerName,
+          type: receipt?.profileId,
+          credentials: [{ name: "COMPATIBLE_ANTHROPIC_API_KEY", value: "adapter-token" }],
+        }),
       );
-      assert.equal(providerCommand.env?.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN, "adapter-token");
-      assert.ok(
-        !JSON.stringify(commands).includes("bedrock-bearer"),
-        "Bedrock bearer token must not appear in OpenShell argv or env",
+      expect(ensureAdapter).toHaveBeenCalledWith(
+        expect.objectContaining({ compatibleCredential: "bedrock-bearer" }),
       );
-      assert.deepEqual(harness.errors, []);
-      assert.deepEqual(harness.logs, [
-        "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
-        "  ✓ Inference route set: compatible-anthropic-endpoint / anthropic.claude-3-5-sonnet-20240620-v1:0",
-      ]);
+      expect(harness.commands).toEqual([]);
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpointUrl: "http://127.0.0.1:11436/v1",
+          credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+          forceOpenAiLike: true,
+        }),
+      );
+      expect(harness.errors).toEqual([]);
+      expect(JSON.stringify(updateSandbox.mock.calls)).not.toMatch(/bedrock-bearer|adapter-token/u);
       assert.doesNotMatch(
         [...harness.logs, ...harness.errors, ...consoleOutput].join("\n"),
         /bedrock-bearer|adapter-token/,
         "Bedrock tokens must not appear in onboarding console output",
       );
-      const sandboxCommands = commands.filter((entry) => /\bsandbox\b/.test(entry.command));
-      assert.ok(
-        !sandboxCommands.some((entry) =>
-          JSON.stringify(entry).includes("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"),
-        ),
-        "adapter credential env must not be passed to sandbox commands",
-      );
-      assert.ok(
-        !sandboxCommands.some((entry) => JSON.stringify(entry).includes("adapter-token")),
-        "adapter token must not be passed to sandbox commands",
-      );
-      assert.match(
-        commands.at(-1)?.command || "",
-        /inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
-      );
-      expect(updateSandbox).toHaveBeenCalledWith("test-box", {
-        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
-        provider: "compatible-anthropic-endpoint",
-        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
-        endpointSource: "onboard",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        preferredInferenceApi: null,
-        gatewayName: "nemoclaw",
-        hostLocalInferenceReceipt: null,
-      });
     });
   });
   it(

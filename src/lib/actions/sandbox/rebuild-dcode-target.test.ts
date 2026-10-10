@@ -3,6 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../../inference/native-custom";
 import { resolveDcodeRebuildTarget } from "./rebuild-dcode-target";
 
 describe("resolveDcodeRebuildTarget", () => {
@@ -32,4 +36,37 @@ describe("resolveDcodeRebuildTarget", () => {
     });
     expect(target).not.toHaveProperty("dashboardPort");
   });
+});
+
+it("carries the exact native custom endpoint authority into DCode rebuild probes (#12636)", async () => {
+  const prepared = await prepareNativeCustomProfile({
+    sandboxName: "alpha",
+    provider: "compatible-endpoint",
+    endpointUrl: "http://8.8.8.8/v1",
+    api: "openai-completions",
+  });
+  const receipt = customAttachmentFromPrepared(prepared, {
+    schemaVersion: 1,
+    profileId: prepared.profile.id,
+    providerName: prepared.providerName,
+    providerId: "custom-id",
+  });
+  const entry = {
+    name: "alpha",
+    agent: "langchain-deepagents-code",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    nativeCustomProviderAttachment: receipt,
+  };
+  const selection = {
+    provider: "compatible-endpoint",
+    model: "model",
+    preferredInferenceApi: "openai-completions",
+  };
+  expect(resolveDcodeRebuildTarget(entry, selection).nativeCustomProviderAttachment).toEqual(
+    receipt,
+  );
+  expect(() => resolveDcodeRebuildTarget({ ...entry, name: "peer" }, selection)).toThrow(
+    "malformed",
+  );
 });

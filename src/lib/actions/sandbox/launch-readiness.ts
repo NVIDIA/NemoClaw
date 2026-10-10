@@ -65,7 +65,7 @@ import {
   type LaunchReadinessObservationStage,
   LaunchReadinessObservationError as ObservationError,
   recordLaunchReadinessObservationFailure,
-  getNativeNvidiaProviderAttachment,
+  hasNativeInferenceProviderAttachment,
   requireLaunchSemanticHealth,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
@@ -89,7 +89,9 @@ export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/tim
 export { createBoundLaunchReadinessDeps };
 export {
   getNativeNvidiaProviderAttachment,
+  hasNativeInferenceProviderAttachment,
   requireNativeNvidiaInferenceHealth,
+  requireNativeInferenceHealth,
 } from "./launch-readiness/health";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
@@ -826,9 +828,9 @@ async function captureLaunchIdentity(
   }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const nativeNvidia = Boolean(getNativeNvidiaProviderAttachment(entry));
+  const nativeInference = hasNativeInferenceProviderAttachment(entry);
   let liveInference: { provider: string; model: string } | null = null;
-  if (!nativeNvidia) {
+  if (!nativeInference) {
     const inferenceGetStartedAt = performance.now();
     let inferenceResult: Awaited<
       ReturnType<

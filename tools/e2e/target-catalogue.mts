@@ -21,7 +21,8 @@ import {
 import { FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES } from "./full-e2e-timeout-contract.mts";
 import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
-  ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+  CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
+  INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
@@ -1028,12 +1029,38 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw + langchain-deepagents-code",
     environmentOrInferenceEndpoint: "Ubuntu; local compatible and HTTPS inference fixtures",
     profile: "standard",
-    timeoutMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+    timeoutMinutes: INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: false,
     cloudflared: true,
     owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
+  }),
+  managedRuntimeTarget("inference-routing-custom-hosted", {
+    targetId: "inference-routing",
+    shard: "custom-hosted",
+    displayName: "Inference: proves native custom hosted lifecycle and isolation",
+    agentRuntime: "openclaw + hermes + langchain-deepagents-code",
+    environmentOrInferenceEndpoint: "Ubuntu; native custom HTTPS, HTTP and Anthropic fixtures",
+    profile: "standard",
+    timeoutMinutes: CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
+    installMode: "none",
+    restoreCli: true,
+    exposeCliBin: false,
+    cloudflared: true,
+    owningPaths: [
+      "src/lib/inference/native-custom/",
+      "src/lib/inference/native-provider/",
+      "src/lib/actions/inference-set/native-custom.ts",
+      "src/lib/state/registry/native-custom-provider-authority.ts",
+      "src/lib/onboard/resume/native-custom.ts",
+      "tools/e2e/onboard-timeout-contract.mts",
+      "test/e2e/live/inference-routing-native-anthropic.ts",
+      "test/e2e/live/inference-routing-native-hermes.ts",
+      "test/e2e/live/inference-routing-helpers.ts",
+      "test/e2e/live/https-pin-compatible-server.ts",
+      "test/e2e/live/dns-rebinding-hosts-fixture.ts",
+    ],
   }),
   dockerOnlyTarget("llama-cpp-generic-gpu", {
     displayName: "Inference: completes an agent turn with llama.cpp on a generic NVIDIA GPU",

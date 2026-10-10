@@ -119,6 +119,10 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         except (TypeError, ValueError):
             raise ManagedPolicyError("managed policy model.base_url is invalid") from None
         expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
+        upstream = config.get("_nemoclaw_upstream", {}).get("provider")
+        key = {"compatible-endpoint": "COMPATIBLE_API_KEY", "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY"}.get(upstream)
+        if key and url.hostname != "inference.local":
+            expected_key = f"sk-OPENSHELL-RESOLVE-ENV-{key}"
         if policy_value(config, "model.api_key") != expected_key:
             raise ManagedPolicyError(
                 "managed policy model.api_key must use the OpenShell proxy rewrite sentinel "

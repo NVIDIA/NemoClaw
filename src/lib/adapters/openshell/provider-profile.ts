@@ -79,7 +79,14 @@ function providerProfileBoundary(value: unknown): ProviderProfileBoundary | null
   return {
     id: profile.id,
     credentials: credentials as readonly Readonly<Record<string, unknown>>[],
-    endpoints: profile.endpoints,
+    endpoints: profile.endpoints.map((endpoint) => {
+      const boundary = { ...(endpoint as Record<string, unknown>) };
+      // OpenShell's EndpointProfile omits an empty allowed_ips on export.
+      if (Array.isArray(boundary.allowed_ips) && boundary.allowed_ips.length === 0) {
+        delete boundary.allowed_ips;
+      }
+      return boundary;
+    }),
     binaries: profile.binaries as string[],
     inference_capable: profile.inference_capable,
   };

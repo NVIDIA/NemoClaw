@@ -347,3 +347,19 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain("[models.providers.openai]");
   });
 });
+
+describe("custom hosted DCode credential binding (#12636)", () => {
+  it.each([
+    ["compatible-endpoint", "COMPATIBLE_API_KEY"],
+    ["compatible-anthropic-endpoint", "COMPATIBLE_ANTHROPIC_API_KEY"],
+  ])("binds %s to its native credential environment", (provider, key) => {
+    const config = runGenerator({
+      NEMOCLAW_UPSTREAM_PROVIDER: provider,
+      NEMOCLAW_INFERENCE_BASE_URL: "https://api.example.com/v1",
+    });
+    expect(config).toContain(`api_key_env = "${key}"`);
+    expect(config).not.toContain('api_key_env = "NVIDIA_INFERENCE_API_KEY"');
+    const legacy = runGenerator({ NEMOCLAW_UPSTREAM_PROVIDER: provider });
+    expect(legacy).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+  });
+});

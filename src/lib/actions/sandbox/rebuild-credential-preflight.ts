@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { normalizeNativeCustomProviderAttachment } from "../../inference/native-custom";
 import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
@@ -178,6 +179,18 @@ export async function preflightRebuildCredentials(
     sb.endpointUrl,
   );
   const rebuildProvider = sb.provider;
+  const nativeCustom = normalizeNativeCustomProviderAttachment(
+    sb.nativeCustomProviderAttachment,
+    sb.name,
+  );
+  if (sb.nativeCustomProviderAttachment !== undefined && !nativeCustom) {
+    bail("Malformed native custom provider authority; sandbox is untouched");
+    return false;
+  }
+  if (nativeCustom)
+    return checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+      nativeAttachment: nativeCustom,
+    });
   const nativeAttachment = normalizeNativeNvidiaProviderAttachment(
     sb.nativeNvidiaProviderAttachment,
   );

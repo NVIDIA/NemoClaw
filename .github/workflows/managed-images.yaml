@@ -58,6 +58,7 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/agents/openclaw/runtime/pi-native-consumer.mts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
@@ -1910,6 +1911,19 @@ jobs:
               fi
             done
           '
+      - name: Verify native compatible routing through the Pi client
+        timeout-minutes: 2
+        shell: bash
+        env:
+          REFERENCE: ${{ steps.publish.outputs.reference }}
+        run: |
+          set -euo pipefail
+          expected_version="$(node -p 'require("./agents/pi/pi-runtime/package.json").dependencies["@earendil-works/pi-coding-agent"]')"
+          docker run --rm --network none --user 999:999 \
+            --mount "type=bind,src=$PWD/test/agents/openclaw/runtime/pi-native-consumer.mts,dst=/tmp/pi-native-consumer.mts,readonly" \
+            --entrypoint /usr/local/bin/node "$REFERENCE" \
+            /tmp/pi-native-consumer.mts /usr/local/bin/pi \
+            /opt/nemoclaw-pi/generate-config.ts "$expected_version"
       - name: Record the exact Pi candidate contract
         shell: bash
         env:

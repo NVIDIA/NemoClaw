@@ -390,7 +390,14 @@ async function resolveInferenceRoute(
 ): Promise<DoctorInferenceRoute> {
   const recordedNativeNvidia = isNativeNvidiaProvider(sb?.provider);
   let live: { provider: string; model: string } | null = null;
-  if (!recordedNativeNvidia && openshellBin && openshellConnected && gatewayName) {
+  const recordedNativeCustom = sb?.nativeCustomProviderAttachment !== undefined;
+  if (
+    !recordedNativeNvidia &&
+    !recordedNativeCustom &&
+    openshellBin &&
+    openshellConnected &&
+    gatewayName
+  ) {
     const result = await createSynchronousCliOpenShellInferenceRouteObserver(
       captureOpenshell,
     ).observeInferenceRoute({
@@ -405,6 +412,10 @@ async function resolveInferenceRoute(
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
     recordedEndpointUrl: sb?.endpointUrl,
     agentName: sb?.agent,
+    preferredInferenceApi: sb?.preferredInferenceApi,
+    ...(recordedNativeCustom
+      ? { nativeCustomProviderAttachment: sb?.nativeCustomProviderAttachment }
+      : {}),
     ...(recordedNativeNvidia
       ? {
           nativeNvidiaProviderAttachment: normalizeNativeNvidiaProviderAttachment(

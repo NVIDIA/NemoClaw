@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// #6294: an OpenAI-/chat/completions-only agent (langchain-deepagents-code)
-// onboarded on the Custom Anthropic-compatible provider is coerced onto
-// openai-completions; the gateway provider must then be registered type=openai
-// (OPENAI_BASE_URL) after verifying the endpoint really serves the OpenAI
-// surface, so OpenShell routes the sandbox's openai_chat_completions traffic.
-// The anthropic-flavor endpoint normalization strips a trailing /v1, so the
-// branch re-adds it for both the probe and the registered base URL — keeping
-// the probed URL identical to the one OpenShell calls at runtime.
+// #6294 and #12636: preserve the agent-selected OpenAI or Anthropic surface
+// while replacing fresh hosted custom shared routes with sandbox-owned native
+// authority. A pre-existing shared provider never grants native ownership.
 
 import fs from "node:fs";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,23 +34,8 @@ const PROVIDER = "compatible-anthropic-endpoint";
 // Production hands the anthropic-flavor-normalized origin (trailing /v1
 // stripped by normalizeProviderBaseUrl) to setupInference.
 const ENDPOINT = "https://inference-hub.example";
-const SURFACE_URL = `${ENDPOINT}/v1`;
 const CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const MODEL = "nvidia/nvidia/nemotron-3-super-v3";
-
-function createInjectedExit() {
-  return vi.fn((code: number): never => {
-    throw new Error(`EXIT_CALLED:${code}`);
-  });
-}
-
-/** Declarative openshell stub keyed on the first two argv tokens. */
-function commandStubs(routes: Record<string, { status: number; stderr?: string }>) {
-  return (args: string[]) => routes[`${args[0]} ${args[1]}`];
-}
-
-/** Route `provider get` to "absent" so the real upsert takes the create path. */
-const providerAbsentRunner = commandStubs({ "provider get": { status: 1 } });
 
 describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#6294)", () => {
   beforeEach(() => {
@@ -100,182 +80,133 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     });
   });
 
-  it("registers the provider as type=openai on the /v1 surface after the probe passes", async () => {
-    vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: providerAbsentRunner,
-      overrides: { probeOpenAiLikeEndpoint },
-    });
-
-    await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
-      preferredInferenceApi: "openai-completions",
-    });
-
-    // The probe must exercise the same /v1 base OpenShell will call at
-    // runtime (<OPENAI_BASE_URL> + /v1/chat/completions with /v1 dedup).
-    expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(SURFACE_URL, MODEL, "hub-secret", {
-      pinnedAddresses: ["93.184.216.34"],
-      skipResponsesProbe: true,
-    });
-    const createCommand = harness.commands.find(({ command }) =>
-      command.startsWith("provider create"),
-    );
-    expect(createCommand?.command).toContain("--type openai");
-    expect(createCommand?.command).toContain(`OPENAI_BASE_URL=${SURFACE_URL}`);
-    expect(createCommand?.command).toContain(`--credential ${CREDENTIAL_ENV}`);
-    expect(
-      harness.commands.some(({ command }) =>
-        command.includes(`inference set -g nemoclaw --provider ${PROVIDER} --model ${MODEL}`),
-      ),
-    ).toBe(true);
-  });
-
-  it("replaces an unattached stale Anthropic-surface registration with a plain delete", async () => {
-    vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV),
-      overrides: { probeOpenAiLikeEndpoint },
-    });
-
-    await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
-      preferredInferenceApi: "openai-completions",
-    });
-
-    // Plain delete succeeded (default status 0) — no force-detach recovery.
-    expect(
-      harness.commands.some(({ command }) => command === `provider delete -g nemoclaw ${PROVIDER}`),
-    ).toBe(true);
-    expect(harness.commands.some(({ command }) => command.includes("provider detach"))).toBe(false);
-    const createCommand = harness.commands.find(({ command }) =>
-      command.startsWith("provider create"),
-    );
-    expect(createCommand?.command).toContain("--type openai");
-  });
-
-  it("recovers the flip when the stale provider is attached only to the onboarding sandbox", async () => {
-    vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, ["test-box"]),
-      overrides: { probeOpenAiLikeEndpoint },
-    });
-
-    await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
-      preferredInferenceApi: "openai-completions",
-    });
-
-    expect(harness.commands.filter(({ command }) => command.includes("provider detach"))).toEqual([
-      expect.objectContaining({
-        command: `sandbox provider detach -g nemoclaw test-box ${PROVIDER}`,
-      }),
-    ]);
-    const createCommand = harness.commands.find(({ command }) =>
-      command.startsWith("provider create"),
-    );
-    expect(createCommand?.command).toContain("--type openai");
-  });
-
-  it("fails closed when the stale provider is attached to other sandboxes", async () => {
-    vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
-    const exitProcess = createInjectedExit();
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, [
-        "other-box",
+  it.each(["openai-completions", "anthropic-messages"] as const)(
+    "binds a fresh custom Anthropic selection to its requested %s native surface",
+    async (api) => {
+      vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
+      const harness = createDirectSetupInferenceHarness();
+      await harness.setupInference(
         "test-box",
-      ]),
+        MODEL,
+        PROVIDER,
+        ENDPOINT,
+        CREDENTIAL_ENV,
+        null,
+        [],
+        {
+          preferredInferenceApi: api,
+        },
+      );
+      const receipt = harness.updateSandbox.mock.lastCall?.[1]?.nativeCustomProviderAttachment;
+      expect(receipt).toMatchObject({
+        api,
+        sandboxName: "test-box",
+        credentialEnv: CREDENTIAL_ENV,
+        transport: { sourceEndpointUrl: ENDPOINT },
+      });
+      expect(harness.native.providerAdapter.createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          name: receipt?.providerName,
+          type: receipt?.profileId,
+          credentials: [{ name: CREDENTIAL_ENV, value: expect.stringMatching(/^token-/u) }],
+        }),
+      );
+      expect(harness.commands).toEqual([]);
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+      expect(JSON.stringify(harness.updateSandbox.mock.calls)).not.toContain("hub-secret");
+    },
+  );
+
+  it("keeps a stale shared Anthropic registration untouched while admitting a fresh native selection", async () => {
+    vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
+    const stale = createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, ["other-box"]);
+    const harness = createDirectSetupInferenceHarness({ runOpenshell: stale });
+    await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(stale(["provider", "get", PROVIDER])).toMatchObject({ status: 0 });
+    expect(stale(["provider", "delete", PROVIDER])?.stderr).toContain("other-box");
+    expect(harness.commands).toEqual([]);
+  });
+
+  it("refuses an observed native provider without durable ownership before preparing its adapter", async () => {
+    vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
+    const harness = createDirectSetupInferenceHarness();
+    await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
+      preferredInferenceApi: "openai-completions",
+    });
+    const retry = createDirectSetupInferenceHarness({
       overrides: {
-        probeOpenAiLikeEndpoint,
-        exitProcess,
-        isNonInteractive: () => true,
+        ...harness.native,
+        getNativeCustomProviderAuthority: () => undefined,
       },
     });
-
     await expect(
-      harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
+      retry.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
         preferredInferenceApi: "openai-completions",
       }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(harness.commands.some(({ command }) => command.includes("provider detach"))).toBe(false);
-    expect(
-      harness.errors.some((message) =>
-        message.includes("attached to other sandbox(es) (other-box)"),
-      ),
-    ).toBe(true);
-    expect(harness.commands.some(({ command }) => command.startsWith("provider create"))).toBe(
-      false,
-    );
+    ).rejects.toThrow("ownership cannot be verified");
+    expect(harness.native.providerAdapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.native.nativeCustomTransportDeps.ensureHttpsAdapter).toHaveBeenCalledOnce();
+    expect(retry.updateSandbox).not.toHaveBeenCalled();
+    expect(retry.commands).toEqual([]);
   });
 
-  it("fails non-interactive onboarding actionably when the endpoint lacks the OpenAI surface", async () => {
+  it("rejects an incompatible native profile before starting transport or creating a provider", async () => {
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
-    const exitProcess = createInjectedExit();
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+    const harness = createDirectSetupInferenceHarness();
+    vi.mocked(harness.native.providerAdapter.importProviderProfile).mockResolvedValue({
       ok: false,
-      message: "POST /v1/chat/completions returned 404",
-    }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: providerAbsentRunner,
-      overrides: { probeOpenAiLikeEndpoint, exitProcess, isNonInteractive: () => true },
+      error: { kind: "command", reason: "profile_incompatible", message: "collision" },
     });
-
     await expect(
       harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
         preferredInferenceApi: "openai-completions",
       }),
-    ).rejects.toThrow("EXIT_CALLED:1");
-
-    expect(
-      harness.errors.some((message) =>
-        message.includes("requires an OpenAI-compatible /v1/chat/completions surface"),
-      ),
-    ).toBe(true);
-    expect(harness.commands.some(({ command }) => command.startsWith("provider create"))).toBe(
-      false,
-    );
+    ).rejects.toThrow("conflicts with NemoClaw");
+    expect(harness.native.nativeCustomTransportDeps.ensureHttpsAdapter).not.toHaveBeenCalled();
+    expect(harness.native.providerAdapter.createProvider).not.toHaveBeenCalled();
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("keeps the Anthropic registration for native anthropic-messages selections", async () => {
+  it("uses distinct native identities for two sandbox selections of the same upstream", async () => {
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: providerAbsentRunner,
-      overrides: { probeOpenAiLikeEndpoint },
-    });
-
+    const harness = createDirectSetupInferenceHarness();
     await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
-      preferredInferenceApi: "anthropic-messages",
+      preferredInferenceApi: "openai-completions",
     });
-
-    expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
-    const createCommand = harness.commands.find(({ command }) =>
-      command.startsWith("provider create"),
+    await harness.setupInference("other-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
+      preferredInferenceApi: "openai-completions",
+    });
+    const receipts = harness.updateSandbox.mock.calls.map(
+      ([, patch]) => patch?.nativeCustomProviderAttachment,
     );
-    expect(createCommand?.command).toContain("--type anthropic");
-    expect(createCommand?.command).toContain(`ANTHROPIC_BASE_URL=${ENDPOINT}`);
+    expect(new Set(receipts.map((receipt) => receipt?.providerName)).size).toBe(2);
+    expect(new Set(receipts.map((receipt) => receipt?.endpointUrl)).size).toBe(2);
+    expect(harness.commands).toEqual([]);
   });
 
-  it("skips the surface probe on keyless gateway-credential reuse", async () => {
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const harness = createDirectSetupInferenceHarness({
-      runOpenshell: commandStubs({ "provider get": { status: 0 } }),
-      overrides: { probeOpenAiLikeEndpoint },
-    });
-
+  it("reuses only the recorded native credential authority without rotating the upstream adapter", async () => {
+    vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
+    const harness = createDirectSetupInferenceHarness();
     await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
+      preferredInferenceApi: "openai-completions",
+    });
+    const recorded = { name: "test-box", ...harness.updateSandbox.mock.lastCall?.[1] };
+    vi.stubEnv(CREDENTIAL_ENV, "");
+    const retry = createDirectSetupInferenceHarness({
+      overrides: { ...harness.native, getSandbox: () => recorded },
+    });
+    await retry.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
       preferredInferenceApi: "openai-completions",
       reuseGatewayCredentialWithoutLocalKey: true,
     });
-
-    expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
-    expect(
-      harness.commands.some(
-        ({ command }) =>
-          command.startsWith("provider create") || command.startsWith("provider update"),
-      ),
-    ).toBe(false);
+    expect(harness.native.nativeCustomTransportDeps.ensureHttpsAdapter).toHaveBeenCalledOnce();
+    expect(harness.native.providerAdapter.createProvider).toHaveBeenCalledOnce();
+    expect(retry.updateSandbox.mock.lastCall?.[1]?.nativeCustomProviderAttachment).toEqual(
+      recorded.nativeCustomProviderAttachment,
+    );
+    expect(retry.commands).toEqual([]);
   });
 });

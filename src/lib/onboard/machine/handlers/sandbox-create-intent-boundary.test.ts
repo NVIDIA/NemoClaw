@@ -7,6 +7,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../../../inference/native-custom";
 import { resolveMessagingPlanAuthority } from "../../../messaging/plan-authority";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession } from "../../../state/onboard-session";
@@ -84,6 +88,70 @@ describe("sandbox create intent machine boundary", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
     });
   });
+
+  async function nativeCustomCase(condition: "valid" | "malformed" | "another sandbox") {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: condition === "another sandbox" ? "other" : "native-custom",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const attachment = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "owned-provider-id",
+    });
+    const recorded = condition === "malformed" ? { ...attachment, providerId: "" } : attachment;
+    const session = createSession({ sandboxName: "native-custom" });
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: () => ({
+        name: "native-custom",
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: "http://8.8.8.8/v1",
+        preferredInferenceApi: "openai-completions",
+        nativeCustomProviderAttachment: recorded,
+        toolDisclosure: "progressive" as const,
+      }),
+    });
+    calls.promptName.mockResolvedValue("native-custom");
+    const run = () =>
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        sandboxName: "native-custom",
+        provider: "compatible-endpoint",
+        model: "custom-model",
+      });
+    return { run, calls, attachment };
+  }
+
+  it("preserves valid recorded native custom authority before creation (#12636)", async () => {
+    const { run, calls, attachment } = await nativeCustomCase("valid");
+    await run();
+    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "native-custom",
+        inferenceProvider: attachment.providerName,
+        nativeCustomProviderAttachment: attachment,
+      }),
+    );
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it.each(["malformed", "another sandbox"] as const)(
+    "rejects %s recorded native custom authority before creation (#12636)",
+    async (condition) => {
+      const { run, calls } = await nativeCustomCase(condition);
+      await expect(run()).rejects.toThrow(
+        "The recorded native custom provider attachment is invalid.",
+      );
+      expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
+      expect(calls.startStep).not.toHaveBeenCalled();
+      expect(calls.removeSandbox).not.toHaveBeenCalled();
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects deterministic create conflicts before resume recreation mutates state (#6226)", async () => {
     const session = createSession({ sandboxName: "saved" });

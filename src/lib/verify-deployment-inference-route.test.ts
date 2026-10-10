@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { prepareNativeCustomProfile } from "./inference/native-custom/profile";
 import { describe, expect, it, vi } from "vitest";
 import { buildChain } from "./dashboard/contract.js";
 import { probeOnboardInferenceInvocation, verifyDeployment } from "./verify-deployment.js";
@@ -58,6 +59,57 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(scripts.join("\n")).not.toContain("inference.local");
   });
+
+  it.each([true, false])(
+    "requires native custom invocation success (%s) without a shared route probe",
+    async (ok) => {
+      const prepared = await prepareNativeCustomProfile({
+        sandboxName: "my-sandbox",
+        provider: "compatible-anthropic-endpoint",
+        endpointUrl: "https://api.example.com",
+        api: "anthropic-messages",
+        lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+      });
+      const receipt = {
+        schemaVersion: 1 as const,
+        sandboxName: prepared.sandboxName,
+        endpointUrl: prepared.endpointUrl,
+        api: prepared.api,
+        credentialEnv: prepared.credentialEnv,
+        addresses: prepared.profile.endpoints[0].allowed_ips,
+        trustedPrivateEndpoint: prepared.trustedPrivateEndpoint,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "native-id",
+      };
+      const scripts: string[] = [];
+      const invocation = vi.fn(async () => ({ ok, detail: ok ? undefined : "credential denied" }));
+      const result = await verifyDeployment(
+        "my-sandbox",
+        buildChain(),
+        makeDeps({
+          executeSandboxCommand: async (_name: string, script: string) => {
+            scripts.push(script);
+            return { status: 0, stdout: "200", stderr: "" };
+          },
+          probeInferenceInvocation: invocation,
+        }),
+        {
+          ...NO_RETRY,
+          inferenceRouteContext: {
+            provider: "compatible-anthropic-endpoint",
+            nativeCustomProviderAttachment: receipt,
+          },
+        },
+      );
+      expect(result.verification.inferenceRouteWorking).toBe(ok);
+      expect(invocation).toHaveBeenCalledOnce();
+      expect(scripts.join("\n")).not.toContain("inference.local");
+      expect(result.diagnostics.find((entry) => entry.link === "inference")?.detail).toContain(
+        ok ? "native custom inference served" : "credential denied",
+      );
+    },
+  );
 
   it("fails the deployment when the models route returns HTTP 404 (#10543)", async () => {
     const result = await verifyDeployment("my-sandbox", buildChain(), makeModelsRouteDeps("404"), {

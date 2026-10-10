@@ -323,7 +323,7 @@ describe("native NVIDIA OpenShell provider", () => {
       }),
     ).rejects.toThrow(/did not confirm.*credential update.*No provider receipt was recorded/u);
     expect(updateProvider).toHaveBeenCalledOnce();
-    expect(getProvider).toHaveBeenCalledOnce();
+    expect(getProvider).toHaveBeenCalledTimes(2);
   });
 
   it("refuses to replace a recorded provider that is missing (#12558)", async () => {

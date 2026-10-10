@@ -21,6 +21,10 @@ import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import {
+  normalizeNativeCustomProviderAttachment,
+  type NativeCustomProviderAttachment,
+} from "../inference/native-custom";
+import {
   normalizeWebSearchConfig,
   webSearchEnvFor,
   webSearchProviderForConfig,
@@ -111,6 +115,7 @@ const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
 export class InvalidPersistedCancellationRecoveryError extends Error {}
 export class InvalidPersistedExternalComponentActivationError extends Error {}
+export class InvalidPersistedNativeCustomAttachmentError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -300,6 +305,8 @@ export interface Session {
   /** Receipt generation durably awaiting exact-match retirement after Station completion. */
   stationExpressReceiptRetirement: string | null;
   endpointUrl: string | null;
+  /** Secret-free pre-delete attachment, revalidated against gateway authority before rebuild reuse. */
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
@@ -964,6 +971,20 @@ export function syncCheckpointMachineState(
   session.checkpoint = { ...session.checkpoint, machineState: state, updatedAt };
 }
 
+function parseNativeCustomRebuildAttachment(
+  value: unknown,
+  sandboxName: string | null | undefined,
+): NativeCustomProviderAttachment {
+  const attachment = sandboxName
+    ? normalizeNativeCustomProviderAttachment(value, sandboxName)
+    : undefined;
+  if (!attachment)
+    throw new InvalidPersistedNativeCustomAttachmentError(
+      "Refusing to load invalid native custom rebuild attachment authority.",
+    );
+  return attachment;
+}
+
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
   const startedAt = overrides.startedAt ?? now;
@@ -1010,6 +1031,14 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       ? overrides.stationExpressReceiptRetirement
       : null,
     endpointUrl: overrides.endpointUrl ?? null,
+    ...(overrides.nativeCustomProviderAttachment !== undefined
+      ? {
+          nativeCustomProviderAttachment: parseNativeCustomRebuildAttachment(
+            overrides.nativeCustomProviderAttachment,
+            overrides.sandboxName,
+          ),
+        }
+      : {}),
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
@@ -1152,6 +1181,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     stationExpressIntent,
     stationExpressReceiptRetirement,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
+    ...(hasOwn(data, "nativeCustomProviderAttachment")
+      ? {
+          nativeCustomProviderAttachment: parseNativeCustomRebuildAttachment(
+            data.nativeCustomProviderAttachment,
+            readString(data.sandboxName),
+          ),
+        }
+      : {}),
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
@@ -1296,6 +1333,7 @@ function loadSessionFile(filePath: string): Session | null {
   } catch (error) {
     if (
       error instanceof InvalidPersistedApfInterceptorIntentError ||
+      error instanceof InvalidPersistedNativeCustomAttachmentError ||
       error instanceof InvalidPersistedExternalComponentActivationError
     ) {
       throw error;
@@ -2002,6 +2040,7 @@ export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRe
       current.status = "failed";
       current.resumable = false;
       current.sandboxName = null;
+      delete current.nativeCustomProviderAttachment;
       current.cancellationRecovery = null;
       saveSession(current);
     }
@@ -2249,6 +2288,7 @@ export function markStepRejected(stepName: string): Session {
       session.nimContainer = null;
       session.hermesToolGateways = null;
       session.sandboxName = null;
+      delete session.nativeCustomProviderAttachment;
       session.sandboxPromptProgress.sandboxName = false;
       session.resumable = false;
       session.status = "failed";

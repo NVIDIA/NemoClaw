@@ -349,7 +349,7 @@ describe("runInferenceSet Hermes routing", () => {
     expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
   });
 
-  it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
+  it("keeps legacy Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
     const config: ConfigObject = {
       model: {
         default: "openai/gpt-5.4-mini",
@@ -362,8 +362,11 @@ describe("runInferenceSet Hermes routing", () => {
       entry: {
         name: "hermes",
         agent: "hermes",
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
+        provider: "compatible-anthropic-endpoint",
+        model: "old-claude-model",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
       },
       defaultSandbox: "hermes",
       target: HERMES_TARGET,

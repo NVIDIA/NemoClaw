@@ -174,7 +174,7 @@ describe("onboarding inference gateway scope", () => {
     });
   });
 
-  it("keeps compatible-endpoint replacement and detach recovery on the target gateway", async () => {
+  it("admits native custom authority on the target gateway without replacing the shared provider", async () => {
     await withProcessEnv(
       { COMPATIBLE_ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" },
       async () => {
@@ -230,9 +230,17 @@ describe("onboarding inference gateway scope", () => {
           JSON.stringify({ commands: harness.commands, errors: harness.errors }, null, 2),
         ).toEqual({ ok: true });
 
-        expect(commandRouter.callCount("provider-delete")).toBe(2);
-        expect(harness.commands.map(({ command }) => command)).toContain(
-          `sandbox provider detach -g ${GATEWAY} test-box compatible-anthropic-endpoint`,
+        expect(commandRouter.callCount("provider-delete")).toBe(0);
+        expect(harness.commands).toEqual([]);
+        expect(harness.native.providerAdapter.createProvider).toHaveBeenCalledWith(
+          expect.objectContaining({ target: { kind: "named", gatewayName: GATEWAY } }),
+        );
+        expect(harness.updateSandbox).toHaveBeenCalledWith(
+          "test-box",
+          expect.objectContaining({
+            gatewayName: GATEWAY,
+            nativeCustomProviderAttachment: expect.objectContaining({ sandboxName: "test-box" }),
+          }),
         );
         expectCommandsTargetOnly(harness.commands);
       },

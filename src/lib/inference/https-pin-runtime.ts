@@ -87,10 +87,21 @@ export function computeHttpsPinRouteId(
   gatewayName: string,
   provider: string,
   endpointUrl: string,
+  sandboxName?: string,
 ): string {
   return crypto
     .createHash("sha256")
-    .update(`nemoclaw:https-pin-route-id:v1\0${gatewayName}\0${provider}\0${endpointUrl}`)
+    .update(
+      sandboxName === undefined
+        ? `nemoclaw:https-pin-route-id:v1\0${gatewayName}\0${provider}\0${endpointUrl}`
+        : JSON.stringify([
+            "nemoclaw:https-pin-sandbox-route:v1",
+            gatewayName,
+            provider,
+            endpointUrl,
+            sandboxName,
+          ]),
+    )
     .digest("hex");
 }
 

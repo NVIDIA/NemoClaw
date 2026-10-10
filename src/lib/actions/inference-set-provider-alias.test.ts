@@ -697,6 +697,10 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
       ensureHttpsPinRuntimeAdapter: httpsPinAdapterGuard(),
     });
 
+    deps.getNativeCustomProviderAuthority = () => undefined;
+    deps.setNativeCustomProviderAuthority = () => undefined;
+    deps.nativeCustomEndpointLookup = async () => [{ address: "10.0.0.8", family: 4 }];
+
     const attempt = runInferenceSet(
       {
         provider: "compatible-endpoint",
@@ -707,9 +711,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
       },
       deps,
     );
-    await expect(attempt).rejects.toThrow(
-      /endpoint-url is not allowed:.*private\/internal address/,
-    );
+    await expect(attempt).rejects.toThrow(/Custom inference endpoint rejected:.*private\/internal/);
     await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
   });
 

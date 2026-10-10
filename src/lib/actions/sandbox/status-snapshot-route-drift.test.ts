@@ -17,6 +17,10 @@ import {
   reserveManagedLlamaCppOwner,
 } from "../../inference/llama-cpp/managed-state";
 import type { SandboxEntry } from "../../state/registry";
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../../inference/native-custom";
 import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
 
 const capture = vi.mocked(captureOpenshellForStatus);
@@ -651,3 +655,69 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     expect(report.routeDrift).toBeNull();
   });
 });
+
+it.each(["healthy", "missing", "malformed"])(
+  "reports native custom status from only the selected attachment (%s) (#12636)",
+  async (state) => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "custom-id",
+    });
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "compatible-endpoint",
+      model: "selected-model",
+      preferredInferenceApi: "openai-completions",
+      nativeCustomProviderAttachment: state === "malformed" ? {} : receipt,
+    } as SandboxEntry;
+    const shared = vi.fn();
+    const direct = vi.fn();
+    const verify = vi.fn(() =>
+      state === "missing"
+        ? Promise.reject(new Error("private upstream diagnostic"))
+        : Promise.resolve(),
+    );
+    const invoke = vi.fn(async () => ({ ok: true, detail: "ok", httpStatus: 200 }));
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listPublishedSandboxesAcrossGatewayRoots: () => [sandbox],
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        inferenceRouteObserver: { observeInferenceRoute: shared },
+        probeProviderHealthImpl: direct,
+        nativeCustomHealthDeps: {
+          verifyNativeCustomAttachment: verify,
+          inferenceInvocationProbe: invoke,
+        },
+      },
+    });
+    expect(shared).not.toHaveBeenCalled();
+    expect(direct).not.toHaveBeenCalled();
+    expect(snapshot.liveRoute).toBeNull();
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.inferenceHealth?.ok).toBe(state === "healthy");
+    expect(invoke.mock.calls).toEqual(
+      state === "healthy"
+        ? [
+            [
+              expect.objectContaining({
+                model: "selected-model",
+                nativeCustomProviderAttachment: receipt,
+              }),
+            ],
+          ]
+        : [],
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("private upstream diagnostic");
+  },
+);

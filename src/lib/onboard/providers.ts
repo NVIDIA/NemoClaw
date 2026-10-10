@@ -18,6 +18,10 @@ const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
 const {
+  getNativeCustomProviderAuthority,
+  setNativeCustomProviderAuthority,
+} = require("../state/registry/native-custom-provider-authority");
+const {
   getNativeNvidiaProviderAuthority,
   setNativeNvidiaProviderAuthority,
 } = require("../state/registry/native-nvidia-provider-authority");
@@ -397,6 +401,16 @@ function setupInferenceProviderDeps(runOpenshell) {
   return {
     providerExistsInGateway,
     providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeCustomProviderAuthority,
+    setNativeCustomProviderAuthority,
+    nativeCustomTransportDeps: {
+      discoverAllowedSourceCidrs: () => {
+        const { resolveCurrentRuntimeProviderBundle } = require("./runtime-provider/access");
+        return resolveCurrentRuntimeProviderBundle()
+          .gateway.observeHostRuntime({ environment: process.env, platform: process.platform })
+          .network.sandboxSourceCidrs();
+      },
+    },
     getNativeNvidiaProviderAuthority,
     setNativeNvidiaProviderAuthority,
   };

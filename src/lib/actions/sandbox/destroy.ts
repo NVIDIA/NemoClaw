@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retireNativeCustomProviders } from "../../inference/native-custom/cleanup";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -1041,6 +1042,13 @@ async function destroySandboxUnlocked(
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force does not bypass MCP source inspection.`,
         );
+      } else if (destructiveResult.nativeCustomOwnershipRequiresGateway) {
+        console.error(
+          "  The OpenShell gateway is unreachable. The sandbox record and native custom provider authority were preserved for cleanup recovery.",
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot discard native custom provider ownership.`,
+        );
       } else if (destructiveResult.portableLifecycleOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. NemoClaw preserved the sandbox registry record and schema-4 Portable receipt because OpenShell sandbox deletion and absence of the exact Podman container are unconfirmed.`,
@@ -1117,6 +1125,19 @@ async function destroySandboxUnlocked(
   const deleteSucceededOrAlreadyGone = deleteResult.kind !== "failed" || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
+  }
+  if (deleteSucceededOrAlreadyGone) {
+    try {
+      await retireNativeCustomProviders({ gatewayName: cleanupGatewayName, sandboxName });
+    } catch (error) {
+      preparedManagedLlamaCppCleanup?.abort();
+      throw new Error(
+        `Sandbox deletion was confirmed, but native custom provider cleanup could not be verified: ${redactDestroyError(error)}. ` +
+          "Ownership authority and registry state are retained. Restore gateway access if unavailable. " +
+          "Reconcile provider identity or attachment conflicts without deleting unproven resources. " +
+          "Confirm HTTPS adapter route revocation when reported, then retry destroy.",
+      );
+    }
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     abortPreparedCleanupOnError(() =>
@@ -1365,6 +1386,7 @@ async function destroySandboxUnlocked(
         current.routerCredentialHash === destroySession.routerCredentialHash,
       (current) => {
         current.sandboxName = null;
+        delete current.nativeCustomProviderAttachment;
         return current;
       },
       "nemoclaw destroy sandbox session cleanup",

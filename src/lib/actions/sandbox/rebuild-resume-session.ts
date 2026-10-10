@@ -88,5 +88,8 @@ export function rewindSessionForRebuildResume(
   // can otherwise leak an old provider URL into recreate. The resume config was
   // resolved and validated before destructive work (#4497/#5869).
   s.endpointUrl = resumeConfig.endpointUrl;
+  if (resumeConfig.nativeCustomProviderAttachment)
+    s.nativeCustomProviderAttachment = resumeConfig.nativeCustomProviderAttachment;
+  else delete s.nativeCustomProviderAttachment;
   return s;
 }

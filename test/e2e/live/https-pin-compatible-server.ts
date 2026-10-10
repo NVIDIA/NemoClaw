@@ -12,6 +12,7 @@ import {
   writeJsonResponse as jsonResponse,
   listenServer as listenOnRandomPort,
   readRequestBody,
+  writeSseEvents,
 } from "../fixtures/http-protocol.ts";
 import type { StartedHttpServer } from "./mcp-bridge-servers.ts";
 
@@ -24,6 +25,7 @@ export interface FakeHttpsCompatibleRequest {
 }
 
 export interface FakeHttpsCompatibleServer extends StartedHttpServer {
+  readonly certificate: Buffer;
   requests(): readonly FakeHttpsCompatibleRequest[];
   setChatRedirect(location: string | null): void;
 }
@@ -59,6 +61,8 @@ function generateEphemeralTlsMaterial(): { dir: string; cert: Buffer; key: Buffe
       "1",
       "-subj",
       "/CN=nemoclaw-https-pin-e2e",
+      "-addext",
+      "subjectAltName=DNS:localhost,IP:127.0.0.1",
       "-keyout",
       keyPath,
       "-out",
@@ -126,6 +130,36 @@ export async function startFakeHttpsCompatibleServer(options: {
         res.end();
         return;
       }
+      const payload = JSON.parse(body || "{}") as { stream?: boolean };
+      if (payload.stream) {
+        const chunk = {
+          id: "chatcmpl-https-pin",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: options.model,
+        };
+        writeSseEvents(
+          res,
+          [
+            [
+              undefined,
+              {
+                ...chunk,
+                choices: [
+                  {
+                    index: 0,
+                    delta: { role: "assistant", content: chatContent },
+                    finish_reason: null,
+                  },
+                ],
+              },
+            ],
+            [undefined, { ...chunk, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }],
+          ],
+          true,
+        );
+        return;
+      }
       jsonResponse(res, 200, {
         id: "chatcmpl-https-pin",
         object: "chat.completion",
@@ -143,6 +177,7 @@ export async function startFakeHttpsCompatibleServer(options: {
   await listenOnRandomPort(server);
   return {
     port: requireTcpPort(server),
+    certificate: tls.cert,
     requests: () => requests,
     setChatRedirect: (location) => {
       chatRedirectLocation = location;

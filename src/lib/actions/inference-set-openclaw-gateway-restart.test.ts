@@ -109,6 +109,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
@@ -193,52 +202,55 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(restartOrder).toBeLessThan(pairingOrder);
   });
 
-  it("does not restart OpenClaw when the requested route is already current (#4504)", async () => {
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: {
-        mode: "merge",
-        providers: {
-          inference: {
-            baseUrl: "https://integrate.api.nvidia.com/v1",
-            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
-            api: "openai-completions",
-            headers: {
-              "X-NemoClaw-Upstream-Provider": "nvidia-prod",
-            },
-            models: [
-              {
-                id: "nvidia/model-a",
-                name: "inference/nvidia/model-a",
-                compat: { supportsStore: false },
+  it.each(["${NVIDIA_INFERENCE_API_KEY}", "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY"])(
+    "does not restart OpenClaw when the requested route is already current (%s) (#4504)",
+    async (apiKey) => {
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        models: {
+          mode: "merge",
+          providers: {
+            inference: {
+              baseUrl: "https://integrate.api.nvidia.com/v1",
+              apiKey,
+              api: "openai-completions",
+              headers: {
+                "X-NemoClaw-Upstream-Provider": "nvidia-prod",
               },
-            ],
+              models: [
+                {
+                  id: "nvidia/model-a",
+                  name: "inference/nvidia/model-a",
+                  compat: { supportsStore: false },
+                },
+              ],
+            },
           },
         },
-      },
-    };
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-        nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
-      },
-      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
-    });
+      };
+      const deps = createDeps({
+        config,
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+          nativeNvidiaProviderAttachment: nativeNvidiaReceipt,
+        },
+        session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+      });
 
-    const result = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/model-a", noVerify: true },
-      deps,
-    );
+      const result = await runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/model-a", noVerify: true },
+        deps,
+      );
 
-    expect(result.configChanged).toBe(false);
-    expect(result.inSandboxConfigSynced).toBe(true);
-    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
-    expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
-  });
+      expect(result.configChanged).toBe(false);
+      expect(result.inSandboxConfigSynced).toBe(true);
+      expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+      expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports a post-commit restart failure without rolling state back (#4504)", async () => {
     const config: ConfigObject = {
@@ -255,6 +267,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
@@ -318,6 +339,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",
@@ -379,6 +409,15 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     };
     const deps = createDeps({
       config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        endpointUrl: "https://old-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
       session: baseSession({
         provider: "compatible-anthropic-endpoint",
         model: "claude-sonnet-proxy",

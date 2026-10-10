@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../../inference/native-custom";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import {
   NVIDIA_HOSTED_NATIVE_PROVIDER,
@@ -397,3 +402,51 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     expect(diagnostics).not.toContain("secret-canary");
   });
 });
+
+it.each(["matching", "replacement", "wrong-key", "mutable-endpoint"])(
+  "verifies native custom identity before rebuild (%s) (#12636)",
+  async (state) => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "owned-id",
+    });
+    const adapter = {
+      getProvider: vi.fn(async () => ({
+        ok: true,
+        value: {
+          name: receipt.providerName,
+          credentialExpiresAtMs: {},
+          type: receipt.profileId,
+          revision: {
+            id: state === "replacement" ? "other-id" : receipt.providerId,
+            resourceVersion: 1,
+          },
+          credentialKeys: [state === "wrong-key" ? "OTHER_KEY" : receipt.credentialEnv],
+          configKeys: state === "mutable-endpoint" ? ["OPENAI_BASE_URL"] : [],
+        },
+      })),
+    } as unknown as OpenShellProviderAdapter;
+    expect(
+      await inspectRebuildGatewayProviderRegistration(
+        "compatible-endpoint",
+        vi.fn(),
+        "Preflight",
+        undefined,
+        adapter,
+        receipt.credentialEnv,
+        receipt,
+      ),
+    ).toBe(state === "matching" ? "registered" : "indeterminate");
+    expect(adapter.getProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: receipt.providerName }),
+    );
+  },
+);

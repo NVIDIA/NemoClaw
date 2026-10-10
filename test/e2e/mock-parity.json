@@ -67,7 +67,9 @@
     },
     {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
-      "liveSources": ["test/e2e/live/managed-image-multiarch-startup-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/managed-image-multiarch-startup-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
@@ -124,7 +126,9 @@
     },
     {
       "live": "test/e2e/live/podman-cpu-lifecycle.test.ts",
-      "liveSources": ["test/e2e/live/podman-cpu-lifecycle-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/podman-cpu-lifecycle-helpers.ts"
+      ],
       "fast": [
         "src/lib/adapters/container-engine.test.ts",
         "src/lib/adapters/podman/index.test.ts",
@@ -139,7 +143,9 @@
     },
     {
       "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
-      "liveSources": ["test/e2e/live/native-runtime-qualification-case-executor.ts"],
+      "liveSources": [
+        "test/e2e/live/native-runtime-qualification-case-executor.ts"
+      ],
       "fast": [
         "src/lib/onboard/runtime-provider/docker.test.ts",
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
@@ -179,10 +185,7 @@
     {
       "live": "test/e2e/live/inference-routing.test.ts",
       "liveSources": [
-        "test/e2e/live/inference-routing-helpers.ts",
-        "test/e2e/live/openclaw-admin-scope.ts",
-        "test/e2e/fixtures/admin-approval-connect.ts",
-        "test/e2e/fixtures/admin-approval-connect.sh"
+        "test/e2e/live/inference-routing-helpers.ts"
       ],
       "fast": [
         "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
@@ -196,6 +199,30 @@
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/inference-routing-custom-hosted.test.ts",
+      "liveSources": [
+        "test/e2e/live/https-pin-compatible-server.ts",
+        "test/e2e/live/inference-routing-helpers.ts",
+        "test/e2e/live/openclaw-admin-scope.ts",
+        "test/e2e/fixtures/admin-approval-connect.ts",
+        "test/e2e/fixtures/admin-approval-connect.sh",
+        "test/e2e/live/inference-routing-native-anthropic.ts",
+        "test/e2e/live/inference-routing-native-hermes.ts",
+        "test/e2e/fixtures/fake-anthropic-compatible.ts"
+      ],
+      "fast": [
+        "test/e2e/support/https-pin-compatible-server.test.ts",
+        "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/onboarding/onboard-inference-gateway-scope.test.ts",
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/fake-anthropic-compatible.test.ts",
+        "src/lib/onboard/native-compatible-endpoint-smoke.test.ts",
+        "src/lib/onboard/machine/handlers/agent-setup.test.ts",
+        "src/lib/onboard/openclaw-setup.test.ts"
       ]
     },
     {
@@ -248,7 +275,9 @@
     },
     {
       "live": "test/e2e/live/launch-readiness-lease-acceptance.test.ts",
-      "liveSources": ["test/e2e/live/launch-agent-turn.ts"],
+      "liveSources": [
+        "test/e2e/live/launch-agent-turn.ts"
+      ],
       "fast": [
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "src/lib/actions/sandbox/launch-readiness.test.ts",
@@ -292,7 +321,9 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
-      "liveSources": ["test/e2e/live/restricted-onboard-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/restricted-onboard-helpers.ts"
+      ],
       "fast": [
         "src/commands/config/export.test.ts",
         "src/lib/adapters/config/live-export-source.test.ts",
@@ -330,7 +361,9 @@
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
-      "liveSources": ["test/e2e/live/external-gateway-health-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/external-gateway-health-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/external-gateway-health-helpers.test.ts",
         "test/e2e/support/external-gateway-health-process.test.ts",
@@ -375,12 +408,18 @@
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
-      "fast": ["test/e2e/support/workflow-plan.test.ts"]
+      "fast": [
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",
-      "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"],
-      "fast": ["test/e2e/support/mcp-bridge-hermes-http.test.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts"
+      ],
+      "fast": [
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
@@ -453,11 +492,16 @@
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
-      "fast": ["test/cli/dispatch-basics.test.ts", "test/cli/sandbox-mutations.test.ts"]
+      "fast": [
+        "test/cli/dispatch-basics.test.ts",
+        "test/cli/sandbox-mutations.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/agent-turn-latency.test.ts",
-      "liveSources": ["test/e2e/live/agent-turn-latency-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/agent-turn-latency-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/agent-turn-latency-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -477,6 +521,7 @@
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
+        "test/onboarding/onboard-inference-reconciliation.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-leaks.test.ts",
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -523,7 +568,9 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/mcp-bridge-hermes-http.test.ts"
       ],
-      "liveSources": ["test/e2e/fixtures/sandbox-failure-diagnostics.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts"
+      ]
     },
     {
       "live": "test/e2e/live/common-egress-agent.test.ts",
@@ -618,7 +665,9 @@
     },
     {
       "live": "test/e2e/live/hermes-discord.test.ts",
-      "liveSources": ["test/e2e/live/hermes-discord-proxy.ts"],
+      "liveSources": [
+        "test/e2e/live/hermes-discord-proxy.ts"
+      ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -764,7 +813,9 @@
     },
     {
       "live": "test/e2e/live/messaging-compatible-endpoint.test.ts",
-      "liveSources": ["test/e2e/live/messaging-compatible-endpoint-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/messaging-compatible-endpoint-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -801,7 +852,9 @@
     },
     {
       "live": "test/e2e/live/model-router-provider-routed-inference.test.ts",
-      "liveSources": ["test/e2e/live/model-router-provider-routed-inference-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/model-router-provider-routed-inference-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -1023,7 +1076,9 @@
     },
     {
       "live": "test/e2e/live/telegram-injection.test.ts",
-      "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/phase6-messaging-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -1137,7 +1192,9 @@
     },
     {
       "live": "test/e2e/live/tunnel-lifecycle.test.ts",
-      "liveSources": ["test/e2e/live/tunnel-lifecycle-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/tunnel-lifecycle-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -1149,11 +1206,15 @@
     },
     {
       "live": "test/e2e/live/issue-9880-staging-launchable.test.ts",
-      "fast": ["test/e2e/support/brev-launchable-fixture.test.ts"]
+      "fast": [
+        "test/e2e/support/brev-launchable-fixture.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/brev-workspace-cleanup.test.ts",
-      "fast": ["test/e2e/support/brev-launchable-fixture.test.ts"]
+      "fast": [
+        "test/e2e/support/brev-launchable-fixture.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/whatsapp-qr-compact.test.ts",

@@ -31,6 +31,28 @@ export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
 
+// TC-INF-11 also performs bounded preparation, restart, agent execution,
+// denial, peer isolation, DNS/redirect checks and direct HTTP verification.
+// A third fresh onboarding and native Anthropic agent turn add another bounded
+// create, admin-scope approval, agent request, and owned-provider cleanup.
+// Ordinary Hermes adds one fresh onboard and a bounded stop/start, config,
+// local agent API request and strict owned cleanup using the existing fixture.
+// Deep Agents Code adds one fresh onboard, agent request and owned cleanup.
+export const CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS = 120 * MINUTE_MS;
+export const CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS =
+  5 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
+  CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS +
+  ONBOARD_TEST_HEADROOM_MS;
+export const CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES =
+  (CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) / MINUTE_MS;
+
+// The retained inference-routing file executes two five-minute negative cases,
+// two runtime-identity cases and one compatible-route case. TC-INF-11 has its
+// own target so each serial job contains all selected tests and cleanup.
+export const INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES =
+  (2 * 5 * MINUTE_MS + 3 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS + ONBOARD_JOB_HEADROOM_MS) /
+  MINUTE_MS;
+
 // The typed DCode target runs onboarding, its invalid-credential lifecycle,
 // state validation, and the ordered cloud checks. Those checks can consume 96
 // minutes of command deadlines before automatic config export; retain the same

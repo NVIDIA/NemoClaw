@@ -13,6 +13,10 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
+import {
+  normalizeNativeCustomProviderAttachment,
+  type NativeCustomProviderAttachment,
+} from "./native-custom";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -28,6 +32,8 @@ export {
   ensureNativeNvidiaProvider,
   ensureNativeNvidiaProviderAttached,
   isNativeNvidiaProvider,
+  isNativeNvidiaCredentialReference,
+  resolveNativeNvidiaCredentialReference,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
@@ -321,6 +327,7 @@ export function getSandboxInferenceConfig(
   model: string,
   provider: string | null = null,
   preferredInferenceApi: string | null = null,
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
 ): SandboxInferenceConfig {
   let providerKey: string;
   let primaryModelRef: string;
@@ -408,6 +415,19 @@ export function getSandboxInferenceConfig(
       break;
   }
 
+  if (nativeCustomProviderAttachment) {
+    const receipt = normalizeNativeCustomProviderAttachment(nativeCustomProviderAttachment);
+    const expectedProvider =
+      receipt?.credentialEnv === "COMPATIBLE_API_KEY"
+        ? "compatible-endpoint"
+        : "compatible-anthropic-endpoint";
+    if (!receipt || provider !== expectedProvider || inferenceApi !== receipt.api)
+      throw new Error("Native custom selection disagrees with its endpoint attachment authority.");
+    inferenceBaseUrl =
+      receipt.api === "anthropic-messages" || receipt.endpointUrl.endsWith("/v1")
+        ? receipt.endpointUrl
+        : `${receipt.endpointUrl}/v1`;
+  }
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 

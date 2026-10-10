@@ -238,6 +238,7 @@ function createDoctorHarness(
     isStale: true,
   });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
+  vi.spyOn(tunnelServices, "migrateLegacyCloudflaredState").mockImplementation(() => undefined);
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
   const executeSandboxCommandForVerificationSpy = vi
     .spyOn(sandboxVerificationExec, "executeSandboxCommandForVerification")

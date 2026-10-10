@@ -41,6 +41,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   chatUiUrl: string;
   provider: string | null;
   endpointUrl?: string | null;
+  nativeCustomProviderAttachment?: import("../inference/native-custom").NativeCustomProviderAttachment;
   compatibleEndpointReasoning?: "true" | "false";
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -121,6 +122,7 @@ export async function prepareSandboxDockerfilePatch({
   chatUiUrl,
   provider,
   endpointUrl = null,
+  nativeCustomProviderAttachment,
   compatibleEndpointReasoning,
   preferredInferenceApi,
   webSearchConfig,
@@ -208,7 +210,16 @@ export async function prepareSandboxDockerfilePatch({
     webSearchConfig,
     resolved ? resolved.ref : null,
     darwinVmCompat,
-    null,
+    nativeCustomProviderAttachment
+      ? (
+          require("../inference/config") as typeof import("../inference/config")
+        ).getSandboxInferenceConfig(
+          model,
+          provider,
+          preferredInferenceApi,
+          nativeCustomProviderAttachment,
+        ).inferenceBaseUrl
+      : null,
     hermesToolGateways,
     (() => {
       const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);

@@ -12,6 +12,10 @@ import { getRemoteProviderConfigForName } from "../../onboard/inference-provider
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 import {
+  normalizeNativeCustomProviderAttachment,
+  type NativeCustomProviderAttachment,
+} from "../../inference/native-custom";
+import {
   createManagedProviderAdapter,
   managedProviderGatewayTarget,
 } from "../../adapters/openshell/managed-provider-adapter";
@@ -160,9 +164,17 @@ export async function inspectRebuildGatewayProviderRegistration(
   runtimeSelection?: OpenShellRuntimeSelection,
   providerAdapter = rebuildProviderAdapter(runtimeSelection),
   credentialKey?: string | null,
-  nativeAttachment?: NativeNvidiaProviderAttachment,
+  nativeAttachment?: NativeNvidiaProviderAttachment | NativeCustomProviderAttachment,
 ): Promise<RebuildGatewayProviderRegistration> {
-  if (nativeAttachment && !isNativeNvidiaProvider(provider)) return "indeterminate";
+  const custom = normalizeNativeCustomProviderAttachment(nativeAttachment);
+  if (nativeAttachment && !custom && !isNativeNvidiaProvider(provider)) return "indeterminate";
+  if (
+    custom &&
+    (custom.credentialEnv === "COMPATIBLE_API_KEY"
+      ? "compatible-endpoint"
+      : "compatible-anthropic-endpoint") !== provider
+  )
+    return "indeterminate";
   const result = await providerAdapter.getProvider({
     providerName: nativeAttachment?.providerName ?? provider,
     target: managedProviderGatewayTarget,
@@ -171,8 +183,15 @@ export async function inspectRebuildGatewayProviderRegistration(
   if (result.ok && nativeAttachment) {
     try {
       if (
-        nativeNvidiaProviderAttachmentFromMetadata(result.value).providerId !==
-        nativeAttachment.providerId
+        custom
+          ? result.value.name !== custom.providerName ||
+            result.value.revision?.id !== custom.providerId ||
+            result.value.type !== custom.profileId ||
+            result.value.configKeys.length !== 0 ||
+            result.value.credentialKeys.length !== 1 ||
+            result.value.credentialKeys[0] !== custom.credentialEnv
+          : nativeNvidiaProviderAttachmentFromMetadata(result.value).providerId !==
+            nativeAttachment.providerId
       )
         return "indeterminate";
     } catch {
@@ -328,7 +347,7 @@ export async function checkRebuildGatewayProviderOrBail(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   options: {
-    nativeAttachment?: NativeNvidiaProviderAttachment;
+    nativeAttachment?: NativeNvidiaProviderAttachment | NativeCustomProviderAttachment;
     allowProviderReconfigure?: boolean;
     hostCredentialAvailable?: boolean;
     onProviderReconfigureRequired?: (provider: string, credentialEnv: string) => void;
@@ -416,9 +435,10 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
-  if (config.nativeNvidiaProviderAttachment) {
+  if (config.nativeCustomProviderAttachment || config.nativeNvidiaProviderAttachment) {
     return checkRebuildGatewayProviderOrBail(config.provider, config.credentialEnv, log, bail, {
-      nativeAttachment: config.nativeNvidiaProviderAttachment,
+      nativeAttachment:
+        config.nativeCustomProviderAttachment ?? config.nativeNvidiaProviderAttachment,
     });
   }
   if (hostCredentialAvailable || !config.provider || !config.credentialEnv) return true;

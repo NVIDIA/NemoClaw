@@ -48,7 +48,9 @@ describe("rebuilt OpenClaw compatible smoke wiring", () => {
         gatewayName,
       });
       expect(run).toHaveBeenCalledExactlyOnceWith(
-        ["provider", "get", "compatible-endpoint"],
+        gatewayName
+          ? ["provider", "get", "-g", gatewayName, "compatible-endpoint"]
+          : ["provider", "get", "compatible-endpoint"],
         expect.objectContaining({ env: environment }),
       );
       expect(runBuffered).toHaveBeenCalledExactlyOnceWith(

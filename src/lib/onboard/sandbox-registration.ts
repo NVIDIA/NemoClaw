@@ -13,6 +13,7 @@ import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
 } from "../inference/selection";
+import { normalizeNativeCustomProviderAttachment } from "../inference/native-custom";
 import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia/contract";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
@@ -81,6 +82,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeCustomProviderAttachment?: SandboxEntry["nativeCustomProviderAttachment"];
   deferredN1xManagedVllmPreviewIntent?: true;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -236,6 +238,14 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const nativeCustomProviderAttachment = normalizeNativeCustomProviderAttachment(
+    input.nativeCustomProviderAttachment,
+    input.sandboxName,
+  );
+  if (input.nativeCustomProviderAttachment !== undefined && !nativeCustomProviderAttachment)
+    throw new RuntimeProviderSelectionError(
+      "Sandbox native custom provider attachment failed closed validation.",
+    );
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     input.nativeNvidiaProviderAttachment,
   );
@@ -294,6 +304,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
+    ...(nativeCustomProviderAttachment ? { nativeCustomProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
@@ -373,8 +384,13 @@ export function prepareCreatedSandboxRegistration(
     input.nativeNvidiaProviderAttachment !== undefined
       ? input.nativeNvidiaProviderAttachment
       : pending?.nativeNvidiaProviderAttachment;
+  const pendingNativeCustomProviderAttachment =
+    input.nativeCustomProviderAttachment ?? pending?.nativeCustomProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    ...(pendingNativeCustomProviderAttachment
+      ? { nativeCustomProviderAttachment: pendingNativeCustomProviderAttachment }
+      : {}),
     inferenceSelection: pendingRoute
       ? { ...input.inferenceSelection, ...pendingRoute }
       : input.inferenceSelection,
@@ -466,4 +482,27 @@ export function registerPreparedCreatedSandbox(
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
+}
+
+/** Refuse mismatched native authority before the setup caller changes agent configuration. */
+export function validateSelectedNativeOpenclawAttachment(
+  value: SandboxEntry["nativeCustomProviderAttachment"],
+  sandboxName: string,
+  provider: string,
+  preferredInferenceApi: string | null,
+): SandboxEntry["nativeCustomProviderAttachment"] {
+  if (value === undefined) return undefined;
+  const attachment = normalizeNativeCustomProviderAttachment(value, sandboxName);
+  if (
+    !attachment ||
+    (preferredInferenceApi !== null && attachment.api !== preferredInferenceApi) ||
+    (attachment.credentialEnv === "COMPATIBLE_API_KEY"
+      ? provider !== "compatible-endpoint"
+      : provider !== "compatible-anthropic-endpoint")
+  ) {
+    throw new Error(
+      "OpenClaw setup requires native custom authority matching the selected sandbox and inference route.",
+    );
+  }
+  return attachment;
 }

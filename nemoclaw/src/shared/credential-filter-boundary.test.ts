@@ -143,6 +143,30 @@ describe("shared credential filter", () => {
     expect(stripCredentials({ model: "unused" })).toEqual({ model: "unused" });
   });
 
+  it.each([
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-v12_COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_ANTHROPIC_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-v12_COMPATIBLE_ANTHROPIC_API_KEY",
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(64)}_COMPATIBLE_API_KEY`,
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(64)}_COMPATIBLE_ANTHROPIC_API_KEY`,
+  ])("preserves Hermes native reference %s across snapshots (#12636)", (reference) => {
+    expect(isSafeCredentialPlaceholder(reference)).toBe(true);
+    expect(stripCredentials({ api_key: reference })).toEqual({ api_key: reference });
+  });
+  it.each([
+    "sk-OPENSHELL-RESOLVE-ENV-v_COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_API_KEY-raw-secret",
+    "sk-OPENSHELL-RESOLVE-ENV-v_COMPATIBLE_ANTHROPIC_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_ANTHROPIC_API_KEY-raw-secret",
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(63)}_COMPATIBLE_API_KEY`,
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(63)}_COMPATIBLE_ANTHROPIC_API_KEY`,
+    "sk-OPENSHELL-RESOLVE-ENV-UNOWNED_API_KEY",
+  ])("strips malformed Hermes native reference %s (#12636)", (value) => {
+    expect(isSafeCredentialPlaceholder(value)).toBe(false);
+    expect(stripCredentials({ api_key: value })).toEqual({ api_key: CREDENTIAL_PLACEHOLDER });
+  });
+
   it("strips URL userinfo from non-credential fields", () => {
     expect(stripCredentials({ host: "https://operator:opaque-value@api.example" })).toEqual({
       host: CREDENTIAL_PLACEHOLDER,

@@ -7,6 +7,11 @@ import {
   exportLiveSource,
   expectExportRefusal,
 } from "../../../../test/support/config-export-harness";
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../../inference/native-custom";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -43,6 +48,7 @@ import {
   nativeNvidiaEntry,
   nativeNvidiaProvider,
   nativeNvidiaProfile,
+  nativeCustomProfileResponse,
   telemetryEntry,
   dashboardSource,
   braveProvider,
@@ -1233,3 +1239,85 @@ describe("Hermes interface export observation", () => {
     expect(reads).toBe(4);
   });
 });
+
+it.each(["matching", "wrong-key", "replacement", "broadened-profile", "missing-attachment"])(
+  "reads native custom export evidence without consulting shared inference (%s) (#12636)",
+  async (state) => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "custom-id",
+    });
+    const built = buildManagedStartupProfile({
+      ...startupInput,
+      inference: {
+        ...startupInput.inference,
+        upstreamProvider: "compatible-endpoint",
+        routedBaseUrl: prepared.endpointUrl,
+      },
+    });
+    mockSupportedLiveSource(3, 3, {
+      ...entry,
+      provider: "compatible-endpoint",
+      credentialEnv: receipt.credentialEnv,
+      endpointUrl: prepared.endpointUrl,
+      nativeCustomProviderAttachment: receipt,
+      workload: {
+        ...entry.workload,
+        encodedProfile: built.encodedProfile,
+        startupProfileSha256: built.startupProfileSha256,
+      },
+    });
+    vi.mocked(getSandboxEntryInference).mockReturnValue({
+      kind: "configured",
+      provider: "compatible-endpoint",
+      model: "model-a",
+    });
+    const secretGetter = vi.fn(() => {
+      throw new Error(readFailureCanary);
+    });
+    raw.getProvider.mockResolvedValue({
+      provider: {
+        ...nativeNvidiaProvider(),
+        metadata: {
+          ...nativeNvidiaProvider().metadata,
+          id: state === "replacement" ? "replacement-id" : receipt.providerId,
+          name: receipt.providerName,
+        },
+        type: receipt.profileId,
+        credentials: Object.defineProperty(
+          {},
+          state === "wrong-key" ? "OTHER_KEY" : receipt.credentialEnv,
+          { enumerable: true, get: secretGetter },
+        ),
+      },
+    });
+    const profile = nativeCustomProfileResponse(prepared);
+    profile.endpoints[0].allowedIps =
+      state === "broadened-profile" ? ["12.12.12.12"] : profile.endpoints[0].allowedIps;
+    raw.getProviderProfile.mockResolvedValue({ profile });
+    raw.getSandbox.mockResolvedValue({
+      sandbox: {
+        ...inventory().sandbox,
+        spec: {
+          ...inventory().sandbox.spec,
+          providers: state === "missing-attachment" ? [] : [receipt.providerName],
+        },
+      },
+    });
+    const observed = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(observed.ok, observed.ok ? undefined : JSON.stringify(observed.findings)).toBe(
+      state === "matching",
+    );
+    expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
+    expect(secretGetter).not.toHaveBeenCalled();
+    expect(JSON.stringify(observed)).not.toContain(readFailureCanary);
+  },
+);

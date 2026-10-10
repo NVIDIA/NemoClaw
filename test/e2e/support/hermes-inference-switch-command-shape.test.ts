@@ -13,6 +13,7 @@ import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts"
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   API_KEY_SHAPE_PATTERN,
+  NVIDIA_API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
@@ -43,9 +44,9 @@ import {
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  function matchesApiKeyShape(line: string): boolean {
+  function matchesApiKeyShape(line: string, pattern = API_KEY_SHAPE_PATTERN): boolean {
     return (
-      spawnSync("grep", ["-Eq", API_KEY_SHAPE_PATTERN], {
+      spawnSync("grep", ["-Eq", pattern], {
         encoding: "utf8",
         input: `${line}\n`,
       }).status === 0
@@ -156,7 +157,7 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand();
+    const command = apiKeyShapeCommand("compatible-endpoint");
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
@@ -164,8 +165,8 @@ describe("Hermes inference switch command shape", () => {
 
   it("accepts only complete sk-prefixed YAML scalars", () => {
     expect(
-      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every(
-        matchesApiKeyShape,
+      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every((line) =>
+        matchesApiKeyShape(line),
       ),
     ).toBe(true);
     expect(
@@ -174,8 +175,24 @@ describe("Hermes inference switch command shape", () => {
         "  api_key: sk-value trailing",
         '  api_key: "sk-value',
         '  api_key: sk-value"',
-      ].some(matchesApiKeyShape),
+      ].some((line) => matchesApiKeyShape(line)),
     ).toBe(false);
+  });
+
+  it("selects the scoped environment placeholder probe for native NVIDIA (#12636)", () => {
+    expect(apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER)[2]).toBe(NVIDIA_API_KEY_SHAPE_PATTERN);
+  });
+
+  it.each([
+    ["${NVIDIA_INFERENCE_API_KEY}", true],
+    ['"${NVIDIA_INFERENCE_API_KEY}"', true],
+    ["'${NVIDIA_INFERENCE_API_KEY}'", true],
+    ["sk-value", false],
+    ["${COMPATIBLE_API_KEY}", false],
+    ["${NVIDIA_INFERENCE_API_KEY} trailing", false],
+    ['"${NVIDIA_INFERENCE_API_KEY}', false],
+  ])("validates the native NVIDIA config credential scalar %s (#12636)", (value, valid) => {
+    expect(matchesApiKeyShape(`  api_key: ${value}`, NVIDIA_API_KEY_SHAPE_PATTERN)).toBe(valid);
   });
 
   it("keeps initial hosted onboarding independent from the switch target", () => {
@@ -217,6 +234,8 @@ describe("Hermes inference switch command shape", () => {
         "openai",
         "--credential",
         "NVIDIA_INFERENCE_API_KEY",
+        "--config",
+        "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
       ]),
     );
     expect(command.mock.calls[2]?.[1]).toEqual(

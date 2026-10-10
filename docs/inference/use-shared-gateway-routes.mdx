@@ -13,6 +13,11 @@ content:
 OpenShell exposes one live inference route per gateway.
 NemoClaw records each sandbox's intended provider and model so compatible sandboxes can take turns using that route.
 
+This procedure applies to host-local providers and retained shared-route selections.
+NVIDIA Endpoints and fresh hosted custom endpoints use a provider attached to the selected sandbox.
+Changing those native selections does not re-point the shared gateway route or another sandbox's attachment.
+For hosted custom endpoint requirements and recovery, refer to [Meet Custom Endpoint Security Requirements](../custom-endpoints/custom-endpoint-security).
+
 ## Change the Live Route During Onboarding
 
 Onboarding a sandbox with another valid provider or model warns immediately before it re-points the shared route.

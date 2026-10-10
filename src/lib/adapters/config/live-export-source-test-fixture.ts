@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NativeCustomProfile } from "../../inference/native-custom";
 import { createHash } from "node:crypto";
 import { vi } from "vitest";
 
@@ -302,7 +303,7 @@ const emptyNativeAllow: Readonly<Record<string, unknown>> = {
   params: {},
 };
 
-function nativeNvidiaEndpoint(): Record<string, unknown> {
+function nativeNvidiaEndpoint() {
   return {
     host: "integrate.api.nvidia.com",
     port: 443,
@@ -338,7 +339,7 @@ function nativeNvidiaEndpoint(): Record<string, unknown> {
   };
 }
 
-export function nativeNvidiaProfile(): Record<string, unknown> {
+export function nativeNvidiaProfile() {
   return {
     id: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
     source: "user",
@@ -391,5 +392,34 @@ export function braveProvider() {
       credentials,
       config: {},
     },
+  };
+}
+
+export function nativeCustomProfileResponse(prepared: NativeCustomProfile) {
+  const base = nativeNvidiaProfile();
+  const credential = prepared.profile.credentials[0];
+  const endpoint = prepared.profile.endpoints[0];
+  return {
+    ...base,
+    id: prepared.profile.id,
+    credentials: [
+      {
+        ...base.credentials[0],
+        envVars: credential.env_vars,
+        authStyle: credential.auth_style,
+        headerName: credential.header_name,
+      },
+    ],
+    endpoints: [
+      {
+        ...base.endpoints[0],
+        host: endpoint.host,
+        port: endpoint.port,
+        allowedIps: endpoint.allowed_ips,
+        path: endpoint.path,
+        rules: endpoint.rules.map((rule) => ({ allow: { ...emptyNativeAllow, ...rule.allow } })),
+      },
+    ],
+    binaries: prepared.profile.binaries.map((path) => ({ path })),
   };
 }

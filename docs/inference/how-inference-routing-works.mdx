@@ -14,7 +14,7 @@ This design keeps provider credentials outside the sandbox.
 
 ## Request Path
 
-Most providers use the shared `inference.local` route inside the sandbox.
+Host-local, existing shared-route sandboxes, and providers without a native attachment use the shared `inference.local` route inside the sandbox.
 OpenShell intercepts each request on the host and forwards it to the provider and model selected during onboarding.
 
 ```text
@@ -27,6 +27,11 @@ The agent addresses the NVIDIA API hostname, but OpenShell still intercepts the 
 ```text
 Sandbox agent -> integrate.api.nvidia.com -> sandbox-attached OpenShell provider -> NVIDIA
 ```
+
+Fresh custom hosted endpoints also use a sandbox-attached provider.
+Public HTTP and admitted HTTPS IP-literal requests go to the admitted endpoint through OpenShell's credential rewrite.
+DNS-backed HTTPS and classified Bedrock requests go through the selected host adapter, which retains TLS or AWS credential custody.
+The attachment binds the selected API, endpoint, allowed executables, and issued credential. Ordinary restart verifies and reuses it; existing shared routes are not migrated automatically.
 
 Host-side services such as Model Router and the OpenRouter runtime adapter remain behind the OpenShell route.
 The sandbox uses `inference.local` for those services instead of calling their host ports directly.
@@ -45,7 +50,7 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 ## Deep Agents Configuration
 
-For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Most providers use `https://inference.local/v1`. NVIDIA Endpoints instead uses the least-privilege OpenShell provider attached to the sandbox at `https://integrate.api.nvidia.com/v1`.
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. NVIDIA Endpoints and fresh custom hosted endpoints use their sandbox-attached provider URL and issued credential. Shared-route providers use `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

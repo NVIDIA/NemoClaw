@@ -1171,11 +1171,13 @@ function computeRespawnState(
  */
 export async function ensureHttpsPinRuntimeAdapter(options: {
   gatewayName: string;
+  sandboxName?: string;
   provider: string;
   endpointUrl: string;
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
   lookup?: EndpointDnsLookupFn;
+  trustedPrivateHosts?: readonly string[];
   discoverAllowedSourceCidrs: () => readonly string[];
 }): Promise<{
   baseUrl: string;
@@ -1200,7 +1202,9 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
       "HTTPS Pin Runtime adapter endpoint URLs cannot contain userinfo, query, or fragment components.",
     );
   }
-  const preflight = await assertEndpointResolvesPublic(options.endpointUrl, options.lookup);
+  const preflight = await assertEndpointResolvesPublic(options.endpointUrl, options.lookup, {
+    trustedPrivateHosts: [...(options.trustedPrivateHosts ?? [])],
+  });
   if (!preflight.ok) {
     throw new Error(
       `HTTPS Pin Runtime adapter cannot validate "${options.endpointUrl}": ${preflight.reason}`,
@@ -1226,6 +1230,7 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
     options.gatewayName,
     options.provider,
     options.endpointUrl,
+    options.sandboxName,
   );
   const allowedSourceCidrs = buildAllowedRouteSourceMatcher(
     options.discoverAllowedSourceCidrs(),

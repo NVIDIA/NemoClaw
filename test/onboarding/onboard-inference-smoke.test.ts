@@ -16,13 +16,6 @@ import { testTimeoutOptions } from "../helpers/timeouts";
 // bash or the scenario framework. Refs #5098, #4349.
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
-function hasTokenSequence(command: string, sequence: readonly string[]): boolean {
-  const tokens = command.trim().split(/\s+/);
-  return tokens.some((_, index) =>
-    sequence.every((expected, offset) => tokens[index + offset] === expected),
-  );
-}
-
 describe("onboard inference smoke guard (#3253)", () => {
   it(
     "rejects a configured OpenAI-compatible route when chat/completions returns 503",
@@ -120,7 +113,28 @@ process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 process.env.BROKEN_API_KEY = "test-key";
 
 const { createSetupInference } = require(${onboardPath});
+let providerMetadata = null;
+const authority = new Map();
 const setupInference = createSetupInference({
+  providerAdapter: {
+    importProviderProfile: async () => ({ ok: true }),
+    ensureProviderPolicyComposition: async () => ({ ok: true, value: undefined }),
+    getProvider: async () => providerMetadata
+      ? { ok: true, value: providerMetadata }
+      : { ok: false, error: { kind: "command", reason: "not_found", message: "missing" } },
+    createProvider: async (request) => {
+      require("node:fs").appendFileSync(process.env.NEMOCLAW_FAKE_COMMAND_LOG, "native.create " + request.name + "\\n");
+      calls.push(["native.create", JSON.stringify({ name: request.name, type: request.type,
+        credentialKeys: request.credentials.map((credential) => credential.name) })]);
+      providerMetadata = { name: request.name, type: request.type, configKeys: [],
+        credentialKeys: request.credentials.map((credential) => credential.name),
+        revision: { id: "native-smoke-provider-id", resourceVersion: 1 } };
+      return { ok: true };
+    },
+  },
+  getNativeCustomProviderAuthority: (_gateway, name) => authority.get(name),
+  setNativeCustomProviderAuthority: (_gateway, receipt) => authority.set(receipt.providerName, receipt),
+  nativeCustomTransportDeps: { discoverAllowedSourceCidrs: () => ["172.18.0.0/16"] },
   resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
 });
 
@@ -129,7 +143,7 @@ const setupInference = createSetupInference({
     "test-sandbox",
     "broken-model",
     "compatible-endpoint",
-    "https://broken.example.invalid/v1",
+    "http://broken.example.invalid/v1",
     "BROKEN_API_KEY",
     null,
     [],
@@ -172,26 +186,12 @@ const setupInference = createSetupInference({
         );
 
         const commands = fs.readFileSync(commandLogPath, "utf8").trim().split("\n");
-        const providerCreateIndex = commands.findIndex(
-          (command) =>
-            hasTokenSequence(command, ["provider", "create"]) &&
-            hasTokenSequence(command, ["-g", "nemoclaw"]) &&
-            hasTokenSequence(command, ["--name", "compatible-endpoint"]),
-        );
-        const inferenceSetIndex = commands.findIndex(
-          (command) =>
-            hasTokenSequence(command, ["inference", "set"]) &&
-            hasTokenSequence(command, ["-g", "nemoclaw"]) &&
-            hasTokenSequence(command, ["--provider", "compatible-endpoint"]),
-        );
-        assert.ok(providerCreateIndex >= 0, "setupInference did not create compatible-endpoint");
+        const nativeCreates = commands.filter((command) => command.startsWith("native.create "));
+        assert.equal(nativeCreates.length, 1, "host smoke must follow native provider admission");
+        assert.match(nativeCreates[0], /^native.create nemoclaw-custom-/);
         assert.ok(
-          inferenceSetIndex >= 0,
-          `setupInference did not configure inference; commands:\n${commands.join("\n")}\noutput:\n${output}`,
-        );
-        assert.ok(
-          providerCreateIndex < inferenceSetIndex,
-          "setupInference configured inference before creating compatible-endpoint",
+          !commands.some((command) => /inference set/.test(command)),
+          "fresh native smoke must not configure the shared inference route",
         );
 
         const expectedDiagnostics = [

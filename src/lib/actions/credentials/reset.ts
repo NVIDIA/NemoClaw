@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retireNativeCustomProviders } from "../../inference/native-custom/cleanup";
+import { listNativeCustomProviderAuthorities } from "../../state/registry/native-custom-provider-authority";
+import { listSandboxes } from "../../state/registry";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type {
   OpenShellProviderAdapter,
@@ -44,6 +47,9 @@ export type CredentialsResetResult = {
 
 export type CredentialsResetDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
+  listNativeCustomProviderAuthorities?: typeof listNativeCustomProviderAuthorities;
+  listSandboxes?: typeof listSandboxes;
+  retireNativeCustomProviders?: typeof retireNativeCustomProviders;
   clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
   listNativeNvidiaProviderAttachmentSandboxNames?: typeof listNativeNvidiaProviderAttachmentSandboxNames;
   withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
@@ -135,6 +141,9 @@ export async function runCredentialsResetAction(
   const key = input.provider;
   const nativeNvidiaProvider =
     key === NVIDIA_HOSTED_LOGICAL_PROVIDER || key === NVIDIA_HOSTED_NATIVE_PROVIDER;
+  const nativeCustomKey =
+    ["compatible-endpoint", "compatible-anthropic-endpoint"].includes(key) ||
+    /^nemoclaw-custom-[a-f0-9]{32}$/u.test(key);
   const providerName = nativeNvidiaProvider ? NVIDIA_HOSTED_NATIVE_PROVIDER : key;
   const publicKey = nativeNvidiaProvider ? NVIDIA_HOSTED_LOGICAL_PROVIDER : key;
   if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
@@ -168,6 +177,52 @@ export async function runCredentialsResetAction(
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
   const resetProvider = async (): Promise<CredentialsResetResult> => {
+    if (nativeCustomKey) {
+      try {
+        const authorities = (
+          deps.listNativeCustomProviderAuthorities ?? listNativeCustomProviderAuthorities
+        )(target.gatewayName).filter(
+          (receipt) =>
+            receipt.providerName === key ||
+            (key === "compatible-endpoint" && receipt.credentialEnv === "COMPATIBLE_API_KEY") ||
+            (key === "compatible-anthropic-endpoint" &&
+              receipt.credentialEnv === "COMPATIBLE_ANTHROPIC_API_KEY"),
+        );
+        if (authorities.length) {
+          const sandboxes = (deps.listSandboxes ?? listSandboxes)().sandboxes;
+          if (
+            authorities.some((receipt) =>
+              sandboxes.some(
+                (entry) =>
+                  entry.nativeCustomProviderAttachment?.providerName === receipt.providerName,
+              ),
+            )
+          )
+            return fail([
+              "  Native custom inference is still recorded by a sandbox. Destroy that sandbox before resetting its owned provider. No provider access or authority was changed.",
+            ]);
+          for (const receipt of authorities)
+            await (deps.retireNativeCustomProviders ?? retireNativeCustomProviders)({
+              gatewayName: target.gatewayName,
+              sandboxName: receipt.sandboxName,
+              receipts: [receipt],
+              adapter: providerAdapter,
+            });
+          if (key.startsWith("nemoclaw-custom-"))
+            return ok([
+              "  Removed the unreferenced native custom providers and their owned authority.",
+            ]);
+        }
+        if (key.startsWith("nemoclaw-custom-"))
+          return fail([
+            "  Native custom provider ownership could not be verified. No provider access or authority was changed.",
+          ]);
+      } catch {
+        return fail([
+          "  Native custom provider cleanup could not be verified. Remaining ownership authority is retained; reconcile the selected gateway and retry.",
+        ]);
+      }
+    }
     if (nativeNvidiaProvider) {
       const blockers = nativeNvidiaResetBlockers(deps, target.gatewayName);
       if (!blockers.ok) {
@@ -219,7 +274,7 @@ export async function runCredentialsResetAction(
     return ok(outcome.lines);
   };
 
-  if (!nativeNvidiaProvider) return resetProvider();
+  if (!nativeNvidiaProvider && !nativeCustomKey) return resetProvider();
   return (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
     target.gatewayName,
     resetProvider,

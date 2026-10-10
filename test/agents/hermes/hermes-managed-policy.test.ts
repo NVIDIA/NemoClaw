@@ -206,3 +206,25 @@ describe("Hermes managed policy", () => {
     expect(patcher.status, patcher.stderr).toBe(0);
   });
 });
+
+describe("native custom Hermes policy (#12636)", () => {
+  it.each([
+    ["compatible-endpoint", "COMPATIBLE_API_KEY"],
+    ["compatible-anthropic-endpoint", "COMPATIBLE_ANTHROPIC_API_KEY"],
+  ])("accepts %s only with its owned credential reference", (provider, key) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, upstreamProvider: provider, baseUrl: "https://api.example.com/v1" },
+      {},
+    );
+    expect(loadWithPython(policy).status).toBe(0);
+    const serialized = JSON.stringify(policy);
+    expect(serialized).toContain(`sk-OPENSHELL-RESOLVE-ENV-${key}`);
+    const malformed = {
+      ...policy,
+      config: { ...policy.config, model: { ...policy.config.model, api_key: "raw-custom-secret" } },
+    };
+    const result = loadWithPython(malformed);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("raw-custom-secret");
+  });
+});

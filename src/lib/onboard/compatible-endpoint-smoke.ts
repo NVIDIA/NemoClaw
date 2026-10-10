@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  probeSandboxInferenceInvocation,
+  type SandboxInferenceInvocationInput,
+} from "../actions/sandbox/inference-invocation-probe";
+import { verifyNativeCustomStatusAttachment } from "../actions/sandbox/inference-route-health";
 import type { StdioOptions } from "node:child_process";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
@@ -104,6 +109,8 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   sandboxName: string;
   provider: string;
   model: string;
+  gatewayName?: string;
+  nativeCustomProviderAttachment?: SandboxInferenceInvocationInput["nativeCustomProviderAttachment"];
   runOpenshell: CompatibleEndpointSmokeRun;
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor;
   redact: (value: string) => string;
@@ -121,20 +128,9 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
 }): Promise<void> {
   const fail: (exitCode: number) => never = options.onFailure ?? process.exit;
   const agentName = options.agent?.name || "openclaw";
-  if (
-    options.forceCanonicalRoute !== true &&
-    (agentName !== "openclaw" || options.provider !== "compatible-endpoint")
-  ) {
-    return;
-  }
-
-  console.log(
-    options.forceCanonicalRoute
-      ? "  Verifying provider-neutral inference through the sandbox runtime..."
-      : "  Verifying compatible endpoint through the sandbox runtime...",
-  );
-
-  const target = { kind: "selected" } as const;
+  const target = options.gatewayName
+    ? { kind: "named" as const, gatewayName: options.gatewayName }
+    : { kind: "selected" as const };
   const adapter = createCliOpenShellProviderAdapter({
     run: (command, runOptions) => {
       const result = options.runOpenshell(command, runOptions);
@@ -151,6 +147,70 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       };
     },
   });
+
+  if (options.nativeCustomProviderAttachment) {
+    try {
+      if (!options.gatewayName)
+        throw new Error("Native custom inference verification requires the recorded gateway.");
+      await verifyNativeCustomStatusAttachment({
+        gatewayName: options.gatewayName,
+        sandboxName: options.sandboxName,
+        expected: options.nativeCustomProviderAttachment,
+      });
+      const result = await probeSandboxInferenceInvocation(
+        {
+          sandboxName: options.sandboxName,
+          provider: options.provider,
+          model: options.model,
+          preferredInferenceApi: options.nativeCustomProviderAttachment.api,
+          nativeCustomProviderAttachment: options.nativeCustomProviderAttachment,
+        },
+        {
+          execute: async (sandboxName, command, timeout) => {
+            const completed = await options.sandboxCommandExecutor.runBuffered({
+              sandboxName,
+              target,
+              command: ["sh", "-lc", command],
+              timeoutMilliseconds: timeout,
+            });
+            return completed.outcome.kind === "completed"
+              ? {
+                  status: completed.outcome.exitCode,
+                  stdout: completed.stdout,
+                  stderr: completed.stderr,
+                }
+              : null;
+          },
+        },
+      );
+      if (!result.ok) throw new Error(result.detail);
+      options.beforeSuccess?.();
+      console.log("  \u2713 Attached native custom provider responds inside the sandbox");
+      return;
+    } catch (error) {
+      console.error("  Native custom sandbox inference verification failed.");
+      console.error(
+        compactText(options.redact(error instanceof Error ? error.message : String(error))).slice(
+          0,
+          1200,
+        ),
+      );
+      fail(1);
+    }
+  }
+  if (
+    options.forceCanonicalRoute !== true &&
+    (agentName !== "openclaw" || options.provider !== "compatible-endpoint")
+  ) {
+    return;
+  }
+
+  console.log(
+    options.forceCanonicalRoute
+      ? "  Verifying provider-neutral inference through the sandbox runtime..."
+      : "  Verifying compatible endpoint through the sandbox runtime...",
+  );
+
   const providerResult = await adapter.getProvider({
     target,
     providerName: options.provider,
@@ -224,6 +284,17 @@ export function createCompatibleEndpointSmoke(
   ) => ReturnType<CompatibleEndpointSmokeRun>,
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
   redact: (value: string) => string,
+  registry?: {
+    getSandbox: (name: string) => {
+      gatewayName?: string | null;
+      gatewayPort?: number | null;
+      nativeCustomProviderAttachment?: SandboxInferenceInvocationInput["nativeCustomProviderAttachment"];
+    } | null;
+    resolveGatewayName: (entry: {
+      gatewayName?: string | null;
+      gatewayPort?: number | null;
+    }) => string;
+  },
 ) {
   type SmokeOptions = Parameters<typeof verifyCompatibleEndpointSandboxSmoke>[0];
   return {
@@ -231,8 +302,17 @@ export function createCompatibleEndpointSmoke(
       options: Omit<SmokeOptions, "runOpenshell" | "sandboxCommandExecutor" | "redact">,
       run = runOpenshell,
     ): Promise<void> {
+      const sandbox = registry?.getSandbox(options.sandboxName);
+      const nativeCustomProviderAttachment =
+        options.nativeCustomProviderAttachment ?? sandbox?.nativeCustomProviderAttachment;
       return verifyCompatibleEndpointSandboxSmoke({
         ...options,
+        nativeCustomProviderAttachment,
+        gatewayName:
+          options.gatewayName ??
+          (nativeCustomProviderAttachment && sandbox
+            ? registry?.resolveGatewayName(sandbox)
+            : undefined),
         runOpenshell: run,
         sandboxCommandExecutor,
         redact,
@@ -241,7 +321,12 @@ export function createCompatibleEndpointSmoke(
     verifyRebuilt(
       options: Pick<
         SmokeOptions,
-        "sandboxName" | "provider" | "model" | "endpointUrl" | "credentialEnv"
+        | "sandboxName"
+        | "provider"
+        | "model"
+        | "endpointUrl"
+        | "credentialEnv"
+        | "nativeCustomProviderAttachment"
       > & {
         environment: NodeJS.ProcessEnv;
         gatewayName?: string;
@@ -250,6 +335,7 @@ export function createCompatibleEndpointSmoke(
       const { environment, gatewayName, ...selection } = options;
       return verifyCompatibleEndpointSandboxSmoke({
         ...selection,
+        gatewayName,
         onFailure: (exitCode) => {
           throw new Error(`Compatible endpoint verification failed (exit ${exitCode}).`);
         },

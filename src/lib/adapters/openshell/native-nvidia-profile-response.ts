@@ -33,15 +33,29 @@ function stringArrayEquals(value: unknown, expected: readonly string[]): boolean
   );
 }
 
-function nativeCredential(value: unknown): boolean {
+export type NativeProfileBoundary = Readonly<{
+  id: string;
+  credentialEnv: string;
+  authStyle: string;
+  headerName: string;
+  host: string;
+  port: number;
+  allowedIps: readonly string[];
+  path: string;
+  modelsPath: string;
+  operationPath: string;
+  binaries: readonly string[];
+}>;
+
+function nativeCredential(value: unknown, boundary: NativeProfileBoundary): boolean {
   const credential = record(value);
   return (
     credential !== null &&
     credential.name === "api_key" &&
-    stringArrayEquals(credential.envVars, ["NVIDIA_INFERENCE_API_KEY"]) &&
+    stringArrayEquals(credential.envVars, [boundary.credentialEnv]) &&
     credential.required === true &&
-    credential.authStyle === "bearer" &&
-    credential.headerName === "authorization" &&
+    credential.authStyle === boundary.authStyle &&
+    credential.headerName === boundary.headerName &&
     credential.queryParam === "" &&
     credential.pathTemplate === "" &&
     credential.refresh === undefined &&
@@ -66,13 +80,13 @@ function nativeRule(value: unknown, method: "GET" | "POST", path: string): boole
   );
 }
 
-function nativeEndpoint(value: unknown): boolean {
+function nativeEndpoint(value: unknown, boundary: NativeProfileBoundary): boolean {
   const endpoint = record(value);
   const rules = endpoint?.rules;
   return (
     endpoint !== null &&
-    endpoint.host === "integrate.api.nvidia.com" &&
-    endpoint.port === 443 &&
+    endpoint.host === boundary.host &&
+    endpoint.port === boundary.port &&
     emptyArray(endpoint.ports) &&
     endpoint.protocol === "rest" &&
     endpoint.tls === "" &&
@@ -80,15 +94,15 @@ function nativeEndpoint(value: unknown): boolean {
     endpoint.access === "" &&
     Array.isArray(rules) &&
     rules.length === 2 &&
-    nativeRule(rules[0], "GET", "/v1/models") &&
-    nativeRule(rules[1], "POST", "/v1/chat/completions") &&
-    emptyArray(endpoint.allowedIps) &&
+    nativeRule(rules[0], "GET", boundary.modelsPath) &&
+    nativeRule(rules[1], "POST", boundary.operationPath) &&
+    stringArrayEquals(endpoint.allowedIps, boundary.allowedIps) &&
     emptyArray(endpoint.denyRules) &&
     endpoint.allowEncodedSlash === false &&
     endpoint.persistedQueries === "" &&
     emptyRecord(endpoint.graphqlPersistedQueries) &&
     endpoint.graphqlMaxBodyBytes === 0 &&
-    endpoint.path === "" &&
+    endpoint.path === boundary.path &&
     endpoint.websocketCredentialRewrite === false &&
     endpoint.requestBodyCredentialRewrite === false &&
     endpoint.advisorProposed === false &&
@@ -101,24 +115,28 @@ function nativeEndpoint(value: unknown): boolean {
   );
 }
 
-function nativeBinaries(value: unknown): boolean {
-  if (!Array.isArray(value)) return false;
-  const paths = value.map((item) => record(item)?.path);
-  return stringArrayEquals(paths, [
-    "/usr/local/bin/node",
-    "/usr/bin/node",
-    "/opt/hermes/.venv/bin/python",
-    "/opt/hermes/.venv/bin/python3",
-    "/opt/venv/bin/python3",
-    "/usr/local/bin/curl",
-    "/usr/bin/curl",
-  ]);
+function nativeBinaries(value: unknown, boundary: NativeProfileBoundary): boolean {
+  return (
+    Array.isArray(value) &&
+    stringArrayEquals(
+      value.map((item) => record(item)?.path),
+      boundary.binaries,
+    )
+  );
 }
 
 /** Verify the live custom profile at the credential, egress, and binary security boundary. */
-export function isManagedNativeNvidiaProfileResponse(
+export function isManagedNativeProfileResponse(
   value: unknown,
-): value is NativeNvidiaProfileResponse {
+  boundary: NativeProfileBoundary,
+): value is {
+  profile: {
+    id: string;
+    source: "user";
+    scope: "platform" | "workspace";
+    resourceVersion: bigint | string;
+  };
+} {
   const response = record(value);
   const profile = record(response?.profile);
   const revision = profile?.resourceVersion;
@@ -126,7 +144,7 @@ export function isManagedNativeNvidiaProfileResponse(
   const endpoints = profile?.endpoints;
   return (
     profile !== null &&
-    profile.id === "nemoclaw-nvidia-inference-v1" &&
+    profile.id === boundary.id &&
     profile.source === "user" &&
     (profile.scope === "platform" || profile.scope === "workspace") &&
     (typeof revision === "bigint" || typeof revision === "string") &&
@@ -135,10 +153,36 @@ export function isManagedNativeNvidiaProfileResponse(
     profile.discovery === undefined &&
     Array.isArray(credentials) &&
     credentials.length === 1 &&
-    nativeCredential(credentials[0]) &&
+    nativeCredential(credentials[0], boundary) &&
     Array.isArray(endpoints) &&
     endpoints.length === 1 &&
-    nativeEndpoint(endpoints[0]) &&
-    nativeBinaries(profile.binaries)
+    nativeEndpoint(endpoints[0], boundary) &&
+    nativeBinaries(profile.binaries, boundary)
   );
+}
+
+export function isManagedNativeNvidiaProfileResponse(
+  value: unknown,
+): value is NativeNvidiaProfileResponse {
+  return isManagedNativeProfileResponse(value, {
+    id: "nemoclaw-nvidia-inference-v1",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    authStyle: "bearer",
+    headerName: "authorization",
+    host: "integrate.api.nvidia.com",
+    port: 443,
+    allowedIps: [],
+    path: "",
+    modelsPath: "/v1/models",
+    operationPath: "/v1/chat/completions",
+    binaries: [
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/venv/bin/python3",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ],
+  });
 }

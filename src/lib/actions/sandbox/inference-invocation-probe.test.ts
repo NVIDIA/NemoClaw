@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../../inference/native-custom";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { spawnSync } from "node:child_process";
 import { getChatCompletionsProbePayload } from "../../inference/openai-probe-models";
@@ -752,4 +756,70 @@ it("gives native Ultra readiness the same reasoning budget as host onboarding", 
   const payload = getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload: true });
   expect(payload.max_tokens).toBe(256);
   expect(command).toContain('"max_tokens":256');
+});
+
+describe("native custom invocation credentials (#12636)", () => {
+  async function request(api: "openai-completions" | "openai-responses" | "anthropic-messages") {
+    const provider =
+      api === "anthropic-messages" ? "compatible-anthropic-endpoint" : "compatible-endpoint";
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "dcode-workspace",
+      provider,
+      endpointUrl: "https://api.example.com/service",
+      api,
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    return {
+      ...input,
+      provider,
+      preferredInferenceApi: api,
+      nativeCustomProviderAttachment: customAttachmentFromPrepared(prepared, {
+        schemaVersion: 1,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "immutable-id",
+      }),
+    };
+  }
+
+  it.each(["openai-completions", "openai-responses", "anthropic-messages"] as const)(
+    "sends %s to its native endpoint with a supervisor-issued credential",
+    async (api) => {
+      const probeInput = await request(api);
+      const key = probeInput.nativeCustomProviderAttachment.credentialEnv;
+      const placeholder = `openshell:resolve:env:v123_${key}`;
+      const result = runProbeCommandWithBody("200", "{}", tmpdir(), probeInput, {
+        [key]: placeholder,
+      });
+      const operation =
+        api === "anthropic-messages"
+          ? "messages"
+          : api === "openai-responses"
+            ? "responses"
+            : "chat/completions";
+      expect(result.argv.at(-1)).toBe(`https://api.example.com/service/v1/${operation}`);
+      expect(result.argv).toContain(
+        api === "anthropic-messages"
+          ? `x-api-key: ${placeholder}`
+          : `Authorization: Bearer ${placeholder}`,
+      );
+      expect(result.argv.join(" ")).not.toContain("inference.local");
+    },
+  );
+
+  it.each([
+    "raw-host-secret",
+    "openshell:resolve:env:COMPATIBLE_API_KEY",
+    "openshell:resolve:env:v123_WRONG_KEY",
+  ])("refuses an unbound credential before curl: %s", async (value) => {
+    const probeInput = await request("openai-completions");
+    const command = buildSandboxInferenceInvocationCommand(probeInput);
+    const result = spawnSync("/bin/sh", ["-c", command], {
+      env: { PATH: process.env.PATH, COMPATIBLE_API_KEY: value },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
 });

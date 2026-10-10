@@ -3,6 +3,7 @@
 
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildNativeCustomProfile } from "../../inference/native-custom/profile";
 
 import {
   endpointlessProviderProfilePath,
@@ -13,6 +14,34 @@ import {
 const PROFILE_ID = "langfuse-hermes-v1";
 
 describe("OpenShell endpointless provider profiles", () => {
+  it.each([
+    [[], undefined, true],
+    [[], [], true],
+    [[], ["8.8.8.8"], false],
+    [["8.8.8.8"], undefined, false],
+    [["8.8.8.8"], ["1.1.1.1"], false],
+  ] as const)(
+    "preserves native profile address restrictions across OpenShell export: %j -> %j",
+    (addresses, exportedAddresses, matches) => {
+      const profile = buildNativeCustomProfile({
+        sandboxName: "native-profile-test",
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:8088/v1",
+        api: "openai-completions",
+        addresses,
+      }).profile;
+      const expected = parseCheckedInProviderProfileContract(JSON.stringify(profile));
+      expect(expected).not.toBeNull();
+      const exported = {
+        ...profile,
+        endpoints: [{ ...profile.endpoints[0], allowed_ips: exportedAddresses }],
+      };
+      expect(exportedProviderProfileMatchesContract(JSON.stringify(exported), expected!)).toBe(
+        matches,
+      );
+    },
+  );
+
   it("resolves a checked-in profile path for the requested profile", () => {
     expect(endpointlessProviderProfilePath("/repo", PROFILE_ID)).toBe(
       path.join("/repo", "nemoclaw-blueprint", "provider-profiles", "langfuse-hermes-v1.yaml"),

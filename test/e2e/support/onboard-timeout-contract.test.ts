@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onboard/docker-gpu-supervisor-reconnect.ts";
 import {
   CONFIG_EXPORT_COMMAND_TIMEOUT_MS,
+  CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
+  CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS,
+  CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
+  INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
   CONFIG_EXPORT_PINNED_V1_CONSUMER_TIMEOUT_MS,
   CONFIG_EXPORT_POLICY_TIMEOUT_MS,
   DCODE_INVALID_CREDENTIAL_LIFECYCLE_BUDGET_MS,
@@ -33,7 +37,11 @@ import { CONFIG_EXPORT_EXPECTATIONS, type ConfigExportExpectation } from "../reg
 
 const MINUTE_MS = 60_000;
 const finalHandoffTimeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1, {}) * 1_000;
-const affectedTargetIds = ["inference-routing", "onboard-resume"] as const;
+const affectedTargetIds = [
+  "inference-routing",
+  "inference-routing-custom-hosted",
+  "onboard-resume",
+] as const;
 const timeoutContractPath = "tools/e2e/onboard-timeout-contract.mts";
 const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
@@ -50,6 +58,40 @@ const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
 afterEach(() => vi.unstubAllEnvs());
 
 describe("onboard final-handoff timeout contract", () => {
+  it("contains the ordered native custom lifecycle operation deadlines", () => {
+    const preparation = 30_000 + 2 * (120_000 + 60_000) + 6 * 120_000 + 3 * 60_000;
+    const adminApproval = 180_000 + 240_000;
+    const restartAndAgentTurn = 120_000 + 240_000 + 30_000 + 60_000 + 240_000;
+    const routeAndPeerChats = 120_000 + 5 * 90_000;
+    const denialAndRevocation = 30_000 + 90_000 + 30_000 + 90_000 + 30_000;
+    const dnsAndRedirect = 3 * 60_000 + 90_000 + 90_000;
+    const directHttp = 2 * 30_000 + 60_000 + 30_000 + 90_000;
+    const nativeAnthropic = adminApproval + 30_000 + 240_000 + 210_000 + 30_000;
+    const nativeHermes = 120_000 + 240_000 + 30_000 + 180_000 + 210_000 + 30_000;
+    const nativeDeepAgents = 180_000 + 210_000 + 30_000;
+    const selectionAndDeletion =
+      60_000 + 30_000 + 30_000 + 120_000 + 30_000 + 30_000 + 210_000 + 2 * 30_000;
+    const fixturePreparation = 2 * MINUTE_MS;
+    expect(CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS).toBeGreaterThanOrEqual(
+      preparation +
+        adminApproval +
+        restartAndAgentTurn +
+        routeAndPeerChats +
+        denialAndRevocation +
+        dnsAndRedirect +
+        directHttp +
+        nativeAnthropic +
+        nativeHermes +
+        nativeDeepAgents +
+        selectionAndDeletion +
+        fixturePreparation,
+    );
+    expect(CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      5 * ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS +
+        CUSTOM_HOSTED_LIFECYCLE_OPERATION_BUDGET_MS +
+        testHeadroomMs,
+    );
+  });
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {
     expect(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(
       finalHandoffTimeoutMs * 2 + commandDiagnosticHeadroomMs,
@@ -127,9 +169,9 @@ describe("onboard final-handoff timeout contract", () => {
 
   it.each([
     [
-      "inference-routing",
-      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
-      ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+      "inference-routing-custom-hosted",
+      CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS,
+      CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
   ] as const)(
@@ -142,7 +184,29 @@ describe("onboard final-handoff timeout contract", () => {
     },
   );
 
-  it("selects both affected targets when the shared timeout contract changes", () => {
+  it("bounds every retained routing case and final cleanup in its catalogue job", () => {
+    const selectedTestDeadlines =
+      2 * 5 * MINUTE_MS + 3 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS;
+    expect(catalogueTarget("inference-routing").timeoutMinutes).toBe(
+      INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
+    );
+    expect(INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      selectedTestDeadlines + DEFAULT_CLEANUP_TIMEOUT_MS + workflowFinalizationHeadroomMs,
+    );
+    expect(CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      CUSTOM_HOSTED_LIFECYCLE_TEST_TIMEOUT_MS +
+        DEFAULT_CLEANUP_TIMEOUT_MS +
+        workflowFinalizationHeadroomMs,
+    );
+    expect(
+      Math.max(
+        INFERENCE_ROUTING_BASE_TARGET_TIMEOUT_MINUTES,
+        CUSTOM_HOSTED_LIFECYCLE_TARGET_TIMEOUT_MINUTES,
+      ),
+    ).toBeLessThanOrEqual(360);
+  });
+
+  it("selects all affected targets when the shared timeout contract changes", () => {
     expect(
       catalogueTargetsForChangedFiles([timeoutContractPath])
         .map((target) => target.id)

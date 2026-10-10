@@ -824,48 +824,52 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
   });
 
-  it("redacts a copied failed-startup log before artifact publication", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
-    const secret = "supplied-startup-diagnostic-secret";
-    const containerId = "a".repeat(64);
-    const artifacts = new ArtifactSink(directory);
-    const command = vi.fn(async (executable: string, args: readonly string[]) => {
-      switch (`${executable}:${String(args[0])}`) {
-        case "docker:ps":
-          return {
-            exitCode: 0,
-            stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
-            stderr: "",
-          };
-        case "docker:cp":
-          fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
-          break;
+  it.each(["onboard", "public-lifecycle"] as const)(
+    "redacts a copied %s failure log before artifact publication",
+    async (failureStage) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
+      const secret = "supplied-startup-diagnostic-secret";
+      const containerId = "a".repeat(64);
+      const artifacts = new ArtifactSink(directory);
+      const command = vi.fn(async (executable: string, args: readonly string[]) => {
+        switch (`${executable}:${String(args[0])}`) {
+          case "docker:ps":
+            return {
+              exitCode: 0,
+              stdout: `${containerId}\tmanaged-container\timage\tExited\n`,
+              stderr: "",
+            };
+          case "docker:cp":
+            fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
+            break;
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      try {
+        await collectOnboardFailureRuntimeDiagnostics(
+          artifacts,
+          { command } as never,
+          "openclaw",
+          "managed-openclaw",
+          {},
+          [secret],
+          failureStage,
+        );
+
+        const published = fs.readFileSync(
+          artifacts.pathFor(
+            `managed-activation-${failureStage}-failure-openclaw-container-1-nemoclaw-start.log`,
+          ),
+          "utf8",
+        );
+        expect(published).toContain("[REDACTED]");
+        expect(published).not.toContain(secret);
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
       }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
-
-    try {
-      await collectOnboardFailureRuntimeDiagnostics(
-        artifacts,
-        { command } as never,
-        "openclaw",
-        "managed-openclaw",
-        {},
-        [secret],
-      );
-
-      const published = fs.readFileSync(
-        artifacts.pathFor(
-          "managed-activation-onboard-failure-openclaw-container-1-nemoclaw-start.log",
-        ),
-        "utf8",
-      );
-      expect(published).toContain("[REDACTED]");
-      expect(published).not.toContain(secret);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+    },
+  );
 
   it("installs activation proof plugins through native OpenClaw ownership", () => {
     const script = managedActivationOpenClawPluginScript();

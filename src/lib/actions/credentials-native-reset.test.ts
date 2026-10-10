@@ -3,6 +3,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../inference/native-custom";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsResetAction } from "./credentials/reset";
@@ -132,4 +136,64 @@ describe("native NVIDIA credential reset ownership", () => {
     ]);
     expect(JSON.stringify(result)).not.toContain("opaque registry failure");
   });
+});
+
+describe("native custom credential reset ownership", () => {
+  beforeEach(() =>
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      forgetExtraProvider: () => true,
+    }),
+  );
+  afterEach(() => setGlobalCliActionRuntimeHooksForTest({}));
+  it.each([true, false])(
+    "requires absence of the recorded sandbox before retiring custom authority (recorded=%s) (#12636)",
+    async (recorded) => {
+      const prepared = await prepareNativeCustomProfile({
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        endpointUrl: "http://8.8.8.8/v1",
+        api: "openai-completions",
+      });
+      const receipt = customAttachmentFromPrepared(prepared, {
+        schemaVersion: 1,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "owned-id",
+      });
+      const remove = vi.fn(async () => undefined);
+      const providerAdapter = adapter(async () => ({ ok: true }));
+      const result = await runCredentialsResetAction(
+        { provider: "compatible-endpoint", confirmed: true },
+        {
+          providerAdapter,
+          listNativeCustomProviderAuthorities: () => [receipt],
+          listSandboxes: () => ({
+            sandboxes: recorded ? [{ name: "alpha", nativeCustomProviderAttachment: receipt }] : [],
+            defaultSandbox: null,
+          }),
+          retireNativeCustomProviders: remove,
+          withGatewayRouteMutationLock: async (_gateway, operation) => operation(),
+        },
+      );
+      expect(result.exitCode).toBe(recorded ? 1 : 0);
+      expect(remove.mock.calls).toEqual(
+        recorded
+          ? []
+          : [
+              [
+                {
+                  gatewayName: "nemoclaw",
+                  sandboxName: "alpha",
+                  receipts: [receipt],
+                  adapter: providerAdapter,
+                },
+              ],
+            ],
+      );
+      expect(vi.mocked(providerAdapter.deleteProvider).mock.calls).toEqual(
+        recorded ? [] : [[expect.objectContaining({ providerName: "compatible-endpoint" })]],
+      );
+    },
+  );
 });

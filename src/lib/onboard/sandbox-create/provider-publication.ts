@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+import type { SelectionDrift } from "../selection-drift";
+
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type {
   OpenShellProviderAdapter,
@@ -10,6 +13,10 @@ import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/prov
 import type { OpenShellGatewayEndpointEnvironment } from "../../adapters/openshell/gateway-scope";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import {
+  ensureNativeCustomProviderAttached,
+  normalizeNativeCustomProviderAttachment,
+} from "../../inference/native-custom";
 import {
   ensureNativeNvidiaProviderAttached,
   NVIDIA_HOSTED_NATIVE_PROVIDER,
@@ -22,6 +29,25 @@ import type { SandboxEntry } from "../../state/registry";
 import { matchesGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
 import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
+
+/** A provider/model match cannot prove that the requested native endpoint is unchanged. */
+export function withNativeCustomSelectionDrift(
+  drift: SelectionDrift,
+  input: { sandboxName: string; previous?: unknown; next?: unknown; replacementRequested: boolean },
+): SelectionDrift {
+  const receipt = (value: unknown) => {
+    if (value === undefined) return undefined;
+    const normalized = normalizeNativeCustomProviderAttachment(value, input.sandboxName);
+    if (!normalized)
+      throw new Error("Cannot reuse a sandbox with invalid native custom provider authority.");
+    return normalized;
+  };
+  const previous = receipt(input.previous);
+  if (!input.replacementRequested && input.next === undefined) return drift;
+  const next = receipt(input.next);
+  if (isDeepStrictEqual(previous, next)) return drift;
+  return { ...drift, changed: true, unknown: false, nativeCustomChanged: true };
+}
 
 type ProviderPreparationInput = {
   readonly openshellDriver: SandboxEntry["openshellDriver"];
@@ -241,4 +267,22 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
       deps,
     );
   }
+}
+
+export async function verifyNativeCustomAttachmentAfterCreate(input: {
+  sandboxName: string;
+  gatewayName: string;
+  inferenceProvider: string | null;
+  expected: SandboxEntry["nativeCustomProviderAttachment"];
+  deps: ProviderPreparationDeps;
+}): Promise<void> {
+  if (!input.expected) return;
+  if (input.inferenceProvider !== input.expected.providerName)
+    throw new Error("Custom provider create identity disagrees with its receipt.");
+  await ensureNativeCustomProviderAttached({
+    adapter: resolveProviderAdapter(input.deps),
+    target: namedOpenShellGateway(input.gatewayName),
+    sandboxName: input.sandboxName,
+    expected: input.expected,
+  });
 }

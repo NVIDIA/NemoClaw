@@ -5,6 +5,7 @@ import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/opensh
 import {
   initializeOpenclawInferenceRoute as initializeDefaultOpenclawInferenceRoute,
   type InitializeOpenclawInferenceRoute,
+  type NativeCustomProviderAttachment,
 } from "./openclaw/initial-inference-route";
 
 const OPENCLAW_ALIVE_HTTP_CODES = new Set([200, 401]);
@@ -116,6 +117,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     initializeNativeInferenceRoute = false,
     gatewayName?: string,
     settleOpenclawPairingBeforeRestart?: () => Promise<boolean>,
+    nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
@@ -129,14 +131,18 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
           `External-image OpenClaw pairing did not settle after configuration for sandbox '${sandboxName}'.`,
         );
       }
-      await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
+      const initialize =
+        deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute;
+      const args = [
         sandboxName,
         model,
         provider,
         preferredInferenceApi,
         gatewayName,
         revalidateSandboxIdentity,
-      );
+      ] as const;
+      if (nativeCustomProviderAttachment) await initialize(...args, nativeCustomProviderAttachment);
+      else await initialize(...args);
     } else if (deps.shouldRestartNativeGateway(provider)) {
       revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
       const restart = await deps.restartNativeGateway(sandboxName);

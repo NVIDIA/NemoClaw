@@ -101,8 +101,11 @@ describe("runInferenceSet degraded state handling", () => {
       const entry = {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: initiallyPresent ? "compatible-endpoint" : "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: initiallyPresent ? "https://old.example/v1" : undefined,
+        credentialEnv: initiallyPresent ? "COMPATIBLE_API_KEY" : undefined,
+        preferredInferenceApi: initiallyPresent ? "openai-completions" : undefined,
       };
       let persistedConfig: ConfigObject = {
         agents: {

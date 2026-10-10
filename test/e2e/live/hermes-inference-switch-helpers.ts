@@ -231,7 +231,10 @@ export async function prepareProxyResolutionRoute({
   redactionValues: string[];
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
-    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+    mockBaseline?.baseUrl ??
+    (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
+      : (process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL));
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
@@ -733,6 +736,9 @@ export function maybeAssertPidStable(
   beforePid && afterPid && assertStable(afterPid, beforePid);
 }
 
+// The custom switch fixture uses host.openshell.internal, which preserves the
+// host-local shared route. Hosted native custom inference has a separate live
+// consumer in bedrock-runtime-compatible-anthropic.test.ts.
 export function expectedBaseUrl(): string {
   if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) return NVIDIA_HOSTED_NATIVE_ENDPOINT;
   return RUNTIME_SWITCH_API === "anthropic-messages"
@@ -755,8 +761,14 @@ export function expectedApiMode(): string | undefined {
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
 
-export function apiKeyShapeCommand(): string[] {
-  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+export const NVIDIA_API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("\\$\\{NVIDIA_INFERENCE_API_KEY\\}"|'\\$\\{NVIDIA_INFERENCE_API_KEY\\}'|\\$\\{NVIDIA_INFERENCE_API_KEY\\})[[:space:]]*$`;
+
+export function apiKeyShapeCommand(provider: string = SWITCH_PROVIDER): string[] {
+  const pattern =
+    provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NVIDIA_API_KEY_SHAPE_PATTERN
+      : API_KEY_SHAPE_PATTERN;
+  return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {

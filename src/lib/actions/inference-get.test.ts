@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../inference/native-custom";
 import fs from "node:fs";
 import os from "node:os";
 
@@ -1071,5 +1075,83 @@ describe("runInferenceGet", () => {
         "NemoClaw rejected the inference route lookup for gateway 'nemoclaw-19090' before observation. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
     });
     expect(deps.log).not.toHaveBeenCalled();
+  });
+});
+
+describe("selected native custom inference get (#12636)", () => {
+  async function fixture(endpointUrl = "https://api.example.com/v1") {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "custom",
+      provider: "compatible-endpoint",
+      endpointUrl,
+      api: "openai-completions",
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    return {
+      name: "custom",
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      preferredInferenceApi: "openai-completions",
+      nativeCustomProviderAttachment: customAttachmentFromPrepared(prepared, {
+        schemaVersion: 1,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "owned-id",
+      }),
+    };
+  }
+  it("reports the verified sandbox selection without reading the shared gateway route", async () => {
+    const entry = await fixture();
+    const deps = createDeps(configuredRoute("other-provider", "other-model"));
+    deps.getSandbox = () => entry;
+    const verify = vi.fn(async () => undefined);
+    deps.verifyNativeCustomAttachment = verify;
+    expect(await runInferenceGet({ sandboxName: "custom", quiet: true }, deps)).toEqual({
+      provider: entry.provider,
+      model: entry.model,
+      endpointUrl: "https://api.example.com/v1",
+    });
+    expect(verify).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      sandboxName: "custom",
+      expected: entry.nativeCustomProviderAttachment,
+    });
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+  });
+  it("fails closed when observed attachment identity cannot be verified", async () => {
+    const entry = await fixture();
+    const deps = createDeps(configuredRoute("other-provider", "other-model"));
+    deps.getSandbox = () => entry;
+    deps.verifyNativeCustomAttachment = async () => {
+      throw new Error("private-provider-detail");
+    };
+    await expect(runInferenceGet({ sandboxName: "custom" }, deps)).rejects.toThrow(
+      "Run 'nemoclaw custom status'",
+    );
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+  it("rejects mismatched native selection before gateway verification (#12636)", async () => {
+    const entry = await fixture();
+    entry.preferredInferenceApi = "anthropic-messages";
+    const deps = createDeps(configuredRoute("other-provider", "other-model"));
+    deps.getSandbox = () => entry;
+    const verify = vi.fn(async () => undefined);
+    deps.verifyNativeCustomAttachment = verify;
+    await expect(runInferenceGet({ sandboxName: "custom" }, deps)).rejects.toThrow(
+      "Recreate the sandbox",
+    );
+    expect(verify).not.toHaveBeenCalled();
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+  });
+  it("withholds an opaque endpoint path from JSON and text", async () => {
+    const entry = await fixture("https://api.example.com/opaque-private-path");
+    const deps = createDeps(configuredRoute("other-provider", "other-model"));
+    deps.getSandbox = () => entry;
+    deps.verifyNativeCustomAttachment = async () => undefined;
+    const result = await runInferenceGet({ sandboxName: "custom", json: true }, deps);
+    expect(result.endpointStatus).toBe("withheld");
+    expect(JSON.stringify(result)).not.toContain("opaque-private-path");
+    expect(deps.log.mock.calls.flat().join(" ")).not.toContain("opaque-private-path");
   });
 });

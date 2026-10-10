@@ -102,7 +102,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(79);
+    expect(plan.coverageMatrix).toHaveLength(80);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -155,7 +155,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(48);
+    expect(catalogueIds).toHaveLength(49);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -289,6 +289,34 @@ describe("E2E workflow plan", () => {
   ])("selects custom-image route evidence when %s changes (#12033)", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "openclaw-inference-switch",
+    );
+  });
+
+  it.each([
+    "src/lib/inference/native-custom/transport.ts",
+    "src/lib/actions/inference-set/native-custom.ts",
+    "src/lib/state/registry/native-custom-provider-authority.ts",
+    "src/lib/onboard/resume/native-custom.ts",
+  ])("selects native custom lifecycle evidence when %s changes (#12636)", (changedFile) => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: [changedFile], gatewayRuntimes: ["docker"] },
+    );
+    expect(
+      Object.values(plan.catalogueMatrices)
+        .flat()
+        .map((row) => row.id),
+    ).toContain("inference-routing-custom-hosted");
+  });
+
+  it("includes native custom lifecycle in the existing inference-routing selector (#12636)", () => {
+    const plan = buildE2eWorkflowPlan({ targets: "inference-routing" });
+    const rows = Object.values(plan.catalogueMatrices).flat();
+    expect(rows.map((row) => row.id)).toContain("inference-routing-custom-hosted");
+    const lifecycle = rows.find((row) => row.id === "inference-routing-custom-hosted");
+    expect(lifecycle?.shard).toBe("custom-hosted");
+    expect(catalogueTarget("inference-routing-custom-hosted").agentRuntime).toBe(
+      "openclaw + hermes + langchain-deepagents-code",
     );
   });
 

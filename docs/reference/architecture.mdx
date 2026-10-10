@@ -31,6 +31,7 @@ graph LR
     subgraph EXTERNAL["External Services"]
         SHARED_INFERENCE["Shared-route inference providers<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
         NVIDIA_INFERENCE["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
+        CUSTOM_INFERENCE["Custom hosted endpoint<br/><small>Admitted API and endpoint</small>"]:::external
         INTEGRATIONS["Integration APIs<br/><small>MCP · GitHub · package indexes</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
     end
@@ -42,6 +43,7 @@ graph LR
             NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · sandbox setup</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
             STATE["State Management<br/><small>Whole-home rebuild transfer<br/>Fail-closed credential checks<br/>Integrity verification</small>"]:::nemoclaw
+            CUSTOM_ADAPTER["Host adapter<br/><small>HTTPS pinning · Bedrock authentication</small>"]:::nemoclaw
         end
 
         subgraph OPENSHELL["OpenShell"]
@@ -65,9 +67,12 @@ graph LR
     BP -->|"Defines sandbox<br/>shape + policies"| SANDBOX
     STATE -->|"Backup + restore"| SANDBOX
 
-    AGENT -->|"Most inference requests<br/><small>inference.local · no credentials</small>"| GW
+    AGENT -->|"Shared inference requests<br/><small>inference.local · no credentials</small>"| GW
     GW -->|"Shared-route request with<br/>credential injected"| SHARED_INFERENCE
     AGENT -->|"Attached NVIDIA provider<br/><small>restricted request · placeholder credential</small>"| NVIDIA_INFERENCE
+    AGENT -->|"Attached custom provider<br/><small>restricted HTTP egress · issued credential rewritten</small>"| CUSTOM_INFERENCE
+    AGENT -->|"Attached custom provider<br/><small>restricted adapter egress · issued credential rewritten</small>"| CUSTOM_ADAPTER
+    CUSTOM_ADAPTER -->|"Pinned HTTPS or authenticated Bedrock"| CUSTOM_INFERENCE
 
     INTEGRATIONS -->|"External APIs"| INTEG
     INTEG -->|"Policy-gated access"| AGENT
@@ -173,12 +178,14 @@ graph TB
 
     SHARED_INFER["Shared-route inference provider<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
     NVIDIA_INFER["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
+    CUSTOM_INFER["Custom hosted endpoint<br/><small>Admitted API and endpoint or host adapter</small>"]:::external
 
     CLI -->|"openshell CLI<br/>(orchestrates)"| GW
     GW -->|"creates/recreates<br/>Docker-driver sandbox"| SANDBOX
     SANDBOX -->|"shared-route requests<br/><small>inference.local · placeholder credentials</small>"| GW
     GW -->|"shared-route egress<br/>credential injected at L7 proxy"| SHARED_INFER
     SANDBOX -->|"attached NVIDIA provider<br/><small>restricted egress · placeholder rewritten</small>"| NVIDIA_INFER
+    SANDBOX -->|"attached custom provider<br/><small>restricted egress · credential reference rewritten</small>"| CUSTOM_INFER
 
     class HOST host
     class DOCKER docker
@@ -196,11 +203,13 @@ Layering from top to bottom:
 | Sandbox container | Docker container | Runs the selected supported agent runtime and NemoClaw integration under Landlock + seccomp + netns. |
 | OpenShell L7 proxy | Gateway process | Intercepts shared-route agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
 | OpenShell attached NVIDIA provider | Provider profile attached to the sandbox | Restricts NVIDIA Endpoints egress by host, method, path, and binary, then rewrites the placeholder credential at the egress boundary. |
+| OpenShell attached custom provider | Endpoint-specific provider profile attached to the sandbox | Restricts the admitted endpoint, API paths, addresses, and agent binary, then resolves the credential reference at egress. Existing host adapters retain their transport and authentication responsibilities. |
 
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider and placeholder system.
 Shared routes use the gateway L7 proxy to substitute the real value at egress.
 NVIDIA Endpoints uses the sandbox-attached provider profile to enforce the restricted request and replace its placeholder at egress.
+Fresh custom hosted selections likewise use their recorded sandbox-attached provider identity and admitted endpoint/API contract, including a host adapter where required.
 The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model.
 It is not a runtime component.
 
@@ -358,7 +367,7 @@ Inside the sandbox:
 ## Inference Routing
 
 Agent inference follows one of two OpenShell-managed paths.
-Most providers use the shared `inference.local` route through the OpenShell gateway:
+Providers without a native attachment use the shared `inference.local` route through the OpenShell gateway:
 
 ```text
 Supported agent runtime (sandbox)  ──▶  inference.local  ──▶  OpenShell gateway  ──▶  Provider endpoint
@@ -372,6 +381,12 @@ Supported agent runtime (sandbox)  ──▶  integrate.api.nvidia.com  ──�
 ```
 
 The NVIDIA request does not use the shared `inference.local` route.
+
+Fresh custom hosted endpoints also use a provider attached to the selected sandbox.
+Its profile binds the admitted endpoint, API, executable allowlist, address set, and issued credential.
+Public HTTP requests use that endpoint directly through OpenShell's credential rewrite.
+HTTPS and classified Bedrock requests use their selected host adapter, which retains upstream TLS or AWS credential custody.
+Host-local endpoints and existing shared-route sandboxes retain their existing path.
 The attached OpenShell profile allows only the configured endpoint, methods, paths, and binaries, and it replaces the placeholder credential at egress.
 
 When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.

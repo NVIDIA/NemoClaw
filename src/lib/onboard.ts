@@ -673,7 +673,10 @@ const {
 });
 const sandboxExec = sandboxCommandCli.createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
-const compatibleSmoke = createCompatibleEndpointSmoke(runOpenshell, sandboxExec, redact);
+const compatibleSmoke = createCompatibleEndpointSmoke(runOpenshell, sandboxExec, redact, {
+  getSandbox: registry.getSandbox,
+  resolveGatewayName: gatewayBinding.resolveSandboxGatewayName,
+});
 
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
 const waitForSandboxReady = sandboxReadinessTracing.createCliSandboxReadyWaiter({
@@ -3146,6 +3149,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             step,
             sandboxCommandExecutor: sandboxExec,
             gatewayName: GATEWAY_NAME!,
+            nativeCustomProviderAttachment: registry.getSandbox(finalFlowContext.sandboxName)
+              ?.nativeCustomProviderAttachment,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,
@@ -3207,9 +3212,17 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
           verifyDeployment: async (name, chain) => {
             const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
-            return verifyDeploymentModule.verifyDeployment(
+            return verifyDeploymentModule.verifyOnboardDeployment(
               name,
               chain,
+              {
+                ...liveFinalFlowContext,
+                sandboxName: name,
+                gatewayName: GATEWAY_NAME,
+                agentName: agent?.name,
+                nativeCustomProviderAttachment:
+                  registry.getSandbox(name)?.nativeCustomProviderAttachment,
+              },
               {
                 executeSandboxCommand: (sandbox: string, script: string) =>
                   executeSandboxCommandForVerification(sandbox, script, sandboxExec),
@@ -3217,23 +3230,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),
-                probeInferenceInvocation: () =>
-                  verifyDeploymentModule.probeOnboardInferenceInvocation({
-                    ...liveFinalFlowContext,
-                    sandboxName: name,
-                    gatewayName: GATEWAY_NAME,
-                    agentName: agent?.name,
-                  }),
-              },
-              {
-                diagnoseCustomOpenClawRuntime:
-                  verifyDeploymentModule.shouldDiagnoseCustomOpenClawRuntime(
-                    liveFinalFlowContext.fromDockerfile,
-                    agent?.name,
-                  ),
-                inferenceRouteContext: {
-                  provider: liveFinalFlowContext.provider,
-                },
               },
             );
           },

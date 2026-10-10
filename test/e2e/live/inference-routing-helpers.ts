@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import type { NativeCustomProviderAttachment } from "../../../src/lib/inference/native-custom/index.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -366,6 +367,7 @@ async function expectOpenAiChatThroughSandbox(
   model: string,
   redactionValues: readonly string[],
   artifactName: string,
+  nativeCustom?: NativeCustomProviderAttachment,
 ): Promise<void> {
   const payload = JSON.stringify({
     model,
@@ -374,17 +376,19 @@ async function expectOpenAiChatThroughSandbox(
   });
   const response = await sandbox.exec(
     sandboxName,
-    [
-      "curl",
-      "-sS",
-      "--max-time",
-      "60",
-      "https://inference.local/v1/chat/completions",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      payload,
-    ],
+    nativeCustom
+      ? nativeCustomChatCommand(nativeCustom, payload)
+      : [
+          "curl",
+          "-sS",
+          "--max-time",
+          "60",
+          "https://inference.local/v1/chat/completions",
+          "-H",
+          "Content-Type: application/json",
+          "--data-raw",
+          payload,
+        ],
     {
       artifactName,
       env: buildAvailabilityProbeEnv(),
@@ -395,6 +399,21 @@ async function expectOpenAiChatThroughSandbox(
   expect(response.exitCode, resultText(response)).toBe(0);
   const content = openAiContent(parseJsonBody(response.stdout, artifactName));
   expect(content, `no chat content in response: ${response.stdout.slice(0, 500)}`).not.toBe("");
+}
+
+export function nativeCustomChatCommand(
+  receipt: NativeCustomProviderAttachment,
+  payload: string,
+  curlOptions: readonly string[] = [],
+  executable = "curl",
+): string[] {
+  if (receipt.credentialEnv !== "COMPATIBLE_API_KEY")
+    throw new Error("The HTTPS chat fixture requires its compatible OpenAI credential binding.");
+  return [
+    "sh",
+    "-c",
+    `exec ${[executable, "-sS", "--max-time", "60", `${receipt.endpointUrl}/chat/completions`, "-H", "Content-Type: application/json", "--data-raw", payload, ...curlOptions].map(shellQuote).join(" ")} -H "Authorization: Bearer \${COMPATIBLE_API_KEY:?}"`,
+  ];
 }
 
 async function expectAnthropicMessageThroughSandbox(

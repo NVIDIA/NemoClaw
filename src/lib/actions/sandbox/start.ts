@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeCustomProviderAttachment } from "../../inference/native-custom";
+import {
+  normalizeNativeNvidiaProviderAttachment,
+  isNativeNvidiaProvider,
+} from "../../inference/native-nvidia";
+import { getSandboxInferenceConfig } from "../../inference/config";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
@@ -29,7 +35,11 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
-import { isTransientInferenceInvocationFailure } from "./inference-route-health";
+import {
+  isTransientInferenceInvocationFailure,
+  verifyNativeNvidiaStatusAttachment,
+  verifyNativeCustomStatusAttachment,
+} from "./inference-route-health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
@@ -87,6 +97,8 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   delayGatewayProcessProbe?: (delayMs: number) => Promise<void>;
   now?: () => number;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  verifyNativeNvidiaAttachment?: typeof verifyNativeNvidiaStatusAttachment;
+  verifyNativeCustomAttachment?: typeof verifyNativeCustomStatusAttachment;
   qualifyLegacyPortableProfile?: typeof qualifyLegacyHermesPortableLifecycleProfile;
   recoverPortableSandbox?: typeof recoverPortableAgentSandboxLifecycle;
   requalifyPortableSandbox?: typeof requalifyPortableAgentSandboxAuthority;
@@ -156,6 +168,44 @@ async function checkStartedSandboxInference(
   const provider = (sandbox.provider ?? "").trim();
   if (!model || !provider) return null;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
+  const nativeCustom = normalizeNativeCustomProviderAttachment(
+    sandbox.nativeCustomProviderAttachment,
+    sandboxName,
+  );
+  const nativeNvidia = normalizeNativeNvidiaProviderAttachment(
+    sandbox.nativeNvidiaProviderAttachment,
+  );
+  try {
+    if (sandbox.nativeCustomProviderAttachment !== undefined) {
+      if (!nativeCustom || sandbox.nativeNvidiaProviderAttachment !== undefined)
+        throw new Error("Invalid native inference authority.");
+      getSandboxInferenceConfig(
+        model,
+        provider,
+        sandbox.preferredInferenceApi ?? null,
+        nativeCustom,
+      );
+      await (deps.verifyNativeCustomAttachment ?? verifyNativeCustomStatusAttachment)({
+        gatewayName,
+        sandboxName,
+        expected: nativeCustom,
+      });
+    } else if (sandbox.nativeNvidiaProviderAttachment !== undefined) {
+      if (!nativeNvidia || !isNativeNvidiaProvider(provider))
+        throw new Error("Invalid native inference authority.");
+      await (deps.verifyNativeNvidiaAttachment ?? verifyNativeNvidiaStatusAttachment)({
+        gatewayName,
+        sandboxName,
+        expected: nativeNvidia,
+      });
+    }
+  } catch {
+    return {
+      ok: false,
+      detail: "native inference attachment authority could not be verified",
+      httpStatus: null,
+    };
+  }
   log("  Checking that the sandbox serves an agent request…");
   const input = {
     sandboxName,
@@ -164,6 +214,8 @@ async function checkStartedSandboxInference(
     provider,
     model,
     preferredInferenceApi: sandbox.preferredInferenceApi ?? null,
+    ...(nativeCustom ? { nativeCustomProviderAttachment: nativeCustom } : {}),
+    ...(nativeNvidia ? { nativeProvider: true } : {}),
   };
   const probe = () =>
     (deps.probeInferenceInvocation ?? probeSandboxInferenceInvocation)(

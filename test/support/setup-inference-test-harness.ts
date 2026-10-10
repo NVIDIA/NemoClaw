@@ -13,6 +13,83 @@ import {
 } from "../../src/lib/onboard/setup-inference.js";
 import { redact } from "../../src/lib/security/redact.js";
 
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderMetadata,
+} from "../../src/lib/adapters/openshell/provider-adapter";
+import type { NativeCustomProviderAttachment } from "../../src/lib/inference/native-custom";
+import {
+  buildHttpsPinRouteBaseUrl,
+  computeHttpsPinRouteId,
+} from "../../src/lib/inference/https-pin-runtime";
+
+export function createNativeCustomSetupDependencies() {
+  const providers = new Map<string, OpenShellProviderMetadata>();
+  const authorities = new Map<string, NativeCustomProviderAttachment>();
+  const adapter = {
+    importProviderProfile: vi.fn(async () => ({ ok: true })),
+    ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true, value: undefined })),
+    getProvider: vi.fn(
+      async ({ providerName }: Parameters<OpenShellProviderAdapter["getProvider"]>[0]) =>
+        providers.has(providerName)
+          ? { ok: true, value: providers.get(providerName)! }
+          : { ok: false, error: { kind: "command", reason: "not_found", message: "missing" } },
+    ),
+    createProvider: vi.fn(
+      async (request: Parameters<OpenShellProviderAdapter["createProvider"]>[0]) => {
+        providers.set(request.name, {
+          name: request.name,
+          type: request.type,
+          credentialKeys: request.credentials.map((credential) => credential.name),
+          configKeys: [],
+          revision: { id: `id-${request.name}`, resourceVersion: 1 },
+        });
+        return { ok: true };
+      },
+    ),
+  } as unknown as OpenShellProviderAdapter;
+  return {
+    providerAdapter: adapter,
+    getSandbox: () => null,
+    getNativeCustomProviderAuthority: (_gateway: string, name: string) => authorities.get(name),
+    setNativeCustomProviderAuthority: (
+      _gateway: string,
+      receipt: NativeCustomProviderAttachment,
+    ) => {
+      authorities.set(receipt.providerName, receipt);
+    },
+    nativeCustomTransportDeps: {
+      discoverAllowedSourceCidrs: () => ["172.18.0.0/16"],
+      ensureHttpsAdapter: vi.fn(
+        async (
+          options: Parameters<
+            NonNullable<
+              NonNullable<SetupInferenceDeps["nativeCustomTransportDeps"]>["ensureHttpsAdapter"]
+            >
+          >[0],
+        ) => {
+          const routeId = computeHttpsPinRouteId(
+            options.gatewayName,
+            options.provider,
+            options.endpointUrl,
+            options.sandboxName,
+          );
+          const pins = await options.lookup!(new URL(options.endpointUrl).hostname, { all: true });
+          return {
+            routeId,
+            baseUrl: buildHttpsPinRouteBaseUrl(routeId),
+            localBaseUrl: "http://127.0.0.1/route",
+            logPath: "/tmp/adapter.log",
+            credentialEnv: "ADAPTER_TOKEN",
+            token: `token-${routeId}`,
+            pinnedAddresses: pins.map((pin) => pin.address),
+          };
+        },
+      ) as NonNullable<SetupInferenceDeps["nativeCustomTransportDeps"]>["ensureHttpsAdapter"],
+    },
+  };
+}
+
 const onboardProviderHelpers = require("../../src/lib/onboard/providers") as {
   upsertProvider: (
     name: string,
@@ -326,10 +403,11 @@ export function createDirectSetupInferenceHarnessFactory(
   createSetupInference: CreateSetupInference,
 ) {
   return function createDirectSetupInferenceHarness(options: DirectSetupHarnessOptions = {}) {
+    const native = createNativeCustomSetupDependencies();
     const commands: DirectCommandEntry[] = [];
     const errors: string[] = [];
     const logs: string[] = [];
-    const updateSandbox = vi.fn(() => true);
+    const updateSandbox = vi.fn<SetupInferenceDeps["updateSandbox"]>(() => true);
     const unloadOllamaModels = vi.fn();
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn();
@@ -466,9 +544,8 @@ export function createDirectSetupInferenceHarnessFactory(
           ? "http://host.openshell.internal:11435/v1"
           : "http://host.openshell.internal:8000/v1",
       applyLocalInferenceRoute: async () => false,
-      // Let setupInference bind provider recovery to this harness's
-      // gateway-scoped runner instead of the production process adapter.
-      providerAdapter: undefined,
+      // Fresh hosted custom fixtures use the native owner and isolated adapter state.
+      ...native,
       run: () => directRunResult(),
       shouldFrontOllamaWithProxy: () => false,
       ensureOllamaAuthProxy: () => {},
@@ -519,6 +596,7 @@ export function createDirectSetupInferenceHarnessFactory(
         },
       );
     return {
+      native,
       commands,
       errors,
       logs,

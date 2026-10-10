@@ -159,6 +159,7 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
     console.log(`  Sandbox '${sandboxName}' exists but requested inference selection changed.`);
     console.log(`  Current:   provider=${currentProvider}  model=${currentModel}`);
     console.log(`  Requested: provider=${nextProvider}  model=${nextModel}`);
+    if (drift.nativeCustomChanged) console.log("  The native custom endpoint attachment changed.");
     console.log(
       `  Recreating the sandbox is required to apply this change to the running ${deps.agentProductName()} UI.`,
     );

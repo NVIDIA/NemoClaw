@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeNativeCustomProviderAttachment } from "../../../inference/native-custom";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
@@ -141,12 +142,22 @@ function nativeNvidiaCreateIntentFields(
 ): {
   inferenceProvider: string | null;
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+  nativeCustomProviderAttachment?: SandboxEntry["nativeCustomProviderAttachment"];
 } {
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );
+  const nativeCustomProviderAttachment = normalizeNativeCustomProviderAttachment(
+    entry?.nativeCustomProviderAttachment,
+    entry?.name,
+  );
+  if (entry?.nativeCustomProviderAttachment !== undefined && !nativeCustomProviderAttachment) {
+    throw new Error("The recorded native custom provider attachment is invalid.");
+  }
   return {
-    inferenceProvider: nativeInferenceProviderForSandbox(provider),
+    inferenceProvider:
+      nativeCustomProviderAttachment?.providerName ?? nativeInferenceProviderForSandbox(provider),
+    ...(nativeCustomProviderAttachment ? { nativeCustomProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
   };
 }
@@ -374,6 +385,7 @@ export interface SandboxStateOptions<
       sandboxName: string;
       inferenceProvider?: string | null;
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+      nativeCustomProviderAttachment?: SandboxEntry["nativeCustomProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -1564,6 +1576,7 @@ class SandboxStateFlow<
         current.sandboxName !== null && current.sandboxName !== sandboxName;
       const messagingPlanTargetsAnotherName =
         current.messagingPlan !== null && current.messagingPlan.sandboxName !== sandboxName;
+      if (recordedNameChanged) delete current.nativeCustomProviderAttachment;
       if (recordedNameChanged || messagingPlanTargetsAnotherName) {
         current.messagingPlan = null;
         current.sandboxPromptProgress.messaging = false;

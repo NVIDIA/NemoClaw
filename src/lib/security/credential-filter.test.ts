@@ -197,12 +197,54 @@ describe("valueLooksLikeSecret", () => {
 });
 
 describe("textContainsHighConfidenceCredential", () => {
+  it.each([
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-v12_COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_ANTHROPIC_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-v12_COMPATIBLE_ANTHROPIC_API_KEY",
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(64)}_COMPATIBLE_API_KEY`,
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(64)}_COMPATIBLE_ANTHROPIC_API_KEY`,
+  ])("accepts canonical Hermes reference text %s (#12636)", (reference) => {
+    expect(textContainsHighConfidenceCredential(reference)).toBe(false);
+    expect(textContainsHighConfidenceCredential(`${reference}-secret`)).toBe(true);
+  });
+  it.each([
+    "sk-OPENSHELL-RESOLVE-ENV-v_COMPATIBLE_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_API_KEY-raw-secret",
+    "sk-OPENSHELL-RESOLVE-ENV-v_COMPATIBLE_ANTHROPIC_API_KEY",
+    "sk-OPENSHELL-RESOLVE-ENV-COMPATIBLE_ANTHROPIC_API_KEY-raw-secret",
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(63)}_COMPATIBLE_API_KEY`,
+    `sk-OPENSHELL-RESOLVE-ENV-s${"a".repeat(63)}_COMPATIBLE_ANTHROPIC_API_KEY`,
+    "sk-OPENSHELL-RESOLVE-ENV-UNOWNED_API_KEY",
+  ])("flags malformed Hermes reference text %s (#12636)", (value) => {
+    expect(textContainsHighConfidenceCredential(value)).toBe(true);
+  });
+
   it("does not flag generated placeholder matcher source as a Slack credential", () => {
     expect(
       textContainsHighConfidenceCredential(
         String.raw`const bot = /^xoxb-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/u; const app = /^xapp-OPENSHELL-RESOLVE-ENV-[A-Za-z0-9_]+$/u;`,
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    [
+      "const native = /^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/;",
+      false,
+    ],
+    [
+      "const native = /^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,21}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/;",
+      true,
+    ],
+    [
+      `const native = /^sk-OPENSHELL-RESOLVE-ENV-(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?COMPATIBLE(?:_ANTHROPIC)?_API_KEY$/; const apiKey = "${makeJwtFixture()}";`,
+      true,
+    ],
+  ])("scans native matcher source without hiding credentials: %s", (source, expected) => {
+    expect(textContainsHighConfidenceCredential(source)).toBe(expected);
+    expect(textContainsCredential(source)).toBe(expected);
+    expect(isSafeCredentialPlaceholder(source)).toBe(false);
   });
 
   it.each([

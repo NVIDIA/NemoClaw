@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildConfig } from "../../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "../../../test/helpers/openclaw-env-fixture";
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../inference/native-custom";
 
 const configMocks = vi.hoisted(() => ({
   readSandboxConfig: vi.fn(),
@@ -174,47 +180,65 @@ describe("OpenClaw sandbox setup", () => {
     expect(restartNativeGateway).not.toHaveBeenCalled();
   });
 
-  it("initializes a fresh custom-image route before reporting setup success (#12033)", async () => {
-    const order: string[] = [];
-    const initializeOpenclawInferenceRoute = vi.fn(async () => {
-      order.push("initialize");
-    });
-    const settleOpenclawPairingBeforeRestart = vi.fn(async () => {
-      order.push("pair");
-      return true;
-    });
-    const setup = createOpenclawSetup({
-      step: vi.fn(),
-      agentProductName: () => "OpenClaw",
-      configureOpenclawSandbox: vi.fn(async () => {
-        order.push("configure");
-      }),
-      initializeOpenclawInferenceRoute,
-      restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
-      shouldRestartNativeGateway: () => false,
-    });
+  it.each([false, true])(
+    "initializes a fresh custom-image route with native authority=%s (#12033)",
+    async (native) => {
+      const prepared = await prepareNativeCustomProfile({
+        sandboxName: "spark-box",
+        provider: "compatible-endpoint",
+        endpointUrl: "https://models.example.com/v1",
+        api: "openai-completions",
+        lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+      });
+      const attachment = customAttachmentFromPrepared(prepared, {
+        schemaVersion: 1,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "native-id",
+      });
+      const order: string[] = [];
+      const initializeOpenclawInferenceRoute = vi.fn(async () => {
+        order.push("initialize");
+      });
+      const settleOpenclawPairingBeforeRestart = vi.fn(async () => {
+        order.push("pair");
+        return true;
+      });
+      const setup = createOpenclawSetup({
+        step: vi.fn(),
+        agentProductName: () => "OpenClaw",
+        configureOpenclawSandbox: vi.fn(async () => {
+          order.push("configure");
+        }),
+        initializeOpenclawInferenceRoute,
+        restartNativeGateway: vi.fn(async () => ({ ok: true as const })),
+        shouldRestartNativeGateway: () => false,
+      });
 
-    await setup(
-      "spark-box",
-      "selected/model",
-      "compatible-endpoint",
-      undefined,
-      "openai-completions",
-      true,
-      "nemoclaw-19090",
-      settleOpenclawPairingBeforeRestart,
-    );
+      await setup(
+        "spark-box",
+        "selected/model",
+        "compatible-endpoint",
+        undefined,
+        "openai-completions",
+        true,
+        "nemoclaw-19090",
+        settleOpenclawPairingBeforeRestart,
+        ...(native ? ([attachment] as const) : []),
+      );
 
-    expect(order).toEqual(["configure", "pair", "initialize"]);
-    expect(initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
-      "spark-box",
-      "selected/model",
-      "compatible-endpoint",
-      "openai-completions",
-      "nemoclaw-19090",
-      undefined,
-    );
-  });
+      expect(order).toEqual(["configure", "pair", "initialize"]);
+      expect(initializeOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+        "spark-box",
+        "selected/model",
+        "compatible-endpoint",
+        "openai-completions",
+        "nemoclaw-19090",
+        undefined,
+        ...(native ? ([attachment] as const) : []),
+      );
+    },
+  );
 
   it("withholds the custom-image restart when post-config pairing does not settle (#11932)", async () => {
     const initializeOpenclawInferenceRoute = vi.fn(async () => undefined);
@@ -398,6 +422,103 @@ describe("OpenClaw reuse preserves native configuration", () => {
 });
 
 describe("restored native OpenClaw inference fields", () => {
+  it.each([
+    {
+      provider: "compatible-endpoint",
+      api: "openai-completions",
+      key: "COMPATIBLE_API_KEY",
+      endpoint: "https://api.example.com/v1",
+      slot: "inference",
+    },
+    {
+      provider: "compatible-anthropic-endpoint",
+      api: "anthropic-messages",
+      key: "COMPATIBLE_ANTHROPIC_API_KEY",
+      endpoint: "https://api.example.com",
+      slot: "anthropic",
+    },
+  ] as const)(
+    "restores the selected native $api endpoint and issued credential (#12636)",
+    async ({ provider, api, key, endpoint, slot }) => {
+      const prepared = await prepareNativeCustomProfile({
+        sandboxName: "openclaw",
+        provider,
+        api,
+        endpointUrl: endpoint,
+        lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+      });
+      const receipt = customAttachmentFromPrepared(prepared, {
+        schemaVersion: 1,
+        profileId: prepared.profile.id,
+        providerName: prepared.providerName,
+        providerId: "restored-native-id",
+      });
+      const reference = `openshell:resolve:env:v3_${key}`;
+      const resolve = vi.fn(async () => reference);
+      const generated = buildConfig({
+        ...baseOpenClawGenerationEnv(),
+        NEMOCLAW_PROVIDER_KEY: slot,
+        NEMOCLAW_PRIMARY_MODEL_REF: `${slot}/original-model`,
+        NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+        NEMOCLAW_INFERENCE_API: api,
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_AGENT_TIMEOUT: "317",
+      });
+      const config = {
+        ...generated,
+        channels: { telegram: { enabled: true } },
+        models: {
+          ...generated.models,
+          providers: {
+            ...generated.models.providers,
+            other: { models: [{ id: "fallback" }] },
+          },
+        },
+      };
+      const writeValues = vi.fn();
+      const write = createOpenclawInferenceRouteWriter({
+        readOpenclawConfig: () => config,
+        patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+        resolveNativeCustomCredentialReference: resolve,
+        writeOpenclawInferenceConfigNatively: (name, patched, route, gateway) =>
+          writeOpenClawInferenceConfigNatively(name, patched, route, writeValues, gateway),
+      });
+      await write("openclaw", "changed-model", provider, api, "nemoclaw-9090", undefined, receipt);
+      expect(config.models.providers).toMatchObject({
+        [slot]: {
+          baseUrl: endpoint,
+          api,
+          apiKey: reference,
+          timeoutSeconds: 317,
+          models: expect.arrayContaining([expect.objectContaining({ id: "changed-model" })]),
+        },
+        other: { models: [{ id: "fallback" }] },
+      });
+      expect(config).toMatchObject({ agents: { defaults: { timeoutSeconds: 317 } } });
+      expect(writeValues).toHaveBeenCalledWith(
+        "openclaw",
+        expect.arrayContaining([
+          {
+            dotpath: `models.providers.${slot}`,
+            value: expect.objectContaining({ timeoutSeconds: 317, apiKey: reference }),
+          },
+        ]),
+        "nemoclaw-9090",
+      );
+      expect(config.channels.telegram.enabled).toBe(true);
+      expect(resolve).toHaveBeenCalledExactlyOnceWith({
+        sandboxName: "openclaw",
+        gatewayName: "nemoclaw-9090",
+        credentialEnv: key,
+      });
+      resolve.mockRejectedValueOnce(new Error("Missing issued reference"));
+      await expect(
+        write("openclaw", "changed-model", provider, api, "nemoclaw-9090", undefined, receipt),
+      ).rejects.toThrow("Missing issued reference");
+      expect(writeValues).toHaveBeenCalledOnce();
+    },
+  );
+
   it("changes the selected route while preserving unrelated native settings (#12667)", async () => {
     const config = {
       agents: {

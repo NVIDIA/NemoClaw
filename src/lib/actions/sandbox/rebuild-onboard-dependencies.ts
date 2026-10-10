@@ -5,6 +5,8 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/registry";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { verifyNativeCustomStatusAttachment } from "./inference-route-health";
+import { writeRestoredOpenclawInferenceRoute } from "../../onboard/openclaw/initial-inference-route";
 
 type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
   deferInferenceRouteUntilOnboard?: true;
@@ -17,7 +19,12 @@ type RebuildCompatibleEndpointSmokeOptions = Pick<
   Parameters<
     typeof import("../../onboard/compatible-endpoint-smoke").verifyCompatibleEndpointSandboxSmoke
   >[0],
-  "sandboxName" | "provider" | "model" | "endpointUrl" | "credentialEnv"
+  | "sandboxName"
+  | "provider"
+  | "model"
+  | "endpointUrl"
+  | "credentialEnv"
+  | "nativeCustomProviderAttachment"
 > & { environment: NodeJS.ProcessEnv; gatewayName?: string };
 
 type RebuildOnboardModule = {
@@ -67,6 +74,31 @@ function loadOnboardModule(): RebuildOnboardModule {
  * the onboarding APIs are side-effect-free named imports.
  */
 export const rebuildOnboardDependencies = {
+  async refreshRestoredOpenClawInference(options: {
+    sandboxName: string;
+    gatewayName: string;
+    provider: string;
+    model: string;
+    preferredInferenceApi: string | null;
+    environment: NodeJS.ProcessEnv;
+    attachment: NonNullable<Parameters<typeof writeRestoredOpenclawInferenceRoute>[6]>;
+  }): Promise<void> {
+    await verifyNativeCustomStatusAttachment({
+      gatewayName: options.gatewayName,
+      sandboxName: options.sandboxName,
+      expected: options.attachment,
+      environment: options.environment,
+    });
+    await writeRestoredOpenclawInferenceRoute(
+      options.sandboxName,
+      options.model,
+      options.provider,
+      options.preferredInferenceApi,
+      options.gatewayName,
+      undefined,
+      options.attachment,
+    );
+  },
   verifyRebuiltOpenClawCompatibleEndpoint(
     options: RebuildCompatibleEndpointSmokeOptions,
   ): Promise<void> {

@@ -71,6 +71,7 @@ export type DestroyHarness = {
   runSandboxProviderPreDeleteCleanupSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   sessionState: Session;
+  sessionStore: typeof import("../../src/lib/state/onboard-session");
   setDockerIdentityResult: (result: {
     status: number | null;
     stdout?: string;
@@ -816,6 +817,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     runOpenshellSpy,
     selectGatewaySpy,
     sessionState,
+    sessionStore: onboardSession,
     setDockerIdentityResult: (result) => {
       dockerIdentityResult = result;
     },
@@ -841,4 +843,21 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     withCurrentPortableHostFenceSpy,
     withModelRouterPortLifecycleLockSpy,
   };
+}
+
+/** Use the existing destroy-module loader so the spy observes the consumer's module identity. */
+export function nativeCustomDestroyAuthorityStore() {
+  return requireSource(
+    "../../state/registry/native-custom-provider-authority.js",
+  ) as typeof import("../../src/lib/state/registry/native-custom-provider-authority");
+}
+
+/** Use the existing destroy-module loader so the spy observes the consumer's module identity. */
+export function spyOnNativeCustomDestroyCleanup(
+  action: typeof import("../../src/lib/inference/native-custom/cleanup").retireNativeCustomProviders,
+) {
+  const cleanup = requireSource(
+    "../../inference/native-custom/cleanup.js",
+  ) as typeof import("../../src/lib/inference/native-custom/cleanup");
+  return vi.spyOn(cleanup, "retireNativeCustomProviders").mockImplementation(action);
 }

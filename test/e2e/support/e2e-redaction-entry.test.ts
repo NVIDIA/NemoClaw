@@ -388,6 +388,7 @@ describe("fixture redaction entry point", () => {
     const text = JSON.stringify({
       key: "agent:main:main",
       replyMarker: "A2603-REPLY",
+      apiKey: "${NVIDIA_INFERENCE_API_KEY}",
       token: discordReference,
       versionedToken: versionedReference,
       stableToken: stableReference,
@@ -412,6 +413,14 @@ describe("fixture redaction entry point", () => {
   });
 
   it.each([
+    [
+      "NVIDIA env reference suffix",
+      'apiKey="${NVIDIA_INFERENCE_API_KEY}opaqueCredentialPayloadZ1234567890"',
+    ],
+    [
+      "NVIDIA env reference prefix",
+      'apiKey="opaqueCredentialPayloadZ1234567890${NVIDIA_INFERENCE_API_KEY}"',
+    ],
     ["attached suffix", "TOKEN=openshell:resolve:env:FOO-opaqueCredentialPayloadZ1234567890"],
     ["dot suffix", "TOKEN=openshell:resolve:env:FOO.opaqueCredentialPayloadZ1234567890"],
     ["slash suffix", "TOKEN=openshell:resolve:env:FOO/opaqueCredentialPayloadZ1234567890"],
