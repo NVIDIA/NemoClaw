@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync as defaultExistsSync } from "node:fs";
+import { existsSync as defaultExistsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -31,6 +31,8 @@ export interface DockerHostDetectionOptions extends PlatformLookupOptions, WslDe
   existsSync?: (filePath: string) => boolean;
   probeDockerHost?: DockerHostProbe;
   resolveDockerContextHost?: DockerContextHostResolver;
+  inspectCurrentDockerContext?: CurrentDockerContextInspector;
+  resolveSocketPath?: (socketPath: string) => string | null;
 }
 
 export interface DockerHostDetection {
@@ -41,6 +43,9 @@ export interface DockerHostDetection {
 
 /** Resolve a Docker context name to the endpoint it selects, or null. */
 export type DockerContextHostResolver = (context: string) => string | null;
+
+/** Read the Docker CLI's current context name and endpoint, or null. */
+export type CurrentDockerContextInspector = () => { name: string; host: string } | null;
 
 export type DockerVersionIdentity = "docker" | "podman" | "unknown";
 
@@ -222,6 +227,38 @@ function resolveDockerContextHost(context: string, source: NodeJS.ProcessEnv): s
   const host = String(result.stdout ?? "").trim();
   if (!host || /[\0\r\n]/u.test(host)) return null;
   return host;
+}
+
+const DEFAULT_DOCKER_SOCKET = "/var/run/docker.sock";
+
+function realSocketPath(socketPath: string): string | null {
+  try {
+    return realpathSync(socketPath);
+  } catch {
+    return null;
+  }
+}
+
+/** Read the context the Docker CLI uses when no environment variable selects one. */
+function inspectCurrentDockerContext(
+  source: NodeJS.ProcessEnv,
+): { name: string; host: string } | null {
+  const result = dockerSpawnSync(
+    ["context", "inspect", "--format", `{{.Name}}\n${DOCKER_CONTEXT_HOST_FORMAT}`],
+    {
+      encoding: "utf-8",
+      env: buildDockerProbeEnv(source, undefined),
+      timeout: DOCKER_PROBE_TIMEOUT_MS,
+      maxBuffer: DOCKER_PROBE_MAX_BUFFER_BYTES,
+    },
+  );
+  if (!result || result.error || result.status !== 0) return null;
+  const [name, host, ...rest] = String(result.stdout ?? "")
+    .trim()
+    .split("\n")
+    .map((line) => line.trim());
+  if (!name || !host || rest.length > 0 || /[\0\r]/u.test(host)) return null;
+  return { name, host };
 }
 
 function probeDockerHost(
@@ -425,7 +462,35 @@ function selectDockerAuthority(opts: DockerHostDetectionOptions = {}): DockerAut
   // Redirect the CLI away from the host's own default authority only after
   // observing that the default refuses to answer. A probe that timed out or
   // never ran is no evidence at all (#10367).
-  if (ambient.reachable || ambient.inconclusive) return { selection: null, conflict: null };
+  if (ambient.inconclusive) return { selection: null, conflict: null };
+  if (ambient.reachable) {
+    // The gateway reads DOCKER_HOST, not Docker contexts such as Colima's.
+    const current = (
+      opts.inspectCurrentDockerContext ?? (() => inspectCurrentDockerContext(env))
+    )();
+    if (
+      !current ||
+      current.name === "default" ||
+      !current.host.startsWith("unix://") ||
+      !isSupportedGatewayDockerHost(current.host)
+    ) {
+      return { selection: null, conflict: null };
+    }
+    // Docker Desktop links the default socket to its context socket.
+    const resolveSocket = opts.resolveSocketPath ?? realSocketPath;
+    const contextSocket = current.host.slice("unix://".length);
+    const defaultSocket = resolveSocket(DEFAULT_DOCKER_SOCKET);
+    if (
+      defaultSocket !== null &&
+      defaultSocket === (resolveSocket(contextSocket) ?? contextSocket)
+    ) {
+      return { selection: null, conflict: null };
+    }
+    return {
+      selection: { dockerHost: current.host, source: "context", socketPath: null },
+      conflict: null,
+    };
+  }
 
   const fileExists = opts.existsSync ?? defaultExistsSync;
   let selection: DockerHostDetection | null = null;
