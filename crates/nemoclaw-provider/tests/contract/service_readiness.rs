@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::tofu::TofuWorkspace;
+use crate::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
@@ -25,14 +25,9 @@ async fn standalone_readiness(proxy: bool) {
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
     // Beside the providers, where Windows finds it before the relay on PATH.
-    nemoclaw_e2e::install_ssh_simulator(
-        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
-            .expect("Cargo sets the fixture executable path"),
-        root,
-        root,
-    );
+    nemoclaw_test_fixtures::ssh::install_simulator(root, root);
     let document = Document::parse(
-        include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
+        include_bytes!("../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
     )
     .unwrap();
     let mut document = serde_json::to_value(document).unwrap();
@@ -58,7 +53,7 @@ async fn standalone_readiness(proxy: bool) {
     let changed = model_changed.clone();
     let mutations = Arc::new(Mutex::new(Vec::new()));
     let seen = mutations.clone();
-    let server = nemoclaw_e2e::http_fixture::Fixture::start_tcp(move |request| {
+    let server = crate::http_fixture::Fixture::start_tcp(move |request| {
         if request.method != "GET" || request.path != "/api/tags" {
             seen.lock()
                 .unwrap()
@@ -134,7 +129,7 @@ async fn standalone_readiness(proxy: bool) {
             .command()
             .args(args)
             .env("NEMOCLAW_TEST_REMOTE", root)
-            .env("PATH", nemoclaw_e2e::path_with(root))
+            .env("PATH", nemoclaw_test_fixtures::path_with(root))
             .output()
             .unwrap();
         assert_eq!(

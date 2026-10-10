@@ -28,7 +28,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         process.arg(root.join(file));
     }
     let output = process
-        .env("PATH", nemoclaw_e2e::path_with(&root.join("bin")))
+        .env("PATH", nemoclaw_test_fixtures::path_with(&root.join("bin")))
         .env("NEMOCLAW_TEST_REMOTE", root)
         .output()
         .await
@@ -127,12 +127,7 @@ async fn lifecycle(
     let root = directory.path();
     // OpenTofu passes its providers only platform variables, so the fake ssh
     // finds its state in the file installed beside it, not the environment.
-    nemoclaw_e2e::install_ssh_simulator(
-        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
-            .expect("Cargo sets the fixture executable path"),
-        &root.join("bin"),
-        root,
-    );
+    nemoclaw_test_fixtures::ssh::install_simulator(&root.join("bin"), root);
     let gateway = Fixture::start().await;
     gateway.state.lock().unwrap().driver = Some("podman".into());
     gateway.state.lock().unwrap().inference_exit = 1;

@@ -35,16 +35,10 @@ mod multiple_providers;
 mod openshell;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
-#[path = "provider_protocol.rs"]
-mod provider_protocol;
 #[path = "remote_service.rs"]
 mod remote_service;
 #[path = "sandbox_readiness.rs"]
 mod sandbox_readiness;
-#[path = "service_capacity.rs"]
-mod service_capacity;
-#[path = "service_readiness.rs"]
-mod service_readiness;
 #[path = "spark.rs"]
 mod spark;
 #[path = "tls.rs"]

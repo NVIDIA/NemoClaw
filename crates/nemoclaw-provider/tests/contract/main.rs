@@ -13,8 +13,16 @@ mod image_runtime;
 
 mod discovery;
 mod gateway_readiness;
+// Managed gateway resources take only a local engine socket, which only Unix
+// clients reach.
+#[cfg(unix)]
+mod gateway_storage;
+mod inference_capabilities;
 mod kubernetes_hcl;
+mod provider_protocol;
 mod runtime_image;
+mod service_capacity;
+mod service_readiness;
 mod service_storage;
 // The bundled Docker provider reaches its engine with its own ssh arguments,
 // which the relay does not accept.
@@ -41,28 +49,7 @@ pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
 }
 
 /// Types still tested only outside this binary, and why.
-const ELSEWHERE: [(&str, &str); 5] = [
-    (
-        "gateway_storage",
-        "nemoclaw-e2e managed and the live Docker gateway tests, which need Docker (#12879)",
-    ),
-    (
-        "managed_gateway",
-        "nemoclaw-e2e provider_protocol, which needs that crate's fixture provider (#12878)",
-    ),
-    (
-        "service_capacity",
-        "nemoclaw-e2e service_capacity, which needs that crate's SSH fixture (#12878)",
-    ),
-    (
-        "service_readiness",
-        "nemoclaw-e2e service_readiness, which needs that crate's SSH fixture (#12878)",
-    ),
-    (
-        "inference_capabilities",
-        "nemoclaw-e2e inference_discovery, only through SDK deployments (#12879)",
-    ),
-];
+const ELSEWHERE: [(&str, &str); 0] = [];
 
 /// Every resource and data source the provider serves appears in a contract
 /// test, or in [`ELSEWHERE`] with the reason it is not here yet.
@@ -85,8 +72,13 @@ fn every_type_has_a_contract_test() {
     let sources = [
         include_str!("discovery.rs"),
         include_str!("gateway_readiness.rs"),
+        include_str!("gateway_storage.rs"),
+        include_str!("inference_capabilities.rs"),
         include_str!("kubernetes_hcl.rs"),
+        include_str!("provider_protocol.rs"),
         include_str!("runtime_image.rs"),
+        include_str!("service_capacity.rs"),
+        include_str!("service_readiness.rs"),
         include_str!("service_storage.rs"),
         include_str!("vllm_runtime.rs"),
     ]
