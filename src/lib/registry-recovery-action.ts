@@ -39,6 +39,15 @@ export type RecoveredSandboxEntry = SandboxEntry & {
 
 type Session = ReturnType<typeof onboardSession.loadSession>;
 
+/** Route a metadata-only destroy retry using recovery retained in the selected state root. */
+export function hasIdentityFreeRetainedRecovery(sandboxName: string): boolean {
+  return onboardSession
+    .listRetainedSandboxRecoveryRecords()
+    .some(
+      (record) => record.sandboxName === sandboxName && record.sandboxIdentityFingerprint === null,
+    );
+}
+
 type RecoveredSandboxMetadata = Partial<
   Pick<
     SandboxEntry,

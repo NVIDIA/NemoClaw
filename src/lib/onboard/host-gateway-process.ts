@@ -230,6 +230,7 @@ export function resolveOwnedHostGatewayRuntimeProviderId(options: {
   architecture?: NodeJS.Architecture;
   platform?: NodeJS.Platform;
   uid?: number;
+  recoveryRecordedAt?: string;
 }): string | null {
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
@@ -250,6 +251,19 @@ export function resolveOwnedHostGatewayRuntimeProviderId(options: {
     return null;
   }
   if (markerPort !== options.gatewayPort) return null;
+  if (options.recoveryRecordedAt !== undefined) {
+    // A replacement gateway cannot establish the daemon used by an earlier failed create.
+    const recordedAt = Date.parse(options.recoveryRecordedAt);
+    const startedAt = Date.parse(marker.createdAt);
+    if (
+      (marker.dockerHost !== null && marker.dockerHost !== "unix:///var/run/docker.sock") ||
+      !Number.isFinite(recordedAt) ||
+      !Number.isFinite(startedAt) ||
+      startedAt >= recordedAt
+    ) {
+      return null;
+    }
+  }
   const provider = resolveRegisteredRuntimeProvider(marker.driver);
   return provider?.gateway.supported === true ? provider.identity.id : null;
 }

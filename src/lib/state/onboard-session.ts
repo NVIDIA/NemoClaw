@@ -1568,7 +1568,8 @@ function onboardLockContentionGuidance(
   return [lead, ...holderDetails, remediation].join(" ");
 }
 
-function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
+/** Hold the onboarding writer lock through one synchronous state transition. */
+export function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   const managesOnboardLock = heldLockHandle === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);

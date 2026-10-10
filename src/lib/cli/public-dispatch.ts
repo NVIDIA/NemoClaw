@@ -561,9 +561,15 @@ async function dispatchSandboxArgv(
   // sandbox missing. The printed guidance runs it after `destroy --yes`
   // removed the registry entry, so registry recovery here can only exit with
   // "does not exist" or start a gateway the retirement never needs.
+  // An identity-free destroy retry can also retain only its local recovery
+  // record after reservation retirement. Its lifecycle owner still checks
+  // ownership and absence; admission must not require recreating a registry row.
   if (
-    isRebuildRecoveryRetirement(requestedSandboxAction, requestedSandboxActionArgs) &&
-    !registry().getSandbox(cmd)
+    (isRebuildRecoveryRetirement(requestedSandboxAction, requestedSandboxActionArgs) &&
+      !registry().getSandbox(cmd)) ||
+    (requestedSandboxAction === "destroy" &&
+      !findKnownSandboxEntry(cmd) &&
+      registryRecovery().hasIdentityFreeRetainedRecovery(cmd))
   ) {
     validateName(cmd, "sandbox name");
     await runPublicTranslationResult(

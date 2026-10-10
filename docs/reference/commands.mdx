@@ -548,7 +548,8 @@ Use the result from `destroy` to choose the next action:
 
 - If OpenShell reports the sandbox present and its durable identity matches the recovery record, `destroy` checks that identity during cleanup and immediately before deletion. It can delete the retained sandbox. A failed check or deletion preserves the recovery record. If you cannot prevent another gateway client from replacing the sandbox name during cleanup, use a different explicit name instead.
 - If OpenShell cannot determine whether the sandbox is present, `destroy` reports unknown presence, removes no resources, and preserves the recovery record. Correct the OpenShell gateway or list failure, then rerun `destroy`.
-- If OpenShell confirms the sandbox is absent, `destroy` selects one retained record from its registry generation, gateway, create-attempt evidence, and available identity fingerprint.
+- For the existing residual-cleanup path, `destroy` selects one retained record from its registry generation, gateway, create-attempt evidence, and available identity fingerprint.
+  Cleanup requires the owning OpenShell gateway to confirm sandbox absence.
   Before pending identity publication, it can instead select one record with a durable identity fingerprint when the pending reservation belongs to the recorded onboarding session, the saved session recovery evidence matches the record, and the registry has no lifecycle identity evidence.
   Provider and Docker cleanup then apply their own immutable identity checks.
   `destroy` removes only qualified residual resources and clears the matching recovery record only after verified cleanup.
@@ -561,7 +562,24 @@ Only then rerun the owning provider setup workflow to restore those attachments.
 If you cannot prevent replacement or verify attachment ownership, leave the attachments untouched and use a different sandbox name.
 Keep the recovery record and retry `destroy` only after resolving the identity drift.
 
-If OpenShell did not return a durable identity fingerprint, `destroy` cannot authorize deletion of a live sandbox. It can still select one recovery record that matches the immutable registry generation, gateway, and create-attempt evidence. It clears that record only after the owning gateway reports absence and verified residual cleanup succeeds. If the sandbox is present or presence is unknown, preserve the record and do not delete by mutable name. If NemoClaw could not save recovery evidence, preserve the registry entry and terminal output.
+If OpenShell did not return a durable identity fingerprint, `destroy` cannot authorize deletion of a live sandbox.
+
+For an unpublished reservation without lifecycle identity, `destroy` can clear local recovery metadata on native Linux with the default Docker daemon.
+It requires exactly one matching retained record, a recorded Docker ownership marker, and sandbox absence confirmed by the owning gateway.
+Docker must report no matching containers or managed state volumes.
+Any reservation must match its recovery-only onboarding session; conflicting state, recorded sandbox-scoped providers, or additional resource ownership block recovery.
+
+Use the failed onboarding attempt's gateway port to select its state root, for example:
+
+```bash
+NEMOCLAW_GATEWAY_PORT=19260 $$nemoclaw <sandbox-name> destroy --yes
+```
+
+Success clears the matching recovery metadata and releases the sandbox name without removing runtime resources.
+If a local metadata write fails, resolve the reported write error.
+Then rerun the same command with that port, even if the reservation was removed.
+
+If NemoClaw could not save recovery evidence, preserve the registry entry and terminal output.
 
 This fail-closed record keeps only the affected sandbox name unavailable. This command does not accept externally supplied identity authority.
 To onboard another sandbox while the record remains unresolved, supply a different explicit name:
