@@ -200,8 +200,10 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 Native CI disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
-Profiles live in `.cargo/config.toml`, which the CI dependency cache hashes; changing one requires a one-time dependency rebuild.
-Other manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
+Profiles live in `.cargo/config.toml`, whose hash and the current month are part of the CI dependency cache prefix.
+Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
+Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
+Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
 The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v1` cache keeps those of its debug build tool and the target-specific release profile.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.

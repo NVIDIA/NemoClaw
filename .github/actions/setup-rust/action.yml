@@ -20,13 +20,20 @@ runs:
       with:
         path: .build/downloads
         key: native-downloads-v1-${{ inputs.platform }}-${{ hashFiles('versions.json') }}
+    # Before saving, rust-cache keeps target artifacts by crate name, not version
+    # or build hash, so a cache restored from an older key also keeps every
+    # earlier build. A profile change rebuilds every dependency, and new months
+    # bound the slower growth from lockfile updates: either starts a fresh cache.
+    - name: Select the dependency cache generation
+      id: generation
+      shell: bash
+      run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
     - name: Restore Rust dependencies
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
-        prefix-key: ${{ inputs.cache-prefix }}
-        # The action hashes manifests, Cargo.lock, rust-toolchain.toml and
-        # .cargo/config.toml itself, and restores an older cache for this
-        # platform when they change. Hashing files here would block that.
+        prefix-key: ${{ inputs.cache-prefix }}-${{ steps.generation.outputs.month }}-${{ hashFiles('.cargo/config.toml') }}
+        # Within a generation, the action restores an older cache for this
+        # platform when manifests, Cargo.lock, or rust-toolchain.toml change.
         # Replace the job-specific key so native and live jobs share dependencies.
         shared-key: ${{ inputs.platform }}
         add-rust-environment-hash-key: "true"
