@@ -43,7 +43,9 @@ const CREDENTIAL_CLASSIFICATION_PATTERN =
 const TRANSPORT_CLASSIFICATION_PATTERN =
   /unreachable|timeout|connect|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENOTFOUND|EAI_AGAIN|No route to host|transport|network|endpoint|dns/i;
 
-function shouldRunProviderSmoke(provider: "openai" | "anthropic"): boolean {
+function shouldRunProviderSmoke(
+  provider: "openai" | "anthropic" | "gemini" | "openrouter" | "hermes",
+): boolean {
   // The former shell script auto-ran these smokes when provider secrets were
   // present. This live migration requires an explicit opt-in so PR-safe jobs
   // cannot spend third-party quota accidentally; any future secret-backed lane
@@ -433,9 +435,12 @@ async function expectAnthropicMessageThroughSandbox(
   );
 }
 
-export function requireProviderSmokeSelected(provider: "openai" | "anthropic", skip: SkipFn): void {
+export function requireProviderSmokeSelected(
+  provider: "openai" | "anthropic" | "gemini" | "openrouter" | "hermes",
+  skip: SkipFn,
+): void {
   if (!shouldRunProviderSmoke(provider)) {
-    const label = provider === "openai" ? "OpenAI" : "Anthropic";
+    const label = provider;
     skipLive(
       skip,
       `set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${provider} or all to run ${label} smoke`,
