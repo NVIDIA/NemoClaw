@@ -9,6 +9,7 @@ import {
   getHermesDashboardRegistryFields,
   resolveHermesDashboardOnboardState,
 } from "../../onboard/hermes-dashboard";
+import { buildManagedStartupOnboardProfile } from "../../onboard/managed-startup/onboard-profile";
 import {
   entry,
   snapshot,
@@ -16,6 +17,7 @@ import {
   hermesProfileInput,
   managedWorkload,
   hermesSnapshot,
+  tavilySnapshot,
   verify,
   changeRetainedProfile,
 } from "./export-source-test-fixture";
@@ -52,6 +54,38 @@ function hermesInterfacesSnapshot(port = 19000, internalPort = 19120, tui = true
       hermesImageRef,
     ),
   });
+}
+
+function onboardedTavilySnapshot(port: number) {
+  const source = tavilySnapshot("hermes");
+  const built = buildManagedStartupOnboardProfile({
+    agentName: "hermes",
+    inference: hermesProfileInput().inference,
+    chatUiUrl: `http://127.0.0.1:${port}`,
+    effectiveDashboardPort: port,
+    manageDashboard: true,
+    dashboardBindAddress: undefined,
+    wslExposure: false,
+    hermesDashboardState: resolveHermesDashboardOnboardState({
+      agentName: "hermes",
+      effectivePort: port,
+      env: {},
+    }),
+    webSearch: { fetchEnabled: true, provider: "tavily" },
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: "disabled",
+    observabilityEnabled: false,
+    environment: {},
+    corporateCa: null,
+  });
+  const workload = {
+    ...managedWorkload(hermesProfileInput(), hermesImageRef),
+    encodedProfile: built.encodedProfile,
+    startupProfileSha256: built.startupProfileSha256,
+  };
+  return { ...source, registry: { ...source.registry, dashboardPort: port, workload } };
 }
 
 describe("Hermes retained interface export", () => {
@@ -103,6 +137,51 @@ describe("Hermes retained interface export", () => {
       interfaces: { dashboard: { enabled: false }, api: { port: 8643 } },
     });
   });
+
+  it("exports the same disabled dashboard when onboarding allocated a port other than 18789", async () => {
+    const allocated = await exportSnapshots([onboardedTavilySnapshot(18790)]);
+    const defaultPort = await exportSnapshots([onboardedTavilySnapshot(18789)]);
+    expect(allocated.outcome).toEqual({ ok: true, completion: { kind: "stdout" } });
+    expect(allocated.writeStdout.mock.calls).toEqual(defaultPort.writeStdout.mock.calls);
+    const document = asExportedConfig(YAML.parse(allocated.writeStdout.mock.calls[0]![0]));
+    expect(document.spec.sandboxes[0]!.harness.interfaces).toEqual({
+      dashboard: { enabled: false },
+    });
+  });
+
+  it("exports a disabled dashboard with an allocated port when the profile has no browser URL", async () => {
+    const source = changeRetainedProfile(onboardedTavilySnapshot(18790), (profile) => {
+      delete profile.dashboard!.browserUrl;
+    });
+    const exported = await exportSnapshots([source]);
+    expect(exported.outcome.ok).toBe(true);
+  });
+
+  it.each([
+    { browserUrl: "https://hermes.example.test" },
+    { browserUrl: "http://127.0.0.1:18791" },
+    { url: "http://localhost:18790", browserUrl: "http://localhost:18790" },
+    { url: "http://127.0.0.1:18790/custom", browserUrl: "http://127.0.0.1:18790/custom" },
+    { url: "http://127.0.0.1:1023", browserUrl: "http://127.0.0.1:1023" },
+  ])(
+    "refuses a disabled dashboard unless both retained URLs are the same allocated 127.0.0.1 URL %j",
+    (change) => {
+      const source = changeRetainedProfile(onboardedTavilySnapshot(18790), (profile) =>
+        Object.assign(profile.dashboard!, change),
+      );
+      expect(verify(source)).toEqual({
+        kind: "rejected",
+        findings: [
+          {
+            field: "source.workload.startupProfile",
+            category: "unsupported",
+            diagnostic:
+              "The managed startup profile is not the canonical profile supported by v1 export.",
+          },
+        ],
+      });
+    },
+  );
 
   it.each([
     { hermesDashboardEnabled: true },
