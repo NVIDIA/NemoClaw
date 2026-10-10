@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
 import fs from "node:fs";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
@@ -76,7 +77,7 @@ describe("onboarding inference gateway scope", () => {
           runOpenshell: (args) =>
             args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
         });
-        const endpointUrl = "http://localhost:8000/v1?tenant=local#models";
+        const endpointUrl = "http://localhost:8000/v1";
         const model = "deepseek-ai/DeepSeek-V4-Flash";
 
         await expect(
@@ -92,11 +93,24 @@ describe("onboarding inference gateway scope", () => {
           ),
         ).resolves.toEqual({ ok: true });
 
-        expect(harness.commands.map(({ command }) => command)).toEqual([
-          `provider get -g ${GATEWAY} compatible-endpoint`,
-          `provider create -g ${GATEWAY} --name compatible-endpoint --type openai --credential COMPATIBLE_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1?tenant=local#models`,
-          `inference set -g ${GATEWAY} --no-verify --provider compatible-endpoint --model ${model} --timeout 180`,
-        ]);
+        expect(harness.commands).toEqual([]);
+        expect(harness.native.adapter.createProvider).toHaveBeenCalledWith(
+          expect.objectContaining({
+            target: { kind: "named", gatewayName: GATEWAY },
+            type: expect.stringMatching(/^nemoclaw-local-authenticated-v1-/),
+            credentials: [
+              {
+                name: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+                value: "sk-compatible-TEST-NOT-A-REAL-VALUE",
+              },
+            ],
+            config: [],
+          }),
+        );
+        expect(harness.native.profiles[0]).toMatchObject({
+          endpoints: [{ host: "host.openshell.internal", port: 8000 }],
+        });
+        expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
         expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith({
           provider: "compatible-endpoint",
           model,
@@ -116,6 +130,10 @@ describe("onboarding inference gateway scope", () => {
           gatewayName: GATEWAY,
           reservationSessionId: undefined,
           hostLocalInferenceReceipt: null,
+          nativeLocalProviderAttachment: expect.objectContaining({
+            gatewayName: GATEWAY,
+            sandboxName: "dcode-vllm-local",
+          }),
         });
         expectCommandsTargetOnly(harness.commands);
       },
@@ -134,6 +152,14 @@ describe("onboarding inference gateway scope", () => {
               }
             : undefined,
       });
+      const receipt = nativeLocalSetupReceipt({
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        authMode: "authenticated",
+        gatewayName: GATEWAY,
+        sandboxName: "dcode-vllm-local",
+      });
+      harness.native.seed(receipt);
       const model = "deepseek-ai/DeepSeek-V4-Flash";
 
       await expect(
@@ -153,23 +179,15 @@ describe("onboarding inference gateway scope", () => {
         ),
       ).resolves.toEqual({ ok: true });
 
-      expect(harness.commands.map(({ command }) => command)).toEqual([
-        `provider get -g ${GATEWAY} compatible-endpoint`,
-        `provider get -g ${GATEWAY} compatible-endpoint`,
-        `provider update -g ${GATEWAY} compatible-endpoint --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1`,
-        `inference set -g ${GATEWAY} --no-verify --provider compatible-endpoint --model ${model} --timeout 180`,
-      ]);
-      const providerUpdate = harness.commands.find(({ command }) =>
-        command.startsWith("provider update "),
-      );
-      expect(providerUpdate?.env).toBeUndefined();
-      expect(harness.commands.every(({ env }) => env?.COMPATIBLE_API_KEY === undefined)).toBe(true);
+      expect(harness.commands).toEqual([]);
+      expect(harness.native.adapter.getProvider).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: GATEWAY },
+        providerName: receipt.providerName,
+      });
+      expect(harness.native.adapter.createProvider).not.toHaveBeenCalled();
+      expect(harness.native.adapter.updateProvider).not.toHaveBeenCalled();
       expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
-      expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(
-        GATEWAY,
-        "compatible-endpoint",
-        model,
-      );
+      expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
       expectCommandsTargetOnly(harness.commands);
     });
   });

@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../inference/native-local/contract";
+import { NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN } from "../inference/native-local/agent-config";
+import { verifyNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import type { StdioOptions } from "node:child_process";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
@@ -113,6 +119,7 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
   agent?: CompatibleEndpointSmokeAgent;
   /** Force the provider-neutral inference.local proof for any supported agent. */
   forceCanonicalRoute?: boolean;
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
   /** Recheck sandbox identity after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
@@ -121,20 +128,30 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
 }): Promise<void> {
   const fail: (exitCode: number) => never = options.onFailure ?? process.exit;
   const agentName = options.agent?.name || "openclaw";
+  const local = normalizeNativeLocalProviderAttachment(options.nativeLocalProviderAttachment);
+  if (options.nativeLocalProviderAttachment && !local)
+    throw new Error("Invalid native local inference ownership receipt.");
   if (
+    !local &&
     options.forceCanonicalRoute !== true &&
     (agentName !== "openclaw" || options.provider !== "compatible-endpoint")
   ) {
     return;
   }
 
+  const forceCanonicalRoute = options.forceCanonicalRoute === true || Boolean(local);
+  const providerName = local?.providerName ?? options.provider;
   console.log(
-    options.forceCanonicalRoute
-      ? "  Verifying provider-neutral inference through the sandbox runtime..."
-      : "  Verifying compatible endpoint through the sandbox runtime...",
+    local
+      ? "  Verifying native local inference through the sandbox runtime..."
+      : forceCanonicalRoute
+        ? "  Verifying provider-neutral inference through the sandbox runtime..."
+        : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
-  const target = { kind: "selected" } as const;
+  const target = local
+    ? { kind: "named" as const, gatewayName: local.gatewayName }
+    : { kind: "selected" as const };
   const adapter = createCliOpenShellProviderAdapter({
     run: (command, runOptions) => {
       const result = options.runOpenshell(command, runOptions);
@@ -151,22 +168,33 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
       };
     },
   });
+  if (local)
+    await verifyNativeLocalProviderAttachment({
+      adapter,
+      sandboxName: options.sandboxName,
+      expected: local,
+    });
   const providerResult = await adapter.getProvider({
     target,
-    providerName: options.provider,
+    providerName: local?.providerName ?? options.provider,
   });
 
   if (!providerResult.ok) {
     console.error(
-      options.forceCanonicalRoute
-        ? `  Provider-neutral inference provider '${options.provider}' is missing or unreachable in the OpenShell gateway.`
+      forceCanonicalRoute
+        ? `  Provider-neutral inference provider '${providerName}' is missing or unreachable in the OpenShell gateway.`
         : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
-    console.error("  The sandbox inference.local route cannot reach the selected model provider.");
+    console.error(
+      local
+        ? "  Native sandbox inference cannot reach the selected model provider."
+        : "  The sandbox inference.local route cannot reach the selected model provider.",
+    );
     console.error(`  ${compactText(options.redact(providerResult.error.message)).slice(0, 800)}`);
     fail(1);
   }
   if (
+    !local &&
     options.credentialEnv &&
     !providerResult.value.credentialKeys.includes(options.credentialEnv)
   ) {
@@ -175,11 +203,11 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
     );
   }
 
-  const forceCanonicalRoute = options.forceCanonicalRoute === true;
   const script = forceCanonicalRoute
     ? buildProviderNeutralInferenceSandboxSmokeScript(
         options.model,
         options.hostLocalInferenceProofAuthority,
+        local,
       )
     : buildCompatibleEndpointSandboxSmokeCommand(options.model);
   const smokeResult = await options.sandboxCommandExecutor.runBuffered({
@@ -195,11 +223,11 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
 
   if (smokeStatus !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
     console.error(
-      options.forceCanonicalRoute
+      forceCanonicalRoute
         ? "  Provider-neutral sandbox inference smoke check failed."
         : "  Compatible endpoint sandbox smoke check failed.",
     );
-    if (!options.forceCanonicalRoute) {
+    if (!forceCanonicalRoute) {
       console.error(
         "  Messaging setup is not the root cause; the sandbox inference.local route failed.",
       );
@@ -210,9 +238,11 @@ export async function verifyCompatibleEndpointSandboxSmoke(options: {
 
   options.beforeSuccess?.();
   console.log(
-    options.forceCanonicalRoute
-      ? "  \u2713 Provider responds through inference.local inside the sandbox"
-      : "  \u2713 Compatible endpoint responds through inference.local inside the sandbox",
+    local
+      ? "  \u2713 Native local inference responds inside the sandbox"
+      : options.forceCanonicalRoute
+        ? "  \u2713 Provider responds through inference.local inside the sandbox"
+        : "  \u2713 Compatible endpoint responds through inference.local inside the sandbox",
   );
 }
 
@@ -224,8 +254,21 @@ export function createCompatibleEndpointSmoke(
   ) => ReturnType<CompatibleEndpointSmokeRun>,
   sandboxCommandExecutor: OpenShellSandboxBufferedCommandExecutor,
   redact: (value: string) => string,
+  getSandbox: typeof import("../state/registry").getSandbox,
 ) {
   type SmokeOptions = Parameters<typeof verifyCompatibleEndpointSandboxSmoke>[0];
+  const nativeSelection = (
+    options: Pick<SmokeOptions, "sandboxName" | "provider" | "endpointUrl">,
+  ) => {
+    const recorded = getSandbox(options.sandboxName)?.nativeLocalProviderAttachment;
+    if (recorded === undefined) return {};
+    const receipt = normalizeNativeLocalProviderAttachment(recorded);
+    if (!receipt)
+      throw new Error(
+        "Native local inference requires its recorded provider attachment. Recreate this beta sandbox.",
+      );
+    return { nativeLocalProviderAttachment: receipt };
+  };
   return {
     verify(
       options: Omit<SmokeOptions, "runOpenshell" | "sandboxCommandExecutor" | "redact">,
@@ -233,6 +276,7 @@ export function createCompatibleEndpointSmoke(
     ): Promise<void> {
       return verifyCompatibleEndpointSandboxSmoke({
         ...options,
+        ...nativeSelection(options),
         runOpenshell: run,
         sandboxCommandExecutor,
         redact,
@@ -250,6 +294,7 @@ export function createCompatibleEndpointSmoke(
       const { environment, gatewayName, ...selection } = options;
       return verifyCompatibleEndpointSandboxSmoke({
         ...selection,
+        ...nativeSelection(selection),
         onFailure: (exitCode) => {
           throw new Error(`Compatible endpoint verification failed (exit ${exitCode}).`);
         },
@@ -502,12 +547,12 @@ export function buildCompatibleEndpointSandboxSmokeCommand(model: string): strin
 
 /**
  * Runs a Python standard-library request inside the sandbox, proving a real
- * chat response through inference.local and explicit policy denial for the
- * selected direct host-native inference port that would bypass the gateway.
+ * chat response through the selected endpoint and explicit denial outside its policy.
  */
 export function buildProviderNeutralInferenceSandboxSmokeScript(
   model: string,
   authority: HostLocalInferenceSandboxProofAuthority | undefined,
+  local?: NativeLocalProviderAttachment,
 ): string {
   const expectedHealthPath =
     authority?.service === "ollama"
@@ -518,37 +563,52 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
           ? "/health"
           : null;
   if (
-    !authority ||
-    !Number.isSafeInteger(authority.directHostPort) ||
-    authority.directHostPort < 1 ||
-    authority.directHostPort > 65_535 ||
-    authority.directHealthPath !== expectedHealthPath
+    !local &&
+    (!authority ||
+      !Number.isSafeInteger(authority.directHostPort) ||
+      authority.directHostPort < 1 ||
+      authority.directHostPort > 65_535 ||
+      authority.directHealthPath !== expectedHealthPath)
   ) {
     throw new Error("Provider-neutral sandbox smoke requires exact provider health authority.");
   }
-  const inferenceUrl = JSON.stringify(`${INFERENCE_ROUTE_URL}/chat/completions`);
+  const endpointLabel = local ? "Native local inference" : "inference.local";
+  const inferenceUrl = JSON.stringify(
+    `${local?.endpointUrl ?? INFERENCE_ROUTE_URL}/chat/completions`,
+  );
   const maxTokensField = JSON.stringify(resolveMaxTokensField(model));
   const modelValue = JSON.stringify(model);
-  const toolCallingRequired = authority.toolCallingRequired ? "True" : "False";
-  const directAuthority = `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.host}:${String(
-    authority.directHostPort,
-  )}`;
-  const directUrl = JSON.stringify(
-    `http://${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path}`,
-  );
+  const toolCallingRequired = authority?.toolCallingRequired ? "True" : "False";
+  const directAuthority = local
+    ? new URL(local.endpointUrl).host
+    : `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.host}:${String(authority!.directHostPort)}`;
+  const deniedPath = local
+    ? `${new URL(local.endpointUrl).pathname}/nemoclaw-denied`
+    : OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path;
+  const directUrl = JSON.stringify(`http://${directAuthority}${deniedPath}`);
   const directMethod = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method);
   const directDenialError = JSON.stringify(OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.error);
   const directDenialDetail = JSON.stringify(
-    `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
+    `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${deniedPath} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
   );
+  const authSetup = local
+    ? `credential = os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
+if not re.fullmatch(${JSON.stringify(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN)}, credential):
+    print("Native local inference requires an issued credential reference", file=sys.stderr)
+    sys.exit(2)
+auth_headers = {"Authorization": "Bearer " + credential}`
+    : "auth_headers = {}";
   return `
 import errno
 import json
+import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
 
+${authSetup}
 inference_url = ${inferenceUrl}
 model = ${modelValue}
 max_tokens_field = ${maxTokensField}
@@ -561,7 +621,7 @@ def post_inference(payload, label):
     request = urllib.request.Request(
         inference_url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **auth_headers},
         method="POST",
     )
     response_data = None
@@ -569,31 +629,31 @@ def post_inference(payload, label):
         try:
             with inference_opener.open(request, timeout=60) as response:
                 if response.status < 200 or response.status > 299:
-                    raise RuntimeError("inference.local returned HTTP %s" % response.status)
+                    raise RuntimeError("${endpointLabel} returned HTTP %s" % response.status)
                 response_bytes = response.read(max_response_bytes + 1)
                 if len(response_bytes) > max_response_bytes:
-                    print("inference.local %s proof response exceeded byte limit" % label, file=sys.stderr)
+                    print("${endpointLabel} %s proof response exceeded byte limit" % label, file=sys.stderr)
                     sys.exit(1)
                 try:
                     response_data = json.loads(response_bytes.decode("utf-8", errors="strict"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
-                    print("inference.local %s proof returned invalid JSON" % label, file=sys.stderr)
+                    print("${endpointLabel} %s proof returned invalid JSON" % label, file=sys.stderr)
                     sys.exit(1)
             break
         except urllib.error.HTTPError as error:
             if 500 <= error.code <= 599 and attempt < 2:
                 time.sleep(5 * (attempt + 1))
                 continue
-            print("inference.local %s proof returned terminal HTTP %s" % (label, error.code), file=sys.stderr)
+            print("${endpointLabel} %s proof returned terminal HTTP %s" % (label, error.code), file=sys.stderr)
             sys.exit(1)
         except urllib.error.URLError:
             if attempt < 2:
                 time.sleep(5 * (attempt + 1))
                 continue
-            print("inference.local %s proof transport failed after bounded retries" % label, file=sys.stderr)
+            print("${endpointLabel} %s proof transport failed after bounded retries" % label, file=sys.stderr)
             sys.exit(1)
     if not isinstance(response_data, dict) or response_data.get("model") != model:
-        print("inference.local %s proof returned a different model identity" % label, file=sys.stderr)
+        print("${endpointLabel} %s proof returned a different model identity" % label, file=sys.stderr)
         sys.exit(1)
     return response_data
 
@@ -629,7 +689,7 @@ def classify_content_shape(data):
 content_shape, content, retry_reasoning = classify_content_shape(response_data)
 if retry_reasoning:
     print(
-        "inference.local content proof returned REASONING_ONLY at the initial token limit; retrying once with a larger content budget",
+        "${endpointLabel} content proof returned REASONING_ONLY at the initial token limit; retrying once with a larger content budget",
         file=sys.stderr,
     )
     response_data = post_inference({
@@ -639,7 +699,7 @@ if retry_reasoning:
     }, "content")
     content_shape, content, _ = classify_content_shape(response_data)
 if not isinstance(content, str) or not content.strip():
-    print("inference.local content proof failed: %s" % content_shape, file=sys.stderr)
+    print("${endpointLabel} content proof failed: %s" % content_shape, file=sys.stderr)
     sys.exit(1)
 
 if tool_calling_required:
@@ -664,7 +724,7 @@ if tool_calling_required:
     tool_calls = tool_message.get("tool_calls")
     matching_call = next((call for call in tool_calls if isinstance(call, dict) and isinstance(call.get("function"), dict) and call["function"].get("name") == tool_name), None) if isinstance(tool_calls, list) else None
     if matching_call is None:
-        print("inference.local tool proof did not return the required tool call", file=sys.stderr)
+        print("${endpointLabel} tool proof did not return the required tool call", file=sys.stderr)
         sys.exit(1)
     arguments = matching_call["function"].get("arguments")
     try:
@@ -672,7 +732,7 @@ if tool_calling_required:
     except json.JSONDecodeError:
         decoded_arguments = None
     if not isinstance(decoded_arguments, dict) or decoded_arguments:
-        print("inference.local tool proof returned invalid tool arguments", file=sys.stderr)
+        print("${endpointLabel} tool proof returned invalid tool arguments", file=sys.stderr)
         sys.exit(1)
 
 direct_url = ${directUrl}

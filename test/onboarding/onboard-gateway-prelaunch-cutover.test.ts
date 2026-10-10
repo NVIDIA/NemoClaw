@@ -162,6 +162,9 @@ const observedListenerPids = [];
 
 Module._load = function(request, parent, isMain) {
   const actual = () => originalLoad.call(this, request, parent, isMain);
+  if (request.endsWith("/adapters/openshell/provider-policy")) {
+    return { ...actual(), initializeNativeProviderPolicy: async () => {} };
+  }
   if (request.endsWith("/preflight")) {
     return { ...actual(), checkPortAvailable: async () => ({ ok: true, pid: ++probe }) };
   }

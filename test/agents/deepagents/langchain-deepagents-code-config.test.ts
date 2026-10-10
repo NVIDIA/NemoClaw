@@ -68,6 +68,22 @@ function runGenerator(env: Record<string, string | undefined>): string {
 }
 
 describe("LangChain Deep Agents Code config generator", () => {
+  it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
+    "writes the selected native endpoint and credential reference for %s (#12558)",
+    (provider) => {
+      const config = runGenerator({
+        NEMOCLAW_UPSTREAM_PROVIDER: provider,
+        NEMOCLAW_MODEL: "local-model",
+        NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+        OPENAI_API_KEY: "ambient-secret-must-not-escape",
+      });
+      expect(config).toContain('base_url = "http://host.openshell.internal:11434/v1"');
+      expect(config).toContain('api_key_env = "NEMOCLAW_LOCAL_INFERENCE_TOKEN"');
+      expect(config).toContain('default = "openai:local-model"');
+      expect(config).not.toContain("ambient-secret-must-not-escape");
+    },
+  );
+
   it("routes managed inference through OpenAI-compatible chat completions", () => {
     const config = runGenerator({});
 

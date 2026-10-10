@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -120,3 +121,178 @@ it("lists registered sandboxes that retain native NVIDIA provider ownership", as
     vi.unstubAllEnvs();
   }
 });
+
+it.each([
+  ["native resume", "http://127.0.0.1:11434/v1", "nemoclaw", false, true],
+  ["hosted compatible switch", "https://api.example.com/v1", "nemoclaw", false, false],
+  ["different local endpoint", "http://127.0.0.1:8000/v1", "nemoclaw", false, false],
+  ["different gateway", "http://127.0.0.1:11434/v1", "other-gateway", false, false],
+  ["explicit native replacement", "http://127.0.0.1:8000/v1", "nemoclaw", true, true],
+] as const)(
+  "retains only matching native route attachments during %s",
+  async (_scenario, endpointUrl, gatewayName, replacement, retained) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-local-attachment-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const authority = await import("./registry/native-local-provider-authority");
+      const { nativeLocalIdentity } = await import("../inference/native-local/contract");
+      const binding = {
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated",
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      } as const;
+      const receipt = {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "original-provider",
+      };
+      authority.setNativeLocalProviderAuthority(receipt);
+      registry.registerSandbox({
+        name: "alpha",
+        provider: binding.provider,
+        model: "model-a",
+        endpointUrl: "http://127.0.0.1:11434/v1",
+        gatewayName: binding.gatewayName,
+        nativeLocalProviderAttachment: receipt,
+      });
+      const nextBinding = {
+        ...binding,
+        endpointUrl: endpointUrl.replace("127.0.0.1", "host.openshell.internal"),
+        gatewayName,
+      };
+      const nextReceipt = replacement
+        ? {
+            ...nextBinding,
+            ...nativeLocalIdentity(nextBinding),
+            schemaVersion: 1 as const,
+            providerId: "replacement-provider",
+          }
+        : undefined;
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: binding.provider,
+        model: "model-b",
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        endpointUrl,
+        gatewayName,
+        ...(nextReceipt ? { nativeLocalProviderAttachment: nextReceipt } : {}),
+      });
+      const entry = registry.getSandbox("alpha")!;
+      expect(entry.nativeLocalProviderAttachment).toEqual(
+        retained ? (nextReceipt ?? receipt) : undefined,
+      );
+      expect(authority.getNativeLocalProviderAuthority(receipt.providerName)).toEqual(receipt);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);
+
+it("enumerates cleanup authority only for the exact sandbox and gateway (#12558)", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-native-cleanup-"));
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+  try {
+    const authority = await import("./registry/native-local-provider-authority");
+    const { nativeLocalIdentity } = await import("../inference/native-local/contract");
+    const binding = {
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "sentinel",
+      gatewayName: "selected",
+      sandboxName: "alpha",
+    } as const;
+    const own = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "own",
+    };
+    const siblingBinding = { ...binding, sandboxName: "beta" };
+    const sibling = {
+      ...siblingBinding,
+      ...nativeLocalIdentity(siblingBinding),
+      schemaVersion: 1 as const,
+      providerId: "sibling",
+    };
+    const otherBinding = { ...binding, gatewayName: "other" };
+    const other = {
+      ...otherBinding,
+      ...nativeLocalIdentity(otherBinding),
+      schemaVersion: 1 as const,
+      providerId: "other",
+    };
+    authority.setNativeLocalProviderAuthority(own);
+    authority.setNativeLocalProviderAuthority(sibling);
+    authority.setNativeLocalProviderAuthority(other);
+    expect(authority.listNativeLocalProviderAuthorities("alpha", "selected")).toEqual([own]);
+    expect(authority.getNativeLocalProviderAuthority(sibling.providerName)).toEqual(sibling);
+    expect(authority.getNativeLocalProviderAuthority(other.providerName)).toEqual(other);
+  } finally {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+const wrongAuthorityKeyBinding = {
+  provider: "vllm-local",
+  endpointUrl: "http://host.openshell.internal:8000/v1",
+  sandboxName: "alpha",
+  gatewayName: "nemoclaw",
+  authMode: "sentinel",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+} as const;
+
+it.each([
+  ["invalid map", []],
+  [
+    "wrong map key",
+    {
+      "different-key": {
+        ...wrongAuthorityKeyBinding,
+        ...nativeLocalIdentity(wrongAuthorityKeyBinding),
+        schemaVersion: 1,
+        providerId: "retained-id",
+      },
+    },
+  ],
+  ["invalid receipt", { "owned-provider": { providerId: "retained-id" } }],
+])(
+  "preserves %s authority evidence when an unrelated registry write is attempted (#12558)",
+  async (_label, invalid) => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-native-invalid-authority-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { REGISTRY_FILE, save } = await import("./registry/persistence");
+      await fs.mkdir(path.dirname(REGISTRY_FILE), { recursive: true });
+      const original = JSON.stringify({
+        sandboxes: {},
+        defaultSandbox: null,
+        nativeLocalProviderAuthorities: invalid,
+      });
+      await fs.writeFile(REGISTRY_FILE, original);
+      expect(() =>
+        registry.registerSandbox({ name: "unrelated", gatewayName: "nemoclaw" }),
+      ).toThrow(/native local provider authority/i);
+      expect(await fs.readFile(REGISTRY_FILE, "utf8")).toBe(original);
+      expect(() => save({ sandboxes: {}, defaultSandbox: null })).toThrow(
+        /native local provider authority/i,
+      );
+      expect(await fs.readFile(REGISTRY_FILE, "utf8")).toBe(original);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { nativeLocalTestReceipt } from "../inference-set.test-support";
 import type { ProviderHealthStatus } from "../../inference/health";
 import { collectInferenceChecks, collectManagedLlamaCppDoctorChecks } from "./doctor-inference";
 
@@ -425,5 +426,60 @@ describe("doctor inference checks", () => {
       model: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
       recordedEndpointUrl: "http://host.openshell.internal:46145/v1",
     });
+  });
+});
+
+describe("native local doctor reachability", () => {
+  it("skips route verification while the sandbox is unreachable (#12558)", async () => {
+    const verify = vi.fn();
+    const probe = vi.fn();
+    const shared = vi.fn();
+    const checks = await collectInferenceChecks(
+      "alpha",
+      {
+        provider: "ollama-local",
+        model: "model",
+        nativeLocalProviderAttachment: nativeLocalTestReceipt(),
+      },
+      false,
+      {
+        gatewayName: "nemoclaw",
+        verifyNativeLocalStatusAttachmentImpl: verify,
+        nativeLocalInvocationProbe: probe,
+        probeSandboxInferenceGatewayHealthImpl: shared,
+        probeProviderHealthImpl: () => null,
+        includeServingProcessCheck: false,
+      },
+    );
+    expect(checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native local)", status: "info" }),
+    );
+    expect(verify).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+    expect(shared).not.toHaveBeenCalled();
+  });
+  it("still fails reachable native routes with missing gateway authority (#12558)", async () => {
+    const verify = vi.fn();
+    const probe = vi.fn();
+    const checks = await collectInferenceChecks(
+      "alpha",
+      {
+        provider: "ollama-local",
+        model: "model",
+        nativeLocalProviderAttachment: nativeLocalTestReceipt(),
+      },
+      true,
+      {
+        verifyNativeLocalStatusAttachmentImpl: verify,
+        nativeLocalInvocationProbe: probe,
+        probeProviderHealthImpl: () => null,
+        includeServingProcessCheck: false,
+      },
+    );
+    expect(checks).toContainEqual(
+      expect.objectContaining({ label: "Inference route (native local)", status: "fail" }),
+    );
+    expect(verify).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
   });
 });

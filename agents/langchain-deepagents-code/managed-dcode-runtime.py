@@ -1080,6 +1080,26 @@ def managed_inference_base_url() -> str:
 
 def managed_inference_api_key(base_url: str) -> str:
     """Select the non-secret credential for the validated image-owned route."""
+    parsed = urlparse(base_url)
+    host = parsed.hostname or ""
+    local_host = host in {"host.openshell.internal", "host.docker.internal"}
+    try:
+        address = ipaddress.IPv4Address(host)
+        local_host = any(address in ipaddress.IPv4Network(network) for network in (
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
+        ))
+    except ipaddress.AddressValueError:
+        pass
+    if parsed.scheme == "http" and local_host and _managed_upstream_provider() in {
+        "ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"
+    }:
+        value = os.environ.get("NEMOCLAW_LOCAL_INFERENCE_TOKEN", "")
+        if re.fullmatch(
+            r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+            value,
+        ) is None:
+            raise RuntimeError("native local inference requires an issued OpenShell credential reference")
+        return value
     if base_url != "https://integrate.api.nvidia.com/v1":
         return "nemoclaw-managed-inference"
     name = "NVIDIA_INFERENCE_API_KEY"

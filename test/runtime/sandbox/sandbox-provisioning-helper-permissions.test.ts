@@ -5,7 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
+import {
+  dockerRunCommandBetween,
+  runLoggedDockerShell,
+  shellCommandSegmentBetween,
+} from "../../helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -100,6 +104,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       toolDisclosurePath,
       applierPath,
       messagingHookPath,
+      path.join(localSrc, "lib/inference/native-local/agent-config.ts"),
       pluginFile,
       nestedPluginFile,
     ];
@@ -112,6 +117,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       fs.mkdirSync(path.dirname(applierPath), { recursive: true });
       fs.mkdirSync(path.dirname(messagingHookPath), { recursive: true });
       files.forEach((file) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
         fs.chmodSync(file, 0o600);
       });
@@ -169,3 +175,60 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     }
   });
 });
+
+it.each([
+  {
+    agent: "OpenClaw cached install",
+    marker: "# Config inputs precede the cached plugin install.",
+    dockerfile: "Dockerfile",
+    start: "chmod 444 /src/lib/*.ts",
+    file: "/src/lib/inference/native-local/agent-config.ts",
+  },
+  {
+    agent: "OpenClaw runtime",
+    marker: "# Copy startup script and shared sandbox initialisation library",
+    dockerfile: "Dockerfile",
+    start: "chmod 444 /src/lib/*.ts",
+    file: "/src/lib/inference/native-local/agent-config.ts",
+  },
+  {
+    agent: "Hermes",
+    marker: "# Keep the config generator",
+    dockerfile: "agents/hermes/Dockerfile",
+    start: "chmod 444 /src/lib/hermes-managed-route.ts",
+    file: "/src/lib/inference/native-local/agent-config.ts",
+  },
+  {
+    agent: "DCode",
+    marker: "# Copy the managed-startup entrypoint",
+    dockerfile: "agents/langchain-deepagents-code/Dockerfile",
+    start: "chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts",
+    file: "/opt/nemoclaw-deepagents-code/src/lib/inference/native-local/agent-config.ts",
+  },
+])(
+  "makes the native config dependency read-only for $agent from private checkout modes (#12558)",
+  ({ dockerfile, marker, start, file }) => {
+    const source = fs.readFileSync(path.join(ROOT, dockerfile), "utf8");
+    const command = shellCommandSegmentBetween(
+      source.slice(source.indexOf(marker)).replaceAll(/\\\n\s*/gu, " "),
+      start,
+      "&&",
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "native-config-mode-"));
+    try {
+      const operands = command
+        .split(/\s+/u)
+        .slice(2)
+        .map((operand) => operand.replace("*.ts", "fixture.ts"));
+      const files = [...operands, file].map((operand) => path.join(tmp, operand));
+      const directories = files.map((operand) => path.dirname(operand));
+      const setup = `mkdir -p ${directories.join(" ")} && touch ${files.join(" ")} && chmod 600 ${files.join(" ")}`;
+      const rewritten = command.replaceAll(/ \/(?=opt|src|scripts|usr|etc|ci)/gu, ` ${tmp}/`);
+      const { result } = runLoggedDockerShell(`${setup} && ${rewritten}`, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.statSync(path.join(tmp, file)).mode & 0o777).toBe(0o444);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);

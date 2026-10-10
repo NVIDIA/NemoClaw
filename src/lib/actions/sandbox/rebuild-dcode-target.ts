@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../inference/native-local/contract";
 import { GATEWAY_PORT } from "../../core/ports";
 import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
 import {
@@ -15,6 +19,7 @@ export type DcodeRebuildRegistryEntry = SandboxGatewayBinding & {
   agent?: string | null;
   dashboardPort?: number | null;
   nativeNvidiaProviderAttachment?: unknown;
+  nativeLocalProviderAttachment?: unknown;
 };
 
 export type DcodeRebuildResumeConfig = {
@@ -25,6 +30,7 @@ export type DcodeRebuildResumeConfig = {
 };
 
 export type ResolvedDcodeRebuildTarget = {
+  nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   nativeProvider?: boolean;
   agent: typeof DCODE_AGENT_NAME;
   gatewayName: string;
@@ -64,6 +70,12 @@ export function resolveDcodeRebuildTarget(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${gatewayPort}.`,
     );
   }
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    entry.nativeLocalProviderAttachment,
+  );
+  if (entry.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment) {
+    throw new Error("Malformed native local provider attachment; sandbox is untouched");
+  }
   return {
     agent: DCODE_AGENT_NAME,
     gatewayName,
@@ -71,6 +83,7 @@ export function resolveDcodeRebuildTarget(
     provider: requiredString(resumeConfig.provider, "inference provider"),
     model: requiredString(resumeConfig.model, "inference model"),
     preferredInferenceApi: resumeConfig.preferredInferenceApi,
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
       ? { nativeProvider: true }
       : {}),

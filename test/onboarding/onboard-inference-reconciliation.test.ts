@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
+import type { NativeLocalProviderAttachment } from "../../src/lib/inference/native-local/contract";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -649,13 +651,14 @@ const { onboard } = require(${onboardPath});
           overrides: { applyLocalInferenceRoute },
         });
         await harness.setupInference("test-box", "meta-llama", "vllm-local");
-        const providerCommand = harness.commands.find((entry) =>
-          entry.command.includes("provider create"),
-        );
-        assert.ok(providerCommand, "expected local vLLM provider create command");
-        assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
-        assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
-        assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
+        const providerRequest = harness.native.adapter.createProvider.mock.calls[0]?.[0];
+        assert.ok(providerRequest, "expected native local vLLM provider creation");
+        assert.deepEqual(providerRequest.credentials, [
+          { name: "NEMOCLAW_LOCAL_INFERENCE_TOKEN", value: "dummy" },
+        ]);
+        assert.ok(!providerRequest.credentials.some(({ name }) => name === "OPENAI_API_KEY"));
+        assert.deepEqual(providerRequest.config, []);
+        assert.deepEqual(harness.commands, []);
         assert.equal(credentials.getCredential("OPENAI_API_KEY"), "sk-existing");
       });
     } finally {
@@ -695,22 +698,20 @@ const { onboard } = require(${onboardPath});
       warn.mockRestore();
     }
     assert.deepEqual(proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
-    const providerCommand = harness.commands.find(
-      (entry) =>
-        entry.command.includes("provider create") && entry.command.includes("ollama-local"),
-    );
-    assert.ok(providerCommand, "expected ollama-local provider create command");
-    assert.match(providerCommand.command, /--credential NEMOCLAW_OLLAMA_PROXY_TOKEN/);
-    assert.equal(providerCommand.env?.NEMOCLAW_OLLAMA_PROXY_TOKEN, "proxy-token");
-    assert.doesNotMatch(providerCommand.command, /proxy-token/);
-    assert.ok(
-      harness.commands.some((entry) =>
-        entry.command.includes("inference set -g nemoclaw --no-verify --provider ollama-local"),
-      ),
-      "expected ollama-local inference route to be selected",
-    );
+    const providerRequest = harness.native.adapter.createProvider.mock.calls[0]?.[0];
+    assert.ok(providerRequest, "expected native Ollama provider creation");
+    assert.deepEqual(providerRequest.credentials, [
+      { name: "NEMOCLAW_LOCAL_INFERENCE_TOKEN", value: "proxy-token" },
+    ]);
+    assert.deepEqual(providerRequest.config, []);
+    expect(harness.native.profiles[0]).toMatchObject({
+      endpoints: [{ host: "host.openshell.internal", port: 11435 }],
+    });
+    assert.ok(!JSON.stringify(harness.native.profiles).includes("proxy-token"));
+    assert.deepEqual(harness.commands, []);
+    expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
   });
-  it("surfaces a contextual error and exits when ollama-local inference set fails after the proxy-ready warning (#4257)", async () => {
+  it("rejects ollama-local native registration failure before sandbox reservation (#4257)", async () => {
     const error = vi.fn();
     const exitProcess = vi.fn((code: number): never => {
       throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
@@ -746,31 +747,29 @@ const { onboard } = require(${onboardPath});
         exitProcess,
       },
     });
+    harness.native.adapter.createProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "native provider registration denied" },
+    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await assert.rejects(
         harness.setupInference("test-box", "qwen3.5:9b", "ollama-local"),
-        (error: Error & { __exit?: boolean }) => error.__exit === true,
+        /native provider registration denied/,
       );
     } finally {
       warn.mockRestore();
     }
-    const setCmd = harness.commands.find((entry) =>
-      entry.command.includes("inference set -g nemoclaw --no-verify --provider ollama-local"),
-    );
-    assert.ok(setCmd, "expected ollama-local inference set command to be issued");
-    assert.equal(
-      setCmd.ignoreError,
-      true,
-      "ollama-local inference set must use ignoreError so onboard can recover",
-    );
-    const combinedErr = error.mock.calls.flat().join("\n");
-    assert.equal(exitProcess.mock.calls.length, 1);
-    assert.equal(exitProcess.mock.calls[0]?.[0], 7);
-    assert.match(combinedErr, /No sandbox was created/);
-    assert.match(combinedErr, /nemoclaw onboard --resume/);
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.native.authorities.size).toBe(0);
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(exitProcess).not.toHaveBeenCalled();
+    expect(commandRouter.callCount("ollama-inference-set")).toBe(0);
+    // Shared-route exit status and resume guidance remain covered by local-inference-route.test.ts.
   });
-  it("surfaces a contextual error and exits when vllm-local inference set fails (#4257)", async () => {
+  it("rejects vllm-local native registration failure before sandbox reservation (#4257)", async () => {
     const exitProcess = vi.fn((code: number): never => {
       throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
     });
@@ -795,25 +794,23 @@ const { onboard } = require(${onboardPath});
       },
     });
 
+    harness.native.adapter.createProvider.mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "native provider registration denied" },
+    });
     await assert.rejects(
       harness.setupInference("test-box", "meta-llama", "vllm-local"),
-      (error: Error & { __exit?: boolean }) => error.__exit === true,
+      /native provider registration denied/,
     );
 
-    const setCmd = harness.commands.find((entry) =>
-      entry.command.includes("inference set -g nemoclaw --no-verify --provider vllm-local"),
-    );
-    assert.ok(setCmd, "expected vllm-local inference set command to be issued");
-    assert.equal(
-      setCmd.ignoreError,
-      true,
-      "vllm-local inference set must use ignoreError so onboard can recover",
-    );
-    const combinedErr = harness.errors.join("\n");
-    assert.equal(exitProcess.mock.calls.length, 1);
-    assert.equal(exitProcess.mock.calls[0]?.[0], 13);
-    assert.match(combinedErr, /No sandbox was created/);
-    assert.match(combinedErr, /nemoclaw onboard --resume/);
+    expect(harness.native.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(harness.native.authorities.size).toBe(0);
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
+    expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(exitProcess).not.toHaveBeenCalled();
+    expect(commandRouter.callCount("vllm-inference-set")).toBe(0);
+    // Shared-route exit status and resume guidance remain covered by local-inference-route.test.ts.
   });
   it("detects when the live inference route already matches the requested provider and model", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
@@ -1077,11 +1074,20 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     provider: string;
     model: string;
     endpointUrl?: string | null;
+    nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
   };
+  const priorAttachment = nativeLocalSetupReceipt({
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11435/v1",
+    authMode: "authenticated",
+    gatewayName: "nemoclaw",
+    sandboxName: "test-box",
+  });
   const priorEntry: ReleaseEntry = {
     name: "test-box",
     provider: "ollama-local",
     model: "llama3",
+    nativeLocalProviderAttachment: priorAttachment,
   };
 
   function releaseHarness(options: {
@@ -1098,7 +1104,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
       releasedModels?: readonly string[],
     ) => void;
   }) {
-    return createDirectSetupInferenceHarness({
+    const harness = createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
         args.slice(0, 2).join(" ") === "provider get"
           ? { status: 1, stdout: "", stderr: "" }
@@ -1130,6 +1136,8 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         },
       },
     });
+    harness.native.seed(priorAttachment);
+    return harness;
   }
 
   it("releases the superseded model after a re-onboard onto a different model (#9110)", async () => {
@@ -1421,6 +1429,7 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         },
       },
     });
+    harness.native.seed(priorAttachment);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
@@ -1430,7 +1439,9 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     // A serialized re-onboard can neither replace the row under the read nor
     // select the captured model before this cleanup runs.
     expect(events).toEqual([
+      "read-prior-route", // Agent support admission; cleanup reads the route again under the lock.
       "lock-enter",
+      "read-prior-route",
       "read-prior-route",
       "ownership-lock-enter",
       "peer-scan",
@@ -1440,22 +1451,28 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     ]);
   });
 
-  it("skips the release when the route returns to selection (#9110)", async () => {
+  it("skips the release when endpoint rejection returns to selection (#9110)", async () => {
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
     const harness = releaseHarness({
       getSandbox: () => priorEntry,
       sandboxes: [priorEntry],
       unloadOllamaModels,
-      applyLocalInferenceRoute: async () => true,
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     let result: Awaited<ReturnType<SetupInference>>;
     try {
-      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      result = await harness.setupInference(
+        "test-box",
+        "new-model",
+        "compatible-endpoint",
+        "http://169.254.169.254/v1",
+      );
     } finally {
       warn.mockRestore();
     }
     assert.deepEqual(result, { retry: "selection" });
     expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(harness.updateSandbox).not.toHaveBeenCalled();
+    expect(harness.commands).toEqual([]);
   });
 });
