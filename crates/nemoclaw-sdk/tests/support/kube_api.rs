@@ -61,7 +61,7 @@ fn path(object: &Value) -> String {
     )
 }
 
-fn status(code: u16, reason: &str) -> Option<(u16, Vec<u8>)> {
+pub fn status(code: u16, reason: &str) -> Option<(u16, Vec<u8>)> {
     Some((
         code,
         json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "reason": reason, "code": code})
