@@ -14,6 +14,7 @@ import {
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "./gateway/process-environment";
 import {
+  hasDockerDriverGatewayEnvironment,
   readDockerDriverGatewayProcessIdentity,
   readDockerDriverGatewayProcessEnvironment,
 } from "./docker-driver-gateway-process-identity";
@@ -84,7 +85,9 @@ function fixture() {
   const taskDirectory = mockGatewayProcTaskDir(`${proc}/task`, [String(pid), String(tid)]);
   const realpath = fs.realpathSync.native;
   vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
-    String(file) === `${task}/exe` ? binary : realpath(file, options),
+    String(file) === `${task}/exe` || (String(file) === `${proc}/exe` && files.has(`${proc}/exe`))
+      ? binary
+      : realpath(file, options),
   );
   const outputs = new Map([
     ["stat=", "Z\nS\n"],
@@ -121,6 +124,15 @@ function stopScoped(f: ReturnType<typeof fixture>) {
     scopedGatewayStop: true,
     usePgrepFallback: false,
   });
+}
+
+function inheritedEnvironment(f: ReturnType<typeof fixture>, size: number) {
+  // Keep individual inherited variables below Linux's per-string exec limit.
+  const inherited = Array.from(
+    { length: size / (32 * 1024) },
+    (_, index) => `INHERITED_${index}=${"x".repeat(32 * 1024)}\0`,
+  ).join("");
+  return `${inherited}${f.files.get(`${task}/environ`)}`;
 }
 
 describe.runIf(process.platform === "linux")("gateway identity after leader exit", () => {
@@ -196,19 +208,71 @@ describe.runIf(process.platform === "linux")("gateway identity after leader exit
     expect(f.kill).not.toHaveBeenCalled();
   });
 
-  it.each(["cmdline", "environ"] as const)(
+  it.each([
+    ["cmdline", 64 * 1024],
+    ["environ", 6 * 1024 * 1024],
+  ] as const)(
     "refuses an oversized sibling %s instead of trusting partial identity",
-    (entry) => {
+    (entry, limit) => {
       const f = fixture();
       f.files.set(`${proc}/${entry}`, "");
       f.files.set(
         `${task}/${entry}`,
-        `${f.files.get(`${task}/${entry}`)}FILLER=${"x".repeat(65_536)}`,
+        `${f.files.get(`${task}/${entry}`)}FILLER=${"x".repeat(limit)}`,
       );
       expect(stopScoped(f).ownershipFailures).toHaveLength(1);
       expect(f.kill).not.toHaveBeenCalled();
     },
   );
+
+  it.each([128 * 1024, 3 * 1024 * 1024])(
+    "proves readiness and scoped ownership for a live leader with %i inherited bytes",
+    (size) => {
+      const f = fixture();
+      f.files.set(`${proc}/status`, "State:\tS (sleeping)\n");
+      f.files.set(`${proc}/exe`, binary);
+      f.files.set(`${proc}/cmdline`, args);
+      f.files.set(`${proc}/environ`, inheritedEnvironment(f, size));
+      f.outputs.set("stat=", "S\n");
+      const env = readDockerDriverGatewayProcessEnvironment(pid);
+      expect(hasDockerDriverGatewayEnvironment(env, "https://127.0.0.1:18080")).toBe(true);
+      expect(env?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe(
+        gatewayIdForStateDir(f.stateDir),
+      );
+      expect(stopScoped(f).stopped).toEqual([pid]);
+      expect(f.kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
+      expect(f.taskDirectory.reads).toBe(0);
+    },
+  );
+
+  it.each([128 * 1024, 3 * 1024 * 1024])(
+    "recovers readiness and scoped ownership from a live sibling with %i inherited bytes",
+    (size) => {
+      const f = fixture();
+      f.files.set(`${task}/environ`, inheritedEnvironment(f, size));
+      const env = readDockerDriverGatewayProcessEnvironment(pid);
+      expect(hasDockerDriverGatewayEnvironment(env, "https://127.0.0.1:18080")).toBe(true);
+      expect(env?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]).toBe(
+        gatewayIdForStateDir(f.stateDir),
+      );
+      expect(stopScoped(f).stopped).toEqual([pid]);
+      expect(f.kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
+    },
+  );
+
+  it("preserves a live gateway when its environment exceeds the bounded read", () => {
+    const f = fixture();
+    f.files.set(`${proc}/status`, "State:\tS (sleeping)\n");
+    f.files.set(`${proc}/cmdline`, args);
+    f.files.set(
+      `${proc}/environ`,
+      `${f.files.get(`${task}/environ`)}X=${"x".repeat(6 * 1024 * 1024)}`,
+    );
+    expect(readDockerDriverGatewayProcessEnvironment(pid)).toBeNull();
+    expect(stopScoped(f).ownershipFailures).toHaveLength(1);
+    expect(f.kill).not.toHaveBeenCalled();
+    expect(f.taskDirectory.reads).toBe(0);
+  });
 
   it("keeps an empty environment for a non-zombie leader", () => {
     const f = fixture();

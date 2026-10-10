@@ -7,13 +7,21 @@ type GatewayProcEntry = "cmdline" | "environ" | "exe";
 // Recovery must fail closed instead of making unbounded synchronous proc reads.
 const MAX_ZOMBIE_SIBLING_PROBES = 64;
 const MAX_PROC_ENTRY_BYTES = 64 * 1024;
+// Linux execve permits up to 3/4 of its 8 MiB stack ceiling for argv + environ.
+// Gateway launches inherit the host environment, which can exceed 64 KiB.
+const MAX_PROC_ENVIRONMENT_BYTES = 6 * 1024 * 1024;
 
-function readBoundedText(file: string): string | null {
+function readBoundedText(file: string, maxBytes = MAX_PROC_ENTRY_BYTES): string | null {
   const fd = fs.openSync(file, "r");
   try {
-    const buffer = Buffer.allocUnsafe(MAX_PROC_ENTRY_BYTES + 1);
+    let buffer = Buffer.allocUnsafe(4096);
     let length = 0;
-    while (length < buffer.length) {
+    while (length <= maxBytes) {
+      if (length === buffer.length) {
+        const grown = Buffer.allocUnsafe(Math.min(buffer.length * 2, maxBytes + 1));
+        buffer.copy(grown, 0, 0, length);
+        buffer = grown;
+      }
       const count = fs.readSync(fd, buffer, length, buffer.length - length, null);
       if (count === 0) return buffer.toString("utf8", 0, length);
       length += count;
@@ -28,7 +36,10 @@ function readEntry(directory: string, entry: GatewayProcEntry): string | null {
   try {
     return entry === "exe"
       ? fs.realpathSync.native(`${directory}/exe`)
-      : readBoundedText(`${directory}/${entry}`);
+      : readBoundedText(
+          `${directory}/${entry}`,
+          entry === "environ" ? MAX_PROC_ENVIRONMENT_BYTES : MAX_PROC_ENTRY_BYTES,
+        );
   } catch {
     return null;
   }

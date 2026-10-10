@@ -3880,7 +3880,7 @@ If onboarding also set `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, pass its original
 Use the dedicated gateway state directory created for that port, not a shared or parent directory.
 Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
 Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
-If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a bounded process scan proves that no live process claims its state. A listener, unreadable process identity, or a scan that reaches its probe limit preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
 If a prior uninstall removed a non-default gateway but retained its registry and backups, rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall --destroy-user-data` to remove that retained data.
 This recovery requires the default state directory for that port, with `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` unset, and retained rows that explicitly identify Docker.
 The selected gateway registration, runtime directory, processes, listener and sandbox containers must be absent.
@@ -3906,7 +3906,7 @@ Do not stop a process or delete the lock from that record.
 NemoClaw preserves a recent malformed lock for 30 seconds because another process can still be writing it.
 Wait at least 30 seconds, then retry.
 Successful managed cleanup recursively removes that directory and all contents; `--keep-openshell` preserves it.
-Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a complete process-absence scan; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
+Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a bounded process-absence scan that proves no live process claims its state; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
 
 ```bash
 NEMOCLAW_GATEWAY_PORT=<port> \

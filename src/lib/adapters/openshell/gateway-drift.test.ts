@@ -347,6 +347,60 @@ describe("OpenShell gateway drift preflight", () => {
     },
   );
 
+  it.runIf(process.platform === "linux").each([
+    { prefix: "", selected: "openshell-gateway", version: "0.0.43" },
+    { prefix: "/usr/bin/vim ", selected: "other-gateway", version: "0.0.44" },
+  ])(
+    "selects $selected after an oversized command with ps prefix '$prefix'",
+    ({ prefix, selected, version }) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-drift-oversized-"));
+      const gatewayBin = path.join(stateDir, "openshell-gateway");
+      const fallbackBin = path.join(stateDir, "other-gateway");
+      const pid = 9_999_811;
+      try {
+        fs.writeFileSync(gatewayBin, "#!/bin/sh\nprintf 'openshell-gateway 0.0.43\\n'\n", {
+          mode: 0o700,
+        });
+        fs.writeFileSync(fallbackBin, "#!/bin/sh\nprintf 'openshell-gateway 0.0.44\\n'\n", {
+          mode: 0o700,
+        });
+        writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+          pid,
+          desiredEnv: {},
+          endpoint: "https://127.0.0.1:18080",
+          gatewayBin,
+        });
+        vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
+        vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_BIN", fallbackBin);
+        mockGatewayProcFiles(
+          new Map([
+            [`/proc/${pid}/cmdline`, `${gatewayBin}\0${"x".repeat(65_536)}`],
+            [`/proc/${pid}/status`, "State:\tS (sleeping)\n"],
+          ]),
+        );
+        vi.spyOn(process, "kill").mockReturnValue(true);
+        const childProcess = requireDist("node:child_process");
+        const ps = vi.spyOn(childProcess, "spawnSync").mockImplementationOnce(() => ({
+          status: 0,
+          stdout: `${prefix}${gatewayBin}`,
+          stderr: "",
+        }));
+        expect(getHostProcessGatewayRuntimeOrNull()).toEqual({
+          gatewayBin: path.join(stateDir, selected),
+          runningVersion: version,
+        });
+        expect(ps).toHaveBeenCalledWith(
+          "ps",
+          ["-p", String(pid), "-o", "args="],
+          expect.anything(),
+        );
+      } finally {
+        vi.restoreAllMocks();
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("does not flag a matching host-process gateway binary", async () => {
     expect(
       await getGatewayHostProcessDrift({
