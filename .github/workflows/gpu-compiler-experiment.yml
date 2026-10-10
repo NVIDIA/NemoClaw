@@ -1,0 +1,355 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Temporary draft PR experiment. No package or image is published.
+name: Experiment / GPU Rust compiler
+
+on:
+  # NVIDIA self-hosted runners accept trusted branch pushes, not PR events.
+  push:
+    branches: [experiment/gpu-rust-compiler]
+    paths:
+      - .github/workflows/gpu-compiler-experiment.yml
+      - experiments/gpu-rust-compiler/**
+  # A new workflow starts from the branch push. Manual dispatch requires the
+  # workflow on the repository's default branch; this PR will not be merged.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpu-compiler-experiment-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CANDIDATE_SHA: ${{ github.sha }}
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  native-cpu:
+    name: Experiment / Native CPU frontend
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.ref == 'refs/heads/experiment/gpu-rust-compiler' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      frontend-artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - name: Require the open draft experiment PR at this exact head
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/NVIDIA/NemoClaw/pulls/12951 | jq --exit-status \
+            --arg sha "$CANDIDATE_SHA" '
+              .number == 12951 and .state == "open" and .draft == true
+              and .base.repo.full_name == "NVIDIA/NemoClaw" and .base.ref == "v1"
+              and .head.repo.full_name == "NVIDIA/NemoClaw"
+              and .head.ref == "experiment/gpu-rust-compiler" and .head.sha == $sha
+            ' > /dev/null
+
+      - name: Check out the exact experiment head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+
+      - name: Verify source and record build tools
+        working-directory: experiments/gpu-rust-compiler
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p results .build/ci-native
+          printf '%s\n' "$CANDIDATE_SHA" > .build/ci-native/source-sha.txt
+          rustup toolchain install 1.98.1 --profile minimal
+          rustc +1.98.1 --version --verbose > results/rustc.txt
+          clang --version > results/clang-native.txt
+
+      - name: Build and test the independent frontend
+        working-directory: experiments/gpu-rust-compiler
+        run: |
+          set -euo pipefail
+          cargo +1.98.1 test --locked --manifest-path compiler/Cargo.toml --target-dir .build/compiler
+          cargo +1.98.1 build --locked --release --bins --manifest-path compiler/Cargo.toml --target-dir .build/compiler
+          .build/compiler/release/gpu-rust-compiler fixtures/compiler_demo.rs \
+            --backend cpu --verify --output .build/compiler-demo-cpu \
+            --report results/native-cpu-demo.json
+          .build/compiler-demo-cpu > results/native-cpu-demo.stdout
+          test "$(cat results/native-cpu-demo.stdout)" = 1460
+          cp .build/compiler/release/gpu-rust-compiler .build/ci-native/gpu-rust-compiler
+          cp .build/compiler/release/gpu-cpu-liveness .build/ci-native/gpu-cpu-liveness
+          cp .build/compiler/release/gpu-native-benchmark .build/ci-native/gpu-native-benchmark
+          cp .build/compiler/release/gpu-cargo .build/ci-native/gpu-cargo
+          cp .build/compiler/release/gpu-bitcode-linker .build/ci-native/gpu-bitcode-linker
+          cp .build/compiler/release/gpu-codegen .build/ci-native/gpu-codegen
+          cp .build/compiler/release/gpu-emit-module .build/ci-native/gpu-emit-module
+          cp .build/compiler/release/gpu-verify-pipeline .build/ci-native/gpu-verify-pipeline
+          cargo +1.98.1 test --locked --manifest-path fast-backend/Cargo.toml --target-dir .build/fast-controller
+          cargo +1.98.1 build --locked --release --bins --manifest-path fast-backend/Cargo.toml --target-dir .build/fast-controller
+          cp .build/fast-controller/release/nemoclaw-fast-backend .build/ci-native/nemoclaw-fast-backend
+          cp .build/fast-controller/release/rust-llvm-llc .build/ci-native/rust-llvm-llc
+          RUSTUP_TOOLCHAIN=1.98.1 .build/compiler/release/gpu-reference-programs .build/ci-native/references
+          (cd .build/ci-native && sha256sum gpu-rust-compiler gpu-cpu-liveness \
+            gpu-native-benchmark gpu-cargo gpu-bitcode-linker gpu-codegen gpu-emit-module \
+            gpu-verify-pipeline nemoclaw-fast-backend rust-llvm-llc source-sha.txt references/* > binary.sha256)
+
+      - name: Identify the exact-head frontend artifact
+        id: identity
+        working-directory: experiments/gpu-rust-compiler
+        run: |
+          printf 'artifact=gpu-compiler-frontend-%s-%s-%s\n' \
+            "$CANDIDATE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the frontend for this run
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: experiments/gpu-rust-compiler/.build/ci-native/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain native CPU evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-compiler-native-cpu-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}
+          path: experiments/gpu-rust-compiler/results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  cpu-benchmark:
+    name: Experiment / Complete NemoClaw CPU benchmark
+    needs: native-cpu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out the exact experiment head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+
+      - name: Download this run's exact-head frontend
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.native-cpu.outputs.frontend-artifact }}
+          path: experiments/gpu-rust-compiler/.build/compiler/release/
+
+      - name: Verify source and CPU frontend provenance
+        working-directory: experiments/gpu-rust-compiler
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          FRONTEND_ARTIFACT: ${{ needs.native-cpu.outputs.frontend-artifact }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(cat .build/compiler/release/source-sha.txt)" = "$CANDIDATE_SHA"
+          (cd .build/compiler/release && sha256sum --check binary.sha256)
+          chmod +x .build/compiler/release/gpu-cargo
+          mkdir -p results
+          rustup toolchain install 1.98.1 --profile minimal
+          rustc +1.98.1 --version --verbose > results/rustc-full-nemoclaw-cpu.txt
+          jq --null-input \
+            --arg candidate "$CANDIDATE_SHA" --arg workflow "$WORKFLOW_SHA" \
+            --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg frontend "$FRONTEND_ARTIFACT" \
+            '{candidate_sha:$candidate,workflow_sha:$workflow,run_id:$run,run_attempt:$attempt,frontend_artifact:$frontend,scope:"Complete NemoClaw release and fast CPU policy comparison"}' \
+            > results/full-nemoclaw-cpu-provenance.json
+
+      - name: Set up the compatible NemoClaw build contract
+        uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          cache-prefix: gpu-experiment-full-rust-v1
+          save-cache: "false"
+
+      - name: Build complete NemoClaw in release and fast CPU policies
+        working-directory: .
+        run: |
+          set -euo pipefail
+          exp="$PWD/experiments/gpu-rust-compiler"
+          "$exp/.build/compiler/release/gpu-cargo" build --manifest-path "$PWD/Cargo.toml" \
+            --package nemoclaw-cli --bin nemoclaw --quality release --placement cpu \
+            --target-root "$exp/.build/full-nemoclaw" --report "$exp/results/full-nemoclaw-release.json"
+          reference=$(jq -r .artifact.path "$exp/results/full-nemoclaw-release.json")
+          "$exp/.build/compiler/release/gpu-cargo" build --manifest-path "$PWD/Cargo.toml" \
+            --package nemoclaw-cli --bin nemoclaw --quality fast --placement cpu \
+            --target-root "$exp/.build/full-nemoclaw" --reference-artifact "$reference" \
+            --max-size-ratio 1.5 --size-basis strip-debug --report "$exp/results/full-nemoclaw-fast.json"
+          candidate=$(jq -r .artifact.path "$exp/results/full-nemoclaw-fast.json")
+          "$candidate" --version > "$exp/results/full-nemoclaw-fast-version.txt"
+
+      - name: Retain complete NemoClaw CPU evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-compiler-full-nemoclaw-cpu-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}
+          path: experiments/gpu-rust-compiler/results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  cuda:
+    name: Experiment / CUDA on RTX PRO 6000
+    needs: native-cpu
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 45
+    env:
+      CONTAINER_IMAGE: gpu-rust-compiler-experiment:${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out the exact experiment head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+
+      - name: Download this run's exact-head frontend
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.native-cpu.outputs.frontend-artifact }}
+          path: experiments/gpu-rust-compiler/.build/compiler/release/
+
+      - name: Verify source and frontend provenance
+        working-directory: experiments/gpu-rust-compiler
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUNNER_NAME: ${{ runner.name }}
+          RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(cat .build/compiler/release/source-sha.txt)" = "$CANDIDATE_SHA"
+          (cd .build/compiler/release && sha256sum --check binary.sha256)
+          chmod +x .build/compiler/release/gpu-rust-compiler \
+            .build/compiler/release/gpu-cpu-liveness .build/compiler/release/gpu-native-benchmark \
+            .build/compiler/release/gpu-cargo .build/compiler/release/gpu-bitcode-linker \
+            .build/compiler/release/gpu-codegen .build/compiler/release/gpu-emit-module \
+            .build/compiler/release/gpu-verify-pipeline .build/compiler/release/nemoclaw-fast-backend \
+            .build/compiler/release/rust-llvm-llc
+          chmod +x .build/compiler/release/references/*-reference
+          mkdir -p results .build/verification/cuda
+          jq --null-input \
+            --arg candidate "$CANDIDATE_SHA" --arg workflow "$WORKFLOW_SHA" \
+            --arg event "$EVENT_NAME" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg runner "$RUNNER_NAME" \
+            --arg architecture "$RUNNER_ARCH" \
+            '{candidate_sha:$candidate,workflow_sha:$workflow,event:$event,run_id:$run,run_attempt:$attempt,runner:$runner,runner_arch:$architecture,scope:"Full Rust bitcode backend, GPU leaf object emission, and scalar liveness experiments; no full NemoClaw GPU speedup claim."}' \
+            > results/ci-provenance.json
+
+      - name: Record the GPU and container engine
+        working-directory: experiments/gpu-rust-compiler
+        run: |
+          set -euo pipefail
+          nvidia-smi > results/nvidia-smi-host.txt 2>&1
+          docker version > results/docker-version.txt 2>&1
+
+      - name: Build the local CUDA validation environment
+        working-directory: experiments/gpu-rust-compiler
+        run: |
+          set -euo pipefail
+          docker build --pull --file cuda/validation.Dockerfile \
+            --tag "$CONTAINER_IMAGE" cuda 2>&1 | tee results/container-build.log
+          docker image inspect "$CONTAINER_IMAGE" > results/container-image.json
+
+      - name: Verify CUDA and compile the supported subset
+        working-directory: experiments/gpu-rust-compiler
+        run: |
+          set -euo pipefail
+          docker run --rm --gpus all --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=1g,mode=1777 \
+            --mount "type=bind,source=$PWD,target=/lab,readonly" \
+            --mount "type=bind,source=$PWD/.build,target=/lab/.build" \
+            --mount "type=bind,source=$PWD/results,target=/lab/results" \
+            --workdir /lab --env CANDIDATE_SHA \
+            --env PYTHONUNBUFFERED=1 --env PYTHONDONTWRITEBYTECODE=1 \
+            "$CONTAINER_IMAGE" bash --noprofile --norc -euo pipefail -c '
+              nvcc --version > results/nvcc-container.txt
+              clang --version > results/clang-container.txt
+              dpkg-query -W > results/container-packages.txt
+              cmake -S fast-backend -B .build/tpde-native -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR=/opt/llvm/lib/cmake/llvm \
+                -DFETCHCONTENT_SOURCE_DIR_TPDE=/opt/tpde-source \
+                -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+                -DCMAKE_CXX_COMPILER=/opt/llvm/bin/clang++ -DCMAKE_C_COMPILER=/opt/llvm/bin/clang
+              cmake --build .build/tpde-native --target tpde-rust-bridge --parallel 4
+              nvcc -O3 -std=c++17 -shared -Xcompiler -fPIC native/codegen_cuda.cu \
+                -o .build/verification/cuda/libgpuemit_cuda.so
+              .build/compiler/release/gpu-codegen --backend cuda --functions 128 \
+                --batch-functions 32 --repeats 5 --cpu-workers 4 --devices 0 \
+                --library .build/verification/cuda/libgpuemit_cuda.so \
+                --out-dir .build/verification/codegen-cuda --execute
+              .build/compiler/release/gpu-codegen --backend cpu --functions 128 \
+                --batch-functions 32 --repeats 5 --cpu-workers 4 \
+                --out-dir .build/verification/codegen-cpu --execute
+              .build/compiler/release/gpu-verify-pipeline --backend cuda \
+                --fixture-manifest fixtures/full-rust-gpu/Cargo.toml \
+                --gpu-cargo .build/compiler/release/gpu-cargo \
+                --wrapper .build/compiler/release/gpu-bitcode-linker \
+                --controller .build/compiler/release/nemoclaw-fast-backend \
+                --bridge .build/tpde-native/tpde-rust-bridge --llc .build/compiler/release/rust-llvm-llc \
+                --gpu-emitter .build/compiler/release/gpu-emit-module \
+                --gpu-library .build/verification/cuda/libgpuemit_cuda.so \
+                --target-root .build/verification/full-rust-cuda --report results/full-rust-cuda-verified.json
+              python3 -m unittest discover -s tests -p test_liveness_reference.py
+              python3 -m unittest discover -s tests -p test_prepare_workload.py
+              python3 -m unittest discover -s tests -p test_benchmark_cuda.py
+              python3 -m unittest discover -s tests -p test_native_cuda_evidence.py
+              python3 scripts/verify_cuda.py --repeats 15 --report results/cuda-verification.json
+              python3 scripts/compile.py fixtures/compiler_demo.rs --backend cpu \
+                --compiler-binary .build/compiler/release/gpu-rust-compiler \
+                --output .build/compiler-demo-cpu-bridge --report results/cpu-bridge-demo.json
+              .build/compiler-demo-cpu-bridge > results/cpu-bridge-demo.stdout
+              test "$(cat results/cpu-bridge-demo.stdout)" = 1460
+              python3 scripts/compile.py fixtures/compiler_demo.rs --backend cuda \
+                --compiler-binary .build/compiler/release/gpu-rust-compiler \
+                --cuda-binary .build/cuda/cuda-liveness \
+                --output .build/compiler-demo-cuda --report results/cuda-demo.json
+              .build/compiler-demo-cuda > results/cuda-demo.stdout
+              test "$(cat results/cuda-demo.stdout)" = 1460
+              python3 scripts/benchmark_cuda.py --repeats 31 --compile-repeats 9 \
+                --compiler-binary .build/compiler/release/gpu-rust-compiler \
+                --cpu-binary .build/compiler/release/gpu-cpu-liveness \
+                --cuda-binary .build/cuda/cuda-liveness \
+                --report results/cuda-benchmark.json
+              python3 scripts/verify_native_cuda.py \
+                --compiler-binary .build/compiler/release/gpu-rust-compiler \
+                --benchmark-binary .build/compiler/release/gpu-native-benchmark \
+                --references .build/compiler/release/references \
+                --repeats 21 --compile-repeats 7 --report results/native-cuda-verification.json
+            ' 2>&1 | tee results/cuda-run.log
+
+      - name: Retain CUDA evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-compiler-cuda-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}
+          path: |
+            experiments/gpu-rust-compiler/results/
+            experiments/gpu-rust-compiler/.build/verification/cuda/
+            experiments/gpu-rust-compiler/.build/compilations/
+            experiments/gpu-rust-compiler/.build/benchmarks/cuda/
+            experiments/gpu-rust-compiler/.build/verification/native-cuda/
+            experiments/gpu-rust-compiler/.build/verification/codegen-cuda/
+            experiments/gpu-rust-compiler/.build/verification/codegen-cpu/
+            experiments/gpu-rust-compiler/.build/verification/full-rust-cuda/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove the local experiment image
+        if: always()
+        working-directory: .
+        run: docker image rm "$CONTAINER_IMAGE" || true

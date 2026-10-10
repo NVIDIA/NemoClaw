@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "gpu-rust-math-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
