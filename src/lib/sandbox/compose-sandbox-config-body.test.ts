@@ -167,8 +167,8 @@ describe("composeSandboxConfigBody", () => {
         {
           dotpath: "models.providers.inference",
           value: {
-            baseUrl: "https://integrate.api.nvidia.com/v1",
-            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+            baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
             api: "openai-completions",
             models: [{ id: "nvidia/model-a" }],
           },
@@ -198,7 +198,7 @@ describe("composeSandboxConfigBody", () => {
         {
           path: "models.providers.inference",
           value: {
-            baseUrl: "https://integrate.api.nvidia.com/v1",
+            baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
             apiKey: handle,
             api: "openai-completions",
             models: [{ id: "nvidia/model-a" }],
@@ -215,7 +215,7 @@ describe("composeSandboxConfigBody", () => {
           dotpath: "models.providers.inference",
           value: {
             baseUrl: "https://other.example/v1",
-            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+            apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
           },
         },
       ]);
