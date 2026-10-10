@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
 import {
   gatewayIdForStateDir,
@@ -595,7 +596,7 @@ describe("docker-driver gateway runtime helpers", () => {
         files.get(String(candidate)) ??
         readFile(candidate, options as never)) as typeof fs.readFileSync,
     );
-    vi.spyOn(fs, "readdirSync").mockReturnValue([String(pid), "12353"] as never);
+    mockGatewayProcTaskDir(`/proc/${String(pid)}/task`, [String(pid), "12353"]);
     const realpath = fs.realpathSync.native.bind(fs.realpathSync);
     vi.spyOn(fs.realpathSync, "native").mockImplementation(((candidate, options) =>
       String(candidate) === `${thread}/exe` && executable !== null

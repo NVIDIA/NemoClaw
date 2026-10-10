@@ -33,17 +33,25 @@ export function readGatewayProcEntry(pid: number, entry: GatewayProcEntry): stri
     // A thread beneath this task directory belongs to this PID's thread group.
     // Never use an unrelated /proc/<tid> or saved PID marker as identity evidence.
     let scanned = 0;
-    for (const tid of fs.readdirSync(`${root}/task`)) {
-      if (tid === String(pid)) continue;
-      if (scanned >= MAX_ZOMBIE_SIBLING_PROBES) return null;
-      scanned += 1;
-      if (!/^[1-9]\d*$/.test(tid)) continue;
-      const threadValue = readEntry(`${root}/task/${tid}`, entry);
-      if (threadValue !== null && (entry === "exe" || threadValue.trim() !== "")) {
-        return threadValue;
+    // Stream one entry at a time so the probe cap also bounds directory enumeration.
+    const taskDirectory = fs.opendirSync(`${root}/task`, { bufferSize: 1 });
+    try {
+      for (;;) {
+        if (scanned >= MAX_ZOMBIE_SIBLING_PROBES) return null;
+        const task = taskDirectory.readSync();
+        if (task === null) break;
+        const tid = task.name;
+        if (tid === String(pid)) continue;
+        scanned += 1;
+        if (!/^[1-9]\d*$/.test(tid)) continue;
+        const threadValue = readEntry(`${root}/task/${tid}`, entry);
+        if (threadValue !== null && (entry === "exe" || threadValue.trim() !== "")) {
+          return threadValue;
+        }
       }
+    } finally {
+      taskDirectory.closeSync();
     }
-    if (scanned >= MAX_ZOMBIE_SIBLING_PROBES) return null;
   } catch {
     // A vanished or unreadable thread group cannot establish process identity.
   }

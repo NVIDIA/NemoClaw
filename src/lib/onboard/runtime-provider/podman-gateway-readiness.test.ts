@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
 
 import { classifyManagedGatewayPortConflict } from "../../readiness/gateway-production";
 import {
@@ -149,12 +150,7 @@ function mockZombieServiceProcess(environment: Record<string, string>) {
   vi.spyOn(fs, "readFileSync").mockImplementation(
     (file, options) => files.get(String(file)) ?? readFile(file, options),
   );
-  const readdir = fs.readdirSync;
-  vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) =>
-    String(directory) === `${proc}/task`
-      ? ([String(PID), String(PID + 1)] as unknown as ReturnType<typeof fs.readdirSync>)
-      : readdir(directory, options),
-  );
+  mockGatewayProcTaskDir(`${proc}/task`, [String(PID), String(PID + 1)]);
   const realpath = fs.realpathSync.native;
   vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
     String(file) === `${sibling}/exe` ? GATEWAY_BIN : realpath(file, options),

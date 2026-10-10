@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -279,12 +280,7 @@ describe("uninstall OpenShell gateway user service", () => {
       vi.spyOn(fs, "readFileSync").mockImplementation(
         (file, options) => files.get(String(file)) ?? readFile(file, options),
       );
-      const readdir = fs.readdirSync;
-      vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) =>
-        String(directory) === `${proc}/task`
-          ? ([String(pid), String(pid + 1)] as unknown as ReturnType<typeof fs.readdirSync>)
-          : readdir(directory, options),
-      );
+      mockGatewayProcTaskDir(`${proc}/task`, [String(pid), String(pid + 1)]);
       const realpath = fs.realpathSync.native;
       vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
         String(file) === `${sibling}/exe` ? binary : realpath(file, options),

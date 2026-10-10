@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 
 import {
   gatewayIdForStateDir,
@@ -78,12 +79,7 @@ function fixture() {
   vi.spyOn(fs, "readFileSync").mockImplementation(
     (file, options) => files.get(String(file)) ?? readFile(file, options),
   );
-  const readdir = fs.readdirSync;
-  vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) =>
-    String(directory) === `${proc}/task`
-      ? ([String(pid), String(tid)] as unknown as ReturnType<typeof fs.readdirSync>)
-      : readdir(directory, options),
-  );
+  const taskDirectory = mockGatewayProcTaskDir(`${proc}/task`, [String(pid), String(tid)]);
   const realpath = fs.realpathSync.native;
   vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
     String(file) === `${task}/exe` ? binary : realpath(file, options),
@@ -111,7 +107,7 @@ function fixture() {
     gatewayName: "nemoclaw-18080",
     gatewayPort: 18080,
   };
-  return { files, outputs, kill, deps, target, stateDir };
+  return { files, outputs, kill, deps, target, stateDir, taskDirectory };
 }
 
 function stopScoped(f: ReturnType<typeof fixture>) {
@@ -165,11 +161,7 @@ describe.runIf(process.platform === "linux")("gateway identity after leader exit
     const f = fixture();
     f.files.set(`${proc}/environ`, "");
     f.files.set(`${proc}/task/${tid + 1}/environ`, "");
-    vi.mocked(fs.readdirSync).mockReturnValue([
-      String(pid),
-      String(tid + 1),
-      String(tid),
-    ] as unknown as ReturnType<typeof fs.readdirSync>);
+    f.taskDirectory.setEntries([String(pid), String(tid + 1), String(tid)]);
     expect(stopScoped(f).stopped).toEqual([pid]);
     expect(f.kill.mock.calls).toEqual([[pid, "SIGTERM"]]);
   });
@@ -179,21 +171,20 @@ describe.runIf(process.platform === "linux")("gateway identity after leader exit
     f.files.set(`${proc}/environ`, "");
     const emptyTids = Array.from({ length: 70 }, (_, index) => String(tid + index + 1));
     emptyTids.forEach((emptyTid) => f.files.set(`${proc}/task/${emptyTid}/environ`, ""));
-    vi.mocked(fs.readdirSync).mockReturnValue([
+    f.taskDirectory.setEntries([
       String(pid),
       ...emptyTids.slice(0, 10),
       String(tid),
       ...emptyTids.slice(10),
-    ] as unknown as ReturnType<typeof fs.readdirSync>);
+    ]);
     expect(readGatewayProcEntry(pid, "environ")).toBe(f.files.get(`${task}/environ`));
 
-    vi.mocked(fs.readdirSync).mockReturnValue([
-      String(pid),
-      ...emptyTids,
-      String(tid),
-    ] as unknown as ReturnType<typeof fs.readdirSync>);
+    f.taskDirectory.setEntries([String(pid), ...emptyTids, String(tid)]);
+    f.taskDirectory.resetCounts();
     vi.mocked(fs.readFileSync).mockClear();
     expect(readGatewayProcEntry(pid, "environ")).toBeNull();
+    expect(f.taskDirectory.reads).toBeLessThanOrEqual(65);
+    expect(f.taskDirectory.closes).toBe(1);
     expect(
       vi
         .mocked(fs.readFileSync)

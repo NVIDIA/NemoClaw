@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
+import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as wait from "../core/wait";
@@ -520,14 +521,10 @@ describe("gateway host runtime attachment probe", () => {
         ? ("State:\tZ (zombie)\n" as never)
         : (JSON.stringify(DECLARATION) as never),
     );
-    const readdir = fs.readdirSync;
-    vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) =>
-      String(directory) === `${proc}/task`
-        ? ([String(SYSTEMD_GATEWAY_PID), String(SYSTEMD_GATEWAY_PID + 1)] as unknown as ReturnType<
-            typeof fs.readdirSync
-          >)
-        : readdir(directory, options),
-    );
+    mockGatewayProcTaskDir(`${proc}/task`, [
+      String(SYSTEMD_GATEWAY_PID),
+      String(SYSTEMD_GATEWAY_PID + 1),
+    ]);
     const realpath = fs.realpathSync.native;
     const absentLeaderExe = new Map([[`${proc}/exe`, `${proc}/missing-executable`]]);
     vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
