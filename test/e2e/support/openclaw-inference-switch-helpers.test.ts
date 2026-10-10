@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../../../src/lib/inference-credential.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
@@ -14,9 +20,56 @@ import {
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
+  nativeNvidiaOpenClawApiKeyCommand,
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
 } from "../live/openclaw-inference-switch-helpers.ts";
+
+describe("native NVIDIA OpenClaw credential handle", () => {
+  it.each([
+    ["exact handle", NVIDIA_INFERENCE_PLACEHOLDER, 0],
+    ["another handle", "${OTHER_API_KEY}", 1],
+    ["literal credential", "sk-synthetic-value", 1],
+  ] as const)("checks %s without emitting it", (_caseName, apiKey, expectedStatus) => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-handle-"));
+    const configPath = join(directory, "openclaw.json");
+    try {
+      const command = nativeNvidiaOpenClawApiKeyCommand(configPath);
+      expect(command).toEqual([
+        "node",
+        "-e",
+        expect.any(String),
+        configPath,
+        NVIDIA_INFERENCE_PLACEHOLDER,
+      ]);
+      writeFileSync(
+        configPath,
+        JSON.stringify({ models: { providers: { inference: { apiKey } } } }),
+      );
+      const result = spawnSync(command[0]!, command.slice(1), { encoding: "utf8" });
+      expect(result.status).toBe(expectedStatus);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on malformed config without emitting it", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-handle-"));
+    const configPath = join(directory, "openclaw.json");
+    try {
+      writeFileSync(configPath, '{"apiKey":"sk-synthetic-value"');
+      const command = nativeNvidiaOpenClawApiKeyCommand(configPath);
+      const result = spawnSync(command[0]!, command.slice(1), { encoding: "utf8" });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
   const attempt = {

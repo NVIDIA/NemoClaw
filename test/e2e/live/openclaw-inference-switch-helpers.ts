@@ -5,10 +5,24 @@
 // target and fast e2e-support tests without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
 import type { RetryFailureClass } from "../../../tools/e2e/retry-evidence.mts";
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../../../src/lib/inference-credential.ts";
 import {
   startFakeOpenAiCompatibleServer,
   type FakeOpenAiCompatibleServerOptions,
 } from "../fixtures/fake-openai-compatible.ts";
+
+/** Compare inside the sandbox so artifact redaction cannot mask this exact handle assertion. */
+export function nativeNvidiaOpenClawApiKeyCommand(
+  configPath = "/sandbox/.openclaw/openclaw.json",
+): string[] {
+  return [
+    "node",
+    "-e",
+    'process.exit((() => { try { return Number(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))?.models?.providers?.inference?.apiKey !== process.argv[2]) } catch { return 1 } })())',
+    configPath,
+    NVIDIA_INFERENCE_PLACEHOLDER,
+  ];
+}
 
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;

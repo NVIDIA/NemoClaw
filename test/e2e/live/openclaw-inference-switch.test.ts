@@ -58,6 +58,7 @@ import {
   classifyUnavailableInitialProviderEvidence,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
+  nativeNvidiaOpenClawApiKeyCommand,
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
 } from "./openclaw-inference-switch-helpers.ts";
@@ -645,7 +646,16 @@ async function readAndAssertOpenClawConfig(
         ? "https://inference.local"
         : "https://inference.local/v1",
   );
-  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "${NVIDIA_INFERENCE_API_KEY}" : "unused");
+  const nativeHandle = expected.nativeNvidia
+    ? await sandbox.exec(SANDBOX_NAME, nativeNvidiaOpenClawApiKeyCommand(), {
+        artifactName: `${expected.artifactName}-native-credential-handle`,
+        env: commandEnv(home),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      })
+    : null;
+  expect(expected.nativeNvidia ? nativeHandle?.exitCode : provider?.apiKey).toBe(
+    expected.nativeNvidia ? 0 : "unused",
+  );
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
