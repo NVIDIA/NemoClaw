@@ -422,3 +422,72 @@ describe.each([OPENCLAW_TARGET, HERMES_TARGET])(
     });
   },
 );
+
+describe("Hermes native gateway credential refresh", () => {
+  it("does not restart when native route verification fails before the config commit", async () => {
+    const { deps, entry } = fixture();
+    entry.agent = "hermes";
+    deps.resolveAgentConfig = () => HERMES_TARGET;
+    deps.calls.probeSandboxRoute.mockResolvedValue({
+      ok: false,
+      detail: "rejected",
+      httpStatus: 401,
+    });
+    await expect(
+      runInferenceSet({ provider: "gemini-api", model: "fixture-model" }, deps),
+    ).rejects.toThrow("Sandbox-side verification rejected");
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it("restarts the selected gateway after committing a newly attached credential reference", async () => {
+    const { deps, entry } = fixture();
+    entry.agent = "hermes";
+    deps.resolveAgentConfig = () => HERMES_TARGET;
+    await runInferenceSet({ provider: "gemini-api", model: "fixture-model" }, deps);
+    expect(JSON.stringify(deps.calls.writeSandboxConfig.mock.calls)).toContain("${GEMINI_API_KEY}");
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(deps.calls.writeSandboxConfig.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.calls.restartSandboxGateway.mock.invocationCallOrder[0]!,
+    );
+    expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      failure: "failure",
+      restart: async () => ({
+        ok: false as const,
+        failureLayer: "health timeout",
+        detail: "synthetic-secret",
+      }),
+    },
+    {
+      failure: "exception",
+      restart: async () => {
+        throw new Error("synthetic-secret");
+      },
+    },
+  ])(
+    "preserves the committed route after restart $failure and retries activation",
+    async ({ restart }) => {
+      const { deps, entry, calls, attached } = fixture();
+      entry.agent = "hermes";
+      deps.resolveAgentConfig = () => HERMES_TARGET;
+      deps.calls.restartSandboxGateway.mockImplementationOnce(restart);
+      await expect(
+        runInferenceSet({ provider: "gemini-api", model: "fixture-model" }, deps),
+      ).rejects.toThrow(
+        /managed Hermes gateway restart.*committed route was not rolled back.*alpha gateway restart/,
+      );
+      expect(entry.provider).toBe("gemini-api");
+      expect([...attached.get("alpha")!]).toEqual([
+        hostedNativeProvider("gemini-api")!.providerName,
+      ]);
+      expect(calls.detachProvider).not.toHaveBeenCalled();
+      await runInferenceSet({ provider: "gemini-api", model: "fixture-model" }, deps);
+      expect(deps.calls.restartSandboxGateway).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(deps.calls.log.mock.calls)).not.toContain("synthetic-secret");
+    },
+  );
+});

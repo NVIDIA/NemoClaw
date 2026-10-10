@@ -1880,6 +1880,12 @@ async function runInferenceSetWithoutHostLock(
         // A prior failed native response or receipt write can leave the new config on disk
         // without ever activating it in the running gateway.
         configChanged: patched.changed || retryingOpenClawConfigSync,
+        // A new native attachment refreshes credentials for new processes only.
+        // Restart on retries too: an earlier attempt may have committed the config.
+        hermesGatewayRestart:
+          agentName === "hermes" && (selectingNative || previousNativeAttachment)
+            ? { gatewayName: expectedGatewayName }
+            : undefined,
         openClawPairingTarget:
           agentName === "openclaw"
             ? {

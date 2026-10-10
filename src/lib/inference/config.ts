@@ -13,7 +13,7 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
-import { hostedNativeProvider } from "./native-provider/hosted";
+import { hostedNativeProvider, usesNativeHermesEndpoint } from "./native-provider/hosted";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "./native-nvidia";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
@@ -322,12 +322,15 @@ export function getSandboxInferenceConfig(
   model: string,
   provider: string | null = null,
   preferredInferenceApi: string | null = null,
-  nativeProvider = true,
+  nativeProvider?: boolean,
   nativeEndpointUrl?: string | null,
 ): SandboxInferenceConfig {
   let providerKey: string;
   let primaryModelRef: string;
-  const hostedNative = nativeProvider
+  const useNativeProvider =
+    nativeProvider ??
+    (provider !== "hermes-provider" || usesNativeHermesEndpoint(nativeEndpointUrl));
+  const hostedNative = useNativeProvider
     ? hostedNativeProvider(provider, nativeEndpointUrl)
     : undefined;
   let inferenceBaseUrl = hostedNative?.endpoint ?? INFERENCE_ROUTE_URL;
