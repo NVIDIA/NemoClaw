@@ -37,6 +37,7 @@ class NativeSession:
     def __init__(self, command, log_path):
         self.command = [str(value) for value in command]
         self.log = Path(log_path).open("w")
+        self.protocol_log = Path(log_path).with_suffix(".protocol.jsonl").open("w")
         self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=self.log,
                                         text=True, bufsize=1)
@@ -60,6 +61,10 @@ class NativeSession:
         elapsed = (time.perf_counter() - started) * 1000
         if not line:
             raise RuntimeError(f"Native process exited without a response: {self.command}")
+        # Retain responses before parsing or oracle validation can fail.
+        self.protocol_log.write(json.dumps({"request": [str(field) for field in fields],
+                                           "response": line, "wall_ms": elapsed}) + "\n")
+        self.protocol_log.flush()
         response = json.loads(line)
         pid = response.get("process_id")
         if pid is not None:
@@ -96,6 +101,7 @@ class NativeSession:
                 self.process.kill()
                 self.process.wait()
             self.log.close()
+            self.protocol_log.close()
 
 
 def validate_native(response, actual, expected, gpu_required=False, resident=False):
@@ -180,6 +186,7 @@ def driver_command(args, profile=None):
 def verify_lifecycle(args, report, directory):
     session = NativeSession(driver_command(args), directory / "lifecycle.stderr.log")
     records = []
+    report["native_lifecycle_progress"] = []
     try:
         # Grow, shrink and erase facts inside the same CUDA context/pinned buffers.
         base = correctness_workloads()[0]
@@ -192,6 +199,10 @@ def verify_lifecycle(args, report, directory):
             for alg in ("dense", "sparse") if not args.cpu_only else ("dense",):
                 output = directory / f"lifecycle-{len(records)}.result.bin"
                 response, wall = session.request("cpu" if args.cpu_only else "cuda", alg, path, output)
+                report["native_lifecycle_progress"].append({"name": workload["name"],
+                    "algorithm": alg, "report": response, "external_request_ms": wall})
+                if response.get("actual_gpu_functions", 0) > 0 and response.get("gpu_stats", {}).get("gpu_ms", 0) > 0:
+                    report["gpu_executed"] = True
                 validate_native(response, read_result(output), expected, not args.cpu_only)
                 if not args.cpu_only:
                     cap = response["capabilities"]
@@ -637,7 +648,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler-binary", type=Path, default=ROOT / ".build/compiler/release/gpu-rust-compiler")
     parser.add_argument("--benchmark-binary", type=Path, default=ROOT / ".build/compiler/release/gpu-native-benchmark")
-    parser.add_argument("--cuda-library", type=Path, default=ROOT / ".build/cuda/libgpu_cuda.so")
+    parser.add_argument("--cuda-library", type=Path, default=ROOT / ".build/cuda/libgpulab_cuda.so")
     parser.add_argument("--references", type=Path, default=ROOT / ".build/ci-native/references")
     parser.add_argument("--repeats", type=int, default=21)
     parser.add_argument("--compile-repeats", type=int, default=9)
