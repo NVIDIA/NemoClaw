@@ -1,0 +1,153 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//! Owned OpenTofu workspaces for explicitly selected test executables.
+
+use crate::Bundle;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+use tempfile::TempDir;
+
+/// Where Unix sockets are missing, fake engines are reached over SSH. Windows
+/// resolves a bare program name in the launching executable's directory
+/// before `PATH`, so providers copied here run the relay as `ssh`.
+fn install_ssh_relay(directory: &Path) {
+    if cfg!(not(unix)) {
+        fs::copy(crate::ssh_relay(), directory.join(crate::executable("ssh"))).unwrap();
+    }
+}
+
+pub struct TofuWorkspace {
+    directory: TempDir,
+    tofu: PathBuf,
+}
+
+impl TofuWorkspace {
+    /// A workspace whose OpenTofu is the bundle's and uses the `nemoclaw`
+    /// provider at `nemoclaw` and the bundle's `openshell` and `fabric`
+    /// providers.
+    pub fn new(bundle: &Bundle, nemoclaw: impl AsRef<Path>) -> Self {
+        Self::with_providers(
+            bundle.tofu(),
+            &[
+                ("nemoclaw", nemoclaw.as_ref()),
+                ("openshell", &bundle.provider("openshell")),
+                ("fabric", &bundle.provider("fabric")),
+            ],
+        )
+    }
+
+    /// A workspace whose OpenTofu uses only the given `(name, executable)`
+    /// providers from `registry.opentofu.org/nvidia`.
+    pub fn with_providers(tofu: impl AsRef<Path>, providers: &[(&str, &Path)]) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, executable) in providers {
+            fs::copy(
+                executable,
+                directory
+                    .path()
+                    .join(crate::executable(&format!("terraform-provider-{name}"))),
+            )
+            .unwrap();
+        }
+        if !providers.is_empty() {
+            install_ssh_relay(directory.path());
+        }
+        let path = serde_json::to_string(directory.path()).unwrap();
+        let overrides = providers
+            .iter()
+            .map(|(name, _)| format!("\"registry.opentofu.org/nvidia/{name}\" = {path}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        fs::write(
+            directory.path().join("tofu.rc"),
+            format!("provider_installation {{ dev_overrides {{ {overrides} }} direct {{}} }}"),
+        )
+        .unwrap();
+        Self {
+            directory,
+            tofu: tofu.as_ref().to_owned(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        self.directory.path()
+    }
+
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.tofu);
+        command
+            .current_dir(self.path())
+            .env("TF_CLI_CONFIG_FILE", self.path().join("tofu.rc"))
+            .env("TF_IN_AUTOMATION", "1")
+            .env("CHECKPOINT_DISABLE", "1");
+        command
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn stages_only_the_selected_provider_and_cleans_only_its_workspace() {
+        let sources = tempfile::tempdir().unwrap();
+        let mut workspaces = Vec::new();
+        for selected in ["production", "fixture"] {
+            let provider = sources.path().join(selected);
+            let script = format!("#!/bin/sh\nprintf '%s' '{selected}'\n");
+            fs::write(&provider, &script).unwrap();
+            fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
+            let workspace = TofuWorkspace::with_providers("/bin/sh", &[("nemoclaw", &provider)]);
+            let staged = workspace
+                .path()
+                .join(crate::executable("terraform-provider-nemoclaw"));
+            let output = Command::new(&staged).output().unwrap();
+            assert!(output.status.success());
+            assert_eq!(output.stdout, selected.as_bytes());
+            assert_eq!(fs::read_to_string(&provider).unwrap(), script);
+            let config = fs::read_to_string(workspace.path().join("tofu.rc")).unwrap();
+            assert!(config.contains("registry.opentofu.org/nvidia/nemoclaw"));
+            assert!(config.contains(&serde_json::to_string(workspace.path()).unwrap()));
+            workspaces.push(workspace);
+        }
+        assert_ne!(workspaces[0].path(), workspaces[1].path());
+        let removed = workspaces.pop().unwrap();
+        let path = removed.path().to_owned();
+        drop(removed);
+        assert!(!path.exists());
+        assert!(workspaces[0].path().exists());
+        assert!(sources.path().join("fixture").exists());
+    }
+
+    #[test]
+    fn command_preserves_failure_output_and_allows_scenario_environment() {
+        let sources = tempfile::tempdir().unwrap();
+        let provider = sources.path().join("provider");
+        fs::write(&provider, b"explicit provider").unwrap();
+        let workspace = TofuWorkspace::with_providers("/bin/sh", &[("nemoclaw", &provider)]);
+        let output = workspace.command()
+            .args(["-c", r#"pwd -P; printf '%s\n' "$TF_CLI_CONFIG_FILE" "$TF_IN_AUTOMATION" "$CHECKPOINT_DISABLE" "$SCENARIO_VALUE"; printf 'expected failure' >&2; exit 23"#])
+            .env("SCENARIO_VALUE", "literal scenario value")
+            .output().unwrap();
+        let working_directory = workspace.path().canonicalize().unwrap();
+        assert_eq!(output.status.code(), Some(23));
+        assert_eq!(output.stderr, b"expected failure");
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            [
+                working_directory.to_str().unwrap(),
+                workspace.path().join("tofu.rc").to_str().unwrap(),
+                "1",
+                "1",
+                "literal scenario value",
+            ]
+        );
+    }
+}

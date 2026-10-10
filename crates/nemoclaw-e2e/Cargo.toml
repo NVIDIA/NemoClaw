@@ -26,6 +26,7 @@ nemoclaw-provider = { path = "../nemoclaw-provider" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
 fabric-provider = { path = "../fabric-provider" }
 nemoclaw-openshell = { path = "../nemoclaw-openshell" }
+nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 async-trait.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -45,15 +46,6 @@ tar.workspace = true
 [dev-dependencies]
 serde-saphyr.workspace = true
 getrandom.workspace = true
-
-[[bin]]
-name = "terraform-provider-nemoclaw-fixture"
-path = "src/bin/provider.rs"
-
-# Installed as `ssh` on PATH by the remote-service tests.
-[[bin]]
-name = "nemoclaw-e2e-ssh-fixture"
-path = "src/bin/ssh_fixture.rs"
 
 [lints]
 workspace = true

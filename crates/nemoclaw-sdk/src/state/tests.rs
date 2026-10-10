@@ -798,39 +798,3 @@ fn gateway_storage_bindings_record_their_typed_settings() {
     changed.insert("image".into(), "changed".into());
     assert!(bindings[address].differs(&changed));
 }
-
-#[tokio::test]
-async fn state_with_openshell_types_from_the_nemoclaw_provider_is_rejected_before_any_read() {
-    for kind in [
-        "nemoclaw_workspace",
-        "nemoclaw_provider",
-        "nemoclaw_provider_profile",
-        "nemoclaw_sandbox",
-        "nemoclaw_gateway_capabilities",
-        "nemoclaw_agent_configuration",
-        "nemoclaw_sandbox_readiness",
-        "nemoclaw_fabric_capabilities",
-    ] {
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::write(
-            directory.path().join("terraform.tfstate"),
-            serde_json::json!({"version": 4, "resources": [
-                {"mode": "managed", "type": kind, "name": "example", "instances": []}
-            ]})
-            .to_string(),
-        )
-        .unwrap();
-        // A missing OpenTofu proves that rejection needs no provider or read.
-        let error = super::bindings(
-            directory.path(),
-            &directory.path().join("missing-tofu"),
-            &crate::CancellationToken::new(),
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            error.to_string().contains("earlier release"),
-            "{kind}: {error}"
-        );
-    }
-}

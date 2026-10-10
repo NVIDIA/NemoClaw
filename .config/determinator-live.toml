@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Which changed files can affect the live suites, read by `nemoclaw-build changes live`.
+# A file inside a crate marks that crate changed; the command then checks whether the
+# live build uses it: the packages whose tests run live, and the CLI and providers the
+# bundle ships, with their development dependencies. Any other file outside a crate runs
+# the live suites unless a rule below ignores it. Rules apply in order, before
+# determinator's defaults.
+
+# A workspace package under examples/: map it to its package.
+[[path-rule]]
+globs = ["examples/onboarding-tui/**"]
+mark-changed = []
+post-rule = "skip-rules"
+
+# Inputs the live tests and the bundle read outside crates.
+[[path-rule]]
+globs = [
+    "examples/**",
+    "image/**",
+    "runtimes/**",
+    "schemas/**",
+    "versions.json",
+    "rust-toolchain.toml",
+    ".config/nextest.toml",
+    ".github/actions/**",
+    # The live jobs run in CI / Native.
+    ".github/workflows/native-platform.yml",
+    ".github/workflows/rust.yml",
+]
+mark-changed = "all"
+
+# Not read by the live tests, the bundle, or their workflows.
+[[path-rule]]
+globs = [
+    "docs/**",
+    "fern/**",
+    "tools/**",
+    ".github/**",
+    ".config/**",
+    ".agents/**",
+    ".claude/**",
+    "deny.toml",
+    ".pre-commit-config.yaml",
+    "AGENTS.md",
+    "WRITING.md",
+]
+mark-changed = []

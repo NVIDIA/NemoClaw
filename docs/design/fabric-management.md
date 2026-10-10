@@ -156,5 +156,5 @@ The [image command suite](../../image/test_agent_contract.py) exercises the same
 Its successful dummy health results do not qualify a real adapter’s native health or cleanup through OpenShell.
 The existing installed Fabric fixture adapter remains authored and packaged in Fabric.
 The separate dummy backend is authored in NemoClaw and exercises the image interface without Fabric.
-The [discovery tests](../../crates/nemoclaw-e2e/tests/discovery.rs) read that installed discovery output and image metadata through the real OpenTofu/provider planner.
+The [discovery tests](../../crates/nemoclaw-provider/tests/contract/discovery.rs) read that installed discovery output and image metadata through the real OpenTofu/provider planner.
 [Bundle fixtures](../contributing/integration-tests.md#opentofu-and-bundle-lifecycle) separately exercise deployment recovery, export/reapply and ownership.

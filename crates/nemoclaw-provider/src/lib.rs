@@ -39,5 +39,5 @@ pub(crate) use nemoclaw_sdk::{
 mod download;
 pub(crate) use nemoclaw_sdk::{ByteProgress, DownloadPhase};
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 use nemoclaw_sdk::compile;

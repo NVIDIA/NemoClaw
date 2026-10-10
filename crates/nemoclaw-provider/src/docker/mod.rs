@@ -23,27 +23,27 @@ impl std::ops::Deref for Engine {
 impl Engine {
     pub fn connect(endpoint: &str) -> Result<Self, Error> {
         let read = nemoclaw_discovery::Engine::connect(endpoint)?;
-        #[cfg(unix)]
-        {
-            let host_observer: std::sync::Arc<dyn crate::hardware::HostObserver> =
-                if endpoint.starts_with("ssh://") {
-                    std::sync::Arc::new(ssh::RemoteHost)
-                } else {
+        // Local engines exist only on Unix, where their host can be measured.
+        let host_observer: std::sync::Arc<dyn crate::hardware::HostObserver> =
+            if endpoint.starts_with("ssh://") {
+                std::sync::Arc::new(ssh::RemoteHost)
+            } else {
+                #[cfg(unix)]
+                {
                     std::sync::Arc::new(crate::hardware::LocalHost)
-                };
-            Ok(Self {
-                read,
-                host_observer_explicit: false,
-                host_observer,
-            })
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = read;
-            Err(Error::Conflict(
-                "container-engine connections are unsupported on this platform",
-            ))
-        }
+                }
+                #[cfg(not(unix))]
+                {
+                    return Err(Error::Conflict(
+                        "local container engines are unsupported on this platform",
+                    ));
+                }
+            };
+        Ok(Self {
+            read,
+            host_observer_explicit: false,
+            host_observer,
+        })
     }
     /// The same engine reported under another endpoint.
     pub fn relabel(self, endpoint: &str) -> Self {
@@ -63,21 +63,19 @@ impl Engine {
     }
 }
 
-// Only the Unix fixture tests build container archives.
-#[cfg(all(test, unix))]
+// The fixture tests build container archives.
+#[cfg(test)]
 pub(crate) use nemoclaw_docker::archive;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(crate) mod fixture;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod two_engines;
 
 mod connections;
 pub use connections::Connections;
 
-#[cfg(unix)]
 mod ssh;
 
-#[cfg(unix)]
 pub(crate) use nemoclaw_discovery::ssh_command;

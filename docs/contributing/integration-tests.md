@@ -9,18 +9,19 @@ Complete the [build prerequisites](../build.md) first.
 
 ## OpenTofu and Bundle Lifecycle
 
-The private `nemoclaw-e2e` crate runs the actual provider protocol through OpenTofu 1.12.6.
-Build the production providers and supply absolute executable paths explicitly.
-Tests install `terraform-provider-openshell` and `terraform-provider-fabric` from the directory that holds `NEMOCLAW_TEST_PROVIDER`:
+The provider contract tests and the private `nemoclaw-e2e` crate run the provider protocol through OpenTofu 1.12.6.
+They take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle such as the `dist/PLATFORM` directory that `cargo ci bundle` writes.
+The bundle supplies the pinned OpenTofu and the providers the tests run.
+Each provider's contract tests run instead the provider Cargo builds with them, so they test the checkout without a new bundle; the other providers they need come from the bundle.
+Tests in other packages find fixture executables beside the test executables, so build those first:
 
 ```sh
-cargo build -p nemoclaw-provider -p openshell-provider -p fabric-provider
-NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration provider_protocol:: -- --ignored
+cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
-These tests launch a fixture provider built by that crate and use temporary files.
+These tests launch the fixture provider that `nemoclaw-fixture-provider` builds and use temporary files.
 On Unix, they also run the production provider against a local Docker API fixture to check network and image planning, including prerequisite changes before saved-plan application.
 They create no Docker, OpenShell, or inference resources.
 The fixture provider is not a production bundle component.
@@ -28,9 +29,8 @@ The fixture provider is not a production bundle component.
 On Unix, run from the repository root to test combined service capacity through the production provider and an isolated SSH simulator:
 
 ```sh
-NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration service_capacity:: -- --ignored
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-provider --test contract service_capacity:: -- --ignored
 ```
 
 This fixture checks shared-host overcommit, deferred reads, preserved state after failed observations, and cleanup without capacity checks.
@@ -38,16 +38,8 @@ It uses a built-in OpenTofu resource to exercise the generated precondition and 
 
 Test the runtime bundle and live serving backend separately.
 
-Test the production provider's full OpenShell resource graph against the local gRPC fixture:
-
-```sh
-NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration opentofu_openshell:: -- --ignored
-```
-
-These tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
-The `gateway_readiness::` tests use the same explicit OpenTofu/provider paths with local engine and OpenShell fixtures.
+The [OpenShell provider contract](#openshell-provider-contract) tests also check gateway version and driver preconditions, failed observations without resource changes, and data-source reads deferred until bootstrap inputs become known.
+The `gateway_readiness::` tests use the same bundle with local engine and OpenShell fixtures.
 It checks prompt managed-gateway exit diagnostics, bootstrap state retained after failure, corrected retry, unchanged-apply rechecks, and teardown with the readiness data source omitted.
 Its bootstrap identity is a built-in OpenTofu resource; it creates no live container.
 Standalone HCL cases exercise provider/profile replacement and removal without sandbox teardown mode, recreation after confirmed absence, credential-reference updates, and recovery after a lost creation response.
@@ -82,30 +74,69 @@ The export fixture checks provider refresh failures through OpenTofu, unchanged 
 The web-search lifecycle case covers Brave and Tavily at deployment, sandbox, and agent scope, including profile and sandbox-grant drift.
 The mixed-search export case checks shared registrations, unused definitions, export without search keys, unchanged reapply, and rejected provider-type or credential-reference drift without changes to saved state.
 
+## NemoClaw Provider Contract
+
+The `nemoclaw-provider` crate's `contract` tests run its types through OpenTofu against fake Docker engines, gateways, and model servers:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-provider --test contract -- --ignored
+```
+
+They cover service storage, Kubernetes planning, runtime images and runtime contracts, gateway readiness, and engine and hardware discovery.
+`every_type_has_a_contract_test` requires a contract test for every type the provider serves.
+Its `ELSEWHERE` list names the types still tested only in `nemoclaw-e2e` and why: the managed gateway, service capacity, and service readiness tests need that crate's fixture binaries, gateway storage needs Docker, and inference capabilities are read only through SDK deployments.
+
+## OpenShell Provider Contract
+
+The `openshell-provider` crate's `contract` tests apply each fixture in `crates/openshell-provider/tests/contract/fixtures` through OpenTofu against a fake OpenShell gateway from `nemoclaw-test-fixtures`.
+Each fixture must plan no managed changes after it is applied, and teardown must remove every sandbox, provider registration, and profile while the gateway keeps the workspace:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p openshell-provider --test contract -- --ignored
+```
+
+Its `capabilities` tests check gateway preconditions and saved-plan rechecks, and its `standalone` tests apply authored OpenShell resources from `tests/contract/standalone` through lost replies, foreign or missing objects, bootstrap endpoints, and registration rotation.
+The fixtures are the OpenShell resources the SDK compiles for each example with an external gateway, excluding examples whose credentials are read from a managed service's container.
+`nemoclaw-e2e`'s `openshell_contract_fixtures` test fails when they differ from what the SDK compiles; regenerate them with `NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-e2e --test integration openshell_contract_fixtures`.
+
+## Fabric Provider Contract
+
+The `fabric-provider` crate's `contract` tests run each Fabric type through OpenTofu with the same bundle:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p fabric-provider --test contract -- --ignored
+```
+
+`fabric_agent_configuration` applies a Pi configuration to a sandbox from `tests/contract/fixtures`. An invalid configuration fails validation at its field without repeating the value. The configuration updates without replacing the sandbox, a stopped host is reconfigured, and a lost reply is not retried.
+`fabric_sandbox_readiness` reports the configured agent ready, and not ready while its health fails, without writing to the sandbox.
+`fabric_capabilities` reads a fake Docker engine's image metadata. A compatible image reports its runtime binaries, while another platform, or a read policy without the runtime's paths, is unsupported, and a missing image is unknown.
+A coverage test requires a contract test for every Fabric type.
+
 ## Standalone Sandbox Completion
 
-On Unix, build the production provider and supply the explicit OpenTofu and provider paths as above.
+On Unix, supply the bundle as above; this test runs the bundle's `nemoclaw` provider.
 Run from the repository root:
 
 ```sh
-NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
   cargo test -p nemoclaw-e2e --test integration sandbox_readiness:: -- --ignored
 ```
 
 The fixture runs the sandbox completion data source through OpenTofu against a local gRPC server, without SDK deployment orchestration.
 It checks deferred health reads, failed postconditions with retained observations and bindings, unchanged-apply rechecks, prompt configuration-admission rejection with safe sandbox context, and teardown without readiness.
 It creates temporary state and simulated OpenShell resources; it does not start containers or invoke a model.
-On failure, inspect the OpenTofu diagnostic and verify that the selected provider matches the checkout before rerunning.
+On failure, inspect the OpenTofu diagnostic and verify that the bundle matches the checkout before rerunning.
 
 ## Standalone Service Readiness
 
-On Unix, build the production provider as above and run from the repository root:
+On Unix, supply the bundle as above and run from the repository root:
 
 ```sh
-NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
-NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration service_readiness:: -- --ignored
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-provider --test contract service_readiness:: -- --ignored
 ```
 
 The fixture uses an isolated SSH/Docker simulator and a builtin OpenTofu consumer, without SDK deployment orchestration or a reachable OpenShell gateway.
@@ -307,7 +338,7 @@ With a verified bundle, run:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration remote_service::managed_hermes -- --ignored
+  cargo test -p nemoclaw-e2e --test integration remote_service::managed_bearer -- --ignored
 ```
 
 The fixture simulates SSH/Docker and OpenShell while exercising apply, export/reapply, observation failures and retained data through the bundled CLI/provider.

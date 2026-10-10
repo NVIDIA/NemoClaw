@@ -323,8 +323,7 @@ Destroy uses native provider compute/cache state and separately verified credent
 
 ### Recover an Interrupted Helm Removal
 
-This procedure applies to managed Kubernetes and OpenShift deployments using the native Helm provider graph.
-For deployments using the earlier combined gateway resource, follow the [migration policy](migration.md#move-from-the-combined-kubernetes-gateway-resource) with their original tooling.
+This procedure applies to managed Kubernetes and OpenShift deployments.
 
 During destroy, the pinned Helm provider can lose a release binding when its release lookup fails, even though the release remains in the cluster.
 Before removing a bound release, NemoClaw saves a private checkpoint at `runtime/helm-recovery.json` under the deployment state directory.

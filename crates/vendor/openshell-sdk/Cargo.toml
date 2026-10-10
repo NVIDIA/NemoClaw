@@ -11,7 +11,7 @@ license = "Apache-2.0"
 repository = "https://github.com/NVIDIA/OpenShell"
 
 [dependencies]
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "6648bd0c290efbc41ba131ee9831ee45cd431f94", default-features = false }
+openshell-core = { git = "https://github.com/NVIDIA/OpenShell", rev = "e1f3c82caa3ed3b65de22889ae7ef32a774878ef", default-features = false }
 async-trait = "0.1"
 futures = { version = "0.3" }
 hyper = { version = "1.6", features = ["full"] }

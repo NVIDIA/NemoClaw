@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# A fixture nemoclaw provider for the provider protocol tests. It serves SDK
+# resource definitions, so it lives apart from nemoclaw-test-fixtures: the
+# openshell and fabric provider tests use those fixtures without compiling the
+# SDK. Tests find the executable beside theirs (fixture_executable).
+[package]
+name = "nemoclaw-fixture-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "nemoclaw-fixture-provider"
+path = "src/main.rs"
+
+[dependencies]
+nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
+nemoclaw-tofu = { path = "../nemoclaw-tofu" }
+tf-provider.workspace = true
+async-trait.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
+
+[lints]
+workspace = true

@@ -4,13 +4,13 @@
 
 use super::*;
 
-pub(super) fn package_inputs(tools: &Tools<'_>, platform: &str) -> Result<()> {
+pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
     let output = fs::File::create(".build/ci/lifecycle-inputs.tar")?;
     // Leave compression to the artifact uploader; gzip in this debug build is slow.
     let mut archive = tar::Builder::new(output);
-    // Tar preserves executable permissions across artifact upload/download.
+    // Tar preserves executable permissions across artifact upload/download. The
+    // bundle job uploads dist/PLATFORM separately, so it can build in parallel.
     for directory in [
-        Path::new("dist").join(platform),
         protoc_directory(tools.protobuf),
         nextest_directory(tools.nextest),
     ] {
@@ -20,13 +20,12 @@ pub(super) fn package_inputs(tools: &Tools<'_>, platform: &str) -> Result<()> {
         std::env::current_exe()?,
         Path::new(".build/ci").join(nemoclaw_build_executable("nemoclaw-build")),
     )?;
-    // Protocol fixtures locate sibling providers beside this explicit binary.
-    for name in ["nemoclaw", "openshell", "fabric"] {
-        let path = Path::new("target/debug").join(nemoclaw_build_executable(&format!(
-            "terraform-provider-{name}"
-        )));
-        archive.append_path(&path)?;
-    }
+    // The lifecycle step puts the fake ssh first on PATH where Unix sockets
+    // are missing. The providers need no copy here: the bundle ships them, and
+    // nextest archives each provider package's executables with its tests.
+    archive.append_path(
+        Path::new("target/debug").join(nemoclaw_build_executable("nemoclaw-fixture-ssh")),
+    )?;
     archive.finish()?;
     Ok(())
 }

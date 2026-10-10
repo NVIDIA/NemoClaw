@@ -1,9 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// Deployment planning requires image discovery, whose engine transports are Unix-only.
-// Windows retains bridge tests that need no engine transport and an unsupported-engine regression.
-#![cfg(unix)]
-
 use nemoclaw_e2e::openshell::Fixture;
 use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
 use std::{

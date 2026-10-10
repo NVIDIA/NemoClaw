@@ -1,18 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
-
 use nemoclaw_e2e::{openshell::Fixture, tofu::TofuWorkspace};
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::fs;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated gateway fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn standalone_sandbox_completion_rejects_unknown_health_and_retains_bindings() {
-    let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
-    let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
-    let directory = TofuWorkspace::new(tofu, provider);
+    let bundle = nemoclaw_test_fixtures::Bundle::from_env();
+    let directory = TofuWorkspace::new(&bundle, bundle.provider("nemoclaw"));
     let root = directory.path();
     let fixture = Fixture::start().await;
     let mut document = Document::parse(

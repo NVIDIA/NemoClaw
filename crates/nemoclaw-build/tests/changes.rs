@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Whether a change can affect `CI / Images`, decided from a real Git history and
-//! Cargo workspace without network access.
+//! Whether a change can affect `CI / Images` or the live suites, decided from a real
+//! Git history and Cargo workspace without network access.
 
 use std::{fs, path::Path, process::Command};
 
 const RULES: &str = include_str!("../../../.config/determinator-images.toml");
+const LIVE_RULES: &str = include_str!("../../../.config/determinator-live.toml");
 
 fn manifest(name: &str, dependencies: &str) -> String {
     format!(
@@ -82,6 +83,14 @@ impl Repo {
                 ),
             ),
             (".config/determinator-images.toml", RULES.to_owned()),
+            (".config/determinator-live.toml", LIVE_RULES.to_owned()),
+            (".config/nextest.toml", "\n".into()),
+            (
+                ".github/workflows/native-platform.yml",
+                "name: native\n".into(),
+            ),
+            ("examples/local.yaml", "kind: Deployment\n".into()),
+            ("versions.json", "{}\n".into()),
             (".dockerignore", "*\n".into()),
             (".github/workflows/images.yml", "name: images\n".into()),
             (".github/workflows/rust.yml", "name: rust\n".into()),
@@ -98,6 +107,22 @@ impl Repo {
         ];
         for (path, contents) in files {
             write(dir.path(), path, &contents);
+        }
+        // The rest of the live build: the CLI and providers in the bundle, and a
+        // package outside it.
+        for name in [
+            "nemoclaw-cli",
+            "nemoclaw-provider",
+            "openshell-provider",
+            "fabric-provider",
+            "nemoclaw-onboarding",
+        ] {
+            write(
+                dir.path(),
+                &format!("crates/{name}/Cargo.toml"),
+                &manifest(name, "nemoclaw-sdk = { path = \"../nemoclaw-sdk\" }\n"),
+            );
+            write(dir.path(), &format!("crates/{name}/src/lib.rs"), "");
         }
         for name in ["build", "ollama-proxy", "runtime", "sdk", "e2e"] {
             write(
@@ -121,6 +146,15 @@ impl Repo {
 
     /// Commit the edits (None deletes a file), then ask about the base commit.
     fn decide(&self, edits: &[(&str, Option<&str>)], base: Option<&str>) -> (String, String) {
+        self.decide_for("images", edits, base)
+    }
+
+    fn decide_for(
+        &self,
+        workflow: &str,
+        edits: &[(&str, Option<&str>)],
+        base: Option<&str>,
+    ) -> (String, String) {
         let recorded = self.base();
         for (path, contents) in edits {
             match contents {
@@ -131,7 +165,7 @@ impl Repo {
         succeed(self.0.path(), "git", &["add", "-A"]);
         succeed(self.0.path(), "git", &["commit", "-q", "-m", "change"]);
         let output = Command::new(env!("CARGO_BIN_EXE_nemoclaw-build"))
-            .args(["changes", "images", "--base", base.unwrap_or(&recorded)])
+            .args(["changes", workflow, "--base", base.unwrap_or(&recorded)])
             .current_dir(self.0.path())
             .env("CARGO", cargo())
             .env("CARGO_NET_OFFLINE", "true")
@@ -233,4 +267,45 @@ fn an_unanalyzable_change_runs_the_image_checks() {
     );
     assert_eq!(decision, "images=true");
     assert!(stderr.contains("running the image checks"), "{stderr}");
+}
+
+fn live(edits: &[(&str, Option<&str>)]) -> String {
+    let (decision, stderr) = Repo::new().decide_for("live", edits, None);
+    assert!(!stderr.contains("could not analyze"), "{stderr}");
+    decision
+}
+
+#[test]
+fn documentation_other_workflows_and_packages_outside_the_live_build_skip_live_suites() {
+    let decision = live(&[
+        ("docs/guide.md", Some("# Changed\n")),
+        (".github/workflows/images.yml", Some("name: changed\n")),
+        (
+            "crates/nemoclaw-onboarding/src/lib.rs",
+            Some("pub fn changed() {}\n"),
+        ),
+    ]);
+    assert_eq!(decision, "live=false");
+}
+
+#[test]
+fn live_build_packages_and_their_inputs_run_live_suites() {
+    for path in [
+        "crates/nemoclaw-sdk/src/lib.rs",
+        "crates/nemoclaw-runtime/src/lib.rs",
+        "crates/nemoclaw-e2e/src/lib.rs",
+        "crates/nemoclaw-build/src/lib.rs",
+        "crates/nemoclaw-cli/src/lib.rs",
+        "crates/openshell-provider/src/lib.rs",
+        "runtimes/vllm/build.json",
+        "image/fabric/Dockerfile",
+        "examples/local.yaml",
+        "versions.json",
+        ".config/nextest.toml",
+        ".github/workflows/native-platform.yml",
+        ".github/workflows/rust.yml",
+        "Makefile",
+    ] {
+        assert_eq!(live(&[(path, Some("# changed\n"))]), "live=true", "{path}");
+    }
 }

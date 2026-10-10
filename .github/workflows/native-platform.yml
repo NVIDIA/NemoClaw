@@ -10,9 +10,14 @@ on:
       platform:
         type: string
         required: true
-      shard-lifecycle:
+      lifecycle-shards:
+        description: JSON list of lifecycle shard numbers; its length is the partition count.
+        type: string
+        default: "[1, 2]"
+      live:
+        description: Also run the Docker and Kubernetes live suites, which need a Linux runner.
         type: boolean
-        default: true
+        default: false
 permissions:
   contents: read
 defaults:
@@ -21,6 +26,10 @@ defaults:
 env:
   TEST_PLATFORM: ${{ inputs.platform }}
   CARGO_INCREMENTAL: "0"
+# Build and test, and Build bundle, run in parallel on separate runners; the
+# lifecycle shards start when both have uploaded their artifacts. Artifact names
+# carry the run attempt, and consumers read them from the producers' outputs, so
+# rerunning a failed shard reuses an earlier attempt's artifacts.
 jobs:
   build:
     name: Build and test
@@ -53,30 +62,12 @@ jobs:
           retention-days: 14
       - name: Check generated configuration schema and reference
         run: cargo ci schema
-      - name: Build and verify bundle
-        run: cargo ci bundle
-      # Windows has few lifecycle fixtures; transferring an archive costs more
-      # than running them here. Unix fixtures run on two independent workers.
-      - name: Execute unsharded lifecycle
-        if: ${{ !inputs.shard-lifecycle }}
-        run: cargo ci lifecycle
-      - name: Upload unsharded lifecycle timings
-        if: ${{ always() && !inputs.shard-lifecycle }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lifecycle-${{ inputs.platform }}-${{ github.run_attempt }}
-          path: target/nextest/lifecycle/lifecycle.xml
-          if-no-files-found: ignore
-          retention-days: 14
       - name: Archive lifecycle executables and inputs
-        if: inputs.shard-lifecycle
         run: cargo ci archive
       - name: Identify lifecycle artifact
-        if: inputs.shard-lifecycle
         id: identity
         run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Upload lifecycle inputs
-        if: inputs.shard-lifecycle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.identity.outputs.artifact }}
@@ -88,35 +79,74 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  bundle:
+    name: Build bundle
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A separate cache: the bundle's release dependencies and the debug build
+      # tool that assembles it, which the test job's cache does not hold together.
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ inputs.platform }}
+          cache-prefix: native-bundle-v1
+      - name: Build and verify bundle
+        run: cargo ci bundle
+      # Tar preserves the executable permissions that artifact transfer drops.
+      - name: Pack bundle
+        run: |
+          mkdir -p .build/ci
+          tar -cf .build/ci/bundle.tar "dist/${TEST_PLATFORM}"
+      - name: Identify bundle artifact
+        id: identity
+        run: echo "artifact=bundle-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Upload bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: .build/ci/bundle.tar
+          include-hidden-files: true
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
+
   lifecycle:
     name: Lifecycle / ${{ matrix.shard }}
-    if: inputs.shard-lifecycle
-    needs: build
+    needs: [build, bundle]
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: ${{ fromJSON(inputs.lifecycle-shards) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The producer output also supports rerunning a failed shard without
-      # rebuilding: its artifact may come from an earlier run attempt.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: .build/ci
-      # Tar preserves the executable permissions that artifact transfer drops.
-      - name: Extract lifecycle inputs
-        run: tar -xf .build/ci/lifecycle-inputs.tar
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.bundle.outputs.artifact }}
+          path: .build/ci
+      - name: Extract lifecycle inputs and bundle
+        run: |
+          tar -xf .build/ci/lifecycle-inputs.tar
+          tar -xf .build/ci/bundle.tar
       - name: Execute lifecycle partition without compiling
         env:
           LIFECYCLE_SHARD: ${{ matrix.shard }}
+          LIFECYCLE_SHARDS: ${{ strategy.job-total }}
         run: >-
           .build/ci/nemoclaw-build ci lifecycle
-          --partition "hash:${LIFECYCLE_SHARD}/2"
+          --partition "hash:${LIFECYCLE_SHARD}/${LIFECYCLE_SHARDS}"
           --archive-file .build/ci/lifecycle.tar.zst
       - name: Upload lifecycle timings
         if: always()
@@ -127,3 +157,72 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+
+  # Each partition reports and enforces its own budget; this job reports the
+  # platform's whole lifecycle suite in its summary, from the partitions'
+  # uploaded timings, including failed partitions'. It never fails the platform.
+  lifecycle-timing:
+    name: Lifecycle timing
+    needs: [build, lifecycle]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.lifecycle.result != 'skipped' }}
+    continue-on-error: true
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      # The build tool comes from the lifecycle inputs; this job compiles nothing.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: .build/ci
+      # Every attempt's timings; the report reads each shard's latest attempt.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: lifecycle-${{ inputs.platform }}-*
+          path: .build/ci/timings
+      - name: Report the whole lifecycle suite
+        env:
+          SHARDS: ${{ inputs.lifecycle-shards }}
+        run: |
+          tool=.build/ci/nemoclaw-build
+          if [ "$RUNNER_OS" = Windows ]; then tool="$tool.exe"; fi
+          tar -xf .build/ci/lifecycle-inputs.tar "$tool"
+          "$tool" lifecycle-timing .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
+
+  # The live suites reuse this platform's bundle instead of building their own,
+  # so they start when it is ready. Like the lifecycle shards, they count toward
+  # the platform's required Test / PLATFORM check.
+  live-docker:
+    name: Live / Docker
+    if: inputs.live
+    needs: bundle
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The second commit is a pull request merge commit's base.
+          fetch-depth: 2
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-docker
+          bundle: ${{ needs.bundle.outputs.artifact }}
+
+  live-kind:
+    name: Live / Kind
+    if: inputs.live
+    needs: bundle
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The second commit is a pull request merge commit's base.
+          fetch-depth: 2
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-kind
+          bundle: ${{ needs.bundle.outputs.artifact }}

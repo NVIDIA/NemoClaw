@@ -228,7 +228,6 @@ A failed startup retains provider state, the model volume, and status for inspec
 Recovery may replace the container while reusing that volume.
 Destroy removes owned runtime resources and retains the model volume.
 Verified cached snapshots can be reused without querying a subsequently changed registry tag.
-There is no automatic migration or adoption of storage from the older `ollama` resource form; use a fresh deployment and retain the old bundle/state for its teardown.
 
 Configuration, registry download, startup protocol, memory checks, and removal behavior are covered by fixtures.
 Live image builds, GPU inference, tools and agent replies with this adapter have not been tested ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).

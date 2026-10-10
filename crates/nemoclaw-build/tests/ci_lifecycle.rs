@@ -25,11 +25,17 @@ if [ "$1 $2" = 'nextest --version' ]; then
     exit 0
 fi
 printf '%s\n' "$@" > arguments
+if [ "$1" = build ]; then
+    /bin/mkdir -p target/debug
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > bundled\n' > target/debug/nemoclaw-build
+    /bin/chmod +x target/debug/nemoclaw-build
+    exit 0
+fi
 if [ "$1 $2" = 'nextest list' ]; then
     printf '%s\n' "$CARGO_LIST"
     exit "${CARGO_RESULT:-0}"
 fi
-printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_TEST_TOFU" "$NEMOCLAW_TEST_PROVIDER" > inputs
+printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "${NEMOCLAW_TEST_TOFU-unset}" "${NEMOCLAW_TEST_PROVIDER-unset}" > inputs
 exit "${CARGO_RESULT:-0}"
 "#,
             ),
@@ -57,6 +63,8 @@ exit "${CARGO_RESULT:-0}"
             .env("PROTOC", self.0.path().join("bin/protoc"))
             .env("PATH", self.0.path().join("bin"))
             .env("TEST_PLATFORM", "linux_arm64")
+            .env_remove("NEMOCLAW_TEST_TOFU")
+            .env_remove("NEMOCLAW_TEST_PROVIDER")
             .env_remove("GITHUB_ENV")
             .env_remove("GITHUB_PATH");
         command
@@ -86,12 +94,14 @@ fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
         args.contains("--profile\nlifecycle\n--run-ignored\nonly\n"),
         "{args}"
     );
+    // The bundle supplies OpenTofu and the providers; each provider's own
+    // tests use the one Cargo built.
     let inputs = fs::read_to_string(fixture.0.path().join("inputs")).unwrap();
-    assert!(inputs.contains("dist/linux_arm64/libexec/tofu"), "{inputs}");
-    assert!(
-        inputs.contains("target/debug/terraform-provider-nemoclaw"),
-        "{inputs}"
-    );
+    let inputs: Vec<_> = inputs.lines().collect();
+    assert_eq!(inputs.len(), 3, "{inputs:?}");
+    assert!(inputs[0].ends_with("/dist/linux_arm64"), "{inputs:?}");
+    assert!(std::path::Path::new(inputs[0]).is_absolute(), "{inputs:?}");
+    assert_eq!(inputs[1..], ["unset", "unset"]);
 }
 
 #[test]
@@ -158,7 +168,7 @@ fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
 }
 
 #[test]
-fn archive_packages_the_bundle_tools_and_provider_helpers_with_executable_modes() {
+fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_and_nextest() {
     let fixture = Fixture::new();
     for path in [
         "dist/linux_arm64/bin/nemoclaw",
@@ -168,6 +178,7 @@ fn archive_packages_the_bundle_tools_and_provider_helpers_with_executable_modes(
         "target/debug/terraform-provider-nemoclaw",
         "target/debug/terraform-provider-openshell",
         "target/debug/terraform-provider-fabric",
+        "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = fixture.0.path().join(path);
         fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -193,12 +204,16 @@ fn archive_packages_the_bundle_tools_and_provider_helpers_with_executable_modes(
     let packed = fs::File::open(fixture.0.path().join(".build/ci/lifecycle-inputs.tar")).unwrap();
     let unpacked = tempfile::tempdir().unwrap();
     tar::Archive::new(packed).unpack(unpacked.path()).unwrap();
+    // The bundle job uploads dist/PLATFORM separately, in parallel with this build.
+    assert!(!unpacked.path().join("dist").exists());
+    // Nextest archives each provider package's executables with its tests.
+    for name in ["nemoclaw", "openshell", "fabric"] {
+        let path = format!("target/debug/terraform-provider-{name}");
+        assert!(!unpacked.path().join(&path).exists(), "{path}");
+    }
     for path in [
-        "dist/linux_arm64/bin/nemoclaw",
         ".tools/nextest-0.9.144/cargo-nextest",
-        "target/debug/terraform-provider-nemoclaw",
-        "target/debug/terraform-provider-openshell",
-        "target/debug/terraform-provider-fabric",
+        "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = unpacked.path().join(path);
         assert_eq!(fs::read_to_string(&file).unwrap(), path);
@@ -208,6 +223,32 @@ fn archive_packages_the_bundle_tools_and_provider_helpers_with_executable_modes(
         fs::read(unpacked.path().join(".build/ci/nemoclaw-build")).unwrap(),
         fs::read(env!("CARGO_BIN_EXE_nemoclaw-build")).unwrap()
     );
+}
+
+#[test]
+fn bundle_builds_its_build_tool_so_it_can_run_without_the_build_step() {
+    let fixture = Fixture::new();
+    assert!(
+        !fixture
+            .0
+            .path()
+            .join("target/debug/nemoclaw-build")
+            .exists()
+    );
+    let output = fixture.run(&["bundle"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let args = fixture.arguments();
+    assert!(
+        args.starts_with("build\n--locked\n--package\nnemoclaw-build\n"),
+        "{args}"
+    );
+    assert!(!args.contains("--no-default-features"), "{args}");
+    let bundled = fs::read_to_string(fixture.0.path().join("bundled")).unwrap();
+    assert_eq!(bundled, "bundle\n--platform\nlinux_arm64\n");
 }
 
 #[test]

@@ -13,8 +13,8 @@ use openshell_core::proto::open_shell_server::{OpenShell, OpenShellServer};
 use openshell_sdk::{
     AuthConfig, ClientConfig, ExecOptions, ListOptions, OpenShellClient, Refresh, RefreshError,
     RefreshedToken, SandboxPhase, SandboxSpec, SandboxTemplateCreateSpec,
-    SandboxTemplateListOptions, ServiceExposure, ServiceStatus as SdkServiceStatus, WatchEvent,
-    WatchOptions,
+    SandboxTemplateListOptions, ServiceAuthorizationMode, ServiceExposure,
+    ServiceStatus as SdkServiceStatus, WatchEvent, WatchOptions,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -131,6 +131,11 @@ fn sandbox_with_phase_ws(
             ..Default::default()
         }),
         created_from_workload_template,
+        host_key_fingerprint: if name == "pinned-identity" {
+            "SHA256:public-identity".to_string()
+        } else {
+            String::new()
+        },
     }
 }
 
@@ -1139,6 +1144,7 @@ async fn create_sandbox_passes_spec_through() {
         service_exposures: vec![ServiceExposure {
             service: "web".to_string(),
             target_port: 8080,
+            authorization_mode: ServiceAuthorizationMode::BearerPassthrough,
         }],
         ..Default::default()
     };
@@ -1158,6 +1164,10 @@ async fn create_sandbox_passes_spec_through() {
     assert_eq!(observed.service_exposures.len(), 1);
     assert_eq!(observed.service_exposures[0].service, "web");
     assert_eq!(observed.service_exposures[0].target_port, 8080);
+    assert_eq!(
+        observed.service_exposures[0].authorization_mode(),
+        proto::ServiceAuthorizationMode::BearerPassthrough
+    );
     let observed_spec = observed.spec.unwrap();
     assert!(
         observed_spec
@@ -1284,6 +1294,25 @@ async fn get_sandbox_sends_name_and_maps_phase() {
 
     let observed = state.last_get_name.lock().await.clone();
     assert_eq!(observed.as_deref(), Some("my-box"));
+}
+
+#[tokio::test]
+async fn get_sandbox_preserves_host_fingerprint_and_accepts_older_gateways() {
+    let endpoint = start_mock(Arc::new(MockState::default())).await;
+    let client = connect(&endpoint).await;
+    let sandbox = client.get_sandbox("pinned-identity").await.unwrap();
+    assert_eq!(
+        sandbox.host_key_fingerprint.as_deref(),
+        Some("SHA256:public-identity")
+    );
+    assert!(
+        client
+            .get_sandbox("legacy")
+            .await
+            .unwrap()
+            .host_key_fingerprint
+            .is_none()
+    );
 }
 
 #[tokio::test]

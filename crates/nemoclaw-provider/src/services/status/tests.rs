@@ -26,7 +26,7 @@ fn status(phase: &str) -> Value {
     json!({"phase":phase,"detail":"","updated":"2026-09-14T00:01:00Z","pid":123})
 }
 async fn fixture(response: Arc<Mutex<(u16, Vec<u8>)>>) -> Fixture {
-    Fixture::start(move |request| {
+    Fixture::engine(move |request| {
         assert_eq!(request.method, "GET", "status reads must never mutate");
         assert!(request.path.starts_with("/containers/container/archive?"));
         assert!(request.path.ends_with("path=%2Fdata%2Fstatus.json"));
@@ -180,7 +180,7 @@ async fn runtime_status_preserves_size_and_transport_failures_during_startup() {
 
 #[tokio::test]
 async fn runtime_status_rejects_invalid_start_time_before_contacting_engine() {
-    let fixture = Fixture::start(|_| panic!("invalid start time must fail before I/O")).await;
+    let fixture = Fixture::engine(|_| panic!("invalid start time must fail before I/O")).await;
     let engine = Engine::connect(&fixture.endpoint).unwrap();
     for kind in ["inference_service", "ollama_service"] {
         let mut observed = observed(kind);

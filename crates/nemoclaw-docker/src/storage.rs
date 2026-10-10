@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Retained volumes: their identity, ownership labels, and observation.
-#[cfg(all(test, unix, feature = "client"))]
+#[cfg(all(test, feature = "client"))]
 #[path = "storage_tests.rs"]
 mod tests;
 
@@ -190,7 +190,7 @@ mod operations {
     }
 }
 // Only the Unix storage tests build volumes with the ownership labels.
-#[cfg(all(test, unix, feature = "client"))]
+#[cfg(all(test, feature = "client"))]
 use operations::labels;
 #[cfg(feature = "client")]
 pub use operations::{ensure_storage, observe_storage};
