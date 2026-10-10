@@ -169,10 +169,9 @@ Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destr
 
 ## Manage the Cloudflare Tunnel
 
-When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
-The tunnel can expose the dashboard with a public URL.
-NemoClaw manages one tunnel for the selected OpenShell gateway port, independent of individual sandbox lifecycles.
-Stopping, destroying, or recreating a sandbox does not stop that tunnel.
+When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel for the selected sandbox's registered dashboard port.
+Set `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, or `SANDBOX_NAME` to select a sandbox; otherwise, the command uses the registry default.
+The tunnel can expose that dashboard with a public URL.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
 If command-line inspection is unavailable, Windows can still verify and stop a recorded `cloudflared.exe` through an identity-bound process handle. Other platforms require process inspection before signaling. If NemoClaw cannot verify the process identity or stop it safely, it refuses to create a second tunnel; restore inspection access or independently verify and stop the process before retrying. [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
@@ -181,6 +180,8 @@ $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+NemoClaw manages one tunnel for the selected OpenShell gateway port, independent of individual sandbox lifecycles.
+Stopping, destroying, or recreating a sandbox does not stop that tunnel.
 An explicitly set `NEMOCLAW_GATEWAY_PORT` selects the host tunnel state.
 Otherwise, tunnel commands use the selected or default sandbox's owning gateway, falling back to the process-default gateway when no sandbox resolves.
 If the sandbox name belongs to more than one gateway registry, tunnel-state selection fails closed.
@@ -199,10 +200,9 @@ a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` 
 
 ## Manage the Cloudflare Tunnel
 
-When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
-The tunnel can expose the forwarded Hermes endpoint with a public URL.
-NemoClaw manages one tunnel for the selected OpenShell gateway port, independent of individual sandbox lifecycles.
-Stopping, destroying, or recreating a sandbox does not stop that tunnel.
+When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel for the selected sandbox's registered dashboard port.
+Set `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, or `SANDBOX_NAME` to select a sandbox; otherwise, the command uses the registry default.
+The tunnel can expose that dashboard with a public URL.
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
 If command-line inspection is unavailable, Windows can still verify and stop a recorded `cloudflared.exe` through an identity-bound process handle. Other platforms require process inspection before signaling. If NemoClaw cannot verify the process identity or stop it safely, it refuses to create a second tunnel; restore inspection access or independently verify and stop the process before retrying. [`$$nemoclaw tunnel status`](../../reference/commands#$$nemoclaw-tunnel-status) reports this recovery state.
 
@@ -211,6 +211,8 @@ $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
+NemoClaw manages one tunnel for the selected OpenShell gateway port, independent of individual sandbox lifecycles.
+Stopping, destroying, or recreating a sandbox does not stop that tunnel.
 An explicitly set `NEMOCLAW_GATEWAY_PORT` selects the host tunnel state.
 Otherwise, tunnel commands use the selected or default sandbox's owning gateway, falling back to the process-default gateway when no sandbox resolves.
 If the sandbox name belongs to more than one gateway registry, tunnel-state selection fails closed.
