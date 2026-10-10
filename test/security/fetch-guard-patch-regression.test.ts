@@ -495,7 +495,12 @@ describe("fetch-guard patch regression guard", () => {
       const previousSandboxEnv = process.env.OPENSHELL_SANDBOX;
       process.env.OPENSHELL_SANDBOX = "1";
       try {
-        await (globalThis as any).assertExplicitProxyAllowed("http://10.200.0.1:3128");
+        await expect(
+          (globalThis as any).assertExplicitProxyAllowed({
+            mode: "explicit-proxy",
+            proxyUrl: "http://169.254.169.254:3128",
+          }),
+        ).rejects.toThrow("Explicit proxy must match the root-owned OpenShell proxy endpoint");
         await import(`${webGuardPath}?${Date.now()}`);
         const trusted = await (globalThis as any).fetchWithWebToolsNetworkGuard({
           url: "http://host.openshell.internal:8000",
@@ -623,8 +628,11 @@ describe("fetch-guard patch regression guard", () => {
           `const exports = await import(${JSON.stringify(modulePath)});
 const web = await import(${JSON.stringify(webGuardPath)});
 if (exports.a !== exports.b) throw new Error('strict export was not redirected to trusted env proxy mode');
-await globalThis.assertExplicitProxyAllowed('http://10.200.0.1:3128');
-if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validation did not bypass target-policy checks');
+let proxyBlocked = false;
+try { await globalThis.assertExplicitProxyAllowed({ mode: 'explicit-proxy', proxyUrl: 'http://169.254.169.254:3128' }); }
+catch (error) { proxyBlocked = error.message === 'Explicit proxy must match the root-owned OpenShell proxy endpoint'; }
+if (!proxyBlocked) throw new Error('sandbox accepted a proxy without root-owned endpoint authority');
+if (globalThis.proxyChecks.length !== 0) throw new Error('untrusted proxy reached native target-policy checks');
 let genericBlocked = false;
 try { globalThis.assertHostnameAllowedWithPolicy('host.openshell.internal'); } catch { genericBlocked = true; }
 if (!genericBlocked) throw new Error('generic SSRF helper allowed host gateway');
@@ -687,7 +695,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(patched).toContain(
         "export { withTrustedEnvProxyGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
       );
-      expect(patched).toContain("nemoclaw: env-gated bypass");
+      expect(patched).toContain("nemoclaw: validated OpenShell explicit proxy");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -761,7 +769,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 2 not needed");
       const patched = fs.readFileSync(modulePath, "utf-8");
-      expect(patched).not.toContain("nemoclaw: env-gated bypass");
+      expect(patched).not.toContain("nemoclaw: validated OpenShell explicit proxy");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1011,7 +1019,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 2 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
-      expect(patched).toContain("nemoclaw: env-gated bypass");
+      expect(patched).toContain("nemoclaw: validated OpenShell explicit proxy");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1045,7 +1053,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 2 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
-      expect(patched).toContain("nemoclaw: env-gated bypass");
+      expect(patched).toContain("nemoclaw: validated OpenShell explicit proxy");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1088,7 +1096,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 2 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
-      expect(patched).toContain("nemoclaw: env-gated bypass");
+      expect(patched).toContain("nemoclaw: validated OpenShell explicit proxy");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

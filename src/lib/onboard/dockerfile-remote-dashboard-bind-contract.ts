@@ -133,6 +133,9 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // NEMOCLAW_DARWIN_VM_COMPAT chmod for the OpenClaw and NemoClaw state trees;
   // it changes modes only and preserves the generated dashboard binding.
   "295282a4f06106c93df72b4e035f980a2fc0e8a7dcbf6d270e102d7c75be27fb",
+  // Root-owned explicit-proxy endpoint authority; this exact instruction writes
+  // only openclaw-proxy-url and preserves the generated dashboard config.
+  "db9871787f8503167e34995ffe2e2c903d22fbde7007d8e529d1618c2bd61561",
 ]);
 
 function instructionSha256(text: string): string {

@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { shellQuote } from "../../src/lib/core/shell-quote";
 import { OPENCLAW_WORKER_PROXY_SOURCE } from "../fixtures/openclaw-worker-proxy";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
@@ -120,6 +121,12 @@ export function runDockerfilePatchBlock(
     endMarker,
   )
     .replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist)
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/patch-openclaw-explicit-proxy.mts",
+      shellQuote(
+        path.join(import.meta.dirname, "../../scripts/lib/patch-openclaw-explicit-proxy.mts"),
+      ),
+    )
     .replaceAll(
       "/usr/local/lib/nemoclaw/patch-openclaw-worker-proxy.mts",
       JSON.stringify(
