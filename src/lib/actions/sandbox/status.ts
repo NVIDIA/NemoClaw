@@ -7,6 +7,7 @@ import { deferSandboxLifecycleExit, isSandboxLifecycleDeferredExit } from "../..
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import { getGatewayPresets } from "../../policy";
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
+import { loadOnboardSessionForStatus } from "../../status-command-deps";
 import * as registry from "../../state/registry";
 import {
   findSandboxAcrossGatewayRoots,
@@ -190,6 +191,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     preflight,
     sandboxEntry,
+    deps: { loadOnboardSessionForStatus },
   });
   const {
     sb,
