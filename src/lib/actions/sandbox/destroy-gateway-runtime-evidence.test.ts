@@ -63,7 +63,7 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     const missingProcess = () => ({ status: 1, stdout: "", stderr: "" });
     const processResponses = new Map([
       [
-        `ps -p ${pid} -o stat= -L`,
+        `ps -p ${pid} -o stat=${process.platform === "linux" ? " -L" : ""}`,
         () => ({
           status: pidIsAlive ? 0 : 1,
           stdout: pidIsAlive ? "S\n" : "",
