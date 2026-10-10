@@ -29,7 +29,7 @@ struct Volumes {
 async fn volume_engine() -> (Fixture, Arc<Mutex<Volumes>>) {
     let volumes = Arc::new(Mutex::new(Volumes::default()));
     let shared = volumes.clone();
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         let mut volumes = shared.lock().unwrap();
         let path = request.path.split('?').next().unwrap();
         let (status, value) = match (request.method.as_str(), path) {

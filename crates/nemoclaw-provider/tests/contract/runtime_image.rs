@@ -13,7 +13,7 @@ use std::{
 
 /// A Docker engine that answers image inspection with `image`.
 async fn image_engine(image: Arc<Mutex<Value>>) -> Fixture {
-    Fixture::start(move |request| {
+    Fixture::engine(move |request| {
         assert_eq!(request.method, "GET", "an image check must not mutate");
         let body = if request.path.starts_with("/images/") {
             image.lock().unwrap().clone()

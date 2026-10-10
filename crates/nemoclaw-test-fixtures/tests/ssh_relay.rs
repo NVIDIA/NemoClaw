@@ -56,3 +56,12 @@ fn anything_but_a_loopback_dial_stdio_fails_like_ssh() {
         assert_eq!(output.status.code(), Some(255), "{args:?}");
     }
 }
+
+/// The lifecycle profile selects this ignored test, so nextest archives the
+/// relay beside the extracted lifecycle tests, where fake engines find it.
+#[test]
+#[ignore = "run by the lifecycle profile to archive the relay with its tests"]
+fn the_relay_is_found_beside_the_test_executables() {
+    let relay = nemoclaw_test_fixtures::ssh_relay(std::path::Path::new("/nonexistent"));
+    assert!(relay.is_file());
+}

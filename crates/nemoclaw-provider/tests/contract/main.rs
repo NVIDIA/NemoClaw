@@ -14,12 +14,10 @@ mod image_runtime;
 mod discovery;
 mod gateway_readiness;
 mod kubernetes_hcl;
-// Providers launched by OpenTofu reach these fake engines over a Unix socket;
-// Windows needs the SSH relay beside them first (#12943).
-#[cfg(unix)]
 mod runtime_image;
-#[cfg(unix)]
 mod service_storage;
+// The bundled Docker provider reaches its engine with its own ssh arguments,
+// which the relay does not accept.
 #[cfg(unix)]
 mod vllm_runtime;
 
