@@ -74,12 +74,11 @@ describe("onboard preflight severity messages (#6004)", () => {
 
   it("prints the unsupported-runtime failure to stderr with a ✗ marker", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    printUnsupportedRuntimeError();
+    printUnsupportedRuntimeError("linux");
     expect(err).toHaveBeenCalledTimes(3);
     expect(lines(err)[0]).toContain("✗");
     expect(lines(err)[0]).toContain("Docker driver");
-    expect(lines(err).join("\n")).toContain("Switch to Docker Engine");
-    // macOS reporters use Docker Desktop or Colima, not native Docker Engine (#7320).
+    expect(lines(err).join("\n")).toContain("Docker Engine");
     expect(lines(err).join("\n")).toContain("Docker Desktop");
     expect(lines(err).join("\n")).toContain("Colima");
   });
@@ -237,5 +236,48 @@ describe("printGpuPreflightLines", () => {
       sandboxGpuConfig: { ...sandboxGpuDisabled, mode: "0" },
     });
     expect(lines).toContain("  ✓ Sandbox GPU: disabled by configuration");
+  });
+});
+
+describe("printUnsupportedRuntimeError (#12678)", () => {
+  it("lists Docker Desktop and Colima as the supported alternatives on macOS", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    printUnsupportedRuntimeError("darwin");
+
+    const output = error.mock.calls.map(([l]) => l).join("\n");
+    expect(output).toContain("Docker Desktop");
+    expect(output).toContain("Colima");
+    expect(output).not.toContain("Docker Engine");
+
+    error.mockRestore();
+  });
+
+  it("lists Docker Engine, Docker Desktop, and Colima on Linux", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    printUnsupportedRuntimeError("linux");
+
+    const output = error.mock.calls.map(([l]) => l).join("\n");
+    expect(output).toContain("Docker Engine");
+    expect(output).toContain("Docker Desktop");
+    expect(output).toContain("Colima");
+
+    error.mockRestore();
+  });
+
+  it("still names Podman as unsupported regardless of platform", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    printUnsupportedRuntimeError("darwin");
+    let output = error.mock.calls.map(([l]) => l).join("\n");
+    expect(output).toContain("Podman is not supported");
+
+    error.mockClear();
+    printUnsupportedRuntimeError("linux");
+    output = error.mock.calls.map(([l]) => l).join("\n");
+    expect(output).toContain("Podman is not supported");
+
+    error.mockRestore();
   });
 });
