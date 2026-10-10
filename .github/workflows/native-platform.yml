@@ -189,13 +189,12 @@ jobs:
           "$tool" lifecycle-timing .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
   # The live suites reuse this platform's bundle instead of building their own,
-  # so they start when it is ready. They are not required checks: a failure
-  # shows on its job without failing the platform's Test / PLATFORM check.
+  # so they start when it is ready. Like the lifecycle shards, they count toward
+  # the platform's required Test / PLATFORM check.
   live-docker:
     name: Live / Docker
     if: inputs.live
     needs: bundle
-    continue-on-error: true
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
@@ -214,7 +213,6 @@ jobs:
     name: Live / Kind
     if: inputs.live
     needs: bundle
-    continue-on-error: true
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
