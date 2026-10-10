@@ -192,13 +192,18 @@
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
-        "test/e2e/support/managed-image-activation-diagnostics.test.ts"
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/hosted-provider-smoke-selection.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/inference-routing-provider-smoke.test.ts",
-      "liveSources": ["test/e2e/live/inference-routing-credential-scan.ts"],
+      "liveSources": [
+        "test/e2e/live/inference-routing-credential-scan.ts",
+        "test/e2e/fixtures/hermes-api-command.ts"
+      ],
       "fast": [
+        "test/e2e/support/hosted-provider-smoke-selection.test.ts",
         "test/e2e/support/hosted-credential-scan.test.ts",
         "test/e2e/support/hosted-inference-workflow-selection.test.ts"
       ]

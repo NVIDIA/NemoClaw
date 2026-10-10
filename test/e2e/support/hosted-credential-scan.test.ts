@@ -10,7 +10,7 @@ import { hostedCredentialScanCommand } from "../live/inference-routing-credentia
 
 const credential = "synthetic-hosted-credential-for-scan";
 
-function executeProbe(leakIn = "none", emptyFiles = false) {
+function executeProbe(leakIn = "none", emptyFiles = false, discoverCanary = true) {
   const command = hostedCredentialScanCommand(credential);
   const records = new Map<string, Buffer>([
     [
@@ -27,9 +27,14 @@ function executeProbe(leakIn = "none", emptyFiles = false) {
       execFileSync: (program: string) =>
         Buffer.from(
           program === "sh"
-            ? emptyFiles
-              ? ""
-              : "/fixture\n"
+            ? [
+                discoverCanary && records.has("/probe-control/canary")
+                  ? "/probe-control/canary"
+                  : "",
+                emptyFiles ? "" : "/fixture",
+              ]
+                .filter(Boolean)
+                .join("\n")
             : leakIn === program
               ? `prefix ${credential} suffix`
               : "ordinary observation",
@@ -85,5 +90,11 @@ describe("hosted credential isolation probe", () => {
 
   it("does not call an empty filesystem sample clean", () => {
     expect(executeProbe("none", true).evidence.sampledFilesClean).toBe(false);
+  });
+
+  it("rejects a positive control omitted by file discovery", () => {
+    const result = executeProbe("none", false, false);
+    expect(result.evidence.canaryDetected).toBe(false);
+    expect(result.records.has("/probe-control/canary")).toBe(false);
   });
 });

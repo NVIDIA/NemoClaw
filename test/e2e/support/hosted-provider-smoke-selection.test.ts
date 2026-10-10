@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   HOSTED_PROVIDER_SMOKE_CASES,
   hostedProviderSmokeEnvironment,
@@ -15,8 +15,13 @@ import {
   E2E_TARGET_CATALOGUE,
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
-import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import {
+  buildE2eWorkflowPlan,
+  validateE2eWorkflowPlan,
+} from "../../../tools/e2e/workflow-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
+
+import { requireProviderSmokeSelected } from "../live/inference-routing-helpers.ts";
 
 const workflow = YAML.parse(readFileSync(".github/workflows/e2e.yaml", "utf8"));
 
@@ -74,13 +79,13 @@ it("selects automatic catalogue targets when their shared installer changes", ()
   );
 });
 
-it("selects distinct protocol and credential representatives for hosted lifecycle changes", () => {
+it("keeps hosted targets available for explicit recommendations only", () => {
   expect(
     buildE2eWorkflowPlan(
       {},
       { changedFiles: ["src/lib/inference/native-provider/lifecycle.ts"] },
     ).catalogueMatrices["hosted-inference"].map((row) => row.id),
-  ).toEqual(["hosted-inference-openai", "hosted-inference-anthropic", "hosted-inference-hermes"]);
+  ).toEqual([]);
   expect(catalogueRecommendationSelectorIds()).toEqual(
     expect.arrayContaining(
       HOSTED_PROVIDER_SMOKE_CASES.map((entry) => `hosted-inference-${entry.selector}`),
@@ -88,15 +93,18 @@ it("selects distinct protocol and credential representatives for hosted lifecycl
   );
 });
 
-it.each(HOSTED_PROVIDER_SMOKE_CASES)("selects only $label for its profile change", (selected) => {
-  expect(
-    catalogueTargetsForChangedFiles([
-      `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
-    ])
-      .filter((target) => target.profile === "hosted-inference")
-      .map((target) => target.id),
-  ).toEqual([`hosted-inference-${selected.selector}`]);
-});
+it.each(HOSTED_PROVIDER_SMOKE_CASES)(
+  "does not automatically select $label for its profile change",
+  (selected) => {
+    expect(
+      catalogueTargetsForChangedFiles([
+        `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
+      ])
+        .filter((target) => target.profile === "hosted-inference")
+        .map((target) => target.id),
+    ).toEqual([]);
+  },
+);
 
 describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label workflow credential boundary", (provider) => {
   it.each([
@@ -179,6 +187,95 @@ describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label workflow credential boundary"
       DOCKERHUB_USERNAME: scenario.allowed ? "registry-user" : "",
       DOCKERHUB_TOKEN: scenario.allowed ? "registry-canary" : "",
       HOSTED_INFERENCE_API_KEY: scenario.allowed ? provider.selector : "",
+    });
+  });
+});
+
+// Evaluate the reusable workflow expression with distinct models to detect provider crossover.
+it.each(HOSTED_PROVIDER_SMOKE_CASES)("routes only the approved $label model", (selected) => {
+  const profile = YAML.parse(readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"));
+  const step = profile.jobs.run.steps.find(
+    (entry: { name?: string }) => entry.name === "Run catalogue E2E target",
+  );
+  const plan = buildE2eWorkflowPlan({ targets: `hosted-inference-${selected.selector}` });
+  const matrix = plan.catalogueMatrices["hosted-inference"][0]!;
+  expect(matrix.model_env).toBe(selected.modelEnv);
+  expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
+  const observed = execFileSync(
+    process.execPath,
+    [
+      "-e",
+      `
+    const { readFileSync } = require("node:fs");
+    const { runInNewContext } = require("node:vm");
+    const { expression, callerExpression, context } = JSON.parse(readFileSync(0, "utf8"));
+    context.inputs.hosted_inference_model = runInNewContext(callerExpression.slice(3, -2), context, { timeout: 1000 });
+    process.stdout.write(runInNewContext(expression.slice(3, -2), context, { timeout: 1000 }));
+  `,
+    ],
+    {
+      input: JSON.stringify({
+        expression: step.env.HOSTED_INFERENCE_MODEL,
+        callerExpression: workflow.jobs["catalogue-hosted-inference"].with.hosted_inference_model,
+        context: {
+          matrix,
+          inputs: { catalogue_id: `hosted-inference-${selected.selector}` },
+          vars: Object.fromEntries(
+            HOSTED_PROVIDER_SMOKE_CASES.map((provider) => [
+              provider.modelEnv,
+              `approved-${provider.selector}`,
+            ]),
+          ),
+        },
+      }),
+      env: {},
+      encoding: "utf8",
+      timeout: 5000,
+    },
+  );
+  expect(observed).toBe(`approved-${selected.selector}`);
+  matrix.model_env = "UNRELATED_MODEL";
+  expect(() => validateE2eWorkflowPlan(plan)).toThrow("invalid output schema");
+  delete matrix.model_env;
+  expect(() => validateE2eWorkflowPlan(plan)).toThrow("invalid output schema");
+});
+
+describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label local smoke prerequisites", (selected) => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([undefined, "unrelated-provider"])("skips without matching opt-in %s", (requested) => {
+    vi.stubEnv("NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE", requested);
+    const skip = vi.fn();
+    expect(() => requireProviderSmokeSelected(selected.selector, skip)).toThrow(
+      `NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${selected.selector}`,
+    );
+    expect(skip).toHaveBeenCalledOnce();
+  });
+
+  it("runs only after explicit selection and validates its named key and model", () => {
+    vi.stubEnv("NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE", selected.selector);
+    const skip = vi.fn();
+    requireProviderSmokeSelected(selected.selector, skip);
+    expect(skip).not.toHaveBeenCalled();
+    const id = `hosted-inference-${selected.selector}`;
+    expect(() =>
+      hostedProviderSmokeEnvironment(id, {
+        [selected.modelEnv]: "approved-model",
+      }),
+    ).toThrow("requires its approved credential and model");
+    expect(() =>
+      hostedProviderSmokeEnvironment(id, {
+        [selected.credential]: "synthetic-selected-key",
+      }),
+    ).toThrow("requires its approved credential and model");
+    expect(
+      hostedProviderSmokeEnvironment(id, {
+        [selected.credential]: "synthetic-selected-key",
+        [selected.modelEnv]: "approved-model",
+      }),
+    ).toEqual({
+      [selected.credential]: "synthetic-selected-key",
+      [selected.modelEnv]: "approved-model",
     });
   });
 });

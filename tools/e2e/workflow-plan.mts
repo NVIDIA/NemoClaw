@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { appendFileSync } from "node:fs";
+import { HOSTED_PROVIDER_SMOKE_CASES } from "./hosted-provider-smoke.mts";
 import { requiresManagedImages } from "./workflow-prerequisites.mts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -275,6 +276,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
   return (
     isRecord(value) &&
     hasExactKeys(value, [
+      ...(value.model_env === undefined ? [] : ["model_env"]),
       "artifact_layout",
       "agent_runtime",
       "cloudflared",
@@ -399,6 +401,10 @@ function isCatalogueMatrixRowForProfile(
   const target = E2E_TARGET_CATALOGUE.find((entry) => entry.id === value.id);
   return (
     target?.profile === profile &&
+    value.model_env ===
+      HOSTED_PROVIDER_SMOKE_CASES.find(
+        (selected) => target.id === `hosted-inference-${selected.selector}`,
+      )?.modelEnv &&
     target.targetId === value.target_id &&
     target.displayName === value.display_name &&
     target.agentRuntime === value.agent_runtime &&
@@ -778,17 +784,9 @@ export function buildE2eWorkflowPlan(
       });
       const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
       const selectedJobs = [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])];
-      const affectedCatalogueTargets = catalogueTargetsForChangedFiles(changedFiles);
       return withCoverageMatrix(
         {
           ...planWithoutCoverage,
-          catalogueMatrices: catalogueMatrices(
-            E2E_TARGET_CATALOGUE.filter(
-              (target) =>
-                target.profile !== "hosted-inference" || affectedCatalogueTargets.includes(target),
-            ),
-            gatewayRuntimes,
-          ),
           selectedJobs,
           runtimeProvidersByJob: {
             ...plan.runtimeProvidersByJob,

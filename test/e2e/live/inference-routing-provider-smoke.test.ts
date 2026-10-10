@@ -5,7 +5,10 @@ import crypto from "node:crypto";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
 import YAML from "yaml";
 import { hermesApiCommand } from "../fixtures/hermes-api-command.ts";
-import { HOSTED_PROVIDER_SMOKE_CASES as hostedCases } from "../../../tools/e2e/hosted-provider-smoke.mts";
+import {
+  HOSTED_PROVIDER_SMOKE_CASES as hostedCases,
+  hostedProviderSmokeEnvironment,
+} from "../../../tools/e2e/hosted-provider-smoke.mts";
 import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   parseOpenClawJsonDocuments,
@@ -220,7 +223,7 @@ test(
   },
 );
 
-// Each case uses OpenClaw only; deterministic tests own the other supported agents.
+// Four cases use OpenClaw; the Nous API-key case uses Hermes.
 
 test.for(hostedCases)(
   "$id $label answers through its native provider",
@@ -242,12 +245,12 @@ test.for(hostedCases)(
     { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip },
   ) => {
     requireProviderSmokeSelected(selected.selector, skip);
-    const apiKey =
-      secrets.optional(selected.credential) ?? skipLive(skip, `${selected.credential} not set`);
-    const model =
-      process.env[selected.modelEnv] ||
-      ("defaultModel" in selected ? selected.defaultModel : "") ||
-      skipLive(skip, `${selected.modelEnv} must name an available model`);
+    const environment = hostedProviderSmokeEnvironment(`hosted-inference-${selected.selector}`, {
+      [selected.credential]: secrets.optional(selected.credential),
+      [selected.modelEnv]: process.env[selected.modelEnv],
+    });
+    const apiKey = environment[selected.credential]!;
+    const model = environment[selected.modelEnv]!;
     await requireLivePrerequisites(host, runtimeProvider);
     const hermes = selected.selector === "hermes";
     const sandboxName = inferenceSandboxName(`e2e-${selected.selector}`);

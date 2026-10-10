@@ -2144,7 +2144,7 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
 
-### Fixed hosted provider qualification
+## Fixed hosted provider qualification
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.
 Select `openai`, `anthropic`, `gemini`, `openrouter`, or `hermes` with
@@ -2160,26 +2160,26 @@ Before the request, a sandbox probe checks the raw environment, process argument
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
-This is not an exhaustive filesystem scan. This covers runtime configuration, OpenShell injection, and the
-remote inference boundary. Deterministic tests own protocol/header construction, ownership collisions,
+This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
+It does not prove credential isolation in host processes or upstream requests.
+Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
-Provide `NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, and `NEMOCLAW_HERMES_MODEL` for those cases.
-OpenAI and Anthropic retain their existing defaults and model overrides.
+Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
 The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
-The existing cleanup helper destroys each test sandbox. Use a disposable gateway because provider
-credentials can remain stored after sandbox removal.
+The existing cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence only.
+Failed onboarding uses best-effort cleanup. Neither path proves removal of credentials from the OpenShell provider store.
+Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,
 `hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
 These Docker targets reuse `inference-routing-provider-smoke.test.ts` and the trusted E2E controller.
-Default suites and unrelated shared-file changes do not select these targets.
-Changes to `e2e.yaml` or `e2e-standard-profile.yaml` select all five hosted targets because these
-workflows own the credential handoff.
-Native hosted lifecycle changes select OpenAI, Anthropic, and Hermes as protocol and credential
-representatives. A provider-profile change selects that provider. Advisor can recommend an explicit
-hosted target. Selection identifies required evidence; it does not grant dispatch or credential access.
+These targets require explicit selection. Default suites and changed-file selection do not include them,
+even when a workflow or provider source changes. The initial consumer is Slice 2 (#12589); its native
+provider behavior must exist in the candidate before running these assertions. Advisor can recommend
+an explicit hosted target. Selection does not grant dispatch or credential access.
 The credential-free `inference-routing` target remains separate.
 
 Before dispatch, obtain an approved disposable environment and credential source for the selected provider.
@@ -2191,6 +2191,10 @@ Set the corresponding repository variable `NEMOCLAW_OPENAI_MODEL`, `NEMOCLAW_ANT
 `NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, or `NEMOCLAW_HERMES_MODEL` to an approved model.
 Missing credentials or models fail before onboarding. A selected test that skips cannot produce passing evidence.
 The existing controller binds artifacts to the tested source revision and trusted workflow revision.
+For an authorized hosted-provider candidate run, the trusted reporter comments on the PR after the selected jobs finish.
+It rechecks the open PR's head, base, and repository before posting the candidate commit, workflow commit, selected results, and artifact link.
+The artifacts retain scenario evidence and per-sandbox `cleanup.json` when produced. Inspect cleanup outcomes separately; missing evidence is not a pass.
+A changed PR head or base rejects the comment. Other candidate dispatches retain their existing artifact-only reporting path.
 For a manual same-repository PR run, GitHub workflow-dispatch permission authorizes the operator.
 The controller verifies the open PR, repository, candidate commit, base commit, and workflow revision before credential forwarding.
 Review the complete candidate diff and approve the selected credential source before dispatch.
@@ -2200,10 +2204,7 @@ Job cleanup and artifact redaction do not revoke the key or erase a copy made by
 Rotate or revoke the key in its issuing provider to remove later access.
 Hermes API-key evidence does not qualify interactive OAuth login.
 
-Hermes OAuth remains a live qualification gap for Slice 2 (#12589). Its supported login uses an
-interactive device authorization before registering the returned endpoint. The deterministic owner
-`src/lib/hermes-provider-auth.test.ts` covers the returned endpoint, native credential callback,
-absence of legacy registration, and token redaction. The API-key smoke cannot qualify that login.
-Closing the gap requires an approved disposable interactive environment and an authorized account
-operator, followed by a fresh Hermes response using the returned native endpoint. Do not add an
-unsupported noninteractive token bootstrap or count the API-key smoke as OAuth evidence.
+Hermes OAuth remains a separate live qualification for Slice 2 (#12589). An authorized account operator
+must complete device authorization in an approved disposable interactive environment, verify a fresh
+request through the returned native endpoint, restart, and verify another fresh request. Record the
+tested commit and redacted results. This prerequisite adds no OAuth selector or automation.

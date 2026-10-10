@@ -716,7 +716,7 @@ jobs:
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
-        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@dfb7fb7c0ae86b2926ec6e896bec72bacd9b23a2
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@5ec38cfc369b3dac4df5207d8dda20805a72cbda
         with:
           enabled: ${{ (contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'portable-hermes-finalization')) && 'true' || 'false' }}
           github-token: ${{ github.token }}
@@ -3305,6 +3305,7 @@ jobs:
       credential_boundary: selected hosted inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
+      hosted_inference_model: ${{ vars[matrix.model_env] }}
       runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
       checkout_sha: ${{ inputs.checkout_sha }}
       workflow_sha: ${{ inputs.workflow_sha }}
@@ -6364,7 +6365,7 @@ jobs:
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}
     permissions:
       actions: read
       contents: read
@@ -6386,6 +6387,13 @@ jobs:
         env:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           TEST_MATRIX: ${{ needs.generate-matrix.outputs.test_matrix }}
+          JOB_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          JOB_CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
+          JOB_BASE_SHA: ${{ inputs.base_sha }}
+          JOB_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MATRIX_RESULT: ${{ needs.generate-matrix.result }}
+          SELECTED_WORKFLOW_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}

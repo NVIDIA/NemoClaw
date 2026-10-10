@@ -108,6 +108,7 @@ export interface E2eCatalogueTarget {
 }
 
 export interface E2eCatalogueMatrixRow {
+  model_env?: string;
   id: string;
   execution_id: string;
   runtime_provider: E2eRuntimeProvider;
@@ -1872,16 +1873,8 @@ export function catalogueTargetsForChangedFiles(
     const ownsSource = files.some((file) =>
       entry.owningPaths.some((owner) => pathMatches(file, owner)),
     );
-    if (entry.profile === "hosted-inference") {
-      return (
-        ownsSource ||
-        files.some(
-          (file) =>
-            file === ".github/workflows/e2e.yaml" ||
-            file === ".github/workflows/e2e-standard-profile.yaml",
-        )
-      );
-    }
+    // Native hosted behavior is qualified only by explicit selection until Slice 2 lands.
+    if (entry.profile === "hosted-inference") return false;
     return shared || ownsSource || files.includes(entry.testFile);
   });
 }
@@ -1905,6 +1898,13 @@ export function catalogueMatrix(
     .filter((entry) => entry.profile === profile)
     .flatMap((entry) =>
       e2eRuntimeProviders(entry.gatewayRuntimes, gatewayRuntimes).map((runtimeProvider) => ({
+        ...(profile === "hosted-inference"
+          ? {
+              model_env: HOSTED_PROVIDER_SMOKE_CASES.find(
+                (selected) => entry.id === `hosted-inference-${selected.selector}`,
+              )!.modelEnv,
+            }
+          : {}),
         id: entry.id,
         execution_id: runtimeExecutionId(entry.id, entry.shard, runtimeProvider),
         runtime_provider: runtimeProvider,
