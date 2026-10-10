@@ -191,6 +191,7 @@ jobs:
           done
           for support_relative in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
+            src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \

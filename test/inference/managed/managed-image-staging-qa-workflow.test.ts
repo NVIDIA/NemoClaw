@@ -98,6 +98,7 @@ describe("managed-image staging QA workflow", () => {
     const overlaySource = required(overlay.run, "staging QA dependency overlay is missing");
     expect(overlaySource).toContain("agents/langchain-deepagents-code/Dockerfile.base");
     expect(overlaySource).toContain("agents/langchain-deepagents-code/requirements.lock");
+    expect(overlaySource).toContain("src/lib/agent/deep-agents-code-runtime-identity.json");
     [
       "ci/reviewed-npm-audit.json",
       "scripts/lib/bundled-npm-package.mts",
@@ -119,6 +120,7 @@ describe("managed-image staging QA workflow", () => {
     const dockerfile = "agents/langchain-deepagents-code/Dockerfile.base";
     const packageBuilder = "scripts/security/build-native-security-packages.sh";
     const requirements = "agents/langchain-deepagents-code/requirements.lock";
+    const runtimeIdentity = "src/lib/agent/deep-agents-code-runtime-identity.json";
     const npmSupportFiles = [
       "ci/reviewed-npm-audit.json",
       "scripts/lib/bundled-npm-package.mts",
@@ -135,6 +137,7 @@ describe("managed-image staging QA workflow", () => {
       writeOverlayFixture(candidateRoot, dockerfile, "candidate Dockerfile\n");
       writeOverlayFixture(candidateRoot, packageBuilder, "exit 42\n");
       writeOverlayFixture(candidateRoot, requirements, "candidate requirements\n");
+      writeOverlayFixture(candidateRoot, runtimeIdentity, "candidate runtime identity\n");
       writeOverlayFixture(
         candidateRoot,
         "agents/langchain-deepagents-code/validate-runtime-contract.py",
@@ -144,6 +147,7 @@ describe("managed-image staging QA workflow", () => {
       writeOverlayFixture(stagingRoot, dockerfile, "staging Dockerfile\n");
       writeOverlayFixture(stagingRoot, packageBuilder, "exit 41\n");
       writeOverlayFixture(stagingRoot, requirements, "staging requirements\n");
+      fs.mkdirSync(path.dirname(path.join(stagingRoot, runtimeIdentity)), { recursive: true });
       writeOverlayFixture(stagingRoot, perlPatch, "staging Perl patch\n");
       npmSupportFiles.forEach((supportFile) => {
         writeOverlayFixture(candidateRoot, supportFile, "candidate npm support\n");
@@ -163,6 +167,13 @@ describe("managed-image staging QA workflow", () => {
         status: 0,
         stderr: "",
       });
+      expect(
+        spawnSync("cmp", [
+          "-s",
+          path.join(candidateRoot, runtimeIdentity),
+          path.join(stagingRoot, runtimeIdentity),
+        ]).status,
+      ).toBe(0);
       expect(spawnSync("bash", [path.join(stagingRoot, packageBuilder)]).status).toBe(42);
     } finally {
       fs.rmSync(overlayFixture, { recursive: true, force: true });

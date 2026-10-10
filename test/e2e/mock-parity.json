@@ -1026,7 +1026,8 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/e2e-phase-environment.test.ts"
+        "test/e2e/support/e2e-phase-environment.test.ts",
+        "test/e2e/support/openclaw-container-diagnostics.test.ts"
       ]
     },
     {

@@ -61,7 +61,12 @@ it("captures only failed onboarding and ignores diagnostic transport failures", 
     exec: vi.fn().mockRejectedValue(new Error("phase Error")),
     openshell: vi.fn().mockResolvedValue({}),
   };
-  const input = { sandboxName: "sandbox", artifactPrefix: "resume", ...options, runtime: client };
+  const input = {
+    sandboxName: "sandbox",
+    artifactPrefix: "resume",
+    ...options,
+    runtime: client,
+  };
   await captureOpenClawOnboardFailure({ exitCode: 0 }, sandbox, input);
   expect(client.resolveSandboxResourceHandle).not.toHaveBeenCalled();
   client.command.mockRejectedValue(new Error("container stopped"));
@@ -71,9 +76,38 @@ it("captures only failed onboarding and ignores diagnostic transport failures", 
   expect(client.command).toHaveBeenCalledTimes(3);
 });
 
+it("keeps initial install failure evidence when no sandbox container was created", async () => {
+  const client = runtime("");
+  const sandbox = {
+    exec: vi.fn().mockRejectedValue(new Error("sandbox absent")),
+    openshell: vi.fn().mockResolvedValue({}),
+  };
+  await expect(
+    captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
+      sandboxName: "sandbox",
+      artifactPrefix: "phase-0-install-token-a",
+      ...options,
+      runtime: client,
+    }),
+  ).resolves.toBeUndefined();
+  expect(client.command).not.toHaveBeenCalled();
+  expect(sandbox.openshell.mock.calls.map(([args]) => args)).toEqual([
+    ["sandbox", "get", "sandbox"],
+    ["logs", "sandbox", "-n", "120", "--source", "all"],
+  ]);
+  expect(sandbox.openshell.mock.calls[0]![1]).toMatchObject({
+    artifactName: "phase-0-install-token-a-failure-status",
+    redactionValues: options.redactionValues,
+    captureLimitBytes: 65536,
+  });
+});
+
 it("protects raw and JSON-escaped secrets on direct runtime probes", async () => {
   const client = runtime();
-  const sandbox = { exec: vi.fn().mockResolvedValue({}), openshell: vi.fn().mockResolvedValue({}) };
+  const sandbox = {
+    exec: vi.fn().mockResolvedValue({}),
+    openshell: vi.fn().mockResolvedValue({}),
+  };
   const secret = 'fixture-"secret\nvalue';
   await captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
     sandboxName: "sandbox",
