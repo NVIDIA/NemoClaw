@@ -79,6 +79,7 @@ Every `CI / Native` platform uses cargo-nextest 0.9.144 for both the `ci` and `l
 `cargo ci test` runs tests not marked `#[ignore]` with the `ci` profile, then the doctests.
 The `ci` profile runs at most eight tests concurrently, reports slow tests every 30 seconds, terminates a test after five minutes, and does not retry failures.
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
+The `lifecycle` step passes the platform's bundle as `NEMOCLAW_TEST_BUNDLE`, the tests' only input; each provider's contract tests run the provider Cargo built from the checkout.
 CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
 Each platform's build-and-test job and bundle job run in parallel on separate runners; its lifecycle workers start when both finish.
 Linux and macOS run two nextest hash partitions on separate runners and Windows runs three, each with four test slots.
@@ -116,7 +117,7 @@ cargo ci lifecycle --partition hash:2/2
 
 To reproduce the archive handoff, run `cargo ci archive` after building.
 It writes `.build/ci/lifecycle.tar.zst` and `.build/ci/lifecycle-inputs.tar`.
-The first contains only binaries selected by the lifecycle profile and their nextest metadata; the second preserves the pinned tools, `nemoclaw-build` executable, provider helpers, and their executable permissions.
+The first contains only binaries selected by the lifecycle profile, the executables their packages build, and their nextest metadata; the second preserves the pinned tools, `nemoclaw-build` executable, the fake `ssh` relay, and their executable permissions.
 The bundle is not included; CI builds it in a parallel job and transfers `dist/PLATFORM` separately.
 `cargo ci bundle` builds its own `nemoclaw-build`, so it does not need the `build` step first.
 Copy both archives into `.build/ci` and the bundle into `dist/PLATFORM` in a separate checkout of the same revision on the same operating system and architecture, then run:
@@ -279,7 +280,7 @@ For deployment tests, keep the YAML and expected plan/apply resource actions eas
 Use assertions and the test runner's output for failures; do not add separate reports, host inventories, or project-tracking metadata to tests.
 Keep inference requests, fault injection, and recovery checks in explicitly named scenarios.
 
-- [Run integration tests](integration-tests.md) with explicit OpenTofu and bundle paths.
+- [Run integration tests](integration-tests.md) with an explicit bundle path.
 - [Run live tests](live-tests.md) only against explicitly owned resources.
 
 ### SSH Engine Transport

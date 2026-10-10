@@ -4,7 +4,9 @@
 # Test fixtures shared by the provider contract tests and the end-to-end
 # tests. Provider crates use them as development dependencies; nemoclaw-e2e
 # depends on the providers, so they cannot live there. The fixture executables
-# in src/bin are found beside the test executables (fixture_executable).
+# in src/bin are found beside the test executables (fixture_executable). The
+# fixture provider, which needs the SDK, is in nemoclaw-fixture-provider so the
+# openshell and fabric provider tests do not compile the SDK.
 [package]
 name = "nemoclaw-test-fixtures"
 version.workspace = true
@@ -14,12 +16,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-# The fixture provider serves SDK resource definitions through the shared adapter.
-nemoclaw-sdk = { path = "../nemoclaw-sdk" }
-nemoclaw-runtime = { path = "../nemoclaw-runtime", default-features = false }
-nemoclaw-tofu = { path = "../nemoclaw-tofu" }
-tf-provider.workspace = true
-async-trait.workspace = true
 tar.workspace = true
 openshell-core.workspace = true
 tonic.workspace = true

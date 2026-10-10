@@ -35,7 +35,7 @@ if [ "$1 $2" = 'nextest list' ]; then
     printf '%s\n' "$CARGO_LIST"
     exit "${CARGO_RESULT:-0}"
 fi
-printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "$NEMOCLAW_TEST_TOFU" "$NEMOCLAW_TEST_PROVIDER" > inputs
+printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "${NEMOCLAW_TEST_TOFU-unset}" "${NEMOCLAW_TEST_PROVIDER-unset}" > inputs
 exit "${CARGO_RESULT:-0}"
 "#,
             ),
@@ -63,6 +63,8 @@ exit "${CARGO_RESULT:-0}"
             .env("PROTOC", self.0.path().join("bin/protoc"))
             .env("PATH", self.0.path().join("bin"))
             .env("TEST_PLATFORM", "linux_arm64")
+            .env_remove("NEMOCLAW_TEST_TOFU")
+            .env_remove("NEMOCLAW_TEST_PROVIDER")
             .env_remove("GITHUB_ENV")
             .env_remove("GITHUB_PATH");
         command
@@ -92,12 +94,14 @@ fn lifecycle_partition_reaches_nextest_without_changing_the_selected_suite() {
         args.contains("--profile\nlifecycle\n--run-ignored\nonly\n"),
         "{args}"
     );
+    // The bundle supplies OpenTofu and the providers; each provider's own
+    // tests use the one Cargo built.
     let inputs = fs::read_to_string(fixture.0.path().join("inputs")).unwrap();
-    assert!(inputs.contains("dist/linux_arm64/libexec/tofu"), "{inputs}");
-    assert!(
-        inputs.contains("target/debug/terraform-provider-nemoclaw"),
-        "{inputs}"
-    );
+    let inputs: Vec<_> = inputs.lines().collect();
+    assert_eq!(inputs.len(), 3, "{inputs:?}");
+    assert!(inputs[0].ends_with("/dist/linux_arm64"), "{inputs:?}");
+    assert!(std::path::Path::new(inputs[0]).is_absolute(), "{inputs:?}");
+    assert_eq!(inputs[1..], ["unset", "unset"]);
 }
 
 #[test]
@@ -164,7 +168,7 @@ fn lifecycle_options_cannot_silently_narrow_default_or_other_ci_steps() {
 }
 
 #[test]
-fn archive_packages_tools_and_provider_helpers_but_leaves_the_bundle_to_its_own_job() {
+fn archive_packages_tools_and_the_ssh_relay_but_leaves_providers_to_the_bundle_and_nextest() {
     let fixture = Fixture::new();
     for path in [
         "dist/linux_arm64/bin/nemoclaw",
@@ -202,11 +206,13 @@ fn archive_packages_tools_and_provider_helpers_but_leaves_the_bundle_to_its_own_
     tar::Archive::new(packed).unpack(unpacked.path()).unwrap();
     // The bundle job uploads dist/PLATFORM separately, in parallel with this build.
     assert!(!unpacked.path().join("dist").exists());
+    // Nextest archives each provider package's executables with its tests.
+    for name in ["nemoclaw", "openshell", "fabric"] {
+        let path = format!("target/debug/terraform-provider-{name}");
+        assert!(!unpacked.path().join(&path).exists(), "{path}");
+    }
     for path in [
         ".tools/nextest-0.9.144/cargo-nextest",
-        "target/debug/terraform-provider-nemoclaw",
-        "target/debug/terraform-provider-openshell",
-        "target/debug/terraform-provider-fabric",
         "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = unpacked.path().join(path);

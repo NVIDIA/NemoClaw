@@ -1,21 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::fs;
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
 fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_state() {
-    let tofu =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
-    );
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = crate::workspace();
     let root = directory.path();
     // Beside the providers, where Windows finds it before the relay on PATH.
     nemoclaw_test_fixtures::ssh::install_simulator(root, root);

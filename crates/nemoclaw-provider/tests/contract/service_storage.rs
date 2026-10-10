@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     fs,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -60,10 +59,7 @@ async fn volume_engine() -> (Fixture, Arc<Mutex<Volumes>>) {
 }
 
 fn workspace() -> TofuWorkspace {
-    let path = |name| PathBuf::from(std::env::var_os(name).expect("explicit qualification path"));
-    let (tofu, provider) = (path("NEMOCLAW_TEST_TOFU"), path("NEMOCLAW_TEST_PROVIDER"));
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    TofuWorkspace::new(tofu, provider)
+    crate::workspace()
 }
 
 /// Write one storage resource; `identity` supplies owner and generation.
@@ -114,7 +110,7 @@ fn success(workspace: &TofuWorkspace, args: &[&str]) -> std::process::Output {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn authored_service_storage_applies_refreshes_and_names_invalid_attributes() {
     for (kind, name) in [
         (
@@ -197,7 +193,7 @@ fn lowercase_hex(value: &str) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn omitted_storage_identity_is_generated_once_and_kept() {
     for kind in KINDS {
         let (engine, volumes) = volume_engine().await;
@@ -246,7 +242,7 @@ async fn omitted_storage_identity_is_generated_once_and_kept() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn lost_reply_with_omitted_identity_stops_until_its_identity_is_supplied() {
     for kind in KINDS {
         let (engine, volumes) = volume_engine().await;
@@ -295,7 +291,7 @@ async fn lost_reply_with_omitted_identity_stops_until_its_identity_is_supplied()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn omitted_proxy_storage_identity_is_generated_and_labels_its_credential_volume() {
     let (engine, volumes) = volume_engine().await;
     let workspace = workspace();
@@ -347,7 +343,7 @@ async fn upstream(digest: Arc<Mutex<String>>) -> Fixture {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker and Ollama fixtures"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker and Ollama fixtures"]
 async fn authored_external_model_shares_proxy_identity_and_rechecks_its_digest() {
     let (engine, volumes) = volume_engine().await;
     let digest = Arc::new(Mutex::new("a".repeat(64)));

@@ -4,13 +4,10 @@
 
 use crate::tofu::TofuWorkspace;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::fs;
 
 fn workspace(resources: &str) -> TofuWorkspace {
-    let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
-    let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    let workspace = TofuWorkspace::new(tofu, provider);
+    let workspace = crate::workspace();
     fs::write(
         workspace.path().join("main.tf"),
         format!(
@@ -68,7 +65,7 @@ resource "nemoclaw_kubernetes_gateway" "platform" {{
 }
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; no cluster"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no cluster"]
 fn kubernetes_resources_plan_from_typed_settings_and_reject_invalid_ones() {
     let valid = workspace(&platform("agents", None));
     let run =

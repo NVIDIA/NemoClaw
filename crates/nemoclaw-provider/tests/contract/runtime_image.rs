@@ -7,7 +7,6 @@ use nemoclaw_sdk::managed::{RUNTIME_SPEC_VERSION, RUNTIME_SPEC_VERSION_LABEL};
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -26,10 +25,7 @@ async fn image_engine(image: Arc<Mutex<Value>>) -> Fixture {
 }
 
 fn workspace(engine: &str) -> TofuWorkspace {
-    let path = |name| PathBuf::from(std::env::var_os(name).expect("explicit qualification path"));
-    let (tofu, provider) = (path("NEMOCLAW_TEST_TOFU"), path("NEMOCLAW_TEST_PROVIDER"));
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    let workspace = TofuWorkspace::new(tofu, provider);
+    let workspace = crate::workspace();
     fs::write(
         workspace.path().join("main.tf"),
         format!(
@@ -62,7 +58,7 @@ output "observation" {{
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn authored_runtime_image_check_reads_labels_and_rejects_an_incompatible_image() {
     let image = Arc::new(Mutex::new(json!({
         "Id": "sha256:runtime", "Os": "linux", "Architecture": "arm64",

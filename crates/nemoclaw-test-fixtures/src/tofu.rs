@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Owned OpenTofu workspaces for explicitly selected test executables.
 
+use crate::Bundle;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -12,13 +13,9 @@ use tempfile::TempDir;
 /// Where Unix sockets are missing, fake engines are reached over SSH. Windows
 /// resolves a bare program name in the launching executable's directory
 /// before `PATH`, so providers copied here run the relay as `ssh`.
-fn install_ssh_relay(directory: &Path, providers: &Path) {
+fn install_ssh_relay(directory: &Path) {
     if cfg!(not(unix)) {
-        fs::copy(
-            crate::ssh_relay(providers),
-            directory.join(crate::executable("ssh")),
-        )
-        .unwrap();
+        fs::copy(crate::ssh_relay(), directory.join(crate::executable("ssh"))).unwrap();
     }
 }
 
@@ -28,39 +25,18 @@ pub struct TofuWorkspace {
 }
 
 impl TofuWorkspace {
-    /// A workspace whose OpenTofu uses `provider` and, beside it, the
-    /// `openshell` and `fabric` providers built with it.
-    pub fn new(tofu: impl AsRef<Path>, provider: impl AsRef<Path>) -> Self {
-        let directory = tempfile::tempdir().unwrap();
-        let provider = provider.as_ref();
-        fs::copy(
-            provider,
-            directory
-                .path()
-                .join(crate::executable("terraform-provider-nemoclaw")),
+    /// A workspace whose OpenTofu is the bundle's and uses the `nemoclaw`
+    /// provider at `nemoclaw` and the bundle's `openshell` and `fabric`
+    /// providers.
+    pub fn new(bundle: &Bundle, nemoclaw: impl AsRef<Path>) -> Self {
+        Self::with_providers(
+            bundle.tofu(),
+            &[
+                ("nemoclaw", nemoclaw.as_ref()),
+                ("openshell", &bundle.provider("openshell")),
+                ("fabric", &bundle.provider("fabric")),
+            ],
         )
-        .unwrap();
-        for name in ["openshell", "fabric"] {
-            let binary = crate::executable(&format!("terraform-provider-{name}"));
-            let sibling = provider.with_file_name(&binary);
-            if sibling.exists() {
-                fs::copy(sibling, directory.path().join(binary)).unwrap();
-            }
-        }
-        install_ssh_relay(directory.path(), provider.parent().unwrap());
-        let path = serde_json::to_string(directory.path()).unwrap();
-        let overrides = ["nemoclaw", "openshell", "fabric"]
-            .map(|name| format!("\"registry.opentofu.org/nvidia/{name}\" = {path}"))
-            .join(" ");
-        fs::write(
-            directory.path().join("tofu.rc"),
-            format!("provider_installation {{ dev_overrides {{ {overrides} }} direct {{}} }}"),
-        )
-        .unwrap();
-        Self {
-            directory,
-            tofu: tofu.as_ref().to_owned(),
-        }
     }
 
     /// A workspace whose OpenTofu uses only the given `(name, executable)`
@@ -76,8 +52,8 @@ impl TofuWorkspace {
             )
             .unwrap();
         }
-        if let Some((_, executable)) = providers.first() {
-            install_ssh_relay(directory.path(), executable.parent().unwrap());
+        if !providers.is_empty() {
+            install_ssh_relay(directory.path());
         }
         let path = serde_json::to_string(directory.path()).unwrap();
         let overrides = providers
@@ -125,7 +101,7 @@ mod tests {
             let script = format!("#!/bin/sh\nprintf '%s' '{selected}'\n");
             fs::write(&provider, &script).unwrap();
             fs::set_permissions(&provider, fs::Permissions::from_mode(0o700)).unwrap();
-            let workspace = TofuWorkspace::new("/bin/sh", &provider);
+            let workspace = TofuWorkspace::with_providers("/bin/sh", &[("nemoclaw", &provider)]);
             let staged = workspace
                 .path()
                 .join(crate::executable("terraform-provider-nemoclaw"));
@@ -152,7 +128,7 @@ mod tests {
         let sources = tempfile::tempdir().unwrap();
         let provider = sources.path().join("provider");
         fs::write(&provider, b"explicit provider").unwrap();
-        let workspace = TofuWorkspace::new("/bin/sh", provider);
+        let workspace = TofuWorkspace::with_providers("/bin/sh", &[("nemoclaw", &provider)]);
         let output = workspace.command()
             .args(["-c", r#"pwd -P; printf '%s\n' "$TF_CLI_CONFIG_FILE" "$TF_IN_AUTOMATION" "$CHECKPOINT_DISABLE" "$SCENARIO_VALUE"; printf 'expected failure' >&2; exit 23"#])
             .env("SCENARIO_VALUE", "literal scenario value")

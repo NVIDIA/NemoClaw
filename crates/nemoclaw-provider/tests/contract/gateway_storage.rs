@@ -10,7 +10,6 @@ use std::{
     collections::BTreeMap,
     fs,
     io::Read,
-    path::PathBuf,
     process::Output,
     sync::{Arc, Mutex},
 };
@@ -209,14 +208,11 @@ fn run(workspace: &TofuWorkspace, args: &[&str], success: bool) -> String {
 }
 
 fn workspace() -> TofuWorkspace {
-    let path = |name| PathBuf::from(std::env::var_os(name).expect("explicit qualification path"));
-    let (tofu, provider) = (path("NEMOCLAW_TEST_TOFU"), path("NEMOCLAW_TEST_PROVIDER"));
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    TofuWorkspace::new(tofu, provider)
+    crate::workspace()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn gateway_storage_initializes_once_rejects_drift_and_refuses_deletion() {
     let (fixture, engine) = docker_engine().await;
     let workspace = workspace();

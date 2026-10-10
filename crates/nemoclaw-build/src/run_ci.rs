@@ -248,18 +248,9 @@ fn run_step(
                 )?;
                 command.env("PATH", path);
             }
-            command
-                .env("NEMOCLAW_TEST_BUNDLE", &bundle)
-                .env(
-                    "NEMOCLAW_TEST_TOFU",
-                    bundle
-                        .join("libexec")
-                        .join(nemoclaw_build_executable("tofu")),
-                )
-                .env(
-                    "NEMOCLAW_TEST_PROVIDER",
-                    std::path::absolute(tool("terraform-provider-nemoclaw"))?,
-                );
+            // The bundle supplies pinned OpenTofu and the providers; each
+            // provider's contract tests use the one Cargo built with them.
+            command.env("NEMOCLAW_TEST_BUNDLE", &bundle);
         }
         run(&mut command)?;
     }
