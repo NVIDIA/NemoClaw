@@ -17,10 +17,11 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
     assert!(tofu.is_absolute() && provider.is_absolute());
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
+    // Beside the providers, where Windows finds it before the relay on PATH.
     nemoclaw_e2e::install_ssh_simulator(
         std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
             .expect("Cargo sets the fixture executable path"),
-        &root.join("bin"),
+        root,
         root,
     );
     for (file, value) in [
@@ -87,7 +88,7 @@ fn production_capacity_data_blocks_overcommit_defers_unknowns_and_preserves_stat
             .command()
             .args(args)
             .env("NEMOCLAW_TEST_REMOTE", root)
-            .env("PATH", nemoclaw_e2e::path_with(&root.join("bin")))
+            .env("PATH", nemoclaw_e2e::path_with(root))
             .output()
             .unwrap();
         assert_eq!(

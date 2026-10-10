@@ -24,10 +24,11 @@ async fn standalone_readiness(proxy: bool) {
     assert!(tofu.is_absolute() && provider.is_absolute());
     let directory = TofuWorkspace::new(tofu, provider);
     let root = directory.path();
+    // Beside the providers, where Windows finds it before the relay on PATH.
     nemoclaw_e2e::install_ssh_simulator(
         std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
             .expect("Cargo sets the fixture executable path"),
-        &root.join("bin"),
+        root,
         root,
     );
     let document = Document::parse(
@@ -133,7 +134,7 @@ async fn standalone_readiness(proxy: bool) {
             .command()
             .args(args)
             .env("NEMOCLAW_TEST_REMOTE", root)
-            .env("PATH", nemoclaw_e2e::path_with(&root.join("bin")))
+            .env("PATH", nemoclaw_e2e::path_with(root))
             .output()
             .unwrap();
         assert_eq!(

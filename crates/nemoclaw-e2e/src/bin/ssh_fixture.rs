@@ -582,12 +582,17 @@ fn root() -> PathBuf {
 }
 
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Where Unix sockets are missing, fake image engines are reached through
+    // the shared relay, which this simulator shadows on PATH.
+    if let Some(address) = nemoclaw_test_fixtures::ssh::fixture_engine(&args) {
+        return nemoclaw_test_fixtures::ssh::relay(address);
+    }
     let root = root();
     let mut control = read_json(&root.join("control.json"));
     if flag(&control, "transport_failure") {
         return ExitCode::from(255);
     }
-    let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg.contains("==nemoclaw:")) {
         return capacity(&root, &control);
     }
