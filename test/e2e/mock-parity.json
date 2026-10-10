@@ -849,6 +849,7 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-switch-workflow-boundary.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/openclaw-inference-switch-baseline.test.ts",
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/security/admin-approval-helper.test.ts",
