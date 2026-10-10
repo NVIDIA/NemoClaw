@@ -882,7 +882,7 @@ native_refreshed = False
 # A native NVIDIA handle persisted by the host-side config batch belongs to
 # the provider revision that issued it. After a supervisor restart, only the
 # current revision is available, so replace that exact config field before
-# OpenClaw starts. Never copy a raw value or rewrite another provider's config.
+# OpenClaw starts. Never copy a raw value or rewrite config for other providers.
 models = config.get("models") if isinstance(config, dict) else None
 providers = models.get("providers") if isinstance(models, dict) else None
 native = providers.get("inference") if isinstance(providers, dict) else None
