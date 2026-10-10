@@ -115,7 +115,7 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(mockRegistryState.sandboxes["interrupt-test"]).toBeUndefined();
   });
 
-  it("seeds the session sandbox when the sandbox step completed", async () => {
+  it("registers a completed session sandbox when the live gateway lists it", async () => {
     vi.mocked(loadSession).mockReturnValue({
       sandboxName: "alpha",
       provider: "nvidia",
@@ -127,17 +127,70 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
       },
     } as never);
+    vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "alpha Ready", status: 0 } as never);
 
     const result = await recoverRegistryEntries();
 
     expect(result.recoveredFromSession).toBe(true);
+    expect(result.recoveredFromGateway).toBe(0);
     const recovered = result.sandboxes.find((s) => s.name === "alpha");
     expect(recovered).toBeDefined();
     expect(recovered).not.toHaveProperty("policies");
     expect(recovered?.observabilityEnabled).toBe(true);
+    expect(recovered?.agent).toBe("langchain-deepagents-code");
+    expect(mockRegistryState.defaultSandbox).toBe("alpha");
+  });
+
+  it("does not register a completed session sandbox that the live gateway does not list", async () => {
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia",
+      model: "nemotron",
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
+    expect(result.recoveredFromSession).toBe(false);
+    expect(result.sandboxes).toEqual([]);
+    expect(mockRegistryState.sandboxes.alpha).toBeUndefined();
+    expect(mockRegistryState.defaultSandbox).toBeNull();
+  });
+
+  it("does not register a completed session sandbox when OpenShell cannot list sandboxes", async () => {
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia",
+      model: "nemotron",
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(false);
+    expect(result.sandboxes).toEqual([]);
+    expect(mockRegistryState.sandboxes.alpha).toBeUndefined();
+    expect(mockRegistryState.defaultSandbox).toBeNull();
   });
 
   it("restores complete custom-route identity from a confirmed session", async () => {
+    vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "custom-route Ready",
+      status: 0,
+    } as never);
     vi.mocked(loadSession).mockReturnValue({
       sandboxName: "custom-route",
       provider: "compatible-endpoint",
@@ -165,6 +218,12 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
 
   it("still fails closed for a confirmed legacy custom route without full identity", async () => {
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "legacy-custom-route Ready",
+      status: 0,
+    } as never);
     vi.mocked(loadSession).mockReturnValue({
       sandboxName: "legacy-custom-route",
       provider: "compatible-endpoint",

@@ -13,6 +13,9 @@ import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
 type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
+type DestroySandboxInSelectedRoot =
+  (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandboxInSelectedRoot"];
+type OwningRegistryModule = typeof import("../../src/lib/actions/sandbox/rebuild/owning-registry");
 
 const requireSource = createRequire(
   new URL("../../src/lib/actions/sandbox/destroy-flow.test.ts", import.meta.url),
@@ -27,6 +30,9 @@ export type DestroyHarness = {
   captureOpenshellSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
+  destroySandboxInSelectedRoot: DestroySandboxInSelectedRoot;
+  owningRegistryDependencies: OwningRegistryModule["rebuildOwningRegistryDependencies"];
+  runOwningRegistryWorkerSpy: MockInstance;
   prepareSandboxDestroy: typeof import("../../src/lib/actions/sandbox/destroy-preflight").prepareSandboxDestroy;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
@@ -291,6 +297,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const destroyExecution = requireSource("./destroy-execution.js");
   const forwardRecovery = requireSource("./forward-recovery.js");
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockResolvedValue(true);
+  const owningRegistry = requireSource("./rebuild/owning-registry.js") as OwningRegistryModule;
+  const runOwningRegistryWorkerSpy = vi
+    .spyOn(owningRegistry.rebuildOwningRegistryDependencies, "runWorker")
+    .mockResolvedValue(undefined);
   const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
   const sandboxSession = requireSource("../../state/sandbox-session.js");
@@ -775,6 +785,14 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
           sleep: finalGatewaySleepSpy,
         },
       }),
+    destroySandboxInSelectedRoot: (sandboxName, destroyOptions) =>
+      requireSource(destroyModulePath).destroySandboxInSelectedRoot(sandboxName, destroyOptions, {
+        finalGatewayCleanup: {
+          sleep: finalGatewaySleepSpy,
+        },
+      }),
+    owningRegistryDependencies: owningRegistry.rebuildOwningRegistryDependencies,
+    runOwningRegistryWorkerSpy,
     prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
     errorSpy,
     events,

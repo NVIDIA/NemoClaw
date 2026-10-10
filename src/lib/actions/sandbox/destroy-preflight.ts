@@ -7,6 +7,7 @@ import os from "node:os";
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import type { DestroySandboxOptions } from "../../domain/lifecycle/options";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import {
@@ -53,6 +54,10 @@ import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
+import {
+  delegatedDestroyExitCode,
+  delegateDestroyToOwningRegistry,
+} from "./rebuild/owning-registry";
 
 export { teardownSandboxDashboardForward } from "./forward-recovery";
 
@@ -100,6 +105,43 @@ export function resolveSandboxDestroyRegistryAuthority(
     removeSandbox: (name) =>
       name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
   };
+}
+
+/** Report whether the named sandbox is the only published sandbox in every gateway state root. */
+export function isOnlyPublishedSandbox(sandboxName: string): boolean {
+  return listPublishedSandboxesAcrossGatewayRoots().every((entry) => entry.name === sandboxName);
+}
+
+export type SandboxDestroyDelegation =
+  | Readonly<{ delegated: false }>
+  | Readonly<{ delegated: true; exitCode: number | null }>;
+
+/**
+ * Hand a sandbox that another gateway state root owns to a worker bound to
+ * that root. The detached worker cannot prompt, so `confirm` resolves every
+ * prompt first. A delegated result carries the exit status that the worker
+ * requested after printing its own diagnostics, or null.
+ */
+export async function delegateSandboxDestroyToOwningRoot(
+  sandboxName: string,
+  options: DestroySandboxOptions,
+  confirm: (options: DestroySandboxOptions) => Promise<DestroySandboxOptions | null>,
+  cliName: string,
+): Promise<SandboxDestroyDelegation> {
+  try {
+    const delegated = await delegateDestroyToOwningRegistry(
+      { sandboxName, options },
+      resolveDestroyHomeDir({}),
+      registry.REGISTRY_FILE,
+      confirm,
+      cliName,
+    );
+    return delegated ? { delegated: true, exitCode: null } : { delegated: false };
+  } catch (error) {
+    const exitCode = delegatedDestroyExitCode(error);
+    if (exitCode === undefined) throw error;
+    return { delegated: true, exitCode };
+  }
 }
 
 export function resolveSandboxDestroyGatewayName(

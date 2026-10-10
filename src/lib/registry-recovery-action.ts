@@ -196,23 +196,19 @@ function isSessionSandboxConfirmed(session: Session | null): boolean {
 }
 
 /**
- * Build the name→metadata seed map used to enrich gateway-recovered entries,
- * and recover a confirmed onboard-session sandbox into the registry when it is
- * missing. Returns the seed map and whether a session sandbox was recovered.
+ * Build the name→metadata seed map used to enrich gateway-recovered entries.
+ * A confirmed onboard session contributes metadata for its sandbox, but only
+ * the live gateway listing proves that the sandbox still exists, so the
+ * session never registers a row by itself. Returns the seed map and the
+ * confirmed session sandbox name.
  */
-function seedRecoveryMetadata(
-  current: { sandboxes: SandboxEntry[] },
-  session: Session | null,
-  requestedSandboxName: string | null,
-  gatewayName = resolveGatewayName(GATEWAY_PORT),
-) {
+function seedRecoveryMetadata(current: { sandboxes: SandboxEntry[] }, session: Session | null) {
   const metadataByName = new Map<string, RecoveredSandboxMetadata>(
     current.sandboxes.map((sandbox: SandboxEntry) => [sandbox.name, sandbox]),
   );
-  let recoveredFromSession = false;
 
   if (!isSessionSandboxConfirmed(session) || !session?.sandboxName) {
-    return { metadataByName, recoveredFromSession };
+    return { metadataByName, sessionSandboxName: null };
   }
 
   metadataByName.set(
@@ -230,21 +226,7 @@ function seedRecoveryMetadata(
         : {}),
     }),
   );
-  const sessionSandboxMissing = !current.sandboxes.some(
-    (sandbox: { name: string }) => sandbox.name === session.sandboxName,
-  );
-  const shouldRecoverSessionSandbox =
-    current.sandboxes.length === 0 ||
-    sessionSandboxMissing ||
-    requestedSandboxName === session.sandboxName;
-  if (shouldRecoverSessionSandbox) {
-    recoveredFromSession = upsertRecoveredSandbox(
-      session.sandboxName,
-      metadataByName.get(session.sandboxName),
-      gatewayName,
-    );
-  }
-  return { metadataByName, recoveredFromSession };
+  return { metadataByName, sessionSandboxName: session.sandboxName };
 }
 
 /**
@@ -286,6 +268,8 @@ async function canInspectLiveGatewayViaRecovery(): Promise<boolean> {
 
 interface LiveGatewayRecovery {
   recoveredFromGateway: number;
+  /** A live sandbox named by the confirmed onboard session was registered. */
+  recoveredFromSession: boolean;
   /**
    * #5714: live sandboxes surfaced for display only (unseeded `list` recovery)
    * that were NOT persisted to the on-disk registry. Empty for the seeded path.
@@ -293,30 +277,34 @@ interface LiveGatewayRecovery {
   ephemeralSandboxes: RecoveredSandboxEntry[];
 }
 
+function noLiveGatewayRecovery(): LiveGatewayRecovery {
+  return { recoveredFromGateway: 0, recoveredFromSession: false, ephemeralSandboxes: [] };
+}
+
 /**
  * Inspect the live OpenShell gateway and recover its sandboxes. In `readOnly`
  * mode (unseeded #5714 `list`) recovered sandboxes are returned as display-only
  * `ephemeralSandboxes` and never persisted; otherwise they are upserted into
- * the on-disk registry. Returns the recovered count and any ephemeral entries.
+ * the on-disk registry. A new row for the confirmed session sandbox counts as
+ * recovered from the session because the session supplies its metadata.
+ * Returns the recovered counts and any ephemeral entries.
  */
 async function recoverRegistryFromLiveGateway(
   metadataByName: Map<string, RecoveredSandboxMetadata>,
   {
     readOnly = false,
     gatewayName = resolveGatewayName(GATEWAY_PORT),
-  }: { readOnly?: boolean; gatewayName?: string } = {},
+    sessionSandboxName = null,
+  }: { readOnly?: boolean; gatewayName?: string; sessionSandboxName?: string | null } = {},
 ): Promise<LiveGatewayRecovery> {
-  if (!resolveOpenshell()) {
-    return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
-  }
+  if (!resolveOpenshell()) return noLiveGatewayRecovery();
   const canInspectLiveGateway = readOnly
     ? await canInspectLiveGatewayReadOnly()
     : await canInspectLiveGatewayViaRecovery();
-  if (!canInspectLiveGateway) {
-    return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
-  }
+  if (!canInspectLiveGateway) return noLiveGatewayRecovery();
 
   let recoveredFromGateway = 0;
+  let recoveredFromSession = false;
   const ephemeralSandboxes: RecoveredSandboxEntry[] = [];
   // Scope the live-sandbox list to the gateway this recovery targets. An
   // unscoped `sandbox list` returns every sandbox on the host. On a host
@@ -336,9 +324,7 @@ async function recoverRegistryFromLiveGateway(
   // Only trust the output of a clean `sandbox list`. On a non-zero/failed probe
   // (timeout, transport error) the typed observer returns an error instead of
   // treating command diagnostics as sandbox rows.
-  if (!liveList.ok) {
-    return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
-  }
+  if (!liveList.ok) return noLiveGatewayRecovery();
   for (const { name, phase } of liveList.value.sandboxes) {
     const metadata = metadataByName.get(name) || undefined;
     if (readOnly) {
@@ -365,11 +351,14 @@ async function recoverRegistryFromLiveGateway(
       recoveredFromGateway += 1;
       continue;
     }
-    if (upsertRecoveredSandbox(name, metadata, gatewayName)) {
+    if (!upsertRecoveredSandbox(name, metadata, gatewayName)) continue;
+    if (name === sessionSandboxName) {
+      recoveredFromSession = true;
+    } else {
       recoveredFromGateway += 1;
     }
   }
-  return { recoveredFromGateway, ephemeralSandboxes };
+  return { recoveredFromGateway, recoveredFromSession, ephemeralSandboxes };
 }
 
 /**
@@ -408,7 +397,7 @@ async function recoverRegistryEntriesFromSnapshot(
   requestedSandboxName: string | null,
   gatewayName: string,
 ) {
-  const seeded = seedRecoveryMetadata(current, session, requestedSandboxName, gatewayName);
+  const seeded = seedRecoveryMetadata(current, session);
   // A seed is any signal that the user expects a specific sandbox to exist:
   // existing registry entries, a *confirmed* onboard session, or an explicit
   // requested name. With a seed we allow active gateway recovery (which may
@@ -427,6 +416,7 @@ async function recoverRegistryEntriesFromSnapshot(
   const gateway = await recoverRegistryFromLiveGateway(seeded.metadataByName, {
     readOnly: !hasRecoverySeed,
     gatewayName,
+    sessionSandboxName: seeded.sessionSandboxName,
   });
   const recovered = applyRecoveredDefault(current.defaultSandbox, requestedSandboxName, session);
   // Merge display-only (ephemeral) live-gateway sandboxes that were not
@@ -440,7 +430,7 @@ async function recoverRegistryEntriesFromSnapshot(
   return {
     ...recovered,
     sandboxes,
-    recoveredFromSession: seeded.recoveredFromSession,
+    recoveredFromSession: gateway.recoveredFromSession,
     recoveredFromGateway: gateway.recoveredFromGateway,
   };
 }

@@ -39,6 +39,7 @@ import {
 import { resolveDashboardForwardBind } from "../../onboard/dashboard-runtime";
 import { isWsl } from "../../platform";
 import * as registry from "../../state/registry";
+import { listPublishedSandboxesAcrossGatewayRoots } from "../../state/registry/cross-port";
 export type SandboxForwardHealth = boolean;
 import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
@@ -499,6 +500,28 @@ export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
 }
 
 /**
+ * A row that records no dashboard port resolves a fallback port. When another
+ * registered sandbox records that port, the listener belongs to that sandbox,
+ * so this sandbox's release check must not wait for it.
+ */
+function withoutFallbackPortOfAnotherSandbox(
+  sandboxName: string,
+  sandbox: registry.SandboxEntry,
+  forwards: OpenShellForwardIdentity[],
+  resolvePort: typeof resolveSandboxDashboardPort,
+  listRegisteredSandboxes: () => readonly registry.SandboxEntry[],
+): OpenShellForwardIdentity[] {
+  if (isValidPort(sandbox.dashboardPort)) return forwards;
+  const fallbackPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
+  const recordedByAnotherSandbox = listRegisteredSandboxes().some(
+    (entry) => entry.name !== sandboxName && entry.dashboardPort === fallbackPort,
+  );
+  return recordedByAnotherSandbox
+    ? forwards.filter((forward) => forward.port !== fallbackPort)
+    : forwards;
+}
+
+/**
  * Wait for OpenShell's direct forwards to exit after the sandbox becomes unavailable.
  */
 export async function teardownSandboxDashboardForward(
@@ -508,6 +531,7 @@ export async function teardownSandboxDashboardForward(
     forwardAdapterForAuthority?: (
       authority: OpenShellForwardRuntimeAuthority,
     ) => Pick<OpenShellForwardAdapter, "verifyForwardRelease">;
+    listRegisteredSandboxes?: () => readonly registry.SandboxEntry[];
     resolveForwardRuntimeAuthority?: typeof forwardRuntimeAuthority;
     resolveSandboxDashboardPort?: typeof resolveSandboxDashboardPort;
   } = {},
@@ -523,12 +547,18 @@ export async function teardownSandboxDashboardForward(
     const { authority, runtime } = (deps.resolveForwardRuntimeAuthority ?? forwardRuntimeAuthority)(
       gatewayName,
     );
-    const forwards = registeredLegacyForwardIdentities(
+    const forwards = withoutFallbackPortOfAnotherSandbox(
       sandboxName,
       sandbox,
-      registeredAgent,
-      runtime,
+      registeredLegacyForwardIdentities(
+        sandboxName,
+        sandbox,
+        registeredAgent,
+        runtime,
+        resolvePort,
+      ),
       resolvePort,
+      deps.listRegisteredSandboxes ?? listPublishedSandboxesAcrossGatewayRoots,
     );
     const release = await (
       deps.forwardAdapterForAuthority ?? createOpenShellForwardAdapterForAuthority
