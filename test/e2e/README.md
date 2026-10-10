@@ -2164,12 +2164,12 @@ This is not an exhaustive filesystem scan. This covers runtime configuration, Op
 remote inference boundary. Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
-Provide `NEMOCLAW_GEMINI_MODEL`, `NEMOCLAW_OPENROUTER_MODEL`, and `NEMOCLAW_HERMES_MODEL` for those cases.
-OpenAI and Anthropic retain their existing defaults and model overrides.
+Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
 The Hermes smoke uses `NOUS_API_KEY`. It does not prove interactive OAuth login or token refresh.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
-The existing cleanup helper destroys each test sandbox. Use a disposable gateway because provider
-credentials can remain stored after sandbox removal.
+The existing cleanup helper destroys each test sandbox. After successful onboarding, strict cleanup checks sandbox absence only.
+Failed onboarding uses best-effort cleanup. Neither path proves removal of credentials from the OpenShell provider store.
+Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 
 Select one explicit target with `targets=hosted-inference-openai`, `hosted-inference-anthropic`,
 `hosted-inference-gemini`, `hosted-inference-openrouter`, or `hosted-inference-hermes`.
