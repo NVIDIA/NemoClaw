@@ -28,6 +28,7 @@ interface FakeOpenShellCall {
 interface FakeOpenShellState {
   attachments: Record<string, string>;
   calls: FakeOpenShellCall[];
+  profileSource: string | null;
   profiles: string[];
   providers: Record<
     string,
@@ -53,6 +54,7 @@ const CONFIG = {
 const INITIAL_STATE: FakeOpenShellState = {
   attachments: {},
   calls: [],
+  profileSource: null,
   profiles: [],
   providers: {},
 };
@@ -108,8 +110,14 @@ if (args[0] === "provider" && args[1] === "get") {
 }
 
 if (args.join(" ").startsWith("provider profile import --file ")) {
+  state.profileSource = fs.readFileSync(args[args.indexOf("--file") + 1], "utf8");
   state.profiles.push("okta-runtime-v1");
   save(0);
+}
+
+if (args.join(" ") === "provider profile export okta-runtime-v1 --output yaml") {
+  if (!state.profileSource) save(1, "", "provider profile not found");
+  save(0, state.profileSource);
 }
 
 if (args[0] === "provider" && args[1] === "create") {
@@ -193,6 +201,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
       OKTA_CLIENT_SECRET: "integration-client-secret",
     };
     const persistedReceipts: RuntimeIdentityReceipt[] = [];
+    const warnings: string[] = [];
     const run = async (
       args: string[],
       options?: RuntimeIdentityCommandOptions,
@@ -217,6 +226,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
       formatError: (output, secrets = []) =>
         secrets.reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), output),
       persistReceipt: (receipt) => persistedReceipts.push({ ...receipt }),
+      warn: (message) => warnings.push(message),
       run,
       // This test intentionally bypasses DNS validation and uses a fake OpenShell to isolate lifecycle orchestration.
       // TC-INF-12 separately proves the successful path through a real
@@ -233,7 +243,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
     await mintRuntimeIdentityCredential(receipt, deps);
 
     let state = await readState(fakeOpenShell);
-    expect(receipt).toEqual({
+    expect(receipt).toMatchObject({
       provider_type: "okta-runtime-v1",
       provider_name: "e2e-okta-runtime",
       credential_key: "OKTA_ACCESS_TOKEN",
@@ -241,6 +251,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
       attachment_created: true,
     });
     expect(persistedReceipts).toEqual([{ ...receipt, attachment_created: false }]);
+    expect(warnings).toEqual([]);
     expect(state.profiles).toEqual(["okta-runtime-v1"]);
     expect(state.providers["e2e-okta-runtime"]).toMatchObject({
       configured: true,

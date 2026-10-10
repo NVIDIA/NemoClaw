@@ -1216,11 +1216,14 @@ async function runRuntimeIdentityCommand(
     stderr: "pipe",
     env: buildBlueprintOpenShellEnv(gateway, options?.env),
     extendEnv: false,
+    ...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
   });
   return {
     exitCode: result.exitCode ?? 1,
     stdout: result.stdout,
-    stderr: result.stderr,
+    stderr: result.timedOut
+      ? `OpenShell command timed out after ${(options?.timeoutMs ?? 0) / 1_000} seconds`
+      : result.stderr,
   };
 }
 
@@ -1228,6 +1231,7 @@ function runtimeIdentityCommandDeps(gateway: string): RuntimeIdentityCommandDeps
   return {
     run: (args, options) => runRuntimeIdentityCommand(args, options, gateway),
     formatError: boundedCommandError,
+    warn: (message) => log(`Warning: ${message}`),
   };
 }
 
