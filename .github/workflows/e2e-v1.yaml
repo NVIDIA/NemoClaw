@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: E2E / V1 Suite
+run-name: V1 E2E / ${{ github.event_name }}
+
+# GitHub schedules and the manual UI require this entry point on main.
+# Merge the reusable native/image workflows into v1 before this workflow.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-v1-suite
+  cancel-in-progress: false
+
+jobs:
+  revision:
+    name: Resolve V1 revision
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v1
+          persist-credentials: false
+      - id: revision
+        name: Record tested revision
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Testing V1 commit: $sha" >> "$GITHUB_STEP_SUMMARY"
+
+  native:
+    name: Native and bundle fixtures
+    needs: revision
+    uses: NVIDIA/NemoClaw/.github/workflows/rust.yml@v1
+    with:
+      source-ref: ${{ needs.revision.outputs.sha }}
+
+  images:
+    name: Images and native adapters
+    needs: revision
+    uses: NVIDIA/NemoClaw/.github/workflows/images.yml@v1
+    with:
+      source-ref: ${{ needs.revision.outputs.sha }}
+
+  result:
+    name: V1 suite result
+    if: always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    needs: [revision, native, images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      REVISION: ${{ needs.revision.outputs.sha }}
+      RESOLUTION: ${{ needs.revision.result }}
+      NATIVE: ${{ needs.native.result }}
+      IMAGES: ${{ needs.images.result }}
+    steps:
+      - name: Report all suite results
+        run: |
+          {
+            echo "V1 commit: $REVISION"
+            echo ""
+            echo '| Suite | Result |'
+            echo '|---|---|'
+            echo "| Resolve revision | $RESOLUTION |"
+            echo "| Native and bundle fixtures | $NATIVE |"
+            echo "| Images and native adapters | $IMAGES |"
+            echo ""
+            echo 'Live deployments and externally configured fixtures remain opt-in; see docs/testing.md on v1.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$RESOLUTION" = success && test "$NATIVE" = success && test "$IMAGES" = success
