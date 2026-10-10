@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "defaultModel": "qwen3.8-27b",
+  "fallbackModel": "qwen3.6-35b-a3b",
+  "fallbackSelection": "explicit",
+  "engine": {
+    "version": "b10362",
+    "architecture": "arm64",
+    "backend": "cuda",
+    "bundleBytes": 1819690260,
+    "bundleSha256": "05806c620eb45b6cf0dc3092755fe066e9234ab32f272844e1af524de869c54e",
+    "packageIdentity": "NousResearch.HermesBundledCommit1cc989e",
+    "packageVersion": "0.21.3.0",
+    "sourceRevision": "1cc989ec1bc5557e4947e467179700f75d042f4e",
+    "prefix": "app/resources/agent-payload/tools/llamacpp-cuda-10362-win32-arm64/"
+  },
+  "models": [
+    {
+      "id": "qwen3.8-27b",
+      "displayName": "Qwen 3.8 27B",
+      "repository": "unsloth/Qwen3.8-27B-GGUF",
+      "revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+      "quantization": "UD-Q4_K_M",
+      "weights": {
+        "name": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "bytes": 16464440224,
+        "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q4_K_M.gguf"
+      },
+      "visionProjector": {
+        "name": "mmproj-Qwen3.8-27B-BF16.gguf",
+        "bytes": 931146432,
+        "sha256": "83ee4f4f205fa514161778c41df1ea14144faa0f713510893b63c2395f5c2d53",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/mmproj-BF16.gguf"
+      }
+    },
+    {
+      "id": "qwen3.6-35b-a3b",
+      "displayName": "Qwen 3.6 35B-A3B (alternative)",
+      "repository": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
+      "revision": "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
+      "quantization": "UD-Q4_K_M",
+      "weights": {
+        "name": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+        "bytes": 22663387424,
+        "sha256": "0b21525e972670ed59e1812e170b27c26355381f0656ecc4e25617ece7dac58b",
+        "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/5bc3e238d916f48a861bac2f8a1990a0e9b7e98d/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+      },
+      "visionProjector": {
+        "name": "mmproj-Qwen3.6-35B-A3B-BF16.gguf",
+        "bytes": 902822528,
+        "sha256": "da63cb47a76763c712393f8a017070188a304fa39f8aeea6edc629ed7b975cfa",
+        "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/5bc3e238d916f48a861bac2f8a1990a0e9b7e98d/mmproj-BF16.gguf"
+      }
+    }
+  ]
+}

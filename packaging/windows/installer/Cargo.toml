@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "nemoclaw-windows-msi-transaction"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+msi-boundary-fixture = []
+
+[[bin]]
+name = "NemoClawRuntimeTransaction"
+path = "transaction_main.rs"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = "symbols"

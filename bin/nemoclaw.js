@@ -56,6 +56,8 @@ function handleTopLevelError(error) {
 }
 
 function applyPersistedAutomaticGatewayPort() {
+  // Native Windows does not use the POSIX installer's automatic-port markers.
+  if (process.platform === "win32") return;
   if (process.env.NEMOCLAW_GATEWAY_PORT) {
     const installerAutomaticPort =
       process.env.NEMOCLAW_INSTALLING === "1" &&

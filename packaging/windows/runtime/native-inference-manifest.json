@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "n1x-qwen3.6-35b-a3b",
+  "displayName": "On this device \u00b7 Qwen 3.6 35B-A3B",
+  "productName": "RTX Spark N1X",
+  "serverVersion": "b10868",
+  "cudaVersion": "13.4",
+  "model": "qwen3.6-35b-a3b",
+  "modelRepository": "ggml-org/Qwen3.6-35B-A3B-GGUF",
+  "modelRevision": "baec3ebee244827cda0f4557eafa8b28f7545fa6",
+  "memoryBytes": 50331648000,
+  "storageBytes": 42949672960,
+  "contextSize": 131072,
+  "maxOutputTokens": 4096,
+  "maxRequestBytes": 16777216,
+  "maxHeaderBytes": 32768,
+  "requestTimeoutMs": 900000,
+  "readinessTimeoutMs": 1800000,
+  "shutdownTimeoutMs": 25000,
+  "runtime": {
+    "name": "llama-b10868-bin-win-cuda-13.4-arm64.zip",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10868/llama-b10868-bin-win-cuda-13.4-arm64.zip",
+    "sha256": "ad9e8b4254c32dce4190c7bcc384656fea2b9484a5d3f39cec982ee853004766",
+    "bytes": 142951355
+  },
+  "cuda": {
+    "name": "cudart-llama-bin-win-cuda-13.4-arm64.zip",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10868/cudart-llama-bin-win-cuda-13.4-arm64.zip",
+    "sha256": "5a40dc7c5fa3d0a80ceeba4f16f9e8d25d87bcf1399c9233588953c43436c33c",
+    "bytes": 153318797
+  },
+  "weights": {
+    "name": "Qwen3.6-35B-A3B-Q4_K_M.gguf",
+    "url": "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/resolve/baec3ebee244827cda0f4557eafa8b28f7545fa6/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+    "sha256": "671e47e0ec53c665d048b98c3ecbfd5236b5ca9c3e02ed19fc8f81f7b85140c7",
+    "bytes": 20419565568
+  }
+}

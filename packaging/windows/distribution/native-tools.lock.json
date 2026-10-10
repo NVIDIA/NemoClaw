@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "nodeVersion": "22.23.2",
+  "target": "win32-arm64",
+  "postject": {
+    "version": "1.0.0-alpha.6",
+    "url": "https://registry.npmjs.org/postject/-/postject-1.0.0-alpha.6.tgz",
+    "integrity": "sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A==",
+    "archiveSha256": "d1447b53e87d49ddaf7fb3350c870afafa72760eca47f6d5cce4cefd537e7d92"
+  }
+}
