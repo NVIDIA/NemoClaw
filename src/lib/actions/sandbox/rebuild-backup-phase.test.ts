@@ -212,6 +212,129 @@ describe("rebuild policy handoff", () => {
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("was stopped"));
   });
 
+  it("releases the source quiesce window before an exiting bail from the state capture (#12875)", async () => {
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    const backup = vi.fn(
+      async (
+        _sandboxName: string,
+        _sandboxEntry: { name: string },
+        _staleRecovery: boolean,
+        _log: (message: string) => void,
+        captureBail: (message: string) => never,
+      ) => {
+        captureBail("Failed to back up sandbox state.");
+        return undefined;
+      },
+    );
+    // Hold the release pending so the test proves the bail waits for the
+    // release to SETTLE, not merely to be invoked (#12914 review).
+    let signalReleaseSettled!: (value: { ok: true }) => void;
+    let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      releaseStarted = resolve;
+    });
+    mocks.finishOpenClawBackupQuiesce.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseStarted();
+          signalReleaseSettled = resolve;
+        }),
+    );
+
+    const phase = runRebuildBackupPhase(input({ bail }), backup);
+    await started;
+    expect(bail).not.toHaveBeenCalled();
+    signalReleaseSettled({ ok: true });
+    await expect(phase).rejects.toThrow("Failed to back up sandbox state.");
+
+    // The CLI bail prints and exits the process, so a `finally` cannot run after
+    // it: the quiesce window must already be released when the bail fires.
+    expect(mocks.finishOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(mocks.finishOpenClawBackupQuiesce.mock.invocationCallOrder[0]).toBeLessThan(
+      bail.mock.invocationCallOrder[0],
+    );
+    expect(mocks.abortOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
+  });
+
+  it("runs the abort fallback and still bails when the source release itself rejects (#12914)", async () => {
+    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.finishOpenClawBackupQuiesce.mockRejectedValue(new Error("maintenance authority lost"));
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    const backup = vi.fn(
+      async (
+        _sandboxName: string,
+        _sandboxEntry: { name: string },
+        _staleRecovery: boolean,
+        _log: (message: string) => void,
+        captureBail: (message: string) => never,
+      ) => {
+        captureBail("Failed to back up sandbox state.");
+        return undefined;
+      },
+    );
+
+    await expect(runRebuildBackupPhase(input({ bail }), backup)).rejects.toThrow(
+      "Failed to back up sandbox state.",
+    );
+
+    expect(mocks.abortOpenClawPostRestoreDoctor).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("maintenance authority lost"));
+    expect(bail).toHaveBeenCalledExactlyOnceWith("Failed to back up sandbox state.", undefined);
+  });
+
+  it("releases the source quiesce window before bailing on a credential-bearing policy handoff (#12875)", async () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-quiesce-bail-"));
+    temporaryDirectories.push(backupPath);
+    const credentialPolicy = [
+      "version: 1",
+      "network_policies: {}",
+      "process:",
+      "  environment:",
+      "    SERVICE_API_KEY: opaque-retained-credential",
+      "",
+    ].join("\n");
+    const sha256 = createHash("sha256").update(credentialPolicy).digest("hex");
+    const file = `rebuild-policy-handoff.${sha256}.yaml`;
+    fs.writeFileSync(path.join(backupPath, file), credentialPolicy, { mode: 0o600 });
+    const backup = vi.fn(async () => ({
+      version: 1,
+      sandboxName: "alpha",
+      timestamp: "2026-09-01T00-00-00-000Z",
+      agentType: "openclaw",
+      agentVersion: null,
+      expectedVersion: null,
+      dir: "/sandbox/.openclaw",
+      backupPath,
+      blueprintDigest: "digest",
+      rebuildPolicyHandoff: { file, sha256 },
+    }));
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(runRebuildBackupPhase(input({ bail }), backup)).rejects.toThrow(
+      /contains a literal credential value/,
+    );
+
+    expect(mocks.finishOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+    expect(mocks.finishOpenClawBackupQuiesce.mock.invocationCallOrder[0]).toBeLessThan(
+      bail.mock.invocationCallOrder[0],
+    );
+  });
+
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {
     const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
