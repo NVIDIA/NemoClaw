@@ -13,6 +13,29 @@ function providerModels(config: ConfigObject, providerKey: string): ConfigObject
 }
 
 describe("patchOpenClawInferenceConfig", () => {
+  it("replaces the vLLM credential when switching to native NVIDIA inference", () => {
+    const config: ConfigObject = {
+      models: { providers: { inference: { apiKey: "unused", models: [] } } },
+    };
+    patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/test-model");
+    expect(config).toMatchObject({
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+          },
+        },
+      },
+    });
+    patchOpenClawInferenceConfig(config, "vllm-local", "local-model");
+    expect(config).toMatchObject({
+      models: {
+        providers: { inference: { baseUrl: "https://inference.local/v1", apiKey: "unused" } },
+      },
+    });
+  });
+
   it.each([undefined, null, 16384])(
     "updates only the selected model's context when the resolved window is %s",
     (contextWindow) => {
@@ -82,7 +105,7 @@ describe("patchOpenClawInferenceConfig", () => {
       providers: {
         inference: {
           baseUrl: "https://integrate.api.nvidia.com/v1",
-          apiKey: "unused",
+          apiKey: "${NVIDIA_INFERENCE_API_KEY}",
           api: "openai-completions",
           models: [
             {
@@ -152,7 +175,7 @@ describe("patchOpenClawInferenceConfig", () => {
     expect((config.models as ConfigObject).providers).toEqual({
       inference: {
         baseUrl: "https://integrate.api.nvidia.com/v1",
-        apiKey: "unused",
+        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
         api: "openai-completions",
         models: [
           {
@@ -208,7 +231,7 @@ describe("patchOpenClawInferenceConfig", () => {
         providers: {
           inference: {
             baseUrl: "https://integrate.api.nvidia.com/v1",
-            apiKey: "unused",
+            apiKey: "${NVIDIA_INFERENCE_API_KEY}",
             api: "openai-completions",
             models: [
               {
