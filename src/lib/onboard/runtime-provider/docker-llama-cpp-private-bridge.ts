@@ -19,6 +19,8 @@ export interface DockerLlamaCppPrivateBridgeAuthority {
   readonly transactionId: string;
   readonly apiKeyPath: string;
   readonly targetHost: string;
+  readonly containerId?: string;
+  readonly dockerAuthorityId?: string;
   readonly targetPort: number;
   readonly listenPort: number;
   readonly bindAddresses: readonly ["127.0.0.1"] | readonly ["127.0.0.1", string];
@@ -33,6 +35,7 @@ export interface DockerLlamaCppPrivateBridgeController {
 
 export interface DockerLlamaCppPrivateBridgeDependencies {
   readonly spawnProcess?: typeof spawn;
+  readonly dockerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly processIsAlive?: (pid: number) => boolean;
   readonly signalProcess?: (pid: number, signal: NodeJS.Signals) => void;
   readonly listProcessIds?: () => readonly number[];
@@ -69,7 +72,9 @@ function normalizeAuthority(
     path.normalize(value.apiKeyPath) !== value.apiKeyPath ||
     value.bindAddresses[0] !== "127.0.0.1" ||
     !(value.targetHost === "127.0.0.1"
-      ? value.bindAddresses.length === 1 && value.targetPort !== value.listenPort
+      ? value.bindAddresses.length === 1 &&
+        SHA256.test(value.containerId ?? "") &&
+        /^docker:[a-f0-9]{64}$/u.test(value.dockerAuthorityId ?? "")
       : isPrivateIpv4(value.targetHost) &&
         value.bindAddresses.length === 2 &&
         isPrivateIpv4(value.bindAddresses[1]) &&
@@ -81,6 +86,9 @@ function normalizeAuthority(
     transactionId: value.transactionId,
     apiKeyPath: value.apiKeyPath,
     targetHost: value.targetHost,
+    ...(value.containerId === undefined
+      ? {}
+      : { containerId: value.containerId, dockerAuthorityId: value.dockerAuthorityId }),
     targetPort: exactPort(value.targetPort, "target port"),
     listenPort: exactPort(value.listenPort, "listen port"),
     bindAddresses: Object.freeze([
@@ -102,6 +110,14 @@ function bridgeArguments(authorityValue: DockerLlamaCppPrivateBridgeAuthority): 
     String(authority.targetPort),
     "--listen-port",
     String(authority.listenPort),
+    ...(authority.containerId === undefined
+      ? []
+      : [
+          "--container-id",
+          authority.containerId,
+          "--docker-authority",
+          authority.dockerAuthorityId!,
+        ]),
     ...authority.bindAddresses.flatMap((address) => ["--bind-address", address]),
   ]);
 }
@@ -326,7 +342,7 @@ export function createDockerLlamaCppPrivateBridgeController(
             detached: true,
             stdio: ["ignore", "ignore", "ignore", apiKeyDescriptor, startupDescriptor],
             shell: false,
-            env: {},
+            env: authority.containerId === undefined ? {} : { ...dependencies.dockerEnvironment },
           },
         );
         apiKeyOpen = false;

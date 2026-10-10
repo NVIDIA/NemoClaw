@@ -198,12 +198,12 @@ export function createDockerFixture(
               "image",
               "inspect",
               "--format",
-              '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.authentication"}}',
+              '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"}}',
               IMAGE,
             ]),
           unexpected,
         );
-        return { status: 0, stdout: "managed-bearer-v1", stderr: "" };
+        return { status: 0, stdout: "1", stderr: "" };
       case "network":
         switch (args[1]) {
           case "inspect":

@@ -737,6 +737,32 @@ export function dockerOperationCommandArguments(
   return Object.freeze([...binding.endpointArgs, ...args]);
 }
 
+/** Let the detached inference bridge requalify this exact Docker operation. */
+export function dockerOperationBridgeEnvironment(
+  authority: DockerOperationAuthority,
+): Readonly<NodeJS.ProcessEnv> {
+  const binding = bindings.get(authority);
+  if (!binding || authority.engine.operation !== "host-local-inference") {
+    throw new Error("Docker bridge requires a qualified host-local inference operation.");
+  }
+  const environment = { ...binding.commandEnvironment };
+  for (const [argument, name] of [
+    ["--config", "DOCKER_CONFIG"],
+    ["--context", "DOCKER_CONTEXT"],
+    ["--host", "DOCKER_HOST"],
+  ] as const) {
+    const index = binding.endpointArgs.indexOf(argument);
+    if (index >= 0) environment[name] = binding.endpointArgs[index + 1];
+  }
+  if (binding.endpointArgs.includes("--tlsverify")) environment.DOCKER_TLS_VERIFY = "1";
+  else if (binding.endpointArgs.includes("--tls")) environment.DOCKER_TLS = "1";
+  const certificate = binding.endpointArgs.indexOf("--tlscacert");
+  if (certificate >= 0) {
+    environment.DOCKER_CERT_PATH = path.dirname(binding.endpointArgs[certificate + 1]!);
+  }
+  return Object.freeze(environment);
+}
+
 /** Stable digest for the executable and exact endpoint authority of one Docker operation. */
 export function dockerOperationBindingSha256(engine: ContainerEngine): string {
   return createHash("sha256")

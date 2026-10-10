@@ -5,20 +5,28 @@ title: "Set Up llama.cpp"
 sidebar-title: "Set Up llama.cpp"
 description: "Attach an existing llama.cpp server or select an experimental managed llama.cpp profile."
 description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or an experimental declarative managed profile."
-keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "muse glimmer gguf", "nemotron gguf"]
+keywords:
+  [
+    "nemoclaw llama.cpp",
+    "llama.cpp dgx spark",
+    "managed llama.cpp",
+    "muse glimmer gguf",
+    "nemotron gguf",
+  ]
 content:
   type: "how_to"
 ---
+
 NemoClaw provides two first-class llama.cpp paths.
 You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
 Both paths are experimental and use OpenAI Chat Completions through `https://inference.local/v1`.
 
 ## Choose a llama.cpp Path
 
-| Path | NemoClaw manages | You manage | Use it when |
-|---|---|---|---|
-| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
-| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly. |
+| Path                    | NemoClaw manages                                                                                                                                | You manage                                                                                                                                                                       | Use it when                                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Existing server         | Provider registration, route validation, and sandbox traffic through `inference.local`.                                                         | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle.                                                                            | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
+| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64, Linux x86_64 NVIDIA GPU, or Windows WSL N1x or Station GB300 host, plus the recipe readiness requirements and any required Hugging Face credential. | You want a repository-owned managed llama.cpp profile without managing `llama-server` directly.         |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
@@ -109,14 +117,17 @@ Accepting Windows Express and its third-party software notice is the explicit op
 During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the applicable N1x or Station GB300 readiness requirements pass.
 
 <Note>
-This path is an experimental implementation.
-It does not establish a supported agent, model, and runtime tuple until the protected qualification and activation gates pass.
-The protected qualification runner requires Docker Engine `28.3.3` or newer and the trusted daemon's default protected NAT and firewall behavior; it re-queries the live daemon and consumes a fresh single-use authority immediately before each temporary loopback publication.
-That requirement supersedes older Docker 27 qualification evidence.
-On native Linux, managed onboarding uses the host-owned private bridge without publishing a Docker port.
-On Docker Desktop WSL, onboarding requires Docker Engine `28.3.3` or newer and an image with authenticated request-guard publication.
-It publishes guarded port `8081` to one Docker-assigned port on `127.0.0.1` and retains the host-owned bridge on `127.0.0.1:8081`.
-The Muse Glimmer profile remains Experimental after bounded physical DGX Spark qualification of text, separated reasoning, and one structured tool call.
+  This path is an experimental implementation. It does not establish a supported agent, model, and
+  runtime tuple until the protected qualification and activation gates pass. The protected
+  qualification runner requires Docker Engine `28.3.3` or newer and the trusted daemon's default
+  protected NAT and firewall behavior; it re-queries the live daemon and consumes a fresh single-use
+  authority immediately before each temporary loopback publication. That requirement supersedes
+  older Docker 27 qualification evidence. On native Linux, managed onboarding uses the host-owned
+  private bridge without publishing a Docker port. On Docker Desktop WSL, onboarding requires an
+  image with guarded stdio forwarding. The host-owned bridge on `127.0.0.1:8081` reaches the
+  authenticated guard through Docker exec without publishing a container port. The Muse Glimmer
+  profile remains Experimental after bounded physical DGX Spark qualification of text, separated
+  reasoning, and one structured tool call.
 </Note>
 
 Before you start, confirm these prerequisites:
@@ -156,10 +167,12 @@ It does not write the value to managed llama.cpp state, the receipt, the serving
 Run `unset HF_TOKEN` after onboarding when no other process needs it.
 
 <Warning>
-When the artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
-It reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their identities.
-It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
-Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
+  When the artifacts are not already present, onboarding pulls digest-pinned images from external
+  registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache. It
+  reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their
+  identities. It creates an owner-only API key, a host-loopback listener on port `8081`, and a
+  Docker internal network. Only one managed llama.cpp runtime can exist per Docker authority,
+  regardless of the owning OpenShell gateway or sandbox.
 </Warning>
 
 Run interactive onboarding on the qualified host:
@@ -250,7 +263,7 @@ Onboarding performs these actions:
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
 - Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network.
 - On native Linux, connects the bridge directly to the container without publishing a Docker port.
-- On Docker Desktop WSL, connects the bridge through the authenticated guard's Docker-assigned loopback port.
+- On Docker Desktop WSL, connects the bridge through Docker exec to the authenticated guard inside the same container.
 - Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
@@ -274,10 +287,7 @@ docker inspect --format '{{json .HostConfig.PortBindings}}' nemoclaw-llama-cpp
 ```
 
 Accept the result when `status` reports `Managed llama.cpp: running`, the inference route is `healthy`, and `doctor` exits with status `0`.
-On native Linux, the Docker inspection output must be `{}`.
-On Docker Desktop WSL, it must show one `8081/tcp` binding with `HostIp` set to `127.0.0.1`.
-The configured `HostPort` may be empty or `0` when Docker assigns the port.
-Inspect `.NetworkSettings.Ports` to confirm a nonzero assigned port bound to `127.0.0.1`.
+On native Linux and Docker Desktop WSL, the Docker inspection output must be `{}`.
 The host-owned private bridge still listens on loopback.
 These checks do not establish agent and model qualification.
 
@@ -304,9 +314,9 @@ If the bridge topology is missing or invalid, onboarding fails closed without pr
 Inspect the OpenShell Docker bridge configuration before you retry onboarding.
 
 <Warning>
-The printed command changes UFW.
-Confirm that the reported Docker network, source subnet, and gateway IP address belong to the OpenShell Docker bridge before you run it.
-The rule allows TCP traffic only from that subnet to port `8081` on that gateway IP address.
+  The printed command changes UFW. Confirm that the reported Docker network, source subnet, and
+  gateway IP address belong to the OpenShell Docker bridge before you run it. The rule allows TCP
+  traffic only from that subnet to port `8081` on that gateway IP address.
 </Warning>
 
 Run the command from the onboarding error.

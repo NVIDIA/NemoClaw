@@ -15,7 +15,6 @@ import {
   assertLlamaCppVerifiedLocalModelArtifact,
   buildLlamaCppRequestGuardCommandArgv,
   buildLlamaCppRequestGuardDockerArgv,
-  qualifyLlamaCppGuardLoopbackPublishAuthority,
   LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH,
   LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
   type LlamaCppHostLocalLaunchContract,
@@ -111,7 +110,6 @@ interface DockerContainerInspection {
   readonly networkId: string | null;
   readonly networkName: string;
   readonly containerIp: string | null;
-  readonly loopbackPort: number | null;
   readonly mounts: readonly {
     readonly type: string;
     readonly source: string;
@@ -350,67 +348,23 @@ function parseLabels(value: unknown): Readonly<Record<string, string>> {
   return Object.freeze(labels);
 }
 
-function inspectPublishedUpstream(
+function assertPrivatePorts(
   hostConfig: Record<string, unknown>,
   networkSettings: Record<string, unknown>,
   contract: LlamaCppHostLocalLaunchContract,
-  bindings: DockerLlamaCppManagedLifecycleOptions["bindings"],
   mode: DockerContainerInspectionMode,
-  running: boolean,
-): number | null {
-  if (mode === "cleanup") return null;
+): void {
+  if (mode === "cleanup") return;
   const ports = record(networkSettings.Ports, "Docker llama.cpp published ports");
   const configured = record(hostConfig.PortBindings, "Docker llama.cpp configured ports");
   const key = `${String(contract.serve.port)}/tcp`;
-  if (!bindings.loopbackUpstream) {
-    if (Object.keys(configured).length !== 0) {
-      throw new Error("Docker llama.cpp container must not configure published ports.");
-    }
-    if (Object.keys(ports).some((port) => port !== key) || (key in ports && ports[key] !== null)) {
-      throw new Error(
-        "Docker llama.cpp container must not publish ports from its internal network.",
-      );
-    }
-    return null;
+  if (Object.keys(configured).length !== 0) {
+    throw new Error("Docker llama.cpp container must not configure published ports.");
   }
-  const configuration = configured[key];
-  if (
-    Object.keys(configured).length !== 1 ||
-    !Array.isArray(configuration) ||
-    configuration.length !== 1 ||
-    Object.keys(ports).some((port) => port !== key)
-  ) {
-    throw new Error("Docker llama.cpp requires exactly one guarded loopback publication.");
+  if (Object.keys(ports).some((port) => port !== key) || (key in ports && ports[key] !== null)) {
+    throw new Error("Docker llama.cpp container must not publish ports from its internal network.");
   }
-  const configuredBinding = record(configuration[0], "Docker llama.cpp loopback publication");
-  const configuredPort = String(configuredBinding.HostPort ?? "");
-  if (
-    configuredBinding.HostIp !== "127.0.0.1" ||
-    typeof configuredBinding.HostPort !== "string" ||
-    Number(configuredPort) > 65_535 ||
-    !/^(?:|0|[1-9][0-9]{0,4})$/u.test(configuredPort)
-  ) {
-    throw new Error("Docker llama.cpp guarded publication must bind exact IPv4 loopback.");
-  }
-  if (!running && (ports[key] === null || ports[key] === undefined)) return null;
-  const publication = ports[key];
-  if (!Array.isArray(publication) || publication.length !== 1) {
-    throw new Error("Docker llama.cpp running guard lacks its exact loopback publication.");
-  }
-  const binding = record(publication[0], "Docker llama.cpp published loopback binding");
-  const port = Number(binding.HostPort);
-  if (
-    binding.HostIp !== "127.0.0.1" ||
-    !/^[1-9][0-9]{0,4}$/u.test(String(binding.HostPort)) ||
-    port > 65_535 ||
-    port === bindings.hostPort ||
-    (configuredPort !== "" && configuredPort !== "0" && Number(configuredPort) !== port)
-  ) {
-    throw new Error(
-      "Docker llama.cpp published guard port is invalid or differs from its configuration.",
-    );
-  }
-  return port;
+  return;
 }
 
 function parseInspection(
@@ -455,14 +409,7 @@ function parseInspection(
       : (mode !== "runtime" || state.Running === false) && attachedIp === ""
         ? null
         : exactPrivateIpv4(attachedIp, "Docker llama.cpp container address");
-  const loopbackPort = inspectPublishedUpstream(
-    hostConfig,
-    networkSettings,
-    contract,
-    bindings,
-    mode,
-    state.Running === true,
-  );
+  assertPrivatePorts(hostConfig, networkSettings, contract, mode);
   if (!Array.isArray(source.Mounts)) {
     throw new Error("Docker llama.cpp inspection returned malformed mounts.");
   }
@@ -531,7 +478,6 @@ function parseInspection(
     networkId,
     networkName,
     containerIp,
-    loopbackPort,
     mounts: Object.freeze(mounts),
     hardening: Object.freeze({
       user: String(config.User ?? ""),
@@ -830,31 +776,27 @@ function createArguments(
   specSha256: string,
   transactionId: string,
 ): readonly string[] {
-  const publication = options.bindings.loopbackUpstream
-    ? qualifyLlamaCppGuardLoopbackPublishAuthority(
-        requireSuccess(
-          "Docker loopback publication version",
-          options.engine.capture(
-            ["version", "--format", "{{.Server.Version}}"],
-            INSPECT_TIMEOUT_MS,
-          ),
-        ),
-        requireSuccess(
-          "request guard authentication inspection",
-          options.engine.capture(
-            [
-              "image",
-              "inspect",
-              "--format",
-              '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.authentication"}}',
-              options.bindings.imageReference,
-            ],
-            INSPECT_TIMEOUT_MS,
-          ),
-        ),
-      )
-    : undefined;
-  const run = buildLlamaCppRequestGuardDockerArgv(options.contract, options.bindings, publication);
+  if (options.bindings.stdioForward) {
+    const capability = requireSuccess(
+      "request guard stdio capability inspection",
+      options.engine.capture(
+        [
+          "image",
+          "inspect",
+          "--format",
+          '{{index .Config.Labels "io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"}}',
+          options.bindings.imageReference,
+        ],
+        INSPECT_TIMEOUT_MS,
+      ),
+    );
+    if (capability.trim() !== "1") {
+      throw new Error(
+        "Docker Desktop WSL llama.cpp requires an image with guarded stdio forwarding.",
+      );
+    }
+  }
+  const run = buildLlamaCppRequestGuardDockerArgv(options.contract, options.bindings);
   if (run[0] !== "run" || run[1] !== "--detach") {
     throw new Error("Docker llama.cpp materializer returned an unsupported launch operation.");
   }
@@ -916,7 +858,7 @@ function specificationDigest(
       sizeBytes: options.plan.acquisition.source.file.sizeBytes,
     },
     network: options.bindings.network,
-    ...(options.bindings.loopbackUpstream ? { loopbackUpstream: true } : {}),
+    ...(options.bindings.stdioForward ? { stdioForward: true } : {}),
     ownerLabel: options.bindings.ownerLabel,
     probeImageReference: options.probeImageReference,
     readinessTimeoutSeconds: options.readinessTimeoutSeconds,
@@ -1065,16 +1007,16 @@ function privateBridgeAuthority(
   if (options.bindings.hostPort !== options.contract.serve.port) {
     throw new Error("Docker llama.cpp host bridge port differs from its declarative server port.");
   }
-  if (options.bindings.loopbackUpstream && container.loopbackPort === null) {
-    throw new Error("Docker llama.cpp bridge lacks its inspected guarded upstream publication.");
-  }
   return Object.freeze({
     transactionId: journal.transactionId,
     apiKeyPath: options.bindings.apiKeyHostPath,
-    targetHost: options.bindings.loopbackUpstream ? "127.0.0.1" : container.containerIp,
-    targetPort: container.loopbackPort ?? options.contract.serve.port,
+    targetHost: options.bindings.stdioForward ? "127.0.0.1" : container.containerIp,
+    targetPort: options.contract.serve.port,
+    ...(options.bindings.stdioForward
+      ? { containerId: container.id, dockerAuthorityId: options.engine.authorityId }
+      : {}),
     listenPort: options.bindings.hostPort,
-    bindAddresses: options.bindings.loopbackUpstream
+    bindAddresses: options.bindings.stdioForward
       ? Object.freeze(["127.0.0.1"] as const)
       : Object.freeze(["127.0.0.1", gateway.gatewayIp] as const),
   });
@@ -1167,7 +1109,7 @@ function probePrivateBridge(
       "--network",
       gateway.name,
       "--add-host",
-      `${ENDPOINT_HOST}:${options.bindings.loopbackUpstream ? "host-gateway" : gateway.gatewayIp}`,
+      `${ENDPOINT_HOST}:${options.bindings.stdioForward ? "host-gateway" : gateway.gatewayIp}`,
       "--entrypoint",
       "curl",
       options.probeImageReference,
@@ -1182,7 +1124,7 @@ function probePrivateBridge(
       !sandboxProbe.error &&
       CURL_CONNECTIVITY_FAILURE_EXIT_CODES.has(sandboxProbe.status) &&
       subnet &&
-      !options.bindings.loopbackUpstream &&
+      !options.bindings.stdioForward &&
       !validateUfwRuleOperands(subnet, gateway.gatewayIp, port)
     ) {
       const remediation = formatHostServiceUnreachableMessage(
@@ -2167,8 +2109,8 @@ export function createDockerLlamaCppManagedLifecycle(
   dependencies: DockerLlamaCppManagedLifecycleDependencies = {},
 ): DockerLlamaCppManagedLifecycle {
   const current = createDockerLlamaCppLifecycleForTopology(options, dependencies);
-  if (!options.bindings.loopbackUpstream) return current;
-  const legacy = { ...options, bindings: { ...options.bindings, loopbackUpstream: undefined } };
+  if (!options.bindings.stdioForward) return current;
+  const legacy = { ...options, bindings: { ...options.bindings, stdioForward: undefined } };
   const isLegacy = (journal: HostLocalCreateJournalRecord): boolean =>
     journal.specSha256 ===
     specificationDigest(legacy, journal.apiKeyRootIdentitySha256, journal.receiptTargetSha256);

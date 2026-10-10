@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
   createDockerLlamaCppPrivateBridgeController,
   type DockerLlamaCppPrivateBridgeAuthority,
@@ -338,7 +339,7 @@ describe("llama.cpp private bridge argument boundary", () => {
   });
 });
 
-it("accepts a localhost upstream only with one loopback listener and a distinct port (#12285)", () => {
+it("accepts Docker exec only with one loopback listener and exact container authority (#12285)", () => {
   const input = [
     "--transaction",
     TRANSACTION,
@@ -347,7 +348,11 @@ it("accepts a localhost upstream only with one loopback listener and a distinct 
     "--target-host",
     "127.0.0.1",
     "--target-port",
-    "49152",
+    "8081",
+    "--container-id",
+    "c".repeat(64),
+    "--docker-authority",
+    `docker:${"d".repeat(64)}`,
     "--listen-port",
     "8081",
     "--bind-address",
@@ -355,15 +360,15 @@ it("accepts a localhost upstream only with one loopback listener and a distinct 
   ];
   expect(parseLlamaCppPrivateBridgeArguments(input)).toMatchObject({
     targetHost: "127.0.0.1",
-    targetPort: 49152,
+    targetPort: 8081,
     bindAddresses: ["127.0.0.1"],
   });
   expect(() =>
     parseLlamaCppPrivateBridgeArguments([...input, "--bind-address", "172.29.0.1"]),
   ).toThrow("authority is invalid");
-  const recursive = input.slice();
-  recursive[recursive.indexOf("--target-port") + 1] = "08081";
-  expect(() => parseLlamaCppPrivateBridgeArguments(recursive)).toThrow("authority is invalid");
+  const invalid = input.slice();
+  invalid[invalid.indexOf("--container-id") + 1] = "--privileged";
+  expect(() => parseLlamaCppPrivateBridgeArguments(invalid)).toThrow("authority is invalid");
 });
 
 async function listen(server: http.Server): Promise<number> {
@@ -379,6 +384,62 @@ async function close(server: http.Server): Promise<void> {
     server.close((error) => (error ? reject(error) : resolve()));
   });
 }
+
+it("authenticates before spawning the qualified Docker stream and forwards its response", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bridge-exec-"));
+  const invocations = path.join(root, "invocations.json");
+  fs.writeFileSync(
+    path.join(root, "docker"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(invocations)}, JSON.stringify(process.argv.slice(2)));
+let input = "";
+process.stdin.on("data", chunk => {
+  input += chunk;
+  if (input.includes("\\r\\n\\r\\n")) {
+    process.stdout.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nOK", () => process.exit(0));
+  }
+});
+`,
+    { mode: 0o700 },
+  );
+  vi.stubEnv("PATH", root);
+  vi.stubEnv("DOCKER_HOST", "unix:///tmp/nemoclaw-bridge-exec-test.sock");
+  const docker = createDockerOperationAuthority("host-local-inference");
+  const containerId = "c".repeat(64);
+  const server = createLlamaCppPrivateBridgeServer(
+    {
+      targetHost: "127.0.0.1",
+      targetPort: 8081,
+      containerId,
+      dockerAuthorityId: docker.engine.authorityId,
+    },
+    API_KEY,
+  );
+  try {
+    const port = await listen(server);
+    expect((await request(port)).status).toBe(401);
+    expect(fs.existsSync(invocations)).toBe(false);
+    const response = await request(port, { authorization: `Bearer ${API_KEY}` });
+    expect([response.status, response.body]).toEqual([200, "OK"]);
+    expect(JSON.parse(fs.readFileSync(invocations, "utf8")).slice(-7)).toEqual([
+      "exec",
+      "-i",
+      containerId,
+      "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
+      "--stdio-forward",
+      "--listen-port",
+      "8081",
+    ]);
+    fs.appendFileSync(path.join(root, "docker"), "\n// executable changed after qualification\n");
+    expect((await request(port, { authorization: `Bearer ${API_KEY}` })).status).toBe(502);
+  } finally {
+    server.closeAllConnections();
+    await close(server);
+    vi.unstubAllEnvs();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 it("reports startup ready only after its listener binds", async () => {
   const server = http.createServer();

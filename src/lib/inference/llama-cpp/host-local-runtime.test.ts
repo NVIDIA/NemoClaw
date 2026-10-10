@@ -19,7 +19,6 @@ import { LLAMA_CPP_PORT } from "./contract";
 import {
   buildLlamaCppHostLocalDockerArgv,
   buildLlamaCppRequestGuardDockerArgv,
-  qualifyLlamaCppGuardLoopbackPublishAuthority,
   LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
   LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
   type LlamaCppHostLocalLaunchContract,
@@ -551,21 +550,13 @@ describe("llama.cpp host-local runtime materializer", () => {
   });
 });
 
-describe("Docker Desktop WSL request-guard publication", () => {
-  it("publishes only the guarded port through one qualified localhost allocation (#12285)", () => {
-    const input = { ...bindings(), loopbackUpstream: true as const };
-    const authority = qualifyLlamaCppGuardLoopbackPublishAuthority("29.8.0", "managed-bearer-v1");
-    const argv = buildLlamaCppRequestGuardDockerArgv(contract(), input, authority);
-    expect(() => qualifyLlamaCppGuardLoopbackPublishAuthority("29.8.0", "<no value>")).toThrow(
-      "authenticated request-guard publication",
-    );
-    expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+describe("Docker Desktop WSL request-guard transport", () => {
+  it("keeps both guard and upstream ports private for Docker exec (#12285)", () => {
+    const argv = buildLlamaCppRequestGuardDockerArgv(contract(), {
+      ...bindings(),
+      stdioForward: true,
+    });
+    expect(valuesAfter(argv, "--publish")).toEqual([]);
     expect(valuesAfter(argv, "--upstream-port")).toEqual(["8082"]);
-    expect(() => buildLlamaCppRequestGuardDockerArgv(contract(), input, authority)).toThrow(
-      "already consumed",
-    );
-    expect(() => buildLlamaCppRequestGuardDockerArgv(contract(), input)).toThrow(
-      "exact Docker authority",
-    );
   });
 });

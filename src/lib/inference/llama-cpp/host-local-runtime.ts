@@ -104,8 +104,8 @@ export interface LlamaCppHostLocalRuntimeBindings {
   readonly imageReference: string;
   /** Fixed host bridge port for product installs; omitted only by isolated qualification. */
   readonly hostPort?: number;
-  /** Docker Desktop WSL reaches the guarded server through a private localhost publication. */
-  readonly loopbackUpstream?: true;
+  /** Docker Desktop WSL reaches the guard through the qualified Docker exec transport. */
+  readonly stdioForward?: true;
   readonly model: VerifiedLocalModelArtifact;
   /** The caller must create this named Docker network with `--internal` before launch. */
   readonly network: {
@@ -397,19 +397,6 @@ export function qualifyDockerLoopbackPublishAuthority(
   return authority;
 }
 
-/** Require the owned guard to authenticate the newly host-reachable upstream. */
-export function qualifyLlamaCppGuardLoopbackPublishAuthority(
-  serverVersion: string,
-  authentication: string,
-): DockerLoopbackPublishAuthority {
-  if (authentication.trim() !== "managed-bearer-v1") {
-    throw new Error(
-      "Docker Desktop WSL llama.cpp requires an image with authenticated request-guard publication.",
-    );
-  }
-  return qualifyDockerLoopbackPublishAuthority(serverVersion);
-}
-
 /** Consume a single-use authority immediately before one Docker loopback publication. */
 export function consumeDockerLoopbackPublishAuthority(
   authority: DockerLoopbackPublishAuthority,
@@ -432,19 +419,11 @@ export function consumeDockerLoopbackPublishAuthority(
 export function buildLlamaCppRequestGuardDockerArgv(
   contract: LlamaCppHostLocalLaunchContract,
   bindings: LlamaCppHostLocalRuntimeBindings,
-  publication?: DockerLoopbackPublishAuthority,
 ): string[] {
   validateContract(contract);
   validateBindings(contract, bindings);
-  if (bindings.loopbackUpstream !== (publication === undefined ? undefined : true)) {
-    throw new Error("llama.cpp loopback publication lacks exact Docker authority.");
-  }
-  if (publication !== undefined) consumeDockerLoopbackPublishAuthority(publication);
   return [
     ...buildLlamaCppHostLocalDockerRunArgv(contract, bindings),
-    ...(publication === undefined
-      ? []
-      : ["--publish", `127.0.0.1::${String(contract.serve.port)}`]),
     "--entrypoint",
     LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
     bindings.imageReference,

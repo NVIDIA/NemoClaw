@@ -8,15 +8,14 @@ import {
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { getFutureShellPathHint } from "../remediation";
 import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
-import {
-  createDockerLlamaCppManagedLifecycle,
-  type DockerLlamaCppManagedLifecycle,
-} from "./docker-llama-cpp-managed-lifecycle";
+import { createDockerLlamaCppManagedLifecycle } from "./docker-llama-cpp-managed-lifecycle";
 import {
   createDockerOperationAuthority,
   dockerOperationBindingSha256,
   dockerOperationCommandArguments,
+  dockerOperationBridgeEnvironment,
 } from "./docker-operation-authority";
+import { createDockerLlamaCppPrivateBridgeController } from "./docker-llama-cpp-private-bridge";
 import type {
   HostLocalInferenceCommandSpawner,
   HostLocalInferenceOperation,
@@ -29,6 +28,7 @@ import {
 export interface DockerLlamaCppOperationAuthority {
   readonly assertAuthority: () => void;
   readonly engine: ContainerEngine;
+  readonly bridgeEnvironment: Readonly<NodeJS.ProcessEnv>;
   readonly spawn: HostLocalInferenceCommandSpawner;
 }
 
@@ -82,6 +82,7 @@ export function createDockerLlamaCppOperationAuthority(
   return Object.freeze({
     assertAuthority,
     engine: managedLlamaCppEngine(authority.engine),
+    bridgeEnvironment: dockerOperationBridgeEnvironment(authority),
     spawn: (args: readonly string[], options?: Parameters<HostLocalInferenceCommandSpawner>[1]) => {
       assertAuthority();
       return boundedSpawnCommand
@@ -99,9 +100,7 @@ export function createDockerLlamaCppHostLocalOperation(
   env: NodeJS.ProcessEnv = process.env,
   capture?: ContainerEngineCommandCapture,
   spawnCommand?: HostLocalInferenceCommandSpawner,
-  createLifecycle: (
-    input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
-  ) => DockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
+  createLifecycle: typeof createDockerLlamaCppManagedLifecycle = createDockerLlamaCppManagedLifecycle,
   deadlineMs?: number,
 ): HostLocalInferenceOperation {
   const authority = createDockerLlamaCppOperationAuthority(env, capture, spawnCommand, deadlineMs);
@@ -119,10 +118,17 @@ export function createDockerLlamaCppHostLocalOperation(
     createLlamaCppLifecycle: (
       input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0],
     ) => {
-      return createLifecycle({
+      const options = {
         ...dockerLlamaCppLifecycleOptions(input, engine, env),
         ...(deadlineMs === undefined ? {} : { engine }),
-      });
+      };
+      return options.bindings?.stdioForward
+        ? createLifecycle(options, {
+            privateBridge: createDockerLlamaCppPrivateBridgeController({
+              dockerEnvironment: authority.bridgeEnvironment,
+            }),
+          })
+        : createLifecycle(options);
     },
   });
 }
@@ -139,7 +145,7 @@ function dockerLlamaCppLifecycleOptions(
     }) === "docker-desktop";
   return {
     ...input,
-    ...(desktop ? { bindings: { ...input.bindings, loopbackUpstream: true } } : {}),
+    ...(desktop ? { bindings: { ...input.bindings, stdioForward: true } } : {}),
     loopbackProbe: input.loopbackProbe ?? (desktop ? "host-process" : undefined),
   };
 }

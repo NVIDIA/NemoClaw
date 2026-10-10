@@ -644,7 +644,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     [false, true],
   ] as const)(
     "resumes an owned runtime with running=%s and requested WSL publication=%s (#12285)",
-    (running, loopbackUpstream) => {
+    (running, stdioForward) => {
       const fixture = dockerFixture();
       const input = options(fixture);
       const bridge = privateBridgeFixture();
@@ -652,7 +652,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       fixture.setContainerState(running, running ? "running" : "exited");
       fixture.capture.mockClear();
       const updated = createLifecycle(
-        { ...input, bindings: { ...input.bindings, loopbackUpstream } },
+        { ...input, bindings: { ...input.bindings, stdioForward } },
         {},
         bridge,
       );
@@ -767,9 +767,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     ["configured", "8081", undefined, "127.0.0.1", 0, /must not configure/u],
     ["runtime", "", "8081", "127.0.0.1", 1, /must not publish/u],
     ["runtime-wide", "", "8081", "0.0.0.0", 1, /must not publish/u],
-    ["wsl-wide", "0", "49152", "0.0.0.0", 1, /publication|published guard port/u],
-    ["wsl-duplicate", "0", "49152", "127.0.0.1", 2, /publication|published guard port/u],
-    ["wsl-recursive", "0", "8081", "127.0.0.1", 1, /publication|published guard port/u],
+    ["wsl-wide", "0", "49152", "0.0.0.0", 1, /published ports/u],
+    ["wsl-duplicate", "0", "49152", "127.0.0.1", 2, /published ports/u],
+    ["wsl-recursive", "0", "8081", "127.0.0.1", 1, /published ports/u],
   ] as const)(
     "rolls back exact ownership for unexpected %s Docker publication (#8544)",
     (_kind, configured, published, ip, count, expectedError) => {
@@ -779,7 +779,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         ...input,
         bindings: {
           ...input.bindings,
-          ...(_kind.startsWith("wsl-") ? { loopbackUpstream: true as const } : {}),
+          ...(_kind.startsWith("wsl-") ? { stdioForward: true as const } : {}),
         },
       });
       expect(() => lifecycle.start(receiptWriter())).toThrow(expectedError);
@@ -997,7 +997,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
 
   it.each([undefined, true] as const)(
     "replays a prepared receipt with requested WSL publication %s (#12285)",
-    (loopbackUpstream) => {
+    (stdioForward) => {
       const fixture = dockerFixture();
       const store = journalStore();
       const writer = receiptWriter();
@@ -1011,7 +1011,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
       const updated = createLifecycle({
         ...base,
-        bindings: { ...base.bindings, loopbackUpstream },
+        bindings: { ...base.bindings, stdioForward },
       });
       expect(updated.recoverUnfinished(writer)).toEqual({
         recovered: [TRANSACTION_ID],
@@ -1447,17 +1447,19 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   });
 });
 
-it("uses the guarded localhost upstream through WSL start, resume and cleanup (#12285)", () => {
-  const fixture = dockerFixture("0", "49152", "127.0.0.1", 1);
+it("uses the guarded WSL transport without a published port through start, resume and cleanup (#12285)", () => {
+  const fixture = dockerFixture();
   const privateBridge = privateBridgeFixture();
   const input = { ...options(fixture), loopbackProbe: "host-process" as const };
-  input.bindings = { ...input.bindings, loopbackUpstream: true };
+  input.bindings = { ...input.bindings, stdioForward: true };
   const lifecycle = createLifecycle(input, {}, privateBridge);
   const receipt = lifecycle.start(receiptWriter());
   expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
   expect(privateBridge.start.mock.calls[0]?.[0]).toMatchObject({
     targetHost: "127.0.0.1",
-    targetPort: 49152,
+    targetPort: LLAMA_CPP_PORT,
+    containerId: RUNTIME_ID,
+    dockerAuthorityId: fixture.engine.authorityId,
     bindAddresses: ["127.0.0.1"],
   });
   expect(fixture.capture.mock.calls.flatMap(([args]) => args)).toContain(
@@ -1477,9 +1479,7 @@ it("rejects a WSL image without guard authentication before container creation (
     args[0] === "image" ? { status: 0, stdout: "", stderr: "" } : capture(args, timeoutMs, input),
   );
   const base = options(fixture);
-  const input = { ...base, bindings: { ...base.bindings, loopbackUpstream: true as const } };
-  expect(() => createLifecycle(input).start(receiptWriter())).toThrow(
-    /authenticated request-guard/u,
-  );
+  const input = { ...base, bindings: { ...base.bindings, stdioForward: true as const } };
+  expect(() => createLifecycle(input).start(receiptWriter())).toThrow(/guarded stdio forwarding/u);
   expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["create", "--pull=never"]);
 });
