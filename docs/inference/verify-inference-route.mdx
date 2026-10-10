@@ -21,9 +21,10 @@ $$nemoclaw inference get
 ```
 
 For a selected sandbox with a valid native NVIDIA attachment, the command returns that sandbox's recorded provider, model, and `https://integrate.api.nvidia.com/v1` endpoint.
-For a selected sandbox with a valid native custom attachment, it returns that sandbox's recorded provider, model, and attached endpoint.
+For a selected sandbox with a valid native custom attachment, it returns that sandbox's recorded provider and model.
+It displays the attached endpoint only when its path is safe to display; otherwise, it reports that the endpoint is withheld.
 For providers without a native attachment, the command reads the live shared gateway route.
-Confirm that the provider, model, and endpoint match the path you intended to configure.
+Confirm that the provider, model, and any displayed endpoint match the path you intended to configure.
 
 ## Check Sandbox Inference Health
 
