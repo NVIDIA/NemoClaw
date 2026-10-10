@@ -201,6 +201,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
       OKTA_CLIENT_SECRET: "integration-client-secret",
     };
     const persistedReceipts: RuntimeIdentityReceipt[] = [];
+    const warnings: string[] = [];
     const run = async (
       args: string[],
       options?: RuntimeIdentityCommandOptions,
@@ -225,6 +226,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
       formatError: (output, secrets = []) =>
         secrets.reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), output),
       persistReceipt: (receipt) => persistedReceipts.push({ ...receipt }),
+      warn: (message) => warnings.push(message),
       run,
       // This test intentionally bypasses DNS validation and uses a fake OpenShell to isolate lifecycle orchestration.
       // TC-INF-12 separately proves the successful path through a real
@@ -249,6 +251,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
       attachment_created: true,
     });
     expect(persistedReceipts).toEqual([{ ...receipt, attachment_created: false }]);
+    expect(warnings).toEqual([]);
     expect(state.profiles).toEqual(["okta-runtime-v1"]);
     expect(state.providers["e2e-okta-runtime"]).toMatchObject({
       configured: true,
