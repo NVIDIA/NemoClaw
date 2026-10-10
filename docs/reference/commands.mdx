@@ -3063,6 +3063,8 @@ Other failures use a different nonzero status.
 The command downloads to a fresh private temporary directory on the host, verifies that OpenShell wrote an artifact, publishes the artifact to your destination, and removes the temporary directory.
 An existing destination directory is resolved to its canonical path before publication.
 The command refuses an existing file destination that is a symbolic link and a new destination below a symbolic-link parent.
+It checks every component of the destination parent, so it refuses the destination whether or not the directories below the symbolic link already exist.
+Pass the canonical path, or an existing destination directory, to publish below a symbolic link on purpose.
 Regular files are published through a private temporary entry and atomically replace an existing regular file.
 Relative host destinations resolve against the caller's working directory.
 Absolute host destinations do not use caller-working-directory resolution.

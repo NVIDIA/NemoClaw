@@ -183,7 +183,9 @@ describe("publishDownloadArtifact", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-7367-publish-"));
+    // Canonical: the publication guard rejects a destination reached through a
+    // symbolic link, and the platform temporary root is itself a link on macOS.
+    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nc-7367-publish-")));
   });
 
   afterEach(() => {
@@ -238,6 +240,54 @@ describe("publishDownloadArtifact", () => {
     expect(fs.lstatSync(linkedParent).isSymbolicLink()).toBe(true);
     expect(fs.readlinkSync(linkedParent)).toBe(outside);
     expect(fs.existsSync(path.join(outside, "fresh.txt"))).toBe(false);
+  });
+
+  it("rejects a fresh destination whose symbolic-link parent chain already exists", () => {
+    const staged = path.join(dir, "staged.txt");
+    const outside = path.join(dir, "outside");
+    const destinationRoot = path.join(dir, "destination");
+    const linkedParent = path.join(destinationRoot, "symlink-parent");
+    const destination = path.join(linkedParent, "subdir", "newfile.txt");
+    fs.writeFileSync(staged, "payload");
+    // The directory below the link exists, so every component of the
+    // destination parent resolves and the walk has nothing left to create.
+    fs.mkdirSync(path.join(outside, "subdir"), { recursive: true });
+    fs.mkdirSync(destinationRoot);
+    fs.symlinkSync(outside, linkedParent);
+
+    expect(() => publishDownloadArtifact(staged, destination, "file")).toThrow(
+      /destination path '.*symlink-parent' is a symbolic link/,
+    );
+    expect(fs.lstatSync(linkedParent).isSymbolicLink()).toBe(true);
+    expect(fs.readdirSync(path.join(outside, "subdir"))).toEqual([]);
+  });
+
+  it("rejects a directory publication below an existing symbolic-link parent", () => {
+    const staged = path.join(dir, "staged");
+    const outside = path.join(dir, "outside");
+    const destinationRoot = path.join(dir, "destination");
+    const linkedParent = path.join(destinationRoot, "symlink-parent");
+    fs.mkdirSync(staged);
+    fs.writeFileSync(path.join(staged, "new.txt"), "new");
+    fs.mkdirSync(path.join(outside, "subdir"), { recursive: true });
+    fs.mkdirSync(destinationRoot);
+    fs.symlinkSync(outside, linkedParent);
+
+    expect(() => publishDownloadArtifact(staged, path.join(linkedParent, "subdir"), "dir")).toThrow(
+      /destination path '.*symlink-parent' is a symbolic link/,
+    );
+    expect(fs.readdirSync(path.join(outside, "subdir"))).toEqual([]);
+  });
+
+  it("publishes a fresh destination whose parent chain holds no symbolic link", () => {
+    const staged = path.join(dir, "staged.txt");
+    const destination = path.join(dir, "destination", "subdir", "newfile.txt");
+    fs.writeFileSync(staged, "payload");
+    fs.mkdirSync(path.join(dir, "destination", "subdir"), { recursive: true });
+
+    publishDownloadArtifact(staged, destination, "file");
+
+    expect(fs.readFileSync(destination, "utf8")).toBe("payload");
   });
 
   it("rejects a destination parent swapped for a symbolic link before publication", () => {
