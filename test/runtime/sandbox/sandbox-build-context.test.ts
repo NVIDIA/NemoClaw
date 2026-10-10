@@ -296,6 +296,11 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "reviewed-npm-identity.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "bundled-npm-package.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
+    writeFixture(
+      path.join("scripts", "lib", "install-reviewed-openclaw-plugin.mts"),
+      "plugin-installer\n",
+      0o700,
+    );
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "openclaw-npm-remediation.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "verify-mcporter-audit.sh"), "fixture\n", 0o700);
@@ -579,6 +584,12 @@ describe("sandbox build context staging", () => {
     expect(
       fs.readFileSync(path.join(buildCtx, "scripts/lib/verify-mcporter-audit.sh"), "utf8"),
     ).toBe(fs.readFileSync(path.join(sourceRoot, "scripts/lib/verify-mcporter-audit.sh"), "utf8"));
+    expect(
+      fs.readFileSync(
+        path.join(buildCtx, "scripts/lib/install-reviewed-openclaw-plugin.mts"),
+        "utf8",
+      ),
+    ).toBe("plugin-installer\n");
   }
 
   it("normalizes restrictive and group-writable modes for Docker COPY", () => {

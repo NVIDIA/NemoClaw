@@ -1773,12 +1773,10 @@ RUN set -eu; \
     trap - EXIT
 
 # Install non-messaging OpenClaw plugins that need to match the runtime.
-# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
-# basename in a fresh directory, local-archive-only install, and cleanup.
-# The verified tarball installs through the `npm-pack:` spec so OpenClaw
-# records npm provenance; bare archive-path installs record archive
-# provenance, which fails the trusted-official-install check gating
-# openKeyedStore on OpenClaw >= 2026.6.10.
+# Reviewed-archive invariants (#5896): SRI, offline install and native npm provenance.
+# The npm-pack origin lacks the internal diagnostics capability.
+COPY scripts/lib/install-reviewed-openclaw-plugin.mts scripts/lib/seed-reviewed-npm-cache.mts /scripts/lib/
+COPY scripts/checks/materialize-locked-npm-cache-seed.mts /scripts/checks/
 # hadolint ignore=DL3059,DL4006,SC2016
 RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \
     export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives; \
@@ -1803,7 +1801,8 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
                 --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}")"; \
         fi; \
         NPM_CONFIG_OFFLINE=true NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
-            openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_archive}"; \
+            node /scripts/lib/install-reviewed-openclaw-plugin.mts \
+                "$plugin_archive" "$plugin_spec" "$expected_integrity" "$expected_tarball"; \
         if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$(dirname "$plugin_archive")"; fi; \
     }; \
     if [ "$managed_image_union" = "1" ] || [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
