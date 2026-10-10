@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Managed Kubernetes resources written in HCL, planned without a cluster.
 
-use nemoclaw_e2e::tofu::TofuWorkspace;
+use crate::tofu::TofuWorkspace;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 

@@ -12,7 +12,7 @@ test:
   wall_seconds: 45
   test_seconds: 8
 
-# Each lifecycle partition: 270 s on linux_amd64, slowest test 149 s.
+# Each lifecycle partition: 229 s on linux_amd64, slowest test 74 s.
 lifecycle:
   wall_seconds: 360
-  test_seconds: 180
+  test_seconds: 120

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Authored HCL for retained service storage through pinned OpenTofu.
 
-use nemoclaw_e2e::{http_fixture::Fixture, tofu::TofuWorkspace};
+use crate::{http_fixture::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -29,7 +29,7 @@ struct Volumes {
 async fn volume_engine() -> (Fixture, Arc<Mutex<Volumes>>) {
     let volumes = Arc::new(Mutex::new(Volumes::default()));
     let shared = volumes.clone();
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         let mut volumes = shared.lock().unwrap();
         let path = request.path.split('?').next().unwrap();
         let (status, value) = match (request.method.as_str(), path) {

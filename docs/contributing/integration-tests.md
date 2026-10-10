@@ -17,7 +17,7 @@ Tests install `terraform-provider-openshell` and `terraform-provider-fabric` fro
 cargo build -p nemoclaw-provider -p openshell-provider -p fabric-provider
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration provider_protocol:: -- --ignored
+  cargo test -p nemoclaw-provider --test contract provider_protocol:: -- --ignored
 ```
 
 These tests launch a fixture provider built by that crate and use temporary files.
@@ -30,7 +30,7 @@ On Unix, run from the repository root to test combined service capacity through 
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration service_capacity:: -- --ignored
+  cargo test -p nemoclaw-provider --test contract service_capacity:: -- --ignored
 ```
 
 This fixture checks shared-host overcommit, deferred reads, preserved state after failed observations, and cleanup without capacity checks.
@@ -73,6 +73,21 @@ The fixture returns protocol responses; it does not establish live agent inferen
 The export fixture checks provider refresh failures through OpenTofu, unchanged deployment state and configuration, and export without inference credentials or Fabric health requests.
 The web-search lifecycle case covers Brave and Tavily at deployment, sandbox, and agent scope, including profile and sandbox-grant drift.
 The mixed-search export case checks shared registrations, unused definitions, export without search keys, unchanged reapply, and rejected provider-type or credential-reference drift without changes to saved state.
+
+## NemoClaw Provider Contract
+
+The `nemoclaw-provider` crate's `contract` tests run its types through OpenTofu against fake Docker engines, gateways, and model servers:
+
+```sh
+NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
+NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-provider --test contract -- --ignored
+```
+
+They cover service storage, Kubernetes planning, runtime images and runtime contracts, gateway readiness, and engine and hardware discovery.
+`every_type_has_a_contract_test` requires a contract test for every type the provider serves.
+Its `ELSEWHERE` list names the types still tested only in `nemoclaw-e2e` and why: the managed gateway, service capacity, and service readiness tests need that crate's fixture binaries, gateway storage needs Docker, and inference capabilities are read only through SDK deployments.
 
 ## OpenShell Provider Contract
 
@@ -127,7 +142,7 @@ On Unix, build the production provider as above and run from the repository root
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
-  cargo test -p nemoclaw-e2e --test integration service_readiness:: -- --ignored
+  cargo test -p nemoclaw-provider --test contract service_readiness:: -- --ignored
 ```
 
 The fixture uses an isolated SSH/Docker simulator and a builtin OpenTofu consumer, without SDK deployment orchestration or a reachable OpenShell gateway.
@@ -329,7 +344,7 @@ With a verified bundle, run:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration remote_service::managed_hermes -- --ignored
+  cargo test -p nemoclaw-e2e --test integration remote_service::managed_bearer -- --ignored
 ```
 
 The fixture simulates SSH/Docker and OpenShell while exercising apply, export/reapply, observation failures and retained data through the bundled CLI/provider.

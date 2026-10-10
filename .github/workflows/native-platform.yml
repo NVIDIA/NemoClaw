@@ -14,6 +14,10 @@ on:
         description: JSON list of lifecycle shard numbers; its length is the partition count.
         type: string
         default: "[1, 2]"
+      live:
+        description: Also run the Docker and Kubernetes live suites, which need a Linux runner.
+        type: boolean
+        default: false
 permissions:
   contents: read
 defaults:
@@ -153,3 +157,44 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
+
+  # The live suites reuse this platform's bundle instead of building their own,
+  # so they start when it is ready. They are not required checks: a failure
+  # shows on its job without failing the platform's Test / PLATFORM check.
+  live-docker:
+    name: Live / Docker
+    if: inputs.live
+    needs: bundle
+    continue-on-error: true
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The second commit is a pull request merge commit's base.
+          fetch-depth: 2
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-docker
+          bundle: ${{ needs.bundle.outputs.artifact }}
+
+  live-kind:
+    name: Live / Kind
+    if: inputs.live
+    needs: bundle
+    continue-on-error: true
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The second commit is a pull request merge commit's base.
+          fetch-depth: 2
+      - uses: ./.github/actions/live-suite
+        with:
+          platform: ${{ inputs.platform }}
+          suite: live-kind
+          bundle: ${{ needs.bundle.outputs.artifact }}

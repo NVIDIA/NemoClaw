@@ -51,12 +51,10 @@ To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/pro
 
 | Workflow | Checks |
 |---|---|
-| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
+| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; on Linux also `Live / Docker` and `Live / Kind`, through `cargo ci live-docker` and `cargo ci live-kind` |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
-| Live / Docker | `Live / Docker / linux_arm64`, `Live / Docker / linux_amd64` on pull requests that can affect them, `v1` pushes, `run-live-docker/` branch pushes, and manual runs, through `cargo ci live-docker` |
-| Live / Kind | `Live / Kind / linux_arm64`, `Live / Kind / linux_amd64` on pull requests that can affect them, `v1` pushes, `run-live-kind/` branch pushes, and manual runs, through `cargo ci live-kind` |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
 
 The first eight checks are required by the `v1` ruleset, including documentation validation.
@@ -65,7 +63,9 @@ Superseded PR runs are cancelled, and their `Test / PLATFORM` checks report as c
 The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
 Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
 Documentation and dependency pushes finish; newer pushes replace older pending runs.
-Live push runs use separate concurrency groups and are not cancelled by a newer push; superseded pull request runs are cancelled.
+The live jobs start once their platform's bundle job finishes and use that bundle instead of building their own.
+They run on pull requests that can affect them, `v1` pushes, `run-live/` branch pushes, and manual runs.
+They are not required: a live failure shows on its job without failing that platform's `Test / PLATFORM` check.
 On a pull request, each live job first runs `nemoclaw-build changes live` and skips its remaining steps when the change cannot affect the suite.
 A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
 [Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suite.
@@ -81,7 +81,7 @@ The `ci` profile runs at most eight tests concurrently, reports slow tests every
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
 CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
 Each platform's build-and-test job and bundle job run in parallel on separate runners; its lifecycle workers start when both finish.
-Linux and macOS run two nextest hash partitions on separate runners with four test slots each; Windows runs its smaller suite on one.
+Linux and macOS run two nextest hash partitions on separate runners and Windows runs three, each with four test slots.
 Each platform starts its workers after its own jobs; it does not wait for other platforms.
 The existing `Test / PLATFORM` required checks succeed only when that platform's build, bundle, and lifecycle jobs succeed.
 After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.
@@ -200,8 +200,10 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 Native CI disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
-Profiles live in `.cargo/config.toml`, which the CI dependency cache hashes; changing one requires a one-time dependency rebuild.
-Other manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
+Profiles live in `.cargo/config.toml`, whose hash and the current month are part of the CI dependency cache prefix.
+Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.
+Before saving, the cache action keeps target artifacts by crate name only, so a cache that extended an older one would keep every earlier version and profile of each crate.
+Within a month, manifest and lockfile changes restore the platform's previous cache and rebuild only the changed dependencies.
 The test job's cache keeps third-party debug build artifacts; the bundle job's `native-bundle-v1` cache keeps those of its debug build tool and the target-specific release profile.
 Workspace libraries, test executables, workspace binaries, and installed Cargo binaries are excluded.
 Only `v1` writes Rust dependency caches; PRs restore the base branch cache and skip uploads.
