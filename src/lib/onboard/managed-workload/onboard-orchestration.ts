@@ -198,6 +198,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
+  readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
   readonly fallbackBuildEstimate: () => string | null;
@@ -395,6 +396,7 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
+    const endpointUrl = input.nativeLocalProviderAttachment?.endpointUrl ?? input.endpointUrl;
     const selectedModel = input.model?.trim() || "";
     const selectedProvider = input.provider?.trim() || null;
     const inferenceApi =
@@ -409,11 +411,12 @@ export function createManagedWorkloadOnboardRuntime(
       selectedModel,
       selectedProvider,
       inferenceApi,
+      endpointUrl,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference:
-        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !input.endpointUrl
+        !selectedModel && !selectedProvider && !input.preferredInferenceApi && !endpointUrl
           ? null
           : {
               routeProvider: inference.providerKey,
@@ -421,7 +424,7 @@ export function createManagedWorkloadOnboardRuntime(
               model: selectedModel,
               routedBaseUrl: inference.inferenceBaseUrl,
               upstreamEndpointUrl:
-                input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
+                input.agentName === "langchain-deepagents-code" ? endpointUrl : null,
               api: inference.inferenceApi as
                 | "openai-completions"
                 | "openai-responses"

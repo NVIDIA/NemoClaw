@@ -9,6 +9,8 @@ import path from "node:path";
 import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+  INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -35,6 +37,7 @@ import {
   hasRawNodeStackTrace,
   inferenceSandboxName,
   onboardSandbox,
+  providerPolicyRestoreArgs,
   redactedResultText,
   requireLivePrerequisites,
   runNemoclawCli,
@@ -51,7 +54,7 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 test(
   "TC-INF-06 invalid API key fails with credential classification and cleanup",
   {
-    timeout: 5 * 60_000,
+    timeout: INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm live inference prerequisites",
@@ -103,7 +106,7 @@ test(
 test(
   "TC-INF-07 unreachable endpoint fails with transport classification and cleanup",
   {
-    timeout: 5 * 60_000,
+    timeout: INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm live inference prerequisites",
@@ -271,16 +274,11 @@ async function runRuntimeIdentityE2EScenario(
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
   await cleanupSandbox(host, sandbox, sandboxName);
-  const inference = await startFakeOpenAiCompatibleServer({
+  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
+  const inference = await startFakeHttpsCompatibleServer({
     apiKey: inferenceKey,
     chatContent: "PONG",
-    host: "0.0.0.0",
     model,
-    port: 8000,
-    progress,
-    publicHost: "localhost",
-    requireAuth: true,
-    requireAuthModels: true,
   });
   cleanup.add("close runtime identity inference prerequisite", async () => {
     try {
@@ -289,13 +287,24 @@ async function runRuntimeIdentityE2EScenario(
       await inference.close();
     }
   });
+  // Arbitrary loopback ports are intentionally not rewritten by onboarding.
+  // Use a public prerequisite route while preserving the shared inference path.
+  const inferenceTunnel = await startPublicMcpHttpsTunnel({
+    cloudflaredBin,
+    cleanup,
+    label: "runtime identity inference prerequisite",
+    progress,
+    readinessPath: "/v1/models",
+    readinessStatus: 401,
+    server: inference,
+  });
   progress.phase("onboard a real OpenShell sandbox");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
     {
       COMPATIBLE_API_KEY: inferenceKey,
-      NEMOCLAW_ENDPOINT_URL: inference.baseUrl,
+      NEMOCLAW_ENDPOINT_URL: `${inferenceTunnel.origin}/v1`,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
@@ -328,17 +337,7 @@ async function runRuntimeIdentityE2EScenario(
     settings?: Record<string, string>;
   };
   const priorProvidersV2Setting = settingsDocument.settings?.providers_v2_enabled;
-  const restoreSettingArgs = new Map<string, string[]>([
-    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
-    [
-      "false",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
-    ],
-    [
-      "true",
-      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
-    ],
-  ]).get(priorProvidersV2Setting ?? "");
+  const restoreSettingArgs = providerPolicyRestoreArgs(priorProvidersV2Setting);
   expect(restoreSettingArgs).toBeDefined();
   cleanup.add("restore OpenShell provider-derived policy setting", async () => {
     const restored = await sandbox.openshell(restoreSettingArgs!, {
@@ -379,7 +378,6 @@ async function runRuntimeIdentityE2EScenario(
       await oauth.close();
     }
   });
-  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
   const tunnel = await startPublicMcpHttpsTunnel({
     cloudflaredBin,
     cleanup,
@@ -718,15 +716,17 @@ test
 );
 
 test(
-  "TC-INF-09 local compatible endpoint routes through inference.local (#5744)",
+  "TC-INF-09 native local inference stays isolated between sibling sandboxes (#12558)",
   {
-    timeout: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+    timeout: INFERENCE_ROUTING_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm compatible-endpoint prerequisites",
         "start the local compatible endpoint",
         "onboard to the compatible endpoint",
-        "request sandbox chat through inference.local",
+        "run a fresh native agent turn",
+        "run a fresh sibling OpenClaw turn",
+        "verify sibling endpoint denial",
       ],
     },
   },
@@ -766,7 +766,9 @@ test(
       id: "inference-routing-compatible-endpoint",
       contract: [
         "a custom OpenAI-compatible endpoint onboards",
-        "sandbox inference.local routes chat to compatible endpoint",
+        "a fresh agent process reaches its selected native endpoint",
+        "a fresh OpenClaw process reaches its own authenticated native endpoint",
+        "a sibling provider grants no access to the first sandbox",
       ],
       endpointUrl: fake.baseUrl,
       model,
@@ -776,6 +778,7 @@ test(
       artifacts,
       sandboxName,
       {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
         COMPATIBLE_API_KEY: apiKey,
         NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
         NEMOCLAW_MODEL: model,
@@ -788,15 +791,19 @@ test(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
     expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
-    progress.phase("request sandbox chat through inference.local");
+    progress.phase("run a fresh native agent turn");
     const sandboxRequestOffset = fake.requests().length;
-    await expectOpenAiChatThroughSandbox(
-      sandbox,
+    const turn = await sandbox.exec(
       sandboxName,
-      model,
-      [apiKey],
-      "compatible-endpoint-inference-local-chat",
+      ["dcode", "-n", "Reply with PONG. Do not use tools.", "--json"],
+      {
+        artifactName: "tc-inf-09-native-agent",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
     );
+    expect(turn.exitCode, resultText(turn)).toBe(0);
     expect(
       fake
         .requests()
@@ -805,9 +812,110 @@ test(
           (request) =>
             request.auth === "ok" &&
             request.method === "POST" &&
-            request.path === "/v1/chat/completions",
+            request.path === "/v1/chat/completions" &&
+            request.model === model,
         ),
     ).toBe(true);
+    progress.phase("run a fresh sibling OpenClaw turn");
+    const siblingName = inferenceSandboxName("e2e-compat-peer");
+    const sibling = await startFakeOpenAiCompatibleServer({
+      apiKey,
+      chatContent: "PONG",
+      host: "0.0.0.0",
+      model,
+      port: 11434,
+      progress,
+      publicHost: "localhost",
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanup.add("close sibling compatible endpoint", async () => {
+      try {
+        await artifacts.writeJson("tc-inf-09-sibling-endpoint-requests.json", sibling.requests());
+      } finally {
+        await sibling.close();
+      }
+    });
+    cleanup.add("remove sibling native inference sandbox", () =>
+      cleanupSandbox(host, sandbox, siblingName, { strict: true }),
+    );
+    const siblingOnboard = await onboardSandbox(
+      artifacts,
+      siblingName,
+      {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_ENDPOINT_URL: sibling.baseUrl,
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      [apiKey],
+      "tc-inf-09-onboard-sibling",
+      progress,
+      ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    );
+    expectOnboardSuccess(siblingOnboard, "TC-INF-09 sibling onboard");
+    const siblingRequestOffset = sibling.requests().length;
+    const siblingTurn = await sandbox.exec(
+      siblingName,
+      [
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        `tc-inf-09-sibling-${Date.now()}`,
+        "-m",
+        "Reply with PONG. Do not use tools.",
+      ],
+      {
+        artifactName: "tc-inf-09-sibling-native-agent",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 120_000,
+      },
+    );
+    expect(siblingTurn.exitCode, resultText(siblingTurn)).toBe(0);
+    expect(
+      sibling
+        .requests()
+        .slice(siblingRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === model,
+        ),
+    ).toBe(true);
+    progress.phase("verify sibling endpoint denial");
+    const denied = await sandbox.exec(
+      sandboxName,
+      [
+        "curl",
+        "-sS",
+        "--max-time",
+        "15",
+        "http://host.openshell.internal:11434/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        "Authorization: Bearer openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        "--data-raw",
+        JSON.stringify({ model, messages: [{ role: "user", content: "PONG" }] }),
+      ],
+      {
+        artifactName: "tc-inf-09-sibling-denial",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 30_000,
+      },
+    );
+    expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
   },
 );
 
@@ -880,24 +988,30 @@ test(
       endpointUrl,
       model,
     });
-    // Onboarding's own SSRF preflight (assertEndpointResolvesPublic) only
-    // rejects private/internal addresses; it does not fail closed on
-    // DNS-backed HTTPS the way the HTTPS Pin Runtime adapter's call site does,
-    // and onboarding never wires that adapter itself (only
-    // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
-    // the `inference set --endpoint-url` path). Onboard with a disposable
-    // plain-HTTP placeholder endpoint first -- the same shape TC-INF-09 already
-    // onboards successfully with -- then switch to the DNS-backed HTTPS
-    // endpoint through `inference set --endpoint-url`, the actual #6141 call
-    // site this test exercises.
-    // Advertise localhost so onboarding exercises its host-bridge rewrite, but
-    // listen beyond host loopback so the resulting sandbox route can reach it.
+    // A distinct public onboarding endpoint keeps inference set on the pinning
+    // path: reusing the exact onboarded URL intentionally bypasses that adapter.
+    const onboarding = await startFakeHttpsCompatibleServer({
+      apiKey,
+      chatContent: "placeholder",
+      model,
+    });
+    cleanup.add("close https-pin onboarding endpoint", () => onboarding.close());
+    const onboardingTunnel = await startPublicMcpHttpsTunnel({
+      cloudflaredBin,
+      cleanup,
+      label: "https-pin onboarding prerequisite",
+      progress,
+      readinessPath: "/v1/models",
+      readinessStatus: 401,
+      server: onboarding,
+    });
+    // Keep a separate private target to witness that redirects are never followed.
     const placeholder = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "placeholder",
       host: "0.0.0.0",
       model,
-      port: 8000,
+      port: 0,
       progress,
       publicHost: "localhost",
       requireAuth: true,
@@ -910,7 +1024,7 @@ test(
       sandboxName,
       {
         COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_ENDPOINT_URL: placeholder.baseUrl,
+        NEMOCLAW_ENDPOINT_URL: `${onboardingTunnel.origin}/v1`,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PREFERRED_API: "openai-completions",
         NEMOCLAW_PROVIDER: "custom",

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ConfigExportExpectation } from "../../test/e2e/registry/types.ts";
+import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../../test/e2e/fixtures/cleanup.ts";
 import { testTimeout } from "../../test/helpers/timeouts.ts";
 
 const MINUTE_MS = 60_000;
@@ -30,6 +31,21 @@ export const ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS = 15 * MINUTE_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
 export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
+
+// Native routing qualification onboards two sandbox owners before checking isolation.
+export const INFERENCE_ROUTING_TEST_TIMEOUT_MS = 2 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS;
+export const INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS = 5 * MINUTE_MS;
+// The file runs serially: two rejection cases, three single-sandbox cases,
+// and one two-sandbox native isolation case. Each owns a cleanup fixture.
+export const INFERENCE_ROUTING_SERIAL_TEST_TIMEOUT_MS =
+  2 * INFERENCE_ROUTING_NEGATIVE_TEST_TIMEOUT_MS +
+  3 * ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS +
+  INFERENCE_ROUTING_TEST_TIMEOUT_MS;
+export const INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES =
+  (INFERENCE_ROUTING_SERIAL_TEST_TIMEOUT_MS +
+    6 * DEFAULT_CLEANUP_TIMEOUT_MS +
+    ONBOARD_JOB_HEADROOM_MS) /
+  MINUTE_MS;
 
 // The typed DCode target runs onboarding, its invalid-credential lifecycle,
 // state validation, and the ordered cloud checks. Those checks can consume 96

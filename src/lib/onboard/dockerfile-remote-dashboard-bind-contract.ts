@@ -125,6 +125,10 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // Main-image chmod for NemoClaw startup helpers, source, preloads, policy,
   // and plugin payloads; it does not write OpenClaw configuration.
   "4baee14013357ee190f418985d6b58457ab7a0c414f7ae3d8d308704da1696cf",
+  // The same metadata-only instruction includes the native-local config input.
+  "aa67a56299fedea5c7130da731ef3ee58a9800a69e7f92e5f13e64a54faab6ab",
+  // The same instruction after removing a duplicate wrapper chmod operand.
+  "d70666fe15aa35161e49de378e90a3b7994814bca11efa9ca96b2581fac63b0f",
   // NEMOCLAW_DARWIN_VM_COMPAT chmod for the OpenClaw and NemoClaw state trees;
   // it changes modes only and preserves the generated dashboard binding.
   "295282a4f06106c93df72b4e035f980a2fc0e8a7dcbf6d270e102d7c75be27fb",

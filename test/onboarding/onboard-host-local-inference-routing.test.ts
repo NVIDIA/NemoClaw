@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createCliOpenShellInferenceRouteMutator } from "../../src/lib/adapters/openshell/inference-route-cli.js";
+import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferencePreparedStartup,
@@ -243,7 +243,9 @@ function fixture(
   options: Parameters<typeof runtime>[2] & {
     gatewayCommitError?: Error;
     gatewayRollbackError?: Error;
-    gatewayUpsertProvider?: NonNullable<HostLocalInferenceGatewayMutation["upsertProvider"]>;
+    registerNativeProvider?: NonNullable<
+      HostLocalInferenceGatewayMutation["registerNativeProvider"]
+    >;
     recover?: boolean;
     resume?: boolean;
   } = {},
@@ -281,7 +283,9 @@ function fixture(
   const prepareGatewayMutation = vi.fn(() => {
     events.push("gateway-snapshot");
     return {
-      ...(options.gatewayUpsertProvider ? { upsertProvider: options.gatewayUpsertProvider } : {}),
+      ...(options.registerNativeProvider
+        ? { registerNativeProvider: options.registerNativeProvider }
+        : {}),
       commit: gatewayCommit,
       rollback: gatewayRollback,
     };
@@ -467,7 +471,7 @@ describe("onboard host-local inference routing", () => {
   });
 
   it.each(APPLICATIONS)(
-    "routes %s through inference.local without legacy host probes",
+    "prepares native local inference for %s without a shared gateway route or legacy host probes",
     async (application) => {
       const route = fixture(application, "ollama");
       const legacyRun = vi.fn();
@@ -549,18 +553,22 @@ describe("onboard host-local inference routing", () => {
         kind: "host",
         acceleration: "nvidia-gpu",
       });
-      expect(harness.commands.map(({ command }) => command)).toEqual([
-        "provider get -g nemoclaw ollama-local",
-        "provider create -g nemoclaw --name ollama-local --type openai --credential NEMOCLAW_OLLAMA_PROXY_TOKEN --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1",
-        `inference set -g nemoclaw --no-verify --provider ollama-local --model ${MODEL} --timeout 180`,
-      ]);
-      expect(harness.commands.map(({ command }) => command).join(" ")).not.toContain(
-        "mxc-provider-native.internal",
+      expect(harness.commands).toEqual([]);
+      expect(harness.native.adapter.createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          type: expect.stringMatching(/^nemoclaw-local-sentinel-v1-/),
+          credentials: [{ name: "NEMOCLAW_LOCAL_INFERENCE_TOKEN", value: "ollama" }],
+          config: [],
+        }),
       );
+      expect(harness.native.profiles[0]).toMatchObject({
+        endpoints: [{ host: "host.openshell.internal", port: 11434 }],
+      });
+      expect(verify).not.toHaveBeenCalled();
       expect(route.events).toEqual([
         "provider-ready-proof",
         "gateway-snapshot",
-        "gateway-route-verify",
         "runtime-precommit-validation",
         "gateway-commit",
         "runtime-precommit-validation",
@@ -585,10 +593,17 @@ describe("onboard host-local inference routing", () => {
   );
 
   it("uses a transaction-owned provider create instead of the generic gateway upsert", async () => {
-    const exactProviderCreate = vi.fn(() => ({ ok: true }));
+    const attachment = nativeLocalSetupReceipt({
+      provider: "ollama-local",
+      endpointUrl: "http://host.openshell.internal:11434/v1",
+      authMode: "sentinel",
+      gatewayName: "nemoclaw",
+      sandboxName: SANDBOX,
+    });
+    const exactProviderCreate = vi.fn(async () => attachment);
     const genericUpsertProvider = vi.fn(async () => ({ ok: true }));
     const route = fixture("hermes", "ollama", {
-      gatewayUpsertProvider: exactProviderCreate,
+      registerNativeProvider: exactProviderCreate,
     });
     const harness = createHarness({
       overrides: {
@@ -604,12 +619,11 @@ describe("onboard host-local inference routing", () => {
       }),
     ).resolves.toEqual({ ok: true });
 
-    expect(exactProviderCreate).toHaveBeenCalledWith(
-      "ollama-local",
-      "openai",
-      "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-      "http://host.openshell.internal:11434/v1",
-      { NEMOCLAW_OLLAMA_PROXY_TOKEN: "ollama" },
+    expect(exactProviderCreate).toHaveBeenCalledExactlyOnceWith();
+    expect(harness.native.adapter.createProvider).not.toHaveBeenCalled();
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ nativeLocalProviderAttachment: attachment }),
     );
     expect(genericUpsertProvider).not.toHaveBeenCalled();
   });
@@ -740,9 +754,10 @@ describe("onboard host-local inference routing", () => {
       }),
     ).resolves.toEqual({ ok: true });
 
-    expect(harness.commands.some(({ command }) => command.includes(`:${String(port)}/v1`))).toBe(
-      true,
-    );
+    expect(harness.native.profiles[0]).toMatchObject({
+      endpoints: [{ host: "host.openshell.internal", port }],
+    });
+    expect(harness.commands).toEqual([]);
     expect(legacyRun).not.toHaveBeenCalled();
     expect(legacyValidate).not.toHaveBeenCalled();
     expect(route.gatewayCommit).toHaveBeenCalledOnce();
@@ -803,6 +818,9 @@ describe("onboard host-local inference routing", () => {
         // it is not rollback authority for an already-published runtime.
         priorState: "absent",
         resumeStateAtEntry: stateAtEntry,
+        registerNativeProvider: async () => {
+          throw new Error("provider creation denied");
+        },
       });
       const harness = createHarness({
         overrides: { applyLocalInferenceRoute: vi.fn(async () => true) },
@@ -812,7 +830,7 @@ describe("onboard host-local inference routing", () => {
         harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
           hostLocalInference: route.selection,
         }),
-      ).resolves.toEqual({ retry: "selection" });
+      ).rejects.toThrow("EXIT_CALLED:1");
 
       const preparedStartup = route.preparedStartups[0];
       expect(route.providerRuntime.resumeManaged).toHaveBeenCalledOnce();
@@ -832,7 +850,12 @@ describe("onboard host-local inference routing", () => {
   it.each(APPLICATIONS)(
     "rolls back %s gateway denial and exact prior runtime state",
     async (application) => {
-      const route = fixture(application, "vllm", { priorState: "stopped" });
+      const route = fixture(application, "vllm", {
+        priorState: "stopped",
+        registerNativeProvider: async () => {
+          throw new Error("provider creation denied");
+        },
+      });
       const error = vi.fn(() => route.events.push("redacted-evidence"));
       const harness = createHarness({
         overrides: {
@@ -845,7 +868,7 @@ describe("onboard host-local inference routing", () => {
         harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {
           hostLocalInference: route.selection,
         }),
-      ).resolves.toEqual({ retry: "selection" });
+      ).rejects.toThrow("EXIT_CALLED:1");
 
       expect(route.events.slice(-3)).toEqual([
         "redacted-evidence",
@@ -863,21 +886,15 @@ describe("onboard host-local inference routing", () => {
     { provider: "ollama-local", service: "ollama" },
     { provider: "vllm-local", service: "vllm" },
   ] as const)(
-    "retains the $service gateway and runtime after an ambiguous route mutation",
+    "retains the $service gateway and runtime when native provider creation and cleanup cannot be reconciled",
     async ({ provider, service }) => {
-      const route = fixture("openclaw", service);
-      const harness = createHarness({
-        overrides: {
-          applyLocalInferenceRoute: undefined,
-          inferenceRouteMutator: createCliOpenShellInferenceRouteMutator(async () => ({
-            status: 0,
-            signal: null,
-            output: "Error: authentication failed",
-            stdout: "",
-            stderr: "Error: authentication failed",
-          })),
+      const route = fixture("openclaw", service, {
+        registerNativeProvider: async () => {
+          throw new Error("provider creation result is unknown");
         },
+        gatewayRollbackError: new Error("provider identity cannot be reconciled"),
       });
+      const harness = createHarness();
 
       await expect(
         harness.setupInference(SANDBOX, MODEL, provider, null, null, null, [], {
@@ -885,10 +902,10 @@ describe("onboard host-local inference routing", () => {
         }),
       ).rejects.toThrow("EXIT_CALLED:1");
 
-      expect(route.gatewayRollback).not.toHaveBeenCalled();
+      expect(route.gatewayRollback).toHaveBeenCalledOnce();
       expect(route.preparedStartups[0]?.rollback).not.toHaveBeenCalled();
       expect(route.events).not.toContain("runtime-rollback");
-      expect(harness.errors.join(" ")).toContain("route update result is unknown");
+      expect(harness.errors.join(" ")).toContain("provider creation result is unknown");
     },
   );
 
@@ -897,6 +914,9 @@ describe("onboard host-local inference routing", () => {
     async (application) => {
       const route = fixture(application, "vllm", {
         gatewayRollbackError: new Error("indeterminate gateway cleanup"),
+        registerNativeProvider: async () => {
+          throw new Error("provider creation denied");
+        },
       });
       const harness = createHarness({
         overrides: { applyLocalInferenceRoute: vi.fn(async () => true) },
@@ -945,19 +965,14 @@ describe("onboard host-local inference routing", () => {
   });
 
   it("never emits a raw secret-bearing gateway provider failure", async () => {
-    const route = fixture("openclaw", "vllm");
-    const providerFailures = {
-      "provider get": { status: 1 },
-      "provider create": {
-        status: 1,
-        stderr:
+    const route = fixture("openclaw", "vllm", {
+      registerNativeProvider: async () => {
+        throw new Error(
           "https://gateway-user:gateway-password@gateway.example/v1?token=gateway-query OPENAI_API_KEY=gateway-env-secret",
+        );
       },
-    } as const;
-    const harness = createHarness({
-      runOpenshell: (args) =>
-        providerFailures[args.slice(0, 2).join(" ") as keyof typeof providerFailures],
     });
+    const harness = createHarness();
 
     await expect(
       harness.setupInference(SANDBOX, MODEL, "vllm-local", null, null, null, [], {

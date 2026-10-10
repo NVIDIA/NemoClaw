@@ -254,14 +254,8 @@ function sandboxInspect(
   ]);
 }
 
-function createGatewayMutation(mutation: HostLocalInferenceGatewayMutation): void {
-  mutation.upsertProvider!(
-    "ollama-local",
-    "openai",
-    "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-    "http://host.openshell.internal:11434/v1",
-    { NEMOCLAW_OLLAMA_PROXY_TOKEN: "ollama" },
-  );
+async function createGatewayMutation(mutation: HostLocalInferenceGatewayMutation): Promise<void> {
+  await mutation.registerNativeProvider!();
 }
 
 export interface HermesPortableUninstallFixture {
@@ -397,7 +391,7 @@ export async function createHermesPortableUninstallFixture(
     model: "qwen3-vl:4b",
     providerBaseUrl: "http://host.openshell.internal:11434/v1",
   });
-  createGatewayMutation(mutation);
+  await createGatewayMutation(mutation);
   await mutation.commit();
   route.prepared.commit();
   const inferenceStateRoot = path.join(stateDir, "portable-inference");

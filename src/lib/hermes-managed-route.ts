@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  nativeLocalCredentialReference,
+  requireNativeLocalAgentSupport,
+} from "./inference/native-local/agent-config.ts";
+
 import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
 
 // The inference.local route replaces this non-secret sentinel at egress.
@@ -78,6 +83,8 @@ export function applyHermesManagedRoute(
   config: Record<string, unknown>,
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
+  if (nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl))
+    requireNativeLocalAgentSupport("hermes");
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);

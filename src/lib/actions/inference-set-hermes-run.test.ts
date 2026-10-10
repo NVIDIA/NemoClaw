@@ -620,3 +620,28 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 });
+
+it.each(["ollama-local", "vllm-local", "llama-cpp-local"])(
+  "refuses deferred Hermes native-local switch to %s without registry/config writes (#12921)",
+  async (provider) => {
+    portableMocks.assertUnavailable.mockReset();
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+    });
+    await expect(
+      runInferenceSet(
+        { provider, model: "local-model", sandboxName: "hermes", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow("Hermes native-local inference is not supported yet");
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  },
+);

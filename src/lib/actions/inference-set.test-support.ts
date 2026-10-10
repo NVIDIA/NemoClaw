@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeLocalIdentity, type NativeLocalBinding } from "../inference/native-local/contract";
 import { vi } from "vitest";
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
 import type {
@@ -252,6 +253,26 @@ export type CaptureOpenshell = (
   options?: CaptureOpenshellOptions,
 ) => CaptureOpenshellResult;
 
+export function nativeLocalTestReceipt(
+  provider: NativeLocalBinding["provider"] = "ollama-local",
+  endpointUrl = "http://host.openshell.internal:11435/v1",
+) {
+  const binding: NativeLocalBinding = {
+    provider,
+    endpointUrl,
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    authMode: "authenticated",
+  };
+  return {
+    ...binding,
+    ...nativeLocalIdentity(binding),
+    schemaVersion: 1 as const,
+    providerId: "local-provider-id",
+  };
+}
+
 export function createDeps(options: {
   config: ConfigObject;
   entry?: SandboxEntry | null;
@@ -424,6 +445,28 @@ export function createDeps(options: {
       { redactDiagnostic: redactInferenceSetRouteDiagnostic },
     );
   return {
+    requireNativeProviderPolicy: async () => {},
+    prepareNativeLocalSwitch: async (input) => {
+      const binding: NativeLocalBinding = {
+        provider: input.provider as NativeLocalBinding["provider"],
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        endpointUrl: input.binding?.baseUrl ?? "http://host.openshell.internal:11435/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        authMode: "authenticated",
+      };
+      return {
+        changed: false,
+        previousDetached: false,
+        receipt: {
+          ...binding,
+          ...nativeLocalIdentity(binding),
+          schemaVersion: 1,
+          providerId: "local-provider-id",
+        },
+      };
+    },
+    listNativeLocalProviderAuthorities: () => [],
     getDefaultSandbox: () => defaultSandbox,
     getSandbox: (name: string) => sandboxes[name] ?? null,
     listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
@@ -478,4 +521,56 @@ export function createDeps(options: {
     calls,
     getSession: () => session,
   };
+}
+
+/** Stateful local-to-NVIDIA fixture with a failed restoration after detach. */
+export function createFailingNativeLocalRestoreAdapter(
+  base: OpenShellProviderAdapter,
+  previous: ReturnType<typeof nativeLocalTestReceipt>,
+) {
+  let localAttached = true;
+  const detachProvider = vi.fn(async (request: Parameters<typeof base.detachProvider>[0]) => {
+    if (request.providerName !== previous.providerName) return base.detachProvider(request);
+    localAttached = false;
+    return { ok: true as const, value: { changed: true } };
+  });
+  const adapter = {
+    ...base,
+    detachProvider,
+    inspectProviderProfile: async () => ({
+      ok: true as const,
+      value: { credentialKeys: [previous.credentialEnv] },
+    }),
+    getProvider: async (request: Parameters<typeof base.getProvider>[0]) =>
+      request.providerName !== previous.providerName
+        ? base.getProvider(request)
+        : {
+            ok: true as const,
+            value: {
+              name: previous.providerName,
+              type: previous.profileId,
+              credentialKeys: [previous.credentialEnv],
+              configKeys: [],
+              revision: { id: previous.providerId, resourceVersion: 1 },
+            },
+          },
+    listProviderAttachments: async (
+      request: Parameters<typeof base.listProviderAttachments>[0],
+    ) => {
+      const result = await base.listProviderAttachments(request);
+      return result.ok
+        ? {
+            ok: true as const,
+            value: {
+              names: [...result.value.names, ...(localAttached ? [previous.providerName] : [])],
+            },
+          }
+        : result;
+    },
+    attachProvider: async (request: Parameters<typeof base.attachProvider>[0]) => {
+      if (request.providerName !== previous.providerName) return base.attachProvider(request);
+      throw new Error("local restoration unavailable");
+    },
+  };
+  return { adapter, detachProvider };
 }

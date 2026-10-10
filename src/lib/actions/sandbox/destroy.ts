@@ -59,6 +59,7 @@ import {
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  retireDestroyedSandboxNativeLocalProvider,
   preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
   retirePortableLifecycleAuthority,
@@ -1086,6 +1087,12 @@ async function destroySandboxUnlocked(
   const deleteSucceededOrAlreadyGone = deleteResult.kind !== "failed" || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
+  }
+  if (deleteSucceededOrAlreadyGone && sandbox) {
+    await retireDestroyedSandboxNativeLocalProvider(sandbox, cleanupGatewayName).catch((error) => {
+      preparedManagedLlamaCppCleanup?.abort();
+      throw error;
+    });
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     abortPreparedCleanupOnError(() =>

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { InferenceSetError } from "./inference-set-error";
 import type { OpenShellInferenceRouteMutationError } from "../adapters/openshell/inference-route";
 import {
   type CaptureOpenShellInferenceRoute,
@@ -84,4 +85,33 @@ export async function buildInferenceSetFailure(
         : 1,
     message: `${error.message}${providerLine}${tip}${recovery}`,
   };
+}
+
+/** Report the failed path after its owning compensation, without implying native fallback. */
+export async function rejectInferenceSelectionProbe(input: {
+  nativeLocal: boolean;
+  sandboxName: string;
+  provider: string;
+  model: string;
+  detail: string;
+  previousProvider: string;
+  previousModel: string;
+  restorePreviousSelection: () => Promise<string | null>;
+}): Promise<never> {
+  if (input.nativeLocal) {
+    throw new InferenceSetError(
+      `Native local inference verification failed for '${input.sandboxName}': ${input.detail}. No new inference selection was committed.`,
+    );
+  }
+  const restoreFailure = await input.restorePreviousSelection();
+  if (restoreFailure) {
+    throw new InferenceSetError(
+      `Sandbox-side verification rejected provider '${input.provider}' / '${input.model}': ${input.detail}. ` +
+        `Failed to restore the previous OpenShell inference selection '${input.previousProvider}' / '${input.previousModel}': ${restoreFailure}. Re-run onboarding before using this route.`,
+    );
+  }
+  throw new InferenceSetError(
+    `Sandbox-side verification rejected provider '${input.provider}' / '${input.model}': ${input.detail}. ` +
+      `The previous OpenShell inference selection was restored to '${input.previousProvider}' / '${input.previousModel}'.`,
+  );
 }

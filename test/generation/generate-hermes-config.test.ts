@@ -268,6 +268,20 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(import.meta.dirname, "../..", "src", "lib", "providerless-inference.ts"),
     path.join(fixtureRoot, "src", "lib", "providerless-inference.ts"),
   );
+  const localDir = path.join(fixtureRoot, "src", "lib", "inference", "native-local");
+  fs.mkdirSync(localDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(
+      import.meta.dirname,
+      "../..",
+      "src",
+      "lib",
+      "inference",
+      "native-local",
+      "agent-config.ts",
+    ),
+    path.join(localDir, "agent-config.ts"),
+  );
   return fixtureScriptPath;
 }
 
@@ -329,6 +343,21 @@ afterEach(() => {
 });
 
 describe("agents/hermes/generate-config.ts", () => {
+  it.each(["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"])(
+    "refuses deferred Hermes native-local route %s (#12921)",
+    (provider) => {
+      expectGenerationError(
+        {
+          NEMOCLAW_UPSTREAM_PROVIDER: provider,
+          NEMOCLAW_MODEL: "local-model",
+          NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:11434/v1",
+          NEMOCLAW_INFERENCE_API: "openai-completions",
+        },
+        "Hermes native-local inference is not supported yet",
+      );
+    },
+  );
+
   it(
     "matches direct generation as a strip-types executable with an explicit gateway matrix",
     async () => {

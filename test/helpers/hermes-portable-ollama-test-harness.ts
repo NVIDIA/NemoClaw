@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { prepareNativeLocalProfile } from "../../src/lib/inference/native-local/profile";
+import { NATIVE_LOCAL_CREDENTIAL_ENV } from "../../src/lib/inference/native-local/contract";
 import type {
   ContainerEngineCommandCapture,
   ContainerEngineCommandResult,
@@ -184,7 +186,17 @@ export function createPortableGatewayProviderHarness(
   let foreignCreateCredentialEnv: string | null = null;
   let lookupFailure = false;
   let resourceVersion = 1;
-  let credentialEnv = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+  let credentialEnv: string = NATIVE_LOCAL_CREDENTIAL_ENV;
+  const nativeProfile = prepareNativeLocalProfile({
+    gatewayName: "nemoclaw",
+    sandboxName: "portable-hermes",
+    provider: "ollama-local",
+    endpointUrl: "http://host.openshell.internal:11434/v1",
+    authMode: "sentinel",
+    credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+  });
+  let providerType: string = nativeProfile.profileId;
+  let providerName: string = nativeProfile.providerName;
   let profileState: "exact" | "missing" | "incompatible" | "import-failed" = "exact";
   const calls: Array<{ readonly args: readonly string[]; readonly timeout: number }> = [];
   return Object.freeze({
@@ -221,6 +233,23 @@ export function createPortableGatewayProviderHarness(
     run(args: string[], options: Parameters<PortableGatewayProviderHarness["run"]>[1]) {
       calls.push(Object.freeze({ args: Object.freeze([...args]), timeout: options.timeout }));
       events.push(`openshell:${args.join(" ")}`);
+      const gatewayIndex = args.indexOf("-g");
+      if (gatewayIndex !== -1)
+        args = [...args.slice(0, gatewayIndex), ...args.slice(gatewayIndex + 2)];
+      if (args[0] === "settings" && args[1] === "get")
+        return {
+          status: 0,
+          stdout: JSON.stringify({ scope: "global", settings: { providers_v2_enabled: "true" } }),
+          stderr: "",
+        };
+      if (args.join(" ") === "policy list --global --limit 1")
+        return { status: 0, stdout: "", stderr: "No global policy history found\n" };
+      if (args[0] === "policy" && args[1] === "get")
+        return {
+          status: 1,
+          stdout: "",
+          stderr: 'status: NotFound, message: "no global policy revision found"',
+        };
       if (args[0] === "provider" && args[1] === "profile" && args[2] === "export") {
         if (profileState === "missing" || profileState === "import-failed") {
           return { status: 1, stdout: "", stderr: "provider profile not found" };
@@ -228,11 +257,11 @@ export function createPortableGatewayProviderHarness(
         return {
           status: 0,
           stdout: JSON.stringify({
-            id: "openai",
-            credentials: [],
-            endpoints: profileState === "exact" ? [] : ["https://example.invalid"],
-            binaries: [],
-            inference_capable: true,
+            ...nativeProfile.document,
+            endpoints:
+              profileState === "exact"
+                ? nativeProfile.document.endpoints
+                : [{ host: "example.invalid", port: 443 }],
           }),
           stderr: "",
         };
@@ -257,10 +286,10 @@ export function createPortableGatewayProviderHarness(
               stdout: [
                 "\u001b[2mId:\u001b[0m portable-ollama-provider",
                 `\u001b[2mResource version:\u001b[0m ${String(resourceVersion)}`,
-                "Name: ollama-local",
-                "Type: openai",
+                `Name: ${providerName}`,
+                `Type: ${providerType}`,
                 `Credential keys: ${credentialEnv}`,
-                "Config keys: OPENAI_BASE_URL",
+                "Config keys: <none>",
               ].join("\n"),
               stderr: "",
             }
@@ -284,10 +313,12 @@ export function createPortableGatewayProviderHarness(
           throw new Error("Unexpected OpenShell provider create without a credential value.");
         }
         credentialEnv = args[credentialIndex + 1];
+        providerName = args[args.indexOf("--name") + 1] ?? providerName;
+        providerType = args.includes("--type") ? args[args.indexOf("--type") + 1] : providerType;
         present = true;
         resourceVersion = 1;
         return createTransportAmbiguity
-          ? { status: 1, stdout: "", stderr: "transport result unavailable" }
+          ? { status: 1, stdout: "", stderr: "connection reset by peer" }
           : { status: 0, stdout: "", stderr: "" };
       }
       if (args[0] === "provider" && args[1] === "delete") {

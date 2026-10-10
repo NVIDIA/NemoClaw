@@ -84,7 +84,7 @@ test(
         "install Ollama and GPU sandbox",
         "validate GPU runtime status",
         "validate Ollama proxy credential boundary",
-        "run sandbox inference.local chat",
+        "run sandbox native local chat",
         "restart Ollama and recover agent inference",
       ],
     },
@@ -93,7 +93,7 @@ test(
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
-        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
+        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + native provider",
       credentialBoundary:
         "The proxy token remains host/OpenShell-owned and is absent from sandbox env.",
       remoteInstallerBoundary:
@@ -238,12 +238,12 @@ test(
       "OpenShell owns proxy authentication; the host proxy token must not enter sandbox env",
     ).toBe("");
 
-    progress.phase("run sandbox inference.local chat");
+    progress.phase("run sandbox native local chat");
     const model = await detectOllamaModel(host);
     const chat = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
-        `curl -sS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+        `curl -sS --max-time 120 http://host.openshell.internal:${PROXY_PORT}/v1/chat/completions -H 'Authorization: Bearer openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN' -H 'Content-Type: application/json' --data '${JSON.stringify(
           {
             model,
             messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -255,7 +255,7 @@ test(
           },
         )}'`,
       ),
-      { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
+      { artifactName: "sandbox-native-local-chat", env: env(), timeoutMs: 150_000 },
     );
     expect(chatContent(chat.stdout)).toMatch(/pong/i);
 

@@ -2144,6 +2144,18 @@ test, and makes `full-e2e` the source of truth for the hard cold-path contract.
 
 The explicit `dgx-station-express` target runs the local Station Express installer with cached Ultra weights, checks routed sandbox inference, and uninstalls the job runtime. See [Station dispatch](docs/dgx-station-dispatch.md) for prerequisites, workflow selection, and evidence boundaries.
 
+### Native host-local inference
+
+Slice 4 supports the DCode/OpenClaw contract below. Hermes native-local selection is deferred to #12921 and must fail before provider mutation; hosted Hermes routes remain supported. Hermes credential projection through its guarded configuration lifecycle is not part of this slice.
+
+`inference-routing` TC-INF-09 owns the real OpenShell boundary for Slice 4 of #12558: a fresh DCode process reaches its selected authenticated local endpoint, and attaching a provider to an OpenClaw sibling sandbox does not grant the first sandbox access to that endpoint. The test uses the existing compatible-server fixture and target. Existing local runtime qualification owns Ollama, vLLM, llama.cpp, GPU startup, and cleanup.
+
+Profile rules, ownership collisions, credential custody, mutation reconciliation, gateway prerequisites, and generated request behavior belong to the native-local, provider-policy, gateway bootstrap, and compatible-endpoint-smoke source tests. TC-INF-09 replaces its managed-route curl success evidence with a fresh native agent turn and the server's authenticated selected-model request. Sibling denial remains live because a source test cannot prove OpenShell composes provider policy per sandbox. No assertion about terminal formatting is added.
+
+`gpu-e2e` and `gpu-double-onboard` retain their existing live chat assertions against the qualified Ollama proxy endpoint with the attached provider placeholder. They protect native routing after GPU startup and recreation. Request construction and credential reference selection remain in source and generator tests; these live assertions prove the real OpenShell proxy boundary. Their assertion counts are unchanged.
+
+Native Ollama and managed vLLM export reuse the existing GPU export cases. SDK metadata, exact native profile permissions, attachment identity, stable observation, credential custody, and unchanged service serialization are covered by the live-export-source Ollama/vLLM pipeline tests in the CLI lane. Export adds no live assertions. TC-INF-09's sibling-denial outcome still requires real OpenShell: a mocked adapter can prove the submitted attachment and profile boundaries, but cannot prove that OpenShell composes and enforces them separately for two sandboxes.
+
 ## Fixed hosted provider qualification
 
 `live/inference-routing-provider-smoke.test.ts` owns credential-backed native inference smoke tests.

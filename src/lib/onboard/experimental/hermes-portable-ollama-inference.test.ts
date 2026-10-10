@@ -119,17 +119,9 @@ const gatewayMutationInput = {
   providerBaseUrl: "http://host.openshell.internal:11434/v1",
 } as const;
 
-function createExactGatewayProvider(
-  mutation: HostLocalInferenceGatewayMutation,
-  baseUrl: string = gatewayMutationInput.providerBaseUrl,
-) {
-  return mutation.upsertProvider!(
-    gatewayMutationInput.provider,
-    "openai",
-    "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-    baseUrl,
-    { NEMOCLAW_OLLAMA_PROXY_TOKEN: "ollama" },
-  );
+async function createExactGatewayProvider(mutation: HostLocalInferenceGatewayMutation) {
+  await mutation.registerNativeProvider!();
+  return { ok: true };
 }
 
 function gatewayJournalPath(fixture: ReturnType<typeof createRuntimeFixture>): string {
@@ -164,7 +156,7 @@ async function publishPortableInference(fixture: ReturnType<typeof createRuntime
   const route = prepareManagedRoute(fixture, selection);
   route.prepared.validateBeforeCommit();
   const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-  createExactGatewayProvider(mutation);
+  await createExactGatewayProvider(mutation);
   await mutation.commit();
   route.prepared.commit();
   return gatewayJournal(fixture);
@@ -614,7 +606,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       const route = prepareManagedRoute(fixture, selection);
       route.prepared.validateBeforeCommit();
       const gatewayMutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-      createExactGatewayProvider(gatewayMutation);
+      await createExactGatewayProvider(gatewayMutation);
       await gatewayMutation.commit();
       route.prepared.commit();
       fixture.events.push("provider-operation");
@@ -666,14 +658,19 @@ describe("Hermes Portable Ollama inference activation", () => {
     ).toBe(true);
     expect(podmanEvents.some((event) => event.includes("executable=docker"))).toBe(false);
     expect(podmanEvents.some((event) => event.includes("--env OLLAMA_CONTEXT_LENGTH"))).toBe(true);
+    const timeoutByCommand: Record<string, number> = {
+      "provider get": OPENSHELL_PROBE_TIMEOUT_MS,
+      "provider get scoped": OPENSHELL_OPERATION_TIMEOUT_MS,
+      "provider profile scoped": OPENSHELL_OPERATION_TIMEOUT_MS,
+      "provider create scoped": OPENSHELL_OPERATION_TIMEOUT_MS,
+      "settings get scoped": OPENSHELL_PROBE_TIMEOUT_MS,
+      "policy list scoped": OPENSHELL_PROBE_TIMEOUT_MS,
+    };
     expect(
-      fixture.gatewayProvider
-        .calls()
-        .every(({ args, timeout }) =>
-          args[1] === "get"
-            ? timeout === OPENSHELL_PROBE_TIMEOUT_MS
-            : timeout === OPENSHELL_OPERATION_TIMEOUT_MS,
-        ),
+      fixture.gatewayProvider.calls().every(({ args, timeout }) => {
+        const command = `${args.slice(0, 2).join(" ")}${args.includes("-g") ? " scoped" : ""}`;
+        return timeout === timeoutByCommand[command];
+      }),
     ).toBe(true);
   });
 
@@ -694,7 +691,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const route = prepareManagedRoute(fixture, selection);
     route.prepared.validateBeforeCommit();
     const mutation = await selection.prepareGatewayMutation({ ...gatewayMutationInput, model });
-    createExactGatewayProvider(mutation);
+    await createExactGatewayProvider(mutation);
     await mutation.commit();
     route.prepared.commit();
     expect(route.receipt).toMatchObject({ inference: { model } });
@@ -760,7 +757,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       ...gatewayMutationInput,
       gatewayName,
     });
-    createExactGatewayProvider(mutation);
+    await createExactGatewayProvider(mutation);
     await mutation.commit();
     route.prepared.commit();
     const journal = gatewayJournal(fixture);
@@ -806,7 +803,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(gatewayJournal(fixture)).toEqual(durableJournal);
     await expect(resumed.prepareGatewayMutation(gatewayMutationInput)).resolves.toBeDefined();
     expect(
-      fixture.events.filter((event) => event.includes("provider create --name ollama-local")),
+      fixture.events.filter((event) => event.startsWith("openshell:provider create ")),
     ).toHaveLength(1);
   });
 
@@ -824,7 +821,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(healed.request).not.toHaveProperty("recover", true);
     expect(gatewayJournal(fixture)).toMatchObject({ phase: "committed" });
     expect(
-      fixture.events.filter((event) => event.includes("provider create --name ollama-local")),
+      fixture.events.filter((event) => event.startsWith("openshell:provider create ")),
     ).toHaveLength(1);
   });
 
@@ -1026,7 +1023,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const recovered = prepareManagedRoute(fixture, interrupted);
     recovered.prepared.validateBeforeCommit();
     const gatewayMutation = await interrupted.prepareGatewayMutation(gatewayMutationInput);
-    createExactGatewayProvider(gatewayMutation);
+    await createExactGatewayProvider(gatewayMutation);
     await gatewayMutation.commit();
     recovered.prepared.commit();
     const published = fixture.resolve({
@@ -1054,23 +1051,27 @@ describe("Hermes Portable Ollama inference activation", () => {
     );
     fixture.gatewayProvider.setMalformed(false);
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    expect(createExactGatewayProvider(mutation)).toEqual({ ok: true });
+    expect(await createExactGatewayProvider(mutation)).toEqual({ ok: true });
     await mutation.commit();
     await mutation.rollback();
     expect(fixture.gatewayProvider.isPresent()).toBe(false);
   });
 
-  it("creates the Portable OpenAI provider without a compatibility-profile mutation (#11229)", async () => {
+  it("creates the Portable native provider without changing built-in profiles (#12558)", async () => {
     const fixture = createRuntimeFixture();
     const mutation = await fixture.resolve()!.prepareGatewayMutation(gatewayMutationInput);
 
-    expect(createExactGatewayProvider(mutation)).toEqual({ ok: true });
+    expect(await createExactGatewayProvider(mutation)).toEqual({ ok: true });
 
     const providerCreate = fixture.events.findIndex((event) =>
-      event.includes("provider create --name ollama-local"),
+      event.startsWith("openshell:provider create "),
     );
     expect(providerCreate).toBeGreaterThanOrEqual(0);
-    expect(fixture.events.some((event) => event.includes("provider profile"))).toBe(false);
+    expect(
+      fixture.events.some(
+        (event) => event.includes("provider profile") && event.includes("openai"),
+      ),
+    ).toBe(false);
   });
 
   it("resumes the journaled provider-create crash window and publishes exact ownership (#9596)", async () => {
@@ -1092,7 +1093,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       .mockImplementationOnce(() => {
         throw new Error("injected death before provider identity persistence");
       });
-    expect(() => createExactGatewayProvider(mutation)).toThrow(
+    await expect(createExactGatewayProvider(mutation)).rejects.toThrow(
       "injected death before provider identity persistence",
     );
     rename.mockRestore();
@@ -1109,7 +1110,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const recoveredRoute = prepareManagedRoute(fixture, restarted);
     recoveredRoute.prepared.validateBeforeCommit();
     const resumedMutation = await restarted.prepareGatewayMutation(gatewayMutationInput);
-    expect(createExactGatewayProvider(resumedMutation)).toEqual({ ok: true });
+    expect(await createExactGatewayProvider(resumedMutation)).toEqual({ ok: true });
     await resumedMutation.commit();
     recoveredRoute.prepared.commit();
     const published = fixture.resolve({
@@ -1124,14 +1125,10 @@ describe("Hermes Portable Ollama inference activation", () => {
       providerAuthority: { id: "portable-ollama-provider", resourceVersion: 1 },
     });
     expect(gatewayJournal(fixture).intent.providerCredentialEnv).toMatch(
-      /^NEMOCLAW_OLLAMA_PROXY_TOKEN_[A-F0-9]{64}$/u,
+      /^NEMOCLAW_LOCAL_INFERENCE_TOKEN$/u,
     );
     expect(
-      fixture.events.filter((event) =>
-        event.startsWith(
-          "openshell:provider create --name ollama-local --type openai --credential NEMOCLAW_OLLAMA_PROXY_TOKEN_",
-        ),
-      ),
+      fixture.events.filter((event) => event.startsWith("openshell:provider create ")),
     ).toHaveLength(1);
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
     expect(fixture.harness.container()).not.toBeNull();
@@ -1146,7 +1143,7 @@ describe("Hermes Portable Ollama inference activation", () => {
       route.prepared.validateBeforeCommit();
       const input = { ...gatewayMutationInput, gatewayName };
       const mutation = await selection.prepareGatewayMutation(input);
-      createExactGatewayProvider(mutation);
+      await createExactGatewayProvider(mutation);
       await mutation.commit();
 
       const interruptedTransactionId = gatewayJournal(fixture).intent.transactionId;
@@ -1160,12 +1157,12 @@ describe("Hermes Portable Ollama inference activation", () => {
       const recoveredRoute = prepareManagedRoute(fixture, restarted);
       recoveredRoute.prepared.validateBeforeCommit();
       const resumedMutation = await restarted.prepareGatewayMutation(input);
-      expect(createExactGatewayProvider(resumedMutation)).toEqual({ ok: true });
+      expect(await createExactGatewayProvider(resumedMutation)).toEqual({ ok: true });
       await resumedMutation.commit();
       recoveredRoute.prepared.commit();
 
       expect(
-        fixture.events.filter((event) => event.includes("provider create --name ollama-local")),
+        fixture.events.filter((event) => event.startsWith("openshell:provider create ")),
       ).toHaveLength(1);
       expect(gatewayJournal(fixture)).toMatchObject({
         phase: "committed",
@@ -1226,10 +1223,13 @@ describe("Hermes Portable Ollama inference activation", () => {
     );
     fixture.gatewayProvider.setLookupFailure(false);
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    expect(() => createExactGatewayProvider(mutation, "http://192.0.2.2:11434/v1")).toThrow(
-      "provider mutation authority changed",
-    );
-    createExactGatewayProvider(mutation);
+    await expect(
+      selection.prepareGatewayMutation({
+        ...gatewayMutationInput,
+        providerBaseUrl: "http://192.0.2.2:11434/v1",
+      }),
+    ).rejects.toThrow("gateway mutation authority changed");
+    await createExactGatewayProvider(mutation);
     fixture.gatewayProvider.bumpResourceVersion();
     expect(() => mutation.commit()).toThrow("gateway provider authority changed");
     await expect(mutation.rollback()).rejects.toThrow(
@@ -1246,10 +1246,8 @@ describe("Hermes Portable Ollama inference activation", () => {
       "NEMOCLAW_OLLAMA_PROXY_TOKEN_FOREIGN_TRANSACTION",
     );
 
-    expect(() => createExactGatewayProvider(mutation)).toThrow(
-      "ambiguous gateway provider authority",
-    );
-    expect(() => createExactGatewayProvider(mutation)).toThrow(GatewayStateConflictError);
+    await expect(createExactGatewayProvider(mutation)).rejects.toThrow("provider already exists");
+    await expect(createExactGatewayProvider(mutation)).rejects.toThrow(GatewayStateConflictError);
 
     expect(gatewayJournal(fixture)).toMatchObject({
       phase: "creating",
@@ -1274,6 +1272,15 @@ describe("Hermes Portable Ollama inference activation", () => {
       expected: "gateway provider journal is malformed",
     },
     {
+      name: "non-string transaction identity",
+      serialize: (journal: ReturnType<typeof gatewayJournal>) =>
+        `${JSON.stringify({
+          ...journal,
+          intent: { ...journal.intent, transactionId: [journal.intent.transactionId] },
+        })}\n`,
+      expected: "gateway provider journal identity is malformed",
+    },
+    {
       name: "malformed transaction identity",
       serialize: (journal: ReturnType<typeof gatewayJournal>) => {
         journal.intent.transactionId = "invalid";
@@ -1285,7 +1292,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const fixture = createRuntimeFixture();
     const selection = fixture.resolve()!;
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    createExactGatewayProvider(mutation);
+    await createExactGatewayProvider(mutation);
     const journalPath = gatewayJournalPath(fixture);
     const serialized = serialize(gatewayJournal(fixture));
     fs.writeFileSync(journalPath, serialized, { mode: 0o600 });
@@ -1320,7 +1327,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
     fixture.gatewayProvider.setCreateTransportAmbiguity(true);
 
-    expect(createExactGatewayProvider(mutation)).toEqual({ ok: true });
+    expect(await createExactGatewayProvider(mutation)).toEqual({ ok: true });
     expect(gatewayJournal(fixture)).toMatchObject({
       phase: "created",
       providerAuthority: { id: "portable-ollama-provider", resourceVersion: 1 },
@@ -1328,9 +1335,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(fixture.gatewayProvider.credentialEnv()).toBe(
       gatewayJournal(fixture).intent.providerCredentialEnv,
     );
-    expect(fixture.gatewayProvider.credentialEnv()).toMatch(
-      /^NEMOCLAW_OLLAMA_PROXY_TOKEN_[A-F0-9]{64}$/u,
-    );
+    expect(fixture.gatewayProvider.credentialEnv()).toMatch(/^NEMOCLAW_LOCAL_INFERENCE_TOKEN$/u);
   });
 
   it.each([
@@ -1409,7 +1414,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const fixture = createRuntimeFixture();
     const selection = fixture.resolve()!;
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    createExactGatewayProvider(mutation);
+    await createExactGatewayProvider(mutation);
     mutate(fixture, selection);
     const mutationsBefore = fixture.events.filter(
       (event) => event.includes("provider create") || event.includes("provider delete"),
@@ -1451,7 +1456,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const fixture = createRuntimeFixture();
     const selection = fixture.resolve()!;
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    createExactGatewayProvider(mutation);
+    await createExactGatewayProvider(mutation);
     await mutation.commit();
     fixture.gatewayProvider.setDeleteFailure(true);
     await expect(mutation.rollback()).rejects.toThrow(
@@ -1465,7 +1470,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     const resumed = await restarted.prepareGatewayMutation(gatewayMutationInput);
     expect(fixture.gatewayProvider.isPresent()).toBe(false);
     expect(gatewayJournal(fixture)).toMatchObject({ phase: "prepared" });
-    expect(createExactGatewayProvider(resumed)).toEqual({ ok: true });
+    expect(await createExactGatewayProvider(resumed)).toEqual({ ok: true });
     expect(fixture.gatewayProvider.isPresent()).toBe(true);
   });
 });

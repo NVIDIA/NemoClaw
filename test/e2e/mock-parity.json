@@ -193,6 +193,7 @@
         "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
+        "test/e2e/support/inference-routing-cleanup.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts"
       ]
     },
@@ -578,6 +579,7 @@
     {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
       "fast": [
+        "src/lib/inference/native-local.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"

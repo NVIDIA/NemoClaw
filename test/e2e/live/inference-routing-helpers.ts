@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { outputContainsSandbox, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -205,12 +205,44 @@ async function cleanupSandbox(
 
   const cleanupEvidence: string[] = [];
   try {
+    const deletion = await sandbox.openshell(["sandbox", "delete", sandboxName], {
+      artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
+      env: rawOpenShellEnv(),
+      timeoutMs: 60_000,
+    });
+    cleanupEvidence.push(probeSummary("openshell sandbox delete", deletion));
+  } catch (error) {
+    cleanupEvidence.push(
+      `openshell sandbox delete threw: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  // Observe absence while the gateway is still running. Public destroy may
+  // stop the last gateway after reconciling its registry and provider ownership.
+  const listing = await sandbox.list({
+    artifactName: `cleanup-openshell-sandbox-list-${sandboxName}`,
+    env: rawOpenShellEnv(),
+    timeoutMs: 30_000,
+  });
+  cleanupEvidence.push(probeSummary("openshell sandbox list", listing));
+  if (
+    listing.exitCode !== 0 ||
+    listing.timedOut ||
+    listing.signal !== null ||
+    outputContainsSandbox(listing, sandboxName)
+  ) {
+    throw new Error(
+      `sandbox '${sandboxName}' absence was not verified after strict cleanup\n${cleanupEvidence.join("\n")}`,
+    );
+  }
+
+  try {
     const destroy = await host.command(
       process.execPath,
       [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"],
       {
         artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
-        env: buildAvailabilityProbeEnv(),
+        env: rawOpenShellEnv(),
         timeoutMs: 120_000,
       },
     );
@@ -221,32 +253,7 @@ async function cleanupSandbox(
     );
   }
 
-  try {
-    const deletion = await sandbox.openshell(["sandbox", "delete", sandboxName], {
-      artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    });
-    cleanupEvidence.push(probeSummary("openshell sandbox delete", deletion));
-  } catch (error) {
-    cleanupEvidence.push(
-      `openshell sandbox delete threw: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
   clearOnboardState();
-
-  const status = await sandbox.status(sandboxName, {
-    artifactName: `cleanup-openshell-sandbox-status-${sandboxName}`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  cleanupEvidence.push(probeSummary("openshell sandbox status", status));
-  if (status.exitCode === 0) {
-    throw new Error(
-      `sandbox '${sandboxName}' still exists after strict cleanup\n${cleanupEvidence.join("\n")}`,
-    );
-  }
 }
 
 async function expectNoActiveSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -498,3 +505,17 @@ export {
   skipLive,
   TRANSPORT_CLASSIFICATION_PATTERN,
 };
+
+export function providerPolicyRestoreArgs(value: unknown): string[] | undefined {
+  return new Map<string, string[]>([
+    ["<unset>", ["settings", "delete", "--global", "--key", "providers_v2_enabled", "--yes"]],
+    [
+      "false",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "false", "--yes"],
+    ],
+    [
+      "true",
+      ["settings", "set", "--global", "--key", "providers_v2_enabled", "--value", "true", "--yes"],
+    ],
+  ]).get(typeof value === "string" ? value : value === undefined ? "<unset>" : "");
+}
