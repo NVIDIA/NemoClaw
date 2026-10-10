@@ -140,7 +140,7 @@ describe("detectInferenceProviderHostState", () => {
       hostCommandExists: vi.fn((command) => command === "ollama" || command === "docker"),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
       runCapture: vi.fn((command) =>
-        command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? "{}" : "",
+        command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? '{"data":[]}' : "",
       ),
       dockerCapture,
       detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(() => ({
