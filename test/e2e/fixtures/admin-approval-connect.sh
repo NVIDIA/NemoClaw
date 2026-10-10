@@ -46,10 +46,15 @@ selection_checks=(
     ('selection-response', r'device state must be an object|records must be an array of objects|JSONDecodeError'),
 )
 checks=(
+    ('approval-state-mismatch', r'local fallback pairing state does not contain the gateway request'),
+    ('approval-context-rejected', r'forced pairing (?:pinned|state descriptor)|bounded same-device approval context changed'),
+    ('approval-not-pending', r'No pending device request matches'),
+    ('self-approval-rejected', r"This device can't approve its own scope upgrade"),
+    ('approval-token-handoff-failed', r'Admin approval completed, but its token handoff'),
     ('timeout', r'timed?\s*out|timeout'),
     ('pairing-required', r'device pairing|required.*pairing|pairing required'),
-    ('scope-upgrade-pending', r'scope upgrade pending|operator\.admin'),
     ('authorization-rejected', r'denied|forbidden|unauthorized|approval.*(?:failed|rejected)'),
+    ('scope-upgrade-pending', r'scope upgrade pending'),
     ('gateway-unavailable', r'gateway|connection|econn|socket|network'),
     ('invalid-response', r'invalid|parse|json'),
 )

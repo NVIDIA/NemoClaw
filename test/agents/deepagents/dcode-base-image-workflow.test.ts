@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
@@ -1036,23 +1037,59 @@ esac
     },
   );
 
+  it("uses the shared identity when validating a Deep Agents Code runtime image", () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-identity-"));
+    const validatorPath = path.join(
+      temporaryRoot,
+      "scripts/checks/validate-dcode-runtime-contract.mts",
+    );
+    const identityPath = path.join(
+      temporaryRoot,
+      "src/lib/agent/deep-agents-code-runtime-identity.json",
+    );
+    fs.mkdirSync(path.dirname(validatorPath), { recursive: true });
+    fs.mkdirSync(path.dirname(identityPath), { recursive: true });
+    fs.copyFileSync(
+      path.join(repoRoot, "scripts/checks/validate-dcode-runtime-contract.mts"),
+      validatorPath,
+    );
+    fs.writeFileSync(identityPath, JSON.stringify({ uid: 1601, gid: 1602 }));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--no-warnings",
+          "--input-type=module",
+          "-e",
+          `const { dcodeRuntimeValidationArgs } = await import(${JSON.stringify(pathToFileURL(validatorPath).href)}); process.stdout.write(JSON.stringify(dcodeRuntimeValidationArgs('sha256:${"a".repeat(64)}', 'linux/amd64')));`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const args = JSON.parse(result.stdout) as string[];
+      expect(args[args.indexOf("--user") + 1]).toBe("1601:1602");
+    } finally {
+      fs.rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
   it.each([
-    ["a complete runtime", undefined, "0.7.5", "0.1.55", "0.7.5", 0, ""],
+    ["a complete runtime", undefined, "0.7.15", "0.1.71", "0.7.15", 0, ""],
     [
       "a missing deepagents module",
       "deepagents",
-      "0.7.5",
-      "0.1.55",
-      "0.7.5",
+      "0.7.15",
+      "0.1.71",
+      "0.7.15",
       1,
       "No module named 'deepagents'",
     ],
     [
       "a missing deepagents_code module",
       "deepagents_code",
-      "0.7.5",
-      "0.1.55",
-      "0.7.5",
+      "0.7.15",
+      "0.1.71",
+      "0.7.15",
       1,
       "No module named 'deepagents_code'",
     ],
@@ -1060,16 +1097,16 @@ esac
       "the wrong installed version",
       undefined,
       "0.7.4",
-      "0.1.55",
-      "0.7.5",
+      "0.1.71",
+      "0.7.15",
       1,
       "runtime versions do not match",
     ],
     [
       "a lock mismatch",
       undefined,
-      "0.7.5",
-      "0.1.55",
+      "0.7.15",
+      "0.1.71",
       "0.7.4",
       1,
       "runtime contract does not match deepagents lock",
@@ -1103,7 +1140,7 @@ esac
       );
       fs.writeFileSync(
         lockPath,
-        [`deepagents==${lockedDeepagentsVersion} \\`, "deepagents-code==0.1.55 \\", ""].join("\n"),
+        [`deepagents==${lockedDeepagentsVersion} \\`, "deepagents-code==0.1.71 \\", ""].join("\n"),
         "utf8",
       );
       try {

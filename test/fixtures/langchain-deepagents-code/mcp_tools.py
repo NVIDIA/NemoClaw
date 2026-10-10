@@ -67,6 +67,6 @@ async def resolve_and_load_mcp_tools(
     return configs
 
 
-def discover_mcp_configs(*, project_context=None):
+def discover_mcp_config_sources(*, project_context=None):
     del project_context
     return [Path.home() / ".deepagents" / ".mcp.json"]

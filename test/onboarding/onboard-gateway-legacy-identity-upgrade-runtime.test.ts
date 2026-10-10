@@ -25,6 +25,8 @@ import {
 import { buildOwnedHostGatewayArgv0 } from "../../src/lib/onboard/gateway-process-identity";
 import { stopHostGatewayProcesses } from "../../src/lib/onboard/host-gateway-process";
 
+import { isAlive } from "./onboard-gateway-legacy-identity-upgrade-support";
+
 const posix = process.platform !== "win32";
 const hasLsof = posix && !spawnSync("lsof", ["-v"], { stdio: "ignore" }).error;
 
@@ -38,19 +40,6 @@ function killQuietly(pid: number): void {
   } catch {
     // Already stopped.
   }
-}
-
-function isAlive(pid: number): boolean {
-  const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
-    encoding: "utf-8",
-    timeout: 5000,
-  });
-  const state = result.stdout.trim().charAt(0);
-  const absent = result.status === 1 && !result.stdout.trim() && !result.stderr.trim();
-  const knownState = result.status === 0 && /^[DIKPRSTUWtZXx]$/.test(state);
-  assert.ok(absent || knownState, "gateway fixture process state could not be inspected");
-  // A zombie has exited and released its listener, even before init reaps its PID.
-  return /^[DIKPRSTUWt]$/.test(state);
 }
 
 afterEach(() => {

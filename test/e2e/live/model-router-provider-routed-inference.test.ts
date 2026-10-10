@@ -81,6 +81,7 @@ test(
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
+    await host.recordSandboxContainerDiscoveryOnFailure(SANDBOX_NAME, onboard.exitCode, [apiKey]);
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
     progress.phase("request a routed inference.local completion");

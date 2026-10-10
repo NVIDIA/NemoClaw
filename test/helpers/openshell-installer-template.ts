@@ -175,11 +175,27 @@ export function removeV00106OperationalTrust(source: string): string {
   return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
 }
 
+function historicalGatewayExecutableReader(source: string): string {
+  // Historical release and prospective-change fixtures start before #12614.
+  return source
+    .replace('import { readGatewayProcEntry } from "./gateway/process-proc-entry";\n', "")
+    .replace(
+      '    return readGatewayProcEntry(pid, "exe");',
+      `    try {
+      const procExePath = \`/proc/\${pid}/exe\`;
+      if (!fs.existsSync(procExePath)) return null;
+      return fs.readlinkSync(procExePath);
+    } catch {
+      return null;
+    }`,
+    );
+}
+
 export function prepareReleaseFixtureRuntime(repoRoot: string, root: string): void {
   const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
   const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
   const source = fs.readFileSync(path.join(repoRoot, runtimePath), "utf8");
-  const prepared = source.replace(
+  const prepared = historicalGatewayExecutableReader(source).replace(
     /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
     candidatePins.trim(),
   );
@@ -313,7 +329,7 @@ export function supervisorV00116Fixtures(selected: {
     installer: restorePins(installerReleaseTemplate(selected.installer, "0.0.116"))
       .replaceAll('VERSION="0.1.2"', 'VERSION="0.0.116"')
       .replaceAll("v0.1.2:", "v0.0.116:"),
-    supervisorRuntime: selected.supervisorRuntime.replace(
+    supervisorRuntime: historicalGatewayExecutableReader(selected.supervisorRuntime).replace(
       'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.1.2";',
       'const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";',
     ),

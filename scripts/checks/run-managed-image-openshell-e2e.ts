@@ -381,6 +381,42 @@ function commandDetail(result: ManagedImageCommandResult): string {
     .slice(-8_000);
 }
 
+function printExactContainerFailureState(containerId: string | null, env: NodeJS.ProcessEnv): void {
+  if (!containerId || !/^[a-f0-9]{64}$/u.test(containerId)) return;
+  const state = commandResult(
+    [
+      "docker",
+      "container",
+      "inspect",
+      "--format",
+      "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}",
+      containerId,
+    ],
+    env,
+    5_000,
+  );
+  console.error(
+    `Managed-image exact container state: ${managedImageFailureDetail(commandDetail(state))}`,
+  );
+  const processState = commandResult(
+    [
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "/bin/sh",
+      "-c",
+      "printf 'pid1='; cat /proc/1/comm; printf 'processes='; ps -eo comm= | head -n 60; printf 'memory-events='; cat /sys/fs/cgroup/memory.events",
+    ],
+    env,
+    5_000,
+  );
+  console.error(
+    `Managed-image exact container processes: ${managedImageFailureDetail(commandDetail(processState))}`,
+  );
+}
+
 function isDockerNotFound(result: ManagedImageCommandResult): boolean {
   return (
     result.status !== 0 &&
@@ -1326,6 +1362,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         `Managed-image failure evidence: ${managedImageFailureDetail(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)}`,
       );
     }
+    printExactContainerFailureState(ownedContainerId, process.env);
   } finally {
     process.exit = exit;
     try {

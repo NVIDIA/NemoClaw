@@ -2278,7 +2278,9 @@ function backupNativeSandboxState(sandboxName: string, options: BackupOptions): 
           "trap resume EXIT HUP INT TERM",
           "quiesce_pass=0",
           'while :; do collect_candidates; newly_stopped=""; for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) if kill -STOP "$pid" 2>/dev/null; then stopped="$stopped $pid"; newly_stopped=1; fi ;; esac; done; [ -n "$newly_stopped" ] || break; quiesce_pass=$((quiesce_pass + 1)); [ "$quiesce_pass" -lt 10 ] || exit 21; done',
-          'for pid in $stopped; do attempts=0; while [ -r "/proc/$pid/status" ]; do state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$pid/status" || break; case "$state" in T*) break ;; esac; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
+          // A group leader can be a zombie while sibling threads still run.
+          // Require every remaining task to be stopped or exited before capture.
+          'for pid in $stopped; do attempts=0; while [ -d "/proc/$pid" ]; do pending=""; observed=""; for task in /proc/$pid/task/[0-9]*; do [ -d "$task" ] || continue; observed=1; state=""; { while IFS=":" read -r key value; do if [ "$key" = "State" ]; then set -- $value; state=${1:-}; break; fi; done; } 2>/dev/null < "$task/status" || { [ ! -d "$task" ] && continue; }; case "$state" in T*|Z*|X*|x*) ;; *) pending=1 ;; esac; done; [ -n "$observed" ] || { [ ! -d "/proc/$pid" ] && break; pending=1; }; [ -n "$pending" ] || break; attempts=$((attempts + 1)); [ "$attempts" -lt 100 ] || exit 21; sleep 0.01; done; done',
           "collect_candidates",
           'for pid in $candidates; do case " $stopped " in *" $pid "*) ;; *) exit 21 ;; esac; done',
           'if [ -e "$root/.openclaw/state/openclaw.sqlite" ] || [ -L "$root/.openclaw/state/openclaw.sqlite" ] || [ -e "$root/.openclaw-data/state/openclaw.sqlite" ] || [ -L "$root/.openclaw-data/state/openclaw.sqlite" ]; then command -v node >/dev/null 2>&1 || exit 22; node --no-warnings -e ' +

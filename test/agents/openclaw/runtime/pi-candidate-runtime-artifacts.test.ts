@@ -77,6 +77,37 @@ describe("Pi candidate contract validation", () => {
     expect(contract.reference).toBe(`ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`);
   });
 
+  it("validates a published candidate contract with plain Node", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-contract-"));
+    try {
+      const contractPath = path.join(directory, "contract.json");
+      fs.writeFileSync(
+        contractPath,
+        JSON.stringify(candidateContract({ platform: "linux/arm64" })),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.join(root, "tools/managed-images/validate-candidate-contract.mts"),
+          "--contract",
+          contractPath,
+          "--platform",
+          "linux/arm64",
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...process.env, NODE_OPTIONS: "" },
+          timeout: 5_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Validated candidate contract for pi on linux/arm64");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a contract whose agent is not a candidate managed-image agent", () => {
     expect(() =>
       validateCandidateContract(

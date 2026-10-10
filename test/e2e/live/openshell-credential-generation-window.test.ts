@@ -697,10 +697,15 @@ test(
     let oldChildRevision = "";
     let oldChildResult: ShellProbeResult | undefined;
     let restartedRevision = "";
-    const observedRevisions = [restoredRevision];
+    const observedRevisions: string[] = [];
     try {
       oldChildRevision = await waitForReadyRevision(sandbox);
-      expect(oldChildRevision).toBe(restoredRevision);
+      const postInferenceRestoreRevision = await observeFreshRevision(
+        sandbox,
+        "credential-window-current-revision-after-inference-restore",
+      );
+      expect(oldChildRevision).toBe(postInferenceRestoreRevision);
+      observedRevisions.push(postInferenceRestoreRevision);
       for (const [index, secret] of rotationSecrets.entries()) {
         await rotateCredential(host, sandbox, fakeMcp, providerName, secret, index + 1, allSecrets);
         observedRevisions.push(
@@ -716,6 +721,7 @@ test(
         oldChildRevision,
         observedRevisions,
         restoredRevision,
+        postInferenceRestoreRevision,
         retainedGenerations: OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
         rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,
       });

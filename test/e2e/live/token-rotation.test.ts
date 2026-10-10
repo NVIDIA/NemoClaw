@@ -14,6 +14,7 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { captureOpenClawOnboardFailure } from "../fixtures/openclaw-onboard-diagnostics.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
 // Keep this free-standing and direct: the contract is the real CLI +
@@ -421,6 +422,16 @@ test(
     progress.phase("install the sandbox and confirm provider hashes");
     const first = await runInstall(host, fakeOpenAI.baseUrl, TOKEN_A, {
       NEMOCLAW_RECREATE_SANDBOX: "1",
+    });
+    await captureOpenClawOnboardFailure(first, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "phase-0-install-token-a",
+      env: {
+        ...onboardEnv(fakeOpenAI.baseUrl, TOKEN_A),
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+      },
+      redactionValues: redactionValues(),
+      runtime: runtimeProvider,
     });
     expect(first.exitCode, resultText(first)).toBe(0);
 

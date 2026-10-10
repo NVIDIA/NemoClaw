@@ -58,6 +58,7 @@ import {
   classifyUnavailableInitialProviderEvidence,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
+  nativeNvidiaOpenClawApiKeyCommand,
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
 } from "./openclaw-inference-switch-helpers.ts";
@@ -645,7 +646,16 @@ async function readAndAssertOpenClawConfig(
         ? "https://inference.local"
         : "https://inference.local/v1",
   );
-  expect(provider?.apiKey).toBe(expected.nativeNvidia ? "${NVIDIA_INFERENCE_API_KEY}" : "unused");
+  const nativeHandle = expected.nativeNvidia
+    ? await sandbox.exec(SANDBOX_NAME, nativeNvidiaOpenClawApiKeyCommand(), {
+        artifactName: `${expected.artifactName}-native-credential-handle`,
+        env: commandEnv(home),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      })
+    : null;
+  expect(expected.nativeNvidia ? nativeHandle?.exitCode : provider?.apiKey).toBe(
+    expected.nativeNvidia ? 0 : "unused",
+  );
   expect(provider?.api).toBe(expected.inferenceApi);
   expect(selectedModel?.name).toBe(expectedPrimary);
   return selectedModel;
@@ -1156,12 +1166,16 @@ test(
     });
 
     const useMockBaseline =
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
+      (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startMockOpenClawBaselineProvider(progress)
       : undefined;
+    cleanup.trackDisposable("close baseline inference provider", async () => {
+      await baselineProvider?.close();
+    });
     const publicApiKey =
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
         ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
@@ -1186,9 +1200,6 @@ test(
     );
     cleanup.trackDisposable("close switched Anthropic provider", async () => {
       await mockProvider?.close();
-    });
-    cleanup.trackDisposable("close baseline inference provider", async () => {
-      await baselineProvider?.close();
     });
     const customDockerfile = writeCustomOpenClawDockerfile(home);
     cleanup.trackGateway(host, "nemoclaw", {
@@ -1323,7 +1334,8 @@ test(
     expect(route.exitCode, resultText(route)).toBe(0);
     const plainRoute = stripAnsi(resultText(route));
     expect(plainRoute).toContain(`Provider: ${SWITCH_PROVIDER}`);
-    expect(plainRoute).toContain(`Model: ${SWITCH_MODEL}`);
+    const modelLine = plainRoute.split(/\r?\n/u).find((line) => line.startsWith("Model:"));
+    expect(modelLine?.slice("Model:".length).trim()).toBe(SWITCH_MODEL);
     await assertOpenClawConfig(sandbox, home, {
       model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,

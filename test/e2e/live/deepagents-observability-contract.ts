@@ -210,13 +210,6 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function captureMetadata(value: unknown, filename: string): CaptureMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${filename} does not contain a capture metadata object`);
-  }
-  return value as CaptureMetadata;
-}
-
 export function validateCaptureDirectory(
   captureDir: string,
   collectorPort: number,
@@ -231,10 +224,9 @@ export function validateCaptureDirectory(
   let allowedProbeCount = 0;
 
   for (const metadataFile of metadataFiles) {
-    const metadata = captureMetadata(
-      JSON.parse(fs.readFileSync(path.join(captureDir, metadataFile), "utf8")),
-      metadataFile,
-    );
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(captureDir, metadataFile), "utf8"),
+    ) as CaptureMetadata;
     if (metadata.accepted !== true) {
       throw new Error(`${metadataFile} records a rejected request: ${String(metadata.rejection)}`);
     }

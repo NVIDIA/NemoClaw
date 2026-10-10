@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../../../src/lib/inference-credential.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { compatibleAnthropicSwitchBinding } from "../fixtures/compatible-anthropic-switch.ts";
@@ -13,6 +14,7 @@ import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts"
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   API_KEY_SHAPE_PATTERN,
+  NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
@@ -43,9 +45,9 @@ import {
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  function matchesApiKeyShape(line: string): boolean {
+  function matchesApiKeyShape(line: string, pattern = API_KEY_SHAPE_PATTERN): boolean {
     return (
-      spawnSync("grep", ["-Eq", API_KEY_SHAPE_PATTERN], {
+      spawnSync("grep", ["-Eq", pattern], {
         encoding: "utf8",
         input: `${line}\n`,
       }).status === 0
@@ -156,16 +158,42 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand();
+    const command = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
 
-    expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
+    expect(command).toEqual([
+      "grep",
+      "-Eq",
+      NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN,
+      "/sandbox/.hermes/config.yaml",
+    ]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
+    expect(apiKeyShapeCommand("compatible-anthropic-endpoint")[2]).toBe(API_KEY_SHAPE_PATTERN);
   });
 
-  it("accepts only complete sk-prefixed YAML scalars", () => {
+  it("accepts only the exact native NVIDIA credential placeholder", () => {
+    const placeholder = NVIDIA_INFERENCE_PLACEHOLDER;
     expect(
-      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every(
-        matchesApiKeyShape,
+      [
+        `  api_key: ${placeholder}`,
+        `  api_key: "${placeholder}"`,
+        `  api_key: '${placeholder}'`,
+      ].every((line) => matchesApiKeyShape(line, NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN)),
+    ).toBe(true);
+    expect(
+      [
+        "  api_key: sk-value",
+        "  api_key: ${OTHER_API_KEY}",
+        `  api_key: ${placeholder} trailing`,
+        `  api_key: "${placeholder}`,
+        `  api_key: ${placeholder}"`,
+      ].some((line) => matchesApiKeyShape(line, NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN)),
+    ).toBe(false);
+  });
+
+  it("accepts only complete sk-prefixed YAML scalars for managed routes", () => {
+    expect(
+      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every((line) =>
+        matchesApiKeyShape(line),
       ),
     ).toBe(true);
     expect(
@@ -174,7 +202,7 @@ describe("Hermes inference switch command shape", () => {
         "  api_key: sk-value trailing",
         '  api_key: "sk-value',
         '  api_key: sk-value"',
-      ].some(matchesApiKeyShape),
+      ].some((line) => matchesApiKeyShape(line)),
     ).toBe(false);
   });
 

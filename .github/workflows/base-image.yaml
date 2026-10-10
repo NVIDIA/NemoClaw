@@ -54,6 +54,7 @@ on:
       - "src/lib/adapters/container-engine.ts"
       - "src/lib/adapters/podman/**"
       - "src/lib/agent/candidate-authority.ts"
+      - "src/lib/agent/deep-agents-code-runtime-identity.json"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"

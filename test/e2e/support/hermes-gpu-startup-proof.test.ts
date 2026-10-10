@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { openshellMainProcessSpecEnvValue } from "../../../src/lib/onboard/docker-startup-command-env.ts";
@@ -45,6 +50,65 @@ const VALID_MANAGED_AUTHORITY = {
   profile: { agent: "hermes" },
   receipt: { kind: "managed-image", reference: MANAGED_IMAGE_REFERENCE },
 } as unknown as ManagedWorkloadAuthority;
+
+function liveFailedGpuDiagnosticScript(): string {
+  const source = readFileSync(
+    new URL("../live/hermes-gpu-startup.test.ts", import.meta.url),
+    "utf8",
+  );
+  const marker = "String.raw`set -eu\nsandbox_filter=";
+  const start = source.indexOf(marker);
+  expect(start, "Hermes GPU live diagnostic probe missing").toBeGreaterThanOrEqual(0);
+  const bodyStart = start + "String.raw`".length;
+  const end = source.indexOf("`;", bodyStart);
+  expect(end, "Hermes GPU live diagnostic probe unterminated").toBeGreaterThanOrEqual(0);
+  return source
+    .slice(bodyStart, end)
+    .replaceAll('${"${runtime_command[@]}"}', "${runtime_command[@]}");
+}
+
+describe("Hermes GPU failed-container diagnostics", () => {
+  it.each([
+    ["found", 0],
+    ["discovery-failed", 31],
+  ] as const)("uses the exact runtime container identity when %s", (mode, status) => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-hermes-gpu-diagnostic-"));
+    try {
+      const runtime = join(root, "runtime");
+      const id = "a".repeat(64);
+      writeFileSync(
+        runtime,
+        [
+          "#!/bin/bash",
+          'if [ "$1 $2" = "container ps" ]; then',
+          mode === "found" ? `  printf '%s\\n' '${id}'` : "  exit 31",
+          'elif [ "$1 $2" = "container inspect" ]; then',
+          '  printf "%s\\n" "exited 1 false 0"',
+          "else exit 32; fi",
+        ].join("\n"),
+      );
+      chmodSync(runtime, 0o755);
+      const result = spawnSync(
+        "bash",
+        [
+          "-lc",
+          liveFailedGpuDiagnosticScript(),
+          "diagnostic",
+          "label=openshell.ai/sandbox-name=owned",
+          "",
+          runtime,
+        ],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      expect(result.status, result.stderr).toBe(status);
+      expect(result.stdout.includes(`== exact container ${id} state ==`)).toBe(mode === "found");
+      expect(result.stdout.includes("exited 1 false 0")).toBe(mode === "found");
+      expect(result.stdout).not.toContain("no runtime container found");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Hermes GPU startup output contract", () => {
   it("accepts observed Podman managed-service startup output", () => {

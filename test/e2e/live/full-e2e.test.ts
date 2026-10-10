@@ -338,6 +338,11 @@ async function exerciseNativeOpenClawPluginVersion(
     {},
     180_000,
   );
+  await captureNativePluginFailureReadiness(sandbox, restart, {
+    sandboxName: SANDBOX_NAME,
+    artifactName: `phase-4-native-plugin-gateway-restart-${version}`,
+    env: env(),
+  });
   expect(restart.exitCode, resultText(restart)).toBe(0);
   await invokeNativeWeatherPlugin(sandbox, version, `phase-4-native-plugin-invoke-${version}`);
 }

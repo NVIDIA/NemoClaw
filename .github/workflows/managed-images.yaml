@@ -50,6 +50,7 @@ on:
       - "src/lib/adapters/openshell/**"
       - "src/lib/adapters/podman/**"
       - "src/lib/agent/candidate-authority.ts"
+      - "src/lib/agent/deep-agents-code-runtime-identity.json"
       - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
@@ -190,6 +191,7 @@ jobs:
           done
           for support_relative in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
+            src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
             scripts/lib/patch-bundled-npm-ip-address.mts \
