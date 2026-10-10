@@ -22,6 +22,7 @@ import {
   processEnvironmentUsesSelectedGatewayState,
   readGatewayProcessEnvironment,
 } from "../gateway/process-environment";
+import { readGatewayProcEntry } from "../gateway/process-proc-entry";
 import {
   canonicalGatewayTargetMatches,
   gatewayProcessCmdlineMatches,
@@ -74,30 +75,27 @@ function runHost(
 }
 
 function readProcessArguments(pid: number, environment: NodeJS.ProcessEnv): string | null {
-  try {
-    const value = fs.readFileSync(`/proc/${String(pid)}/cmdline`, "utf8").replaceAll("\0", " ");
-    if (value.trim()) return value.trim();
-  } catch {
-    // Fall through to the read-only process-table query.
-  }
+  const value = (readGatewayProcEntry(pid, "cmdline") ?? "").replaceAll("\0", " ").trim();
+  if (value) return value;
   const result = runHost("ps", ["-p", String(pid), "-o", "args="], environment);
   return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : null;
 }
 
 function readProcessExecutable(pid: number): string | null {
-  try {
-    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
-  } catch {
-    return null;
-  }
+  return readGatewayProcEntry(pid, "exe");
 }
+
+/** The production reader handoff, shared with its caller-level regression tests. */
+export const podmanGatewayDefaultProcessReaders = Object.freeze({
+  readProcessArguments,
+  readProcessExecutable,
+  readProcessEnvironment: readGatewayProcessEnvironment,
+});
 
 const DEFAULT_DEPS: PodmanGatewayReadinessDeps = {
   currentUid: () => (typeof process.getuid === "function" ? process.getuid() : -1),
   readOwnedFile: readOwnedDockerDriverGatewayRuntimeFile,
-  readProcessArguments,
-  readProcessExecutable,
-  readProcessEnvironment: readGatewayProcessEnvironment,
+  ...podmanGatewayDefaultProcessReaders,
   readManagedService: (environment) =>
     getTrustedActiveOpenShellGatewayUserServiceIdentity({ env: environment, platform: "linux" }),
   runtimeFileMissing: (filePath) => {
@@ -149,8 +147,18 @@ function isRunningProcess(
 ): boolean {
   const owner = deps.runHost("ps", ["-p", String(pid), "-o", "uid="], input.environment);
   if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
-  const status = deps.runHost("ps", ["-p", String(pid), "-o", "stat="], input.environment);
-  return status.status === 0 && /^[DIKPRSUW]/u.test(status.stdout.trim());
+  const args = ["-p", String(pid), "-o", "stat="];
+  if (input.platform === "linux") args.push("-L");
+  const status = deps.runHost("ps", args, input.environment);
+  const states = status.stdout
+    .trim()
+    .split(/\r?\n/u)
+    .map((line) => line.trim());
+  return (
+    status.status === 0 &&
+    states.every((state) => /^[DIKPRSUWXZx]/u.test(state)) &&
+    states.some((state) => /^[DIKPRSUW]/u.test(state))
+  );
 }
 
 function observeOwnedListener(

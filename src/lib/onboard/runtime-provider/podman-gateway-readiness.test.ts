@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../../test/helpers/mock-gateway-proc-files";
+import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
 
 import { classifyManagedGatewayPortConflict } from "../../readiness/gateway-production";
 import {
@@ -11,8 +14,10 @@ import {
   getDockerDriverGatewayRuntimeMarkerPath,
   resolveDockerDriverGatewayStateDir,
 } from "../docker-driver-gateway-runtime-marker";
+import { gatewayIdForStateDir } from "../gateway/process-environment";
 import {
   observeNativePodmanGatewayReadiness,
+  podmanGatewayDefaultProcessReaders,
   type PodmanGatewayReadinessDeps,
 } from "./podman-gateway-readiness";
 
@@ -26,6 +31,8 @@ const STATE_DIR = resolveDockerDriverGatewayStateDir(ENVIRONMENT, ENVIRONMENT.HO
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const MARKER_FILE = getDockerDriverGatewayRuntimeMarkerPath(STATE_DIR);
 const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
+
+afterEach(() => vi.restoreAllMocks());
 
 function input() {
   return {
@@ -77,7 +84,7 @@ function readinessDeps(
       { status: 0, stdout: `${String(UID)}\n`, stderr: "" },
     ],
     [
-      ["ps", "-p", String(PID), "-o", "stat="].join("\0"),
+      ["ps", "-p", String(PID), "-o", "stat=", "-L"].join("\0"),
       { status: 0, stdout: `${processState}\n`, stderr: "" },
     ],
   ]);
@@ -125,6 +132,34 @@ function managedServiceDeps() {
   };
 }
 
+function mockZombieServiceProcess(environment: Record<string, string>) {
+  const proc = `/proc/${String(PID)}`;
+  const sibling = `${proc}/task/${String(PID + 1)}`;
+  const files = new Map([
+    [`${proc}/cmdline`, ""],
+    [`${proc}/environ`, ""],
+    [`${proc}/status`, "State:\tZ (zombie)\n"],
+    [`${sibling}/cmdline`, `${GATEWAY_BIN}\0`],
+    [
+      `${sibling}/environ`,
+      `${Object.entries(environment)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\0")}\0`,
+    ],
+  ]);
+  const readFile = fs.readFileSync;
+  vi.spyOn(fs, "readFileSync").mockImplementation(
+    (file, options) => files.get(String(file)) ?? readFile(file, options),
+  );
+  const procFiles = mockGatewayProcFiles(files);
+  mockGatewayProcTaskDir(`${proc}/task`, [String(PID), String(PID + 1)]);
+  const realpath = fs.realpathSync.native;
+  vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
+    String(file) === `${sibling}/exe` ? GATEWAY_BIN : realpath(file, options),
+  );
+  return { files, sibling, procFiles };
+}
+
 describe("native Podman gateway readiness", () => {
   it("reuses the managed service after startup clears standalone ownership files", () => {
     const deps = managedServiceDeps();
@@ -146,6 +181,47 @@ describe("native Podman gateway readiness", () => {
       deps.runHost.mock.calls.every(([command]) => ["lsof", "ps", GATEWAY_BIN].includes(command)),
     ).toBe(true);
   });
+
+  it.runIf(process.platform === "linux")(
+    "reads a zombie leader's live sibling through the default Podman readiness readers",
+    () => {
+      const base = managedServiceDeps();
+      const environment = {
+        ...base.readProcessEnvironment(),
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
+      };
+      const { files, sibling, procFiles } = mockZombieServiceProcess(environment);
+      const run = base.runHost;
+      const deps = {
+        ...base,
+        ...podmanGatewayDefaultProcessReaders,
+        runHost: (command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+          args.includes("stat=")
+            ? { status: 0, stdout: "Z\nS\n", stderr: "" }
+            : run(command, args, env),
+      };
+
+      const observed = observeNativePodmanGatewayReadiness(input(), deps);
+      expect(observed.listenerScan).toEqual({ pids: [PID], unverifiedPids: [], complete: true });
+      expect(observed.targetBoundListenerPids).toEqual([PID]);
+      expect(observed.versionCompatibility).toBe("compatible");
+      expect(procFiles.openedPaths).toContain(`${sibling}/cmdline`);
+      expect(procFiles.openedPaths).toContain(`${sibling}/environ`);
+      expect(fs.realpathSync.native).toHaveBeenCalledWith(`${sibling}/exe`);
+
+      files.set(
+        `${sibling}/environ`,
+        `${Object.entries({ ...environment, OPENSHELL_DB_URL: "sqlite:/foreign/openshell.db" })
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\0")}\0`,
+      );
+      expect(observeNativePodmanGatewayReadiness(input(), deps).listenerScan).toEqual({
+        pids: [],
+        unverifiedPids: [PID],
+        complete: true,
+      });
+    },
+  );
 
   it.each([
     ["OPENSHELL_DRIVERS", "docker"],
@@ -276,6 +352,34 @@ describe("native Podman gateway readiness", () => {
       observeNativePodmanGatewayReadiness(input(), readinessDeps({ openshellVersion: "0.0.115" }))
         .versionCompatibility,
     ).toBe("drift");
+  });
+
+  it("retains a target-bound listener when the leader exits and a sibling thread runs", () => {
+    const deps = readinessDeps({}, "Z\nS");
+    expect(observeNativePodmanGatewayReadiness(input(), deps).targetBoundListenerPids).toEqual([
+      PID,
+    ]);
+  });
+
+  it.each(["Z\nX", "S\n?", "", "Z\nT"])("rejects an unverified thread scan %j", (processState) => {
+    const deps = readinessDeps({}, processState);
+    expect(observeNativePodmanGatewayReadiness(input(), deps).targetBoundListenerPids).toEqual([]);
+  });
+
+  it("rejects a failed thread scan even when its partial output contains a running thread", () => {
+    const deps = readinessDeps();
+    const run = deps.runHost;
+    const failed = {
+      ...deps,
+      runHost: vi.fn((command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+        args.includes("stat=")
+          ? { status: 1, stdout: "S\n", stderr: "scan failed" }
+          : run(command, args, env),
+      ),
+    };
+    expect(observeNativePodmanGatewayReadiness(input(), failed).targetBoundListenerPids).toEqual(
+      [],
+    );
   });
 
   it.each(["T", "t"])("rejects a stopped process in state %s (#10984)", (processState) => {

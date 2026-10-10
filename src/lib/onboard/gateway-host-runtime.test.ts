@@ -3,6 +3,8 @@
 
 import fs from "node:fs";
 import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
+import { mockGatewayProcFiles } from "../../../test/helpers/mock-gateway-proc-files";
+import { mockGatewayProcTaskDir } from "../../../test/helpers/mock-gateway-proc-task-dir";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as wait from "../core/wait";
@@ -509,6 +511,46 @@ describe("gateway host runtime attachment probe", () => {
       listenerSupervisorMatch: true,
     });
     expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({ ok: true });
+  });
+
+  it("attaches to a supervised listener with a zombie leader only through its live sibling", async () => {
+    declareExternalSupervision();
+    const proc = `/proc/${SYSTEMD_GATEWAY_PID}`;
+    const sibling = `${proc}/task/${SYSTEMD_GATEWAY_PID + 1}`;
+    vi.mocked(fs.readFileSync).mockImplementation((file) =>
+      String(file) === `${proc}/status`
+        ? ("State:\tZ (zombie)\n" as never)
+        : (JSON.stringify(DECLARATION) as never),
+    );
+    mockGatewayProcFiles(new Map([[`${proc}/status`, "State:\tZ (zombie)\n"]]));
+    mockGatewayProcTaskDir(`${proc}/task`, [
+      String(SYSTEMD_GATEWAY_PID),
+      String(SYSTEMD_GATEWAY_PID + 1),
+    ]);
+    const realpath = fs.realpathSync.native;
+    const absentLeaderExe = new Map([[`${proc}/exe`, `${proc}/missing-executable`]]);
+    vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
+      String(file) === `${sibling}/exe`
+        ? SYSTEMD_GATEWAY_EXEC
+        : realpath(absentLeaderExe.get(String(file)) ?? file, options),
+    );
+
+    const runtime = createGatewayHostRuntime(createDeps({ readProcExe: undefined }));
+    const owner = runtime.getGatewayOwner();
+    const probe = await runtime.probeGatewayAttachment(owner);
+    expect(probe.listenerExecPath).toBe(SYSTEMD_GATEWAY_EXEC);
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({ ok: true });
+
+    const foreign = createGatewayHostRuntime(
+      createDeps({
+        readProcExe: undefined,
+        readProcCgroup: () => "0::/system.slice/foreign.service\n",
+      }),
+    );
+    const foreignOwner = foreign.getGatewayOwner();
+    expect(
+      evaluateGatewayAttachment(foreignOwner, await foreign.probeGatewayAttachment(foreignOwner)),
+    ).toMatchObject({ ok: false, code: "identity_mismatch" });
   });
 
   it("rejects a same-binary listener outside the declared unit's cgroup (#6576)", async () => {

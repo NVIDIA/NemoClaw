@@ -83,6 +83,7 @@ import {
   hasStateScopedSandboxNamespace,
   isHostPortFree,
   processUsesStateScopedSandboxNamespace,
+  readHostGatewayProcessExecutable,
   scopedHostGatewayProcessAbsenceFailure,
   scopedHostGatewayProcessOwnershipFailure,
   type StopHostGatewayOptions,
@@ -1854,15 +1855,9 @@ function normalizeGatewayProcessExecutable(
 }
 
 function readGatewayProcessExecutable(pid: number, runtime: UninstallRuntime): string | null {
+  if (runtime.platform === "linux") return readHostGatewayProcessExecutable(pid, runtime);
   const provided = runtime.readProcessExecutable?.(pid);
   if (provided !== undefined) return provided;
-  if (runtime.platform === "linux") {
-    try {
-      return runtime.realpathSync(`/proc/${String(pid)}/exe`);
-    } catch {
-      return null;
-    }
-  }
   if (runtime.platform !== "darwin") return null;
   const inspected = runtime.run("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
     env: runtime.env,

@@ -224,9 +224,18 @@ describe("OpenShell supervisor manifest trust", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("accepts the prospective same-thread-group executable runtime (#12614)", () => {
-    const result = runParser({ transformSupervisor: selectThreadGroupExecutableRuntime });
+  it("accepts the same-thread-group executable runtime (#12614)", () => {
+    const result = runParser();
     expect(result.status, result.stderr).toBe(0);
+
+    const missingReader = runParser({
+      transformSupervisor: (source) =>
+        source.replace('return readGatewayProcEntry(pid, "exe");', "return null;"),
+    });
+    expect(missingReader.status).toBe(1);
+    expect(missingReader.stderr).toContain(
+      "supervisor runtime operational template is not base-trusted",
+    );
   });
 
   it("rejects a repository mutation of the thread-group executable runtime", () => {
