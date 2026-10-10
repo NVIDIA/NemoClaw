@@ -464,6 +464,8 @@ $$nemoclaw onboard --profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
 
 If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
 The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+A managed vLLM or managed llama.cpp profile installs during provider selection, before that screen, so the installer declares the selected profile ID, the recipe, the runtime image, and the pinned model download size first; the managed vLLM confirmation prompt follows that declaration.
+The managed vLLM installer adds the pinned image download size only when that image is not already cached on the host.
 
 When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
 Otherwise, onboarding stops before it records a route that the profile does not declare.
