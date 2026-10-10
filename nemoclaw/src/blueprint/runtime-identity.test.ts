@@ -158,7 +158,7 @@ function commandKey(args: string[]): string {
 describe("runtime identity contract", () => {
   let root: string;
   let profilePath: string;
-  let calls: Array<{ args: string[]; env?: Record<string, string> }>;
+  let calls: Array<{ args: string[]; env?: Record<string, string>; timeoutMs?: number }>;
   let responses: Map<string, RuntimeIdentityCommandResult[]>;
   let environment: NodeJS.ProcessEnv;
   let deps: RuntimeIdentityDeps;
@@ -187,7 +187,7 @@ describe("runtime identity contract", () => {
     };
     deps = {
       run: async (args, options) => {
-        calls.push({ args, env: options?.env });
+        calls.push({ args, env: options?.env, timeoutMs: options?.timeoutMs });
         const captureCommand: Partial<Record<string, () => void>> = {
           "provider profile import --file": () => {
             importedProfilePaths.push(args[5]);
@@ -430,6 +430,26 @@ describe("runtime identity contract", () => {
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/export denied/);
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+    );
+    expect(persistedReceipts).toEqual([]);
+  });
+
+  it("bounds profile export and stops before provider creation when it times out", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 1, stdout: "", stderr: "OpenShell command timed out after 30 seconds" },
+    ]);
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      /profile 'okta-runtime-v1':\s+OpenShell command timed out after 30 seconds/,
+    );
+    expect(
+      calls.find(
+        ({ args }) => commandKey(args) === "provider profile export okta-runtime-v1 --output yaml",
+      )?.timeoutMs,
+    ).toBe(30_000);
     expect(calls.map(({ args }) => commandKey(args))).not.toContain(
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
     );

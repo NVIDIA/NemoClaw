@@ -110,6 +110,7 @@ export interface RuntimeIdentityCommandResult {
 
 export interface RuntimeIdentityCommandOptions {
   env?: Record<string, string>;
+  timeoutMs?: number;
 }
 
 export interface RuntimeIdentityCommandDeps {
@@ -928,18 +929,13 @@ export async function prepareRuntimeIdentity(
       `Failed to import runtime identity provider profile: ${deps.formatError(commandOutput(profileImport))}`,
     );
   }
-  const profileExport = await deps.run([
-    "openshell",
-    "provider",
-    "profile",
-    "export",
-    config.provider_type,
-    "--output",
-    "yaml",
-  ]);
+  const profileExport = await deps.run(
+    ["openshell", "provider", "profile", "export", config.provider_type, "--output", "yaml"],
+    { timeoutMs: 30_000 },
+  );
   if (profileExport.exitCode !== 0) {
     throw new Error(
-      `Failed to inspect runtime identity provider profile: ${deps.formatError(commandOutput(profileExport))}`,
+      `Failed to inspect runtime identity provider profile '${config.provider_type}': ${deps.formatError(commandOutput(profileExport))}`,
     );
   }
   let importedProfile: ParsedRuntimeIdentityProfile;
@@ -952,12 +948,14 @@ export async function prepareRuntimeIdentity(
     );
   } catch {
     throw new Error(
-      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding`,
+      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding; ask the gateway operator to inspect the profile before retrying`,
     );
   }
   if (!isDeepStrictEqual(importedProfile.document, requestedProfile.document)) {
+    // Import success does not prove exclusive ownership of this mutable catalog ID.
+    // Preserve a mismatched profile because another gateway client may have replaced it.
     throw new Error(
-      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding`,
+      `Runtime identity provider profile '${config.provider_type}' has an incompatible binding; ask the gateway operator to inspect the profile before retrying`,
     );
   }
 

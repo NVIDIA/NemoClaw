@@ -223,8 +223,11 @@ The runner validates an existing provider's non-secret binding to report a preci
 It never reuses that provider because OpenShell does not expose a secret-safe snapshot that rollback could restore.
 
 Only an absent provider proceeds to profile import.
-When the profile is already registered, the runner first requires an export match.
-It then creates the provider, configures gateway-managed OAuth refresh, and performs the initial token rotation.
+After a fresh import or an already-registered result, the runner exports the gateway profile and compares it with the validated local profile.
+An export failure, timeout, or mismatch stops apply before provider creation.
+The runner preserves a mismatched gateway profile because another gateway client may own it.
+Ask the gateway operator to inspect the profile before retrying.
+After a match, the runner creates the provider, configures gateway-managed OAuth refresh, and performs the initial token rotation.
 
 Before attachment, the runner creates or reuses the configured inference provider.
 For a reused sandbox and provider, it preserves the live route only when the provider, model, and requested timeout match the blueprint.
