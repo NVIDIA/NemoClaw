@@ -132,7 +132,10 @@ export function nativeProviderRebuildScenario(replaced: boolean, provider = "nvi
       model: "test/model",
       credentialEnv: definition.credentialEnv,
       ...(provider === "hermes-provider"
-        ? { hermesAuthMethod: "oauth" as const, endpointUrl: definition.endpoint }
+        ? {
+            hermesAuthMethod: "oauth" as const,
+            endpointUrl: "https://inference-api.nousresearch.com/v1",
+          }
         : {}),
       [provider === "nvidia-prod"
         ? "nativeNvidiaProviderAttachment"
