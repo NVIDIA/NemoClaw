@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
@@ -12,6 +13,7 @@ export interface OnboardSessionUpdateInput {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
@@ -56,6 +58,9 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
     normalized.sandboxName = toNullableString(updates.sandboxName);
   if (updates.provider !== undefined) normalized.provider = toNullableString(updates.provider);
   if (updates.model !== undefined) normalized.model = toNullableString(updates.model);
+  if (updates.modelSelectionProvenance !== undefined) {
+    normalized.modelSelectionProvenance = updates.modelSelectionProvenance;
+  }
   if (updates.servingProfileProvenance !== undefined) {
     normalized.servingProfileProvenance = updates.servingProfileProvenance;
   }

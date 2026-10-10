@@ -750,7 +750,7 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.beginUnregisteredOpenClawBackupQuiesce).not.toHaveBeenCalled();
     expect(processRecovery.finishUnregisteredOpenClawPostRestoreDoctor).not.toHaveBeenCalled();
     expect(mutableConfigPerms.inspectMutableHermesConfigPerms).toHaveBeenCalledWith("alpha");
-    expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
+    expect(verification).toEqual({ complete: true, mutableConfigPermissionsVerified: true });
   });
 
   it("rebinds ordinary Hermes to restored state before MCP restoration", async () => {
@@ -1015,7 +1015,9 @@ describe("rebuild post-restore phase", () => {
 
       expect(args.bail).toHaveBeenCalledTimes(Number(preparedBackupRecovery));
       expect(verification).toEqual(
-        preparedBackupRecovery ? undefined : { mutableConfigPermissionsVerified: false },
+        preparedBackupRecovery
+          ? undefined
+          : { complete: false, mutableConfigPermissionsVerified: false },
       );
       expect(args.log).toHaveBeenCalledWith(
         "Hermes mutable config posture was not verified: config.yaml remains read-only",
@@ -1081,7 +1083,7 @@ describe("rebuild post-restore phase", () => {
 
       const verification = await runRebuildPostRestorePhase(input());
 
-      expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
+      expect(verification).toEqual({ complete: true, mutableConfigPermissionsVerified: true });
       expect(mutableConfigPerms.inspectMutableHermesConfigPerms).not.toHaveBeenCalled();
     },
   );

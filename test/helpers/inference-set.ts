@@ -184,7 +184,6 @@ export function baseSession(overrides: Partial<Session> = {}): Session {
     webSearchConfig: null,
     policyPresets: null,
     messagingPlan: null,
-    migratedLegacyValueHashes: null,
     hermesToolGateways: null,
     gpuPassthrough: false,
     telegramConfig: null,

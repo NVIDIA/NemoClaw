@@ -133,7 +133,7 @@ describe("handleSandboxState", () => {
       metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
     });
     expect(result.session?.checkpoint?.webSearch).toEqual(decisionSelected({ fetchEnabled: true }));
-    expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
+    expect(result.session?.checkpoint?.messaging).toEqual(decisionUnset());
   });
 
   it("preserves a null endpoint source for fresh host-local inference-only creation (#9203)", async () => {

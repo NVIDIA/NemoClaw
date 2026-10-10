@@ -29,7 +29,11 @@ import {
   TOOL_DISCLOSURE_ENV,
   type ToolDisclosure,
 } from "../tool-disclosure";
-import { applyAgentsManifestEnv, assertNoPerAgentMaxSpawnDepthJson } from "./agents-manifest";
+import {
+  applyAgentsManifestEnv,
+  assertNoPerAgentMaxSpawnDepthJson,
+  takeSelectedAgentsManifest,
+} from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
 import { handleOnboardCommandError, reportOnboardCommandError } from "./command/error-reporting";
 import {
@@ -698,6 +702,7 @@ function restoreOnboardCommandEnvironment(
   restoreServingProfileEnvironment: () => void,
 ): void {
   if (options.agentsManifest) {
+    takeSelectedAgentsManifest(env);
     if (snapshot.agentsManifest === undefined) delete env.NEMOCLAW_EXTRA_AGENTS_JSON;
     else env.NEMOCLAW_EXTRA_AGENTS_JSON = snapshot.agentsManifest;
   }

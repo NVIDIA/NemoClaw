@@ -22,16 +22,26 @@ describe("toSessionUpdates", () => {
     });
   });
 
-  it("carries the recorded compatible-endpoint reasoning effort (#7940)", () => {
+  it("carries the recorded compatible-endpoint model and reasoning selections (#7940)", () => {
+    const modelSelectionProvenance = {
+      schemaVersion: 1 as const,
+      model: "mock/deepseek-compatible",
+      provider: "compatible-endpoint",
+      providerProfile: "compatible-endpoint" as const,
+      modelSource: "custom" as const,
+      apiFamily: "openai-completions" as const,
+    };
     const updates = toSessionUpdates({
       provider: "compatible-endpoint",
       model: "mock/deepseek-compatible",
+      modelSelectionProvenance,
       compatibleEndpointReasoning: "true",
       compatibleEndpointReasoningEffort: "high",
     });
 
     expect(updates.compatibleEndpointReasoningEffort).toBe("high");
     expect(filterSafeUpdates(updates)).toMatchObject({
+      modelSelectionProvenance,
       compatibleEndpointReasoning: "true",
       compatibleEndpointReasoningEffort: "high",
     });
