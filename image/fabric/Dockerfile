@@ -213,5 +213,5 @@ ENTRYPOINT ["/usr/local/bin/fabric-agent"]
 CMD ["serve", "--agent", "main"]
 
 FROM dummy AS reference-tests
-COPY image/fabric/test_reference.py image/fabric/dummy_backend.py /tests/
+COPY image/fabric/test_reference.py image/fabric/test_protocol.py image/fabric/dummy_backend.py /tests/
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
