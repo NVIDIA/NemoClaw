@@ -18,7 +18,7 @@ path = "test.xml"
 inherits = "ci"
 test-threads = 4
 # These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
-# Selecting the fake ssh relay's own tests also archives the relay beside the
+# Selecting the fake ssh relay's ignored test also archives the relay beside the
 # extracted tests, where fake engines find it on platforms without Unix sockets.
 default-filter = '''
 test(native_state_json_preserves_module_and_instance_identity_without_refresh)
