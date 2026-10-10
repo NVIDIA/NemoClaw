@@ -186,6 +186,41 @@ describe("cleanup resources", () => {
     expect(runGc).toBeGreaterThan(registerCleanup);
   });
 
+  it("judges the concurrent-gateway GC phase by reclaim semantics, not tag shape (#12923)", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "..", "live", "concurrent-gateway-ports.test.ts"),
+      "utf8",
+    );
+    const gcSucceeds = source.indexOf("garbageCollect.exitCode === 0");
+    const siblingRetained = source.indexOf("retainedSiblingImage.exitCode === 0", gcSucceeds);
+    const orphanReclaimed = source.indexOf("removedOrphanImage.exitCode !== 0", gcSucceeds);
+    const orphanTaggable = source.indexOf("taggedOrphan.exitCode === 0");
+    const tagShapeEnumeration = source.indexOf(
+      "sandbox-from|nemoclaw-sandbox-local|localhost:5000",
+    );
+
+    expect(
+      gcSucceeds,
+      "GC phase must still require a successful gc exit code",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      siblingRetained,
+      "GC phase must still require the sibling image to survive",
+    ).toBeGreaterThan(gcSucceeds);
+    expect(
+      orphanReclaimed,
+      "GC phase must still require the orphan tag to be reclaimed",
+    ).toBeGreaterThan(gcSucceeds);
+    expect(
+      orphanTaggable,
+      "GC phase must still require the orphan tag command to succeed",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      tagShapeEnumeration,
+      "registered sibling references may be tag- or digest-pinned, so no tag-prefix enumeration may gate the phase",
+    ).toBe(-1);
+  });
+
   it("continues typed cleanup after a resource failure", async () => {
     const calls: string[] = [];
     const host: CleanupHost = {
