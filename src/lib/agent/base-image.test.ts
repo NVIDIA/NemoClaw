@@ -494,6 +494,7 @@ describe("agent base image provisioning", () => {
           inputPaths: [
             "/test/root/agents/langchain-deepagents-code/manifest.yaml",
             "/test/root/agents/langchain-deepagents-code/requirements.lock",
+            "src/lib/agent/deep-agents-code-runtime-identity.json",
           ],
           validateImage: expect.any(Function),
           validationDescription:
