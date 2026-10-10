@@ -85,7 +85,10 @@ impl Repo {
             (".config/determinator-images.toml", RULES.to_owned()),
             (".config/determinator-live.toml", LIVE_RULES.to_owned()),
             (".config/nextest.toml", "\n".into()),
-            (".github/workflows/live-docker.yml", "name: live\n".into()),
+            (
+                ".github/workflows/native-platform.yml",
+                "name: native\n".into(),
+            ),
             ("examples/local.yaml", "kind: Deployment\n".into()),
             ("versions.json", "{}\n".into()),
             (".dockerignore", "*\n".into()),
@@ -299,7 +302,8 @@ fn live_build_packages_and_their_inputs_run_live_suites() {
         "examples/local.yaml",
         "versions.json",
         ".config/nextest.toml",
-        ".github/workflows/live-docker.yml",
+        ".github/workflows/native-platform.yml",
+        ".github/workflows/rust.yml",
         "Makefile",
     ] {
         assert_eq!(live(&[(path, Some("# changed\n"))]), "live=true", "{path}");
