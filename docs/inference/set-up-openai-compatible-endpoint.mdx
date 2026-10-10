@@ -15,7 +15,8 @@ Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible se
 
 Fresh hosted endpoints use an OpenShell provider attached to the selected sandbox.
 The agent uses an issued placeholder credential; OpenShell injects the host-held credential only for the admitted endpoint and API.
-Public HTTP endpoints use the admitted URL directly. HTTPS endpoints use the host's pinned TLS adapter.
+Public HTTP endpoints and admitted HTTPS IP-literal endpoints use the sandbox-attached provider directly.
+DNS-backed HTTPS endpoints use the host's pinned TLS adapter.
 Host-local endpoints and existing shared-route sandboxes continue to use `inference.local`.
 
 ## Start the Server

@@ -39,7 +39,8 @@ It then sends a native Chat Completions request to `https://integrate.api.nvidia
 It does not probe `https://inference.local/v1/models` for this provider.
 
 For a native custom hosted endpoint, `status` verifies the recorded profile, provider identity, and sandbox attachment before making an authenticated request using the selected API.
-HTTPS and Bedrock routes use the recorded adapter endpoint; public HTTP routes use the admitted endpoint directly.
+DNS-backed HTTPS and Bedrock routes use the recorded adapter endpoint.
+Public HTTP and admitted HTTPS IP-literal routes use the admitted endpoint directly.
 Missing or conflicting native authority fails the check instead of falling back to the shared route.
 
 For shared-route providers, the `Inference` row first checks the sandbox's `inference.local` path.

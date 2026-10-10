@@ -16,7 +16,8 @@ NemoClaw keeps provider credentials on the host and validates explicit custom en
 Fresh hosted custom endpoints use a provider profile attached to the selected sandbox.
 The profile binds the admitted URL, API paths, executable allowlist, address set, and credential.
 The agent sends an issued placeholder credential; OpenShell substitutes the host-held credential only when that attachment authorizes the request.
-For HTTPS and classified Bedrock endpoints, the host adapter retains upstream TLS or AWS credential custody.
+For DNS-backed HTTPS endpoints and classified Bedrock endpoints, the host adapter retains upstream TLS or AWS credential custody.
+Admitted HTTPS IP-literal endpoints use the sandbox-attached provider directly.
 Host-local endpoints and existing shared-route sandboxes continue to use `inference.local`.
 The sandbox does not receive the raw API key.
 

@@ -29,8 +29,8 @@ Sandbox agent -> integrate.api.nvidia.com -> sandbox-attached OpenShell provider
 ```
 
 Fresh custom hosted endpoints also use a sandbox-attached provider.
-Public HTTP requests go to the admitted endpoint through OpenShell's credential rewrite.
-HTTPS and classified Bedrock requests go through the selected host adapter, which retains TLS or AWS credential custody.
+Public HTTP and admitted HTTPS IP-literal requests go to the admitted endpoint through OpenShell's credential rewrite.
+DNS-backed HTTPS and classified Bedrock requests go through the selected host adapter, which retains TLS or AWS credential custody.
 The attachment binds the selected API, endpoint, allowed executables, and issued credential. Ordinary restart verifies and reuses it; existing shared routes are not migrated automatically.
 
 Host-side services such as Model Router and the OpenRouter runtime adapter remain behind the OpenShell route.
