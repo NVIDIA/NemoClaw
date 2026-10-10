@@ -377,6 +377,7 @@ export function baseOptions(
     provider: "provider",
     endpointUrl: null,
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     credentialEnv: null,
     nimContainer: null,
     webSearchConfig: null,
