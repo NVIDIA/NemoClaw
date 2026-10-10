@@ -9,12 +9,13 @@ import { describe, expect, it } from "vitest";
 import {
   clearPendingOllamaModelCleanup,
   decideOllamaModelOwnership,
-  exclusivelyHeldOllamaModel,
+  discoverOllamaModelOwnership,
   loadPendingOllamaModelCleanup,
+  type OllamaHostRoute,
   type OllamaModelHolder,
   type OllamaModelRoute,
   persistPendingOllamaModelCleanup,
-  supersededOllamaModel,
+  supersededOllamaModelWithActivePeers,
 } from "./model-ownership";
 import { isLocalOllamaRouteOwner } from "./model-ownership";
 
@@ -24,6 +25,23 @@ function holder(overrides: Partial<OllamaModelHolder> = {}): OllamaModelHolder {
 
 function route(model: string, overrides: Partial<OllamaModelRoute> = {}): OllamaModelRoute {
   return { provider: "ollama-local", model, ...overrides };
+}
+
+function releaseCandidate(
+  previous: OllamaModelHolder | null,
+  next: OllamaModelRoute,
+  peers: readonly OllamaModelHolder[],
+  activePeers: readonly OllamaModelHolder[] = [],
+  selectedHost: OllamaHostRoute | null = null,
+): string | null {
+  return supersededOllamaModelWithActivePeers(
+    previous,
+    next,
+    peers,
+    new Set(activePeers.map((peer) => peer.name)),
+    selectedHost,
+    new Set(activePeers),
+  );
 }
 
 describe("isLocalOllamaRouteOwner", () => {
@@ -57,9 +75,10 @@ describe("isLocalOllamaRouteOwner", () => {
   });
 });
 
-describe("supersededOllamaModel", () => {
+describe("supersededOllamaModelWithActivePeers route changes", () => {
   it("releases the previous model when a re-onboard moves to a different one (#9110)", () => {
-    expect(supersededOllamaModel(holder(), route("qwen2.5:7b"), [holder()])).toBe("llama3");
+    const previous = holder();
+    expect(releaseCandidate(previous, route("qwen2.5:7b"), [previous])).toBe("llama3");
   });
 
   it.each([
@@ -68,69 +87,160 @@ describe("supersededOllamaModel", () => {
     ["an explicit latest tag on the previous model", "llama3:latest", "llama3"],
   ])("keeps the model when the next ref is %s (#9110)", (_label, previousModel, nextModel) => {
     const previous = holder({ model: previousModel });
-    expect(supersededOllamaModel(previous, route(nextModel), [previous])).toBeNull();
+    expect(releaseCandidate(previous, route(nextModel), [previous])).toBeNull();
   });
 
   it.each([["llama3"], ["llama3:latest"]])(
-    "keeps a model an Ollama peer records as %s (#9110)",
+    "keeps a model an active Ollama peer records as %s (#9110)",
     (peerModel) => {
+      const previous = holder();
       const peer = holder({ model: peerModel, name: "peer" });
-      expect(supersededOllamaModel(holder(), route("qwen2.5:7b"), [holder(), peer])).toBeNull();
+      expect(releaseCandidate(previous, route("qwen2.5:7b"), [previous, peer], [peer])).toBeNull();
     },
   );
 
   it("releases the model when peers hold different ones (#9110)", () => {
+    const previous = holder();
     const peer = holder({ model: "llama3:8b", name: "peer" });
-    expect(supersededOllamaModel(holder(), route("qwen2.5:7b"), [holder(), peer])).toBe("llama3");
+    expect(releaseCandidate(previous, route("qwen2.5:7b"), [previous, peer])).toBe("llama3");
   });
 
   it.each([["nvidia-prod"], ["vllm-local"], [undefined]])(
     "does nothing when the previous provider is %s (#9110)",
     (provider) => {
       const previous = holder({ provider });
-      expect(supersededOllamaModel(previous, route("qwen2.5:7b"), [previous])).toBeNull();
+      expect(releaseCandidate(previous, route("qwen2.5:7b"), [previous])).toBeNull();
     },
   );
 
   it("does nothing when the previous model is unrecorded (#9110)", () => {
     const previous = holder({ model: undefined });
-    expect(supersededOllamaModel(previous, route("qwen2.5:7b"), [previous])).toBeNull();
+    expect(releaseCandidate(previous, route("qwen2.5:7b"), [previous])).toBeNull();
   });
 
   it.each([[""], ["   "]])("does nothing when the next model is %j (#9110)", (nextModel) => {
-    expect(supersededOllamaModel(holder(), route(nextModel), [holder()])).toBeNull();
+    const previous = holder();
+    expect(releaseCandidate(previous, route(nextModel), [previous])).toBeNull();
   });
 
   it("does nothing when there is no previous entry (#9110)", () => {
-    expect(supersededOllamaModel(null, route("qwen2.5:7b"), [])).toBeNull();
+    expect(releaseCandidate(null, route("qwen2.5:7b"), [])).toBeNull();
   });
 
   it("keeps a model selected through a compatible endpoint at the same local daemon", () => {
+    const previous = holder();
     expect(
-      supersededOllamaModel(
-        holder(),
+      releaseCandidate(
+        previous,
         route("llama3:latest", {
           provider: "compatible-endpoint",
           endpointUrl: "http://127.0.0.1:11434/v1",
         }),
-        [holder()],
+        [previous],
+        [],
         "127.0.0.1",
       ),
     ).toBeNull();
   });
 
   it("does not mistake a remote compatible endpoint for the local daemon", () => {
+    const previous = holder();
     expect(
-      supersededOllamaModel(
-        holder(),
+      releaseCandidate(
+        previous,
         route("llama3", {
           provider: "compatible-endpoint",
           endpointUrl: "https://ollama.example.com:11434/v1",
         }),
-        [holder()],
+        [previous],
+        [],
         "127.0.0.1",
       ),
     ).toBe("llama3");
+  });
+});
+
+describe("supersededOllamaModelWithActivePeers live ownership rows", () => {
+  it("releases a superseded model despite stale or incomplete matching registry rows", () => {
+    const previous = holder();
+    const inactivePeer = holder({ name: "incomplete-reservation" });
+    expect(releaseCandidate(previous, route("qwen2.5:1.5b"), [previous, inactivePeer])).toBe(
+      "llama3",
+    );
+  });
+
+  it("protects the model while a matching sibling is active", () => {
+    const previous = holder();
+    const activePeer = holder({ name: "active-peer", model: "llama3:latest" });
+    expect(
+      releaseCandidate(previous, route("qwen2.5:1.5b"), [previous, activePeer], [activePeer]),
+    ).toBeNull();
+  });
+
+  it("protects a same-named active peer registered under another gateway", () => {
+    const previous = holder({ gatewayName: "current-gateway" });
+    const peer = holder({ gatewayName: "other-gateway" });
+
+    expect(releaseCandidate(previous, route("qwen2.5:1.5b"), [peer], [peer])).toBeNull();
+  });
+
+  it("does not treat a same-named row with incomplete gateway identity as the subject", () => {
+    const previous = holder();
+    const peer = holder({ gatewayName: "other-gateway" });
+
+    expect(releaseCandidate(previous, route("qwen2.5:1.5b"), [peer], [peer])).toBeNull();
+  });
+
+  it("preserves an active model selected through the same local daemon", () => {
+    const previous = holder();
+    expect(releaseCandidate(previous, route("llama3:latest"), [previous])).toBeNull();
+  });
+});
+
+describe("discoverOllamaModelOwnership", () => {
+  it("does not leak a live same-name peer across gateway roots", () => {
+    const stoppedMatchingPeer = holder({
+      name: "duplicate-peer",
+      model: "llama3",
+      gatewayName: "gateway-stopped",
+    });
+    const activeDifferentModelPeer = holder({
+      name: "duplicate-peer",
+      model: "llama3:8b",
+      gatewayName: "gateway-live",
+    });
+    const discovery = discoverOllamaModelOwnership(
+      [stoppedMatchingPeer, activeDifferentModelPeer],
+      {},
+      (gateway) => ({
+        status: 0,
+        output: gateway === "gateway-live" ? "live" : "stopped",
+      }),
+      {
+        parseLiveSandboxEntries: (output) => [
+          {
+            name: "duplicate-peer",
+            phase: output === "live" ? "Ready" : "Stopped",
+          },
+        ],
+        resolvePersistedSandboxOwnershipGateway: (peer) => peer.gatewayName ?? "default",
+      },
+    );
+
+    expect(discovery.ok).toBe(true);
+    const successfulDiscovery = discovery as Extract<typeof discovery, { readonly ok: true }>;
+    const activePeers = successfulDiscovery.activePeers as ReadonlySet<OllamaModelHolder>;
+    expect(successfulDiscovery.activeSandboxNames).toEqual(new Set(["duplicate-peer"]));
+    expect(activePeers).toEqual(new Set([activeDifferentModelPeer]));
+    expect(
+      decideOllamaModelOwnership(
+        holder({ name: "alpha", model: "llama3" }),
+        [stoppedMatchingPeer, activeDifferentModelPeer],
+        successfulDiscovery.activeSandboxNames,
+        null,
+        activePeers,
+      ),
+    ).toEqual({ kind: "exclusive", model: "llama3", stalePeers: ["duplicate-peer"] });
   });
 });
 
@@ -207,13 +317,6 @@ describe("decideOllamaModelOwnership", () => {
       activePeers: ["compatible-peer"],
       stalePeers: [],
     });
-  });
-});
-
-describe("exclusivelyHeldOllamaModel", () => {
-  it("is not blocked by a non-Ollama peer that records the same model (#9110)", () => {
-    const peer = holder({ name: "peer", provider: "nvidia-prod" });
-    expect(exclusivelyHeldOllamaModel(holder(), [holder(), peer])).toBe("llama3");
   });
 });
 

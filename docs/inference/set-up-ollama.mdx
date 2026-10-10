@@ -405,9 +405,11 @@ When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox
 It leaves the model loaded only when OpenShell reports that another matching Ollama-backed sandbox is active.
 Stopped or incomplete sibling registry rows do not retain the model.
 If NemoClaw cannot verify sibling state, it does not unload the model and `stop` exits nonzero.
-When you re-onboard an existing Ollama-backed sandbox onto a different model, NemoClaw unloads the model it replaced, with the same sibling protection.
-A re-onboard that keeps the same model leaves it loaded, because the new route can still be served by the same Ollama daemon.
-This cleanup runs on a best-effort basis and does not delete downloaded model files.
+When you re-onboard an Ollama-backed sandbox from the host Ollama route to a different model or provider, NemoClaw checks live ownership before releasing its previous model.
+If another active sandbox uses the same local Ollama model, NemoClaw keeps it loaded.
+If NemoClaw cannot verify whether another sandbox uses the model, it keeps the model, records it for retry, and leaves the new route active.
+If the new route uses the same model through the same local daemon, NemoClaw keeps the model loaded.
+This cleanup is best-effort and does not delete downloaded model files.
 
 ## Related Topics
 

@@ -215,7 +215,9 @@ function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
 }
 
 /** Resolve the authoritative gateway for a persisted sibling ownership row. */
-export function resolvePersistedSandboxOwnershipGateway(sandbox: SandboxEntry): string {
+export function resolvePersistedSandboxOwnershipGateway(
+  sandbox: Pick<SandboxEntry, "gatewayName" | "gatewayPort">,
+): string {
   return getPersistedSandboxTargetGatewayName(sandbox);
 }
 
