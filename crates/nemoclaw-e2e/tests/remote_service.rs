@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(unix)]
 use nemoclaw_e2e::{assert_same_managed_resources, openshell::Fixture};
 use nemoclaw_sdk::config::{Document, ServiceDefinition};
 use serde_json::{Value, json};
@@ -29,14 +28,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         process.arg(root.join(file));
     }
     let output = process
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                root.join("bin").display(),
-                std::env::var("PATH").unwrap()
-            ),
-        )
+        .env("PATH", nemoclaw_e2e::path_with(&root.join("bin")))
         .env("NEMOCLAW_TEST_REMOTE", root)
         .output()
         .await
@@ -133,24 +125,14 @@ async fn lifecycle(
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    fs::create_dir(root.join("bin")).unwrap();
     // OpenTofu passes its providers only platform variables, so the fake ssh
-    // finds its state through this wrapper, not the test's environment.
-    let ssh = root.join("bin/ssh");
-    fs::write(
-        &ssh,
-        format!(
-            "#!/bin/sh\nNEMOCLAW_TEST_REMOTE='{}' exec '{}' \"$@\"\n",
-            root.display(),
-            std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
-                .expect("Cargo sets the fixture executable path")
-        ),
-    )
-    .unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    // finds its state in the file installed beside it, not the environment.
+    nemoclaw_e2e::install_ssh_simulator(
+        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
+            .expect("Cargo sets the fixture executable path"),
+        &root.join("bin"),
+        root,
+    );
     let gateway = Fixture::start().await;
     gateway.state.lock().unwrap().driver = Some("podman".into());
     gateway.state.lock().unwrap().inference_exit = 1;

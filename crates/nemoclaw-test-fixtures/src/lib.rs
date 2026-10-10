@@ -4,6 +4,7 @@
 //! A fake OpenShell gateway and owned OpenTofu workspaces, shared by the
 //! provider contract tests and the end-to-end tests.
 pub mod openshell;
+pub mod ssh;
 pub mod tofu;
 
 /// The fake `ssh` relay: beside `providers`, where archived lifecycle runs
