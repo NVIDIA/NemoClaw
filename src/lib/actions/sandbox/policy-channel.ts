@@ -48,6 +48,7 @@ import {
 import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
 import {
+  detectInvalidMessagingChannelConfigEnvValues,
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "../../messaging-channel-config";
@@ -1393,6 +1394,13 @@ export async function addSandboxChannel(
   options: ChannelMutationOptions = {},
   dependencies: AddSandboxChannelDependencies = {},
 ): Promise<void> {
+  const invalidConfigEnvValues = detectInvalidMessagingChannelConfigEnvValues();
+  for (const { key, rawValue, validValues } of invalidConfigEnvValues) {
+    console.error(
+      `  Invalid ${key} value '${rawValue}' (expected one of: ${validValues.join(", ")})`,
+    );
+  }
+  if (invalidConfigEnvValues.length > 0) process.exit(1);
   return withSandboxMutationLockUnlessPreview(sandboxName, options.dryRun, () =>
     addSandboxChannelUnlocked(sandboxName, options, dependencies),
   );
