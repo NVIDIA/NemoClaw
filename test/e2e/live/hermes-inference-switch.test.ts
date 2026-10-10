@@ -32,7 +32,6 @@ import {
   installHermes,
   maybeAssertEnvHashStable,
   maybeAssertPidStable,
-  mockAnthropicSwitchEnabled,
   PROXY_FORBIDDEN_MARKERS,
   PROXY_RESOLUTION_PROVIDER,
   parseHermesModelBlock,
@@ -49,6 +48,7 @@ import {
   SWITCH_MODEL,
   SWITCH_PROVIDER,
   strictHashPerms,
+  useLocalHermesInferenceBaseline,
 } from "./hermes-inference-switch-helpers.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE,
@@ -122,7 +122,7 @@ test(
 
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
-    const mockBaseline = mockAnthropicSwitchEnabled()
+    const mockBaseline = useLocalHermesInferenceBaseline()
       ? await startFakeOpenAiCompatibleServer({
           apiKey: MOCK_BASELINE_API_KEY,
           chatContent: "PONG",

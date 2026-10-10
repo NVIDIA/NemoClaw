@@ -70,7 +70,9 @@ Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 <AgentOnly variant="hermes">
 
-For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and OpenShell proxy API-key placeholder.
+For Hermes, NemoClaw updates the native `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and managed API-key value.
+`inference.local` uses the OpenShell proxy rewrite sentinel. NVIDIA Build uses `${NVIDIA_INFERENCE_API_KEY}` from a supervisor-issued OpenShell reference.
+Neither value is a raw provider credential.
 The gateway, CLI, TUI, and Web Dashboard all read that shared configuration; a normal runtime route change does not rebuild or restart Hermes.
 
 </AgentOnly>
