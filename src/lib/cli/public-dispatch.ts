@@ -291,15 +291,16 @@ function validSandboxActionsText(): string {
 function shouldExecuteViaNativeArgv(
   result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>,
 ): boolean {
-  // Native argv remains useful for fabricated unknown child routes so oclif owns
-  // the unknown-command error. Exact public translations should run by command
-  // ID to avoid flexible-taxonomy reinterpreting positional args under WSL.
-  const helpArgs =
-    result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
-  if (hasHelpFlag(helpArgs)) return false;
+  // Native argv remains useful for fabricated unknown child routes, and for
+  // unregistered parent ids (e.g. `sandbox:policy`, which has no bare index
+  // command) so oclif's flexible run() resolves them as a topic and lists
+  // subcommands. config.runCommand() requires an exact registered id and
+  // throws "command sandbox:policy not found" for a topic-only id, including
+  // on a help request. Exact registered public translations still run by
+  // command ID to avoid flexible-taxonomy reinterpreting positional args
+  // under WSL.
   if (result.commandId.startsWith("root:")) return false;
-  if (getRegisteredOclifCommandMetadata(result.commandId)) return false;
-  return true;
+  return getRegisteredOclifCommandMetadata(result.commandId) === null;
 }
 function printDispatchUsageError(
   result: Extract<PublicTranslationResult, { kind: "publicUsageError" }>,
