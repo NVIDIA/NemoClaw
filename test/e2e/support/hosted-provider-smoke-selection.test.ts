@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import YAML from "yaml";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   HOSTED_PROVIDER_SMOKE_CASES,
   hostedProviderSmokeEnvironment,
@@ -17,6 +17,8 @@ import {
 } from "../../../tools/e2e/target-catalogue.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
+
+import { requireProviderSmokeSelected } from "../live/inference-routing-helpers.ts";
 
 const workflow = YAML.parse(readFileSync(".github/workflows/e2e.yaml", "utf8"));
 
@@ -222,4 +224,44 @@ it.each(HOSTED_PROVIDER_SMOKE_CASES)("routes only the approved $label model", (s
     },
   );
   expect(observed).toBe(`approved-${selected.selector}`);
+});
+
+describe.each(HOSTED_PROVIDER_SMOKE_CASES)("$label local smoke prerequisites", (selected) => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([undefined, "unrelated-provider"])("skips without matching opt-in %s", (requested) => {
+    vi.stubEnv("NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE", requested);
+    const skip = vi.fn();
+    expect(() => requireProviderSmokeSelected(selected.selector, skip)).toThrow(
+      `NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${selected.selector}`,
+    );
+    expect(skip).toHaveBeenCalledOnce();
+  });
+
+  it("runs only after explicit selection and validates its named key and model", () => {
+    vi.stubEnv("NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE", selected.selector);
+    const skip = vi.fn();
+    requireProviderSmokeSelected(selected.selector, skip);
+    expect(skip).not.toHaveBeenCalled();
+    const id = `hosted-inference-${selected.selector}`;
+    expect(() =>
+      hostedProviderSmokeEnvironment(id, {
+        [selected.modelEnv]: "approved-model",
+      }),
+    ).toThrow("requires its approved credential and model");
+    expect(() =>
+      hostedProviderSmokeEnvironment(id, {
+        [selected.credential]: "synthetic-selected-key",
+      }),
+    ).toThrow("requires its approved credential and model");
+    expect(
+      hostedProviderSmokeEnvironment(id, {
+        [selected.credential]: "synthetic-selected-key",
+        [selected.modelEnv]: "approved-model",
+      }),
+    ).toEqual({
+      [selected.credential]: "synthetic-selected-key",
+      [selected.modelEnv]: "approved-model",
+    });
+  });
 });
