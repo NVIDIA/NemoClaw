@@ -94,7 +94,9 @@ function runtimeIdentityProfileExport(args: readonly string[]) {
 }
 
 function responseQueue(
-  overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
+  overrides: Array<
+    [string, Array<{ exitCode?: number; stdout: string; stderr: string; timedOut?: boolean }>]
+  >,
 ) {
   const responses = new Map([
     ["sandbox get test-sandbox", [failureResult("sandbox not found")]],
@@ -360,6 +362,31 @@ describe("blueprint identity wrapper", () => {
       commands.indexOf(
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       ),
+    );
+  });
+
+  it("bounds a timed-out profile export before runtime provider creation", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      ["provider get acme-okta-runtime", [failureResult("provider not found")]],
+      [
+        "provider profile export okta-runtime-v1 --output yaml",
+        [{ stdout: "", stderr: "", timedOut: true }],
+      ],
+    ]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /profile 'okta-runtime-v1'.*OpenShell command timed out after 30 seconds/,
+    );
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      ["provider", "profile", "export", "okta-runtime-v1", "--output", "yaml"],
+      expect.objectContaining({ timeout: 30_000, reject: false }),
+    );
+    expect(mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "))).not.toContain(
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
     );
   });
 
