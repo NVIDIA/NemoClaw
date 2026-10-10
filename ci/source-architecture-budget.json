@@ -4,6 +4,7 @@
     "defaultMax": 20,
     "maxByFile": {
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 24,
+      "src/lib/actions/sandbox/gateway-target.ts": 21,
       "src/lib/actions/sandbox/process-recovery.ts": 12,
       "src/lib/adapters/docker/index.ts": 40,
       "src/lib/adapters/openshell/client.ts": 17,
