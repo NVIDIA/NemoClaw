@@ -44,17 +44,28 @@ func forwardStdio(input io.Reader, output io.Writer, address string) error {
 		return errors.New("request guard is unavailable")
 	}
 	defer connection.Close()
+	inputReader := bufio.NewReader(input)
+	requestLine, readError := inputReader.ReadSlice('\n')
+	if readError != nil {
+		return errors.New("request guard request forwarding failed")
+	}
+	separator := bytes.IndexByte(requestLine, ' ')
+	if separator < 1 {
+		return errors.New("request guard request forwarding failed")
+	}
+	request := &http.Request{Method: string(requestLine[:separator])}
+	requestLine = bytes.Clone(requestLine)
 
 	inputDone := make(chan error, 1)
 	go func() {
-		_, copyError := io.Copy(connection, input)
+		_, copyError := io.Copy(connection, io.MultiReader(bytes.NewReader(requestLine), inputReader))
 		inputDone <- copyError
 	}()
 	responseDone := make(chan error, 1)
 	go func() {
 		reader := bufio.NewReader(connection)
 		for {
-			response, readError := http.ReadResponse(reader, nil)
+			response, readError := http.ReadResponse(reader, request)
 			if readError != nil {
 				responseDone <- readError
 				return
