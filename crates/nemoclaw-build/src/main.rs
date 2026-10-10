@@ -86,6 +86,18 @@ enum Action {
         #[arg(long)]
         base: String,
     },
+    /// Report a platform's whole lifecycle suite from its partitions' JUnit
+    /// artifacts, and add the report to the GitHub job summary.
+    LifecycleTiming {
+        /// Directory holding the downloaded lifecycle-PLATFORM-SHARD-ATTEMPT
+        /// artifacts, one subdirectory each.
+        directory: PathBuf,
+        #[arg(long)]
+        platform: String,
+        /// The shards CI ran, as a JSON list such as [1, 2].
+        #[arg(long)]
+        shards: String,
+    },
 }
 #[derive(Clone, clap::ValueEnum)]
 enum ChangedWorkflow {
@@ -477,6 +489,19 @@ async fn main() -> Result<()> {
         }
         .map_err(Into::into);
     }
+    if let Action::LifecycleTiming {
+        directory,
+        platform,
+        shards,
+    } = &cli.command
+    {
+        let shards: Vec<u32> = serde_json::from_str(shards)
+            .map_err(|error| format!("--shards must be a JSON list of numbers: {error}"))?;
+        let report =
+            nemoclaw_build::ci::timing::partitioned_report(directory, platform, &shards, 15)?;
+        run_ci::publish(&report);
+        return Ok(());
+    }
     if let Action::Changes { workflow, base } = &cli.command {
         let (workflow, name) = match workflow {
             ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
@@ -513,8 +538,11 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
-        Action::Ci { .. } | Action::Images { .. } | Action::Changes { .. } => {
-            unreachable!("CI, image, and change commands returned before build tool checks")
+        Action::Ci { .. }
+        | Action::Images { .. }
+        | Action::Changes { .. }
+        | Action::LifecycleTiming { .. } => {
+            unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]
         Action::Bundle { platform } => {

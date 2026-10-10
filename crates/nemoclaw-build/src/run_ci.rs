@@ -336,6 +336,12 @@ fn report_timing(step: Step, partition: Option<&str>, begun: Instant) -> Vec<Str
             let _ = writeln!(report, "- Over budget: {line}");
         }
     }
+    publish(&report);
+    if enforces_budgets() { over } else { Vec::new() }
+}
+
+/// Print a timing report, and add it to the GitHub job summary when there is one.
+pub(super) fn publish(report: &str) {
     eprintln!("{report}");
     if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
         use std::io::Write;
@@ -348,7 +354,6 @@ fn report_timing(step: Step, partition: Option<&str>, begun: Instant) -> Vec<Str
             eprintln!("cannot write the job summary: {error}");
         }
     }
-    if enforces_budgets() { over } else { Vec::new() }
 }
 
 pub(super) async fn run_steps(
