@@ -230,7 +230,60 @@ impl Backend for ManagedBackend {
     }
 }
 
-#[cfg(all(test, unix))]
+/// Extract connection selection before constructing the resource backend.
+pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationError> {
+    if ManagedBackend::supports(kind) {
+        return specification(kind, row)
+            .map(|spec| spec.engine().to_owned())
+            .map_err(|error| diagnostic(&error));
+    }
+    let Some(encoded) = row.get("spec") else {
+        return Storage::from_row(row)
+            .map(|storage| storage.engine)
+            .map_err(|error| diagnostic(&error));
+    };
+    if let Ok(spec) = serde_json::from_str::<Spec>(encoded) {
+        if spec.kind != kind {
+            return Err(ObservationError::BindingMismatch);
+        }
+        spec.validate().map_err(|error| diagnostic(&error))?;
+        Ok(spec.engine().to_owned())
+    } else {
+        Err(ObservationError::Incomplete)
+    }
+}
+
+/// Select the resource's execution target before observing or mutating it.
+pub fn runtime_engine(
+    connections: &crate::docker::Connections,
+    kind: &str,
+    row: &Row,
+) -> Result<Engine, Error> {
+    let endpoint = connection_endpoint(kind, row)?;
+    let service = row
+        .get("spec")
+        .and_then(|encoded| serde_json::from_str::<Spec>(encoded).ok())
+        .is_some_and(|spec| spec.process.is_some());
+    if service {
+        service_engine(connections, &endpoint)
+    } else {
+        connections.resolve(&endpoint)
+    }
+}
+
+/// Apply the same explicit host-observer selection to resource and group checks.
+pub(crate) fn service_engine(
+    connections: &crate::docker::Connections,
+    endpoint: &str,
+) -> Result<Engine, Error> {
+    let engine = connections.resolve(endpoint)?;
+    if engine.endpoint().starts_with("ssh://") && !engine.host_observer_explicit {
+        return Ok(engine.with_host_observer(std::sync::Arc::new(crate::hardware::SshHost)));
+    }
+    Ok(engine)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::docker::fixture::Fixture;
@@ -274,7 +327,7 @@ mod tests {
     async fn shared_backend_preserves_storage_identity_and_diagnostics_without_recreation() {
         let response = Arc::new(Mutex::new((404, json!({}))));
         let state = response.clone();
-        let fixture = Fixture::start(move |request| {
+        let fixture = Fixture::engine(move |request| {
             assert_eq!(
                 request.method, "GET",
                 "observation or rejection mutated Docker"
@@ -335,57 +388,4 @@ mod tests {
         assert!(backend.read(STORAGE_KIND, &row, false).await.is_err());
         assert!(backend.ensure(STORAGE_KIND, &row).await.error().is_some());
     }
-}
-
-/// Extract connection selection before constructing the resource backend.
-pub fn connection_endpoint(kind: &str, row: &Row) -> Result<String, ObservationError> {
-    if ManagedBackend::supports(kind) {
-        return specification(kind, row)
-            .map(|spec| spec.engine().to_owned())
-            .map_err(|error| diagnostic(&error));
-    }
-    let Some(encoded) = row.get("spec") else {
-        return Storage::from_row(row)
-            .map(|storage| storage.engine)
-            .map_err(|error| diagnostic(&error));
-    };
-    if let Ok(spec) = serde_json::from_str::<Spec>(encoded) {
-        if spec.kind != kind {
-            return Err(ObservationError::BindingMismatch);
-        }
-        spec.validate().map_err(|error| diagnostic(&error))?;
-        Ok(spec.engine().to_owned())
-    } else {
-        Err(ObservationError::Incomplete)
-    }
-}
-
-/// Select the resource's execution target before observing or mutating it.
-pub fn runtime_engine(
-    connections: &crate::docker::Connections,
-    kind: &str,
-    row: &Row,
-) -> Result<Engine, Error> {
-    let endpoint = connection_endpoint(kind, row)?;
-    let service = row
-        .get("spec")
-        .and_then(|encoded| serde_json::from_str::<Spec>(encoded).ok())
-        .is_some_and(|spec| spec.process.is_some());
-    if service {
-        service_engine(connections, &endpoint)
-    } else {
-        connections.resolve(&endpoint)
-    }
-}
-
-/// Apply the same explicit host-observer selection to resource and group checks.
-pub(crate) fn service_engine(
-    connections: &crate::docker::Connections,
-    endpoint: &str,
-) -> Result<Engine, Error> {
-    let engine = connections.resolve(endpoint)?;
-    if engine.endpoint().starts_with("ssh://") && !engine.host_observer_explicit {
-        return Ok(engine.with_host_observer(std::sync::Arc::new(crate::hardware::SshHost)));
-    }
-    Ok(engine)
 }

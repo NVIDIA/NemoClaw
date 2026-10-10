@@ -40,7 +40,10 @@ fn the_chart_values_pin_every_image_by_digest_and_require_authentication() {
         assert_eq!(image["pullPolicy"], "IfNotPresent");
         assert!(image.get("tag").is_none(), "mutable image tags are absent");
     }
-    assert_eq!(values["server"]["auth"]["allowUnauthenticatedUsers"], false);
+    assert_eq!(
+        values["gatewayConfig"]["openshell.gateway.auth"],
+        json!({"allow_unauthenticated_users": false})
+    );
     assert_eq!(values["server"]["disableTls"], false);
     assert_eq!(values["server"]["tls"]["enableMtls"], true);
     assert_eq!(values["server"]["telemetryEnabled"], false);
@@ -49,7 +52,23 @@ fn the_chart_values_pin_every_image_by_digest_and_require_authentication() {
 #[test]
 fn chart_authentication_values_contain_only_references_and_public_policy() {
     let spec = spec();
-    let server = gateway::values(&spec).unwrap()["server"].clone();
+    let values = gateway::values(&spec).unwrap();
+    let server = values["server"].clone();
+    // Settings the chart reads only through its legacy server.* mapping belong
+    // in gatewayConfig; server keeps the values its templates read directly.
+    let mut keys: Vec<_> = server.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "credentialStorage",
+            "disableTls",
+            "oidc",
+            "sandboxJwt",
+            "telemetryEnabled",
+            "tls"
+        ]
+    );
     // Exact shapes reject additional inline keys, certificates, tokens, or
     // credential-storage data before they can enter native Helm state.
     assert_eq!(
@@ -70,16 +89,26 @@ fn chart_authentication_values_contain_only_references_and_public_policy() {
     );
     assert_eq!(
         server["oidc"],
+        json!({"caConfigMapName": format!("{}-oidc-ca", spec.name)})
+    );
+    assert_eq!(
+        values["gatewayConfig"],
         json!({
-            "issuer": format!("https://{}-oidc.agents.svc.cluster.local:8443", spec.name),
-            "audience": spec.owner,
-            "jwksTtl": 60,
-            "rolesClaim": "roles",
-            "adminRole": "nemoclaw-development-admin",
-            "userRole": "nemoclaw-development-user",
-            "scopesClaim": "scope",
-            "caConfigMapName": format!("{}-oidc-ca", spec.name),
-            "dangerouslyAllowInsecureHttp": false,
+            "openshell.gateway.oidc": {
+                "issuer": format!("https://{}-oidc.agents.svc.cluster.local:8443", spec.name),
+                "audience": spec.owner,
+                "jwks_ttl_secs": 60,
+                "roles_claim": "roles",
+                "admin_role": "nemoclaw-development-admin",
+                "user_role": "nemoclaw-development-user",
+                "scopes_claim": "scope",
+                "dangerously_allow_insecure_http": false,
+            },
+            "openshell.gateway.auth": {"allow_unauthenticated_users": false},
+            "openshell.drivers.kubernetes": {
+                "workspace_mode": "shared",
+                "workspace_default_storage_size": "2Gi",
+            },
         })
     );
 }

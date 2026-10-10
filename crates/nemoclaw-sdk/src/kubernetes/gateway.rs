@@ -73,7 +73,6 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
         "server": {
             "telemetryEnabled": false,
             "disableTls": false,
-            "auth": {"allowUnauthenticatedUsers": false},
             "tls": {
                 "enableMtls": true,
                 "certSecretName": format!("{name}-server-tls"),
@@ -81,9 +80,17 @@ pub fn values(spec: &Spec) -> Result<Value, Error> {
             },
             "sandboxJwt": {"signingSecretName": format!("{name}-jwt-keys")},
             "credentialStorage": {"existingSecret": format!("{name}-kek")},
-            "workspaceDefaultStorageSize": "2Gi",
-            "drivers": {"kubernetes": {"workspaceMode": "shared"}},
-            "oidc": super::issuer::oidc_values(name, &target.namespace, &spec.owner),
+            // The chart mounts the issuer CA only from this value.
+            "oidc": {"caConfigMapName": format!("{name}-oidc-ca")},
+        },
+        // Gateway configuration (schema version 2), keyed by TOML table.
+        "gatewayConfig": {
+            "openshell.gateway.oidc": super::issuer::oidc_values(name, &target.namespace, &spec.owner),
+            "openshell.gateway.auth": {"allow_unauthenticated_users": false},
+            "openshell.drivers.kubernetes": {
+                "workspace_mode": "shared",
+                "workspace_default_storage_size": "2Gi",
+            },
         },
         "pkiInitJob": {"enabled": true},
         "resources": {

@@ -242,7 +242,7 @@ impl DataSource for RuntimeImageDataSource {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::docker::fixture::Fixture;
@@ -357,7 +357,7 @@ mod tests {
                     "identity" => image["Id"] = json!(""),
                     _ => {}
                 }
-                let fixture = Fixture::start(move |request| {
+                let fixture = Fixture::engine(move |request| {
                     assert_eq!(request.method, "GET");
                     assert!(request.path.starts_with("/images/"));
                     Some((code, serde_json::to_vec(&image).unwrap()))

@@ -16,7 +16,7 @@ async fn daemon(id: &'static str) -> (Fixture, Arc<Mutex<State>>) {
         deletes: 0,
     }));
     let shared = state.clone();
-    let fixture = Fixture::start(move |request| {
+    let fixture = Fixture::engine(move |request| {
         let mut state = shared.lock().unwrap();
         let path = request.path.split('?').next().unwrap();
         let (status, body) = if state.status != 200 {

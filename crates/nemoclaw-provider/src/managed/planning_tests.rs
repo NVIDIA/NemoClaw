@@ -44,7 +44,7 @@ fn image(spec: &Spec) -> Value {
 }
 
 async fn planning_fixture(network: (u16, Value), inventory: Value, image: (u16, Value)) -> Fixture {
-    Fixture::start(move |request| {
+    Fixture::engine(move |request| {
         assert_eq!(request.method, "GET", "planning mutated the engine");
         let response = match request.path.split('?').next().unwrap() {
             "/info" => (

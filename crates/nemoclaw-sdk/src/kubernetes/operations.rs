@@ -246,10 +246,11 @@ impl Operations {
                 return Err(ObservationError::BindingMismatch);
             }
         }
-        // Receipts written before namespace identities were recorded need
-        // reconciliation before their values may reach Helm. Teardown only
-        // needs the stored identity, including after annotations disappear.
-        let identity_ready = !openshift || receipt.namespace_identity.is_some();
+        // Ensure records the namespace identity before it writes an OpenShift
+        // issuer, and teardown uses the recorded identity after annotations disappear.
+        if openshift && !receipt.issuer.is_empty() && receipt.namespace_identity.is_none() {
+            return Err(ObservationError::Incomplete);
+        }
         let values = if openshift {
             receipt.namespace_identity.map(Identity::values)
         } else {
@@ -258,8 +259,7 @@ impl Operations {
         Ok((
             Response {
                 id: receipt.issuer.first().map(|owned| owned.uid.clone()),
-                running: (!receipt.issuer.is_empty())
-                    .then_some(receipt.issuer_ready && identity_ready),
+                running: (!receipt.issuer.is_empty()).then_some(receipt.issuer_ready),
                 release_present: Some(self.release_present(spec).await?),
                 gateway_values: Some(values.unwrap_or_else(|| serde_json::json!({})).to_string()),
             },

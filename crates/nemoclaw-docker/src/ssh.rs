@@ -6,31 +6,20 @@ use crate::engine::Engine;
 use nemoclaw_backend::Error;
 
 pub(crate) fn connect(endpoint: &str) -> Result<Engine, Error> {
-    #[cfg(unix)]
-    {
-        let target = endpoint.to_owned();
-        let api = bollard::Docker::connect_with_custom_transport(
-            move |request: bollard::BollardRequest| {
-                let target = target.clone();
-                Box::pin(exchange(target, request))
-            },
-            Some("http://docker"),
-            120,
-            bollard::API_DEFAULT_VERSION,
-        )
-        .map_err(|_| Error::State("cannot configure SSH engine client"))?;
-        Ok(Engine::new(api, endpoint))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = endpoint;
-        Err(Error::Conflict(
-            "SSH container-engine connections are unsupported on this platform",
-        ))
-    }
+    let target = endpoint.to_owned();
+    let api = bollard::Docker::connect_with_custom_transport(
+        move |request: bollard::BollardRequest| {
+            let target = target.clone();
+            Box::pin(exchange(target, request))
+        },
+        Some("http://docker"),
+        120,
+        bollard::API_DEFAULT_VERSION,
+    )
+    .map_err(|_| Error::State("cannot configure SSH engine client"))?;
+    Ok(Engine::new(api, endpoint))
 }
 
-#[cfg(unix)]
 async fn exchange(
     target: String,
     mut request: bollard::BollardRequest,
@@ -71,7 +60,6 @@ async fn exchange(
 }
 
 /// A non-interactive SSH command to `target` that never trusts an unknown host key.
-#[cfg(unix)]
 pub fn command(target: &str) -> tokio::process::Command {
     let mut command = tokio::process::Command::new("ssh");
     command.args([

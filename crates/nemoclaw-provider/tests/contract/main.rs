@@ -14,8 +14,13 @@ mod image_runtime;
 mod discovery;
 mod gateway_readiness;
 mod kubernetes_hcl;
+// Providers launched by OpenTofu reach these fake engines over a Unix socket;
+// Windows needs the SSH relay beside them first (#12943).
+#[cfg(unix)]
 mod runtime_image;
+#[cfg(unix)]
 mod service_storage;
+#[cfg(unix)]
 mod vllm_runtime;
 
 pub use nemoclaw_test_fixtures::{openshell, tofu};

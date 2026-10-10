@@ -502,49 +502,6 @@ pub(crate) fn schema_environment(directory: &Path) -> BTreeMap<String, String> {
         ),
     ])
 }
-/// OpenShell and Fabric types that the nemoclaw provider served before the
-/// `openshell` and `fabric` providers.
-const EARLIER_TYPES: [&str; 8] = [
-    "nemoclaw_workspace",
-    "nemoclaw_provider",
-    "nemoclaw_provider_profile",
-    "nemoclaw_sandbox",
-    "nemoclaw_gateway_capabilities",
-    "nemoclaw_agent_configuration",
-    "nemoclaw_sandbox_readiness",
-    "nemoclaw_fabric_capabilities",
-];
-
-/// Refuse state that an earlier release wrote with OpenShell or Fabric types of the
-/// nemoclaw provider. Reading it would need that provider's schemas, and no
-/// release upgrades it, so it is left unchanged for the release that wrote it.
-fn reject_earlier_types(path: &Path) -> Result<(), Error> {
-    #[derive(serde::Deserialize)]
-    struct Resource {
-        #[serde(rename = "type")]
-        kind: String,
-    }
-    #[derive(serde::Deserialize)]
-    struct State {
-        #[serde(default)]
-        resources: Vec<Resource>,
-    }
-    let state: State = serde_json::from_slice(
-        &std::fs::read(path).map_err(|_| Error::State("cannot inspect OpenTofu state"))?,
-    )
-    .map_err(|_| Error::State("cannot inspect OpenTofu state"))?;
-    if state
-        .resources
-        .iter()
-        .any(|resource| EARLIER_TYPES.contains(&resource.kind.as_str()))
-    {
-        return Err(Error::State(
-            "OpenTofu state holds OpenShell or Fabric resources from an earlier release; keep the state directory and use the release that wrote it",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) async fn bindings(
     directory: &Path,
     tofu: &Path,
@@ -557,7 +514,6 @@ pub(crate) async fn bindings(
     {
         return Ok(BTreeMap::new());
     }
-    reject_earlier_types(&directory.join("terraform.tfstate"))?;
     let bytes = crate::process::run(
         directory,
         tofu,

@@ -165,7 +165,7 @@ impl HostObserver for Host {
 }
 #[tokio::test]
 async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_without_mutations() {
-    let fixture = Fixture::start(|request| {
+    let fixture = Fixture::engine(|request| {
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/info");
         Some((200, json!({"ID":"engine"}).to_string().into_bytes()))
@@ -217,7 +217,7 @@ async fn capacity_observation_uses_the_selected_engine_and_preserves_failures_wi
 
 #[tokio::test]
 async fn capacity_observation_counts_combined_budgets_and_largest_reserve_once() {
-    let fixture = Fixture::start(|request| {
+    let fixture = Fixture::engine(|request| {
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/info");
         Some((200, json!({"ID":"engine"}).to_string().into_bytes()))

@@ -120,12 +120,11 @@ pub fn oidc_values(name: &str, namespace: &str, audience: &str) -> Value {
     json!({
         "issuer": format!("https://{name}-oidc.{namespace}.svc.cluster.local:{PORT}"),
         "audience": audience,
-        "jwksTtl": 60,
-        "rolesClaim": "roles",
-        "adminRole": super::auth::ADMIN_ROLE,
-        "userRole": super::auth::USER_ROLE,
-        "scopesClaim": "scope",
-        "caConfigMapName": format!("{name}-oidc-ca"),
-        "dangerouslyAllowInsecureHttp": false,
+        "jwks_ttl_secs": 60,
+        "roles_claim": "roles",
+        "admin_role": super::auth::ADMIN_ROLE,
+        "user_role": super::auth::USER_ROLE,
+        "scopes_claim": "scope",
+        "dangerously_allow_insecure_http": false,
     })
 }
