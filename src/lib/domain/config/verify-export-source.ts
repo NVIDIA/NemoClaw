@@ -337,6 +337,9 @@ function validateHermesAuthentication(snapshot: QualifiedExportSnapshot): Export
   return [];
 }
 
+const GPU_EXPORT_REMEDY =
+  " To remove this blocker, rerun onboarding with --recreate-sandbox --no-sandbox-gpu, which removes in-sandbox GPU access. The config export reference has the full command.";
+
 function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
     [
@@ -366,7 +369,14 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
   const findings = excluded
     .filter(([, value]) => hasEntries(value))
     .map(([field, , capability]) =>
-      finding(field, "unsupported", "V1 export does not support " + capability + "."),
+      finding(
+        field,
+        "unsupported",
+        "V1 export does not support " +
+          capability +
+          "." +
+          (field === "spec.sandboxes[].runtime.gpu" ? GPU_EXPORT_REMEDY : ""),
+      ),
     );
   return [
     ...findings,
