@@ -3,7 +3,7 @@
 //! Kubernetes preparation and observation around the native Helm release.
 #![cfg(unix)]
 
-use crate::kube_api::{Objects, client};
+use crate::{kube_api::Objects, kube_client::client};
 use nemoclaw_sdk::{
     ObservationError,
     kubernetes::{

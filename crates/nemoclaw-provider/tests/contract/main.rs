@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Contract tests: each nemoclaw type through pinned OpenTofu against fake
-//! Docker engines, gateways, and model servers. `every_type_has_a_contract_test`
-//! requires one for every type the provider serves.
+//! Docker engines, gateways, model servers, and Kubernetes APIs.
+//! `every_type_has_a_contract_test` requires one for every type the provider
+//! serves.
 
 #[path = "../../../test-support/http.rs"]
 mod http_fixture;
+/// The in-memory Kubernetes API shared with the SDK tests, which reaches its
+/// HTTP server as `transport`.
+#[path = "../../../test-support/kube_api.rs"]
+mod kube_api;
+use http_fixture as transport;
 /// Fabric catalog fixtures shared with the end-to-end tests.
 #[path = "../../../nemoclaw-e2e/src/image_runtime.rs"]
 #[allow(dead_code)]
@@ -19,6 +25,7 @@ mod gateway_readiness;
 mod gateway_storage;
 mod inference_capabilities;
 mod kubernetes_hcl;
+mod kubernetes_lifecycle;
 mod provider_protocol;
 mod runtime_image;
 mod service_capacity;
@@ -75,6 +82,7 @@ fn every_type_has_a_contract_test() {
         include_str!("gateway_storage.rs"),
         include_str!("inference_capabilities.rs"),
         include_str!("kubernetes_hcl.rs"),
+        include_str!("kubernetes_lifecycle.rs"),
         include_str!("provider_protocol.rs"),
         include_str!("runtime_image.rs"),
         include_str!("service_capacity.rs"),

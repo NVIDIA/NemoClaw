@@ -11,7 +11,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-#[path = "../../../../tests/support/kube_api.rs"]
+#[path = "../../../../../test-support/kube_api.rs"]
 mod kube_api;
 #[path = "../../../../../test-support/http.rs"]
 mod transport;

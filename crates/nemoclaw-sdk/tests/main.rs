@@ -5,8 +5,10 @@
 
 #[path = "support/examples.rs"]
 mod examples;
-#[path = "support/kube_api.rs"]
+#[path = "../../test-support/kube_api.rs"]
 mod kube_api;
+#[path = "support/kube_client.rs"]
+mod kube_client;
 #[path = "support/provider_scope.rs"]
 mod provider_scope;
 #[path = "support/config.rs"]

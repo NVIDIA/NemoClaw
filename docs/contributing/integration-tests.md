@@ -76,7 +76,7 @@ The mixed-search export case checks shared registrations, unused definitions, ex
 
 ## NemoClaw Provider Contract
 
-The `nemoclaw-provider` crate's `contract` tests run its types through OpenTofu against fake Docker engines, gateways, and model servers:
+The `nemoclaw-provider` crate's `contract` tests run its types through OpenTofu against fake Docker engines, gateways, model servers, and Kubernetes APIs:
 
 ```sh
 NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
@@ -86,8 +86,8 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 ```
 
 They cover service storage, Kubernetes planning, runtime images and runtime contracts, gateway readiness, and engine and hardware discovery.
-`every_type_has_a_contract_test` requires a contract test for every type the provider serves.
-Its `ELSEWHERE` list names the types still tested only in `nemoclaw-e2e` and why: the managed gateway, service capacity, and service readiness tests need that crate's fixture binaries, gateway storage needs Docker, and inference capabilities are read only through SDK deployments.
+`kubernetes_lifecycle` applies, refreshes, and tears down the Kubernetes resources against the in-memory API in `crates/test-support/kube_api.rs`, which the SDK tests share; the test writes and deletes the objects Helm would, and the live Kind suite runs the chart itself.
+`every_type_has_a_contract_test` requires a contract test for every type the provider serves, or an `ELSEWHERE` entry naming where it is tested instead.
 
 ## OpenShell Provider Contract
 
