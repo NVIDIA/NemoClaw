@@ -100,6 +100,7 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   standard: "catalogue-standard",
   "nvidia-api": "catalogue-nvidia-api",
   "nvidia-inference": "catalogue-nvidia-inference",
+  "hosted-inference": "catalogue-hosted-inference",
   "github-read": "catalogue-github-read",
 };
 const REGISTRY_OWNING_PATHS = [
@@ -446,6 +447,7 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
     standard: [],
     "nvidia-api": [],
     "nvidia-inference": [],
+    "hosted-inference": [],
     "github-read": [],
   };
 }
@@ -884,7 +886,10 @@ export function buildE2eWorkflowPlan(
       gatewayRuntimes,
       matrix: buildLiveTargetMatrix([], gatewayRuntimes),
       testMatrix,
-      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
+      catalogueMatrices: catalogueMatrices(
+        E2E_TARGET_CATALOGUE.filter((target) => target.profile !== "hosted-inference"),
+        gatewayRuntimes,
+      ),
       selectedJobs,
       runtimeProvidersByJob: runtimeProvidersByJob(
         inventory,
@@ -1184,6 +1189,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+      `catalogue_hosted_inference_matrix=${JSON.stringify(plan.catalogueMatrices["hosted-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
       `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
