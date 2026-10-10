@@ -687,6 +687,27 @@ describe("inventory commands", () => {
     );
   });
 
+  it("marks active sandbox sessions in list output (#12665)", async () => {
+    const lines: string[] = [];
+    await listSandboxesCommand({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          { name: "alpha", model: "m", provider: "p" },
+          { name: "beta", model: "m", provider: "p" },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+      getActiveSessionCount: (sandboxName) => (sandboxName === "alpha" ? 1 : 0),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("    alpha * ●");
+    expect(lines).toContain("    beta");
+    expect(lines).not.toContain("    beta ●");
+  });
+
   it("uses live gateway inference for the default sandbox in list output (#2369)", async () => {
     const lines: string[] = [];
     await listSandboxesCommand({
@@ -1206,7 +1227,7 @@ describe("inventory commands", () => {
     });
   });
 
-  it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", async () => {
+  it("emits an active-sessions line per sandbox when getActiveSessionCount is provided (#2604)", async () => {
     const lines: string[] = [];
     await showStatusCommand({
       listSandboxes: () => ({
@@ -1222,8 +1243,8 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      SSH sessions: 2");
-    expect(lines).toContain("      SSH sessions: none");
+    expect(lines).toContain("      Active sessions: 2");
+    expect(lines).toContain("      Active sessions: none");
   });
 
   it("renders the exact active count when exactly one session (#2604)", async () => {
@@ -1239,10 +1260,10 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      SSH sessions: 1");
+    expect(lines).toContain("      Active sessions: 1");
   });
 
-  it("omits the SSH sessions line when getActiveSessionCount returns null (probe unavailable)", async () => {
+  it("omits the active-sessions line when getActiveSessionCount returns null (probe unavailable)", async () => {
     const lines: string[] = [];
     await showStatusCommand({
       listSandboxes: () => ({
@@ -1255,10 +1276,10 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines.some((l) => l.includes("SSH sessions:"))).toBe(false);
+    expect(lines.some((l) => l.includes("Active sessions:"))).toBe(false);
   });
 
-  it("omits the SSH sessions line when the dep is not wired", async () => {
+  it("omits the active-sessions line when the dep is not wired", async () => {
     const lines: string[] = [];
     await showStatusCommand({
       listSandboxes: () => ({
@@ -1270,7 +1291,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines.some((l) => l.includes("SSH sessions:"))).toBe(false);
+    expect(lines.some((l) => l.includes("Active sessions:"))).toBe(false);
   });
 
   it("awaits asynchronous gateway health, emits its diagnostic, and sets process.exitCode (#3386)", async () => {

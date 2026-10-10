@@ -133,7 +133,7 @@ describe("connectSandbox flow", () => {
       exitSpy.mock.invocationCallOrder[0]!,
     );
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("existing SSH sessions");
+    expect(output).toContain("existing active sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
   });

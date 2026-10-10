@@ -405,7 +405,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Policies: npm, telegram");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
-    expect(output).toContain("SSH sessions: 2");
+    expect(output).toContain("Active sessions: 2");
     expect(output).toContain("Update:");
     expect(output).toContain("Recovered NemoClaw gateway runtime via gateway reattach.");
     expect(output).toContain("Recovered sandbox 'alpha' from Docker via docker unpause");
@@ -429,14 +429,14 @@ describe("showSandboxStatus flow", () => {
     expect(output).not.toContain("Policies: none");
   });
 
-  it("reports zero SSH sessions as 'none' without connection-negative language (#7805)", async () => {
+  it("reports zero active sessions as 'none' without connection-negative language (#7805)", async () => {
     const harness = createStatusFlowHarness();
     harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: true, sessions: [] });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("SSH sessions: none");
+    expect(output).toContain("Active sessions: none");
     expect(output).not.toMatch(/^\s*Connected:/m);
   });
 
@@ -478,14 +478,14 @@ describe("showSandboxStatus flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("\u001b[31m");
   });
 
-  it("omits SSH sessions when the active-session probe is unavailable (#7805)", async () => {
+  it("omits active sessions when the session probe is unavailable (#7805)", async () => {
     const harness = createStatusFlowHarness();
     harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: false, sessions: [] });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).not.toMatch(/^\s*(?:Connected|SSH sessions):/m);
+    expect(output).not.toMatch(/^\s*(?:Connected|Active sessions):/m);
   });
 
   it("omits serving-process status when the gateway is unavailable (#7003)", async () => {

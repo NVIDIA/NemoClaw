@@ -2385,7 +2385,7 @@ export async function printInteractiveSessionHints(sandboxName: string): Promise
     if (sessionResult.detected && sessionResult.sessions.length > 0) {
       const count = sessionResult.sessions.length;
       console.log(
-        `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
+        `  ${D}Note: ${count} existing active session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
       );
     }
   } catch {

@@ -116,10 +116,10 @@ export async function confirmSandboxRebuildIfNeeded(
   if (activeSessionCount > 0) {
     const plural = activeSessionCount > 1 ? "sessions" : "session";
     console.log(
-      `  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
+      `  ${YW}⚠  Active ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
     );
     console.log(
-      `  Rebuilding will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+      `  Rebuilding will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural}; running commands will be interrupted.`,
     );
     console.log("");
   }
