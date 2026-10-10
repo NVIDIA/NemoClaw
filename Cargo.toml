@@ -13,6 +13,7 @@ members = [
     "crates/nemoclaw-provider",
     "crates/nemoclaw-e2e",
     "crates/nemoclaw-test-fixtures",
+    "crates/nemoclaw-fixture-provider",
     "crates/nemoclaw-cli",
     "crates/nemoclaw-runtime",
     "crates/nemoclaw-build",

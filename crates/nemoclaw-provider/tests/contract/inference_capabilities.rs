@@ -7,7 +7,6 @@ use crate::{http_fixture::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::PathBuf,
     process::Output,
     sync::{Arc, Mutex},
 };
@@ -17,10 +16,7 @@ use std::{
 type Seen = (String, String, Option<String>, bool);
 
 fn workspace() -> TofuWorkspace {
-    let path = |name| PathBuf::from(std::env::var_os(name).expect("explicit qualification path"));
-    let (tofu, provider) = (path("NEMOCLAW_TEST_TOFU"), path("NEMOCLAW_TEST_PROVIDER"));
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    TofuWorkspace::new(tofu, provider)
+    crate::workspace()
 }
 
 fn configure(workspace: &TofuWorkspace, endpoint: &str, api: &str) {
@@ -81,7 +77,7 @@ async fn model_server(status: u16, body: &'static str) -> (Fixture, Arc<Mutex<Ve
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated HTTP fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated HTTP fixture"]
 async fn model_catalog_reads_are_read_only_and_keep_api_qualification_unknown() {
     let (server, requests) = model_server(200, r#"{"data":[{"id":"fixture-model"}]}"#).await;
     let workspace = workspace();
@@ -106,7 +102,7 @@ async fn model_catalog_reads_are_read_only_and_keep_api_qualification_unknown() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated HTTP fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated HTTP fixture"]
 async fn rejected_anthropic_catalog_reads_report_required_authentication_without_upstream_text() {
     let (server, requests) = model_server(401, r#"{"error":"private-upstream-message"}"#).await;
     let workspace = workspace();
@@ -135,7 +131,7 @@ async fn rejected_anthropic_catalog_reads_report_required_authentication_without
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated HTTP fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated HTTP fixture"]
 async fn invalid_inputs_fail_validation_without_contacting_the_endpoint() {
     let (server, requests) = model_server(200, r#"{"data":[]}"#).await;
     let workspace = workspace();

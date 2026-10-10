@@ -3,11 +3,7 @@
 
 use crate::tofu::TofuWorkspace;
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Output,
-};
+use std::{fs, path::Path, process::Output};
 
 struct Experiment {
     dir: TofuWorkspace,
@@ -42,13 +38,8 @@ impl Experiment {
         }).to_string()).unwrap();
     }
     fn new(provider: impl AsRef<Path>) -> Self {
-        let tofu = PathBuf::from(
-            std::env::var_os("NEMOCLAW_TEST_TOFU")
-                .expect("explicit pinned OpenTofu executable required"),
-        );
-        assert!(tofu.is_absolute());
         let this = Self {
-            dir: TofuWorkspace::new(tofu, provider),
+            dir: TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
         };
         this.config("https://initial.example/v1");
         this.mode("normal");
@@ -93,7 +84,7 @@ impl Experiment {
 }
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
     let e = Experiment::new(nemoclaw_test_fixtures::fixture_executable(
         "nemoclaw-fixture-provider",
@@ -155,7 +146,7 @@ fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
 }
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and_absence() {
     let e = Experiment::new(nemoclaw_test_fixtures::fixture_executable(
         "nemoclaw-fixture-provider",
@@ -200,7 +191,7 @@ fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and
 }
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
     let e = Experiment::new(nemoclaw_test_fixtures::fixture_executable(
         "nemoclaw-fixture-provider",
@@ -217,15 +208,12 @@ fn real_tofu_retains_identity_after_creation_reports_a_later_failure() {
 // A managed gateway needs a local engine, which only Unix clients reach.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn production_provider_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {
     use nemoclaw_sdk::{compile, config::Document};
     use std::sync::{Arc, Mutex};
 
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit production provider required"),
-    );
-    assert!(provider.is_absolute());
+    let provider = crate::provider();
     let mode = Arc::new(Mutex::new("normal"));
     let shared = mode.clone();
     let fixture = crate::http_fixture::Fixture::engine(move |request| {

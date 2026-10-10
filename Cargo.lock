@@ -2639,6 +2639,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-fixture-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-runtime",
+ "nemoclaw-sdk",
+ "nemoclaw-test-fixtures",
+ "nemoclaw-tofu",
+ "rustls",
+ "serde_json",
+ "tf-provider",
+ "tokio",
+]
+
+[[package]]
 name = "nemoclaw-ollama-proxy"
 version = "0.1.0"
 dependencies = [
@@ -2807,18 +2822,13 @@ dependencies = [
 name = "nemoclaw-test-fixtures"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "http",
- "nemoclaw-runtime",
- "nemoclaw-sdk",
- "nemoclaw-tofu",
  "openshell-core",
  "prost",
  "rustls",
  "serde_json",
  "tar",
  "tempfile",
- "tf-provider",
  "tokio",
  "tokio-stream",
  "tonic",

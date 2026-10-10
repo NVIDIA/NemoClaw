@@ -1,25 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! A fake OpenShell gateway, owned OpenTofu workspaces, and fixture
-//! executables, shared by the provider contract tests and the end-to-end tests.
+//! A fake OpenShell gateway, owned OpenTofu workspaces, the bundle they run,
+//! and fixture executables, shared by the provider contract tests and the
+//! end-to-end tests.
+pub mod bundle;
 pub mod openshell;
 pub mod ssh;
 pub mod tofu;
 
-/// The fake `ssh` relay: beside `providers`, where archived lifecycle runs
-/// unpack it with the providers, or beside the test executables.
+pub use bundle::Bundle;
+
+/// The fake `ssh` relay, beside the test executables.
 #[must_use]
-pub fn ssh_relay(providers: &std::path::Path) -> std::path::PathBuf {
-    let beside = providers.join(executable("nemoclaw-fixture-ssh"));
-    if beside.is_file() {
-        return beside;
-    }
+pub fn ssh_relay() -> std::path::PathBuf {
     fixture_executable("nemoclaw-fixture-ssh")
 }
 
-/// A fixture executable this crate builds, such as `nemoclaw-fixture-provider`
-/// or `nemoclaw-fixture-ssh-simulator`.
+/// A fixture executable from this crate, such as `nemoclaw-fixture-ssh-simulator`,
+/// or from `nemoclaw-fixture-provider`.
 ///
 /// Cargo sets `CARGO_BIN_EXE_*` only for a package's own tests, so other
 /// packages find these beside their test executables: Cargo writes test
@@ -35,7 +34,7 @@ pub fn fixture_executable(name: &str) -> std::path::PathBuf {
         .join(executable(name));
     assert!(
         path.is_file(),
-        "{} is missing; build it with cargo build -p nemoclaw-test-fixtures",
+        "{} is missing; build it with cargo build -p nemoclaw-test-fixtures -p nemoclaw-fixture-provider",
         path.display()
     );
     path

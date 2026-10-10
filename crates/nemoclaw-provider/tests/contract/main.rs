@@ -31,6 +31,17 @@ mod vllm_runtime;
 
 pub use nemoclaw_test_fixtures::{openshell, tofu};
 
+/// The nemoclaw provider Cargo built from this checkout, the one under test.
+pub fn provider() -> std::path::PathBuf {
+    nemoclaw_test_fixtures::package_executable!("terraform-provider-nemoclaw")
+}
+
+/// A workspace with the provider under test, and OpenTofu and the openshell
+/// and fabric providers from the bundle.
+pub fn workspace() -> tofu::TofuWorkspace {
+    tofu::TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider())
+}
+
 /// Failed apply may record new data-source observations and condition
 /// results; its managed resources and lineage must still be preserved.
 pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
