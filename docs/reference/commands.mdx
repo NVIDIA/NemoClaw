@@ -2774,7 +2774,7 @@ Add a local skill directory to a running sandbox. NemoClaw validates and private
 $$nemoclaw my-assistant skill install ./my-skill/
 ```
 
-The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
+The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot exceed 64 characters. For a registered sandbox, skill commands select the agent from its registry record. They ignore another sandbox's latest onboarding selection.
 
 <AgentOnly variant="openclaw">
 
@@ -2837,7 +2837,7 @@ Removal delegates to `dcode skills delete <name> --agent agent --force --json`.
 $$nemoclaw my-assistant skill remove my-skill
 ```
 
-Use the skill name from the `SKILL.md` frontmatter, not the local directory name. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+Use the skill name from the `SKILL.md` frontmatter, not the local directory name. Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, cannot be `.` or `..`, and cannot exceed 64 characters.
 
 <AgentOnly variant="openclaw">
 
