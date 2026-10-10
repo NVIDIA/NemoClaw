@@ -81,12 +81,25 @@ The `ci` profile runs at most eight tests concurrently, reports slow tests every
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
 CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
 Each platform's build-and-test job and bundle job run in parallel on separate runners; its lifecycle workers start when both finish.
-Linux and macOS run two nextest hash partitions on separate runners with four test slots each; Windows runs its smaller suite on one.
+Every platform runs two nextest hash partitions on separate runners with four test slots each.
 Each platform starts its workers after its own jobs; it does not wait for other platforms.
 The existing `Test / PLATFORM` required checks succeed only when that platform's build, bundle, and lifecycle jobs succeed.
 After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.
 In GitHub Actions, the report is added to the job summary.
-The `test-` and `lifecycle-` timing artifacts contain the JUnit reports with per-test durations, with the partition in each lifecycle artifact name.
+Each platform's `Lifecycle timing` job then reports the whole lifecycle suite from the partitions' JUnit reports, using each partition's latest attempt and naming any partition without one; its wall time is the slowest partition's.
+That job never fails the platform.
+The `test-`, `lifecycle-`, `live-docker-`, and `live-kind-` timing artifacts contain the JUnit reports with per-test durations, with the partition in each lifecycle artifact name; the `live-docker` report covers all four of its nextest commands.
+
+[`.config/test-budgets.yaml`](../../.config/test-budgets.yaml) gives each test step a wall-clock budget and a limit for any one test:
+
+| Step | Wall budget | Per-test limit |
+|---|---|---|
+| `test` | 45 s | 8 s |
+| `lifecycle`, each partition | 360 s | 180 s |
+| `live-docker` | 360 s | 300 s |
+| `live-kind` | 270 s | 120 s |
+
+On the Linux CI runners, a step over its budget, or with a test over its limit, fails and names each offender with its time and limit; macOS, Windows, and local runs only report them.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.

@@ -326,8 +326,99 @@ fn budgets_name_each_step_over_its_wall_time_and_each_test_over_its_limit() {
     );
     assert!(budgets.get("live-kind").is_none());
     assert!(ci::timing::Budgets::parse("test:\n  wall_seconds: -1\n").is_err());
-    // The repository's budgets parse and cover the test and lifecycle steps.
+    // The repository's budgets parse and cover every step that writes a JUnit
+    // report, so each such step is enforced on the Linux runners.
     let repository =
         ci::timing::Budgets::parse(include_str!("../../../.config/test-budgets.yaml")).unwrap();
-    assert!(repository.get("test").is_some() && repository.get("lifecycle").is_some());
+    for step in Step::ALL
+        .into_iter()
+        .chain([Step::Archive, Step::LiveDocker, Step::LiveKind])
+        .filter(|step| step.junit().is_some())
+    {
+        assert!(
+            repository.get(step.name()).is_some(),
+            "{} has no budget in .config/test-budgets.yaml",
+            step.name()
+        );
+    }
+}
+
+const RERUN_JUNIT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="1" failures="0" errors="0" uuid="5b8f75da-b026-4226-b5dc-19f49fa7c054" timestamp="2026-10-09T00:30:00.000+00:00" time="3.000">
+    <testsuite name="nemoclaw-sdk::integration" tests="1" disabled="0" errors="0" failures="0">
+        <testcase name="deployment::rerun" classname="nemoclaw-sdk::integration" timestamp="2026-10-09T00:30:00.000+00:00" time="2.500"/>
+    </testsuite>
+</testsuites>
+"#;
+
+#[test]
+fn junit_reports_of_consecutive_runs_join_into_one_report_of_their_summed_time() {
+    let joined = ci::timing::join_consecutive(&[JUNIT.to_owned(), RERUN_JUNIT.to_owned()]).unwrap();
+    let run = ci::timing::Run::parse(&joined).unwrap();
+    assert_eq!(run.wall_seconds, 15.5);
+    assert_eq!(run.tests.len(), 5);
+    assert!(run.tests[1].failed);
+    assert_eq!(run.tests[4].name, "deployment::rerun");
+    assert_eq!(run.tests[4].seconds, 2.5);
+
+    let single = ci::timing::join_consecutive(&[RERUN_JUNIT.to_owned()]).unwrap();
+    assert_eq!(ci::timing::Run::parse(&single).unwrap().tests.len(), 1);
+    assert!(ci::timing::join_consecutive(&[]).is_err());
+    assert!(ci::timing::join_consecutive(&[JUNIT.to_owned(), "<testsuites>".to_owned()]).is_err());
+}
+
+#[test]
+fn a_partitioned_suite_is_reported_whole_from_the_latest_attempt_of_each_partition() {
+    let directory = tempfile::tempdir().unwrap();
+    for (artifact, xml) in [
+        // Shard 1 was rerun: its second attempt replaces the first.
+        ("lifecycle-linux_amd64-1-1", JUNIT),
+        ("lifecycle-linux_amd64-1-2", RERUN_JUNIT),
+        ("lifecycle-linux_amd64-2-1", JUNIT),
+        // Other platforms and artifacts are not this suite's partitions.
+        ("lifecycle-linux_arm64-3-1", JUNIT),
+        ("lifecycle-inputs-linux_amd64-abc-1", JUNIT),
+    ] {
+        let artifact = directory.path().join(artifact);
+        std::fs::create_dir(&artifact).unwrap();
+        std::fs::write(artifact.join("lifecycle.xml"), xml).unwrap();
+    }
+
+    let report =
+        ci::timing::partitioned_report(directory.path(), "linux_amd64", &[1, 2, 3], 3).unwrap();
+    // Partitions run in parallel, so the suite's wall time is its slowest partition's.
+    assert!(
+        report.contains(
+            "### lifecycle on linux_amd64, 3 partitions: 5 tests, 12.5 s wall, 15.0 s summed"
+        ),
+        "{report}"
+    );
+    assert!(report.contains("| 1 | 2 | 1 | 3.0 s | 2.5 s |"), "{report}");
+    assert!(
+        report.contains("| 2 | 1 | 4 | 12.5 s | 12.5 s |"),
+        "{report}"
+    );
+    // A partition that uploaded no report is named, so the totals cannot mislead.
+    assert!(report.contains("| 3 | | | | no JUnit report |"), "{report}");
+    assert!(
+        report.contains("| 9.2 s | nemoclaw-e2e::integration deployment::slow_scenario |"),
+        "{report}"
+    );
+    assert!(
+        report.contains("| 2.5 s | nemoclaw-sdk::integration deployment::rerun |"),
+        "{report}"
+    );
+
+    std::fs::write(
+        directory
+            .path()
+            .join("lifecycle-linux_amd64-2-1/lifecycle.xml"),
+        "<testsuites>",
+    )
+    .unwrap();
+    assert!(
+        ci::timing::partitioned_report(directory.path(), "linux_amd64", &[1, 2], 3)
+            .unwrap_err()
+            .contains("lifecycle-linux_amd64-2-1")
+    );
 }
