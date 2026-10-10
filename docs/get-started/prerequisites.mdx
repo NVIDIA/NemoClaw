@@ -25,6 +25,9 @@ The pipeline buffers decompressed layers in memory.
 On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
 If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
 
+Local inference has separate model and memory requirements.
+For a nominal 64 GB DGX Spark, refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for the Experimental Qwen profile, detected-capacity limits, and required release selection.
+
 ## Software
 
 | Dependency | Version                          |
