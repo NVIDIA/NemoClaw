@@ -131,7 +131,11 @@ export function createDeepAgentsCodeBaseImageResolutionOptions(
   return {
     // Retain the resolver's pre-existing global inputs alongside these agent
     // inputs. Per-agent cache-policy isolation is a separate cross-agent change.
-    inputPaths: [path.join(agentRoot, "manifest.yaml"), path.join(agentRoot, "requirements.lock")],
+    inputPaths: [
+      path.join(agentRoot, "manifest.yaml"),
+      path.join(agentRoot, "requirements.lock"),
+      "src/lib/agent/deep-agents-code-runtime-identity.json",
+    ],
     validateImage: (imageRef) =>
       deepAgentsCodeBaseImageMatchesVersion(imageRef, expectedVersion) &&
       deepAgentsCodeBaseImageMatchesSandboxIdentity(imageRef) &&

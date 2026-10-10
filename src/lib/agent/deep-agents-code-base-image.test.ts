@@ -51,6 +51,7 @@ describe("Deep Agents Code base image compatibility", () => {
       inputPaths: [
         "/test/root/agents/langchain-deepagents-code/manifest.yaml",
         "/test/root/agents/langchain-deepagents-code/requirements.lock",
+        "src/lib/agent/deep-agents-code-runtime-identity.json",
       ],
       validationDescription:
         "deepagents-code==9.8.7, sandbox identity, dos2unix, and the immutable security package inventory",
