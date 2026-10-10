@@ -730,6 +730,8 @@ it("continues force-fresh installation when Homebrew fails after the pinned runt
     observed_macos_openshell_install_method() { printf 'homebrew\n'; }
     spin_count=0
     spin() {
+      [ "$1" = "--show-output" ] || return 9
+      shift
       spin_count=$((spin_count + 1))
       printf 'spin:%s\n' "$1"
       [ "$spin_count" -eq 2 ]
