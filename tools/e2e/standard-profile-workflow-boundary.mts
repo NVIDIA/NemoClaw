@@ -32,8 +32,12 @@ const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
-const guardedCallerSecret = (name: string): string =>
-  `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
+const HOSTED_WORKFLOW_SOURCE_GUARD =
+  "github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && ";
+const guardedCallerSecret = (name: string, hosted = false): string =>
+  name === "HOSTED_INFERENCE_API_KEY"
+    ? `\${{ ${HOSTED_WORKFLOW_SOURCE_GUARD}github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}`
+    : `\${{ ${hosted ? HOSTED_WORKFLOW_SOURCE_GUARD : ""}${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -68,6 +72,14 @@ const PROFILE_JOBS = {
     matrix: "catalogue_nvidia_inference_matrix",
     credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
+    githubToken: false,
+    maxParallel: undefined,
+  },
+  "hosted-inference": {
+    job: "catalogue-hosted-inference",
+    matrix: "catalogue_hosted_inference_matrix",
+    credentialBoundary: "selected hosted inference API key",
+    secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "HOSTED_INFERENCE_API_KEY"],
     githubToken: false,
     maxParallel: undefined,
   },
@@ -183,6 +195,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       workload_source: "${{ needs.generate-matrix.outputs.workload_source }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
+      hosted_inference_model:
+        contract.job === "catalogue-hosted-inference" ? "${{ vars[matrix.model_env] }}" : undefined,
       target_id: "${{ matrix.target_id }}",
       runner:
         "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}",
@@ -202,7 +216,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       shard: "${{ matrix.shard }}",
       artifact_layout: "${{ matrix.artifact_layout }}",
       trusted_main:
-        "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
+        contract.job === "catalogue-hosted-inference"
+          ? `\${{ ${HOSTED_WORKFLOW_SOURCE_GUARD}${TRUSTED_CALLER_CREDENTIAL_PREDICATE} }}`
+          : "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
     })) {
       if (withInputs[name] !== expected) {
         errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
@@ -211,7 +227,11 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     const callerSecrets = record(job.secrets);
     if (
       Object.keys(callerSecrets).sort().join(",") !== [...contract.secrets].sort().join(",") ||
-      contract.secrets.some((name) => callerSecrets[name] !== guardedCallerSecret(name))
+      contract.secrets.some(
+        (name) =>
+          callerSecrets[name] !==
+          guardedCallerSecret(name, contract.job === "catalogue-hosted-inference"),
+      )
     ) {
       errors.push(`${contract.job} must receive only its profile secrets`);
     }
@@ -258,7 +278,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     trusted_main: "boolean",
   };
   if (
-    Object.keys(inputs).sort().join(",") !== Object.keys(requiredInputs).sort().join(",") ||
+    Object.keys(inputs).sort().join(",") !==
+      [...Object.keys(requiredInputs), "hosted_inference_model"].sort().join(",") ||
     Object.entries(requiredInputs).some(
       ([name, type]) =>
         record(inputs[name]).required !== true || record(inputs[name]).type !== type,
@@ -266,18 +287,28 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must require its exact execution-plan inputs");
   }
+  if (
+    !isDeepStrictEqual(record(inputs.hosted_inference_model), {
+      required: false,
+      type: "string",
+      default: "",
+    })
+  ) {
+    errors.push("standard E2E profile must accept an optional selected hosted model");
+  }
   const acceptedSecrets = [
     "DOCKERHUB_TOKEN",
     "DOCKERHUB_USERNAME",
     "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
+    "HOSTED_INFERENCE_API_KEY",
   ];
   const declaredSecrets = record(call.secrets);
   if (
     Object.keys(declaredSecrets).sort().join(",") !== acceptedSecrets.sort().join(",") ||
     acceptedSecrets.some((name) => record(declaredSecrets[name]).required !== false)
   ) {
-    errors.push("standard E2E profile must accept only its four optional profile secrets");
+    errors.push("standard E2E profile must accept only its declared optional profile secrets");
   }
   if (record(profile.permissions).contents !== "read") {
     errors.push("standard E2E profile permissions must be contents: read");
@@ -653,6 +684,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   }
 
   const execute = requireStep(errors, workflowSteps, "Run catalogue E2E target");
+  if (record(execute?.env).HOSTED_INFERENCE_MODEL !== "${{ inputs.hosted_inference_model }}") {
+    errors.push("standard E2E profile must use the caller-selected hosted model");
+  }
   const executeEnv = record(execute?.env);
   if (
     !String(execute?.run).includes('if [ "$INSTALL_MODE" != "none" ]; then') ||
@@ -669,6 +703,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
+    executeEnv.HOSTED_INFERENCE_API_KEY !==
+      "${{ inputs.trusted_main && secrets.HOSTED_INFERENCE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {
