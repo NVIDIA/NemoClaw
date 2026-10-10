@@ -32,6 +32,8 @@ export {
   ensureNativeNvidiaProvider,
   ensureNativeNvidiaProviderAttached,
   isNativeNvidiaProvider,
+  isNativeNvidiaCredentialReference,
+  resolveNativeNvidiaCredentialReference,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,

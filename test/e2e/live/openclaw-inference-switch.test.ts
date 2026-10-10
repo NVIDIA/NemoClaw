@@ -658,7 +658,7 @@ async function readAndAssertOpenClawConfig(
     expected.nativeCustomEndpoint
       ? /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_COMPATIBLE_API_KEY$/u
       : expected.nativeNvidia
-        ? /^\$\{NVIDIA_INFERENCE_API_KEY\}$/u
+        ? /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$/u
         : /^unused$/u,
   );
   expect(provider?.api).toBe(expected.inferenceApi);

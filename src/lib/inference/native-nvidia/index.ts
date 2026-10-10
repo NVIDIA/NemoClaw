@@ -85,3 +85,8 @@ export const ensureNativeNvidiaProvider = lifecycle.ensureProvider;
 export const verifyNativeNvidiaProviderAttachment = lifecycle.verifyProviderAttachment;
 export const ensureNativeNvidiaProviderAttached = lifecycle.ensureProviderAttached;
 export const detachNativeNvidiaProvider = lifecycle.detachProvider;
+
+export {
+  isNativeNvidiaCredentialReference,
+  resolveNativeNvidiaCredentialReference,
+} from "./credential-reference";

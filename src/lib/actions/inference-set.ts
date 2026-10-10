@@ -36,6 +36,8 @@ import {
   ensureNativeNvidiaProvider,
   ensureNativeNvidiaProviderAttached,
   isNativeNvidiaProvider,
+  isNativeNvidiaCredentialReference,
+  resolveNativeNvidiaCredentialReference,
   managedInferenceApiKey,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
   NVIDIA_INFERENCE_PLACEHOLDER,
@@ -199,6 +201,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   nativeCustomTransportDeps?: Partial<Omit<NativeCustomTransportDeps, "admitProfile">>;
   nativeCustomEndpointLookup?: EndpointDnsLookupFn;
   resolveNativeCustomCredentialReference?: typeof import("../inference/native-custom/credential-reference").resolveNativeCustomCredentialReference;
+  resolveNativeNvidiaCredentialReference?: typeof resolveNativeNvidiaCredentialReference;
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => {
@@ -723,14 +726,20 @@ function buildProviderConfig(
   const providerConfig: ConfigObject = {
     ...existing,
     baseUrl: route.inferenceBaseUrl,
-    apiKey: managedInferenceApiKey(
-      route.inferenceBaseUrl,
+    apiKey:
+      isNativeNvidiaProvider(provider) &&
       typeof existing.apiKey === "string" &&
-        existing.apiKey &&
-        existing.apiKey !== NVIDIA_INFERENCE_PLACEHOLDER
+      isNativeNvidiaCredentialReference(existing.apiKey)
         ? existing.apiKey
-        : "unused",
-    ),
+        : managedInferenceApiKey(
+            route.inferenceBaseUrl,
+            typeof existing.apiKey === "string" &&
+              existing.apiKey &&
+              existing.apiKey !== NVIDIA_INFERENCE_PLACEHOLDER &&
+              !isNativeNvidiaCredentialReference(existing.apiKey)
+              ? existing.apiKey
+              : "unused",
+          ),
     api: route.inferenceApi,
     models:
       selectedIndex < 0
@@ -754,6 +763,14 @@ export function patchOpenClawInferenceConfig(
   nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
   credentialReference?: string,
 ): { changed: boolean; route: SandboxInferenceConfig } {
+  if (
+    isNativeNvidiaProvider(provider) &&
+    credentialReference !== undefined &&
+    !isNativeNvidiaCredentialReference(credentialReference)
+  )
+    throw new InferenceSetError(
+      "OpenClaw native NVIDIA inference requires an issued credential reference.",
+    );
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(
     model,
@@ -798,6 +815,13 @@ export function patchOpenClawInferenceConfig(
       apiKey:
         credentialReference ||
         `openshell:resolve:env:${nativeCustomProviderAttachment.credentialEnv}`,
+    };
+  }
+
+  if (isNativeNvidiaProvider(provider) && credentialReference !== undefined) {
+    providers[route.providerKey] = {
+      ...cloneConfigObject(providers[route.providerKey]),
+      apiKey: credentialReference,
     };
   }
 
@@ -1341,6 +1365,26 @@ export function resolveMatchingAgentConfigTarget(
   return target;
 }
 
+async function nativeNvidiaReferenceForConfigSync(
+  input: {
+    selectingNativeNvidia: boolean;
+    agentName: string;
+    configSyncPending: boolean;
+    sandboxName: string;
+    gatewayName: string;
+  },
+  deps: Pick<InferenceSetDeps, "resolveNativeNvidiaCredentialReference">,
+): Promise<string | undefined> {
+  if (!input.selectingNativeNvidia || input.agentName !== "openclaw" || !input.configSyncPending)
+    return undefined;
+  // Native restart inherits the original gateway env. An issued handle lets
+  // a newly attached provider resolve without requiring a new env variable.
+  return (deps.resolveNativeNvidiaCredentialReference ?? resolveNativeNvidiaCredentialReference)({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+  });
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -1680,6 +1724,7 @@ async function runInferenceSetWithoutHostLock(
     null;
   let assertProviderCurrentBeforeSelection: (() => Promise<void>) | null = null;
   let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
+  let nativeNvidiaCredentialReference: string | undefined;
   let nativeNvidiaAttachmentChanged = false;
   let nativeNvidiaRegistryCommitted = false;
   let previousNativeNvidiaDetached = false;
@@ -1726,6 +1771,16 @@ async function runInferenceSetWithoutHostLock(
     });
     nativeNvidiaProviderAttachment = nativeNvidiaSelection.attachment;
     nativeNvidiaAttachmentChanged = nativeNvidiaSelection.attachmentChanged;
+    nativeNvidiaCredentialReference = await nativeNvidiaReferenceForConfigSync(
+      {
+        selectingNativeNvidia,
+        agentName,
+        configSyncPending: openClawConfigSyncPending,
+        sandboxName,
+        gatewayName: preparedRoute.gatewayName,
+      },
+      deps,
+    );
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
       providerMutation = await prepareInferenceSetProviderBinding({
@@ -2013,6 +2068,9 @@ async function runInferenceSetWithoutHostLock(
         contextWindow,
         provider,
         reasoningEffortRequest,
+        true,
+        undefined,
+        nativeNvidiaCredentialReference,
       );
     }
 

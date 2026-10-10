@@ -64,6 +64,7 @@ describe("runInferenceSet OpenClaw routing", () => {
   });
 
   it("selects a native NVIDIA provider registered before any sandbox used it", async () => {
+    const resolveReference = vi.fn(async () => "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY");
     const gatewayAuthority = {
       schemaVersion: 1 as const,
       profileId: "nemoclaw-nvidia-inference-v1" as const,
@@ -105,6 +106,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       getNativeNvidiaProviderAuthority: () => gatewayAuthority,
       providerAdapter,
       resolveCredentialValue: () => "",
+      resolveNativeNvidiaCredentialReference: resolveReference,
     });
 
     await runInferenceSet(
@@ -122,6 +124,38 @@ describe("runInferenceSet OpenClaw routing", () => {
       "nemoclaw",
       gatewayAuthority,
     );
+    expect(resolveReference).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+    });
+    const updates = deps.calls.setOpenClawConfigValues.mock.calls[0]?.[1] as OpenClawConfigUpdate[];
+    expect(
+      updates.find((update) => update.dotpath === "models.providers.inference")?.value,
+    ).toMatchObject({
+      apiKey: "openshell:resolve:env:v7_NVIDIA_INFERENCE_API_KEY",
+    });
+  });
+
+  it("does not activate NVIDIA inference when its issued sandbox reference is unavailable (#12636)", async () => {
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        provider: "openai-api",
+        model: "gpt-5.4",
+      },
+      resolveNativeNvidiaCredentialReference: async () => {
+        throw new Error("issued reference unavailable");
+      },
+    });
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/new-model", noVerify: true }, deps),
+    ).rejects.toThrow("issued reference unavailable");
+    expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("does not record or attach a native NVIDIA provider replaced during credential rotation", async () => {
@@ -621,7 +655,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       expect(providerUpdate?.value).toEqual({
         api: "openai-completions",
         baseUrl: "https://integrate.api.nvidia.com/v1",
-        apiKey: "${NVIDIA_INFERENCE_API_KEY}",
+        apiKey: "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY",
         headers: { "X-NemoClaw-Upstream-Provider": "nvidia-prod" },
         models: alreadyExists ? [otherModel, selectedModel] : [selectedModel, otherModel],
       });

@@ -271,6 +271,7 @@ export function createDeps(options: {
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue?: InferenceSetDeps["resolveCredentialValue"];
+  resolveNativeNvidiaCredentialReference?: InferenceSetDeps["resolveNativeNvidiaCredentialReference"];
   ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute?: InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"];
   probeSandboxRoute?: InferenceSetDeps["probeSandboxRoute"];
@@ -465,6 +466,9 @@ export function createDeps(options: {
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: calls.resolveCredentialValue,
+    resolveNativeNvidiaCredentialReference:
+      options.resolveNativeNvidiaCredentialReference ??
+      vi.fn(async () => "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY"),
     ensureHttpsPinRuntimeAdapter:
       calls.ensureHttpsPinRuntimeAdapter as unknown as EnsureHttpsPinRuntimeAdapterFn,
     revokeHttpsPinRuntimeAdapterRoute:

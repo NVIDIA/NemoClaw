@@ -999,12 +999,12 @@ test(
       );
       expectExitZero(config, "Hermes native endpoint after restart");
       expect(JSON.parse(config.stdout)).toBe(BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL);
-      const converseBeforeTurn = mock.converseCount;
+      const bedrockRequestsBeforeTurn = mock.converseCount + mock.streamCount;
       await assertHermesApiChat(sandbox, home);
       expect(
-        mock.converseCount,
-        "Hermes authenticates a fresh Converse request after restart",
-      ).toBeGreaterThan(converseBeforeTurn);
+        mock.converseCount + mock.streamCount,
+        "Hermes authenticates a fresh Bedrock request after restart",
+      ).toBeGreaterThan(bedrockRequestsBeforeTurn);
     } else {
       await approveOpenClawAdminScope(
         host,
