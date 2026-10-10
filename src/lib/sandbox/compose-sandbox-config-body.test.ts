@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
+import { NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract";
 import YAML from "yaml";
 
 const {
@@ -10,6 +16,7 @@ const {
   buildOpenClawNativeConfigSetInvocation,
   composeSandboxConfigBody,
   hermesConfigAllowsPrivateUrls,
+  runOpenClawNativeConfigBatchUntilHandleReady,
   writeSandboxConfig,
 } = require("./config") as {
   buildOpenClawNativeConfigBatchInvocation: (
@@ -34,6 +41,12 @@ const {
     },
   ) => string;
   hermesConfigAllowsPrivateUrls: (config: Record<string, unknown>) => boolean;
+  runOpenClawNativeConfigBatchUntilHandleReady: (
+    nativeNvidiaUpdate: boolean,
+    run: () => { status: number; stderr: string; error?: Error; signal?: string },
+    wait?: (ms: number) => void,
+    warn?: (message: string) => void,
+  ) => void;
   writeSandboxConfig: (
     sandboxName: string,
     target: typeof OPENCLAW_TARGET,
@@ -142,6 +155,161 @@ describe("composeSandboxConfigBody", () => {
         value: { apiKey: "sandbox-only-secret", models: [{ id: "model-a" }] },
       },
     ]);
+  });
+
+  it("gives a newly attached native NVIDIA handle to OpenClaw without exposing the raw key", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+    try {
+      const executable = path.join(directory, "openclaw");
+      fs.writeFileSync(executable, '#!/bin/sh\ncat "$4"\n', { mode: 0o700 });
+      const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+        { dotpath: "agents.defaults.model.primary", value: "inference/nvidia/model-a" },
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
+            api: "openai-completions",
+            models: [{ id: "nvidia/model-a" }],
+          },
+        },
+      ]);
+      const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+      const handle = "openshell:resolve:env:v42_NVIDIA_INFERENCE_API_KEY";
+      const run = (value: string | undefined) =>
+        spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            ...(value === undefined
+              ? { NVIDIA_INFERENCE_API_KEY: undefined }
+              : { NVIDIA_INFERENCE_API_KEY: value }),
+          },
+        });
+
+      const success = run(handle);
+      expect(success.status, `${success.error?.message ?? ""} ${success.stderr}`).toBe(0);
+      const batch = JSON.parse(success.stdout) as Array<{ path: string; value: unknown }>;
+      expect(batch).toEqual([
+        { path: "agents.defaults.model.primary", value: "inference/nvidia/model-a" },
+        {
+          path: "models.providers.inference",
+          value: {
+            baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            apiKey: handle,
+            api: "openai-completions",
+            models: [{ id: "nvidia/model-a" }],
+          },
+        },
+      ]);
+      expect(invocation.input).not.toContain(handle);
+      expect(invocation.args.join(" ")).not.toContain(handle);
+      expect(invocation.input).toContain(NVIDIA_INFERENCE_PLACEHOLDER);
+      expect(invocation.input).toContain(NVIDIA_HOSTED_NATIVE_ENDPOINT);
+
+      const wrongEndpoint = buildOpenClawNativeConfigBatchInvocation("alpha", [
+        {
+          dotpath: "models.providers.inference",
+          value: {
+            baseUrl: "https://other.example/v1",
+            apiKey: NVIDIA_INFERENCE_PLACEHOLDER,
+          },
+        },
+      ]);
+      const wrongCommand = wrongEndpoint.args.slice(wrongEndpoint.args.indexOf("--") + 1);
+      const refused = spawnSync(wrongCommand[0]!, wrongCommand.slice(1), {
+        input: wrongEndpoint.input,
+        encoding: "utf8",
+        timeout: 5_000,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH ?? ""}`,
+          NVIDIA_INFERENCE_API_KEY: handle,
+        },
+      });
+      expect(refused.status).not.toBe(0);
+      expect(refused.stdout).toBe("");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { value: undefined, expectedStatus: 75 },
+    { value: "nvapi-do-not-write", expectedStatus: 1 },
+    { value: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY", expectedStatus: 1 },
+  ])(
+    "refuses invalid native NVIDIA handle $value before config mutation",
+    ({ value, expectedStatus }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      try {
+        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
+          mode: 0o700,
+        });
+        const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
+          {
+            dotpath: "models.providers.inference",
+            value: { baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT, apiKey: NVIDIA_INFERENCE_PLACEHOLDER },
+          },
+        ]);
+        const command = invocation.args.slice(invocation.args.indexOf("--") + 1);
+        const failed = spawnSync(command[0]!, command.slice(1), {
+          input: invocation.input,
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            NVIDIA_INFERENCE_API_KEY: value,
+          },
+        });
+        expect(failed.status).toBe(expectedStatus);
+        expect(failed.stdout).toBe("");
+        expect(failed.stderr).not.toContain("nvapi-do-not-write");
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("retries only a missing newly attached handle before OpenClaw mutates config", () => {
+    const pending = { status: 75, stderr: "NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\n" };
+    const succeeded = { status: 0, stderr: "" };
+    const run = vi.fn().mockReturnValueOnce(pending).mockReturnValueOnce(succeeded);
+    const wait = vi.fn();
+    const warn = vi.fn();
+
+    runOpenClawNativeConfigBatchUntilHandleReady(true, run, wait, warn);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledExactlyOnceWith(2_000);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "Native NVIDIA provider handle pending; config attempt 1/10",
+    );
+
+    const exhaustedRun = vi.fn().mockReturnValue(pending);
+    const exhaustedWait = vi.fn();
+    expect(() =>
+      runOpenClawNativeConfigBatchUntilHandleReady(true, exhaustedRun, exhaustedWait, vi.fn()),
+    ).toThrow("Native OpenClaw config command failed after 10 attempt(s)");
+    expect(exhaustedRun).toHaveBeenCalledTimes(10);
+    expect(exhaustedWait).toHaveBeenCalledTimes(9);
+  });
+
+  it.each([
+    { status: 75, stderr: "unrelated failure" },
+    { status: 1, stderr: "NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING" },
+    { status: 1, stderr: "Native NVIDIA provider handle is unavailable or invalid" },
+  ])("does not retry other native config failures: $status $stderr", (result) => {
+    const failedRun = vi.fn().mockReturnValue(result);
+    const wait = vi.fn();
+    expect(() =>
+      runOpenClawNativeConfigBatchUntilHandleReady(true, failedRun, wait, vi.fn()),
+    ).toThrow("Native OpenClaw config command failed after 1 attempt(s)");
+    expect(failedRun).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
   });
 
   it("pins native writes to the supplied gateway instead of the ambient selection (#11764)", () => {

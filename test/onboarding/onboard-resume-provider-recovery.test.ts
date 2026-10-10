@@ -221,7 +221,6 @@ describe("rebuild resume session normalization", () => {
       },
     });
     session.metadata.fromDockerfile = "/tmp/reviewed.Dockerfile";
-    session.migratedLegacyValueHashes = { OLD_PROVIDER_KEY: "abc123" };
     session.steps.gateway.status = "complete";
     session.steps.inference.status = "complete";
     session.steps.openclaw.status = "failed";
@@ -252,7 +251,6 @@ describe("rebuild resume session normalization", () => {
 
     expect(rewound.sessionId).toBe(originalSessionId);
     expect(rewound.metadata.fromDockerfile).toBe("/tmp/reviewed.Dockerfile");
-    expect(rewound.migratedLegacyValueHashes).toEqual({ OLD_PROVIDER_KEY: "abc123" });
     expect(rewound.machine).toMatchObject({
       version: onboardSession.MACHINE_SNAPSHOT_VERSION,
       state: "complete",

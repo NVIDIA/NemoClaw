@@ -115,7 +115,6 @@ export function refreshLifecycle(publishToken = true) {
     updateSession: (mutator) => mutator(session) ?? session,
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),
-    persistMigratedLegacyKeys: vi.fn(),
   });
   const stage = () =>
     registration.stageSandboxCredentialProviders(

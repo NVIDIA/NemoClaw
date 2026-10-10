@@ -3,9 +3,38 @@
 
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import {
+  isPendingReservationForSession,
+  isRouteOnlySandboxReservation,
+} from "../../../state/registry/route-reservation";
 import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
 import { reserveRecoveredSandboxInferenceRoute } from "../../sandbox-lifecycle";
-import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
+import {
+  normalizeToolDisclosure,
+  resolveToolDisclosureRequest,
+  toolDisclosureOrDefault,
+  type ToolDisclosure,
+} from "../../../tool-disclosure";
+
+/** Choose the initial local OpenClaw default only for this session's new reservation. */
+export function initialOpenClawToolDisclosure(input: {
+  fresh: boolean;
+  agentName: string;
+  provider: string;
+  entry: SandboxEntry | null;
+  sessionId: string | undefined;
+  env: NodeJS.ProcessEnv;
+}): ToolDisclosure | null {
+  const localDefault =
+    input.fresh &&
+    input.agentName === "openclaw" &&
+    (input.provider === "ollama-local" || input.provider === "vllm-local") &&
+    input.entry !== null &&
+    isRouteOnlySandboxReservation(input.entry) &&
+    isPendingReservationForSession(input.entry, input.sessionId) &&
+    input.entry.toolDisclosure === undefined;
+  return localDefault ? (resolveToolDisclosureRequest(null, input.env) ?? "direct") : null;
+}
 
 export interface SandboxResumeSignals {
   readonly resume: boolean;

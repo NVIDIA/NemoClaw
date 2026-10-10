@@ -60,6 +60,8 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  selectedProviderModelProvenance,
+  type SelectedModelOrigin,
   resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
   vllmInstallRecoveryOptions,
@@ -872,6 +874,16 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   const selectedModel = isBackToSelection(state.model) ? null : state.model;
   await maybePromptForSupportedInferenceInputCapability(input.deps, input.agent, selectedModel);
   return {
+    ...selectedProviderModelProvenance({
+      model: selectedModel,
+      provider: state.provider,
+      endpointUrl: state.endpointUrl,
+      preferredInferenceApi: input.deps.resolveAgentInferenceApi(
+        input.agent.name,
+        state.provider,
+        input.deps.coerceAgentInferenceApi(input.agent, state.preferredInferenceApi),
+      ),
+    }),
     model: selectedModel,
     provider: state.provider,
     endpointUrl: state.endpointUrl,
@@ -993,12 +1005,27 @@ export function createSetupNim(
     let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
     let vllmModelIdentity: string | undefined;
     let selectedServingProfileProvenance: ServingProfileProvenance | null = null;
+    let selectedModelOrigin: SelectedModelOrigin | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
+      onModelSelected: (model, source) => {
+        selectedModelOrigin = {
+          model,
+          source,
+          provider: deps.remoteProviderConfig.build.providerName,
+        };
+      },
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
     });
     const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
+      onModelSelected: (model, source) => {
+        selectedModelOrigin = {
+          model,
+          source,
+          provider: deps.remoteProviderConfig.openrouter.providerName,
+        };
+      },
       defaultModel: resolveAgentDefaultCloudModel(agent),
       fallbackModelOptions: OPENROUTER_CLOUD_MODEL_OPTIONS,
       retiredModelIds: [],
@@ -1006,6 +1033,9 @@ export function createSetupNim(
     });
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
+        onModelSelected: (model, source) => {
+          selectedModelOrigin = { model, source, provider: state.provider };
+        },
         model,
         provider,
         endpointUrl,
@@ -1575,7 +1605,20 @@ export function createSetupNim(
           hasTrustedPrivateCapability: Boolean(endpointTrustedPrivateCapability),
         });
     await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
+    const modelProvenanceUpdate = selectedProviderModelProvenance({
+      model: selectedModel,
+      provider,
+      endpointUrl,
+      preferredInferenceApi: deps.resolveAgentInferenceApi(
+        agent?.name ?? null,
+        provider,
+        deps.coerceAgentInferenceApi(agent, preferredInferenceApi),
+      ),
+      requestedModel,
+      selectedModelOrigin,
+    });
     return {
+      ...modelProvenanceUpdate,
       model: selectedModel,
       provider,
       endpointUrl,

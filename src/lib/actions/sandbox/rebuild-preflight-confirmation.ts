@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordTelemetryTarget } from "../telemetry/operation";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
 import { B, D, R, YW } from "../../cli/terminal-style";
@@ -11,6 +12,7 @@ import {
 } from "../../domain/lifecycle/options";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import * as sandboxVersion from "../../sandbox/version";
+import { escapeTerminalText } from "../../policy/preset-scope-render";
 import { redact, redactFullWithUrls } from "../../security/redact";
 import {
   createSystemDeps as createSessionDeps,
@@ -30,6 +32,13 @@ export function redactBoundedRebuildFailure(error: unknown): string {
   return redactFullWithUrls(error instanceof Error ? error.message : String(error))
     .trim()
     .slice(0, MAX_REBUILD_FAILURE_MESSAGE_CHARS);
+}
+
+export function redactBoundedRebuildTerminalDiagnostic(error: unknown): string {
+  return escapeTerminalText(redactBoundedRebuildFailure(error)).slice(
+    0,
+    MAX_REBUILD_FAILURE_MESSAGE_CHARS,
+  );
 }
 
 export function createRebuildCommandContext(
@@ -173,6 +182,7 @@ export async function confirmDelegatedRebuildIntent(
     console.error(
       "  Cannot confirm rebuild without an interactive terminal. Re-run with --yes or --force.",
     );
+    recordTelemetryTarget({ scope: "sandbox", sandboxName, outcome: "failed", state: "unchanged" });
     return false;
   }
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
@@ -187,6 +197,12 @@ export async function confirmDelegatedRebuildIntent(
       requestedDcodeAutoApprovalMode,
     ))
   ) {
+    recordTelemetryTarget({
+      scope: "sandbox",
+      sandboxName,
+      outcome: "cancelled",
+      state: "unchanged",
+    });
     return false;
   }
   await ensureRebuildUsageNoticeOrBail((message) => {
@@ -221,6 +237,12 @@ export async function confirmRebuildIntent(
       requestedDcodeAutoApprovalMode,
     ))
   ) {
+    recordTelemetryTarget({
+      scope: "sandbox",
+      sandboxName,
+      outcome: "cancelled",
+      state: "unchanged",
+    });
     return null;
   }
   await ensureRebuildUsageNoticeOrBail(bail);

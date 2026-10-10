@@ -7,13 +7,13 @@ import type {
 } from "../openshell/sandbox-command";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
 
-import { createCliOpenShellSandboxCommandExecutor } from "../openshell/sandbox-command-cli";
 import {
-  buildOpenShellRuntimeSelectionEnv,
-  type OpenShellRuntimeSelection,
-} from "../openshell/runtime-selection";
+  buildSandboxCommandEnvironment,
+  createCliOpenShellSandboxCommandExecutor,
+} from "../openshell/sandbox-command-cli";
+export { buildSandboxCommandEnvironment } from "../openshell/sandbox-command-cli";
+import type { OpenShellRuntimeSelection } from "../openshell/runtime-selection";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -103,7 +103,7 @@ function commandTransportDependencies(
 ): CommandTransportDependencies {
   return {
     buildSandboxExecMarkedCommand,
-    buildSubprocessEnv,
+    buildSubprocessEnv: buildSandboxCommandEnvironment,
     extractSandboxExecCommandStdout,
     commandExecutor: {
       runBuffered: (request) =>
@@ -113,16 +113,6 @@ function commandTransportDependencies(
         }),
     },
   };
-}
-
-/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
-export function buildSandboxCommandEnvironment(
-  runtimeSelection?: OpenShellRuntimeSelection,
-  runtimeEnv?: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  return runtimeSelection
-    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
-    : (runtimeEnv ?? buildSubprocessEnv());
 }
 
 export async function executeSandboxExecCommand(

@@ -7,7 +7,8 @@ const { runBuffered, runSshBuffered, executePrivilegedSandboxCommand } = vi.hois
   runSshBuffered: vi.fn(),
   executePrivilegedSandboxCommand: vi.fn(),
 }));
-vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
+vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-command-cli")>()),
   runCliOpenShellBufferedCommand: runSshBuffered,
   createCliOpenShellSandboxCommandExecutor: () => ({ runBuffered }),
 }));
