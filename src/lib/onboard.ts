@@ -279,7 +279,7 @@ const {
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
   VLLM_LOCAL_CREDENTIAL_ENV: string;
   getProviderLabel: (key: string) => string;
-  getNonInteractiveProvider: (allowHostedInferenceStaging?: boolean) => string | null;
+  getNonInteractiveProvider: (allowStaging?: boolean, agentName?: string | null) => string | null;
   getNonInteractiveModel: (providerKey: string) => string | null;
   getSandboxInferenceConfig: (
     model: string,
@@ -2246,7 +2246,7 @@ function getSetupNimDeps(): SetupNimDeps {
     checkpointManagedLlamaCppSelection: onboardSession.checkpointManagedLlamaCppSelection,
     step,
     isNonInteractive,
-    getNonInteractiveProvider,
+    getNonInteractiveProvider: (agentName) => getNonInteractiveProvider(true, agentName),
     getNonInteractiveModel,
     createNvidiaFeaturedModelSession,
     detectInferenceProviderHostState,

@@ -36,7 +36,7 @@ interface VllmInstallResumeSessionAccess {
 }
 
 export interface VllmInstallResumeDeps {
-  getNonInteractiveProvider(): string | null;
+  getNonInteractiveProvider(agentName?: string | null): string | null;
   getVllmInstallResumeModel?(): string | null;
   checkpointVllmInstallModel?(modelId: string): void;
 }
@@ -53,8 +53,8 @@ export function applyVllmInstallResumeDefaults<T extends VllmInstallResumeDeps>(
 ): T {
   return {
     ...deps,
-    getNonInteractiveProvider: () =>
-      deps.getNonInteractiveProvider() ??
+    getNonInteractiveProvider: (agentName) =>
+      deps.getNonInteractiveProvider(agentName) ??
       (readVllmInstallResumeModel(access) ? "install-vllm" : null),
     getVllmInstallResumeModel: () =>
       deps.getVllmInstallResumeModel?.() ?? readVllmInstallResumeModel(access),

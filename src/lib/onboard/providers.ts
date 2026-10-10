@@ -5,6 +5,7 @@
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
 const { redact } = require("../runner");
+const { resolveAgentNameAlias } = require("../agent/aliases");
 const { normalizeCredentialValue } = require("../credentials/store");
 const {
   DEFAULT_CLOUD_MODEL,
@@ -50,6 +51,7 @@ const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/op
 const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
 const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
+const HOSTED_INFERENCE_PROVIDER_KEY_AGENT = "langchain-deepagents-code";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
 const MODEL_ENV = "NEMOCLAW_MODEL";
@@ -254,8 +256,8 @@ function getEffectiveProviderName(providerKey) {
 
 // ── Non-interactive helpers ──────────────────────────────────────
 
-function getNonInteractiveProvider(allowHostedInferenceStaging = true) {
-  if (allowHostedInferenceStaging) stageHostedInferenceSourceSecretEnv();
+function getNonInteractiveProvider(allowHostedInferenceStaging = true, agentName = null) {
+  if (allowHostedInferenceStaging) stageHostedInferenceSourceSecretEnv(agentName);
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
   const normalized = normalizeNonInteractiveProviderKey(providerKey);
@@ -267,10 +269,9 @@ function getNonInteractiveProvider(allowHostedInferenceStaging = true) {
   return normalized;
 }
 
-function stageHostedInferenceSourceSecretEnv() {
-  const agentName = (process.env.NEMOCLAW_AGENT || "").trim().toLowerCase();
+function stageHostedInferenceSourceSecretEnv(agentName = null) {
   let providerKeySource = "";
-  if (agentName === "langchain-deepagents-code") {
+  if (resolveAgentNameAlias(agentName, [HOSTED_INFERENCE_PROVIDER_KEY_AGENT])) {
     const rawProviderKeySource = normalizeCredentialValue(
       // check-direct-credential-env-ignore -- Deep Agents provider-key alias is immediately route-filtered and restaged as COMPATIBLE_API_KEY.
       process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "",
@@ -357,14 +358,22 @@ function getNonInteractiveModel(providerKey, options = {}) {
 }
 
 // No default for nonInteractive — onboard.ts wrapper supplies isNonInteractive().
-function getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging = true) {
-  return nonInteractive ? getNonInteractiveProvider(allowHostedInferenceStaging) : null;
+function getRequestedProviderHint(
+  nonInteractive,
+  allowHostedInferenceStaging = true,
+  agentName = null,
+) {
+  return nonInteractive ? getNonInteractiveProvider(allowHostedInferenceStaging, agentName) : null;
 }
 
-function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = true) {
+function getRequestedModelHint(
+  nonInteractive,
+  allowHostedInferenceStaging = true,
+  agentName = null,
+) {
   if (!nonInteractive) return null;
   const providerKey =
-    getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging) || "cloud";
+    getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging, agentName) || "cloud";
   return getNonInteractiveModel(providerKey);
 }
 
