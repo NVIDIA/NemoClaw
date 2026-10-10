@@ -28,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import replace as dataclass_replace
 from types import SimpleNamespace
 from urllib.parse import urlparse, urlunparse
@@ -44,6 +45,11 @@ _BROWSER_CDP_TUNNEL_PATCH_ATTR = "_nemoclaw_browser_use_cdp_tunnel_patch_install
 _BROWSER_SESSION_STATE_PATCH_ATTR = "_nemoclaw_browser_use_session_state_patch_installed"
 _MESSAGING_RESPONSE_PATCH_ATTR = "_nemoclaw_messaging_response_patch_installed"
 _BROWSER_USE_CDP_TUNNELS = {}
+
+_CONNECTOR_SOURCE_BOUNDARIES = {}
+_CONNECTOR_SOURCE_BOUNDARIES_LOCK = threading.RLock()
+_CONNECTOR_DISCOVERY_TOOLS = frozenset({"tool_search", "tool_describe"})
+_MCP_TOOL_NAME_RE = re.compile(r"^mcp__(?P<server>.+?)__", flags=re.IGNORECASE)
 
 _TOOL_GATEWAY_URL_ENV = {
     "firecrawl": "FIRECRAWL_GATEWAY_URL",
@@ -1036,6 +1042,263 @@ def _load_hermes_config():
     return None
 
 
+def _connector_key(value):
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+def _configured_connector_names():
+    config = _load_hermes_config()
+    servers = config.get("mcp_servers", {}) if isinstance(config, dict) else {}
+    if not isinstance(servers, dict):
+        return ()
+    return tuple(
+        sorted(
+            {
+                _connector_key(name)
+                for name in servers
+                if isinstance(name, str) and _connector_key(name)
+            },
+        ),
+    )
+
+
+def _connector_display_name(connector):
+    return str(connector or "").replace("_", " ").strip().title()
+
+
+def _explicit_connector_requests(user_message, connector_names):
+    text = str(user_message or "").lower()
+    requested = []
+    for connector in connector_names:
+        key = _connector_key(connector)
+        if not key:
+            continue
+        words = [re.escape(word) for word in key.split("_") if word]
+        phrase = r"[\s_-]+".join(words)
+        patterns = (
+            rf"\b(?:use|using|via|through|from)\s+(?:the\s+)?{phrase}\b",
+            rf"\b(?:call|run)\s+(?:mcp__)?{phrase}(?:__|[\s_-])",
+            rf"\b{phrase}\s+only\b",
+            rf"\bonly\s+(?:the\s+)?{phrase}\b",
+            rf"\b(?:search|read|query|check|find|fetch|look\s+up)\s+"
+            rf"(?:(?:in|from|using|via)\s+)?{phrase}\b",
+        )
+        if any(re.search(pattern, text) for pattern in patterns):
+            requested.append(key)
+    return tuple(sorted(set(requested)))
+
+
+def _begin_connector_source_boundary(session_id, turn_id, user_message):
+    """Start one explicit named-connector boundary for a Hermes turn.
+
+    A later turn replaces the boundary, so explicit user consent such as
+    ``Use Glean instead`` can select a different source without inheriting the
+    failed connector from the previous turn.
+    """
+    session_key = str(session_id or "").strip()
+    if not session_key:
+        return ()
+    connectors = _explicit_connector_requests(
+        user_message,
+        _configured_connector_names(),
+    )
+    with _CONNECTOR_SOURCE_BOUNDARIES_LOCK:
+        if not connectors:
+            _CONNECTOR_SOURCE_BOUNDARIES.pop(session_key, None)
+            return ()
+        _CONNECTOR_SOURCE_BOUNDARIES[session_key] = {
+            "turn_id": str(turn_id or "").strip(),
+            "connectors": connectors,
+            "attempted": set(),
+            "succeeded": set(),
+            "failed": set(),
+        }
+    return connectors
+
+
+def _connector_boundary_for_hook(session_id, turn_id=None):
+    session_key = str(session_id or "").strip()
+    if not session_key:
+        return None
+    with _CONNECTOR_SOURCE_BOUNDARIES_LOCK:
+        boundary = _CONNECTOR_SOURCE_BOUNDARIES.get(session_key)
+        if boundary is None:
+            return None
+        expected_turn = str(boundary.get("turn_id") or "").strip()
+        actual_turn = str(turn_id or "").strip()
+        if expected_turn and actual_turn and expected_turn != actual_turn:
+            return None
+        return boundary
+
+
+def _mcp_connector_for_tool(tool_name):
+    match = _MCP_TOOL_NAME_RE.match(str(tool_name or ""))
+    return _connector_key(match.group("server")) if match else None
+
+
+def _connector_source_pre_tool_call(tool_name, session_id="", turn_id="", **_kwargs):
+    boundary = _connector_boundary_for_hook(session_id, turn_id)
+    if boundary is None:
+        return None
+    tool = str(tool_name or "").strip()
+    if tool in _CONNECTOR_DISCOVERY_TOOLS:
+        return None
+    requested = set(boundary["connectors"])
+    if _mcp_connector_for_tool(tool) in requested:
+        return None
+    names = ", ".join(_connector_display_name(name) for name in boundary["connectors"])
+    return {
+        "action": "block",
+        "message": (
+            f"This turn is limited to {names}. Ask the user for permission before "
+            "using another connector or tool."
+        ),
+    }
+
+
+def _connector_tool_result_failed(status, result):
+    if str(status or "").strip().lower() != "ok":
+        return True
+    parsed = result
+    if isinstance(result, str):
+        stripped = result.strip()
+        if stripped.startswith("[TOOL_ERROR]"):
+            return True
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError):
+            return bool(re.match(r"^(?:error|failed|failure|unavailable)\b", stripped, re.I))
+    if not isinstance(parsed, dict):
+        return False
+    if parsed.get("success") is False or parsed.get("ok") is False or parsed.get("error"):
+        return True
+    return str(parsed.get("status") or "").strip().lower() in {
+        "error",
+        "failed",
+        "failure",
+        "partial",
+        "unavailable",
+    }
+
+
+def _connector_source_post_tool_call(
+    tool_name,
+    result=None,
+    session_id="",
+    turn_id="",
+    status="",
+    **_kwargs,
+):
+    boundary = _connector_boundary_for_hook(session_id, turn_id)
+    if boundary is None:
+        return None
+    connector = _mcp_connector_for_tool(tool_name)
+    if connector not in set(boundary["connectors"]):
+        return None
+    failed = _connector_tool_result_failed(status, result)
+    with _CONNECTOR_SOURCE_BOUNDARIES_LOCK:
+        boundary["attempted"].add(connector)
+        if failed:
+            boundary["failed"].add(connector)
+        else:
+            boundary["succeeded"].add(connector)
+    return None
+
+
+def _connector_boundary_failure_message(boundary):
+    if boundary is None:
+        return None
+    with _CONNECTOR_SOURCE_BOUNDARIES_LOCK:
+        requested = set(boundary["connectors"])
+        succeeded = set(boundary["succeeded"])
+        failed = set(boundary["failed"])
+    unverified = failed | (requested - succeeded)
+    if not unverified:
+        return None
+    names = ", ".join(_connector_display_name(name) for name in sorted(unverified))
+    if failed:
+        return (
+            f"The {names} connector request failed, so I could not verify the requested "
+            "result. I did not use another source."
+        )
+    return (
+        f"I could not verify the requested result through {names} because the connector "
+        "did not run successfully. I did not use another source."
+    )
+
+
+def _connector_source_transform_tool_result(
+    tool_name,
+    result,
+    session_id="",
+    turn_id="",
+    status="",
+    **_kwargs,
+):
+    """Bind failed named-source evidence into the durable model transcript."""
+    boundary = _connector_boundary_for_hook(session_id, turn_id)
+    if boundary is None:
+        return None
+    connector = _mcp_connector_for_tool(tool_name)
+    if connector not in set(boundary["connectors"]):
+        return None
+    if not _connector_tool_result_failed(status, result):
+        return None
+    failure = _connector_boundary_failure_message(boundary)
+    if not failure:
+        return None
+    return f"{result}\n\n[NemoClaw source boundary]\n{failure}"
+
+
+def _connector_source_transform_llm_output(response_text, session_id="", **_kwargs):
+    boundary = _connector_boundary_for_hook(session_id)
+    return _connector_boundary_failure_message(boundary)
+
+
+def _connector_source_post_llm_call(
+    assistant_response="",
+    conversation_history=None,
+    session_id="",
+    **_kwargs,
+):
+    """Keep Hermes' live transcript aligned with the fail-closed delivered answer.
+
+    Hermes intentionally persists the raw provider response before running output
+    transforms. The failed tool result above remains the durable source of truth;
+    this hook also replaces the shared in-memory assistant row so a follow-up turn
+    cannot treat the discarded success claim as established fact.
+    """
+    boundary = _connector_boundary_for_hook(session_id)
+    replacement = _connector_boundary_failure_message(boundary)
+    if replacement and isinstance(conversation_history, list):
+        for message in reversed(conversation_history):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                message["content"] = replacement
+                message.pop("_db_persisted", None)
+                break
+    _clear_connector_source_boundary(session_id=session_id)
+
+
+def _clear_connector_source_boundary(session_id="", **_kwargs):
+    session_key = str(session_id or "").strip()
+    if session_key:
+        with _CONNECTOR_SOURCE_BOUNDARIES_LOCK:
+            _CONNECTOR_SOURCE_BOUNDARIES.pop(session_key, None)
+
+
+def _connector_source_context(connectors):
+    if not connectors:
+        return None
+    names = ", ".join(_connector_display_name(name) for name in connectors)
+    return (
+        f"Named connector source boundary: use only {names} for this turn. If that "
+        "connector is unavailable or any requested read fails, report the failure and "
+        "stop. Do not use another connector, web, browser, file, code, terminal, memory, "
+        "or chat history unless the user explicitly grants permission in a later turn. "
+        "Never claim a successful read without a successful tool result from the named source."
+    )
+
+
 def _hermes_api_port():
     """Read the per-sandbox port the OpenAI-compatible API is exposed on.
 
@@ -1310,14 +1573,24 @@ def _pre_llm_call(**kwargs):
     # `_strip_think_blocks` normalizer (#4175) has a current-platform anchor
     # even on non-first turns and non-grounding turns.
     _set_current_messaging_platform(kwargs.get("platform"))
+    connector_context = _connector_source_context(
+        _begin_connector_source_boundary(
+            session_id=kwargs.get("session_id"),
+            turn_id=kwargs.get("turn_id"),
+            user_message=kwargs.get("user_message"),
+        ),
+    )
     if not _should_inject_nemoclaw_context(
         user_message=kwargs.get("user_message"),
         is_first_turn=bool(kwargs.get("is_first_turn")),
     ):
-        return None
+        return {"context": connector_context} if connector_context else None
     _install_nous_tool_broker_patch()
     _install_messaging_response_patch()
-    return {"context": _build_nemoclaw_agent_context(platform=kwargs.get("platform"))}
+    context = _build_nemoclaw_agent_context(platform=kwargs.get("platform"))
+    if connector_context:
+        context = f"{context}\n\n{connector_context}"
+    return {"context": context}
 
 
 def _handle_status(tool_input=None, context=None, **_kwargs):
@@ -1478,9 +1751,16 @@ def register(ctx):
     # Ground the model quietly through Hermes' context hook. This replaces the
     # old visible startup banner without reintroducing TUI interrupt noise.
     ctx.register_hook("pre_llm_call", _pre_llm_call)
+    ctx.register_hook("pre_tool_call", _connector_source_pre_tool_call)
+    ctx.register_hook("post_tool_call", _connector_source_post_tool_call)
+    ctx.register_hook("transform_tool_result", _connector_source_transform_tool_result)
+    ctx.register_hook("transform_llm_output", _connector_source_transform_llm_output)
+    ctx.register_hook("post_llm_call", _connector_source_post_llm_call)
 
     def _on_session_start(**kwargs):
+        _clear_connector_source_boundary(**kwargs)
         _install_nous_tool_broker_patch()
         _install_messaging_response_patch()
 
     ctx.register_hook("on_session_start", _on_session_start)
+    ctx.register_hook("on_session_end", _clear_connector_source_boundary)
