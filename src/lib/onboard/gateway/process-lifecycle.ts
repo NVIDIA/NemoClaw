@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+import {
+  readDockerDriverGatewayBinding,
+  removeDockerDriverGatewayBinding,
+  resolveGatewayStateDirForPort,
+} from "./state-dir";
 import type { OpenShellGatewayLifecycle } from "../../adapters/openshell/gateway-lifecycle";
 import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import type { Buffer } from "node:buffer";
@@ -128,7 +134,21 @@ export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps)
     clearRegistry: () => void = deps.clearRegistry,
     isDockerDriverGatewayEnabled: () => boolean = deps.isDockerDriverGatewayEnabled,
   ): Promise<boolean> {
-    return deps.destroyGatewayWithVolumeCleanup({
+    const home = os.homedir();
+    const port = deps.gatewayPort?.();
+    const binding = port === undefined ? null : readDockerDriverGatewayBinding(home, port);
+    const stateDir =
+      binding &&
+      port !== undefined &&
+      isDockerDriverGatewayEnabled() &&
+      !isExternallySupervised(resolveAuthority())
+        ? resolveGatewayStateDirForPort({
+            home,
+            port,
+            configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+          })
+        : null;
+    const removed = await deps.destroyGatewayWithVolumeCleanup({
       clearRegistry,
       dockerRemoveVolumesByPrefix: deps.dockerRemoveVolumesByPrefix,
       gatewayName: deps.gatewayName(),
@@ -142,6 +162,10 @@ export function createGatewayProcessLifecycle(deps: GatewayProcessLifecycleDeps)
       resolveAuthority,
       stopDockerDriverGatewayProcess,
     });
+    if (removed && stateDir && port !== undefined) {
+      removeDockerDriverGatewayBinding(home, port, stateDir);
+    }
+    return removed;
   }
 
   return {

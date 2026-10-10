@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ensureManagedGatewayStateRoot } from "../../onboard/gateway/state-dir";
+import { writeDockerDriverGatewayBinding } from "../../onboard/gateway/state-dir";
 import { connectManagedOpenShellSdk } from "./sdk";
 import { createSdkOpenShellSandboxCommandExecutor } from "./sandbox-command-sdk";
 
@@ -96,6 +97,28 @@ describe("OpenShell SDK sandbox command executor", () => {
       clientCert: Buffer.from("cert"),
       clientKey: Buffer.from("key"),
     });
+
+    const homeDir = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-sdk-binding-test-"));
+    roots.push(homeDir);
+    writeDockerDriverGatewayBinding(homeDir, 9443, {
+      stateDir,
+      dockerNetworkName: "custom-network",
+    });
+    connect.mockClear();
+    await connectManagedOpenShellSdk(
+      { kind: "named", gatewayName: "nemoclaw-9443" },
+      {
+        env: {},
+        homeDir,
+        loadSdk: async () => ({ OpenShellClient: { connect } }),
+      },
+    );
+    expect(connect).toHaveBeenCalledExactlyOnceWith({
+      gateway: "https://127.0.0.1:9443",
+      caCert: Buffer.from("ca"),
+      clientCert: Buffer.from("cert"),
+      clientKey: Buffer.from("key"),
+    });
   });
 
   it("connects to the owner-private canonical default state created before markers", async () => {
@@ -130,6 +153,18 @@ describe("OpenShell SDK sandbox command executor", () => {
           homeDir: "/unused",
           loadSdk: async () => ({ OpenShellClient: { connect: vi.fn() } }),
         },
+      ),
+    ).rejects.toThrow(/managed gateway state root marker/u);
+    const homeDir = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-sdk-unmarked-binding-"));
+    roots.push(homeDir);
+    writeDockerDriverGatewayBinding(homeDir, 8080, {
+      stateDir,
+      dockerNetworkName: "custom-network",
+    });
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw" },
+        { env: {}, homeDir, loadSdk: async () => ({ OpenShellClient: { connect: vi.fn() } }) },
       ),
     ).rejects.toThrow(/managed gateway state root marker/u);
   });
