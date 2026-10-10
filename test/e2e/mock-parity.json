@@ -538,6 +538,7 @@
     {
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
+        "src/lib/actions/maintenance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -831,6 +832,7 @@
         "test/e2e/fixtures/managed-image-receipt.ts"
       ],
       "fast": [
+        "src/lib/actions/inference-set-patch-openclaw.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
