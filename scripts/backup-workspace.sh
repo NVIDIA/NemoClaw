@@ -10,6 +10,7 @@ WORKSPACE_PATH="/sandbox/.openclaw/workspace"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
 FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md TOOLS.md HEARTBEAT.md MEMORY.md)
 DIRS=(memory)
+SANDBOX_MARKER=".sandbox"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,9 +33,11 @@ Usage:
 Commands:
   backup   Download workspace files from a sandbox to a timestamped local backup.
   restore  Upload workspace files from a local backup into a sandbox.
-           If no timestamp is given, the most recent backup is used.
+           If no timestamp is given, the most recent backup of that sandbox is used.
 
 Backup location: ${BACKUP_BASE}/<timestamp>/
+Each backup records the sandbox it came from, and restore without a timestamp
+only considers backups of the named sandbox.
 EOF
   exit 1
 }
@@ -118,6 +121,7 @@ do_backup() {
   mkdir "$dest" \
     || fail "Failed to create a new backup at ${dest}/. If it already exists, wait one second and retry; otherwise check directory ownership."
   chmod 0700 "$dest"
+  printf '%s\n' "$sandbox" >"${dest}/${SANDBOX_MARKER}"
 
   info "Backing up workspace from sandbox '${sandbox}'..."
 
@@ -157,18 +161,41 @@ do_backup() {
   info "Backup saved to ${dest}/ (${count} items)"
 }
 
+latest_backup_for_sandbox() {
+  local sandbox="$1"
+  local candidate
+  while IFS= read -r candidate; do
+    if [ -f "${BACKUP_BASE}/${candidate}/${SANDBOX_MARKER}" ] \
+      && [ "$(head -n1 "${BACKUP_BASE}/${candidate}/${SANDBOX_MARKER}")" = "$sandbox" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -r)
+  return 0
+}
+
 do_restore() {
   local sandbox="$1"
   local ts="${2:-}"
 
   if [ -z "$ts" ]; then
-    ts="$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -r | head -n1 || true)"
-    [ -n "$ts" ] || fail "No backups found in ${BACKUP_BASE}/"
-    info "Using most recent backup: ${ts}"
+    ts="$(latest_backup_for_sandbox "$sandbox")"
+    if [ -z "$ts" ]; then
+      fail "No backups found in ${BACKUP_BASE}/ for sandbox '${sandbox}'. Backups made before sandbox names were recorded need an explicit timestamp."
+    fi
+    info "Using most recent backup of '${sandbox}': ${ts}"
   fi
 
   local src="${BACKUP_BASE}/${ts}"
   [ -d "$src" ] || fail "Backup directory not found: ${src}"
+
+  if [ -f "${src}/${SANDBOX_MARKER}" ]; then
+    local backup_sandbox
+    backup_sandbox="$(head -n1 "${src}/${SANDBOX_MARKER}")"
+    if [ "$backup_sandbox" != "$sandbox" ]; then
+      warn "Backup ${ts} was taken from sandbox '${backup_sandbox}', not '${sandbox}'."
+    fi
+  fi
 
   info "Restoring workspace to sandbox '${sandbox}' from ${src}..."
 
