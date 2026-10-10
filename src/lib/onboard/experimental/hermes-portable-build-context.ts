@@ -49,6 +49,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/managed_policy.py",
   "agents/hermes/mcp-config-transaction.py",
   "agents/hermes/migrate-dashboard-state.py",
+  "agents/hermes/patch-agent-home.py",
   "agents/hermes/patch-auxiliary-token-limit.py",
   "agents/hermes/patch-cron-execution-runtime.py",
   "agents/hermes/patch-cron-restore-drain.py",
