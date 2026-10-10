@@ -18,6 +18,13 @@ export type ReportNeedResult = { result?: string };
 export type ReportNeeds = Record<string, ReportNeedResult>;
 
 export type ReportEnv = {
+  JOB_CHECKOUT_SHA?: string;
+  JOB_CHECKOUT_REPOSITORY?: string;
+  JOB_BASE_SHA?: string;
+  JOB_WORKFLOW_SHA?: string;
+  WORKFLOW_SHA?: string;
+  MATRIX_RESULT?: string;
+  SELECTED_WORKFLOW_JOBS?: string;
   EXPLICIT_ONLY_JOBS?: string;
   JOBS?: string;
   JOB_PR_NUMBER?: string;
@@ -51,11 +58,13 @@ export type ReportGithub = {
       }) => Promise<unknown>;
     };
     pulls: {
-      get: (input: {
-        owner: string;
-        repo: string;
-        pull_number: number;
-      }) => Promise<{ data: { state?: string } }>;
+      get: (input: { owner: string; repo: string; pull_number: number }) => Promise<{
+        data: {
+          state?: string;
+          head?: { sha?: string; repo?: { full_name?: string } };
+          base?: { sha?: string; ref?: string; repo?: { full_name?: string } };
+        };
+      }>;
       list: (input: {
         owner: string;
         repo: string;
@@ -78,8 +87,32 @@ const CATALOGUE_CREDENTIAL_BOUNDARIES = {
   "catalogue-standard": "no provider credential",
   "catalogue-nvidia-api": "NVIDIA API key",
   "catalogue-nvidia-inference": "NVIDIA inference API key",
+  "catalogue-hosted-inference": "selected hosted inference API key",
   "catalogue-github-read": "GitHub read token",
 } as const;
+
+function validHostedCandidateContext(env: ReportEnv, context: ReportContext): boolean {
+  let selectedJobs: unknown;
+  try {
+    selectedJobs = JSON.parse(env.SELECTED_WORKFLOW_JOBS || "[]");
+  } catch {
+    return false;
+  }
+  return (
+    context.repo.owner === "NVIDIA" &&
+    context.repo.repo === "NemoClaw" &&
+    context.ref === "refs/heads/main" &&
+    env.MATRIX_RESULT === "success" &&
+    Array.isArray(selectedJobs) &&
+    selectedJobs.includes("catalogue-hosted-inference") &&
+    env.JOB_CHECKOUT_REPOSITORY === "NVIDIA/NemoClaw" &&
+    Boolean(env.JOB_PR_NUMBER) &&
+    [env.JOB_CHECKOUT_SHA, env.JOB_BASE_SHA, env.JOB_WORKFLOW_SHA].every((sha) =>
+      /^[a-f0-9]{40}$/.test(sha || ""),
+    ) &&
+    env.JOB_WORKFLOW_SHA === env.WORKFLOW_SHA
+  );
+}
 
 export async function resolveReportPr(input: {
   github: ReportGithub;
@@ -90,6 +123,11 @@ export async function resolveReportPr(input: {
   const { github, context, core, env } = input;
   const workflowBranch = context.ref.replace("refs/heads/", "");
   const prNumberInput = env.JOB_PR_NUMBER || "";
+  const candidateRun = Boolean(env.JOB_CHECKOUT_SHA);
+  if (candidateRun && !validHostedCandidateContext(env, context)) {
+    core.setFailed("Candidate reporting requires an authorized hosted dispatch from trusted main.");
+    return undefined;
+  }
   if (prNumberInput) {
     if (!/^[1-9][0-9]*$/.test(prNumberInput)) {
       core.setFailed(
@@ -108,6 +146,17 @@ export async function resolveReportPr(input: {
         repo: context.repo.repo,
         pull_number: prNumber,
       });
+      if (
+        candidateRun &&
+        (suppliedPr.head?.sha !== env.JOB_CHECKOUT_SHA ||
+          suppliedPr.head?.repo?.full_name !== env.JOB_CHECKOUT_REPOSITORY ||
+          suppliedPr.base?.sha !== env.JOB_BASE_SHA ||
+          suppliedPr.base?.ref !== "main" ||
+          suppliedPr.base?.repo?.full_name !== "NVIDIA/NemoClaw")
+      ) {
+        core.setFailed("Candidate report identity no longer matches the PR head and base.");
+        return undefined;
+      }
       if (suppliedPr.state !== "open") {
         core.setFailed(
           `PR #${prNumber} is ${suppliedPr.state}; E2E reports only comment on open PRs.`,
@@ -337,11 +386,16 @@ export function renderE2eReport(input: {
     ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
     : [];
   const isSelectiveReportEntry = ([name, { result }]: [string, ReportEntry]) =>
-    result !== "skipped" &&
-    (name !== "generate-matrix" || result === "failure" || result === "cancelled");
+    (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)) ||
+    (result !== "skipped" &&
+      (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const selectedEntries =
     requestedTestIds.length > 0
-      ? allEntries.filter(([name]) => requestedTestIdSet.has(name))
+      ? allEntries.filter(
+          ([name]) =>
+            requestedTestIdSet.has(name) ||
+            (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)),
+        )
       : selectiveDispatch
         ? allEntries.filter(isSelectiveReportEntry)
         : allEntries;
@@ -396,7 +450,9 @@ export function renderE2eReport(input: {
                 ? "⚠️ No E2E results reported"
                 : skipped.length > 0 && passed.length === 0
                   ? "⚠️ No selected tests ran"
-                  : passingStatus;
+                  : skipped.length > 0 && validHostedCandidateContext(env, context)
+                    ? "⚠️ Some selected tests did not run"
+                    : passingStatus;
 
   const lines = [
     `### E2E Target Results — ${status}`,
@@ -419,6 +475,16 @@ export function renderE2eReport(input: {
     "|-----|--------|-----------------------|",
     ...rows,
   ];
+  if (env.JOB_CHECKOUT_SHA) {
+    lines.splice(
+      5,
+      0,
+      `**Candidate commit:** \`${env.JOB_CHECKOUT_SHA}\``,
+      `**Base commit:** \`${env.JOB_BASE_SHA}\``,
+      `**Trusted workflow commit:** \`${env.JOB_WORKFLOW_SHA}\``,
+      `**Evidence and cleanup:** [Run artifacts](${runUrl}#artifacts) contain the dispatch receipt, scenario evidence manifest, and per-sandbox \`cleanup.json\` when produced. Missing cleanup evidence is not a cleanup pass.`,
+    );
+  }
   if (failed.length > 0) {
     const failedLinks = failed
       .map(([name, { jobUrl }]) => `[${name}](${jobUrl ?? runUrl})`)

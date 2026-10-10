@@ -16,6 +16,7 @@ import {
   loadReportJobs,
   type ReportApiJob,
   type ReportContext,
+  type ReportEnv,
   type ReportGithub,
   type ReportNeeds,
   renderE2eReport,
@@ -965,3 +966,145 @@ it("rejects a report-to-pr script that resolves the trusted helpers but posts a 
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+const HOSTED_CANDIDATE_ENV: ReportEnv = {
+  JOB_PR_NUMBER: "12886",
+  JOB_CHECKOUT_SHA: "a".repeat(40),
+  JOB_CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
+  JOB_BASE_SHA: "b".repeat(40),
+  JOB_WORKFLOW_SHA: "c".repeat(40),
+  WORKFLOW_SHA: "c".repeat(40),
+  MATRIX_RESULT: "success",
+  SELECTED_WORKFLOW_JOBS: '["catalogue-hosted-inference"]',
+  JOB_TARGETS: "hosted-inference-openai",
+};
+
+function hostedCandidatePr() {
+  return {
+    state: "open",
+    head: { sha: "a".repeat(40), repo: { full_name: "NVIDIA/NemoClaw" } },
+    base: { sha: "b".repeat(40), ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
+  };
+}
+
+it.each(["success", "failure", "skipped"])(
+  "binds a hosted candidate report to its commit and retains %s results",
+  async (result) => {
+    const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
+    const github = reportGithub({ get: vi.fn(async () => ({ data: hostedCandidatePr() })) });
+    expect(
+      await resolveReportPr({ github, context: REPORT_CONTEXT, core, env: HOSTED_CANDIDATE_ENV }),
+    ).toBe(12886);
+    const report = renderE2eReport({
+      context: REPORT_CONTEXT,
+      env: HOSTED_CANDIDATE_ENV,
+      apiJobs: [],
+      apiJobsLoaded: true,
+      needs: { "generate-matrix": { result: "success" }, "catalogue-hosted-inference": { result } },
+    });
+    expect(report.body).toContain(`**Candidate commit:** \`${"a".repeat(40)}\``);
+    expect(report.body).toContain(`**Trusted workflow commit:** \`${"c".repeat(40)}\``);
+    expect(report.body).toContain("hosted-inference-openai");
+    expect(report.body).toContain(` ${result} |`);
+    expect(report.body).toContain("cleanup.json");
+    expect(report.body.includes("All selected tests passed")).toBe(result === "success");
+    expect(core.setFailed).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ["missing PR", { JOB_PR_NUMBER: "" }],
+  ["malformed commit", { JOB_CHECKOUT_SHA: "not-a-sha" }],
+  ["foreign candidate repository", { JOB_CHECKOUT_REPOSITORY: "someone/fork" }],
+  ["failed authorization", { MATRIX_RESULT: "failure" }],
+  ["unselected hosted job", { SELECTED_WORKFLOW_JOBS: '["catalogue-standard"]' }],
+  ["invalid selection", { SELECTED_WORKFLOW_JOBS: "{" }],
+  ["wrong workflow commit", { JOB_WORKFLOW_SHA: "d".repeat(40) }],
+])("rejects a candidate report with %s before a GitHub write", async (_reason, overrides) => {
+  const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
+  const github = reportGithub({ get: vi.fn(async () => ({ data: hostedCandidatePr() })) });
+  expect(
+    await resolveReportPr({
+      github,
+      context: REPORT_CONTEXT,
+      core,
+      env: { ...HOSTED_CANDIDATE_ENV, ...overrides },
+    }),
+  ).toBeUndefined();
+  expect(core.setFailed).toHaveBeenCalled();
+  expect(github.rest.issues.createComment).not.toHaveBeenCalled();
+});
+
+it.each(["head", "base"] as const)(
+  "rejects a candidate report after the PR %s changes",
+  async (side) => {
+    const pr = hostedCandidatePr();
+    pr[side].sha = "d".repeat(40);
+    const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
+    const github = reportGithub({ get: vi.fn(async () => ({ data: pr })) });
+    expect(
+      await resolveReportPr({ github, context: REPORT_CONTEXT, core, env: HOSTED_CANDIDATE_ENV }),
+    ).toBeUndefined();
+    expect(core.setFailed).toHaveBeenCalled();
+  },
+);
+
+it.each(["refs/heads/candidate", "refs/tags/main"])(
+  "rejects candidate reporting from %s",
+  async (ref) => {
+    const core = { info: vi.fn(), setFailed: vi.fn(), warning: vi.fn() };
+    const github = reportGithub({ get: vi.fn(async () => ({ data: hostedCandidatePr() })) });
+    expect(
+      await resolveReportPr({
+        github,
+        context: { ...REPORT_CONTEXT, ref },
+        core,
+        env: HOSTED_CANDIDATE_ENV,
+      }),
+    ).toBeUndefined();
+    expect(core.setFailed).toHaveBeenCalled();
+  },
+);
+
+it("does not qualify a skipped hosted smoke when setup succeeded", () => {
+  const report = renderE2eReport({
+    context: REPORT_CONTEXT,
+    env: HOSTED_CANDIDATE_ENV,
+    apiJobs: [],
+    apiJobsLoaded: true,
+    needs: {
+      "generate-matrix": { result: "success" },
+      "base-image-publication": { result: "success" },
+      "catalogue-hosted-inference": { result: "skipped" },
+    },
+  });
+  expect(report.body).toContain("Some selected tests did not run");
+  expect(report.body).not.toContain("All selected tests passed");
+  expect(report.body).toContain("skipped");
+});
+
+it.each(["failure", "skipped"])(
+  "retains a hosted %s when a requested shared test passes",
+  (result) => {
+    const report = renderE2eReport({
+      context: REPORT_CONTEXT,
+      env: {
+        ...HOSTED_CANDIDATE_ENV,
+        JOBS: "alpha",
+        TEST_MATRIX: JSON.stringify([DEFAULT_TEST_MATRIX[0]]),
+      },
+      apiJobsLoaded: true,
+      apiJobs: [
+        { name: "Shared E2E (alpha)", status: "completed", conclusion: "success", id: 456 },
+      ],
+      needs: {
+        "generate-matrix": { result: "success" },
+        "shared-e2e": { result: "success" },
+        "catalogue-hosted-inference": { result },
+      },
+    });
+    expect(report.body).toContain(` ${result} |`);
+    expect(report.body).toContain("| alpha | ✅ success |");
+    expect(report.body).not.toContain("All requested tests passed");
+  },
+);
