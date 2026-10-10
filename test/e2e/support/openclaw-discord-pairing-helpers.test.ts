@@ -197,6 +197,48 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 
+  it.each([
+    ["slack", "team:T3730E2E:user:U3730E2E", "U3730E2E", 0],
+    ["slack", "team:TOTHER:user:U3730E2E", "U3730E2E", 1],
+    ["slack", "U3730E2E", "U3730E2E", 1],
+    ["discord", "1005536447329222676", "1005536447329222676", 0],
+  ] as const)(
+    "checks the exact %s approval identity %s in SQLite",
+    (channel, storedEntry, user, expectedStatus) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pairing-approval-state-"));
+      try {
+        const database = path.join(tmp, "openclaw.sqlite");
+        const setup = spawnSync(
+          "python3",
+          [
+            "-c",
+            [
+              "import sqlite3, sys",
+              "db = sqlite3.connect(sys.argv[1])",
+              "db.execute('CREATE TABLE channel_pairing_allow_entries (channel_key TEXT, entry TEXT)')",
+              "db.execute('INSERT INTO channel_pairing_allow_entries VALUES (?, ?)', sys.argv[2:])",
+              "db.commit()",
+              "db.close()",
+            ].join("\n"),
+            database,
+            channel,
+            storedEntry,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(setup.status, setup.stderr).toBe(0);
+        const command = buildPairingAllowFromCommand(channel, user).replace(
+          "/sandbox/.openclaw/state/openclaw.sqlite",
+          database,
+        );
+        const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+        expect(result.status, result.stderr).toBe(expectedStatus);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("loads the managed OpenClaw package without starting a child shell", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-managed-root-"));
     try {
