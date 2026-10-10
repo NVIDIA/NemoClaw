@@ -1355,6 +1355,7 @@ async function destroySandboxUnlocked(
         current.routerCredentialHash === destroySession.routerCredentialHash,
       (current) => {
         current.sandboxName = null;
+        delete current.nativeCustomProviderAttachment;
         return current;
       },
       "nemoclaw destroy sandbox session cleanup",

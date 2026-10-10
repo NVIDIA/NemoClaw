@@ -2054,6 +2054,7 @@ export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRe
       current.status = "failed";
       current.resumable = false;
       current.sandboxName = null;
+      delete current.nativeCustomProviderAttachment;
       current.cancellationRecovery = null;
       saveSession(current);
     }
@@ -2301,6 +2302,7 @@ export function markStepRejected(stepName: string): Session {
       session.nimContainer = null;
       session.hermesToolGateways = null;
       session.sandboxName = null;
+      delete session.nativeCustomProviderAttachment;
       session.sandboxPromptProgress.sandboxName = false;
       session.resumable = false;
       session.status = "failed";

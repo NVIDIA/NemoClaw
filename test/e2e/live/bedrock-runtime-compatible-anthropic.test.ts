@@ -838,7 +838,9 @@ test(
     expect(shard).toBe(AGENT);
     validateSandboxName(SANDBOX_NAME);
 
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-runtime-home-"));
+    const home = fs.mkdtempSync(
+      path.join(os.userInfo().homedir, ".nemoclaw-bedrock-runtime-home-"),
+    );
     const hostsBackupDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-hosts-"));
     const hostsBackup = path.join(hostsBackupDir, "hosts");
     let mock: MockBedrockRuntime | undefined;

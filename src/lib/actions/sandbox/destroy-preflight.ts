@@ -545,6 +545,7 @@ export async function stopModelRouterForDestroyedSandbox(
               current.sessionId === destroyedSessionId && current.sandboxName === sandbox.name,
             (current) => {
               current.sandboxName = null;
+              delete current.nativeCustomProviderAttachment;
               return current;
             },
             "nemoclaw destroy sandbox session cleanup",

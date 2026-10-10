@@ -62,7 +62,7 @@ async function fixture(attached = true, unreachable = false) {
   const retire = spyOnNativeCustomDestroyCleanup(async () => {
     harness.events.push("native-cleanup");
   });
-  return { harness, retire };
+  return { harness, retire, receipt };
 }
 
 it.each([true, false])(
@@ -89,8 +89,21 @@ it.each([true, false])(
 it.each([true, false])(
   "retires owned native providers after confirmed deletion with attachment %s (#12636)",
   async (attached) => {
-    const { harness, retire } = await fixture(attached);
+    const { harness, retire, receipt } = await fixture(attached);
+    const session = harness.sessionStore;
+    vi.mocked(session.loadSession).mockRestore();
+    vi.mocked(session.acquireOnboardLock).mockRestore();
+    vi.mocked(session.releaseOnboardLock).mockRestore();
+    harness.compareAndSwapSessionSpy.mockRestore();
+    session.saveSession(
+      session.createSession({
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        ...(attached ? { nativeCustomProviderAttachment: receipt } : {}),
+      }),
+    );
     await harness.destroySandbox("alpha", { yes: true, cleanupGateway: false });
+    expect(session.loadSession()?.sandboxName).toBeNull();
     expect(retire).toHaveBeenCalledWith({ gatewayName: "nemoclaw-19080", sandboxName: "alpha" });
     expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("native-cleanup"));
     expect(retire.mock.invocationCallOrder[0]).toBeLessThan(

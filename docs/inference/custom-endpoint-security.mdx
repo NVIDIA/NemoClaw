@@ -86,8 +86,8 @@ After SSRF validation passes, NemoClaw starts a local reverse-proxy adapter on t
 The sandbox and its OpenShell provider configuration use the opaque local base `http://host.openshell.internal:<port>/route/<id>`.
 The host registry retains the admitted source endpoint and attachment identity for verification and recovery.
 The real upstream hostname and path do not reach the sandbox configuration.
-Host recovery state contains adapter process metadata, the source-subnet policy, opaque route IDs, provider types, non-secret token generation values, and timestamps.
-It contains no upstream URLs, pinned addresses, or credentials.
+Adapter recovery state contains process metadata, the source-subnet policy, opaque route IDs, provider types, non-secret token generation values, and timestamps.
+That adapter state contains no upstream URLs, pinned addresses, or credentials.
 Endpoint URLs containing userinfo, a query string, or a fragment are rejected rather than stripped or persisted.
 For an OpenAI-compatible endpoint entered as a bare origin, the adapter preserves the incoming `/v1` request path.
 For an endpoint with a path prefix, the adapter keeps forwarded requests beneath that prefix and rejects traversal-shaped paths.

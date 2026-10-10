@@ -71,6 +71,7 @@ export type DestroyHarness = {
   runSandboxProviderPreDeleteCleanupSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   sessionState: Session;
+  sessionStore: typeof import("../../src/lib/state/onboard-session");
   setDockerIdentityResult: (result: {
     status: number | null;
     stdout?: string;
@@ -816,6 +817,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     runOpenshellSpy,
     selectGatewaySpy,
     sessionState,
+    sessionStore: onboardSession,
     setDockerIdentityResult: (result) => {
       dockerIdentityResult = result;
     },
