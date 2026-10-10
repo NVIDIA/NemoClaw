@@ -16,6 +16,8 @@ import {
   HERMES_MANAGED_POLICY_SCHEMA_VERSION,
 } from "../../../agents/hermes/config/managed-policy.ts";
 
+import { HOSTED_NATIVE_PROVIDERS } from "../../../src/lib/inference/native-provider/hosted";
+
 const READER_PATH = path.join(
   import.meta.dirname,
   "../../..",
@@ -81,6 +83,40 @@ function loadWithPython(document: unknown) {
 }
 
 describe("Hermes managed policy", () => {
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "accepts the runtime credential reference for $label",
+    (provider) => {
+      const policy = buildHermesManagedPolicy(
+        {
+          ...SETTINGS,
+          baseUrl: provider.endpoint,
+          upstreamProvider: provider.logicalProvider,
+          inferenceApi: provider.api,
+        },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe(`\${${provider.credentialEnv}}`);
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it.each([
+    "openshell:resolve:env:OPENAI_API_KEY",
+    "openshell:resolve:env:v7_OPENAI_API_KEY",
+    "${UNRELATED_API_KEY}",
+    "synthetic-raw-credential",
+  ])("rejects a baked or unrelated hosted credential %s", (apiKey) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, baseUrl: "https://api.openai.com/v1", upstreamProvider: "openai-api" },
+      {},
+    );
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
   it.each(NATIVE_NVIDIA_URLS)(
     "accepts the native NVIDIA inference placeholder at %s",
     (baseUrl) => {

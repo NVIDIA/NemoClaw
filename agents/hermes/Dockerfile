@@ -46,7 +46,7 @@ COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemo
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
 # __init__.py.
 COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/generate-config.ts agents/hermes/check-native-credentials.ts /opt/nemoclaw-hermes-config/
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
@@ -369,6 +369,10 @@ RUN printf '%s  %s\n' \
     || { echo "ERROR: image-build-probes.py hash mismatch (update NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256)" >&2; exit 1; }; \
     /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py managed-runtime-capability
+
+# Verify that native credentials resolve through the pinned Hermes runtime.
+# hadolint ignore=DL3059
+RUN node /opt/nemoclaw-hermes-config/check-native-credentials.ts
 
 # Ensure the NemoClaw plugin for Hermes is readable.
 # hadolint ignore=DL3059

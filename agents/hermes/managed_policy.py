@@ -121,7 +121,7 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         expected_key = NVIDIA_INFERENCE_PLACEHOLDER if native_nvidia else HERMES_PROXY_REWRITE_SENTINEL
         api_key = policy_value(config, "model.api_key")
         native_hosted_placeholder = not native_nvidia and isinstance(api_key, str) and re.fullmatch(
-            r"openshell:resolve:env:(OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY)", api_key
+            r"\$\{(OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY)\}", api_key
         ) is not None
         if api_key != expected_key and not native_hosted_placeholder:
             raise ManagedPolicyError(

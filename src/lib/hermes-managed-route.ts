@@ -80,8 +80,9 @@ export function applyHermesManagedRoute(
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
   const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
-  const apiKey =
-    nativeHosted?.apiKey ?? managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
+  const apiKey = nativeHosted
+    ? `\${${nativeHosted.credentialEnv}}`
+    : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);

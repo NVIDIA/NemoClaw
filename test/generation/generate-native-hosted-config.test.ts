@@ -37,7 +37,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label agent configuration", (pro
     expect(config.model).toEqual(
       expect.objectContaining({
         base_url: provider.endpoint,
-        api_key: `openshell:resolve:env:${provider.credentialEnv}`,
+        api_key: `\${${provider.credentialEnv}}`,
       }),
     );
   });

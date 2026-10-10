@@ -140,7 +140,7 @@ describe("runInferenceSet Hermes routing", () => {
         {
           name: "hermes-provider",
           base_url: "https://inference-api.nousresearch.com/v1",
-          api_key: "openshell:resolve:env:OPENAI_API_KEY",
+          api_key: "${OPENAI_API_KEY}",
           discover_models: true,
         },
       ],
@@ -148,14 +148,14 @@ describe("runInferenceSet Hermes routing", () => {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
         base_url: "https://inference-api.nousresearch.com/v1",
-        api_key: "openshell:resolve:env:OPENAI_API_KEY",
+        api_key: "${OPENAI_API_KEY}",
         context_length: 128_000,
       },
       providers: {
         "hermes-provider": {
           name: "hermes-provider",
           api: "https://inference-api.nousresearch.com/v1",
-          api_key: "openshell:resolve:env:OPENAI_API_KEY",
+          api_key: "${OPENAI_API_KEY}",
           default_model: "openai/gpt-5.4-mini",
           discover_models: true,
         },

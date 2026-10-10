@@ -51,7 +51,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "openai/gpt-5.4-mini",
       provider: "custom",
       base_url: "https://inference-api.nousresearch.com/v1",
-      api_key: "openshell:resolve:env:OPENAI_API_KEY",
+      api_key: "${OPENAI_API_KEY}",
     });
     expect(config._nemoclaw_upstream).toEqual({
       provider: "hermes-provider",
@@ -62,7 +62,7 @@ describe("patchHermesInferenceConfig", () => {
       "hermes-provider": {
         name: "hermes-provider",
         api: "https://inference-api.nousresearch.com/v1",
-        api_key: "openshell:resolve:env:OPENAI_API_KEY",
+        api_key: "${OPENAI_API_KEY}",
         default_model: "openai/gpt-5.4-mini",
         discover_models: true,
       },
@@ -71,7 +71,7 @@ describe("patchHermesInferenceConfig", () => {
       {
         name: "hermes-provider",
         base_url: "https://inference-api.nousresearch.com/v1",
-        api_key: "openshell:resolve:env:OPENAI_API_KEY",
+        api_key: "${OPENAI_API_KEY}",
         discover_models: true,
       },
     ]);
@@ -119,7 +119,7 @@ describe("patchHermesInferenceConfig", () => {
 
       patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
 
-      expect((config.model as ConfigObject).api_key).toBe("openshell:resolve:env:OPENAI_API_KEY");
+      expect((config.model as ConfigObject).api_key).toBe("${OPENAI_API_KEY}");
     },
   );
 
@@ -144,7 +144,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "claude-sonnet-4-6",
       provider: "custom",
       base_url: "https://api.anthropic.com",
-      api_key: "openshell:resolve:env:ANTHROPIC_API_KEY",
+      api_key: "${ANTHROPIC_API_KEY}",
       api_mode: "anthropic_messages",
     });
   });
