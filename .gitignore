@@ -55,3 +55,8 @@ secrets.yaml
 service-account*.json
 token.json
 .e2e/
+
+# GPU e2e animation logs. Keep them on the DGX. Do not commit.
+client-timeline.jsonl
+hpa-timeline.jsonl
+hpa-timeline.pid

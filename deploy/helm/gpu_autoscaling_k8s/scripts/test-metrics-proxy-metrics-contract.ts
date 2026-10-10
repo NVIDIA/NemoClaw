@@ -1,0 +1,78 @@
+#!/usr/bin/env node
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Focused contract for rolling LLM latency_avg used by HPA.
+// Recent samples replace old high values while chats continue. After load
+// stops, the gauge must drop to 0 so scale-down is not blocked by stale samples.
+
+import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+process.env.LLM_LATENCY_IDLE_EXPIRE_MS = "100";
+process.env.LLM_LATENCY_WINDOW_MS = "100";
+
+const metricsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../files/metrics-proxy-metrics.ts");
+const {
+  recordLlmLatency,
+  llmMetricsLines,
+  setLlmMetricsClockForTests,
+  resetLlmLatencyWindowForTests,
+} = await import(pathToFileURL(metricsPath).href);
+
+function gaugeValue(lines: string[], name: string): number {
+  const prefix = `${name} `;
+  const line = lines.find((entry) => entry.startsWith(prefix));
+  assert.ok(line, `missing gauge ${name}`);
+  return Number(line.slice(prefix.length));
+}
+
+let nowMs = 1_000_000;
+setLlmMetricsClockForTests(() => nowMs);
+resetLlmLatencyWindowForTests();
+
+let lines = llmMetricsLines();
+assert.ok(
+  !lines.some((entry: string) => entry.startsWith("nemoclaw_llm_latency_avg_milliseconds ")),
+  "new replica with no samples must omit the HPA gauge (0 would dilute AverageValue)",
+);
+
+recordLlmLatency(5000, true);
+recordLlmLatency(7000, true);
+for (let i = 0; i < 20; i += 1) recordLlmLatency(1000, true);
+lines = llmMetricsLines();
+// All 22 samples count: (5000 + 7000 + 20*1000) / 22 = 1454.54… → 1455
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 1455);
+assert.ok(
+  !lines.some((entry: string) => entry.includes("latency_p50") || entry.includes("latency_p95")),
+  "p50/p95 latency gauges must not be exported",
+);
+
+// Still within the idle window — gauge retains the average of all samples.
+nowMs += 99;
+lines = llmMetricsLines();
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 1455);
+
+// Past idle expire — HPA average clears so HPA sees 0 (below target).
+nowMs += 1;
+lines = llmMetricsLines();
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 0);
+
+// A new sample re-arms the window.
+recordLlmLatency(4000, true);
+lines = llmMetricsLines();
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 4000);
+
+// Continued chats drop aged high samples so HPA follows current latency.
+recordLlmLatency(16000, true);
+nowMs += 101;
+recordLlmLatency(2500, true);
+lines = llmMetricsLines();
+assert.equal(gaugeValue(lines, "nemoclaw_llm_latency_avg_milliseconds"), 2500);
+
+// Cumulative request counters are not cleared by idle expiration.
+assert.match(lines.join("\n"), /nemoclaw_llm_requests_total\{result="success"\} 25/);
+
+setLlmMetricsClockForTests(null);
+console.log("OK: rolling LLM latency_avg gauge windows recent samples and idle-expires");
