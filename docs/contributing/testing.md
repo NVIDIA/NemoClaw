@@ -81,7 +81,7 @@ The `ci` profile runs at most eight tests concurrently, reports slow tests every
 The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests and the same timeout.
 CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
 Each platform's build-and-test job and bundle job run in parallel on separate runners; its lifecycle workers start when both finish.
-Linux and macOS run two nextest hash partitions on separate runners with four test slots each; Windows runs its smaller suite on one.
+Each platform runs two nextest hash partitions on separate runners with four test slots each.
 Each platform starts its workers after its own jobs; it does not wait for other platforms.
 The existing `Test / PLATFORM` required checks succeed only when that platform's build, bundle, and lifecycle jobs succeed.
 After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.

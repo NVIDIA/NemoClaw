@@ -234,6 +234,20 @@ fn run_step(
             if let Some(partition) = partition {
                 command.args(["--partition", partition]);
             }
+            // Where Unix sockets are missing, fake engines are reached over SSH:
+            // providers and the SDK then run the fake ssh relay.
+            if cfg!(not(unix)) {
+                let directory = std::path::absolute(".build/ci/fake-ssh")?;
+                fs::create_dir_all(&directory)?;
+                fs::copy(
+                    tool("nemoclaw-fixture-ssh"),
+                    directory.join(nemoclaw_build_executable("ssh")),
+                )?;
+                let path = std::env::join_paths(
+                    std::iter::once(directory).chain(std::env::split_paths(&path)),
+                )?;
+                command.env("PATH", path);
+            }
             command
                 .env("NEMOCLAW_TEST_BUNDLE", &bundle)
                 .env(

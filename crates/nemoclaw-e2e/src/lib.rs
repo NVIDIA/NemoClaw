@@ -13,6 +13,32 @@ pub mod http_fixture;
 /// otherwise unchanged apply. Sandbox observations also carry a fresh operation
 /// token. Every other field, including health, bindings and check outcomes, must
 /// remain identical. Failed-observation tests still compare bytes.
+/// The file beside an installed SSH simulator that names its state directory.
+pub const SSH_SIMULATOR_ROOT: &str = "nemoclaw-test-remote";
+
+/// Install the SSH simulator at `simulator` as `ssh` in `bin`, recording
+/// `root` beside it for callers that do not pass NEMOCLAW_TEST_REMOTE on.
+pub fn install_ssh_simulator(
+    simulator: impl AsRef<std::path::Path>,
+    bin: &std::path::Path,
+    root: &std::path::Path,
+) {
+    std::fs::create_dir_all(bin).unwrap();
+    std::fs::copy(
+        simulator,
+        bin.join(format!("ssh{}", std::env::consts::EXE_SUFFIX)),
+    )
+    .unwrap();
+    std::fs::write(bin.join(SSH_SIMULATOR_ROOT), root.to_str().unwrap()).unwrap();
+}
+
+/// PATH with `bin` first.
+pub fn path_with(bin: &std::path::Path) -> std::ffi::OsString {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(std::iter::once(bin.to_owned()).chain(std::env::split_paths(&path)))
+        .unwrap()
+}
+
 pub fn assert_same_deployment_state(actual: &[u8], expected: &[u8]) {
     fn normalize(bytes: &[u8]) -> serde_json::Value {
         let mut state: serde_json::Value = serde_json::from_slice(bytes).unwrap();
