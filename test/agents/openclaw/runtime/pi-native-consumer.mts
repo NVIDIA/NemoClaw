@@ -94,7 +94,7 @@ try {
       "openshell",
       "--model",
       model,
-      `Reply ${response}`,
+      "Reply with the fixture response.",
     ],
     { env, cwd: home, stdio: ["ignore", "pipe", "pipe"] },
   );
