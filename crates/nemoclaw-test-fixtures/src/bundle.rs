@@ -53,10 +53,14 @@ impl Bundle {
     #[must_use]
     pub fn provider(&self, name: &str) -> PathBuf {
         // providers/registry.opentofu.org/nvidia/NAME/VERSION/PLATFORM/terraform-provider-NAME_vVERSION
-        let source = self
-            .root
-            .join("providers/registry.opentofu.org/nvidia")
-            .join(name);
+        let source = ["providers", "registry.opentofu.org", "nvidia", name]
+            .iter()
+            .fold(self.root.clone(), |path, part| path.join(part));
+        assert!(
+            source.is_dir(),
+            "the bundle ships no {name} provider: {} is missing",
+            source.display()
+        );
         let version = only_entry(&source);
         let platform = only_entry(&version);
         let version = version.file_name().unwrap().to_string_lossy();
@@ -137,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "nvidia/nemoclaw")]
+    #[should_panic(expected = "the bundle ships no nemoclaw provider")]
     fn a_provider_the_bundle_does_not_ship_is_named_in_the_failure() {
         let (_root, bundle) = bundle();
         let _ = bundle.provider("nemoclaw");
