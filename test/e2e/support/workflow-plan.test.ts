@@ -312,6 +312,9 @@ describe("E2E workflow plan", () => {
     expect(rows.map((row) => row.id)).toContain("inference-routing-custom-hosted");
     const lifecycle = rows.find((row) => row.id === "inference-routing-custom-hosted");
     expect(lifecycle?.shard).toBe("custom-hosted");
+    expect(catalogueTarget("inference-routing-custom-hosted").agentRuntime).toBe(
+      "openclaw + hermes",
+    );
   });
 
   it("selects ordinary agent consumers and inference restart for a scope patch", () => {

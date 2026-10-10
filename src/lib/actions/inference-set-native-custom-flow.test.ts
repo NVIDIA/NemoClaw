@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it, vi } from "vitest";
+import YAML from "yaml";
+import { buildNativeCustomSandboxPolicy } from "../inference/native-custom/network-policy";
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderMetadata,
@@ -127,8 +129,37 @@ async function fixture(agent = "openclaw") {
   deps.resolveNativeCustomCredentialReference = vi.fn(
     async () => "openshell:resolve:env:v12_COMPATIBLE_API_KEY",
   );
+  let policy = buildNativeCustomSandboxPolicy("version: 1\nnetwork_policies: {}\n", receipt);
+  const reconcileNativeCustomSandboxPolicy = vi.fn(
+    async (input: {
+      previous?: NativeCustomProviderAttachment;
+      next?: NativeCustomProviderAttachment;
+    }) => {
+      const before = policy;
+      const parsed = YAML.parse(policy);
+      delete parsed.network_policies.native_custom_inference;
+      policy = input.next
+        ? buildNativeCustomSandboxPolicy(YAML.stringify(parsed), input.next)
+        : YAML.stringify(parsed);
+      return async () => {
+        policy = before;
+      };
+    },
+  );
+  Object.assign(deps, { reconcileNativeCustomSandboxPolicy });
   vi.spyOn(deps.inferenceRouteMutator, "setInferenceRoute");
-  return { deps, receipt, entry, events, attachments, adapter, config };
+  return {
+    deps,
+    receipt,
+    entry,
+    events,
+    attachments,
+    adapter,
+    config,
+    get policy() {
+      return YAML.parse(policy);
+    },
+  };
 }
 
 it("switches a native custom model without rotating credentials or consulting shared inference (#12636)", async () => {
@@ -170,6 +201,10 @@ it("detaches the prior native credential binding before attaching a different en
   );
   expect([...f.attachments]).toEqual([next.providerName]);
   expect(f.entry.endpointUrl).toBe("http://12.12.12.12/v1");
+  expect(f.policy.network_policies.native_custom_inference.endpoints).toEqual(
+    expect.arrayContaining([expect.objectContaining({ host: "12.12.12.12" })]),
+  );
+  expect(JSON.stringify(f.policy)).not.toContain("8.8.8.8");
   expect(JSON.stringify(f.entry)).not.toContain("host-secret");
 });
 
@@ -257,6 +292,7 @@ it("removes native custom access before publishing a built-in provider (#12636)"
   expect(f.attachments.size).toBe(0);
   expect(f.entry.provider).toBe("openai-api");
   expect(f.entry.nativeCustomProviderAttachment).toBeUndefined();
+  expect(f.policy.network_policies.native_custom_inference).toBeUndefined();
   expect(f.events).toContain(`detach:${f.receipt.providerName}`);
 });
 
@@ -299,4 +335,36 @@ it("selects the native OpenAI frontend for a new Hermes custom Anthropic switch 
   });
   expect(f.deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
   expect(f.deps.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+});
+
+it("rejects an unverified custom policy update before attachment or publication (#12636)", async () => {
+  const f = await fixture();
+  f.deps.reconcileNativeCustomSandboxPolicy = vi.fn(async () => {
+    throw new Error("policy update unconfirmed");
+  });
+  await expect(
+    runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "http://12.12.12.12/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      f.deps,
+    ),
+  ).rejects.toThrow(/policy update unconfirmed/);
+  expect([...f.attachments]).toEqual([f.receipt.providerName]);
+  expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  expect(f.deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+});
+
+it("keeps the previous custom policy when departure publication is rejected (#12636)", async () => {
+  const f = await fixture();
+  f.deps.calls.updateSandbox.mockReturnValueOnce(false);
+  await expect(runInferenceSet({ provider: "openai", model: "gpt-4o" }, f.deps)).rejects.toThrow();
+  expect(f.policy.network_policies.native_custom_inference.endpoints).toEqual(
+    expect.arrayContaining([expect.objectContaining({ host: "8.8.8.8" })]),
+  );
+  expect([...f.attachments]).toEqual([f.receipt.providerName]);
 });

@@ -14,6 +14,7 @@ import {
   type NativeCustomProviderAttachment,
 } from "../../inference/native-custom";
 import { InferenceSetError } from "../inference-set-error";
+import { reconcileNativeCustomSandboxPolicy } from "../../inference/native-custom/network-policy";
 
 import type { InferenceSetOptions, InferenceSetDeps, InferenceSetResult } from "../inference-set";
 import type { requireInferenceSetRuntimeAuthority } from "../inference-set-provider";
@@ -65,7 +66,7 @@ export async function prepareNativeCustomSelection(input: {
   sandboxName: string;
   adapter: OpenShellProviderAdapter;
   credentialValue: string | null;
-  beforeAttach?: () => Promise<void>;
+  beforeAttach?: (receipt: NativeCustomProviderAttachment) => Promise<void>;
   recordedAttachment?: NativeCustomProviderAttachment;
   readAuthority: (
     gatewayName: string,
@@ -116,7 +117,7 @@ export async function prepareNativeCustomSelection(input: {
     });
     return ensured;
   });
-  await input.beforeAttach?.();
+  await input.beforeAttach?.(receipt);
   const attached = await ensureNativeCustomProviderAttached({
     adapter: input.adapter,
     target,
@@ -297,6 +298,7 @@ export async function runNativeCustomInferenceSwitch(
   let previousDetachAttempted = false;
   let nvidiaDetached = false;
   let committed = false;
+  let rollbackPolicy: (() => Promise<void>) | undefined;
   try {
     const selected = await prepareNativeCustomSelection({
       prepared: selection.prepared,
@@ -310,7 +312,15 @@ export async function runNativeCustomInferenceSwitch(
         deps.setNativeCustomProviderAuthority!(gateway, receipt);
         attachment = receipt;
       },
-      beforeAttach: async () => {
+      beforeAttach: async (receipt) => {
+        rollbackPolicy = await (
+          deps.reconcileNativeCustomSandboxPolicy ?? reconcileNativeCustomSandboxPolicy
+        )({
+          sandboxName,
+          gatewayName: expectedGatewayName,
+          previous,
+          next: receipt,
+        });
         if (previous && previous.providerName !== selection.prepared.providerName) {
           previousDetachAttempted = true;
           await detachNativeCustomProvider({
@@ -496,6 +506,7 @@ export async function runNativeCustomInferenceSwitch(
           sandboxName,
           expected: attachment,
         });
+      await rollbackPolicy?.();
       if (previousDetachAttempted && previous)
         await ensureNativeCustomProviderAttached({
           adapter: deps.providerAdapter,
@@ -527,6 +538,7 @@ export async function restoreNativeCustomDeparture(input: {
   sandboxName: string;
   expectedGatewayName: string;
   departureSnapshot: SandboxEntry;
+  rollbackPolicy?: () => Promise<void>;
 }): Promise<void> {
   const {
     customDetachAttempted,
@@ -561,6 +573,7 @@ export async function restoreNativeCustomDeparture(input: {
     }
     if (!customDepartureCommitted) {
       try {
+        await input.rollbackPolicy?.();
         await ensureNativeCustomProviderAttached({
           adapter: deps.providerAdapter,
           target: { kind: "named", gatewayName: expectedGatewayName },
@@ -665,15 +678,28 @@ export async function detachNativeCustomDeparture(
   expectedGatewayName: string,
   deps: InferenceSetDeps,
   recordAttempt: () => void,
-): Promise<void> {
+): Promise<(() => Promise<void>) | undefined> {
   if (departingCustom) {
     recordAttempt();
-    await detachNativeCustomProvider({
-      adapter: deps.providerAdapter,
-      target: { kind: "named", gatewayName: expectedGatewayName },
+    const rollbackPolicy = await (
+      deps.reconcileNativeCustomSandboxPolicy ?? reconcileNativeCustomSandboxPolicy
+    )({
       sandboxName,
-      expected: departingCustom,
+      gatewayName: expectedGatewayName,
+      previous: departingCustom,
     });
+    try {
+      await detachNativeCustomProvider({
+        adapter: deps.providerAdapter,
+        target: { kind: "named", gatewayName: expectedGatewayName },
+        sandboxName,
+        expected: departingCustom,
+      });
+    } catch (error) {
+      await rollbackPolicy();
+      throw error;
+    }
+    return rollbackPolicy;
   }
 }
 

@@ -18,6 +18,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { verifyFreshNativeAnthropicEndpoint } from "./inference-routing-native-anthropic.ts";
+import { verifyFreshNativeHermesEndpoint } from "./inference-routing-native-hermes.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
@@ -119,6 +120,7 @@ test(
         "selected detach/delete leaves an independently attached peer working",
         "destroy removes the owned provider and HTTPS route",
         "fresh native Anthropic onboarding serves authenticated Messages from an agent turn",
+        "ordinary native Hermes serves a fresh authenticated OpenAI request after restart",
       ],
       endpointUrl,
       model,
@@ -695,6 +697,7 @@ test(
         ),
     ).toBe(true);
     await verifyFreshNativeAnthropicEndpoint(fixtures, { sandboxName, apiKey, publicHttpAddress });
+    await verifyFreshNativeHermesEndpoint(fixtures, { endpoint: publicHttp, apiKey, model });
     progress.phase("verify final native provider cleanup");
     await cleanupSandbox(host, sandbox, peerName, { strict: true });
     const peerProviderAfterDestroy = await sandbox.openshell(

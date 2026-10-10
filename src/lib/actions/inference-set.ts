@@ -196,6 +196,7 @@ function providerCommitFailureAfterSelection(options: {
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
+  reconcileNativeCustomSandboxPolicy?: typeof import("../inference/native-custom/network-policy").reconcileNativeCustomSandboxPolicy;
   getNativeCustomProviderAuthority?: typeof import("../state/registry/native-custom-provider-authority").getNativeCustomProviderAuthority;
   setNativeCustomProviderAuthority?: typeof import("../state/registry/native-custom-provider-authority").setNativeCustomProviderAuthority;
   nativeCustomTransportDeps?: Partial<Omit<NativeCustomTransportDeps, "admitProfile">>;
@@ -1730,6 +1731,7 @@ async function runInferenceSetWithoutHostLock(
   let previousNativeNvidiaDetached = false;
   let previousNativeNvidiaDetachCommitted = false;
   let customDetachAttempted = false;
+  let rollbackCustomPolicy: (() => Promise<void>) | undefined;
   let customDepartureCommitted = false;
   const restorePreviousInferenceSelection = async (): Promise<string | null> => {
     if (selectingNativeNvidia || previousNativeNvidiaAttachment) {
@@ -1938,7 +1940,7 @@ async function runInferenceSetWithoutHostLock(
       sandboxName,
       deps,
     });
-    await detachNativeCustomDeparture(
+    rollbackCustomPolicy = await detachNativeCustomDeparture(
       departingCustom,
       sandboxName,
       expectedGatewayName,
@@ -2205,6 +2207,7 @@ async function runInferenceSetWithoutHostLock(
       sandboxName,
       expectedGatewayName,
       departureSnapshot,
+      rollbackPolicy: rollbackCustomPolicy,
     });
     if (!providerMutation) throw error;
     if (ambiguousInferenceSelection) throw error;

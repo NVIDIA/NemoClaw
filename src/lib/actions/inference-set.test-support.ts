@@ -466,6 +466,7 @@ export function createDeps(options: {
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
     resolveCredentialValue: calls.resolveCredentialValue,
+    reconcileNativeCustomSandboxPolicy: vi.fn(async () => async () => {}),
     resolveNativeNvidiaCredentialReference:
       options.resolveNativeNvidiaCredentialReference ??
       vi.fn(async () => "openshell:resolve:env:v1_NVIDIA_INFERENCE_API_KEY"),
