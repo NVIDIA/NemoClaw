@@ -4,7 +4,7 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 
 export const MCP_BRIDGE_POLICY_SOURCE = "generated:nemoclaw-mcp-bridge";
-export type McpBridgeErrorReasonCode = "rejected" | "unresolved";
+export type McpBridgeErrorReasonCode = "rejected" | "unresolved" | "supply-chain";
 export class McpBridgeError extends Error {
   constructor(
     message: string,
@@ -16,17 +16,49 @@ export class McpBridgeError extends Error {
   }
 }
 
+/** Supported MCP transport protocols. */
+export type McpTransport = "sse" | "stdio";
+
+export interface McpServerIdentity {
+  /**
+   * Operator-supplied SHA-256 digest pin for the MCP server binary/image
+   * (e.g., "sha256:abc123..."). This is a recorded operator assertion, not a
+   * verified artifact digest.
+   */
+  digest: string;
+  /** Transport protocol used by the server */
+  transport: McpTransport;
+  /**
+   * When the operator pin was recorded. This is not attestation evidence:
+   * nothing at the registration or retry boundary fetches the artifact and
+   * compares it against `digest`. Use `provenanceRef` for real attestation.
+   */
+  verifiedAt: number;
+  /** Optional: provenance attestation reference (SLSA, sigstore, etc.) */
+  provenanceRef?: string;
+}
+
+/** Parsed environment reference for MCP credentials. */
 export interface ParsedEnvReference {
   name: string;
   value?: string;
 }
 
+/** Parsed arguments for MCP add operations. */
 export interface ParsedMcpAddArgs {
   server: string;
   url: string;
   env: ParsedEnvReference[];
   denyTools?: string[];
+  /** Explicitly allowed tools (deny-by-default when specified). If omitted, denyTools is used for explicit denials. */
+  allowTools?: string[];
   trustedPrivateHosts?: string[];
+  /** Pinned server identity digest for supply-chain verification (e.g., "sha256:abc123...") */
+  serverIdentity?: string;
+  /** Transport protocol (defaults to "sse" for HTTP URLs, "stdio" for local) */
+  transport?: McpTransport;
+  /** Require OAuth authentication for the MCP endpoint */
+  requireOAuth?: boolean;
 }
 
 /**
@@ -47,10 +79,18 @@ export interface McpSourceEntry {
   policyName: string;
   /** Denied tool selectors observed from the live OpenShell policy. */
   denyTools?: string[];
+  /** Explicitly allowed tool selectors (deny-by-default mode). When present, only these tools are permitted. */
+  allowTools?: string[];
   /** Where the current agent registration was observed. */
   source?: "native" | "legacy" | "legacy-registry" | "policy";
   /** Live policy endpoint differs from the agent-native URL. */
   policyConflict?: string;
+  /** Pinned server identity for supply-chain verification. */
+  serverIdentity?: McpServerIdentity;
+  /** Transport protocol used by the server. */
+  transport?: McpTransport;
+  /** Whether OAuth authentication is required for this server. */
+  requireOAuth?: boolean;
 }
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
@@ -81,7 +121,10 @@ export interface McpBridgeToolDiscoveryResult {
 
 export type ParsedMcpUpdateArgs =
   | { server: string; denyTools: string[] }
-  | { server: string; refreshPublicPins: true };
+  | { server: string; clearDenyTools: true }
+  | { server: string; refreshPublicPins: true }
+  | { server: string; allowTools: string[] }
+  | { server: string; clearAllowTools: true };
 
 export interface McpBridgeStatus {
   server: string;
@@ -144,6 +187,14 @@ export interface McpBridgeStatus {
   };
   /** Names advertised by the MCP endpoint when live discovery is requested. */
   toolDiscovery?: McpBridgeToolDiscoveryResult;
+  /** Supply-chain verification status for the MCP server. */
+  supplyChain?: {
+    identity?: McpServerIdentity;
+    verified: boolean;
+    transport: McpTransport;
+    oauthRequired: boolean;
+    allowToolsMode: boolean;
+  };
 }
 
 export function isAgentMcpAdapter(value: unknown): value is AgentMcpAdapter {

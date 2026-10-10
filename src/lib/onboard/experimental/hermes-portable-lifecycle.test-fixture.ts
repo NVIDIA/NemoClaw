@@ -10,6 +10,7 @@ import { hermesPortableLifecycleInternals } from "./hermes-portable-lifecycle";
 import type { AgentDefinition } from "../../agent/definition-types";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import { resolveHermesPortableStartupContract } from "./hermes-portable-contract";
+import { privateHermesManifestAgent } from "./__test-helpers__/hermes-manifest-agent";
 import {
   createSandboxListJson,
   poisonUnexpectedCommand,
@@ -106,6 +107,7 @@ export function testPodmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDe
   };
 }
 
+/** Build a fully-populated active Hermes portable lifecycle receipt for tests. */
 export function createHermesPortableLifecycleTestReceipt({
   agent,
   stateDir,
@@ -177,7 +179,7 @@ export function createHermesPortableLifecycleTestReceipt({
       })),
     },
     startup: resolveHermesPortableStartupContract({
-      agent,
+      agent: privateHermesManifestAgent(agent),
       sandboxName: sandboxName,
       startupArgv: renderStartupArgv(sandboxName),
     }),

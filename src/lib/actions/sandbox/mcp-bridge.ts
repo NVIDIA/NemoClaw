@@ -9,6 +9,8 @@ import {
   addMcpBridge as addMcpBridgeLifecycle,
   updateMcpBridgeDenyTools as updateMcpBridgeDenyToolsLifecycle,
   refreshMcpBridgePublicPins,
+  updateMcpBridgeAllowTools,
+  clearMcpBridgeAllowTools,
 } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
@@ -22,7 +24,10 @@ import {
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import {
+  redactBridgeSecretsForDisplay,
+  redactMcpMigrationPlanForDisplay,
+} from "./mcp-bridge-output";
 import {
   type McpRebuildPreparation,
   prepareMcpBridgesForAbsentSandboxRebuild as prepareMcpBridgesForAbsentSandboxRebuildLifecycle,
@@ -91,6 +96,9 @@ export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
 
+/**
+ * inspectCurrentBridgeEntries.
+ */
 async function inspectCurrentBridgeEntries(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -123,6 +131,9 @@ async function inspectCurrentBridgeEntries(
   return { entries: Object.values(bridges), runtimeSelection: selected };
 }
 
+/**
+ * addMcpBridge.
+ */
 export async function addMcpBridge(
   sandboxName: string,
   options: McpBridgeAddOptions,
@@ -130,10 +141,16 @@ export async function addMcpBridge(
   return addMcpBridgeLifecycle(sandboxName, options);
 }
 
+/**
+ * restartMcpBridge.
+ */
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
   return restartMcpBridgeLifecycle(sandboxName, server);
 }
 
+/**
+ * updateMcpBridgeDenyTools.
+ */
 export async function updateMcpBridgeDenyTools(
   sandboxName: string,
   server: string,
@@ -142,6 +159,9 @@ export async function updateMcpBridgeDenyTools(
   return updateMcpBridgeDenyToolsLifecycle(sandboxName, server, denyTools);
 }
 
+/**
+ * removeMcpBridge.
+ */
 export async function removeMcpBridge(
   sandboxName: string,
   server: string,
@@ -150,6 +170,9 @@ export async function removeMcpBridge(
   return removeMcpBridgeLifecycle(sandboxName, server, options);
 }
 
+/**
+ * prepareMcpBridgesForAbsentSandboxDestroy.
+ */
 export async function prepareMcpBridgesForAbsentSandboxDestroy(
   sandboxName: string,
   options: {
@@ -160,6 +183,9 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
   return prepareMcpBridgesForAbsentSandboxDestroyLifecycle(sandboxName, options);
 }
 
+/**
+ * prepareMcpBridgesForDestroy.
+ */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
   options: {
@@ -171,6 +197,9 @@ export async function prepareMcpBridgesForDestroy(
   return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
+/**
+ * restoreMcpBridgesAfterDestroyAbort.
+ */
 export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
@@ -178,6 +207,9 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   return restoreMcpBridgesAfterDestroyAbortLifecycle(sandboxName, preparation);
 }
 
+/**
+ * finalizeMcpBridgesAfterSandboxDelete.
+ */
 export async function finalizeMcpBridgesAfterSandboxDelete(
   sandboxName: string,
   preparation: McpDestroyPreparation,
@@ -188,6 +220,9 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
 
 export { prepareMcpBridgesForStoppedSandboxRebuild } from "./mcp-bridge-rebuild";
 
+/**
+ * prepareMcpBridgesForAbsentSandboxRebuild.
+ */
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -196,6 +231,9 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, entries, runtimeSelection);
 }
 
+/**
+ * prepareMcpBridgesForRebuild.
+ */
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
@@ -214,6 +252,9 @@ export async function prepareMcpBridgesForRebuild(
   );
 }
 
+/**
+ * reattachMcpProvidersAfterRebuildAbort.
+ */
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
@@ -228,6 +269,9 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   );
 }
 
+/**
+ * restoreMcpBridgesAfterRebuild.
+ */
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
@@ -236,6 +280,9 @@ export async function restoreMcpBridgesAfterRebuild(
   return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, runtimeSelection);
 }
 
+/**
+ * parseJsonFlag.
+ */
 function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {
   return {
     json: args.includes("--json"),
@@ -243,6 +290,9 @@ function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {
   };
 }
 
+/**
+ * parseProbeFlags.
+ */
 function parseProbeFlags(args: string[]): { probe?: boolean; rest: string[] } {
   if (args.includes("--probe") && args.includes("--no-probe")) {
     throw new McpBridgeError("Pass at most one of --probe / --no-probe.", 2);
@@ -251,6 +301,9 @@ function parseProbeFlags(args: string[]): { probe?: boolean; rest: string[] } {
   return { probe, rest: args.filter((arg) => arg !== "--probe" && arg !== "--no-probe") };
 }
 
+/**
+ * parseToolsFlag.
+ */
 function parseToolsFlag(args: string[]): { tools: boolean; rest: string[] } {
   return {
     tools: args.includes("--tools"),
@@ -263,6 +316,9 @@ function parseToolsFlag(args: string[]): { tools: boolean; rest: string[] } {
  * durably and a resolution failure is a host-side OpenShell defect, so a
  * nonzero exit here would break scripted adds mid-remediation; `mcp status
  * <server>` remains the authoritative recheck.
+ */
+/**
+ * reportAddCredentialResolution.
  */
 async function reportAddCredentialResolution(
   sandboxName: string,
@@ -302,37 +358,55 @@ async function reportAddCredentialResolution(
   }
 }
 
+/**
+ * requireNoExtraArgs.
+ */
 function requireNoExtraArgs(args: string[], usage: string): void {
   if (args.length > 0) throw new McpBridgeError(usage, 2);
 }
 
+/**
+ * requireAtMostOneArg.
+ */
 function requireAtMostOneArg(args: string[], usage: string): string | undefined {
   if (args.length > 1) throw new McpBridgeError(usage, 2);
   return args[0];
 }
 
+/**
+ * hasHelpFlag.
+ */
 function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
+/**
+ * renderMcpHelp.
+ */
 function renderMcpHelp(subcommand: string): void {
   switch (subcommand) {
     case "add":
       console.log(`USAGE
-  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]
+  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth] [--no-probe]
 
 FLAGS
-  --url URL        MCP Streamable HTTP endpoint
-  --env KEY        Required host credential reference registered with OpenShell
-  --deny-tool TOOL Deny an exact tool name or glob at the OpenShell MCP proxy; repeatable
+  --url URL                 MCP Streamable HTTP endpoint
+  --env KEY                 Required host credential reference registered with OpenShell
+  --deny-tool TOOL          Deny an exact tool name or glob at the OpenShell MCP proxy; repeatable
+  --allow-tool TOOL         Allow only this exact tool name (deny-by-default mode); repeatable
   --trusted-private-host HOST
-                   Trust the exact URL host when it resolves only to routed private addresses
-  --no-probe       Skip the post-add wire-level credential-resolution probe
+                            Trust the exact URL host when it resolves only to routed private addresses
+  --server-identity DIGEST  Operator-supplied pin for supply-chain tracking (format: sha256:...)
+  --transport sse|stdio     Transport protocol (default: sse for HTTPS URLs)
+  --require-oauth           Require OAuth authentication for the MCP endpoint
+  --no-probe                Skip the post-add wire-level credential-resolution probe
 
 SECURITY
   Credentials are registered as an OpenShell provider and appear inside the
   sandbox only as openshell:resolve:env:KEY placeholders. OpenShell resolves
-  them at egress while enforcing the generated protocol: mcp policy.`);
+  them at egress while enforcing the generated protocol: mcp policy.
+  When --allow-tool is specified, deny-by-default mode is enabled: only the
+  explicitly allowed tools are permitted.`);
       return;
     case "list":
       console.log(`USAGE
@@ -343,12 +417,14 @@ FLAGS
       return;
     case "update":
       console.log(`USAGE
-  nemoclaw <name> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins)
+  nemoclaw <name> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins | --allow-tool TOOL [...] | --clear-allow-tools)
 
 FLAGS
-  --deny-tool TOOL    Replace the denied-tool list with exact names or globs; repeatable
-  --clear-deny-tools  Remove every denied-tool rule
-  --refresh-public-pins  Refresh existing public address pins in live OpenShell policy`);
+  --deny-tool TOOL         Replace the denied-tool list with exact names or OpenShell glob selectors; repeatable
+  --allow-tool TOOL        Replace the allowlist with this exact tool name (deny-by-default mode); repeatable
+  --clear-deny-tools       Remove every denied-tool rule
+  --clear-allow-tools      Remove the allowlist and return to denylist mode
+  --refresh-public-pins    Refresh existing public address pins in live OpenShell policy`);
       return;
     case "status":
       console.log(`USAGE
@@ -385,6 +461,9 @@ FLAGS
   }
 }
 
+/**
+ * dispatchMcpBridgeCommand.
+ */
 export async function dispatchMcpBridgeCommand(
   sandboxName: string,
   actionArgs: string[],
@@ -405,7 +484,7 @@ export async function dispatchMcpBridgeCommand(
         const { probe, rest: addRest } = parseProbeFlags(rest);
         if (probe === true)
           throw new McpBridgeError(
-            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST] [--no-probe]",
+            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--allow-tool TOOL ...] [--trusted-private-host HOST] [--server-identity sha256:...] [--transport sse|stdio] [--require-oauth] [--no-probe]",
             2,
           );
         const options = parseMcpAddArgs(addRest);
@@ -420,6 +499,12 @@ export async function dispatchMcpBridgeCommand(
         const options = parseMcpUpdateArgs(rest);
         if ("refreshPublicPins" in options)
           await refreshMcpBridgePublicPins(sandboxName, options.server);
+        else if ("allowTools" in options)
+          await updateMcpBridgeAllowTools(sandboxName, options.server, options.allowTools);
+        else if ("clearAllowTools" in options)
+          await clearMcpBridgeAllowTools(sandboxName, options.server);
+        else if ("clearDenyTools" in options)
+          await updateMcpBridgeDenyTools(sandboxName, options.server, []);
         else await updateMcpBridgeDenyTools(sandboxName, options.server, options.denyTools);
         return;
       }
@@ -488,15 +573,18 @@ export async function dispatchMcpBridgeCommand(
           apply,
           rebuildSandbox: dependencies.rebuildForMigration,
         });
+        // Legacy URLs can embed credentials, so every migration output stays
+        // redacted before it reaches the terminal or a JSON consumer.
+        const displayPlan = redactMcpMigrationPlanForDisplay(plan);
         if (json) {
-          process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+          process.stdout.write(`${JSON.stringify(displayPlan, null, 2)}\n`);
           return;
         }
-        if (plan.items.length === 0) {
+        if (displayPlan.items.length === 0) {
           console.log(`  No legacy MCP agent configuration found on '${sandboxName}'.`);
           return;
         }
-        for (const item of plan.items) {
+        for (const item of displayPlan.items) {
           console.log(
             `  ${item.action === "migrate" ? "Migrate" : "Verify"} '${item.server}': legacy -> native (${item.url})`,
           );
@@ -507,7 +595,7 @@ export async function dispatchMcpBridgeCommand(
           }
         }
         console.log(
-          plan.applied
+          displayPlan.applied
             ? "  MCP migration completed and legacy registry fields were retired."
             : "  Preview only. Rerun with --apply to authorize native materialization.",
         );

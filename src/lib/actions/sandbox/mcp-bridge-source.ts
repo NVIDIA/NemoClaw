@@ -29,13 +29,20 @@ import {
 } from "./mcp-bridge-provider-inspection";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
-import { buildMcpBridgeProviderName, normalizeMcpDenyTools } from "./mcp-bridge-validation";
+import {
+  buildMcpBridgeProviderName,
+  normalizeMcpDenyTools,
+  VALID_ALLOW_TOOL_RE,
+} from "./mcp-bridge-validation";
 
 export type McpSourceObservationDeadline = Readonly<{
   deadlineMs: number;
   now?: () => number;
 }>;
 
+/**
+ * remainingMcpObservationMs.
+ */
 function remainingMcpObservationMs(
   deadline: McpSourceObservationDeadline | undefined,
 ): number | undefined {
@@ -45,12 +52,18 @@ function remainingMcpObservationMs(
   return remainingMs;
 }
 
+/**
+ * sameMcpRegistration.
+ */
 export function sameMcpRegistration(left: McpSourceEntry, right: McpSourceEntry): boolean {
   return (
     left.server === right.server && left.url === right.url && isDeepStrictEqual(left.env, right.env)
   );
 }
 
+/**
+ * assertNoLegacyMcpSources.
+ */
 export function assertNoLegacyMcpSources(
   sandboxName: string,
   legacySources: Readonly<Record<string, McpSourceEntry>>,
@@ -64,6 +77,9 @@ export function assertNoLegacyMcpSources(
   );
 }
 
+/**
+ * readCommittedLegacyRegistryEntries.
+ */
 export function readCommittedLegacyRegistryEntries(
   sandboxName: string,
   currentAgent: string,
@@ -183,10 +199,16 @@ type SourceRecord = {
 const SOURCE_RECORD_MAX = 64;
 const SOURCE_OUTPUT_MAX_BYTES = 262_144;
 
+/**
+ * sourcePayload.
+ */
 function sourcePayload(value: unknown): string {
   return JSON.stringify(JSON.stringify(value));
 }
 
+/**
+ * commonPythonSourceReader.
+ */
 function commonPythonSourceReader(): string[] {
   return [
     "import json, os, pathlib, re, stat",
@@ -222,6 +244,9 @@ function commonPythonSourceReader(): string[] {
   ];
 }
 
+/**
+ * buildDeepAgentsSourceCommand.
+ */
 function buildDeepAgentsSourceCommand(configDir: string): string {
   const nativePath = path.posix.join(configDir, ".mcp.json");
   const legacyPath = path.posix.join(configDir, ".nemoclaw-mcp.json");
@@ -245,6 +270,9 @@ function buildDeepAgentsSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
+/**
+ * buildHermesSourceCommand.
+ */
 function buildHermesSourceCommand(configDir: string): string {
   const configPath = path.posix.join(configDir, "config.yaml");
   return [
@@ -259,6 +287,9 @@ function buildHermesSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
+/**
+ * buildJsonMcpSourceScript.
+ */
 function buildJsonMcpSourceScript(
   configDir: string,
   json5ModulePath: string,
@@ -288,6 +319,9 @@ function buildJsonMcpSourceScript(
   ].join("\n");
 }
 
+/**
+ * buildOpenClawSourceCommand.
+ */
 function buildOpenClawSourceCommand(configDir: string): string {
   return [
     "node - <<'NODE'",
@@ -296,6 +330,9 @@ function buildOpenClawSourceCommand(configDir: string): string {
   ].join("\n");
 }
 
+/**
+ * sourceCommand.
+ */
 function sourceCommand(adapter: AgentMcpAdapter, configDir: string): string {
   switch (adapter) {
     case "openclaw-config":
@@ -307,6 +344,9 @@ function sourceCommand(adapter: AgentMcpAdapter, configDir: string): string {
   }
 }
 
+/**
+ * parseSourceRecords.
+ */
 function parseSourceRecords(output: string): SourceRecord[] {
   if (Buffer.byteLength(output, "utf8") > SOURCE_OUTPUT_MAX_BYTES) {
     throw new McpBridgeError("Agent MCP source inspection returned oversized output.");
@@ -334,6 +374,9 @@ function parseSourceRecords(output: string): SourceRecord[] {
   });
 }
 
+/**
+ * parseHermesSourceRecords.
+ */
 function parseHermesSourceRecords(output: string): SourceRecord[] {
   if (Buffer.byteLength(output, "utf8") > SOURCE_OUTPUT_MAX_BYTES) {
     throw new McpBridgeError("Agent MCP source inspection returned oversized output.");
@@ -389,6 +432,9 @@ function parseHermesSourceRecords(output: string): SourceRecord[] {
   return parseSourceRecords(JSON.stringify(records));
 }
 
+/**
+ * entryFromRecord.
+ */
 function entryFromRecord(
   record: SourceRecord,
   agentName: string,
@@ -413,6 +459,9 @@ function entryFromRecord(
   };
 }
 
+/**
+ * inspectAgentMcpSources.
+ */
 export async function inspectAgentMcpSources(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -451,6 +500,9 @@ export async function inspectAgentMcpSources(
   return detected.sources;
 }
 
+/**
+ * inspectAgentMcpSourcesForAgent.
+ */
 async function inspectAgentMcpSourcesForAgent(
   sandbox: SandboxEntry,
   agent: ReturnType<typeof loadAgent>,
@@ -486,6 +538,9 @@ async function inspectAgentMcpSourcesForAgent(
   return sourceSnapshotFromRecords(records, agent.name, adapter);
 }
 
+/**
+ * sourceSnapshotFromRecords.
+ */
 function sourceSnapshotFromRecords(
   records: readonly SourceRecord[],
   agentName: string,
@@ -537,6 +592,9 @@ export function inspectCapturedAgentMcpSources(source: CapturedAgentState): Agen
   );
 }
 
+/**
+ * policyEntryForServer.
+ */
 function policyEntryForServer(
   policyDocument: string,
   server: string,
@@ -552,6 +610,9 @@ function policyEntryForServer(
   return isObjectRecord(value) ? value : null;
 }
 
+/**
+ * enrichFromPolicy.
+ */
 async function enrichFromPolicy(
   sandboxName: string,
   entry: McpSourceEntry,
@@ -630,11 +691,70 @@ async function enrichFromPolicy(
           : [],
       )
     : [];
-  const deniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
-  const denyTools = deniedToolInspection.ok ? deniedToolInspection.selectors : [];
-  const policyConflict = !deniedToolInspection.ok
-    ? "Live policy contains invalid denied-tool selectors."
-    : endpointConflict;
+
+  // Read deny rules from legacy format (for backward compatibility)
+  // Reuse rawDenyTools to avoid rebuilding the same list.
+  const legacyDeniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
+  const legacyDenyTools = legacyDeniedToolInspection.ok ? legacyDeniedToolInspection.selectors : [];
+
+  // Read allow rules from the new schema (rules[].allow.params.name)
+  // Only include rules whose allow.method is "tools/call" to avoid
+  // granting unintended tool-call permissions from non-tool methods.
+  const allowRules = Array.isArray(endpoint.rules)
+    ? endpoint.rules
+        .filter(
+          (rule): rule is { allow: { method: string; params: { name: string } } } =>
+            isObjectRecord(rule) &&
+            "allow" in rule &&
+            isObjectRecord(rule.allow) &&
+            rule.allow.method === "tools/call" &&
+            isObjectRecord(rule.allow.params) &&
+            typeof rule.allow.params.name === "string",
+        )
+        .map((rule) => rule.allow.params.name)
+    : [];
+
+  // Read deny rules from the new schema (endpoint.deny_rules with params.name)
+  const denyRulesFromEndpoint = Array.isArray(endpoint.deny_rules)
+    ? endpoint.deny_rules
+        .filter(
+          (rule) =>
+            isObjectRecord(rule) &&
+            rule.method === "tools/call" &&
+            isObjectRecord(rule.params) &&
+            typeof rule.params.name === "string",
+        )
+        .map((rule) => rule.params.name)
+    : [];
+
+  const denyToolInspection = inspectMcpDeniedToolSelectors([
+    ...denyRulesFromEndpoint,
+    ...legacyDenyTools,
+  ]);
+
+  const denyTools = denyToolInspection.ok ? denyToolInspection.selectors : [];
+
+  const policyConflict =
+    !denyToolInspection.ok ||
+    !legacyDeniedToolInspection.ok ||
+    (allowRules.length > 0 ? allowRules.some((tool) => !VALID_ALLOW_TOOL_RE.test(tool)) : false)
+      ? "Live policy contains invalid tool selectors."
+      : endpointConflict;
+
+  // Never emit an empty allowTools array: it would read as "no allowlist" and
+  // let computeToolPolicy fall through to denylist mode, silently widening
+  // access when deny rules are also empty. An all-invalid allowlist is reported
+  // through policyConflict instead, and mutations refuse conflicted entries.
+  const validAllowTools =
+    allowRules.length > 0 ? allowRules.filter((tool) => VALID_ALLOW_TOOL_RE.test(tool)) : [];
+  const allowTools = validAllowTools.length > 0 ? validAllowTools : undefined;
+
+  // serverIdentity, transport, and requireOAuth are request-scoped options, not
+  // reconstructed state: agent-native readers round-trip only server/url/env,
+  // and the live OpenShell policy carries none of these fields. Do not read
+  // them from endpoint.mcp or invent them here; retry handling in
+  // sameMcpAddIntent tolerates their absence on reconstructed entries.
+
   const trustedPrivateHost =
     allowedIps?.some((address) => isBlockedMcpUrlTargetHost(address)) &&
     host === new URL(entry.url).hostname.toLowerCase()
@@ -647,10 +767,14 @@ async function enrichFromPolicy(
     ...(providerName ? { providerName } : {}),
     ...(provider.exists === true && provider.id ? { providerId: provider.id } : {}),
     ...(denyTools.length > 0 && entry.source !== "legacy-registry" ? { denyTools } : {}),
+    ...(allowTools ? { allowTools } : {}),
     ...(policyConflict ? { policyConflict } : {}),
   };
 }
 
+/**
+ * joinMcpEntriesToOpenShell.
+ */
 export async function joinMcpEntriesToOpenShell(
   sandbox: SandboxEntry,
   entries: Readonly<Record<string, McpSourceEntry>>,
@@ -684,6 +808,9 @@ export async function joinMcpEntriesToOpenShell(
   );
 }
 
+/**
+ * inspectPolicyOnlyMcpEntry.
+ */
 export async function inspectPolicyOnlyMcpEntry(
   sandbox: SandboxEntry,
   server: string,
@@ -739,6 +866,9 @@ export async function inspectPolicyOnlyMcpEntry(
   );
 }
 
+/**
+ * inspectSourceBridgeState.
+ */
 export async function inspectSourceBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -751,6 +881,9 @@ export async function inspectSourceBridgeState(
   return { bridges, sources };
 }
 
+/**
+ * inspectLegacyBridgeState.
+ */
 export async function inspectLegacyBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -768,6 +901,9 @@ export async function inspectLegacyBridgeState(
   return { bridges, sources };
 }
 
+/**
+ * deepAgentsLegacyRemovalCommand.
+ */
 function deepAgentsLegacyRemovalCommand(configDir: string, server: string): string {
   const configPath = path.posix.join(configDir, ".nemoclaw-mcp.json");
   return [
@@ -811,6 +947,9 @@ function deepAgentsLegacyRemovalCommand(configDir: string, server: string): stri
   ].join("\n");
 }
 
+/**
+ * removeLegacyAgentMcpEntry.
+ */
 export async function removeLegacyAgentMcpEntry(
   sandbox: SandboxEntry,
   entry: McpSourceEntry,
