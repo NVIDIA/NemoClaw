@@ -68,11 +68,18 @@ import {
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
+function nativeCustomRebuildAttachmentOptions(session: Session | null | undefined, reuse = true) {
+  return reuse && session?.nativeCustomProviderAttachment
+    ? { nativeCustomProviderAttachment: session.nativeCustomProviderAttachment }
+    : {};
+}
+
 export interface ProviderInferenceSetupOptions {
   gatewayName?: string;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
+  nativeCustomProviderAttachment?: import("../../../inference/native-custom").NativeCustomProviderAttachment;
   /** Exact onboarding-provenanced endpoint permitted to skip DNS re-resolution. */
   onboardEndpointUrl?: string;
   /**
@@ -1474,6 +1481,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           endpointUrl,
           api: preferredInferenceApi,
           credentialEnv,
+          ...nativeCustomRebuildAttachmentOptions(session),
         })) === true;
       // Native providers have endpoint-specific names. The legacy logical-name
       // lookup cannot recover them and must not demand an exported host key.
@@ -2114,6 +2122,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(preparedOllamaProxyToken ? { preparedOllamaProxyToken } : {}),
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
+        ...nativeCustomRebuildAttachmentOptions(session, reuseGatewayCredentialWithoutLocalKey),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         endpointSource,

@@ -8,6 +8,7 @@ import {
 } from "../inference/native-custom";
 import type { NativeCustomApi, NativeCustomProvider } from "../inference/native-custom";
 import type { SandboxEntry } from "../state/registry/types";
+import { createSession, normalizeSession } from "../state/onboard-session";
 import {
   hasRetainedNativeCustomSelection,
   type RetainedNativeCustomSelection,
@@ -52,6 +53,96 @@ async function fixture(
 }
 
 describe("retained native custom resume selection", () => {
+  it.each([
+    ["compatible-endpoint", "openai-completions"],
+    ["compatible-endpoint", "openai-responses"],
+    ["compatible-anthropic-endpoint", "anthropic-messages"],
+  ] as const)(
+    "recovers deleted %s / %s from a persisted rebuild receipt",
+    async (provider, api) => {
+      const { input, deps, receipt } = await fixture(provider, api);
+      const session = createSession({
+        sandboxName: input.sandboxName,
+        nativeCustomProviderAttachment: receipt,
+      });
+      const resumed = normalizeSession(JSON.parse(JSON.stringify(session)))!;
+      expect(
+        hasRetainedNativeCustomSelection(
+          { ...input, nativeCustomProviderAttachment: resumed.nativeCustomProviderAttachment },
+          {
+            ...deps,
+            getSandbox: () => null,
+          },
+        ),
+      ).toBe(true);
+      expect(resumed.nativeCustomProviderAttachment).toEqual(receipt);
+    },
+  );
+
+  it.each([
+    { sandboxName: "other-sandbox" },
+    { endpointUrl: "https://other.example.com/v1" },
+    { credentialEnv: "OTHER_API_KEY" },
+    { api: "openai-responses" },
+  ])("denies changed deleted-sandbox rebuild selection %j", async (changed) => {
+    const { input, deps, receipt } = await fixture();
+    expect(() =>
+      hasRetainedNativeCustomSelection(
+        { ...input, ...changed, nativeCustomProviderAttachment: receipt },
+        {
+          ...deps,
+          getSandbox: () => null,
+        },
+      ),
+    ).toThrow();
+  });
+
+  it.each(["absent", "replaced", "other-gateway"])(
+    "denies %s gateway authority during deleted-sandbox recovery",
+    async (kind) => {
+      const { input, deps, receipt } = await fixture();
+      expect(() =>
+        hasRetainedNativeCustomSelection(
+          {
+            ...input,
+            gatewayName: kind === "other-gateway" ? "other" : input.gatewayName,
+            nativeCustomProviderAttachment: receipt,
+          },
+          {
+            ...deps,
+            getSandbox: () => null,
+            getNativeCustomProviderAuthority: (gateway) =>
+              gateway !== input.gatewayName || kind === "absent"
+                ? undefined
+                : { ...receipt, providerId: "replacement-provider-id" },
+          },
+        ),
+      ).toThrow(/authority disagree/);
+    },
+  );
+
+  it.each([null, {}, { providerId: "untrusted" }])(
+    "denies malformed persisted rebuild authority %j",
+    async (value) => {
+      const { input, deps } = await fixture();
+      expect(() =>
+        hasRetainedNativeCustomSelection(
+          { ...input, nativeCustomProviderAttachment: value },
+          {
+            ...deps,
+            getSandbox: () => null,
+          },
+        ),
+      ).toThrow(/cannot authorize resume/);
+      expect(() =>
+        normalizeSession({
+          ...createSession({ sandboxName: input.sandboxName }),
+          nativeCustomProviderAttachment: value,
+        } as unknown as Parameters<typeof normalizeSession>[0]),
+      ).toThrow(/invalid native custom rebuild attachment/);
+    },
+  );
+
   it.each([
     ["compatible-endpoint", "openai-completions"],
     ["compatible-endpoint", "openai-responses"],

@@ -43,67 +43,86 @@ vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
 describe("onboard shared gateway route containment", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("reuses an owned native adapter receipt without rotating host credentials or the shared route (#12636)", async () => {
-    const native = createNativeCustomSetupDependencies();
-    let recorded: SandboxEntry | null = null;
-    let credential = "host-credential";
-    const shared = successfulInferenceRouteMutator();
-    const setup = createSetupInference({
-      ...native,
-      localInference: { loadPendingOllamaModelCleanup: () => [] },
-      withOllamaModelOwnershipLock: <T>(operation: () => T) => operation(),
-      getSandbox: () => recorded,
-      updateSandbox: (_name: string, patch: Partial<SandboxEntry>) => {
-        recorded = { ...recorded, ...patch, name: "alpha" };
-        return true;
-      },
-      hydrateCredentialEnv: () => credential,
-      resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
-      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),
-      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
-        operation(),
-      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
-        operation(),
-      step: vi.fn(),
-      getGatewayName: () => "nemoclaw",
-      inferenceRouteMutator: shared,
-      inferenceRouteObserver: successfulInferenceRouteObserver(),
-      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
-      verifyOnboardInferenceSmoke: vi.fn(),
-      verifyInferenceRoute: vi.fn(),
-      log: vi.fn(),
-    } as unknown as SetupInferenceDeps);
-    expect(
-      await setup(
-        "alpha",
-        "model-a",
-        "compatible-endpoint",
-        "https://api.example.com/v1",
-        "COMPATIBLE_API_KEY",
-      ),
-    ).toEqual({ ok: true });
-    const before = structuredClone(recorded);
-    credential = "";
-    expect(
-      await setup(
-        "alpha",
-        "model-a",
-        "compatible-endpoint",
-        "https://api.example.com/v1",
-        "COMPATIBLE_API_KEY",
-        null,
-        [],
-        {
-          reuseGatewayCredentialWithoutLocalKey: true,
-          skipHostInferenceSmoke: true,
+  it.each(["retained", "deleted", "malformed-current"] as const)(
+    "reconciles %s native adapter authority without rotating credentials (#12636)",
+    async (state) => {
+      const native = createNativeCustomSetupDependencies();
+      let recorded: SandboxEntry | null = null;
+      let credential = "host-credential";
+      const shared = successfulInferenceRouteMutator();
+      const setup = createSetupInference({
+        ...native,
+        localInference: { loadPendingOllamaModelCleanup: () => [] },
+        withOllamaModelOwnershipLock: <T>(operation: () => T) => operation(),
+        getSandbox: () => recorded,
+        updateSandbox: (_name: string, patch: Partial<SandboxEntry>) => {
+          recorded = { ...recorded, ...patch, name: "alpha" };
+          return true;
         },
-      ),
-    ).toEqual({ ok: true });
-    expect(native.nativeCustomTransportDeps.ensureHttpsAdapter).toHaveBeenCalledOnce();
-    expect(native.providerAdapter.createProvider).toHaveBeenCalledOnce();
-    expect(shared.setInferenceRoute).not.toHaveBeenCalled();
-    expect(recorded).toEqual(before);
-  });
+        hydrateCredentialEnv: () => credential,
+        resolveEndpointHost: async () => [{ address: "8.8.8.8", family: 4 }],
+        checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true })),
+        withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+          operation(),
+        withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+          operation(),
+        step: vi.fn(),
+        getGatewayName: () => "nemoclaw",
+        inferenceRouteMutator: shared,
+        inferenceRouteObserver: successfulInferenceRouteObserver(),
+        hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+        verifyOnboardInferenceSmoke: vi.fn(),
+        verifyInferenceRoute: vi.fn(),
+        log: vi.fn(),
+      } as unknown as SetupInferenceDeps);
+      expect(
+        await setup(
+          "alpha",
+          "model-a",
+          "compatible-endpoint",
+          "https://api.example.com/v1",
+          "COMPATIBLE_API_KEY",
+        ),
+      ).toEqual({ ok: true });
+      const before = structuredClone(recorded as SandboxEntry | null);
+      const attachment = (before as SandboxEntry | null)?.nativeCustomProviderAttachment;
+      expect(attachment).toBeDefined();
+      recorded = state === "deleted" ? null : recorded;
+      recorded =
+        state === "malformed-current"
+          ? ({ ...before, nativeCustomProviderAttachment: null } as unknown as SandboxEntry)
+          : recorded;
+      credential = "";
+      expect(
+        await setup(
+          "alpha",
+          "model-a",
+          "compatible-endpoint",
+          "https://api.example.com/v1",
+          "COMPATIBLE_API_KEY",
+          null,
+          [],
+          {
+            reuseGatewayCredentialWithoutLocalKey: true,
+            skipHostInferenceSmoke: true,
+            ...(state !== "retained" ? { nativeCustomProviderAttachment: attachment } : {}),
+          },
+        ).catch((error: Error) => ({ ok: false, message: error.message })),
+      ).toEqual(
+        state === "malformed-current"
+          ? { ok: false, message: "Native custom rebuild and sandbox authority disagree." }
+          : { ok: true },
+      );
+      expect(native.nativeCustomTransportDeps.ensureHttpsAdapter).toHaveBeenCalledOnce();
+      expect(native.providerAdapter.createProvider).toHaveBeenCalledOnce();
+      expect(shared.setInferenceRoute).not.toHaveBeenCalled();
+      expect(recorded).toEqual(
+        state === "malformed-current"
+          ? { ...before, nativeCustomProviderAttachment: null }
+          : before,
+      );
+    },
+  );
 
   it.each([
     {

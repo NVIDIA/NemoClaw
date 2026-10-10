@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../../inference/native-custom";
 
 import { createSession, MACHINE_SNAPSHOT_VERSION, type Session } from "../../state/onboard-session";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -34,6 +38,38 @@ function markStep(session: Session, name: string, status: "complete" | "failed")
 }
 
 describe("rewindSessionForRebuildResume", () => {
+  it("carries pre-delete native authority and clears it for an unrelated rebuild (#12636)", async () => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      api: "openai-completions",
+      endpointUrl: "https://new-provider.example/v1",
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "retained-provider-id",
+    });
+    const session = createSession({ sandboxName: "old-name" });
+    const options = {
+      sandboxName: "alpha",
+      rebuildAgent: "openclaw",
+      rebuildMessagingPlan: null,
+      rebuildsHermesSandbox: false,
+      rebuildHermesToolGateways: [],
+      resumeConfig: createResumeConfig({ nativeCustomProviderAttachment: receipt }),
+    };
+    const rewound = rewindSessionForRebuildResume(session, options);
+    expect(rewound.nativeCustomProviderAttachment).toEqual(receipt);
+    const unrelated = rewindSessionForRebuildResume(rewound, {
+      ...options,
+      resumeConfig: createResumeConfig(),
+    });
+    expect(unrelated).not.toHaveProperty("nativeCustomProviderAttachment");
+  });
+
   it.each(["provider_selection", "inference", "sandbox", "openclaw", "agent_setup", "policies"])(
     "normalizes stale recreate snapshots to the pre-sandbox resume boundary without data loss [%s]",
     (stepName) => {

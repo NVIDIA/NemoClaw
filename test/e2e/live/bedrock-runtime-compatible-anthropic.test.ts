@@ -10,6 +10,7 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } from "../../../src/lib/inference/bedrock-runtime.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
@@ -48,7 +49,8 @@ import {
 } from "./bedrock-runtime-compatible-anthropic-raw-command.ts";
 
 // Keep the live boundary focused on source CLI onboarding, one agent-native
-// turn through the fake Bedrock Runtime endpoint, and bounded secret isolation.
+// turn through the fake Bedrock Runtime endpoint (after restart for Hermes),
+// and bounded secret isolation.
 
 const require = createRequire(import.meta.url);
 
@@ -884,7 +886,7 @@ test(
 
     await artifacts.target.declare({
       id: "bedrock-runtime-compatible-anthropic",
-      refs: ["#3767", "#5098", "#12191"],
+      refs: ["#3767", "#5098", "#12191", "#12636"],
       agent: AGENT,
       sandboxName: SANDBOX_NAME,
       boundary: "host-bedrock-mock-source-cli-onboard-and-sandbox-exec",
@@ -893,6 +895,11 @@ test(
         "bedrock-runtime.us-east-1.amazonaws.com maps to the host fake endpoint",
         "non-interactive anthropicCompatible onboarding completes for OpenClaw and Hermes",
         "the selected agent-native runtime path returns PONG through its native custom provider",
+        ...(AGENT === "hermes"
+          ? [
+              "Hermes retains its native endpoint and authenticates a fresh request after public stop/start without the original host key",
+            ]
+          : []),
         "fake Bedrock Runtime endpoint observes authenticated Converse traffic",
         "the OpenClaw path observes authenticated ConverseStream traffic",
         "bounded sandbox credential, config, environment, and process-argument probes contain no forbidden Bedrock values",
@@ -954,7 +961,48 @@ test(
 
     progress.phase("exercise agent inference through Bedrock");
     if (AGENT === "hermes") {
+      const restartEnv = testEnv(home);
+      delete restartEnv.COMPATIBLE_ANTHROPIC_API_KEY;
+      const stop = await runRawCommand("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "stop"], {
+        artifactName: "hermes-bedrock-runtime-stop",
+        artifacts,
+        env: restartEnv,
+        progress,
+        redactionValues: [COMPATIBLE_KEY],
+        timeoutMs: 120_000,
+      });
+      expect(stop.exitCode, redactedResultText(stop)).toBe(0);
+      const start = await runRawCommand("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "start"], {
+        artifactName: "hermes-bedrock-runtime-start",
+        artifacts,
+        env: restartEnv,
+        progress,
+        redactionValues: [COMPATIBLE_KEY],
+        timeoutMs: 240_000,
+      });
+      expect(start.exitCode, redactedResultText(start)).toBe(0);
+      const config = await sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "python3",
+          "-c",
+          "import json, yaml; print(json.dumps(yaml.safe_load(open('/sandbox/.hermes/config.yaml'))['model']['base_url']))",
+        ],
+        {
+          artifactName: "hermes-bedrock-runtime-native-endpoint-after-restart",
+          env: restartEnv,
+          redactionValues: [COMPATIBLE_KEY],
+          timeoutMs: 30_000,
+        },
+      );
+      expectExitZero(config, "Hermes native endpoint after restart");
+      expect(JSON.parse(config.stdout)).toBe(BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL);
+      const converseBeforeTurn = mock.converseCount;
       await assertHermesApiChat(sandbox, home);
+      expect(
+        mock.converseCount,
+        "Hermes authenticates a fresh Converse request after restart",
+      ).toBeGreaterThan(converseBeforeTurn);
     } else {
       await approveOpenClawAdminScope(
         host,

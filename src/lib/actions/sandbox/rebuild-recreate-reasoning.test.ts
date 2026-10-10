@@ -4,6 +4,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+} from "../../inference/native-custom";
+import { hasRetainedNativeCustomSelection } from "../../onboard/resume/native-custom";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
@@ -16,7 +21,7 @@ import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import { type RebuildRecreatePhaseInput, runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
-const SANDBOX_NAME = "rebuild-reasoning-effort";
+const SANDBOX_NAME = "rebuild-reasoning";
 
 const GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
   gatewayName: "nemoclaw",
@@ -194,6 +199,56 @@ describe("rebuild recreate compatible-endpoint reasoning handoff (#7940)", () =>
     expect(onboardSession.loadSession()?.compatibleEndpointReasoningEffort).toBe("high");
     expect(process.env.NEMOCLAW_REASONING).toBe("false");
     expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("low");
+  });
+
+  it("recreates a deleted native custom sandbox using only matching gateway credential authority", async () => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: SANDBOX_NAME,
+      provider: "compatible-endpoint",
+      api: "openai-completions",
+      endpointUrl: compatibleResumeConfig.endpointUrl!,
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    });
+    const attachment = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "retained-native-rebuild-provider",
+    });
+    vi.spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv").mockReturnValue(null);
+    const getSandbox = vi.fn(() => null);
+    const getNativeCustomProviderAuthority = vi.fn(() => attachment);
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      const resumed = onboardSession.loadSession()!;
+      const selection = {
+        gatewayName: GATEWAY_AUTHORITY.gatewayName,
+        sandboxName: resumed.sandboxName,
+        provider: resumed.provider,
+        endpointUrl: resumed.endpointUrl,
+        api: resumed.preferredInferenceApi,
+        credentialEnv: resumed.credentialEnv,
+        nativeCustomProviderAttachment: resumed.nativeCustomProviderAttachment,
+      };
+      expect(
+        hasRetainedNativeCustomSelection(selection, {
+          getSandbox,
+          getNativeCustomProviderAuthority,
+        }),
+      ).toBe(true);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          resumeConfig: { ...compatibleResumeConfig, nativeCustomProviderAttachment: attachment },
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(getSandbox).toHaveBeenCalledWith(SANDBOX_NAME);
+    expect(getNativeCustomProviderAuthority).toHaveBeenCalledWith(
+      GATEWAY_AUTHORITY.gatewayName,
+      attachment.providerName,
+    );
   });
 
   it("restores absent ambient reasoning inputs after a failed recreate", async () => {

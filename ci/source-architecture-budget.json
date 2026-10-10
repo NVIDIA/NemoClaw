@@ -37,7 +37,7 @@
       "src/lib/subprocess-env.ts": 26,
       "src/lib/validation.ts": 23,
       "src/lib/adapters/openshell/provider-adapter-cli.ts": 21,
-      "src/lib/inference/native-custom/index.ts": 27,
+      "src/lib/inference/native-custom/index.ts": 28,
       "src/lib/inference/native-nvidia/index.ts": 22,
       "src/lib/name-validation.ts": 28
     }
@@ -64,7 +64,8 @@
       "src/lib/sandbox/config.ts": 18,
       "scripts/checks/run-managed-image-openshell-e2e.ts": 18,
       "src/lib/adapters/config/live-export-source.ts": 21,
-      "src/lib/onboard/setup-inference.ts": 24,
+      "src/lib/onboard/setup-inference.ts": 25,
+      "src/lib/state/onboard-session.ts": 21,
       "src/lib/state/registry.ts": 21
     }
   },

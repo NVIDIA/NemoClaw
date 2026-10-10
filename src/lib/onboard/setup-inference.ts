@@ -3,6 +3,7 @@
 
 import type { OpenShellGatewayLifecycle } from "../adapters/openshell/gateway-lifecycle";
 import { canonicalEndpoint } from "../core/url-utils";
+import { getMatchingNativeCustomProviderAuthority } from "../state/registry/native-custom-provider-authority";
 import { isHostLocalCustomEndpoint } from "../inference/native-custom/profile";
 import { getSandboxInferenceConfig } from "../inference/config";
 import {
@@ -1032,9 +1033,24 @@ export function createSetupInference(
             };
             const recorded = sandboxName ? deps.getSandbox?.(sandboxName) : null;
             const recordedAttachment = normalizeNativeCustomProviderAttachment(
-              recorded?.nativeCustomProviderAttachment,
+              recorded?.nativeCustomProviderAttachment !== undefined
+                ? recorded.nativeCustomProviderAttachment
+                : options.nativeCustomProviderAttachment,
               sandboxName || undefined,
             );
+            if (options.nativeCustomProviderAttachment !== undefined) {
+              const handoff = getMatchingNativeCustomProviderAuthority(
+                gatewayName,
+                sandboxName || "",
+                options.nativeCustomProviderAttachment,
+                deps.getNativeCustomProviderAuthority,
+              );
+              if (
+                !recordedAttachment ||
+                JSON.stringify(handoff) !== JSON.stringify(recordedAttachment)
+              )
+                throw new Error("Native custom rebuild and sandbox authority disagree.");
+            }
             if (
               recorded &&
               recorded.pendingRouteReservation !== true &&

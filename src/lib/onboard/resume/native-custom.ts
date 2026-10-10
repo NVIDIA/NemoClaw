@@ -17,6 +17,7 @@ export type RetainedNativeCustomSelection = {
   endpointUrl: string | null;
   api: string | null;
   credentialEnv: string | null;
+  nativeCustomProviderAttachment?: unknown;
 };
 
 /** Select native recovery; setupInference still verifies the live profile and immutable provider ID. */
@@ -29,21 +30,35 @@ export function hasRetainedNativeCustomSelection(
 ): boolean {
   if (!isNativeCustomProvider(input.provider) || !input.sandboxName) return false;
   const recorded = deps.getSandbox(input.sandboxName);
-  if (!recorded || recorded.nativeCustomProviderAttachment === undefined) return false;
+  const value =
+    input.nativeCustomProviderAttachment !== undefined
+      ? input.nativeCustomProviderAttachment
+      : recorded?.nativeCustomProviderAttachment;
+  if (value === undefined) return false;
   const receipt = getMatchingNativeCustomProviderAuthority(
     input.gatewayName,
     input.sandboxName,
-    recorded.nativeCustomProviderAttachment,
+    value,
     deps.getNativeCustomProviderAuthority,
   );
   if (
-    recorded.gatewayName !== input.gatewayName ||
-    recorded.provider !== input.provider ||
+    (recorded &&
+      (recorded.gatewayName !== input.gatewayName || recorded.provider !== input.provider)) ||
     receipt.credentialEnv !== input.credentialEnv ||
     !input.endpointUrl ||
     !input.api
   )
     throw new Error("Recorded native custom selection cannot authorize resume.");
+  if (recorded?.nativeCustomProviderAttachment !== undefined) {
+    const current = getMatchingNativeCustomProviderAuthority(
+      input.gatewayName,
+      input.sandboxName,
+      recorded.nativeCustomProviderAttachment,
+      deps.getNativeCustomProviderAuthority,
+    );
+    if (JSON.stringify(current) !== JSON.stringify(receipt))
+      throw new Error("Native custom rebuild and sandbox authority disagree.");
+  }
   restoreNativeCustomInference(
     {
       sandboxName: input.sandboxName,

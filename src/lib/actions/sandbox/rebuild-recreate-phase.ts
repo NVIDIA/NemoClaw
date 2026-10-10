@@ -215,6 +215,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
     s.compatibleEndpointReasoningEffort = resumeConfig.compatibleEndpointReasoningEffort;
     s.endpointUrl = resumeConfig.endpointUrl;
+    if (resumeConfig.nativeCustomProviderAttachment)
+      s.nativeCustomProviderAttachment = resumeConfig.nativeCustomProviderAttachment;
+    else delete s.nativeCustomProviderAttachment;
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
     s.observabilityEnabled = recreateOptions.observabilityEnabled;
     s.observabilityRequestedExplicitly = recreateOptions.observabilityRequestedExplicitly;
