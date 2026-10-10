@@ -6,7 +6,7 @@ import { isIP } from "node:net";
 import type { NativeCustomAdapterTransport } from "./adapter-transport";
 import { isValidName } from "../../name-validation";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
-import { normalizeProviderBaseUrl } from "../../core/url-utils";
+import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import { isLoopbackHostname } from "../../private-networks";
 import {
   assertEndpointResolvesPublic,

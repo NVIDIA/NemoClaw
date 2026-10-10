@@ -3,7 +3,7 @@
 
 import { isValidName } from "../../name-validation";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
-import { normalizeProviderBaseUrl } from "../../core/url-utils";
+import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import {
   normalizeNativeCustomProviderAttachment,
   profileFromCustomAttachment,
