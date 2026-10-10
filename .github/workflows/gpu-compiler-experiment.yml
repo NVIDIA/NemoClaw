@@ -80,14 +80,15 @@ jobs:
         run: |
           set -euo pipefail
           cargo +1.98.1 test --locked --manifest-path compiler/Cargo.toml --target-dir .build/compiler
-          cargo +1.98.1 build --locked --release --manifest-path compiler/Cargo.toml --target-dir .build/compiler
+          cargo +1.98.1 build --locked --release --bins --manifest-path compiler/Cargo.toml --target-dir .build/compiler
           .build/compiler/release/gpu-rust-compiler fixtures/compiler_demo.rs \
             --backend cpu --verify --output .build/compiler-demo-cpu \
             --report results/native-cpu-demo.json
           .build/compiler-demo-cpu > results/native-cpu-demo.stdout
           test "$(cat results/native-cpu-demo.stdout)" = 1460
           cp .build/compiler/release/gpu-rust-compiler .build/ci-native/gpu-rust-compiler
-          (cd .build/ci-native && sha256sum gpu-rust-compiler > binary.sha256)
+          cp .build/compiler/release/gpu-cpu-liveness .build/ci-native/gpu-cpu-liveness
+          (cd .build/ci-native && sha256sum gpu-rust-compiler gpu-cpu-liveness > binary.sha256)
 
       - name: Identify the exact-head frontend artifact
         id: identity
@@ -146,7 +147,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(cat .build/compiler/release/source-sha.txt)" = "$CANDIDATE_SHA"
           (cd .build/compiler/release && sha256sum --check binary.sha256)
-          chmod +x .build/compiler/release/gpu-rust-compiler
+          chmod +x .build/compiler/release/gpu-rust-compiler .build/compiler/release/gpu-cpu-liveness
           mkdir -p results .build/verification/cuda
           jq --null-input \
             --arg candidate "$CANDIDATE_SHA" --arg workflow "$WORKFLOW_SHA" \
@@ -182,13 +183,15 @@ jobs:
             --mount "type=bind,source=$PWD,target=/lab,readonly" \
             --mount "type=bind,source=$PWD/.build,target=/lab/.build" \
             --mount "type=bind,source=$PWD/results,target=/lab/results" \
-            --workdir /lab --env PYTHONUNBUFFERED=1 --env PYTHONDONTWRITEBYTECODE=1 \
+            --workdir /lab --env CANDIDATE_SHA \
+            --env PYTHONUNBUFFERED=1 --env PYTHONDONTWRITEBYTECODE=1 \
             "$CONTAINER_IMAGE" bash --noprofile --norc -euo pipefail -c '
               nvcc --version > results/nvcc-container.txt
               clang --version > results/clang-container.txt
               dpkg-query -W > results/container-packages.txt
               python3 -m unittest discover -s tests -p test_liveness_reference.py
               python3 -m unittest discover -s tests -p test_prepare_workload.py
+              python3 -m unittest discover -s tests -p test_benchmark_cuda.py
               python3 scripts/verify_cuda.py --repeats 15 --report results/cuda-verification.json
               python3 scripts/compile.py fixtures/compiler_demo.rs --backend cpu \
                 --compiler-binary .build/compiler/release/gpu-rust-compiler \
@@ -201,6 +204,11 @@ jobs:
                 --output .build/compiler-demo-cuda --report results/cuda-demo.json
               .build/compiler-demo-cuda > results/cuda-demo.stdout
               test "$(cat results/cuda-demo.stdout)" = 1460
+              python3 scripts/benchmark_cuda.py --repeats 31 --compile-repeats 9 \
+                --compiler-binary .build/compiler/release/gpu-rust-compiler \
+                --cpu-binary .build/compiler/release/gpu-cpu-liveness \
+                --cuda-binary .build/cuda/cuda-liveness \
+                --report results/cuda-benchmark.json
             ' 2>&1 | tee results/cuda-run.log
 
       - name: Retain CUDA evidence, including failures
@@ -212,6 +220,7 @@ jobs:
             experiments/gpu-rust-compiler/results/
             experiments/gpu-rust-compiler/.build/verification/cuda/
             experiments/gpu-rust-compiler/.build/compilations/
+            experiments/gpu-rust-compiler/.build/benchmarks/cuda/
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14

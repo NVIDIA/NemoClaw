@@ -236,6 +236,10 @@ public:
     ~DeviceBuffer() { if (pointer) cudaFree(pointer); }
     DeviceBuffer(const DeviceBuffer&) = delete;
     DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+    void upload(const std::vector<T>& source) const {
+        if (source.size() != count) throw std::runtime_error("upload size mismatch");
+        if (count) cuda_check(cudaMemcpy(pointer, source.data(), count * sizeof(T), cudaMemcpyHostToDevice), "cudaMemcpy H2D");
+    }
     void download(std::vector<T>& destination) const {
         if (destination.size() != count) throw std::runtime_error("download size mismatch");
         if (count) cuda_check(cudaMemcpy(destination.data(), pointer, count * sizeof(T), cudaMemcpyDeviceToHost), "cudaMemcpy D2H");
@@ -423,6 +427,18 @@ static int run_cuda(int argc, char** argv) {
         if (host_result != reference) throw std::runtime_error("CUDA output changed between identical repetitions");
         elapsed.push_back(timing.first); execution.push_back(timing.second);
     }
+    // A compilation produces new input. Time uploading all input arrays as well
+    // as solving and returning the output, while retaining device allocations.
+    std::vector<double> input_update_elapsed;
+    for (int repeat = 0; repeat < repeats; ++repeat) {
+        const auto start = std::chrono::steady_clock::now();
+        descriptors.upload(input.descriptors);
+        offsets.upload(input.successor_offsets); successors.upload(input.successors);
+        uses.upload(input.uses); defs.upload(input.defs); phi.upload(input.phi_out);
+        run();
+        input_update_elapsed.push_back(elapsed_ms(start));
+        if (host_result != reference) throw std::runtime_error("CUDA output changed after input upload");
+    }
     write_result(argv[2], host_result);
     std::cout << std::setprecision(10)
               << "{\"backend\":\"cuda\",\"device_name\":" << json_string(properties.name)
@@ -436,7 +452,8 @@ static int run_cuda(int argc, char** argv) {
               << ",\"first_pass_end_to_end_ms\":" << first.first
               << ",\"gpu_execution_ms\":" << statistics(execution)
               << ",\"warm_pass_end_to_end_ms\":" << statistics(elapsed)
-              << ",\"timing_scope\":\"Warm elapsed includes launch, event wait, convergence checks and device-to-host result copies; excludes initialization, file IO and cross-backend verification.\"}\n";
+              << ",\"warm_input_update_end_to_end_ms\":" << statistics(input_update_elapsed)
+              << ",\"timing_scope\":\"Warm elapsed includes launch, event wait, convergence checks and device-to-host result copies; excludes initialization, input uploads, file IO and cross-backend verification. Input-update elapsed additionally uploads all input arrays and reuses device allocations.\"}\n";
     return 0;
 }
 

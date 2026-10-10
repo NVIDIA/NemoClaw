@@ -5,6 +5,7 @@
 name = "gpu-rust-compiler"
 version = "0.1.0"
 edition = "2021"
+default-run = "gpu-rust-compiler"
 publish = false
 license = "Apache-2.0"
 

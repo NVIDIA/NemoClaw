@@ -36,7 +36,7 @@ CUDA inside its validation image on the repository's GPU runner. It
 retains device/toolchain identity, source and binary hashes, correctness
 results, timings, and program output as artifacts.
 
-GPU verification is pending until that workflow succeeds on this PR's exact
+GPU verification requires that workflow to succeed on this PR's exact
 head. Exit code `3` from the verifier means CUDA is unavailable; it is not a
 passing GPU result. The generated liveness cases are compiler analysis inputs,
 not representative NemoClaw build measurements.
@@ -58,6 +58,42 @@ without rebuilding it. Without that option, the bridge builds the frontend
 when absent or older than its sources. A CUDA device, compatible driver/toolkit,
 Python 3.9+, and a host C++ compiler are required. Clang must support the emitted
 opaque-pointer LLVM IR.
+
+## Same-runner CUDA benchmarks
+
+The GPU job benchmarks the same generated analysis inputs with the native Rust
+CPU worklist and CUDA. CPU results include serial, function-parallel, and
+word-parallel solvers; the comparison uses the fastest CPU median. The Python
+set oracle checks outputs outside the timed solve and is not the performance
+baseline. Compact function batches test GPU throughput at several sizes;
+long chains and mixed workloads test propagation and scheduling costs.
+
+CUDA reports kernel events, resident-input warm passes, and warm passes that
+upload all input arrays and download results. The last comparison includes
+transfers and retains device allocations. Initialization and input preparation
+are reported separately. These generated workloads are analysis measurements,
+not NemoClaw or Omarchy build measurements.
+
+The complete compiler benchmark interleaves repeated fresh-process compiles
+of the supported demo through the native CPU compiler, Python CPU bridge, and
+CUDA bridge. Each executable must print `1460`. Wall time includes process
+startup and linking; stage timings retain their own boundaries. Native CPU
+versus CUDA compares the current architectures, including the bridge and CPU
+verification costs. Python CPU versus CUDA uses the same frontend and bridge.
+File caches and the NVIDIA driver may remain warm between samples.
+
+Within the validation image, after CUDA verification:
+
+```sh
+python3 scripts/benchmark_cuda.py --repeats 31 --compile-repeats 9 \
+  --compiler-binary .build/compiler/release/gpu-rust-compiler \
+  --cpu-binary .build/compiler/release/gpu-cpu-liveness \
+  --cuda-binary .build/cuda/cuda-liveness --report results/cuda-benchmark.json
+```
+
+The workflow retains raw samples, workload hashes, executable outputs, hardware
+identity, and source provenance. A result for one pass or this scalar demo does
+not establish a faster complete Rust build.
 
 ## CPU and Metal development
 
