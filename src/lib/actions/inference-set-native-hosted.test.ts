@@ -9,6 +9,7 @@ import { fixedNativeProvider } from "../inference/native-provider/fixed";
 import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
+import { prepareRebuildResumeConfig } from "./sandbox/rebuild-resume-config";
 import { createDeps, HERMES_TARGET, OPENCLAW_TARGET } from "../../../test/helpers/inference-set";
 
 function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = []) {
@@ -140,6 +141,15 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("inference set native $label", (definitio
     expect(JSON.stringify(deps.calls.setOpenClawConfigValues.mock.calls)).toContain(
       `openshell:resolve:env:${definition.credentialEnv}`,
     );
+  });
+
+  it("reuses the existing credential when selecting another model", async () => {
+    const { deps, calls } = fixture();
+    await runInferenceSet({ provider: definition.logicalProvider, model: "first-model" }, deps);
+    deps.resolveCredentialValue = vi.fn(() => "changed-host-key");
+    await runInferenceSet({ provider: definition.logicalProvider, model: "second-model" }, deps);
+    expect(calls.updateProvider).not.toHaveBeenCalled();
+    expect(deps.resolveCredentialValue).not.toHaveBeenCalled();
   });
 
   it("migrates a legacy selection without changing the gateway route or deleting its provider", async () => {
@@ -307,5 +317,108 @@ it.each([OPENCLAW_TARGET, HERMES_TARGET])(
       expect.arrayContaining(["inference", "set", "--provider", "hermes-provider"]),
       expect.anything(),
     );
+  },
+);
+
+describe.each([OPENCLAW_TARGET, HERMES_TARGET])(
+  "native Hermes credentials for $agentName",
+  (target) => {
+    it("preserves the shared credential after a successful model change", async () => {
+      const { deps, calls, entry, attached } = fixture();
+      entry.agent = target.agentName;
+      deps.resolveAgentConfig = () => target;
+      await runInferenceSet({ provider: "hermes-provider", model: "previous-model" }, deps);
+      const providerName = entry.nativeHostedProviderAttachment!.providerName;
+      attached.get("beta")!.add(providerName);
+      calls.updateProvider.mockClear();
+      const resolve = vi.fn((name: string) =>
+        name === "OPENAI_API_KEY" ? "unrelated-openai-key" : "changed-nous-key",
+      );
+      deps.resolveCredentialValue = resolve;
+      await runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps);
+      expect(calls.updateProvider).not.toHaveBeenCalled();
+      expect(resolve).not.toHaveBeenCalled();
+      expect([...attached.get("beta")!]).toContain(providerName);
+      expect(entry.model).toBe("new-model");
+    });
+
+    it("preserves the shared credential after rejected model verification", async () => {
+      const { deps, calls, entry, attached } = fixture();
+      entry.agent = target.agentName;
+      deps.resolveAgentConfig = () => target;
+      await runInferenceSet({ provider: "hermes-provider", model: "previous-model" }, deps);
+      const providerName = entry.nativeHostedProviderAttachment!.providerName;
+      attached.get("beta")!.add(providerName);
+      calls.updateProvider.mockClear();
+      const resolve = vi.fn((name: string) =>
+        name === "OPENAI_API_KEY" ? "unrelated-openai-key" : "changed-nous-key",
+      );
+      deps.resolveCredentialValue = resolve;
+      deps.calls.probeSandboxRoute.mockResolvedValue({
+        ok: false,
+        detail: "rejected",
+        httpStatus: 401,
+      });
+      await expect(
+        runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps),
+      ).rejects.toThrow("Sandbox-side verification rejected");
+      expect(calls.updateProvider).not.toHaveBeenCalled();
+      expect(resolve).not.toHaveBeenCalled();
+      expect([...attached.get("beta")!]).toContain(providerName);
+      expect(entry.model).toBe("previous-model");
+    });
+
+    it("publishes the native binding during legacy migration so rebuild can resume", async () => {
+      const { deps, calls, entry } = fixture();
+      entry.agent = target.agentName;
+      deps.resolveAgentConfig = () => target;
+      await runInferenceSet({ provider: "hermes-provider", model: "previous-model" }, deps);
+      entry.nativeHostedProviderAttachment = undefined;
+      entry.credentialEnv = "NOUS_API_KEY";
+      deps.resolveCredentialValue = () => "";
+      calls.updateProvider.mockClear();
+      await runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps);
+      expect(calls.updateProvider).not.toHaveBeenCalled();
+      const resume = prepareRebuildResumeConfig(
+        "alpha",
+        entry,
+        target.agentName,
+        () => {},
+        (message) => {
+          throw new Error(message);
+        },
+      );
+      expect(entry.credentialEnv).toBe("OPENAI_API_KEY");
+      expect(resume).toEqual(
+        expect.objectContaining({ credentialEnv: "OPENAI_API_KEY", model: "new-model" }),
+      );
+    });
+
+    it("does not create a Hermes provider with an unrelated OpenAI key", async () => {
+      const { deps, calls, entry } = fixture();
+      entry.agent = target.agentName;
+      deps.resolveAgentConfig = () => target;
+      deps.resolveCredentialValue = (name) =>
+        name === "OPENAI_API_KEY" ? "unrelated-openai-key" : "";
+      await expect(
+        runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps),
+      ).rejects.toThrow("host credential is required");
+      expect(calls.createProvider).not.toHaveBeenCalled();
+      expect(calls.updateProvider).not.toHaveBeenCalled();
+    });
+
+    it("uses the Nous host key for a new native Hermes provider", async () => {
+      const { deps, calls, entry } = fixture();
+      entry.agent = target.agentName;
+      deps.resolveAgentConfig = () => target;
+      deps.resolveCredentialValue = (name) =>
+        name === "NOUS_API_KEY" ? "synthetic-nous-key" : "unrelated-openai-key";
+      await runInferenceSet({ provider: "hermes-provider", model: "new-model" }, deps);
+      expect(calls.createProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          credentials: [{ name: "OPENAI_API_KEY", value: "synthetic-nous-key" }],
+        }),
+      );
+    });
   },
 );

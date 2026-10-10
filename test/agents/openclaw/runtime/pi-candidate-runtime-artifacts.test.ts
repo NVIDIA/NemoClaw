@@ -160,7 +160,7 @@ describe("Pi managed model catalog generation", () => {
         const text = fs.readFileSync(path.join(home, ".pi", "agent", "models.json"), "utf8");
         expect(JSON.parse(text).providers.openshell).toEqual({
           api: "openai-completions",
-          apiKey: `openshell:resolve:env:${provider.credentialEnv}`,
+          apiKey: `\${${provider.credentialEnv}}`,
           baseUrl: provider.endpoint,
           models: [{ id: "selected-model" }],
           ...(provider.logicalProvider === "openrouter-api"

@@ -112,7 +112,10 @@ export function nativeSelectionRegistryFields(
     ...departure,
     ...(nvidia
       ? { nativeNvidiaProviderAttachment: nvidia }
-      : { nativeHostedProviderAttachment: attachment }),
+      : {
+          nativeHostedProviderAttachment: attachment,
+          credentialEnv: fixedNativeProviderForAttachment(attachment).credentialEnv,
+        }),
   };
 }
 
@@ -161,7 +164,14 @@ export async function prepareNativeSelection(input: {
   const ensured = await lifecycle.ensureNativeProvider({
     adapter: input.deps.providerAdapter,
     target,
-    credentialValue: input.deps.resolveCredentialValue(definition.credentialEnv) || null,
+    // Hosted model selection must not rotate a gateway-shared provider credential.
+    // Hermes host credentials use NOUS_API_KEY; OPENAI_API_KEY is its injection slot.
+    credentialValue:
+      input.expectedAttachment && !isNativeNvidiaProvider(input.provider)
+        ? null
+        : input.deps.resolveCredentialValue(
+            input.provider === "hermes-provider" ? "NOUS_API_KEY" : definition.credentialEnv,
+          ) || null,
     ...(input.expectedAttachment ? { expected: input.expectedAttachment } : {}),
   });
   await lifecycle.persistNativeProviderAuthority({

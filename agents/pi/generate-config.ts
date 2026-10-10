@@ -139,7 +139,7 @@ function buildConfig(settings: Settings): ManagedPiConfig {
     providers: {
       [MANAGED_PROVIDER_ID]: {
         api: settings.inferenceApi,
-        apiKey: nativeHosted?.apiKey ?? MANAGED_PROVIDER_API_KEY,
+        apiKey: nativeHosted ? `\${${nativeHosted.credentialEnv}}` : MANAGED_PROVIDER_API_KEY,
         ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
         baseUrl: settings.baseUrl,
         models: [buildModel(settings)],
