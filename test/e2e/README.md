@@ -1782,6 +1782,10 @@ a custom, copied, or no-op adapter.
 
 ## Native custom hosted inference
 
+The `inference-routing` selector includes the retained routing target and
+`inference-routing-custom-hosted`, which uses the distinct `custom-hosted` shard.
+Each target keeps its own execution deadline and artifact identity.
+
 The `inference-routing-custom-hosted` target's TC-INF-11 onboards its public HTTPS fixture
 with a sandbox-specific native provider. It verifies a fresh OpenClaw turn after stop/start,
 selected `inference get` and status, DNS pinning, redirect rejection, executable denial,

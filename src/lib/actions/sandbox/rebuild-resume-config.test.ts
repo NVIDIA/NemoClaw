@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../../state/onboard-session.js");
+const registryPersistence = requireDist("../../state/registry/persistence.js");
 const {
   isLocalInferenceProvider,
   getRebuildCredentialEnvFromRegistry,
@@ -929,7 +930,17 @@ describe("persisted native NVIDIA rebuild authority", () => {
   );
 });
 
-it.each(["matching", "malformed", "other-sandbox", "wrong-api"])(
+it.each([
+  "matching",
+  "matching-port",
+  "malformed",
+  "other-sandbox",
+  "wrong-api",
+  "missing-gateway",
+  "replaced-gateway",
+  "malformed-gateway",
+  "other-gateway",
+])(
   "validates native custom rebuild authority before destructive work (%s) (#12636)",
   async (state) => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
@@ -945,7 +956,26 @@ it.each(["matching", "malformed", "other-sandbox", "wrong-api"])(
       providerName: prepared.providerName,
       providerId: "custom-id",
     });
+    const gatewayName = state === "matching-port" ? "nemoclaw-9001" : "nemoclaw";
+    vi.spyOn(registryPersistence, "load").mockReturnValue({
+      sandboxes: {},
+      nativeCustomProviderAuthorities: {
+        [state === "other-gateway" ? "peer" : gatewayName]: {
+          ...(state === "missing-gateway"
+            ? {}
+            : {
+                [receipt.providerName]:
+                  state === "malformed-gateway"
+                    ? {}
+                    : state === "replaced-gateway"
+                      ? { ...receipt, providerId: "replacement-id" }
+                      : receipt,
+              }),
+        },
+      },
+    });
     const selected = entry({
+      gatewayName,
       provider: "compatible-endpoint",
       model: "model",
       endpointUrl: prepared.endpointUrl,
@@ -967,7 +997,7 @@ it.each(["matching", "malformed", "other-sandbox", "wrong-api"])(
     } catch (error) {
       failure = error;
     }
-    expect(restored).toEqual(state === "matching" ? receipt : undefined);
-    expect(failure instanceof Error).toBe(state !== "matching");
+    expect(restored).toEqual(state.startsWith("matching") ? receipt : undefined);
+    expect(failure instanceof Error).toBe(!state.startsWith("matching"));
   },
 );

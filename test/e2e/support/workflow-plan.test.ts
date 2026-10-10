@@ -306,6 +306,14 @@ describe("E2E workflow plan", () => {
     ).toContain("inference-routing-custom-hosted");
   });
 
+  it("includes native custom lifecycle in the existing inference-routing selector (#12636)", () => {
+    const plan = buildE2eWorkflowPlan({ targets: "inference-routing" });
+    const rows = Object.values(plan.catalogueMatrices).flat();
+    expect(rows.map((row) => row.id)).toContain("inference-routing-custom-hosted");
+    const lifecycle = rows.find((row) => row.id === "inference-routing-custom-hosted");
+    expect(lifecycle?.shard).toBe("custom-hosted");
+  });
+
   it("selects ordinary agent consumers and inference restart for a scope patch", () => {
     const plan = buildE2eWorkflowPlan(
       {},

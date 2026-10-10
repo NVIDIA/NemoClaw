@@ -31,6 +31,7 @@ graph LR
     subgraph EXTERNAL["External Services"]
         SHARED_INFERENCE["Shared-route inference providers<br/><small>OpenAI · Anthropic · Ollama<br/>vLLM · Model Router</small>"]:::external
         NVIDIA_INFERENCE["NVIDIA Endpoints<br/><small>integrate.api.nvidia.com</small>"]:::external
+        CUSTOM_INFERENCE["Custom hosted endpoint<br/><small>Admitted API and endpoint</small>"]:::external
         INTEGRATIONS["Integration APIs<br/><small>MCP · GitHub · package indexes</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
     end
@@ -42,6 +43,7 @@ graph LR
             NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · sandbox setup</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
             STATE["State Management<br/><small>Whole-home rebuild transfer<br/>Fail-closed credential checks<br/>Integrity verification</small>"]:::nemoclaw
+            CUSTOM_ADAPTER["Host adapter<br/><small>HTTPS pinning · Bedrock authentication</small>"]:::nemoclaw
         end
 
         subgraph OPENSHELL["OpenShell"]
@@ -68,6 +70,9 @@ graph LR
     AGENT -->|"Shared inference requests<br/><small>inference.local · no credentials</small>"| GW
     GW -->|"Shared-route request with<br/>credential injected"| SHARED_INFERENCE
     AGENT -->|"Attached NVIDIA provider<br/><small>restricted request · placeholder credential</small>"| NVIDIA_INFERENCE
+    AGENT -->|"Attached custom provider<br/><small>restricted HTTP egress · issued credential rewritten</small>"| CUSTOM_INFERENCE
+    AGENT -->|"Attached custom provider<br/><small>restricted adapter egress · issued credential rewritten</small>"| CUSTOM_ADAPTER
+    CUSTOM_ADAPTER -->|"Pinned HTTPS or authenticated Bedrock"| CUSTOM_INFERENCE
 
     INTEGRATIONS -->|"External APIs"| INTEG
     INTEG -->|"Policy-gated access"| AGENT

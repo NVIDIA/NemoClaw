@@ -24,8 +24,9 @@ import { normalizeInferenceSelection } from "../../inference/selection";
 import type { ReasoningEffort } from "../../onboard/reasoning-mode";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import * as onboardSession from "../../state/onboard-session";
+import { getMatchingNativeCustomProviderAuthority } from "../../state/registry/native-custom-provider-authority";
 import type { AmbientRecreateEnvAssessment } from "./rebuild-env-isolation";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { resolveSandboxGatewayName, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   assessRebuildAmbientEnv,
   assessRebuildInferencePreflight,
@@ -265,6 +266,11 @@ export function prepareRebuildResumeConfig(
       return null;
     }
     try {
+      getMatchingNativeCustomProviderAuthority(
+        resolveSandboxGatewayName(sb),
+        sandboxName,
+        nativeCustomProviderAttachment,
+      );
       getSandboxInferenceConfig(
         trustedSelection.model,
         trustedSelection.provider,

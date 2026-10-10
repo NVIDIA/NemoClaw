@@ -1004,6 +1004,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
   }),
   managedRuntimeTarget("inference-routing-custom-hosted", {
+    targetId: "inference-routing",
+    shard: "custom-hosted",
     displayName: "Inference: proves native custom hosted lifecycle and isolation",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; native custom HTTPS, HTTP and Anthropic fixtures",
