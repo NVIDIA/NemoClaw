@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import deepAgentsCodeRuntimeIdentity from "../../agent/deep-agents-code-runtime-identity.json";
+
 export const MANAGED_IMAGE_CONTRACT_VERSION = 1 as const;
 export const MANAGED_IMAGE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 export const MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION = 1 as const;
@@ -41,7 +43,10 @@ export interface ManagedImageRuntimeIdentity {
 export const MANAGED_IMAGE_RUNTIME_IDENTITIES = Object.freeze({
   openclaw: Object.freeze({ uid: 998, gid: 998, workdir: "/sandbox" }),
   hermes: Object.freeze({ uid: 998, gid: 999, workdir: "/sandbox" }),
-  "langchain-deepagents-code": Object.freeze({ uid: 999, gid: 999, workdir: "/sandbox" }),
+  "langchain-deepagents-code": Object.freeze({
+    ...deepAgentsCodeRuntimeIdentity,
+    workdir: "/sandbox",
+  }),
   pi: Object.freeze({ uid: 999, gid: 999, workdir: "/sandbox" }),
 } as const satisfies Record<ManagedImageAgent, ManagedImageRuntimeIdentity>);
 
