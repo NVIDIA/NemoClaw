@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { classifyManagedGatewayPortConflict } from "../../readiness/gateway-production";
 import {
@@ -11,8 +12,10 @@ import {
   getDockerDriverGatewayRuntimeMarkerPath,
   resolveDockerDriverGatewayStateDir,
 } from "../docker-driver-gateway-runtime-marker";
+import { gatewayIdForStateDir } from "../gateway/process-environment";
 import {
   observeNativePodmanGatewayReadiness,
+  podmanGatewayDefaultProcessReaders,
   type PodmanGatewayReadinessDeps,
 } from "./podman-gateway-readiness";
 
@@ -26,6 +29,8 @@ const STATE_DIR = resolveDockerDriverGatewayStateDir(ENVIRONMENT, ENVIRONMENT.HO
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const MARKER_FILE = getDockerDriverGatewayRuntimeMarkerPath(STATE_DIR);
 const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
+
+afterEach(() => vi.restoreAllMocks());
 
 function input() {
   return {
@@ -125,6 +130,38 @@ function managedServiceDeps() {
   };
 }
 
+function mockZombieServiceProcess(environment: Record<string, string>) {
+  const proc = `/proc/${String(PID)}`;
+  const sibling = `${proc}/task/${String(PID + 1)}`;
+  const files = new Map([
+    [`${proc}/cmdline`, ""],
+    [`${proc}/environ`, ""],
+    [`${proc}/status`, "State:\tZ (zombie)\n"],
+    [`${sibling}/cmdline`, `${GATEWAY_BIN}\0`],
+    [
+      `${sibling}/environ`,
+      `${Object.entries(environment)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\0")}\0`,
+    ],
+  ]);
+  const readFile = fs.readFileSync;
+  vi.spyOn(fs, "readFileSync").mockImplementation(
+    (file, options) => files.get(String(file)) ?? readFile(file, options),
+  );
+  const readdir = fs.readdirSync;
+  vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) =>
+    String(directory) === `${proc}/task`
+      ? ([String(PID), String(PID + 1)] as unknown as ReturnType<typeof fs.readdirSync>)
+      : readdir(directory, options),
+  );
+  const realpath = fs.realpathSync.native;
+  vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
+    String(file) === `${sibling}/exe` ? GATEWAY_BIN : realpath(file, options),
+  );
+  return { files, sibling };
+}
+
 describe("native Podman gateway readiness", () => {
   it("reuses the managed service after startup clears standalone ownership files", () => {
     const deps = managedServiceDeps();
@@ -146,6 +183,47 @@ describe("native Podman gateway readiness", () => {
       deps.runHost.mock.calls.every(([command]) => ["lsof", "ps", GATEWAY_BIN].includes(command)),
     ).toBe(true);
   });
+
+  it.runIf(process.platform === "linux")(
+    "reads a zombie leader's live sibling through the default Podman readiness readers",
+    () => {
+      const base = managedServiceDeps();
+      const environment = {
+        ...base.readProcessEnvironment(),
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
+      };
+      const { files, sibling } = mockZombieServiceProcess(environment);
+      const run = base.runHost;
+      const deps = {
+        ...base,
+        ...podmanGatewayDefaultProcessReaders,
+        runHost: (command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+          args.includes("stat=")
+            ? { status: 0, stdout: "Z\nS\n", stderr: "" }
+            : run(command, args, env),
+      };
+
+      const observed = observeNativePodmanGatewayReadiness(input(), deps);
+      expect(observed.listenerScan).toEqual({ pids: [PID], unverifiedPids: [], complete: true });
+      expect(observed.targetBoundListenerPids).toEqual([PID]);
+      expect(observed.versionCompatibility).toBe("compatible");
+      expect(fs.readFileSync).toHaveBeenCalledWith(`${sibling}/cmdline`, "utf8");
+      expect(fs.readFileSync).toHaveBeenCalledWith(`${sibling}/environ`, "utf8");
+      expect(fs.realpathSync.native).toHaveBeenCalledWith(`${sibling}/exe`);
+
+      files.set(
+        `${sibling}/environ`,
+        `${Object.entries({ ...environment, OPENSHELL_DB_URL: "sqlite:/foreign/openshell.db" })
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\0")}\0`,
+      );
+      expect(observeNativePodmanGatewayReadiness(input(), deps).listenerScan).toEqual({
+        pids: [],
+        unverifiedPids: [PID],
+        complete: true,
+      });
+    },
+  );
 
   it.each([
     ["OPENSHELL_DRIVERS", "docker"],

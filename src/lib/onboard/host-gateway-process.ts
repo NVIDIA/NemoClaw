@@ -289,7 +289,10 @@ export function processUsesStateScopedSandboxNamespace(
   return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
 }
 
-function readProcessExecutable(pid: number, deps: HostGatewayProcessDeps): string | null {
+export function readHostGatewayProcessExecutable(
+  pid: number,
+  deps: Pick<HostGatewayProcessDeps, "readProcessExecutable">,
+): string | null {
   if (deps.readProcessExecutable) return deps.readProcessExecutable(pid);
   return readGatewayProcEntry(pid, "exe");
 }
@@ -319,7 +322,7 @@ export function externallySupervisedHostGatewayProcessOwnershipFailure(
   if (!processUsesStateScopedSandboxNamespace(options.pid, options.stateDir, deps)) {
     return "gateway process owner and loaded sandbox namespace cannot be proven";
   }
-  const executable = readProcessExecutable(options.pid, deps);
+  const executable = readHostGatewayProcessExecutable(options.pid, deps);
   if (
     !executable ||
     normalizeProcessExecutable(executable) !== normalizeProcessExecutable(options.gatewayBin)

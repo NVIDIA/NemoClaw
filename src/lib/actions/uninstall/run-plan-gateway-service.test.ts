@@ -40,6 +40,7 @@ interface Fixture {
 
 const tempRoots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -125,48 +126,50 @@ async function uninstall(
   keepOpenShell: boolean,
   deps: Partial<UninstallRunDeps> = {},
   gateways: { name: string }[] = [{ name: "nemoclaw" }],
+  useDefaultExecutableReader = false,
 ) {
   const { commandExists = () => false, run = () => ok(), ...overrides } = deps;
+  const provenDeps = withProvenManagedGatewayProcess({
+    backupAllBeforeUninstall: async () => undefined,
+    env: test.env,
+    existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
+    hasPortableRuntimeCleanup: () => false,
+    isPortFree: () => true,
+    isTty: false,
+    platform: "linux",
+    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "packaged-service",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+    rmSync: fs.rmSync,
+    runDocker: () => ok(),
+    withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
+    ...overrides,
+    commandExists: (command) => command === "openshell" || commandExists(command),
+    run: (command, args, options) => {
+      const delegated = run(command, args, options);
+      return (
+        (command === "openshell" &&
+          args[0] === "gateway" &&
+          args[1] === "list" &&
+          ok(JSON.stringify(gateways))) ||
+        (command === "systemctl" &&
+          args.includes("--property=MainPID") &&
+          delegated.stdout === "" &&
+          ok("0\n")) ||
+        delegated
+      );
+    },
+  });
   return await runUninstallPlanProduction(
     { assumeYes: true, deleteModels: false, keepOpenShell },
-    withProvenManagedGatewayProcess({
-      backupAllBeforeUninstall: async () => undefined,
-      env: test.env,
-      existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
-      hasPortableRuntimeCleanup: () => false,
-      isPortFree: () => true,
-      isTty: false,
-      platform: "linux",
-      resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-        gatewayName,
-        gatewayPort,
-        mode: "nemoclaw-managed",
-        source: "packaged-service",
-        endpoint: null,
-        stateDir: null,
-        supervisor: null,
-        requiredCapabilities: [],
-      }),
-      rmSync: fs.rmSync,
-      runDocker: () => ok(),
-      withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
-      ...overrides,
-      commandExists: (command) => command === "openshell" || commandExists(command),
-      run: (command, args, options) => {
-        const delegated = run(command, args, options);
-        return (
-          (command === "openshell" &&
-            args[0] === "gateway" &&
-            args[1] === "list" &&
-            ok(JSON.stringify(gateways))) ||
-          (command === "systemctl" &&
-            args.includes("--property=MainPID") &&
-            delegated.stdout === "" &&
-            ok("0\n")) ||
-          delegated
-        );
-      },
-    }),
+    useDefaultExecutableReader ? { ...provenDeps, readProcessExecutable: undefined } : provenDeps,
   );
 }
 
@@ -244,6 +247,90 @@ describe("uninstall OpenShell gateway user service", () => {
     ]);
     expect(fs.existsSync(servicePath)).toBe(false);
   });
+
+  it.runIf(process.platform === "linux")(
+    "deletes a scoped sandbox when the package-managed service leader is a zombie with a live sibling",
+    async () => {
+      const test = fixture(true);
+      const servicePath = writeManagedService(test);
+      const stateDir = path.join(
+        test.home,
+        ".local",
+        "state",
+        "nemoclaw",
+        "openshell-docker-gateway",
+      );
+      fs.rmSync(path.join(stateDir, "openshell-gateway.pid"));
+      fs.rmSync(getDockerDriverGatewayRuntimeMarkerPath(stateDir));
+      writeSelectedSandboxRegistry(test, "my-assistant");
+      const pid = 9_999_801;
+      const proc = `/proc/${String(pid)}`;
+      const sibling = `${proc}/task/${String(pid + 1)}`;
+      const binary = "/usr/bin/openshell-gateway";
+      const files = new Map([
+        [`${proc}/environ`, ""],
+        [`${proc}/status`, "State:\tZ (zombie)\n"],
+        [
+          `${sibling}/environ`,
+          `${NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV}=${gatewayIdForStateDir(stateDir)}\0`,
+        ],
+      ]);
+      const readFile = fs.readFileSync;
+      vi.spyOn(fs, "readFileSync").mockImplementation(
+        (file, options) => files.get(String(file)) ?? readFile(file, options),
+      );
+      const readdir = fs.readdirSync;
+      vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) =>
+        String(directory) === `${proc}/task`
+          ? ([String(pid), String(pid + 1)] as unknown as ReturnType<typeof fs.readdirSync>)
+          : readdir(directory, options),
+      );
+      const realpath = fs.realpathSync.native;
+      vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
+        String(file) === `${sibling}/exe` ? binary : realpath(file, options),
+      );
+      const calls: string[][] = [];
+      let running = true;
+      const responses = new Map<string, () => RunResult>([
+        ["uid=", () => ok(`${String(process.getuid?.() ?? -1)}\n`)],
+        ["stat=", () => (running ? ok("Z\nS\n") : { status: 1, stdout: "", stderr: "" })],
+        ["args=", () => ok("openshell-gateway[nemoclaw=nemoclaw;port=8080]\n")],
+        ["--property=MainPID", () => ok(`${String(pid)}\n`)],
+      ]);
+      const result = await uninstall(
+        test,
+        false,
+        {
+          commandExists: (command) => command === "systemctl" || command === "docker",
+          getTrustedActiveOpenShellGatewayUserServiceIdentity: () => ({
+            executablePath: binary,
+            pid,
+          }),
+          run: (command, args) => {
+            calls.push([command, ...args]);
+            running = running && !(command === "systemctl" && args.includes("disable"));
+            const response = args.map((arg) => responses.get(arg)).find((entry) => entry);
+            return response?.() ?? ok();
+          },
+        },
+        [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+        true,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(calls).toContainEqual([
+        "openshell",
+        "sandbox",
+        "delete",
+        "-g",
+        "nemoclaw",
+        "my-assistant",
+      ]);
+      expect(fs.realpathSync.native).toHaveBeenCalledWith(`${sibling}/exe`);
+      expect(fs.readFileSync).toHaveBeenCalledWith(`${sibling}/environ`, "utf8");
+      expect(fs.existsSync(servicePath)).toBe(false);
+    },
+  );
 
   it("does not delete a sandbox when the package-managed service identity changes", async () => {
     const test = fixture(true);
