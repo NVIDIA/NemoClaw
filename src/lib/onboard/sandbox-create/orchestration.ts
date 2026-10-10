@@ -1631,7 +1631,7 @@ function assertCreateLifecycleJournal(input: {
   }
 }
 
-function shouldInspectExistingSandbox(input: {
+export function shouldInspectExistingSandbox(input: {
   readonly liveExists: boolean;
   readonly portableLifecycle: boolean;
   readonly resumingVerifiedCreate: boolean;
