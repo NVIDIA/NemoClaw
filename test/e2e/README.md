@@ -1784,7 +1784,7 @@ to the console. Pass the fixture-provided frozen, canonical `progress`
 capability unchanged to an audited subprocess boundary; do not replace it with
 a custom, copied, or no-op adapter.
 
-## Native custom hosted inference
+## Native custom-hosted inference
 
 The `inference-routing` selector includes the retained routing target and
 `inference-routing-custom-hosted`, which uses the distinct `custom-hosted` shard.
