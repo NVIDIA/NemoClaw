@@ -17,10 +17,25 @@ LISTEN_PORT = 18081
 UPSTREAM_PORT = 18082
 TEST_KEY = "a" * 64
 FIXTURE = Path(__file__).with_name("fixtures") / "llama-cpp-stdio-upstream.c"
+SUBPROCESS_TIMEOUT_SECONDS = 60
 
 
 def docker(*arguments: str) -> str:
-    return subprocess.check_output(("docker", *arguments), text=True).strip()
+    return subprocess.check_output(
+        ("docker", *arguments), text=True, timeout=SUBPROCESS_TIMEOUT_SECONDS,
+    ).strip()
+
+
+def cleanup(*arguments: str) -> None:
+    try:
+        result = subprocess.run(
+            ("docker", *arguments), check=False, capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0:
+            print("Docker proof cleanup failed", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print("Docker proof cleanup timed out", file=sys.stderr)
 
 
 def forward(container: str, authorization: str) -> tuple[int, bytes, bytes]:
@@ -46,12 +61,12 @@ def forward(container: str, authorization: str) -> tuple[int, bytes, bytes]:
         return status, process.stdout.read(), process.stderr.read()
     except subprocess.TimeoutExpired as error:
         process.kill()
-        process.wait()
+        process.wait(timeout=5)
         raise RuntimeError("docker exec waited for stdin or upstream EOF") from error
     finally:
         if process.poll() is None:
             process.kill()
-            process.wait()
+            process.wait(timeout=5)
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 stream.close()
@@ -70,6 +85,7 @@ def prove(image: str, directory: Path) -> None:
     subprocess.run(
         ("cc", "-O2", "-std=c11", "-Wall", "-Wextra", "-Werror", str(FIXTURE), "-o", str(upstream)),
         check=True,
+        timeout=SUBPROCESS_TIMEOUT_SECONDS,
     )
     upstream.chmod(0o555)
     key = directory / "llama-cpp-api-key"
@@ -121,12 +137,15 @@ def prove(image: str, directory: Path) -> None:
         print("PR-built image: internal-only Docker exec, bearer 401/200, open-stdin exit passed")
     except Exception:
         if container:
-            print(docker("logs", container)[-1200:], file=sys.stderr)
+            try:
+                print(docker("logs", container)[-1200:], file=sys.stderr)
+            except (subprocess.SubprocessError, OSError):
+                print("Docker proof logs unavailable", file=sys.stderr)
         raise
     finally:
         if container:
-            subprocess.run(("docker", "rm", "--force", container), check=False, capture_output=True)
-        subprocess.run(("docker", "network", "rm", network), check=False, capture_output=True)
+            cleanup("rm", "--force", container)
+        cleanup("network", "rm", network)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,13 @@ const (
 
 // Docker exec reaches this process through the daemon when an internal network
 // cannot publish a host port. The HTTP request guard still owns authentication.
+// The paired consumer is the managed Docker Desktop WSL private bridge in
+// PR #12664, within the accepted image scope of #8144 and #8231. The host bridge
+// owns Docker authority, exact container identity, and forwarding-process cleanup;
+// this command preserves the guard's existing bearer, route, and request limits.
+// Image publication precedes that caller's exact-digest pin and qualification;
+// existing recipes do not switch transport when this capability is published.
+// Staged-rollout decision: https://github.com/NVIDIA/NemoClaw/pull/12944#issuecomment-6102710030
 func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
