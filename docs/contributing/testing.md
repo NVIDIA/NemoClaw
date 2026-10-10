@@ -96,7 +96,7 @@ The `test-`, `lifecycle-`, `live-docker-`, and `live-kind-` timing artifacts con
 |---|---|---|
 | `test` | 45 s | 8 s |
 | `lifecycle`, each partition | 360 s | 180 s |
-| `live-docker` | 360 s | 300 s |
+| `live-docker` | 360 s | 180 s |
 | `live-kind` | 270 s | 120 s |
 
 On the Linux CI runners, a step over its budget, or with a test over its limit, fails and names each offender with its time and limit; macOS, Windows, and local runs only report them.

@@ -20,11 +20,13 @@ lifecycle:
 
 # Live / Docker, its four nextest commands together: at most 255 s on
 # linux_amd64 and 210 s on linux_arm64 in 11 v1 runs. Its slowest test,
-# retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache, ran
-# over 120 s in 5 of the 11 linux_amd64 runs; their JUnit kept no test times.
+# retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache,
+# took 110 s on linux_amd64 in a full report; in the v1 runs, whose reports
+# kept only the last command, it ran past 120 s in 5 of 11 linux_amd64 runs
+# and, by its command's wall time, under about 150 s.
 live-docker:
   wall_seconds: 360
-  test_seconds: 300
+  test_seconds: 180
 
 # Live / Kind: at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
 # runs; slowest test 83 s.
