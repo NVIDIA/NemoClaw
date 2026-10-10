@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-analyze-ci-performance
 description: "Analyze retained NemoClaw CI timings for slow CLI tests, runner queues, or base-image publication."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-verify-stale
 description: "Reproduce stale NemoClaw bug reports on the reported and newest releases, then propose evidence-backed triage. Never auto-closes issues."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

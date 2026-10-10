@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-triage
 description: "Propose and apply authorized Issue Type, Project fields, and labels for NemoClaw issues or PRs, individually or in a batch."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

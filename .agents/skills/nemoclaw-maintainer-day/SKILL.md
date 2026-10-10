@@ -1,7 +1,7 @@
 ---
 name: nemoclaw-maintainer-day
 description: "Run a NemoClaw daytime maintainer pass over release-targeted work. Use for the maintainer queue or a requested recurring pass."
-user_invocable: true
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
