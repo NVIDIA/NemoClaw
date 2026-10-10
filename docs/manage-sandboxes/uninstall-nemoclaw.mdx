@@ -298,6 +298,8 @@ In this section, `<selected-state-root>` is `~/.nemoclaw/` for the default gatew
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
 Before deleting a registered sandbox, the default path writes a fresh backup under that gateway's `rebuild-backups/` directory.
+When the backup contains native agent state, successful uninstall prints the path to its `native-home.tar` archive.
+Deep Agents Code files are inside that archive, not separate loose files.
 The whole-host sweep applies this gate separately to each selected gateway port.
 If a backup fails or any registered sandbox is skipped, uninstall stops that gateway pass before OpenShell resource cleanup.
 A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.

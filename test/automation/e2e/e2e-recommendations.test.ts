@@ -139,6 +139,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/full-e2e-timeout-contract.mts",
         "tools/e2e/gateway-runtime.mts",
         "tools/e2e/hermes-acp-owning-paths.mts",
+        "tools/e2e/hosted-provider-smoke.mts",
         "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/sandbox-survival-timeout-contract.mts",

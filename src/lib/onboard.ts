@@ -582,10 +582,10 @@ const {
   shouldUseOpenshellDevChannel,
   supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
   enableBindMounts: onboardSessionBootstrap.isDockerBindMountsEnabled,
+  loadDockerDriverGatewayEnv: gatewayBinding.createGatewayEnvLoader(dockerDriverGatewayEnv),
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
-
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
