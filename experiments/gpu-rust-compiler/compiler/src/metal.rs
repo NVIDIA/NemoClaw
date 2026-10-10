@@ -37,6 +37,7 @@ mod platform {
         defs: *const u32,
         phi_out: *const u32,
     }
+    #[link(name = "gpulab_metal")]
     unsafe extern "C" {
         fn gpulab_create(shader: *const c_char, error: *mut c_char, capacity: usize)
             -> *mut c_void;

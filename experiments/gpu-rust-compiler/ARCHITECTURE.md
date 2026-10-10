@@ -10,6 +10,13 @@ Metal implements the same analysis contract for development on Apple Silicon mac
 The hardware determines the available backend; the compiler's internal
 representation and correctness rules should be shared.
 
+The [compile-time-first backend design](COMPILE_FIRST.md) now supplies a second
+path: stock Rust handles the complete language, while a pinned bitcode wrapper
+selects CPU or GPU object emission. The scalar frontend described below remains
+an independent analysis experiment. Its language restrictions do not apply to
+the compatible Cargo path; strict GPU module eligibility still limits GPU
+coverage. Multi-GPU scaling and whole-build GPU speedups remain unproved.
+
 ## The vertical slice that exists
 
 The `compiler/` crate contains a new lexer, parser, scalar type validator, and
@@ -49,7 +56,7 @@ division/remainder traps; it does not reproduce Rust panic messages.
 Ownership, references, traits, generic code, pattern matching, macros,
 procedural macros, the standard library, dependency crates, Rust metadata, and
 Cargo's rustc interface are outside the current subset. Unsupported syntax and
-invalid types are rejected. This compiler cannot yet build NemoClaw or the
+invalid types are rejected. This scalar frontend cannot build NemoClaw or the
 full Omarchy Rust tools.
 
 ## Architectures to pursue

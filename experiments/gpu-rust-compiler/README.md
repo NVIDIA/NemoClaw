@@ -7,12 +7,24 @@ This is a disposable pipeline experiment. It is excluded from NemoClaw's
 production Cargo workspace and has `publish = false`. Do not merge or ship it.
 [Import provenance](IMPORT.md) records the original prototype hashes.
 
-The new frontend compiles a scalar Rust subset through SSA liveness analysis,
+The compile-time-first path now builds complete Rust programs through the
+existing Rust frontend and a replaceable object emitter. `gpu-cargo` selects
+`fast`, `balanced`, or `release` quality independently of the backend. The
+experimental bitcode wrapper replaces object emission, then uses Rust's saved
+link step without compiling the source again. CPU routes use TPDE or an explicit
+LLVM fallback; GPU routes emit native machine code for strict leaf modules.
+The full Rust fixture exercises generics, standard-library linkage, boundary
+arithmetic, caught panic, and drops with physical GPU code plus attributed CPU
+fallback. See [the current design and evidence](COMPILE_FIRST.md),
+[policy controls](POLICY.md), and [backend setup](fast-backend/README.md).
+GPU execution does not yet establish a faster whole Rust build.
+
+The earlier independent frontend compiles a scalar Rust subset through SSA liveness analysis,
 dead instruction pruning, and Clang/LLVM machine-code generation. Supported
 source has `i64`/`bool`, functions, mutable locals, conditionals, loops, returns,
 and scalar operators. The executable prints its zero-argument scalar `main`
 result. It does not support ownership, traits, generics, macros, dependencies,
-the standard library, or Cargo's compiler interface. It cannot build NemoClaw
+the standard library, or Cargo's compiler interface. That scalar frontend cannot build NemoClaw
 or the complete Rust components used by Omarchy.
 
 The native CPU, Metal, and CUDA paths retain their execution state across

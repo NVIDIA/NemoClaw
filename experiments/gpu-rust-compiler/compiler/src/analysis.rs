@@ -455,13 +455,13 @@ pub(crate) fn solve_words(
         scratch.copy_from_slice(&packed.phi_out[row..row + words]);
         for edge in packed.successor_range(block) {
             let target = packed.successors[edge] as usize - function.block_base;
-            for word in 0..words {
-                scratch[word] |= live[target * words + word];
+            for (word, scratch_word) in scratch.iter_mut().enumerate() {
+                *scratch_word |= live[target * words + word];
             }
         }
         let mut changed = false;
-        for word in 0..words {
-            let value = packed.uses[row + word] | (scratch[word] & !packed.defs[row + word]);
+        for (word, scratch_word) in scratch.iter().enumerate() {
+            let value = packed.uses[row + word] | (*scratch_word & !packed.defs[row + word]);
             let cell = local * words + word;
             if live[cell] != value {
                 live[cell] = value;

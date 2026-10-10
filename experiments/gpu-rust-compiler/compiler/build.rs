@@ -35,4 +35,37 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=dylib=gpulab_metal");
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", out.display());
+    let codegen_source = root.join("native/codegen_metal.mm");
+    for file in [
+        &codegen_source,
+        &root.join("native/codegen_bridge.h"),
+        &root.join("native/codegen.metal"),
+    ] {
+        println!("cargo:rerun-if-changed={}", file.display());
+    }
+    let codegen_library = out.join("libgpuemit_metal.dylib");
+    let status = Command::new("xcrun")
+        .args([
+            "clang++",
+            "-std=c++17",
+            "-O3",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fobjc-arc",
+            "-dynamiclib",
+        ])
+        .arg(codegen_source)
+        .args(["-framework", "Metal", "-framework", "Foundation", "-o"])
+        .arg(&codegen_library)
+        .status()
+        .expect("Could not build Metal machine-code adapter");
+    assert!(
+        status.success(),
+        "Metal machine-code adapter compilation failed"
+    );
+    println!(
+        "cargo:rustc-env=GPUEMIT_METAL_LIBRARY={}",
+        codegen_library.display()
+    );
 }

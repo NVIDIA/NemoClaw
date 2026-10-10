@@ -465,11 +465,8 @@ impl Parser<'_> {
             }
         };
         let mut compared = false;
-        loop {
-            let op = match self.token() {
-                Kind::Symbol(op) => op.clone(),
-                _ => break,
-            };
+        while let Kind::Symbol(op) = self.token() {
+            let op = op.clone();
             let precedence = match op.as_str() {
                 "||" => 1,
                 "&&" => 2,

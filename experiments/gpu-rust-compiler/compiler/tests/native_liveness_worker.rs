@@ -84,7 +84,6 @@ fn persistent_native_worker_replaces_facts_and_recovers_from_errors_without_cuda
     assert!(changed.contains("\"status\":\"ok\""), "{changed}");
     let result = fs::read(&output).unwrap();
     assert_eq!(&result[8..], &[0; 16]);
-    drop(request);
     writeln!(stdin, "quit").unwrap();
     drop(stdin);
     assert!(child.wait().unwrap().success());
