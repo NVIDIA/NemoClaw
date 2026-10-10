@@ -44,6 +44,16 @@ const (
 // this command preserves the guard's existing bearer, route, and request limits.
 // Image publication precedes that caller's exact-digest pin and qualification;
 // existing recipes do not switch transport when this capability is published.
+// The checked-in caller at #12664 head fe78f505674037e8193ad6e8b2e75e573a8e443f
+// is owned by docker-llama-cpp-managed-lifecycle.ts and its private-bridge process.
+// It requires request-guard.stdio-forward=1 before creating a WSL container;
+// older images fail closed rather than falling back to host-port publication.
+// Native Linux retains its private-IP bridge. Recorded legacy receipts retain
+// their original topology for recovery, and failed setup rolls back through the
+// managed lifecycle's transaction-owned bridge/container cleanup.
+// The staged publication contract ends when #12664 selects and qualifies the new
+// immutable digest, retargets main, and merges. Until then, no recipe may select
+// this capability on the strength of an old-image qualification receipt.
 // Staged-rollout decision: https://github.com/NVIDIA/NemoClaw/pull/12944#issuecomment-6102710030
 func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
