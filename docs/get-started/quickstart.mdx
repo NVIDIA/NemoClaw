@@ -200,7 +200,11 @@ Use these details when your first-run path needs more control.
     On any express platform, set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
 
     N1x Express selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
-    N1x detection requires Linux `arm64`, a trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"`, and NVIDIA vendor ID `10de` on a display-class PCI device.
+    N1x detection requires native Linux `arm64` and NVIDIA vendor ID `10de` on a display-class PCI device.
+    A trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"` qualifies the legacy path.
+    If the marker is absent, recognized N1x PCI device IDs can qualify an inferred identity.
+    Invalid, linked, or unreadable markers do not enable inference.
+    Refer to [N1x identity requirements](../inference/local-inference/set-up-vllm#use-n1x-express) for the recognized IDs and pending physical validation.
     The N1x path does not use DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
     Accepting the N1x prompt supplies the narrow managed-vLLM preview intent required to pass the pending-validation readiness finding.
     Declining the N1x prompt or setting `NEMOCLAW_NO_EXPRESS=1` continues with ordinary interactive onboarding.

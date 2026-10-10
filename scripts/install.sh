@@ -5903,8 +5903,19 @@ n1x_pci_identity_is_valid() {
   [[ "$vendor" = "0x10de" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
 }
 
+# Generated from bin/lib/n1x-pci-policy.json. Update with node --no-warnings scripts/lib/generate-n1x-pci-policy.mts.
+# n1x-pci-policy:begin
+n1x_pci_device_is_known() {
+  case "${1:-}" in
+    0x2e03 | 0x2e06 | 0x2e13 | 0x2e02 | 0x2e2a) return 0 ;;
+  esac
+  return 1
+}
+# n1x-pci-policy:end
+
 n1x_has_pci_gpu() {
-  local pci_root="" pci_device="" vendor="" pci_class="" scanned=0
+  local pci_root="" pci_device="" vendor="" pci_class="" device="" scanned=0
+  local require_known_device="${1:-0}"
   pci_root="$(n1x_pci_devices_path)"
   [ -d "$pci_root" ] || return 1
   for pci_device in "$pci_root"/*; do
@@ -5918,7 +5929,12 @@ n1x_has_pci_gpu() {
     fi
     vendor="${vendor//[[:space:]]/}"
     pci_class="${pci_class//[[:space:]]/}"
-    n1x_pci_identity_is_valid "$vendor" "$pci_class" && return 0
+    n1x_pci_identity_is_valid "$vendor" "$pci_class" || continue
+    [ "$require_known_device" = "1" ] || return 0
+    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
+    [ "${#device}" -le 64 ] || continue
+    device="$(printf "%s" "$device" | tr '[:upper:]' '[:lower:]')"
+    n1x_pci_device_is_known "$device" && return 0
   done
   return 1
 }
@@ -5929,7 +5945,15 @@ is_n1x_host() {
     arm64 | aarch64) ;;
     *) return 1 ;;
   esac
-  n1x_fastos_release_is_trusted && n1x_has_pci_gpu
+  if n1x_fastos_release_is_trusted; then
+    n1x_has_pci_gpu
+    return "$?"
+  fi
+  local marker=""
+  marker="$(n1x_fastos_release_path)"
+  # Only an absent marker enables hardware inference; invalid or linked markers stay blocked.
+  [ ! -e "$marker" ] && [ ! -L "$marker" ] || return 1
+  n1x_has_pci_gpu 1
 }
 
 # Concept ISO 1.0.2 reports an NVIDIA BOS kernel but has no FastOS marker.
@@ -7402,11 +7426,11 @@ maybe_offer_express_install() {
     resume_loaded_station_install "$platform"
     return 0
   fi
-  # A Concept ISO-style host is outside the N1x preview identity boundary.
+  # Explain an unqualified Concept ISO-style host without overriding hardware detection.
   if [ -z "$platform" ]; then
     if is_nvidia_bos_arm64_host_without_n1x_marker; then
       warn "NVIDIA BOS ARM64 host has no /etc/fastos-release, as reported for Concept ISO 1.0.2."
-      warn "The Deferred N1x Express preview requires a trusted N1x FASTOS marker. Continuing with ordinary onboarding."
+      warn "The Deferred N1x Express preview requires a trusted N1x FASTOS marker or recognized N1x PCI identity. Continuing with ordinary onboarding."
     fi
     return 0
   fi

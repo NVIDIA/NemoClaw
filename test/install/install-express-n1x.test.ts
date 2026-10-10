@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import { isKnownN1xPciDevice } from "../../src/lib/inference/platform-identity/n1x";
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
@@ -65,7 +67,7 @@ describe("installer N1x Express preview", () => {
     expect(output).toMatch(/RESULT .*PROVIDER=install-vllm/);
   });
 
-  it("detects N1x only when FastOS and PCI identity both qualify (#8574)", () => {
+  it("detects legacy N1x when FastOS and PCI identity both qualify (#8574)", () => {
     const detectN1x = (fastOsQualified: boolean, pciQualified: boolean) =>
       runInstallerSourced(`
 function [ {
@@ -84,7 +86,7 @@ cat() {
 is_wsl_host() { return 1; }
 uname() { if [ "$1" = "-s" ]; then printf "Linux"; else printf "aarch64"; fi; }
 n1x_fastos_release_is_trusted() { return ${fastOsQualified ? "0" : "1"}; }
-n1x_has_pci_gpu() { return ${pciQualified ? "0" : "1"}; }
+n1x_has_pci_gpu() { [ "$#" -eq 0 ] || return 1; return ${pciQualified ? "0" : "1"}; }
 detect_express_platform
 `);
 
@@ -93,6 +95,70 @@ detect_express_platform
     expect(detectN1x(false, true).result.stdout).toBe("");
   });
 
+  it("uses the complete shared PCI policy in the standalone installer (#12737)", () => {
+    const { home, result } = runInstallerSourced(`
+for ((device=0; device<=65535; device++)); do
+  printf -v candidate '0x%04x' "$device"
+  if n1x_pci_device_is_known "$candidate"; then printf '%s\\n' "$candidate"; fi
+done
+`);
+    try {
+      const accepted = result.stdout.trim().split("\n");
+      expect(result.status).toBe(0);
+      const cliAccepted = Array.from(
+        { length: 65536 },
+        (_, device) => `0x${device.toString(16).padStart(4, "0")}`,
+      ).filter(isKnownN1xPciDevice);
+      expect(cliAccepted).toEqual(accepted);
+      expect(isKnownN1xPciDevice("0x2e04")).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["retail laptop", "Linux", "aarch64", "0x10de", "0x030000", "0x2e03", "N1x"],
+    ["retail desktop", "Linux", "aarch64", "0x10de", "0x030000", "0x2e13", "N1x"],
+    ["smaller laptop", "Linux", "aarch64", "0x10de", "0x030200", "0x2e06", "N1x"],
+    ["older prototype", "Linux", "aarch64", "0x10de", "0x030000", "0x2e2a", "N1x"],
+    ["second prototype", "Linux", "arm64", "0x10de", "0x030000", "0x2e02", "N1x"],
+    ["DGX Spark GPU", "Linux", "aarch64", "0x10de", "0x030000", "0x2e12", ""],
+    ["wrong vendor", "Linux", "aarch64", "0x1234", "0x030000", "0x2e2a", ""],
+    ["non-display device", "Linux", "aarch64", "0x10de", "0x020000", "0x2e2a", ""],
+    ["x86 host", "Linux", "x86_64", "0x10de", "0x030000", "0x2e2a", ""],
+    ["macOS host", "Darwin", "arm64", "0x10de", "0x030000", "0x2e2a", ""],
+  ])(
+    "detects an OS-marker-free %s from PCI evidence (#12737)",
+    (_scenario, os, arch, vendor, pciClass, device, expected) => {
+      const { home, result } = runInstallerSourced(
+        `
+uname() { if [ "$1" = "-s" ]; then printf '%s' "$TEST_OS"; else printf '%s' "$TEST_ARCH"; fi; }
+is_wsl_host() { return 1; }
+classify_dgx_station_hardware() { printf unknown; }
+n1x_fastos_release_path() { printf '%s/missing-marker' "$HOME"; }
+n1x_pci_devices_path() { printf '%s/pci' "$HOME"; }
+mkdir -p "$HOME/pci/0000:01:00.0"
+printf '%s\\n' "$TEST_VENDOR" > "$HOME/pci/0000:01:00.0/vendor"
+printf '%s\\n' "$TEST_CLASS" > "$HOME/pci/0000:01:00.0/class"
+printf '%s\\n' "$TEST_DEVICE" > "$HOME/pci/0000:01:00.0/device"
+detect_express_platform
+`,
+        {
+          TEST_OS: os,
+          TEST_ARCH: arch,
+          TEST_VENDOR: vendor,
+          TEST_CLASS: pciClass,
+          TEST_DEVICE: device,
+        },
+      );
+      try {
+        expect(result.status).toBe(0);
+        expect(result.stdout).toBe(expected);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
   const runConceptIsoInstall = (environment: Record<string, string>) =>
     runInstallerSourced(
       `
@@ -108,6 +174,13 @@ uname() {
 }
 n1x_fastos_release_path() { printf '%s' "$HOME/fastos-release"; }
 n1x_fastos_release_is_trusted() { return 1; }
+n1x_pci_devices_path() { printf '%s' "$HOME/pci"; }
+if [ -n "$TEST_DEVICE" ]; then
+  mkdir -p "$HOME/pci/0000:01:00.0"
+  printf '%s\\n' 0x10de >"$HOME/pci/0000:01:00.0/vendor"
+  printf '%s\\n' 0x030000 >"$HOME/pci/0000:01:00.0/class"
+  printf '%s\\n' "$TEST_DEVICE" >"$HOME/pci/0000:01:00.0/device"
+fi
 station_dual_pair_resume_pending() { return 1; }
 if [ "$TEST_MARKER" = 1 ]; then : >"$HOME/fastos-release"; fi
 maybe_offer_express_install
@@ -118,21 +191,29 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s\\n' "\${_SELECTED_EXPRESS_PLATFORM:-}" "\
         TEST_ARCH: "aarch64",
         TEST_KERNEL: "7.0.0-2020-nvidia-bos",
         TEST_MARKER: "0",
+        TEST_DEVICE: "",
         ...environment,
       },
     );
 
-  it("explains why Concept ISO cannot offer the Deferred N1x preview (#12737)", () => {
+  it("explains ordinary onboarding when Concept ISO has no qualifying N1x identity (#12737)", () => {
     const result = runConceptIsoInstall({});
 
     expect(result.result.status, result.output).toBe(0);
     expect(result.output).toContain("NVIDIA BOS ARM64 host has no /etc/fastos-release");
     expect(result.output).toContain(
-      "Deferred N1x Express preview requires a trusted N1x FASTOS marker",
+      "Deferred N1x Express preview requires a trusted N1x FASTOS marker or recognized N1x PCI identity",
     );
     expect(result.output).toContain("Continuing with ordinary onboarding");
     expect(result.output).toContain("RESULT PLATFORM= PROVIDER=");
     expect(result.output).not.toContain("Run the Deferred N1x preview");
+  });
+
+  it("detects a PCI-qualified Concept ISO host before the fallback notice (#12737)", () => {
+    const result = runConceptIsoInstall({ TEST_DEVICE: "0x2e2a", NON_INTERACTIVE: "1" });
+    expect(result.result.status, result.output).toBe(0);
+    expect(result.output).toContain("Detected N1x.");
+    expect(result.output).not.toContain("NVIDIA BOS ARM64 host has no /etc/fastos-release");
   });
 
   it.each([
