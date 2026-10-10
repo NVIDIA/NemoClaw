@@ -631,6 +631,63 @@ describe("backupStartedSandboxState", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("retries a backup whose capture churned while the started sandbox was booting (#12867)", async () => {
+    const churned = {
+      ...denied,
+      nativeChurn: true,
+      error: "Native home/workspace capture failed: exit 21",
+    };
+    const probe = vi.fn().mockReturnValue(true);
+    const backup = vi.fn().mockReturnValueOnce(churned).mockReturnValueOnce(ok);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const result = await backupStartedSandboxState("my-sb", {
+      backup,
+      probe,
+      sleep,
+      delayMs: 1,
+    });
+    expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds churn retries by the backup share of the transaction deadline (#12867)", async () => {
+    const churned = {
+      ...denied,
+      nativeChurn: true,
+      error: "Native home/workspace capture failed: exit 21",
+    };
+    let now = 0;
+    const probe = vi.fn().mockReturnValue(true);
+    const backup = vi.fn().mockReturnValue(churned);
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
+    });
+    const transactionDeadlineMs = startedSandboxBackupTransactionDeadline(() => 0);
+    const result = await backupStartedSandboxState("my-sb", {
+      backup,
+      probe,
+      sleep,
+      delayMs: 1_000,
+      deadlineMs: transactionDeadlineMs,
+      now: () => now,
+    });
+    expect(result).toMatchObject({
+      success: false,
+      nativeChurn: true,
+      error: "Sandbox backup exceeded its transaction deadline.",
+    });
+    // backupDeadline is transaction - 30s stop reserve. The delay walks the
+    // clock in 1s steps, so ~300 churned attempts exhaust it, fail closed, and
+    // never retry once the backup share expires.
+    expect(now).toBe(300_000);
+    expect(backup.mock.calls.length).toBe(300);
+    // Every attempt shares the same backup deadline so late attempts cannot
+    // outlive the stopped-state cleanup reserve.
+    expect(backup.mock.calls[0]?.[1]).toBe(300_000);
+    expect(backup.mock.calls.at(-1)?.[1]).toBe(300_000);
+  });
+
   it("gives a readiness probe its own timeout independent of retry spacing", async () => {
     const probe = vi.fn().mockReturnValue(true);
 
