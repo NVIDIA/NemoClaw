@@ -5,8 +5,9 @@
 
 NemoClaw projects deployment intent once into public Fabric configuration.
 Fabric discovers adapters, validates their settings and constraints, maps native configuration, and starts their runtimes.
-The shared [sandbox host](../../image/fabric/fabric.py) owns command parsing, transport, generation checks, and response envelopes.
+The shared [sandbox host](../../image/fabric/fabric.py) owns transport, generation checks, and the runtime lifecycle.
 Its image-installed [Fabric backend](../../image/fabric/backend.py) calls Fabric's public planner and runtime API; the host contains no adapter registry or native settings translation.
+Its [bridge protocol](../../image/fabric/bridge_protocol.py) owns command parsing, size limits, response envelopes, and response validation without importing Fabric.
 
 ## Responsibility Boundary
 
