@@ -17,7 +17,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
-import { NVIDIA_INFERENCE_PLACEHOLDER } from "../../../src/lib/inference-credential.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -627,9 +626,11 @@ async function readAndAssertOpenClawConfig(
             'const fs = require("node:fs");',
             'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
             "const provider = config.models?.providers?.inference;",
-            // Keep this comparison inside the sandbox: ShellProbe redacts
-            // credential-shaped JSON fields before returning stdout.
-            `require("node:assert/strict").ok(provider?.apiKey === ${JSON.stringify(NVIDIA_INFERENCE_PLACEHOLDER)}, "native credential reference mismatch");`,
+            // A fresh exec receives the newly attached provider handle. Keep
+            // both values inside the sandbox because ShellProbe redacts the
+            // credential-shaped config field before returning stdout.
+            "const handle = process.env.NVIDIA_INFERENCE_API_KEY;",
+            'require("node:assert/strict").ok(/^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$/.test(handle ?? "") && provider?.apiKey === handle, "native credential reference mismatch");',
             "delete provider.apiKey;",
             "process.stdout.write(JSON.stringify(config));",
           ].join(" "),

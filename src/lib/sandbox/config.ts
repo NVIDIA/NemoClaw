@@ -664,12 +664,62 @@ export interface OpenClawConfigUpdate {
   value: ConfigValue;
 }
 
+// A provider attached after sandbox creation appears in fresh OpenShell exec
+// processes, but not in the existing OpenClaw gateway's environment. The
+// gateway restart replaces that process image with its old environment. Pin
+// the supervisor-issued handle in the native config batch before restarting;
+// the actual credential remains outside the sandbox and endpoint-bound.
+const materializeNativeNvidiaHandle = [
+  "import json, os, re, sys",
+  'handle = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")',
+  "if not handle:",
+  '    sys.stderr.write("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING\\n")',
+  "    raise SystemExit(75)",
+  'if not re.fullmatch(r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY", handle):',
+  '    raise SystemExit("Native NVIDIA provider handle is unavailable or invalid")',
+  'with open(sys.argv[1], "r+", encoding="utf-8") as stream:',
+  "    updates = json.load(stream)",
+  "    if not isinstance(updates, list):",
+  '        raise SystemExit("Invalid OpenClaw config batch")',
+  "    matched = 0",
+  "    for update in updates:",
+  '        if not isinstance(update, dict) or update.get("path") != "models.providers.inference":',
+  "            continue",
+  '        provider = update.get("value")',
+  '        if not isinstance(provider, dict) or provider.get("apiKey") != sys.argv[3]:',
+  "            continue",
+  '        if provider.get("baseUrl") != sys.argv[2]:',
+  '            raise SystemExit("Native NVIDIA provider endpoint does not match")',
+  '        provider["apiKey"] = handle',
+  "        matched += 1",
+  "    if matched != 1:",
+  '        raise SystemExit("Expected one native NVIDIA provider config update")',
+  "    stream.seek(0)",
+  '    json.dump(updates, stream, separators=(",", ":"))',
+  "    stream.truncate()",
+].join("\n");
+// Keep these literals alongside the sandbox command. The focused test checks
+// them against the canonical inference constants without adding dependencies
+// to this already saturated config module.
+const nativeNvidiaPlaceholder = "${NVIDIA_INFERENCE_API_KEY}";
+const nativeNvidiaEndpoint = "https://integrate.api.nvidia.com/v1";
+
 function buildOpenClawNativeConfigBatchInvocation(
   sandboxName: string,
   updates: readonly OpenClawConfigUpdate[],
   gateway?: string | OpenShellRuntimeSelection,
 ) {
+  const nativeNvidiaUpdate = updates.some(
+    ({ dotpath, value }) =>
+      dotpath === "models.providers.inference" &&
+      isConfigObject(value) &&
+      value.apiKey === nativeNvidiaPlaceholder,
+  );
+  const materializeCommand = nativeNvidiaUpdate
+    ? `python3 -c ${shellQuote(materializeNativeNvidiaHandle)} "$file" ${shellQuote(nativeNvidiaEndpoint)} ${shellQuote(nativeNvidiaPlaceholder)} || exit $?; `
+    : "";
   return {
+    nativeNvidiaUpdate,
     ...(!gateway || typeof gateway === "string"
       ? {}
       : {
@@ -687,7 +737,7 @@ function buildOpenClawNativeConfigBatchInvocation(
       "--",
       "sh",
       "-c",
-      'umask 077; file=$(mktemp /tmp/nemoclaw-openclaw-config.XXXXXX) || exit $?; trap \'rm -f "$file"\' EXIT; cat >"$file" || exit $?; openclaw config set --batch-file "$file"',
+      `umask 077; file=$(mktemp /tmp/nemoclaw-openclaw-config.XXXXXX) || exit $?; trap 'rm -f "$file"' EXIT; cat >"$file" || exit $?; ${materializeCommand}openclaw config set --batch-file "$file"`,
       "nemoclaw-openclaw-config-set-batch",
     ],
     input: JSON.stringify(updates.map(({ dotpath, value }) => ({ path: dotpath, value }))),
@@ -738,20 +788,53 @@ function setOpenClawConfigValues(
     }
   }
   const invocation = buildOpenClawNativeConfigBatchInvocation(sandboxName, updates, gateway);
-  const result = runOpenshellCommand(getOpenshellBinary(), invocation.args, {
-    env: invocation.env,
-    replaceEnv: invocation.replaceEnv,
-    ignoreError: true,
-    input: invocation.input,
-    maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  if (!result.error && !result.signal && result.status === 0) return;
-  const detail = redactFull(
-    result.error?.message || String(result.stderr ?? "").trim() || "command failed",
+  runOpenClawNativeConfigBatchUntilHandleReady(invocation.nativeNvidiaUpdate, () =>
+    runOpenshellCommand(getOpenshellBinary(), invocation.args, {
+      env: invocation.env,
+      replaceEnv: invocation.replaceEnv,
+      ignoreError: true,
+      input: invocation.input,
+      maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    }),
   );
-  throw new Error(`Native OpenClaw config command failed: ${detail}`);
+}
+
+type NativeConfigBatchResult = Pick<
+  ReturnType<typeof runOpenshellCommand>,
+  "error" | "signal" | "status" | "stderr"
+>;
+
+function runOpenClawNativeConfigBatchUntilHandleReady(
+  nativeNvidiaUpdate: boolean,
+  run: () => NativeConfigBatchResult,
+  wait: (ms: number) => void = (ms) =>
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  warn: (message: string) => void = console.warn,
+): void {
+  // OpenShell 0.0.116 attach can confirm desired state before a fresh process
+  // receives the new environment. This retry is owned by native inference and
+  // applies only when the materializer exited before OpenClaw changed config.
+  const maxAttempts = nativeNvidiaUpdate ? 10 : 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = run();
+    if (!result.error && !result.signal && result.status === 0) return;
+    const handlePending =
+      !result.error &&
+      !result.signal &&
+      result.status === 75 &&
+      String(result.stderr ?? "").includes("NEMOCLAW_NATIVE_PROVIDER_HANDLE_PENDING");
+    if (handlePending && attempt < maxAttempts) {
+      warn(`Native NVIDIA provider handle pending; config attempt ${attempt}/${maxAttempts}`);
+      wait(2_000);
+      continue;
+    }
+    const detail = redactFull(
+      result.error?.message || String(result.stderr ?? "").trim() || "command failed",
+    );
+    throw new Error(`Native OpenClaw config command failed after ${attempt} attempt(s): ${detail}`);
+  }
 }
 
 function unsetOpenClawConfigValue(
@@ -1361,6 +1444,7 @@ export {
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
   rewriteConfigUrlsWithDnsPinning,
+  runOpenClawNativeConfigBatchUntilHandleReady,
   setOpenClawConfigValue,
   setOpenClawConfigValues,
   setDotpath,
