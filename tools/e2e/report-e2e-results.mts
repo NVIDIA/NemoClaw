@@ -391,7 +391,11 @@ export function renderE2eReport(input: {
       (name !== "generate-matrix" || result === "failure" || result === "cancelled"));
   const selectedEntries =
     requestedTestIds.length > 0
-      ? allEntries.filter(([name]) => requestedTestIdSet.has(name))
+      ? allEntries.filter(
+          ([name]) =>
+            requestedTestIdSet.has(name) ||
+            (name === "catalogue-hosted-inference" && validHostedCandidateContext(env, context)),
+        )
       : selectiveDispatch
         ? allEntries.filter(isSelectiveReportEntry)
         : allEntries;

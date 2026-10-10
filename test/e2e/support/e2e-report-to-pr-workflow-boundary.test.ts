@@ -1082,3 +1082,29 @@ it("does not qualify a skipped hosted smoke when setup succeeded", () => {
   expect(report.body).not.toContain("All selected tests passed");
   expect(report.body).toContain("skipped");
 });
+
+it.each(["failure", "skipped"])(
+  "retains a hosted %s when a requested shared test passes",
+  (result) => {
+    const report = renderE2eReport({
+      context: REPORT_CONTEXT,
+      env: {
+        ...HOSTED_CANDIDATE_ENV,
+        JOBS: "alpha",
+        TEST_MATRIX: JSON.stringify([DEFAULT_TEST_MATRIX[0]]),
+      },
+      apiJobsLoaded: true,
+      apiJobs: [
+        { name: "Shared E2E (alpha)", status: "completed", conclusion: "success", id: 456 },
+      ],
+      needs: {
+        "generate-matrix": { result: "success" },
+        "shared-e2e": { result: "success" },
+        "catalogue-hosted-inference": { result },
+      },
+    });
+    expect(report.body).toContain(` ${result} |`);
+    expect(report.body).toContain("| alpha | ✅ success |");
+    expect(report.body).not.toContain("All requested tests passed");
+  },
+);

@@ -2160,8 +2160,10 @@ Before the request, a sandbox probe checks the raw environment, process argument
 for a salted fingerprint of the selected credential. Only the fingerprint enters the probe; reports contain
 booleans and the sampled file count. A planted synthetic control confirms the scanner can detect a match.
 The sample inspects up to 200 files smaller than 1 MiB, taking the first 64 KiB of each readable file.
-This is not an exhaustive filesystem scan. This covers runtime configuration, OpenShell injection, and the
-remote inference boundary. Deterministic tests own protocol/header construction, ownership collisions,
+This is not an exhaustive filesystem scan. The scan checks only sandbox environment variables, process arguments, and sampled files.
+It does not prove credential isolation in host processes or upstream requests.
+Separate smoke assertions check native configuration and require a fresh, nonempty provider response.
+Deterministic tests own protocol/header construction, ownership collisions,
 sandbox isolation, restart, and failed-operation recovery.
 
 Each selected case requires its matching approved model variable, listed below. The smoke does not select a default model.
