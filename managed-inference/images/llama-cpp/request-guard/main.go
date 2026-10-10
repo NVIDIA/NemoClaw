@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/subtle"
@@ -51,8 +52,24 @@ func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	}()
 	responseDone := make(chan error, 1)
 	go func() {
-		_, copyError := io.Copy(output, connection)
-		responseDone <- copyError
+		reader := bufio.NewReader(connection)
+		for {
+			response, readError := http.ReadResponse(reader, nil)
+			if readError != nil {
+				responseDone <- readError
+				return
+			}
+			writeError := response.Write(output)
+			_ = response.Body.Close()
+			if writeError != nil {
+				responseDone <- writeError
+				return
+			}
+			if response.StatusCode >= 200 || response.StatusCode == http.StatusSwitchingProtocols {
+				responseDone <- nil
+				return
+			}
+		}
 	}()
 	var outputError error
 	select {
