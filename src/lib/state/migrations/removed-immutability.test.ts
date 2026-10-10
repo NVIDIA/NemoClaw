@@ -59,7 +59,7 @@ describe("removed immutability migration boundary", () => {
     const warn = vi.fn();
 
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
-      /mutable posture cannot be proven.*rebuild\/recreate/u,
+      /mutable posture cannot be proven.*Run `rebuild` for this sandbox.*Onboarding cannot recreate it/u,
     );
     expect(
       enforceRemovedImmutabilityMigrationBoundary("alpha", {
@@ -72,6 +72,9 @@ describe("removed immutability migration boundary", () => {
       hasUnattributedRecoveryState: false,
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("has been retired"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Affected sandbox records: alpha. Run `rebuild` for each affected"),
+    );
   });
 
   it.each([
@@ -97,22 +100,33 @@ describe("removed immutability migration boundary", () => {
         fs.linkSync(record, path.join(root, "state-alias.json"));
       },
     ],
-  ] as const)("blocks an unsafe legacy state record that is a %s", (_kind, arrange) => {
-    const root = stateDir();
-    const record = path.join(root, "shields-alpha.json");
-    arrange(root, record);
+  ] as const)(
+    "blocks an unsafe legacy state record that is a %s and the notice directs quarantine",
+    (_kind, arrange) => {
+      const root = stateDir();
+      const record = path.join(root, "shields-alpha.json");
+      arrange(root, record);
+      const warn = vi.fn();
 
-    expect(inspectRemovedImmutabilityMigration("alpha", root)).toEqual({
-      stateRecord: null,
-      recoveryArtifacts: [record],
-    });
-    expect(() =>
-      enforceRemovedImmutabilityMigrationBoundary("alpha", {
-        allowStateRecord: true,
-        stateDir: root,
-      }),
-    ).toThrow(/Blocking paths to quarantine/u);
-  });
+      expect(inspectRemovedImmutabilityMigration("alpha", root)).toEqual({
+        stateRecord: null,
+        recoveryArtifacts: [record],
+      });
+      expect(() =>
+        enforceRemovedImmutabilityMigrationBoundary("alpha", {
+          allowStateRecord: true,
+          stateDir: root,
+        }),
+      ).toThrow(/Blocking paths to quarantine/u);
+      expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn })).toEqual({
+        affectedSandboxes: ["alpha"],
+        hasUnattributedRecoveryState: false,
+      });
+      const warning = String(warn.mock.calls[0]?.[0]);
+      expect(warning).toContain("Quarantine the files that a blocked command lists");
+      expect(warning).not.toContain("Run `rebuild` for each affected sandbox");
+    },
+  );
 
   it("blocks a legacy state record when its no-follow inspection fails", () => {
     const root = stateDir();
@@ -193,6 +207,9 @@ describe("removed immutability migration boundary", () => {
       hasUnattributedRecoveryState: true,
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("recovery state also remains"));
+    const warning = String(warn.mock.calls[0]?.[0]);
+    expect(warning).toContain("Quarantine the files that a blocked command lists");
+    expect(warning).not.toContain("Run `rebuild` for each affected sandbox");
   });
 
   it("reports provider ownership but globally blocks retained provider authority", () => {
@@ -214,6 +231,15 @@ describe("removed immutability migration boundary", () => {
     expect(inspectRemovedImmutabilityMigration("beta", root).recoveryArtifacts).toEqual([
       transactionDir,
     ]);
+    const warn = vi.fn();
+    expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn })).toEqual({
+      affectedSandboxes: ["alpha"],
+      hasUnattributedRecoveryState: false,
+    });
+    const warning = String(warn.mock.calls[0]?.[0]);
+    expect(warning).toContain("Affected sandbox records: alpha.");
+    expect(warning).toContain("Quarantine the files that a blocked command lists");
+    expect(warning).not.toContain("Run `rebuild` for each affected sandbox");
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
       /older detached process/u,
     );
@@ -269,7 +295,7 @@ describe("removed immutability migration boundary", () => {
     expect(warning).toContain("did not establish mutation authority");
     expect(warning).toContain("do not block lifecycle operations");
     expect(warning).not.toContain("quarantine");
-    expect(warning).not.toContain("rebuild or recreate");
+    expect(warning).not.toContain("Run `rebuild`");
     expect(enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toEqual({
       stateRecord: null,
       recoveryArtifacts: [],

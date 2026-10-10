@@ -319,6 +319,7 @@ export function reportRemovedImmutabilityUpgrade(
 
   const affectedSandboxes = new Set<string>();
   let hasTopLevelRecoveryState = false;
+  let hasUnsafeStateRecord = false;
   for (const entry of entries) {
     if (isLegacyTopLevelRecoveryEntry(entry)) {
       hasTopLevelRecoveryState = true;
@@ -326,7 +327,10 @@ export function reportRemovedImmutabilityUpgrade(
     }
     if (entry.startsWith("shields-") && entry.endsWith(".json")) {
       const candidate = entry.slice("shields-".length, -".json".length);
-      if (isValidName(candidate)) affectedSandboxes.add(candidate);
+      if (isValidName(candidate)) {
+        affectedSandboxes.add(candidate);
+        if (!isRetirableLegacyStateRecord(path.join(stateDir, entry))) hasUnsafeStateRecord = true;
+      }
     }
   }
   const providerLedger = inspectLegacyProviderLedger(stateDir);
@@ -352,9 +356,14 @@ export function reportRemovedImmutabilityUpgrade(
       noticeOnlyArtifacts.length > 0
         ? ` Nonblocking retired provider intent paths retained for review: ${noticeOnlyArtifacts.map((artifact) => JSON.stringify(artifact)).join(", ")}. These notice-only paths did not establish mutation authority and do not block lifecycle operations.`
         : "";
-    const recovery =
-      names.length > 0 || hasBlockingUnattributedRecoveryState
-        ? " Back up trusted user data and rebuild or recreate affected sandboxes with the current version."
+    const hasBlockingRecoveryState =
+      hasBlockingUnattributedRecoveryState ||
+      hasUnsafeStateRecord ||
+      providerLedger.artifactsBySandbox.size > 0;
+    const recovery = hasBlockingRecoveryState
+      ? " Legacy Shields recovery files block sandbox commands and onboarding. Quarantine the files that a blocked command lists, then run `rebuild`."
+      : names.length > 0
+        ? " Run `rebuild` for each affected sandbox. If rebuild cannot back up state that Shields locked, it prints the steps to replace the sandbox."
         : "";
     (options.warn ?? console.warn)(
       `Shields has been retired from NemoClaw. This release has no Shields commands or supported Shields posture.${affected}${unresolved}${noticeOnly}${recovery}`,
@@ -391,7 +400,8 @@ export function enforceRemovedImmutabilityMigrationBoundary(
       [
         `Sandbox '${sandboxName}' has a state record from the removed Shields feature. Its current mutable posture cannot be proven.`,
         "Shields has been retired and this release has no command that can restore or lower that posture.",
-        "Create a trusted snapshot or backup, then use the supported rebuild/recreate path before other mutations.",
+        "Run `rebuild` for this sandbox before you run other commands for it. Onboarding cannot recreate it while this record exists.",
+        "If rebuild cannot back up state that Shields locked, it prints the steps to replace the sandbox.",
       ].join(" "),
     );
   }

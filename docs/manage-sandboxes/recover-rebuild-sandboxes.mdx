@@ -24,9 +24,44 @@ Use the lightest recovery operation that repairs the sandbox while preserving it
 
 Shields has been retired from NemoClaw. The current CLI has no Shields commands, status, timers, or supported locked posture. After an upgrade, NemoClaw prints a retirement notice while it still finds legacy Shields state and identifies the affected sandbox records when possible.
 
-If the sandbox has only an inert legacy state record, create an independent trusted backup. Then rebuild the affected sandbox before running further mutations.
+Onboarding cannot recreate a sandbox that has a legacy state record.
+If the retirement notice tells you to run `rebuild` for the sandbox, rebuild it before you run other commands:
 
-If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe.
+```bash
+$$nemoclaw <sandbox-name> rebuild
+```
+
+The rebuild backs up the sandbox state, replaces the sandbox, and restores the state.
+After the rebuild verifies that the restored configuration is mutable, it removes the legacy state record.
+The retirement notice then no longer lists the sandbox.
+If that check fails, the rebuild exits with an error and keeps the legacy state record.
+The replacement sandbox keeps its restored state.
+
+If the rebuild cannot read part of the sandbox state, it stops before it deletes the sandbox.
+The `Reason:` line shows the read error that the backup reported.
+If the `Failed:` line shows `permission denied`, correct the ownership or permissions of the reported path.
+Then run the rebuild again.
+For a sandbox with a legacy state record, a permission denial also prints a note that Shields can leave state that only root can read, followed by replacement steps.
+Replace the sandbox only if you cannot restore read access to that state.
+
+<Warning>
+Destroying the sandbox deletes every file that you do not copy first, including locked state that only root can read.
+</Warning>
+
+To replace the sandbox, complete these steps:
+
+1. Download each reviewed, credential-free file or directory that you want to keep with `$$nemoclaw <sandbox-name> download <sandbox-path> <host-dir>`.
+   Download only the paths that the [manual transfer workflow](../state-and-backups/transfer-state-manually) lists for your agent.
+   Do not download credential files.
+2. Destroy the sandbox with `$$nemoclaw <sandbox-name> destroy --yes`.
+   The command also removes the legacy state record.
+3. Onboard a replacement sandbox with the same name by running `$$nemoclaw onboard --name <sandbox-name>`.
+4. Upload only the reviewed files with `$$nemoclaw <sandbox-name> upload <host-path> <sandbox-dir>`.
+   Do not upload files that the manual transfer workflow tells you not to transfer.
+5. Reconfigure any setting whose files you could not copy.
+6. Run `$$nemoclaw <sandbox-name> status` and confirm that the retirement notice no longer lists the sandbox.
+
+If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, legacy state record that is not a regular file with one link, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe.
 
 A notice-only provider intent recorded before mutation authority was granted is preserved for review but does not by itself block lifecycle operations. The retirement notice prints each exact absolute notice-only path and labels it nonblocking. A notice-only path is not part of the quarantine inventory unless a later blocking error explicitly lists that same path.
 

@@ -525,6 +525,7 @@ export async function backupSandboxStateForRebuild(
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
   stoppedNativeState?: PreparedStoppedNativeState,
+  removedImmutabilityStateRecord = false,
 ): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
@@ -648,6 +649,21 @@ export async function backupSandboxStateForRebuild(
         console.error(
           "  The sandbox user could not read this state — the mounted files likely have wrong ownership or permissions, for example after a host reboot remapped the mount's UIDs.",
         );
+        if (removedImmutabilityStateRecord) {
+          console.error(
+            `  Sandbox '${sandboxName}' also has a state record from the removed Shields feature.`,
+          );
+          console.error(
+            "  Shields can leave state that only root can read, and this release cannot unlock it.",
+          );
+          console.error(
+            "  If you cannot restore read access, replace the sandbox. Copy only reviewed, credential-free files that the sandbox user can read:",
+          );
+          console.error(`    1. ${CLI_NAME} ${sandboxName} download <sandbox-path> <host-dir>`);
+          console.error(`    2. ${CLI_NAME} ${sandboxName} destroy --yes`);
+          console.error(`    3. ${CLI_NAME} onboard --name ${sandboxName}`);
+          console.error(`    4. ${CLI_NAME} ${sandboxName} upload <host-path> <sandbox-dir>`);
+        }
       } else if (allAbsent) {
         console.error(
           "  The directories were reported by the sandbox but did not materialize on extraction — the mounted state may be unstable or disappearing under the container.",

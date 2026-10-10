@@ -54,7 +54,7 @@ export interface RebuildRecreatePhaseInput {
   credentialEnv: string | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   recoveryRecreate: boolean;
-  preparedBackupRecovery?: boolean;
+  allowRemovedImmutabilityStateRecord?: boolean;
   registryRollback: RebuildRegistryRollback;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
@@ -97,7 +97,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     credentialEnv: rebuildCredentialEnv,
     baseImagePreflight: rebuildBaseImagePreflight,
     recoveryRecreate,
-    preparedBackupRecovery = false,
+    allowRemovedImmutabilityStateRecord = false,
     registryRollback,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
@@ -288,7 +288,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       ...(recreateJournal.runtimeSelection
         ? { runtimeSelection: recreateJournal.runtimeSelection }
         : {}),
-      ...(preparedBackupRecovery ? { allowRemovedImmutabilityStateRecord: true } : {}),
+      ...(allowRemovedImmutabilityStateRecord ? { allowRemovedImmutabilityStateRecord: true } : {}),
       rebuildGatewayAuthority,
       rebuildPolicySourcePath,
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
