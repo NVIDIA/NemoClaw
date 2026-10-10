@@ -282,6 +282,28 @@ Its curl paths are used only by onboarding's post-create verifier.
 Do not replace these paths with a broad `/**` binary rule.
 Broader binary access would let unrelated sandbox processes send data to Tavily through the same allowed endpoint.
 
+## QA Operation Telemetry
+
+NemoClaw operation telemetry is currently available only for QA runs.
+A valid `NEMOCLAW_TELEMETRY_TEST_LABEL` selects NVIDIA's fixed TEST receiver for the installer and supported CLI commands.
+Use `qa-<label>:<client>:attempt-<number>`, for example, `qa-telemetry:client:attempt-1`.
+`<label>` allows 1 to 32 lowercase letters, digits, or hyphens; `<client>` allows 1 to 40 of the same characters.
+Each segment must start with a letter or digit, and the attempt number must be 1 to 999 without a leading zero.
+A missing or invalid value disables telemetry for that run.
+Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
+It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
+NemoClaw attempts to send one record when a covered operation finishes.
+`--force-station-install` stops after Station validation and does not emit an operation record.
+It limits telemetry collection and delivery to five seconds total.
+If either step fails or times out, the operation result stays the same.
+Help requests and other CLI commands do not emit a record.
+The record describes the operation result and approved configuration categories, such as model and policy choices.
+Production delivery is not enabled.
+
+Set `NEMOCLAW_DISABLE_TELEMETRY=1` in the installer or CLI process environment to suppress collection and delivery.
+NemoClaw also suppresses telemetry for `CI=true`, `CI=1`, `GITHUB_ACTIONS=true`, `VITEST=true`, or `NODE_ENV=test`.
+This setting controls NemoClaw operation telemetry; an agent or third-party tool can have separate diagnostics settings.
+
 ## Filesystem Controls
 
 Review filesystem defaults, writable paths, agent state, and Landlock enforcement in [Understand Filesystem Controls](./security-controls/filesystem-controls).

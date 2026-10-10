@@ -60,6 +60,7 @@ import {
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  recordDestroyCompletion,
   preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
   retirePortableLifecycleAuthority,
@@ -688,6 +689,7 @@ export async function destroySandbox(
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   } = {},
 ): Promise<void> {
+  const telemetryTarget: { gatewayName?: string; mutationStarted?: boolean } = {};
   try {
     return await withSandboxLifecycleLock(sandboxName, () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
@@ -700,29 +702,53 @@ export async function destroySandbox(
         options,
         removedImmutabilityMigration.stateRecord !== null,
         deps,
+        telemetryTarget,
       );
     });
   } catch (error) {
-    if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
+    await recordDestroyCompletion(
+      sandboxName,
+      "failed",
+      error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
+      telemetryTarget.gatewayName,
+      telemetryTarget.mutationStarted === true,
+    );
+    if (error instanceof SandboxDestroyExitRequest) {
+      process.exit(error.exitCode);
+    }
     throw error;
   }
 }
 
 async function destroySandboxUnlocked(
   sandboxName: string,
-  options: string[] | DestroySandboxOptions = {},
-  retireRemovedImmutabilityState = false,
+  options: string[] | DestroySandboxOptions,
+  retireRemovedImmutabilityState: boolean,
   deps: {
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
-  } = {},
+  },
+  telemetryTarget: { gatewayName?: string; mutationStarted?: boolean },
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   const registryAuthority = resolveSandboxDestroyRegistryAuthority(sandboxName);
   const getRegisteredSandbox = registryAuthority.getSandbox;
   const listRegisteredSandboxes = registryAuthority.listSandboxes;
   const registeredSandbox = registryAuthority.entry;
+  if (registeredSandbox) {
+    try {
+      telemetryTarget.gatewayName = resolveSandboxDestroyGatewayName(
+        sandboxName,
+        registeredSandbox,
+      );
+    } catch {
+      // The enforcing owner below still reports invalid gateway authority.
+    }
+  }
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
-  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
+  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) {
+    await recordDestroyCompletion(sandboxName, "cancelled", undefined, telemetryTarget.gatewayName);
+    return;
+  }
   if (registeredSandbox) {
     onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(registeredSandbox);
   }
@@ -764,6 +790,7 @@ async function destroySandboxUnlocked(
     registeredSandbox,
     retainedRecoveryAuthority?.gatewayName,
   );
+  telemetryTarget.gatewayName = destroyGatewayName;
   const destroyRuntimeProviderId = resolveGatewayCleanupRuntimeProviderId(
     destroyGatewayName,
     registeredSandbox?.openshellDriver,
@@ -964,6 +991,9 @@ async function destroySandboxUnlocked(
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
+      onMutationStarted: () => {
+        telemetryTarget.mutationStarted = true;
+      },
     });
   } catch (error) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1038,6 +1068,7 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(destructiveResult.exitCode);
   }
+  telemetryTarget.mutationStarted = true;
   const {
     detachOutcome,
     deleteResult,
@@ -1440,4 +1471,5 @@ async function destroySandboxUnlocked(
     console.warn(`  ${YW}⚠${R}${m}`),
   );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
+  await recordDestroyCompletion(sandboxName, "completed", undefined, destroyGatewayName);
 }

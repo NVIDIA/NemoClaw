@@ -64,6 +64,25 @@ function canonicalJsonStringify(value: unknown): string {
 }
 
 export class MessagingSetupApplier {
+  static emptyPlan(
+    sandboxName = "provider-application",
+    agent: SandboxMessagingPlan["agent"] = "openclaw",
+  ): SandboxMessagingPlan {
+    return {
+      schemaVersion: 1,
+      sandboxName,
+      agent,
+      workflow: "onboard",
+      channels: [],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+  }
   static encodePlan(plan: SandboxMessagingPlan): string {
     return Buffer.from(JSON.stringify(plan), "utf8").toString("base64");
   }

@@ -16,6 +16,7 @@ import {
 import { normalizeNativeCustomProviderAttachment } from "../inference/native-custom";
 import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvidia/contract";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
@@ -47,7 +48,11 @@ import {
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
-import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
+import {
+  getRequestedSandboxAgentName,
+  getSandboxAgentRegistryFields,
+  normalizeSandboxAgentName,
+} from "./sandbox-agent";
 
 /** Fence sandbox image creation through publication against host-wide GC. */
 export function withSandboxImageRegistrationFence<T>(operation: () => Promise<T> | T): Promise<T> {
@@ -163,6 +168,9 @@ export function selection(
   return inferenceSelectionRegistryFields({
     provider,
     model,
+    ...(sessionMatches && session.modelSelectionProvenance
+      ? { modelSelectionProvenance: session.modelSelectionProvenance }
+      : {}),
     endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
     endpointSource: sessionMatches ? endpointSource : null,
     credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,
@@ -198,7 +206,21 @@ export function buildCreatedSandboxRegistryEntry(
       : undefined;
   // A pending removal is command-owned recovery state. Registration must
   // preserve it until post-restore config cleanup and the registry update both succeed.
-  const messagingState = plannedMessagingState;
+  const requestedAgent = getRequestedSandboxAgentName(input.agent);
+  const knownEmptyMessaging =
+    session?.sandboxName === input.sandboxName &&
+    normalizeSandboxAgentName(session.agent) === requestedAgent &&
+    session.messagingPlan === null &&
+    session.checkpoint?.messaging.kind === "declined" &&
+    (requestedAgent === "openclaw" || requestedAgent === "hermes");
+  const messagingState =
+    plannedMessagingState ??
+    (knownEmptyMessaging
+      ? {
+          schemaVersion: 1 as const,
+          plan: MessagingSetupApplier.emptyPlan(input.sandboxName, requestedAgent),
+        }
+      : undefined);
   const workload = cloneSandboxWorkloadReceipt(input.workload);
   if (input.workload !== undefined && workload === undefined) {
     throw new RuntimeProviderSelectionError(
