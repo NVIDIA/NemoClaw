@@ -339,7 +339,7 @@ describe("CLI OpenShell sandbox logs adapter", () => {
     expect(spawnChild).toHaveBeenCalledWith(
       "/usr/bin/openshell",
       ["logs", "alpha", "-n", "50", "--source", "all", "--since", "5m", "--tail"],
-      { cwd: "/repo", env: environment, stdio: ["inherit", "inherit", "pipe"] },
+      { cwd: "/repo", env: environment, stdio: ["inherit", "pipe", "pipe"] },
     );
 
     (child as unknown as EventEmitter).emit("exit", 0, null);
