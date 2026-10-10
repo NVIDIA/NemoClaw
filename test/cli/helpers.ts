@@ -41,6 +41,9 @@ export const OPENCLAW_EXPECTED_VERSION = readOpenClawExpectedVersion();
 export type CliRunResult = {
   code: number;
   out: string;
+  /** Raw process streams; `out` preserves the legacy combined-output behavior. */
+  stdout?: string;
+  stderr?: string;
 };
 
 export type CliScriptRunOptions = {
@@ -251,9 +254,14 @@ function runWithEnvInternal(
     const errorOutput = result.error ? String(result.error) : "";
     const code = typeof result.status === "number" ? result.status : 1;
     if (code === 0) {
-      return { code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout };
+      return {
+        code,
+        out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout,
+        stdout,
+        stderr,
+      };
     }
-    return { code, out: `${stdout}${stderr}${errorOutput}` };
+    return { code, out: `${stdout}${stderr}${errorOutput}`, stdout, stderr };
   } finally {
     if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
   }
@@ -294,11 +302,16 @@ async function runWithEnvInternalAsync(
         (error, stdout, stderr) => {
           const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
           if (code === 0) {
-            resolve({ code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout });
+            resolve({
+              code,
+              out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout,
+              stdout,
+              stderr,
+            });
             return;
           }
           const errorOutput = error && typeof error.code !== "number" ? String(error) : "";
-          resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
+          resolve({ code, out: `${stdout}${stderr}${errorOutput}`, stdout, stderr });
         },
       );
       child.stdin?.end(input);
