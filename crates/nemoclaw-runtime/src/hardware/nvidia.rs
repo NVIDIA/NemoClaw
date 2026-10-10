@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-#[cfg(any(unix, test))]
 use crate::Error;
 #[cfg(target_os = "linux")]
 pub async fn query(query: &str) -> Result<String, Error> {
@@ -15,7 +14,6 @@ pub async fn query(query: &str) -> Result<String, Error> {
     }
     String::from_utf8(output.stdout).map_err(|_| Error::State("GPU inventory is incomplete"))
 }
-#[cfg(any(unix, test))]
 pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Error> {
     let (name, major) = single_gpu(gpu.trim().lines())?;
     let mut seen = std::collections::BTreeSet::new();
@@ -30,7 +28,6 @@ pub fn inventory(gpu: &str, processes: &str) -> Result<(String, u32, usize), Err
     }
     Ok((name, major, seen.len()))
 }
-#[cfg(any(unix, test))]
 fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u32), Error> {
     let Some(line) = lines.next() else {
         return Err(Error::State(
@@ -58,7 +55,6 @@ fn single_gpu<'a>(mut lines: impl Iterator<Item = &'a str>) -> Result<(String, u
     Ok((name.into(), major))
 }
 /// Decode one GPU's compute capability independently of its memory counters.
-#[cfg(any(unix, test))]
 pub fn compute_capability(text: &str) -> Result<u32, Error> {
     let error = || Error::State("GPU compute capability is unobservable");
     let (major, minor) = text.trim().split_once('.').ok_or_else(error)?;
@@ -72,7 +68,6 @@ pub fn compute_capability(text: &str) -> Result<u32, Error> {
 
 /// Preserve unsupported framebuffer counters without inferring a memory architecture.
 /// NVIDIA documents N/A for unsupported fields: https://docs.nvidia.com/deploy/nvidia-smi/
-#[cfg(any(unix, test))]
 pub fn framebuffer_memory(text: &str) -> Result<Option<super::GpuMemory>, Error> {
     let error = || Error::State("GPU framebuffer memory observation is incomplete");
     let mut lines = text.trim().lines();
@@ -102,7 +97,6 @@ pub fn framebuffer_memory(text: &str) -> Result<Option<super::GpuMemory>, Error>
     Ok(Some(super::GpuMemory { total, free }))
 }
 
-#[cfg(unix)]
 pub fn apply_observations(
     capacity: &mut super::Capacity,
     gpu: &str,

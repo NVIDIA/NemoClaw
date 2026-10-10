@@ -211,7 +211,7 @@ mod reader {
             })?
     }
 
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     mod credential_boundary_tests {
         use super::*;
         use crate::fixture::Fixture;
@@ -231,7 +231,7 @@ mod reader {
             ));
             let shared_volume = volume.clone();
             let shared_container = container.clone();
-            let fixture = Fixture::start(move |request| {
+            let fixture = Fixture::engine(move |request| {
                 assert_eq!(request.method, "GET");
                 let response = if request.path == "/info" {
                     json!({"ID":"daemon"})
@@ -272,6 +272,8 @@ mod reader {
         }
     }
 }
+// Its engine sends archive stat headers, which Fixture cannot yet, from a
+// Unix socket.
 #[cfg(all(test, unix, feature = "client"))]
 #[path = "credentials_wait_tests.rs"]
 mod wait_tests;
