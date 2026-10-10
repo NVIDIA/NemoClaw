@@ -46,6 +46,7 @@ Status diagnostics do not include the response body.
 An ordinary HTTP `404` from `/v1/models` reports an unhealthy route because the model catalog is absent.
 The recorded `openrouter-api` provider uses NemoClaw's Chat Completions-only OpenRouter adapter.
 Its models route returns `404` by design, so `status` requires a successful inference request before it reports the route as healthy.
+The row then reads `healthy (no model catalog by design; inference request served)`, and the route reachability line still shows `reachable (HTTP 404)`.
 When the models route responds and `status` sends an inference request, a failing row names the endpoint that request used.
 When the models route itself does not respond, the row names the models route.
 An HTTP `401` or `403` response reports `unauthorized`.
