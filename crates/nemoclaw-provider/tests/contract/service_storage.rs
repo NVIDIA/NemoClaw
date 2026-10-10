@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Authored HCL for retained service storage through pinned OpenTofu.
 
-use nemoclaw_e2e::{http_fixture::Fixture, tofu::TofuWorkspace};
+use crate::{http_fixture::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,

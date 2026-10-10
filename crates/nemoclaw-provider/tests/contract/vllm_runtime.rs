@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Authored HCL for a vLLM container whose runtime contract the provider computes.
 
-use nemoclaw_e2e::http_fixture::Fixture;
+use crate::http_fixture::Fixture;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 

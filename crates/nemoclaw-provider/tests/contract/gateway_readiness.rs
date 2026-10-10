@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use nemoclaw_e2e::{http_fixture as docker, openshell::Fixture, tofu::TofuWorkspace};
+use crate::{http_fixture as docker, openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -98,7 +98,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
         &["apply", "-auto-approve", "-input=false", "-no-color"],
         true,
     );
-    nemoclaw_e2e::assert_same_managed_resources(&fs::read(&state_path).unwrap(), &first);
+    crate::assert_same_managed_resources(&fs::read(&state_path).unwrap(), &first);
     assert!(gateway.state.lock().unwrap().health_reads > 0);
     assert!(gateway.state.lock().unwrap().gateway_reads > 0);
     running.store(false, Ordering::SeqCst);
@@ -112,7 +112,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
         false,
     );
     assert!(started.elapsed() < Duration::from_secs(5));
-    nemoclaw_e2e::assert_same_managed_resources(&fs::read(&state_path).unwrap(), &first);
+    crate::assert_same_managed_resources(&fs::read(&state_path).unwrap(), &first);
     graph.as_object_mut().unwrap().remove("data");
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     run(
