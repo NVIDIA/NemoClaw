@@ -101,6 +101,50 @@ describe("Hermes managed policy", () => {
     },
   );
 
+  it("accepts the Hermes credential reference at an authenticated endpoint", () => {
+    const policy = buildHermesManagedPolicy(
+      {
+        ...SETTINGS,
+        baseUrl: "https://authenticated-hermes.example:8443/inference/v1/",
+        upstreamProvider: "hermes-provider",
+      },
+      {},
+    );
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    ["openai-api", "https://api.openai.com/v1", "${ANTHROPIC_API_KEY}"],
+    ["anthropic-prod", "https://api.openai.com/v1", "${ANTHROPIC_API_KEY}"],
+    ["openai-api", "https://api.openai.com/v2", "${OPENAI_API_KEY}"],
+    ["openai-api", "https://api.openai.com:8443/v1", "${OPENAI_API_KEY}"],
+    ["openai-api", "https://api.openai.com.example/v1", "${OPENAI_API_KEY}"],
+    ["custom", "https://api.openai.com/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://authenticated-hermes.example/v1", "${GEMINI_API_KEY}"],
+    ["hermes-provider", "https://inference.local/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://localhost/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://gateway.internal/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "http://authenticated-hermes.example/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://do-not-echo@authenticated-hermes.example/v1", "${OPENAI_API_KEY}"],
+    [
+      "hermes-provider",
+      "https://authenticated-hermes.example/v1?token=do-not-echo",
+      "${OPENAI_API_KEY}",
+    ],
+    ["hermes-provider", "https://authenticated-hermes.example/v1#do-not-echo", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://authenticated-hermes.example/v1%2fother", "${OPENAI_API_KEY}"],
+  ])("rejects a mismatched hosted route for %s at %s", (provider, baseUrl, apiKey) => {
+    const policy = buildHermesManagedPolicy(SETTINGS, {});
+    policy.config._nemoclaw_upstream!.provider = provider;
+    policy.config.model!.base_url = baseUrl;
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+    expect(result.stderr).not.toContain("do-not-echo");
+  });
+
   it.each([
     "openshell:resolve:env:OPENAI_API_KEY",
     "openshell:resolve:env:v7_OPENAI_API_KEY",
