@@ -631,13 +631,12 @@ export async function verifyNativeCustomDeparture(
 }
 
 export async function retireSynchronizedNativeCustomDeparture(
-  departingCustom: NativeCustomProviderAttachment | undefined,
   inSandboxConfigSynced: boolean,
   sandboxName: string,
   expectedGatewayName: string,
   deps: InferenceSetDeps,
 ): Promise<void> {
-  if (departingCustom && inSandboxConfigSynced)
+  if (inSandboxConfigSynced)
     await deps.retireNativeCustomProviders?.({
       gatewayName: expectedGatewayName,
       sandboxName,

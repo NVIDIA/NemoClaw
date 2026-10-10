@@ -1126,10 +1126,23 @@ describe("selected native custom inference get (#12636)", () => {
       throw new Error("private-provider-detail");
     };
     await expect(runInferenceGet({ sandboxName: "custom" }, deps)).rejects.toThrow(
-      /could not be verified/,
+      "Run 'nemoclaw custom status'",
     );
     expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
     expect(deps.log).not.toHaveBeenCalled();
+  });
+  it("rejects mismatched native selection before gateway verification (#12636)", async () => {
+    const entry = await fixture();
+    entry.preferredInferenceApi = "anthropic-messages";
+    const deps = createDeps(configuredRoute("other-provider", "other-model"));
+    deps.getSandbox = () => entry;
+    const verify = vi.fn(async () => undefined);
+    deps.verifyNativeCustomAttachment = verify;
+    await expect(runInferenceGet({ sandboxName: "custom" }, deps)).rejects.toThrow(
+      "Recreate the sandbox",
+    );
+    expect(verify).not.toHaveBeenCalled();
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
   });
   it("withholds an opaque endpoint path from JSON and text", async () => {
     const entry = await fixture("https://api.example.com/opaque-private-path");

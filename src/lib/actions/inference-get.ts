@@ -339,6 +339,12 @@ export async function runInferenceGet(
         selectedSandbox.preferredInferenceApi ?? null,
         receipt,
       );
+    } catch {
+      throw new InferenceGetError(
+        "The selected sandbox's native inference selection disagrees with its attachment. Recreate the sandbox to restore its native provider.",
+      );
+    }
+    try {
       const gatewayName = deps.getSandboxTargetGatewayName(selectedSandboxName);
       await (deps.verifyNativeCustomAttachment ?? verifyNativeCustomStatusAttachment)({
         gatewayName,
@@ -347,7 +353,7 @@ export async function runInferenceGet(
       });
     } catch {
       throw new InferenceGetError(
-        "The selected sandbox's native inference attachment could not be verified. Recreate the sandbox to restore its native provider.",
+        `The selected sandbox's native inference attachment could not be verified. ${formatStatusRecovery(options.cliName ?? "nemoclaw", selectedSandboxName)}`,
       );
     }
     const payload: InferenceGetResult = {

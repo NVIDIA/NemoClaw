@@ -368,3 +368,22 @@ it("keeps the previous custom policy when departure publication is rejected (#12
   );
   expect([...f.attachments]).toEqual([f.receipt.providerName]);
 });
+
+it("retries owned custom retirement after the departure receipt has been cleared (#12636)", async () => {
+  const f = await fixture();
+  const retire = vi.fn(async () => undefined);
+  retire.mockRejectedValueOnce(new Error("retirement unavailable"));
+  f.deps.retireNativeCustomProviders = retire;
+  await expect(runInferenceSet({ provider: "openai", model: "gpt-4o" }, f.deps)).rejects.toThrow(
+    "retirement unavailable",
+  );
+  expect(f.entry.nativeCustomProviderAttachment).toBeUndefined();
+  expect(f.entry.provider).toBe("openai-api");
+  await runInferenceSet({ provider: "openai", model: "gpt-4o" }, f.deps);
+  expect(retire).toHaveBeenCalledTimes(2);
+  expect(retire).toHaveBeenLastCalledWith({
+    gatewayName: "nemoclaw",
+    sandboxName: "alpha",
+    adapter: f.adapter,
+  });
+});

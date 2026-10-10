@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../inference/native-custom";
 
 import { decisionSelected, decisionUnset } from "../state/onboard-checkpoint-decision";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
@@ -1020,3 +1024,33 @@ describe("prepareOnboardSession", () => {
     expect(deps.exitProcess).not.toHaveBeenCalled();
   });
 });
+
+it.each(["alpha", "beta"])(
+  "keeps native custom session authority only for its checkpointed sandbox (%s) (#12636)",
+  async (sandboxName) => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "owned-id",
+    });
+    const session = createSession({
+      sandboxName: "alpha",
+      nativeCustomProviderAttachment: receipt,
+    });
+    await checkpointSandboxName(sandboxName, { name: "openclaw" }, (mutator) => {
+      const next = mutator(session) ?? session;
+      return createSession(next);
+    });
+    expect(session.sandboxName).toBe(sandboxName);
+    expect(session.nativeCustomProviderAttachment).toEqual(
+      sandboxName === "alpha" ? receipt : undefined,
+    );
+  },
+);

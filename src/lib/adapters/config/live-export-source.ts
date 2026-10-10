@@ -311,7 +311,7 @@ async function resolveLiveInference(
   }
   const selected = getSandboxEntryInference(entry);
   if (selected.kind !== "configured") {
-    throw new Error("The native NVIDIA inference selection is incomplete.");
+    throw new Error("The native inference selection is incomplete.");
   }
   return {
     provider: nativeReceipt.providerName,

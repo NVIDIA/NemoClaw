@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hashCredential } from "../../../security/credential-hash";
 import {
+  prepareNativeCustomProfile,
+  customAttachmentFromPrepared,
+} from "../../../inference/native-custom";
+import {
   decisionDeclined,
   decisionSelected,
   decisionUnset,
@@ -59,6 +63,32 @@ describe("handleSandboxState", () => {
   afterEach(() => {
     fs.rmSync(process.env.HOME!, { force: true, recursive: true });
     vi.unstubAllEnvs();
+  });
+
+  it("clears custom session authority when the sandbox prompt selects another name (#12636)", async () => {
+    const prepared = await prepareNativeCustomProfile({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://8.8.8.8/v1",
+      api: "openai-completions",
+    });
+    const receipt = customAttachmentFromPrepared(prepared, {
+      schemaVersion: 1,
+      profileId: prepared.profile.id,
+      providerName: prepared.providerName,
+      providerId: "owned-id",
+    });
+    const session = createSession({
+      sandboxName: "alpha",
+      nativeCustomProviderAttachment: receipt,
+    });
+    const { deps } = createDeps({
+      loadSession: () => session,
+      updateSession: (mutator) => createSession(mutator(session) ?? session),
+    });
+    const result = await handleSandboxState(baseOptions(deps, session));
+    expect(result.sandboxName).toBe("my-assistant");
+    expect(session.nativeCustomProviderAttachment).toBeUndefined();
   });
 
   it("creates a sandbox and records messaging/web search state", async () => {

@@ -208,9 +208,10 @@ export async function runCredentialsResetAction(
               receipts: [receipt],
               adapter: providerAdapter,
             });
-          return ok([
-            "  Removed the unreferenced native custom providers and their owned authority.",
-          ]);
+          if (key.startsWith("nemoclaw-custom-"))
+            return ok([
+              "  Removed the unreferenced native custom providers and their owned authority.",
+            ]);
         }
         if (key.startsWith("nemoclaw-custom-"))
           return fail([

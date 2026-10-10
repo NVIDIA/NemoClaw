@@ -2122,7 +2122,6 @@ async function runInferenceSetWithoutHostLock(
       );
     }
     await retireSynchronizedNativeCustomDeparture(
-      departingCustom,
       inSandboxConfigSynced,
       sandboxName,
       expectedGatewayName,

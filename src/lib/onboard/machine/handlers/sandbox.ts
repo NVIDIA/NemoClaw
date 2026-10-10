@@ -1574,6 +1574,7 @@ class SandboxStateFlow<
         current.sandboxName !== null && current.sandboxName !== sandboxName;
       const messagingPlanTargetsAnotherName =
         current.messagingPlan !== null && current.messagingPlan.sandboxName !== sandboxName;
+      if (recordedNameChanged) delete current.nativeCustomProviderAttachment;
       if (recordedNameChanged || messagingPlanTargetsAnotherName) {
         current.messagingPlan = null;
         current.sandboxPromptProgress.messaging = false;

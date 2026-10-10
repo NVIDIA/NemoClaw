@@ -414,6 +414,7 @@ export async function checkpointSandboxName(
 ): Promise<void> {
   await updateSession((current) => {
     const checkpointAgent = agent?.name ?? current.agent ?? "openclaw";
+    if (current.sandboxName !== sandboxName) delete current.nativeCustomProviderAttachment;
     current.sandboxName = sandboxName;
     current.sandboxPromptProgress.sandboxName = true;
     recordCheckpointSandboxIdentity(current, sandboxName, checkpointAgent);

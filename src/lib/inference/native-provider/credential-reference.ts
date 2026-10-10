@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureResolvedOpenshellAsync } from "../../adapters/openshell/runtime";
+import type { captureResolvedOpenshellAsync } from "../../adapters/openshell/runtime";
 import { isValidName } from "../../name-validation";
 
 export function isNativeProviderCredentialReference(value: string, key: string): boolean {
@@ -20,7 +20,7 @@ export async function resolveNativeProviderCredentialReference(
     gatewayName: string;
     credentialEnv: string;
   },
-  capture = captureResolvedOpenshellAsync,
+  capture?: typeof captureResolvedOpenshellAsync,
 ): Promise<string> {
   if (
     !isValidName(input.sandboxName) ||
@@ -32,6 +32,8 @@ export async function resolveNativeProviderCredentialReference(
     throw new Error(
       `Invalid native ${input.credentialEnv === "NVIDIA_INFERENCE_API_KEY" ? "NVIDIA" : "custom"} credential scope.`,
     );
+  const captureCredential =
+    capture ?? (await import("../../adapters/openshell/runtime")).captureResolvedOpenshellAsync;
   const label = input.credentialEnv === "NVIDIA_INFERENCE_API_KEY" ? "NVIDIA" : "custom";
   const script = `printf '%s' "\${${input.credentialEnv}}"`;
   // OpenShell projects attached provider credentials on its background poll.
@@ -39,7 +41,7 @@ export async function resolveNativeProviderCredentialReference(
   // converge. A failed command or nonempty unissued value remains an error.
   const deadline = performance.now() + 30_000;
   while (performance.now() < deadline) {
-    const pending = capture(
+    const pending = captureCredential(
       [
         "sandbox",
         "exec",
