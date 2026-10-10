@@ -383,6 +383,7 @@ export function selectRebuildCreatePolicy(
   authorizedCredentialBindingProviders: readonly string[],
   policySource?: string,
   inferenceProvider: string | null = null,
+  nativeCustomProviderAttachment?: SandboxEntry["nativeCustomProviderAttachment"],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -405,11 +406,15 @@ export function selectRebuildCreatePolicy(
     requiredNetworkPolicyKeys: [
       ...requiredNetworkPolicyKeys,
       ...(usesNativeNvidiaProvider(inferenceProvider) ? ["native_nvidia_inference"] : []),
+      ...(nativeCustomProviderAttachment ? ["native_custom_inference"] : []),
     ],
     removedNetworkPolicyKeys: [
       ...removedNetworkPolicyKeys,
       ...(inferenceProvider !== null && !usesNativeNvidiaProvider(inferenceProvider)
         ? ["native_nvidia_inference"]
+        : []),
+      ...(inferenceProvider !== null && !nativeCustomProviderAttachment
+        ? ["native_custom_inference"]
         : []),
     ],
     requiredNetworkPolicySources,
@@ -2858,6 +2863,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicyProviderAuthority,
           rebuildPolicySource?.document,
           resolvedCreateIntent.inferenceProvider,
+          resolvedCreateIntent.nativeCustomProviderAttachment,
         )
       : materializedInitialSandboxPolicy;
     const createRequestPlan = selectRebuildCreateRequestPlan({

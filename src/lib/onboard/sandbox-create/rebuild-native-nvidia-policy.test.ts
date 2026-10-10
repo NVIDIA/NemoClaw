@@ -8,6 +8,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import {
+  customAttachmentFromPrepared,
+  prepareNativeCustomProfile,
+  type NativeCustomProviderAttachment,
+} from "../../inference/native-custom";
 import { prepareInitialSandboxCreatePolicy } from "../initial-policy";
 import { selectRebuildCreatePolicy } from "./orchestration";
 
@@ -25,7 +30,12 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function rebuild(inferenceProvider: string | null, nativePolicy?: unknown) {
+function rebuild(
+  inferenceProvider: string | null,
+  nativePolicy?: unknown,
+  nativeCustomProviderAttachment?: NativeCustomProviderAttachment,
+  customPolicy?: unknown,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-rebuild-policy-test-"));
   roots.push(root);
   const livePath = path.join(root, "live.yaml");
@@ -34,6 +44,7 @@ function rebuild(inferenceProvider: string | null, nativePolicy?: unknown) {
     network_policies: {
       host_rule: hostPolicy,
       ...(nativePolicy === undefined ? {} : { native_nvidia_inference: nativePolicy }),
+      ...(customPolicy === undefined ? {} : { native_custom_inference: customPolicy }),
     },
   });
   fs.writeFileSync(livePath, source, { mode: 0o600 });
@@ -43,7 +54,7 @@ function rebuild(inferenceProvider: string | null, nativePolicy?: unknown) {
       "../../../../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
     ),
     [],
-    { agentName: "openclaw", inferenceProvider },
+    { agentName: "openclaw", inferenceProvider, nativeCustomProviderAttachment },
   );
   cleanups.push(() => replacement.cleanup?.());
   const selected = selectRebuildCreatePolicy(
@@ -58,6 +69,7 @@ function rebuild(inferenceProvider: string | null, nativePolicy?: unknown) {
     [nativeProvider],
     source,
     inferenceProvider,
+    nativeCustomProviderAttachment,
   );
   cleanups.push(() => selected.cleanup?.());
   return {
@@ -101,5 +113,59 @@ describe("native NVIDIA rebuild policy", () => {
     expect(() => rebuild(nativeProvider, hostPolicy)).toThrow(
       "live network policy 'native_nvidia_inference' does not match the selected runtime requirement",
     );
+  });
+});
+
+async function customAttachment() {
+  const prepared = await prepareNativeCustomProfile({
+    sandboxName: "dp",
+    provider: "compatible-endpoint",
+    api: "openai-completions",
+    endpointUrl: "https://api.example.com/v1",
+    lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+  });
+  return customAttachmentFromPrepared(prepared, {
+    schemaVersion: 1,
+    profileId: prepared.profile.id,
+    providerName: prepared.providerName,
+    providerId: "rebuild-custom-provider-id",
+  });
+}
+
+describe("native custom rebuild policy", () => {
+  it("adds the selected endpoint rule without replacing host rules (#12636)", async () => {
+    const attachment = await customAttachment();
+    const result = rebuild(attachment.providerName, undefined, attachment);
+    expect(result.selected.network_policies).toEqual({
+      host_rule: hostPolicy,
+      native_custom_inference: result.replacement.network_policies.native_custom_inference,
+    });
+    expect(fs.readFileSync(result.livePath, "utf8")).toBe(result.source);
+  });
+
+  it("refuses a conflicting custom rule before replacing the sandbox (#12636)", async () => {
+    const attachment = await customAttachment();
+    expect(() => rebuild(attachment.providerName, undefined, attachment, hostPolicy)).toThrow(
+      "live network policy 'native_custom_inference' does not match the selected runtime requirement",
+    );
+  });
+
+  it("removes custom access when another inference provider is selected (#12636)", async () => {
+    const attachment = await customAttachment();
+    const custom = rebuild(attachment.providerName, undefined, attachment).replacement
+      .network_policies.native_custom_inference;
+    const result = rebuild("openai", undefined, undefined, custom);
+    expect(result.selected.network_policies).toEqual({ host_rule: hostPolicy });
+    expect(fs.readFileSync(result.livePath, "utf8")).toBe(result.source);
+  });
+
+  it("preserves custom access when no replacement provider is selected (#12636)", async () => {
+    const attachment = await customAttachment();
+    const custom = rebuild(attachment.providerName, undefined, attachment).replacement
+      .network_policies.native_custom_inference;
+    expect(rebuild(null, undefined, undefined, custom).selected.network_policies).toEqual({
+      host_rule: hostPolicy,
+      native_custom_inference: custom,
+    });
   });
 });

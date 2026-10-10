@@ -358,6 +358,7 @@ test(
       provider: "compatible-endpoint",
       model,
     });
+    const statusRequestOffset = fake.requests().length;
     const status = await runNemoclawCli([sandboxName, "status"], {
       artifacts,
       artifactName: "tc-inf-11-native-status",
@@ -367,6 +368,18 @@ test(
       timeoutMs: 60_000,
     });
     expect(status.exitCode, redactedResultText(status)).toBe(0);
+    expect(
+      fake
+        .requests()
+        .slice(statusRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            JSON.parse(request.body).model === model,
+        ),
+    ).toBe(true);
     const restartRequestOffset = fake.requests().length;
     const nativeTurn = await sandbox.exec(
       sandboxName,

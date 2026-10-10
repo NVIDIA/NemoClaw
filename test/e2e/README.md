@@ -1794,9 +1794,11 @@ detach/delete preserves peer access. After direct public HTTP verification, a fr
 Anthropic sandbox proves an authenticated Messages request from a fresh OpenClaw turn.
 An ordinary native Hermes sandbox uses the same authenticated public HTTP fixture and proves
 a fresh OpenAI request after stop/start, with native endpoint and scoped credential configuration.
-Its 290-minute test deadline contains four 40-minute onboarding bounds, 120 minutes for
+A fresh native Deep Agents Code sandbox uses the same fixture and proves an authenticated
+selected-model request and response from its installed CLI before scoped cleanup.
+Its 330-minute test deadline contains five 40-minute onboarding bounds, 120 minutes for
 lifecycle operations, and 10 minutes of test headroom.
-The target adds 20 minutes of job headroom, for a 310-minute target budget.
+The target adds 20 minutes of job headroom, for a 350-minute target budget.
 These are maximum deadlines, not expected durations. The fixture owns all selected sandboxes,
 the public tunnel, DNS restoration, and local servers.
 
