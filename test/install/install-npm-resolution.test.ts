@@ -280,6 +280,52 @@ echo "${cliBin} v0.1.0"
     },
   );
 
+  it("creates the user-local shim directories without group write under umask 0002", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-shim-umask-"));
+    const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+
+    const result = runInstallerFunction(
+      "umask 0002; _CLI_BIN=nemoclaw; ensure_nemoclaw_shim",
+      fakeBin,
+      {
+        ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+        HOME: tmp,
+        NO_COLOR: "1",
+      },
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect({
+      local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
+      bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
+    }).toEqual({ local: 0o755, bin: 0o755 });
+  });
+
+  it("runs install-openshell.sh without group write under umask 0002", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-openshell-umask-"));
+    const fakeBin = path.join(tmp, "bin");
+    const sourceRoot = path.join(tmp, "source");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(sourceRoot, "scripts"), { recursive: true });
+    // Stands in for the user-local fallback, which creates ~/.local/bin.
+    fs.writeFileSync(
+      path.join(sourceRoot, "scripts", "install-openshell.sh"),
+      'mkdir -p "$HOME/.local/bin"\n',
+    );
+
+    const result = runInstallerFunction(
+      `umask 0002; NEMOCLAW_SOURCE_ROOT=${JSON.stringify(sourceRoot)}; run_install_openshell_script`,
+      fakeBin,
+      { HOME: tmp, NO_COLOR: "1" },
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect({
+      local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
+      bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
+    }).toEqual({ local: 0o755, bin: 0o755 });
+  });
+
   it("leaves a foreign nemoclaw-acp executable untouched and stops before creating sibling shims (#10947)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-collision-"));
     const { fakeBin, prefixBin } = createPackagedCliTree(tmp);

@@ -250,7 +250,10 @@ export function runOpenshellInstall(deps: RunOpenshellInstallDeps): OpenShellIns
   // for the whole download/verify (#4431). `inherit` keeps this call synchronous
   // (no async ripple into the onboard entrypoint) while the child writes straight
   // to the terminal in real time.
-  const result = spawnSync("bash", [path.join(deps.scriptsDir, "install-openshell.sh")], {
+  // Its user-local fallback creates ~/.local/bin; Ubuntu's login umask 0002
+  // would leave ~/.local group-writable, which the gateway state check rejects.
+  const installScript = path.join(deps.scriptsDir, "install-openshell.sh");
+  const result = spawnSync("bash", ["-c", 'umask g-w,o-w && exec bash "$0"', installScript], {
     cwd: deps.cwd,
     env: installEnv,
     stdio: redirectInheritedChildStdoutToStderr(["ignore", "inherit", "inherit"]),

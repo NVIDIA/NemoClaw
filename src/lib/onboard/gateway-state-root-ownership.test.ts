@@ -95,6 +95,60 @@ describe("managed gateway state root ownership", () => {
     }
   });
 
+  it("does not suggest chmod for a shared root-owned directory like /tmp", () => {
+    const real = fs.lstatSync;
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 0, mode: 0o41777 })
+          : real(p)) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+    }
+  });
+
+  it("does not suggest chmod for /tmp when running as root", () => {
+    const real = fs.lstatSync;
+    const getuid = vi.spyOn(process, "getuid").mockReturnValue(0);
+    const lstat = vi
+      .spyOn(fs, "lstatSync")
+      .mockImplementation(((p: fs.PathLike) =>
+        String(p) === "/shared"
+          ? Object.assign(real("/"), { uid: 0, mode: 0o41777 })
+          : Object.assign(real(p), { uid: 0 })) as typeof fs.lstatSync);
+    try {
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).toThrow(
+        /ancestor '\/shared' is not a trusted real directory/,
+      );
+      expect(() => ensureManagedGatewayStateRoot(target("/shared/gateway"))).not.toThrow(/chmod/);
+    } finally {
+      lstat.mockRestore();
+      getuid.mockRestore();
+    }
+  });
+
+  it("names the mode and the chmod remedy when an owned ancestor is group-writable", () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-group-writable-parent-"));
+    const stateDir = path.join(root, "gateway");
+    try {
+      fs.chmodSync(root, 0o775);
+
+      expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(
+        `ancestor '${root}' is not a trusted real directory owned by the current user or root without group or world write access. It has mode 0775; remove group and other write permission (chmod go-w '${root}'), then retry.`,
+      );
+      expect(fs.existsSync(stateDir)).toBe(false);
+    } finally {
+      fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a private immediate parent beneath a replaceable ancestor", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-replaceable-gateway-parent-"));
     const replaceableAncestor = path.join(root, "replaceable");
