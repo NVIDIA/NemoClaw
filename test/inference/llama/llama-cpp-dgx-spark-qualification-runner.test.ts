@@ -4,11 +4,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
-import { spawnSync } from "node:child_process";
+import * as childProcess from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { loadLlamaCppImageConfig } from "../../../scripts/checks/export-llama-cpp-image-config.mts";
 import {
@@ -18,6 +18,7 @@ import {
   expectedRegistryName,
   expectedRegistryOwner,
   hashModelFile,
+  resolveRequestGuardAddress,
   startQualificationLoopbackRelay,
   parseNvidiaSmi,
   parseQualificationInvocation,
@@ -37,6 +38,10 @@ import {
   consumeDockerLoopbackPublishAuthority,
   type DockerLoopbackPublishAuthority,
 } from "../../../src/lib/inference/llama-cpp/host-local-runtime";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+}));
 
 const BASE_SHA = "b".repeat(40);
 const HEAD_SHA = "a".repeat(40);
@@ -488,6 +493,115 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
+  describe("request guard address inspection", () => {
+    const names = {
+      containerName: "qualification-container",
+      networkName: "qualification-network",
+      registryOwner: "qualification-owner",
+    };
+
+    function dockerInspection() {
+      const fixture = {
+        containerOwner: names.registryOwner,
+        networkOwner: names.registryOwner,
+        containerStatus: 0,
+        networkStatus: 0,
+        network: { Id: "internal-network-id", Internal: true },
+        container: {
+          State: { Running: true },
+          NetworkSettings: {
+            Networks: {
+              [names.networkName]: { NetworkID: "internal-network-id", IPAddress: "172.29.0.7" },
+            },
+          },
+        },
+      };
+      vi.spyOn(childProcess, "spawnSync").mockImplementation((command, args = []) => {
+        expect(command).toBe("docker");
+        const network = args[0] === "network";
+        const owner = args.includes("--format");
+        expect(args.at(-1)).toBe(network ? names.networkName : names.containerName);
+        const stdout = owner
+          ? `${network ? fixture.networkOwner : fixture.containerOwner}\n`
+          : Buffer.from(JSON.stringify([network ? fixture.network : fixture.container]));
+        return {
+          pid: 1,
+          status: owner ? (network ? fixture.networkStatus : fixture.containerStatus) : 0,
+          signal: null,
+          stdout,
+          stderr: "",
+          output: [],
+        };
+      });
+      return fixture;
+    }
+
+    it("returns the IPv4 address of an owned running container on its internal network (#8231)", () => {
+      dockerInspection();
+      expect(resolveRequestGuardAddress(names)).toBe("172.29.0.7");
+    });
+
+    it.each([
+      "foreign container owner",
+      "foreign network owner",
+      "failed container inspection",
+      "failed network inspection",
+      "stopped container",
+      "external network",
+      "additional network",
+      "missing network endpoint",
+      "mismatched network ID",
+      "empty address",
+      "hostname address",
+      "IPv6 address",
+    ])("rejects %s before returning a relay target (#8231)", (scenario) => {
+      const fixture = dockerInspection();
+      const endpoints = fixture.container.NetworkSettings.Networks;
+      const endpoint = endpoints[names.networkName]!;
+      switch (scenario) {
+        case "foreign container owner":
+          fixture.containerOwner = "foreign-owner";
+          break;
+        case "foreign network owner":
+          fixture.networkOwner = "foreign-owner";
+          break;
+        case "failed container inspection":
+          fixture.containerStatus = 1;
+          break;
+        case "failed network inspection":
+          fixture.networkStatus = 1;
+          break;
+        case "stopped container":
+          fixture.container.State.Running = false;
+          break;
+        case "external network":
+          fixture.network.Internal = false;
+          break;
+        case "additional network":
+          endpoints.other = { NetworkID: "other-id", IPAddress: "172.30.0.7" };
+          break;
+        case "missing network endpoint":
+          delete endpoints[names.networkName];
+          break;
+        case "mismatched network ID":
+          endpoint.NetworkID = "other-id";
+          break;
+        case "empty address":
+          endpoint.IPAddress = "";
+          break;
+        case "hostname address":
+          endpoint.IPAddress = "example.com";
+          break;
+        case "IPv6 address":
+          endpoint.IPAddress = "fd00::7";
+          break;
+        default:
+          throw new Error("unknown inspection scenario");
+      }
+      expect(() => resolveRequestGuardAddress(names)).toThrow(/qualification relay requires/u);
+    });
+  });
+
   it("forwards through localhost while synchronous qualification commands run and closes the listener (#8231)", async () => {
     // A worker-owned echo endpoint keeps both ends independent of this test's blocked event loop.
     const { Worker } = await import("node:worker_threads");
@@ -504,7 +618,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     try {
       const targetPort = await new Promise<number>((resolve) => upstream.once("message", resolve));
       relay = await startQualificationLoopbackRelay("127.0.0.1", targetPort, 2);
-      const response = spawnSync(
+      const response = childProcess.spawnSync(
         process.execPath,
         [
           "-e",
