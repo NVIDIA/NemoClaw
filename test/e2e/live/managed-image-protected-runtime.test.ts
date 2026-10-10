@@ -3,7 +3,10 @@
 
 import { PROTECTED_MANAGED_IMAGE_AGENTS } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { test } from "../fixtures/e2e-test.ts";
-import { qualifyProtectedManagedImageRuntime } from "./managed-image-protected-runtime-helpers.ts";
+import {
+  qualifyProtectedManagedImageRuntime,
+  qualifyQualificationRelay,
+} from "./managed-image-protected-runtime-helpers.ts";
 
 const TIMEOUT_MS = 220 * 60_000;
 
@@ -13,6 +16,8 @@ test(
     timeout: TIMEOUT_MS,
     meta: {
       e2ePhases: [
+        "create internal Docker fixture",
+        "probe qualification relay",
         "qualify all managed agents with GPU-backed Ollama",
         "qualify all managed agents with GPU-backed vLLM",
         "qualify all managed agents with GPU-backed NVIDIA NIM",
@@ -21,6 +26,7 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, secrets }) => {
+    await qualifyQualificationRelay({ cleanup, progress });
     await artifacts.target.declare({
       id: "managed-image-protected-runtime",
       boundary:

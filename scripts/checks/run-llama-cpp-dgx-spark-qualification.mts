@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
+import { startQualificationLoopbackRelay } from "./llama-cpp-qualification-relay.mts";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +35,7 @@ import { resolveManagedImageLocalInferenceRoute } from "./managed-image-protecte
 import { runManagedImageOpenShellE2e } from "./run-managed-image-openshell-e2e.ts";
 
 export {
+  startQualificationLoopbackRelay,
   qualifyDockerLoopbackPublishAuthority,
   validateChatCompletionResponse,
   validateModelsResponse,
@@ -110,18 +112,6 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function requiredString(value: unknown, name: string, pattern: RegExp): string {
   if (typeof value !== "string" || !pattern.test(value)) {
-    throw new Error(`invalid ${name}`);
-  }
-  return value;
-}
-
-function requiredInteger(value: unknown, name: string, minimum: number, maximum: number): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < minimum ||
-    value > maximum
-  ) {
     throw new Error(`invalid ${name}`);
   }
   return value;
@@ -326,56 +316,6 @@ export function buildCandidateImageArgv(
   ];
 }
 
-export function insertQualificationLoopbackPublishArgv(
-  argv: readonly string[],
-  options: {
-    containerPort: number;
-    hostPort?: number;
-    imageReference: string;
-    loopbackPublishAuthority: DockerLoopbackPublishAuthority;
-  },
-): string[] {
-  const imageIndex = argv.indexOf(options.imageReference);
-  if (imageIndex < 0 || imageIndex !== argv.lastIndexOf(options.imageReference)) {
-    throw new Error(
-      "llama.cpp qualification requires exactly one Docker image reference in the materialized argument vector",
-    );
-  }
-  const materializedDockerOptions = argv.slice(0, imageIndex);
-  if (
-    materializedDockerOptions.some(
-      (argument) =>
-        argument === "--publish" ||
-        argument.startsWith("--publish=") ||
-        argument === "--publish-all" ||
-        argument.startsWith("--publish-all=") ||
-        argument === "-p" ||
-        (argument.startsWith("-p") && argument.length > 2) ||
-        argument === "-P" ||
-        argument.startsWith("-P="),
-    )
-  ) {
-    throw new Error("llama.cpp qualification materializer must not publish a Docker port");
-  }
-  const containerPort = requiredInteger(
-    options.containerPort,
-    "qualification container port",
-    1,
-    65_535,
-  );
-  const hostPort =
-    options.hostPort === undefined
-      ? ""
-      : String(requiredInteger(options.hostPort, "qualification host port", 1, 65_535));
-  consumeDockerLoopbackPublishAuthority(options.loopbackPublishAuthority);
-  return [
-    ...argv.slice(0, imageIndex),
-    "--publish",
-    `127.0.0.1:${hostPort}:${String(containerPort)}`,
-    ...argv.slice(imageIndex),
-  ];
-}
-
 export function buildServerContainerArgv(
   plan: QualificationPlan,
   options: {
@@ -387,8 +327,6 @@ export function buildServerContainerArgv(
     registryOwner: string;
     runtimeGid: number;
     runtimeUid: number;
-    loopbackPublishAuthority: DockerLoopbackPublishAuthority;
-    hostPort?: number;
   },
 ): string[] {
   if (plan.qualification.requestGuard !== "required") {
@@ -398,19 +336,15 @@ export function buildServerContainerArgv(
     apiKeyHostPath: options.apiKeyHostPath,
     containerName: options.containerName,
     imageReference: options.imageReference,
-    ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
     model: options.model,
     network: { isolation: "docker-internal", name: options.networkName },
     ownerLabel: { name: registryOwnerLabel, value: options.registryOwner },
     runtimeGid: options.runtimeGid,
     runtimeUid: options.runtimeUid,
   });
-  return insertQualificationLoopbackPublishArgv(argv, {
-    containerPort: plan.recipe.serve.port,
-    ...(options.hostPort === undefined ? {} : { hostPort: options.hostPort }),
-    imageReference: options.imageReference,
-    loopbackPublishAuthority: options.loopbackPublishAuthority,
-  });
+  // Upstream emits the GPU offload count only at trace verbosity.
+  argv.splice(argv.indexOf(options.imageReference), 0, "--env", "LLAMA_ARG_LOG_VERBOSITY=4");
+  return argv;
 }
 
 export function validateOpenClawQualificationImageLabels(
@@ -889,13 +823,33 @@ function inspectBuiltImage(
   return { digest, imageId, reference };
 }
 
-function resolveLoopbackPort(containerName: string, containerPort: number): number {
-  const value = runCommand("docker", ["port", containerName, `${containerPort}/tcp`])
-    .toString("utf8")
-    .trim();
-  const match = /^127\.0\.0\.1:([1-9][0-9]{3,4})$/u.exec(value);
-  if (!match) throw new Error("model server did not receive one loopback-only ephemeral port");
-  return requiredInteger(Number.parseInt(match[1] ?? "0", 10), "loopback port", 1024, 65_535);
+export function resolveRequestGuardAddress(
+  names: Pick<RuntimeNames, "containerName" | "networkName" | "registryOwner">,
+): string {
+  if (
+    dockerContainerOwner(names.containerName) !== names.registryOwner ||
+    dockerNetworkOwner(names.networkName) !== names.registryOwner
+  ) {
+    throw new Error("qualification relay requires the owned container and network");
+  }
+  const network = JSON.parse(
+    runCommand("docker", ["network", "inspect", names.networkName]).toString("utf8"),
+  )[0];
+  const container = JSON.parse(
+    runCommand("docker", ["inspect", names.containerName]).toString("utf8"),
+  )[0];
+  const endpoints = container.NetworkSettings.Networks;
+  const endpoint = endpoints[names.networkName];
+  if (
+    network.Internal !== true ||
+    !container.State.Running ||
+    Object.keys(endpoints).length !== 1 ||
+    endpoint?.NetworkID !== network.Id ||
+    net.isIP(endpoint?.IPAddress ?? "") !== 4
+  ) {
+    throw new Error("qualification relay requires one running container on its internal network");
+  }
+  return endpoint.IPAddress;
 }
 
 async function waitForHealth(port: number, timeoutSeconds: number): Promise<void> {
@@ -959,6 +913,7 @@ async function runQualification(
   const metadataFile = path.join(names.tempRoot, "build-metadata.json");
   const apiKeyHostPath = path.join(names.tempRoot, "api-key");
   let loopbackPort: number | undefined;
+  let relay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
   let successReceipt: JsonRecord | undefined;
   let failure: unknown;
   let cleanupEvidence: CleanupEvidence | undefined;
@@ -1025,14 +980,16 @@ async function runQualification(
         registryOwner: names.registryOwner,
         runtimeGid,
         runtimeUid,
-        loopbackPublishAuthority: qualifyLiveDockerLoopbackPublishAuthority(),
-        ...(plan.qualification.agentQualification.execution === "enabled"
-          ? { hostPort: plan.recipe.serve.port }
-          : {}),
       }),
       { capture: false },
     );
-    loopbackPort = resolveLoopbackPort(names.containerName, plan.recipe.serve.port);
+    relay = await startQualificationLoopbackRelay(
+      resolveRequestGuardAddress(names),
+      plan.recipe.serve.port,
+      plan.recipe.serve.limits.requestTimeoutSeconds,
+      plan.qualification.agentQualification.execution === "enabled" ? plan.recipe.serve.port : 0,
+    );
+    loopbackPort = relay.port;
     const smi = parseNvidiaSmi(
       runCommand("docker", [
         "exec",
@@ -1170,6 +1127,11 @@ async function runQualification(
   } catch (error) {
     failure = error;
   } finally {
+    try {
+      await relay?.close();
+    } catch (cleanupError) {
+      failure ??= cleanupError;
+    }
     try {
       cleanupEvidence = await cleanupOwnedRuntime(names, loopbackPort);
     } catch (cleanupError) {
