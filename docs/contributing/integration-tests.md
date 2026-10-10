@@ -344,7 +344,7 @@ With a verified bundle, run:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration remote_service::managed_hermes -- --ignored
+  cargo test -p nemoclaw-e2e --test integration remote_service::managed_bearer -- --ignored
 ```
 
 The fixture simulates SSH/Docker and OpenShell while exercising apply, export/reapply, observation failures and retained data through the bundled CLI/provider.
