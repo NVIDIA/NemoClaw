@@ -39,8 +39,9 @@ jobs:
     with:
       runner: windows-2025
       platform: windows_amd64
-      # Windows runs the lifecycle suite in two partitions, as Linux does.
-      lifecycle-shards: "[1, 2]"
+      # Windows lifecycle tests run longest after its slower bundle build, so it
+      # uses a third partition to keep that path closer to the other platforms.
+      lifecycle-shards: "[1, 2, 3]"
   # Keep the v1 ruleset's check names. A skipped, cancelled, or failed platform
   # must never become a successful required check. Each platform's shards start
   # after its own build, not after the slowest member of a global build matrix.
