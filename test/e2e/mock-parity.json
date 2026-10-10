@@ -207,6 +207,7 @@
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
         "test/e2e/live/inference-routing-native-anthropic.ts",
+        "test/e2e/live/inference-routing-native-hermes.ts",
         "test/e2e/fixtures/fake-anthropic-compatible.ts"
       ],
       "fast": [
