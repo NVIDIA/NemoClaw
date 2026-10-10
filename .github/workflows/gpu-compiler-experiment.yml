@@ -88,7 +88,10 @@ jobs:
           test "$(cat results/native-cpu-demo.stdout)" = 1460
           cp .build/compiler/release/gpu-rust-compiler .build/ci-native/gpu-rust-compiler
           cp .build/compiler/release/gpu-cpu-liveness .build/ci-native/gpu-cpu-liveness
-          (cd .build/ci-native && sha256sum gpu-rust-compiler gpu-cpu-liveness > binary.sha256)
+          cp .build/compiler/release/gpu-native-benchmark .build/ci-native/gpu-native-benchmark
+          RUSTUP_TOOLCHAIN=1.98.1 .build/compiler/release/gpu-reference-programs .build/ci-native/references
+          (cd .build/ci-native && sha256sum gpu-rust-compiler gpu-cpu-liveness \
+            gpu-native-benchmark source-sha.txt references/* > binary.sha256)
 
       - name: Identify the exact-head frontend artifact
         id: identity
@@ -147,7 +150,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(cat .build/compiler/release/source-sha.txt)" = "$CANDIDATE_SHA"
           (cd .build/compiler/release && sha256sum --check binary.sha256)
-          chmod +x .build/compiler/release/gpu-rust-compiler .build/compiler/release/gpu-cpu-liveness
+          chmod +x .build/compiler/release/gpu-rust-compiler \
+            .build/compiler/release/gpu-cpu-liveness .build/compiler/release/gpu-native-benchmark
+          chmod +x .build/compiler/release/references/*-reference
           mkdir -p results .build/verification/cuda
           jq --null-input \
             --arg candidate "$CANDIDATE_SHA" --arg workflow "$WORKFLOW_SHA" \
@@ -192,6 +197,7 @@ jobs:
               python3 -m unittest discover -s tests -p test_liveness_reference.py
               python3 -m unittest discover -s tests -p test_prepare_workload.py
               python3 -m unittest discover -s tests -p test_benchmark_cuda.py
+              python3 -m unittest discover -s tests -p test_native_cuda_evidence.py
               python3 scripts/verify_cuda.py --repeats 15 --report results/cuda-verification.json
               python3 scripts/compile.py fixtures/compiler_demo.rs --backend cpu \
                 --compiler-binary .build/compiler/release/gpu-rust-compiler \
@@ -209,6 +215,11 @@ jobs:
                 --cpu-binary .build/compiler/release/gpu-cpu-liveness \
                 --cuda-binary .build/cuda/cuda-liveness \
                 --report results/cuda-benchmark.json
+              python3 scripts/verify_native_cuda.py \
+                --compiler-binary .build/compiler/release/gpu-rust-compiler \
+                --benchmark-binary .build/compiler/release/gpu-native-benchmark \
+                --references .build/compiler/release/references \
+                --repeats 21 --compile-repeats 7 --report results/native-cuda-verification.json
             ' 2>&1 | tee results/cuda-run.log
 
       - name: Retain CUDA evidence, including failures
@@ -221,6 +232,7 @@ jobs:
             experiments/gpu-rust-compiler/.build/verification/cuda/
             experiments/gpu-rust-compiler/.build/compilations/
             experiments/gpu-rust-compiler/.build/benchmarks/cuda/
+            experiments/gpu-rust-compiler/.build/verification/native-cuda/
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14

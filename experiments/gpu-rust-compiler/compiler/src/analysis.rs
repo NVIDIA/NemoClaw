@@ -224,6 +224,98 @@ fn bit(value: usize) -> (usize, u32) {
     (value / 32, 1u32 << (value % 32))
 }
 
+/// Select functions from prepared structured IR. Copies and CFG remapping are
+/// explicit recurring costs, and original ModuleIR function identities survive.
+/// No frontend parsing or GEN/DEF reconstruction participates in this operation.
+pub fn select_packed(
+    original: &PackedAnalysis,
+    module_indices: &[usize],
+) -> Result<PackedAnalysis, String> {
+    let mut selected = HashSet::new();
+    let mut result = PackedAnalysis {
+        functions: Vec::new(),
+        groups: Vec::new(),
+        successor_offsets: vec![0],
+        successors: Vec::new(),
+        predecessor_offsets: vec![0],
+        predecessors: Vec::new(),
+        row_offsets: Vec::new(),
+        uses: Vec::new(),
+        defs: Vec::new(),
+        phi_out: Vec::new(),
+        total_cells: 0,
+    };
+    for &module_index in module_indices {
+        if !selected.insert(module_index) {
+            return Err("Duplicate subset function index".into());
+        }
+        let source = find_function(original, module_index)
+            .ok_or("Subset function absent from original analysis")?;
+        let block_base = result.row_offsets.len();
+        let row_base = result.uses.len();
+        let cells = source.block_count * source.words;
+        result
+            .uses
+            .extend_from_slice(&original.uses[source.row_base..source.row_base + cells]);
+        result
+            .defs
+            .extend_from_slice(&original.defs[source.row_base..source.row_base + cells]);
+        result
+            .phi_out
+            .extend_from_slice(&original.phi_out[source.row_base..source.row_base + cells]);
+        result.functions.push(FunctionDesc {
+            module_index,
+            block_base,
+            block_count: source.block_count,
+            row_base,
+            words: source.words,
+            value_count: source.value_count,
+        });
+        for word in 0..source.words {
+            result.groups.push(GPUGroup {
+                block_base: block_base as u32,
+                block_count: source.block_count as u32,
+                row_base: row_base as u32,
+                words: source.words as u32,
+                word: word as u32,
+            });
+        }
+        for local in 0..source.block_count {
+            let block = source.block_base + local;
+            result.row_offsets.push(row_base + local * source.words);
+            for edge in original.successor_range(block) {
+                let target = original.successors[edge] as usize;
+                if target < source.block_base || target >= source.block_base + source.block_count {
+                    return Err("Subset CFG edge escapes owning function".into());
+                }
+                result
+                    .successors
+                    .push((block_base + target - source.block_base) as u32);
+            }
+            result
+                .successor_offsets
+                .push(result.successors.len() as u32);
+            for edge in original.predecessor_range(block) {
+                let predecessor = original.predecessors[edge] as usize;
+                if predecessor < source.block_base
+                    || predecessor >= source.block_base + source.block_count
+                {
+                    return Err("Subset predecessor escapes owning function".into());
+                }
+                result
+                    .predecessors
+                    .push((block_base + predecessor - source.block_base) as u32);
+            }
+            result
+                .predecessor_offsets
+                .push(result.predecessors.len() as u32);
+        }
+    }
+    result.total_cells = result.uses.len();
+    result.row_offsets.push(result.total_cells);
+    Ok(result)
+}
+
 pub fn solve_cpu_serial(packed: &PackedAnalysis) -> Vec<u32> {
     let mut result = vec![0; packed.total_cells];
     for function in &packed.functions {
@@ -336,7 +428,11 @@ fn worker_count(tasks: usize) -> usize {
         .min(tasks)
 }
 
-fn solve_words(packed: &PackedAnalysis, function: &FunctionDesc, range: Range<usize>) -> Vec<u32> {
+pub(crate) fn solve_words(
+    packed: &PackedAnalysis,
+    function: &FunctionDesc,
+    range: Range<usize>,
+) -> Vec<u32> {
     let blocks = function.block_count;
     let words = range.len();
     let mut live = vec![0u32; blocks * words];

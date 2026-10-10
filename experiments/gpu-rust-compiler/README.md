@@ -15,11 +15,13 @@ result. It does not support ownership, traits, generics, macros, dependencies,
 the standard library, or Cargo's compiler interface. It cannot build NemoClaw
 or the complete Rust components used by Omarchy.
 
-The native CPU/Metal/hybrid compiler retains its analysis pipeline across
-`--serve` requests. CUDA currently runs through a Python bridge and a separate
-CUDA analysis process. CUDA outputs must match an independent CPU set oracle
-before they can affect the emitted executable. There is no CPU fallback for a
-requested CUDA pass. A faster pass does not establish a faster NemoClaw build.
+The native CPU, Metal, and CUDA paths retain their execution state across
+`--serve` requests. CUDA loads a small C ABI library in the compiler process;
+analysis uses the compiler's indexed arrays directly. Python remains an
+independent oracle and benchmark controller inside the validation image. The
+older Python/CUDA-process bridge remains a comparison baseline. An explicitly
+requested CUDA pass fails when unavailable. Adaptive routing can select CPU
+and reports that decision. A faster pass does not establish a faster NemoClaw build.
 
 ## Run the GPU experiment in GitHub Actions
 
@@ -35,6 +37,9 @@ The workflow builds the native frontend on a hosted Linux runner, then verifies
 CUDA inside its validation image on the repository's GPU runner. It
 retains device/toolchain identity, source and binary hashes, correctness
 results, timings, and program output as artifacts.
+The hosted job also compiles standard-Rust reference programs; their sources,
+executable outputs, compiler identity, and checksums travel with this exact-head
+artifact. The GPU job builds the native CUDA library from the same revision.
 
 GPU verification requires that workflow to succeed on this PR's exact
 head. Exit code `3` from the verifier means CUDA is unavailable; it is not a
@@ -58,6 +63,56 @@ without rebuilding it. Without that option, the bridge builds the frontend
 when absent or older than its sources. A CUDA device, compatible driver/toolkit,
 Python 3.9+, and a host C++ compiler are required. Clang must support the emitted
 opaque-pointer LLVM IR.
+
+## Persistent native CUDA
+
+`native/cuda_bridge.{h,cu}` exposes creation, submission, completion, device
+capability queries, and destruction. A context owns a nonblocking stream,
+events, reusable device allocations, and pinned staging buffers. Submission
+captures an immutable snapshot before returning; the caller can then perform
+independent CPU work. Completion waits for result downloads. Every request
+reseeds its facts, including requests that remove previously live values.
+
+The dense kernel remains a reference. The delta-frontier kernel propagates new
+bits backward through predecessor kill masks, using atomic updates and uniform
+round barriers. It scans a frontier bitmap but only visits edges of active
+rows. Function-size buckets avoid charging small functions for the largest
+function's shared-memory allocation. Both algorithms implement the same
+finite least fixed point and phi predecessor semantics.
+
+Inside the CUDA image, the native verifier builds the adapter and runs:
+
+```sh
+python3 scripts/verify_native_cuda.py \
+  --compiler-binary .build/compiler/release/gpu-rust-compiler \
+  --benchmark-binary .build/compiler/release/gpu-native-benchmark \
+  --references .build/compiler/release/references \
+  --report results/native-cuda-verification.json
+.build/compiler/release/gpu-rust-compiler --serve --backend cuda \
+  --cuda-algorithm sparse --cuda-library .build/cuda/libgpulab_cuda.so --verify
+```
+
+Native `cpu` execution has a reusable worker pool. Analysis calibration compares
+serial, function, and word worklists over several active worker counts. CUDA
+`cuda-hybrid` routing uses a saved profile bound to device, driver/runtime, CPU
+capacity, source revision, objective, candidate shape, and parent workload.
+Admission requires a clear timing advantage in separate training and held-out
+samples, including packing, staging, transfers, CPU remainder, and assembly.
+Missing, mismatched, or noisy evidence selects CPU. Long straight chains stay
+on CPU. `--mode latency|throughput` selects separately qualified policies;
+latency evidence cannot authorize throughput placement.
+
+The verifier compares fresh and persistent processes, dense and sparse
+algorithms, full supported-program compilation, and interleaved concurrent
+compilation cohorts. Held-out facts rotate value identities on the same CFG;
+they do not establish generalization to unseen graph geometry. Event polling
+checks whether GPU work remains pending when independent CPU work starts;
+it does not measure simultaneous kernel/CPU execution duration.
+
+Placement is separate from algorithm selection. Pinned staging is implemented
+on the PCIe runner. Runtime queries report memory capabilities, while
+`CoherentUnverified` refuses execution. Vera/Rubin coherent placement and SCC
+preprocessing remain unverified until hardware or measured benefits justify them.
 
 ## Same-runner CUDA benchmarks
 

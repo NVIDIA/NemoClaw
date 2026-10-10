@@ -24,7 +24,15 @@ pipeline, queue, and reusable shared buffers inside the compiler process.
 `--serve` retains this state across requests and recovers from invalid input.
 Clang remains an external code-generation/linking process.
 
-The portable `scripts/compile.py` bridge extracts that IR's SSA liveness problem
+CUDA now has an in-process C ABI adapter with retained streams, events, device
+buffers, and pinned staging. Its dense and delta-frontier kernels consume the
+same indexed snapshot. Submission captures input, enqueues transfers and work,
+and returns before completion; CPU subsets can execute before the final wait.
+Contexts and capacity are retained, while facts are cleared and reseeded for
+every changed request. The placement policy exposes an explicit unverified
+coherent option; capability queries cannot make that option verified.
+
+The legacy portable `scripts/compile.py` bridge extracts that IR's SSA liveness problem
 and selects the independent CPU oracle or the CUDA command-line backend. The selected result feeds a
 bounded dead scalar instruction pruning pass, after which Clang links a native
 executable. Native tests compare output with rustc compiling the same source
@@ -48,17 +56,20 @@ full Omarchy Rust tools.
 
 | Design | CPU role | GPU role | First experiment |
 |---|---|---|---|
-| Adaptive heterogeneous compiler | Parse, validate, schedule dependencies, and execute small or long-chain analyses | Process immutable batches of compact functions | Implemented hybrid liveness scheduler; measure joint elapsed time |
-| Sparse graph engine | Compute SCCs/topological order and create shape buckets | Propagate only newly discovered dataflow bits through active frontiers | Replace dense Jacobi sweeps with a duplicate-safe delta frontier |
+| Adaptive heterogeneous compiler | Parse, validate, schedule dependencies, and execute small or long-chain analyses | Process immutable batches of compact functions | Native CUDA routing requires measured total-cost wins; CPU and GPU state persist |
+| Sparse graph engine | Order CPU worklists and create shape buckets | Propagate newly discovered dataflow bits through active frontiers | Delta frontier implemented; SCC preprocessing remains unmeasured |
 | Flat task evaluator | Drive host effects, incremental caches, and uneven tasks | Execute balanced independent continuations on persistent workers | Encode one analysis in a Bend-style flat IR and compare against native kernels |
 | Compatibility bridge | Use rustc's existing frontend for unsupported Rust while the new frontend grows | Run the same backend-neutral analyses inside a version-pinned backend | A custom `CodegenBackend` adapter with explicit compatibility modes |
 
-The current hybrid is a concrete instance of the first design. It dispatches
+The Metal hybrid is a concrete instance of the first design. It dispatches
 eligible functions of at most 64 blocks only when the batch contains at least
 32 functions and either 50,000 packed cells or 1,024 word groups. Other functions
 remain on CPU worklists. GPU submission precedes CPU work; there is one final
 wait and then results are assembled. These provisional thresholds came from the original Metal prototype; the
-CUDA path has no hybrid scheduler and requires separate tuning.
+CUDA routing instead uses calibrated shape buckets and saved CPU worker limits.
+Profiles require separate training and held-out total-cost wins and are bound
+to hardware, execution objective, and source revision. Unmatched inputs stay
+on CPU; admitted GPU batches can run while CPU worklists solve other functions.
 
 The GPU kernel's words are independent, so a threadgroup can converge without
 global GPU synchronization. Long graphs are a poor fit for its dense Jacobi
@@ -84,13 +95,12 @@ provides a compatibility seam with compiler-version coupling.
 
 ## CUDA and Metal validation
 
-Both GPU implementations consume the same dense bitsets, successors, and
-function-word groups, and solve the same least fixed point. CUDA consumes a
-binary `GLC1` pack; its result is a `GLR1` pack. The Python exporter and CUDA
-host-format checker share the format. The kernel and host runtime code are
-written; the experimental workflow must establish CUDA compilation and NVIDIA
-GPU execution on its exact candidate revision. Metal execution on a Mac cannot
-provide that evidence.
+Both GPU implementations consume the same bitsets and function-word groups,
+and solve the same least fixed point. Native CUDA consumes compiler-owned
+arrays directly. The legacy CUDA executable and native benchmark driver also
+accept `GLC1` packs and emit `GLR1` results for independent verification. The
+experimental workflow must establish CUDA compilation and NVIDIA GPU execution
+on its exact candidate revision. Metal execution on a Mac cannot provide that evidence.
 
 On a CUDA-capable build host:
 
@@ -113,7 +123,8 @@ source hashes, transfer/setup cost, and total compile time.
    Analysis no longer reparses LLVM text or crosses a JSON/subprocess boundary.
    Fresh processes and persistent workers are benchmarked against the same
    source and standard Rust with an equivalent entry harness. Native CPU analysis can use scoped workers;
-   those CPU threads are not themselves a persistent thread pool. Clang code
+   CPU execution now also retains a worker pool and calibrates mode and active
+   worker count. Clang code
    generation and linking remain separate subprocess costs.
 3. Profile actual NemoClaw and Omarchy-component Rust builds. Select an analysis
    with enough aggregate cost to justify GPU work; the current liveness pass
