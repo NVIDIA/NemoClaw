@@ -2164,7 +2164,10 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 <AgentOnly variant="openclaw">
 
-Every OpenClaw onboarding run with an OpenAI-compatible endpoint sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
+OpenClaw onboarding validates the selected OpenAI-compatible endpoint from inside the sandbox, even when you select no messaging channel.
+Fresh custom hosted onboarding uses the sandbox-attached native provider and its admitted endpoint or adapter.
+Host-local and retained shared routes use `inference.local`.
+If native provider authority is missing or conflicts with the recorded attachment, follow [Verify the Sandbox Inference Route](../inference/validate-inference/verify-inference-route) before continuing; NemoClaw does not fall back to the shared route.
 If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
 Messaging setup is not the root cause.
 

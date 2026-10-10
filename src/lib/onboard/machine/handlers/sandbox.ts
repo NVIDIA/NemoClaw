@@ -147,17 +147,17 @@ function nativeNvidiaCreateIntentFields(
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );
+  const nativeCustomProviderAttachment = normalizeNativeCustomProviderAttachment(
+    entry?.nativeCustomProviderAttachment,
+    entry?.name,
+  );
+  if (entry?.nativeCustomProviderAttachment !== undefined && !nativeCustomProviderAttachment) {
+    throw new Error("The recorded native custom provider attachment is invalid.");
+  }
   return {
     inferenceProvider:
-      normalizeNativeCustomProviderAttachment(entry?.nativeCustomProviderAttachment)
-        ?.providerName ?? nativeInferenceProviderForSandbox(provider),
-    ...(entry?.nativeCustomProviderAttachment
-      ? {
-          nativeCustomProviderAttachment: normalizeNativeCustomProviderAttachment(
-            entry.nativeCustomProviderAttachment,
-          ),
-        }
-      : {}),
+      nativeCustomProviderAttachment?.providerName ?? nativeInferenceProviderForSandbox(provider),
+    ...(nativeCustomProviderAttachment ? { nativeCustomProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
   };
 }

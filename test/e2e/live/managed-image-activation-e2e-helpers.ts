@@ -748,6 +748,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
   sandboxName: string,
   env: NodeJS.ProcessEnv,
   artifactRedactionValues: readonly string[] = [API_KEY],
+  failureStage: "onboard" | "public-lifecycle" = "onboard",
 ): Promise<void> {
   artifacts.addRedactionValues(artifactRedactionValues);
   const containerEngine = env.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker";
@@ -766,7 +767,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
         }),
       ],
       {
-        artifactName: `managed-activation-onboard-failure-${agent}-gateway-log`,
+        artifactName: `managed-activation-${failureStage}-failure-${agent}-gateway-log`,
         captureLimitBytes: 65536,
         env,
         redactionValues: [API_KEY],
@@ -787,7 +788,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
         "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
       ],
       {
-        artifactName: `managed-activation-onboard-failure-${agent}-container-inventory`,
+        artifactName: `managed-activation-${failureStage}-failure-${agent}-container-inventory`,
         env,
         redactionValues: [API_KEY],
         timeoutMs: 30_000,
@@ -808,7 +809,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
             containerId,
           ],
           {
-            artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-state`,
+            artifactName: `managed-activation-${failureStage}-failure-${agent}-container-${index + 1}-state`,
             env,
             redactionValues: [API_KEY],
             timeoutMs: 30_000,
@@ -819,7 +820,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
     await Promise.allSettled(
       containerIds.map(async (containerId, index) => {
         const logs = await host.command(containerEngine, ["logs", "--tail", "1000", containerId], {
-          artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
+          artifactName: `managed-activation-${failureStage}-failure-${agent}-container-${index + 1}-logs`,
           captureLimitBytes: 2 * 1024 * 1024,
           env,
           ...ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
@@ -829,7 +830,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
         if (logs.exitCode !== 0) return;
         const output = `${logs.stdout}\n${logs.stderr}`;
         await artifacts.writeJson(
-          `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-signals.json`,
+          `managed-activation-${failureStage}-failure-${agent}-container-${index + 1}-startup-signals.json`,
           summarizeOnboardFailureStartupSignals(output),
         );
         const copyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-log-"));
@@ -839,7 +840,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
             containerEngine,
             ["cp", `${containerId}:/tmp/nemoclaw-start.log`, copiedLog],
             {
-              artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-log-copy`,
+              artifactName: `managed-activation-${failureStage}-failure-${agent}-container-${index + 1}-startup-log-copy`,
               env,
               redactionValues: [API_KEY],
               timeoutMs: 30_000,
@@ -849,7 +850,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
           const stat = fs.lstatSync(copiedLog);
           if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
           await artifacts.writeText(
-            `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
+            `managed-activation-${failureStage}-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
             fs.readFileSync(copiedLog, "utf8"),
           );
         } finally {
@@ -858,7 +859,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
       }),
     );
   } catch {
-    // Preserve the onboarding failure as the primary error when diagnostics are unavailable.
+    // Preserve the runtime failure as the primary error when diagnostics are unavailable.
   }
 }
 
@@ -935,6 +936,17 @@ async function qualifyAgent(
     redactionValues: [API_KEY],
     timeoutMs: 10 * 60_000,
   });
+  if (stop.exitCode !== 0 || start.exitCode !== 0) {
+    await collectOnboardFailureRuntimeDiagnostics(
+      artifacts,
+      host,
+      agent,
+      sandboxName,
+      env,
+      [API_KEY],
+      "public-lifecycle",
+    );
+  }
   expect(
     stop.exitCode === 0 && start.exitCode === 0,
     `${resultText(stop)}\n${resultText(start)}`,
