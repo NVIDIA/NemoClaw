@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  selectedModelProvenance,
+  type ModelSelectionProvenance,
+} from "../domain/telemetry/provenance";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { type ProviderOption, resolveProviderKeyFallback } from "./provider-key-fallback";
 import { providerNameToOptionKey, type RemoteProviderConfigEntryLike } from "./provider-recovery";
@@ -288,4 +292,33 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       providerKey,
     },
   };
+}
+
+export interface SelectedModelOrigin {
+  model: string;
+  provider: string;
+  source: ModelSelectionProvenance["modelSource"];
+}
+
+/** Bind a proven picker origin, explicit request, or selected local runtime to its route. */
+export function selectedProviderModelProvenance(
+  input: Parameters<typeof selectedModelProvenance>[0] & {
+    requestedModel?: string | null;
+    selectedModelOrigin?: SelectedModelOrigin;
+  },
+): { modelSelectionProvenance?: ModelSelectionProvenance } {
+  const { requestedModel, selectedModelOrigin, ...route } = input;
+  const modelSource = ["ollama-local", "vllm-local", "llama-cpp-local", "nvidia-nim"].includes(
+    route.provider ?? "",
+  )
+    ? "local"
+    : selectedModelOrigin &&
+        selectedModelOrigin.provider === route.provider &&
+        selectedModelOrigin.model === route.model
+      ? selectedModelOrigin.source
+      : requestedModel === route.model
+        ? "custom"
+        : undefined;
+  const provenance = modelSource ? selectedModelProvenance({ ...route, modelSource }) : undefined;
+  return provenance ? { modelSelectionProvenance: provenance } : {};
 }

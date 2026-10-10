@@ -21,6 +21,7 @@ import {
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import {
+  decisionUnset,
   decisionValue,
   isDecisionSelected,
   isDecisionUnset,
@@ -2323,6 +2324,14 @@ class SandboxStateFlow<
       });
       this.deps.updateSession((current) => {
         current.messagingPlan = messagingPlan;
+        const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+        if (messagingPlan === null && (agentName === "openclaw" || agentName === "hermes")) {
+          if (state.selectedMessagingChannels.length === 0)
+            recordCheckpointMessaging(current, null);
+          else if (current.checkpoint) {
+            current.checkpoint = { ...current.checkpoint, messaging: decisionUnset() };
+          }
+        }
         return current;
       });
       const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata } =
@@ -2358,6 +2367,7 @@ class SandboxStateFlow<
                     selection: sandboxCreateInferenceSelection({
                       provider: this.options.provider,
                       model: this.options.model,
+                      modelSelectionProvenance: this.options.session.modelSelectionProvenance,
                       endpointUrl: this.options.endpointUrl,
                       endpointSource: this.options.endpointSource,
                       credentialEnv: this.options.credentialEnv,

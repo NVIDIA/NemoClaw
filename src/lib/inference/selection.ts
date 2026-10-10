@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { normalizeReasoningEffort, type ReasoningEffort } from "../onboard/reasoning-mode";
+import {
+  readModelSelectionProvenance,
+  type ModelSelectionProvenance,
+} from "../domain/telemetry/provenance";
 
 export {
   type ReasoningEffortRequest,
@@ -20,16 +24,23 @@ export interface InferenceSelection {
   compatibleEndpointReasoning: "true" | "false" | null;
   compatibleEndpointReasoningEffort: ReasoningEffort | null;
   nimContainer: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance;
 }
 
 export type EffectiveReasoningEffort = ReasoningEffort | "endpoint-default";
 
 export type InferenceSelectionInput =
   | (Partial<
-      Omit<InferenceSelection, "compatibleEndpointReasoning" | "compatibleEndpointReasoningEffort">
+      Omit<
+        InferenceSelection,
+        | "compatibleEndpointReasoning"
+        | "compatibleEndpointReasoningEffort"
+        | "modelSelectionProvenance"
+      >
     > & {
       compatibleEndpointReasoning?: unknown;
       compatibleEndpointReasoningEffort?: unknown;
+      modelSelectionProvenance?: unknown;
     })
   | null
   | undefined;
@@ -75,9 +86,14 @@ function nullableCompatibleEndpointReasoningEffort(
 export function normalizeInferenceSelection(input: InferenceSelectionInput): InferenceSelection {
   const provider = nullableString(input?.provider);
   const endpointUrl = nullableString(input?.endpointUrl);
+  const model = nullableString(input?.model);
+  const provenance = readModelSelectionProvenance(input?.modelSelectionProvenance);
   return {
     provider,
-    model: nullableString(input?.model),
+    model,
+    ...(provenance?.model === model && provenance.provider === provider
+      ? { modelSelectionProvenance: provenance }
+      : {}),
     endpointUrl,
     endpointSource: endpointUrl ? normalizeInferenceEndpointSource(input?.endpointSource) : null,
     credentialEnv: nullableString(input?.credentialEnv),

@@ -17,7 +17,7 @@ import { observeOpenShellSandboxIdentity } from "./sandbox-presence";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./command-execution";
 import { captureOpenshellCommand } from "./client";
 import { resolveOpenshell } from "./resolve";
-import { assertCliOpenShellTarget } from "./sandbox-command-cli";
+import { assertCliOpenShellTarget } from "./target-validation";
 import { OpenShellGatewayEndpointOverrideError } from "../../openshell-gateway-endpoint-guard";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
