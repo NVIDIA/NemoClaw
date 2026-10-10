@@ -4,7 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execSandboxMock = vi.hoisted(() => vi.fn(async () => {}));
-vi.mock("../../lib/actions/sandbox/exec", () => ({
+vi.mock("../../lib/actions/sandbox/exec", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/actions/sandbox/exec")>()),
   execSandbox: execSandboxMock,
 }));
 
@@ -218,5 +219,39 @@ describe("SandboxExecCommand oclif parse path", () => {
       timeoutSeconds: undefined,
       stdin: undefined,
     });
+  });
+
+  it("keeps an inner -- when the command follows the leading -- (#12584)", async () => {
+    await SandboxExecCommand.run(["alpha", "--", "echo", "hi", "--", "there"], rootDir);
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["echo", "hi", "--", "there"], {
+      workdir: undefined,
+      tty: false,
+      timeoutSeconds: undefined,
+      stdin: undefined,
+    });
+  });
+
+  it("forwards a command without any -- unchanged", async () => {
+    await SandboxExecCommand.run(["alpha", "cat", "/etc/hostname"], rootDir);
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["cat", "/etc/hostname"], {
+      workdir: undefined,
+      tty: false,
+      timeoutSeconds: undefined,
+      stdin: undefined,
+    });
+  });
+
+  it("refuses git log before its own -- instead of running only the tail (#12584)", async () => {
+    await expect(
+      SandboxExecCommand.run(["alpha", "git", "log", "--", "/tmp/notes.md"], rootDir),
+    ).rejects.toThrow("Put -- before a command that contains --. Usage: nemoclaw alpha exec");
+    expect(execSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses --workdir and git before its own -- instead of running only the tail (#12584)", async () => {
+    await expect(
+      SandboxExecCommand.run(["alpha", "--workdir", "/sandbox", "git", "--", "status"], rootDir),
+    ).rejects.toThrow("Put -- before a command that contains --");
+    expect(execSandboxMock).not.toHaveBeenCalled();
   });
 });
