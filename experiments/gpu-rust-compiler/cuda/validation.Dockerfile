@@ -8,7 +8,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Validation-only distro packages resolve at build time; CI retains their versions.
 # hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates clang-18 g++ python3 cmake ninja-build git curl xz-utils libxml2 libzstd1 \
+    && apt-get install --yes --no-install-recommends ca-certificates clang-18 g++ python3 cmake ninja-build git curl xz-utils zlib1g-dev libzstd-dev libxml2-dev \
     && ln -s /usr/bin/clang-18 /usr/local/bin/clang \
     && rm -rf /var/lib/apt/lists/*
 

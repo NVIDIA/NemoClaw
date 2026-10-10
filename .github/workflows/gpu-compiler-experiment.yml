@@ -103,6 +103,70 @@ jobs:
             gpu-native-benchmark gpu-cargo gpu-bitcode-linker gpu-codegen gpu-emit-module \
             gpu-verify-pipeline nemoclaw-fast-backend rust-llvm-llc source-sha.txt references/* > binary.sha256)
 
+      - name: Identify the exact-head frontend artifact
+        id: identity
+        working-directory: experiments/gpu-rust-compiler
+        run: |
+          printf 'artifact=gpu-compiler-frontend-%s-%s-%s\n' \
+            "$CANDIDATE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the frontend for this run
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: experiments/gpu-rust-compiler/.build/ci-native/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain native CPU evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-compiler-native-cpu-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}
+          path: experiments/gpu-rust-compiler/results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  cpu-benchmark:
+    name: Experiment / Complete NemoClaw CPU benchmark
+    needs: native-cpu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out the exact experiment head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+
+      - name: Download this run's exact-head frontend
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.native-cpu.outputs.frontend-artifact }}
+          path: experiments/gpu-rust-compiler/.build/compiler/release/
+
+      - name: Verify source and CPU frontend provenance
+        working-directory: experiments/gpu-rust-compiler
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          FRONTEND_ARTIFACT: ${{ needs.native-cpu.outputs.frontend-artifact }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(cat .build/compiler/release/source-sha.txt)" = "$CANDIDATE_SHA"
+          (cd .build/compiler/release && sha256sum --check binary.sha256)
+          chmod +x .build/compiler/release/gpu-cargo
+          mkdir -p results
+          rustup toolchain install 1.98.1 --profile minimal
+          rustc +1.98.1 --version --verbose > results/rustc-full-nemoclaw-cpu.txt
+          jq --null-input \
+            --arg candidate "$CANDIDATE_SHA" --arg workflow "$WORKFLOW_SHA" \
+            --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg frontend "$FRONTEND_ARTIFACT" \
+            '{candidate_sha:$candidate,workflow_sha:$workflow,run_id:$run,run_attempt:$attempt,frontend_artifact:$frontend,scope:"Complete NemoClaw release and fast CPU policy comparison"}' \
+            > results/full-nemoclaw-cpu-provenance.json
+
       - name: Set up the compatible NemoClaw build contract
         uses: ./.github/actions/setup-rust
         with:
@@ -126,27 +190,11 @@ jobs:
           candidate=$(jq -r .artifact.path "$exp/results/full-nemoclaw-fast.json")
           "$candidate" --version > "$exp/results/full-nemoclaw-fast-version.txt"
 
-      - name: Identify the exact-head frontend artifact
-        id: identity
-        working-directory: experiments/gpu-rust-compiler
-        run: |
-          printf 'artifact=gpu-compiler-frontend-%s-%s-%s\n' \
-            "$CANDIDATE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
-
-      - name: Upload the frontend for this run
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ steps.identity.outputs.artifact }}
-          path: experiments/gpu-rust-compiler/.build/ci-native/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Retain native CPU evidence
+      - name: Retain complete NemoClaw CPU evidence, including failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: gpu-compiler-native-cpu-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}
+          name: gpu-compiler-full-nemoclaw-cpu-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}
           path: experiments/gpu-rust-compiler/results/
           if-no-files-found: warn
           retention-days: 14
