@@ -6,22 +6,30 @@
 pub mod openshell;
 pub mod tofu;
 
-/// The fake `ssh` relay built beside the test executables, which live in the
-/// target's `deps` directory.
+/// The fake `ssh` relay: beside `providers`, where archived lifecycle runs
+/// unpack it with the providers, or beside the test executables, which live in
+/// the target's `deps` directory.
 #[must_use]
-pub fn ssh_relay() -> std::path::PathBuf {
+pub fn ssh_relay(providers: &std::path::Path) -> std::path::PathBuf {
+    let name = executable("nemoclaw-fixture-ssh");
     let current = std::env::current_exe().unwrap();
-    let relay = current
+    let built = current
         .parent()
         .and_then(std::path::Path::parent)
         .unwrap()
-        .join(executable("nemoclaw-fixture-ssh"));
-    assert!(
-        relay.is_file(),
-        "{} is missing; build it with cargo build -p nemoclaw-test-fixtures",
-        relay.display()
-    );
-    relay
+        .join(&name);
+    let candidates = [providers.join(&name), built];
+    candidates
+        .iter()
+        .find(|relay| relay.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "{} and {} are missing; build them with cargo build -p nemoclaw-test-fixtures",
+                candidates[0].display(),
+                candidates[1].display()
+            )
+        })
+        .clone()
 }
 
 /// `name` as an executable on this platform.
