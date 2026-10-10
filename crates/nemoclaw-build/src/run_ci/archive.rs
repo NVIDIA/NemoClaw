@@ -20,11 +20,16 @@ pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
         std::env::current_exe()?,
         Path::new(".build/ci").join(nemoclaw_build_executable("nemoclaw-build")),
     )?;
-    // Protocol fixtures locate sibling providers beside this explicit binary.
-    for name in ["nemoclaw", "openshell", "fabric"] {
-        let path = Path::new("target/debug").join(nemoclaw_build_executable(&format!(
-            "terraform-provider-{name}"
-        )));
+    // Protocol fixtures locate sibling providers beside this explicit binary,
+    // and the lifecycle step puts the fake ssh first on PATH where Unix
+    // sockets are missing.
+    for name in [
+        "terraform-provider-nemoclaw",
+        "terraform-provider-openshell",
+        "terraform-provider-fabric",
+        "nemoclaw-fixture-ssh",
+    ] {
+        let path = Path::new("target/debug").join(nemoclaw_build_executable(name));
         archive.append_path(&path)?;
     }
     archive.finish()?;

@@ -39,7 +39,6 @@ mod openshell_contract_fixtures;
 mod provider_protocol;
 #[path = "remote_service.rs"]
 mod remote_service;
-#[cfg(unix)]
 #[path = "sandbox_readiness.rs"]
 mod sandbox_readiness;
 // The fixture engine listens on a Unix socket.
@@ -52,8 +51,6 @@ mod service_readiness;
 mod spark;
 #[path = "tls.rs"]
 mod tls;
-// The fixture engine listens on a Unix socket.
-#[cfg(unix)]
 #[path = "web_search.rs"]
 mod web_search;
 

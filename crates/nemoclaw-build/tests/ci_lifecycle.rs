@@ -174,6 +174,7 @@ fn archive_packages_tools_and_provider_helpers_but_leaves_the_bundle_to_its_own_
         "target/debug/terraform-provider-nemoclaw",
         "target/debug/terraform-provider-openshell",
         "target/debug/terraform-provider-fabric",
+        "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = fixture.0.path().join(path);
         fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -206,6 +207,7 @@ fn archive_packages_tools_and_provider_helpers_but_leaves_the_bundle_to_its_own_
         "target/debug/terraform-provider-nemoclaw",
         "target/debug/terraform-provider-openshell",
         "target/debug/terraform-provider-fabric",
+        "target/debug/nemoclaw-fixture-ssh",
     ] {
         let file = unpacked.path().join(path);
         assert_eq!(fs::read_to_string(&file).unwrap(), path);
