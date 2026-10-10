@@ -15,6 +15,7 @@ import {
   hostGatewayCmdlineMatches,
   resolveDockerDriverGatewayStateDir,
 } from "../../onboard/host-gateway-process";
+import { readGatewayProcEntry } from "../../onboard/gateway/process-proc-entry";
 import { isOpenShellProtobufSchemaMismatch } from "../../runtime-recovery";
 import {
   type GatewayReuseState,
@@ -335,9 +336,10 @@ function isLiveGatewayProcess(pid: number | null | undefined, gatewayBin: string
     if ((err as NodeJS.ErrnoException).code !== "EPERM") return false;
   }
   let cmdline = "";
-  try {
-    cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8").replace(/\0/g, " ").trim();
-  } catch {
+  const procCmdline = readGatewayProcEntry(pid as number, "cmdline");
+  if (procCmdline !== null) {
+    cmdline = procCmdline.replace(/\0/g, " ").trim();
+  } else {
     try {
       const ps = spawnSync("ps", ["-p", String(pid), "-o", "args="], {
         encoding: "utf-8",

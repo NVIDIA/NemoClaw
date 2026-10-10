@@ -2,8 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
+import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../../onboard/docker-driver-gateway-runtime-marker";
 
 const requireDist = createRequire(import.meta.url);
 const {
@@ -12,6 +17,7 @@ const {
   formatOpenShellStateRpcIssue,
   getGatewayClusterImageDrift,
   getGatewayHostProcessDrift,
+  getHostProcessGatewayRuntimeOrNull,
   isGatewayClusterActiveForGateway,
   observeOpenShellGatewayVersionCompatibility,
   parseGatewayClusterImageVersion,
@@ -295,6 +301,49 @@ describe("OpenShell gateway drift preflight", () => {
       expectedVersion: "0.0.44",
     });
   });
+
+  it.runIf(process.platform === "linux")(
+    "selects the marker gateway from a live sibling when the leader is a zombie",
+    () => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-drift-zombie-"));
+      const gatewayBin = path.join(stateDir, "openshell-gateway");
+      const pid = 9_999_811;
+      const tid = pid + 1;
+      const proc = `/proc/${pid}`;
+      try {
+        fs.writeFileSync(gatewayBin, "#!/bin/sh\nprintf 'openshell-gateway 0.0.43\\n'\n", {
+          mode: 0o700,
+        });
+        writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+          pid,
+          desiredEnv: {},
+          endpoint: "https://127.0.0.1:18080",
+          gatewayBin,
+        });
+        vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
+        vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_BIN", path.join(stateDir, "other-gateway"));
+        const files = new Map<string, string>([
+          [`${proc}/cmdline`, ""],
+          [`${proc}/status`, "State:\tZ (zombie)\n"],
+          [`${proc}/task/${tid}/cmdline`, `${gatewayBin}\0--name\0nemoclaw-18080\0`],
+        ]);
+        const readFile = fs.readFileSync;
+        vi.spyOn(fs, "readFileSync").mockImplementation(
+          (file, options) => files.get(String(file)) ?? readFile(file, options),
+        );
+        mockGatewayProcTaskDir(`${proc}/task`, [String(pid), String(tid)]);
+        vi.spyOn(process, "kill").mockReturnValue(true);
+
+        expect(getHostProcessGatewayRuntimeOrNull()).toEqual({
+          gatewayBin,
+          runningVersion: "0.0.43",
+        });
+      } finally {
+        vi.restoreAllMocks();
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not flag a matching host-process gateway binary", async () => {
     expect(
