@@ -927,23 +927,24 @@ export function createCliOpenShellProviderAdapter(
     );
     const error = commandError(result);
     if (error) return failure(error);
-    if (verifiedProfiles.has(targetKey(request.target))) {
+    const profiles = verifiedProfiles.get(targetKey(request.target));
+    if (profiles) {
+      const warnIncompleteVerification = () =>
+        warn(
+          `Warning: Post-mutation profile verification for '${request.providerName}' did not complete. Ask the gateway operator to inspect its profile.`,
+        );
       try {
         const provider = await getProvider({
           target: request.target,
           providerName: request.providerName,
         });
-        if (provider.ok) {
+        if (provider.ok && profiles.has(provider.value.type)) {
           warnIfVerifiedProfileChanged(request, provider.value.type);
         } else {
-          warn(
-            `Warning: Post-mutation profile verification for '${request.providerName}' did not complete. Ask the gateway operator to inspect its profile.`,
-          );
+          warnIncompleteVerification();
         }
       } catch {
-        warn(
-          `Warning: Post-mutation profile verification for '${request.providerName}' did not complete. Ask the gateway operator to inspect its profile.`,
-        );
+        warnIncompleteVerification();
       }
     }
     return mutationSuccess();
