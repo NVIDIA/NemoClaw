@@ -818,4 +818,56 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     expect(snapshot.currentModel).toBe("unknown");
     expect(snapshot.currentProvider).toBe("ollama-local");
   });
+
+  it("ignores an onboarding session model when another session owns the entry (#12864)", async () => {
+    capture.mockResolvedValue({
+      status: 1,
+      output: "",
+    } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(
+        { provider: "ollama-local", model: null, reservationSessionId: "session-owner" },
+        {
+          loadOnboardSessionForStatus: () =>
+            createSession({
+              sessionId: "session-later",
+              sandboxName: "alpha",
+              provider: "ollama-local",
+              model: "qwen3.5:9b",
+            }),
+        },
+      ),
+    );
+
+    expect(snapshot.currentModel).toBe("unknown");
+    expect(snapshot.currentProvider).toBe("ollama-local");
+  });
+
+  it("uses the onboarding session model when that session owns the entry (#12864)", async () => {
+    capture.mockResolvedValue({
+      status: 1,
+      output: "",
+    } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(
+        { provider: "ollama-local", model: null, reservationSessionId: "session-owner" },
+        {
+          loadOnboardSessionForStatus: () =>
+            createSession({
+              sessionId: "session-owner",
+              sandboxName: "alpha",
+              provider: "ollama-local",
+              model: "qwen3.5:9b",
+            }),
+        },
+      ),
+    );
+
+    expect(snapshot.currentModel).toBe("qwen3.5:9b");
+    expect(snapshot.currentProvider).toBe("ollama-local");
+  });
 });

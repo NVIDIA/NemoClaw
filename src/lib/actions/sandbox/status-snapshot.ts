@@ -358,17 +358,20 @@ interface SessionRecordedSelection {
 /**
  * The registry is the status authority, but a resumed run can leave the
  * sandbox-scoped model recorded only in the onboarding session (#12864).
- * Only a session bound to this exact sandbox may speak for it. The session
- * loader is caller-injected because this module's import fan-out and
- * onboard-session's fan-in both sit at their architecture budgets.
+ * Only a session bound to this exact sandbox may speak for it, and only the
+ * owning session when the entry records one. The session loader is
+ * caller-injected because this module's import fan-out and onboard-session's
+ * fan-in both sit at their architecture budgets.
  */
 function readSessionRecordedSelection(
   sandboxName: string,
+  reservationSessionId: string | undefined,
   loadOnboardSession: (() => Session | null) | null,
 ): SessionRecordedSelection | null {
   try {
     const session = loadOnboardSession?.() ?? null;
     if (!session || session.sandboxName !== sandboxName) return null;
+    if (reservationSessionId && session.sessionId !== reservationSessionId) return null;
     const model = typeof session.model === "string" ? session.model.trim() : "";
     const provider = typeof session.provider === "string" ? session.provider.trim() : "";
     return model.length > 0 && provider.length > 0 ? { provider, model } : null;
@@ -505,6 +508,7 @@ export async function collectSandboxStatusSnapshot(
     : getSandbox(sandboxName);
   const sessionSelection = readSessionRecordedSelection(
     sandboxName,
+    sb?.reservationSessionId,
     opts.deps?.loadOnboardSessionForStatus ?? null,
   );
   const initialPreflight =
