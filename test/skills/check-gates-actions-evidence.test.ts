@@ -129,6 +129,34 @@ describe("maintainer merge-gate contributor compliance", () => {
     },
   );
 
+  it.each(["https://untrusted.example/NVIDIA/NemoClaw", "https://github.com/other/repo"])(
+    "rejects legacy success with an untrusted Actions counterpart at %s",
+    (origin) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks().map((check) => ({
+            ...check,
+            detailsUrl:
+              check.name === "checks"
+                ? check.detailsUrl.replace("https://github.com/NVIDIA/NemoClaw", origin)
+                : check.detailsUrl,
+          })),
+          {
+            __typename: "StatusContext",
+            context: "checks",
+            state: "SUCCESS",
+            startedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const output = JSON.parse(result.stdout);
+      expect(output.gates.ci.pass).toBe(false);
+      expect(output.gates.ci.failingChecks).toContain("checks: latest attempt evidence incomplete");
+    },
+  );
+
   it("requires PR/base SHA evidence for optional Actions checks", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
