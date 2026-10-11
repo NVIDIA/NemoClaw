@@ -78,10 +78,6 @@ export type CliOpenShellProviderAdapterDeps = Readonly<{
   readProfileFile?: (profilePath: string) => string;
   environment?: OpenShellGatewayEndpointEnvironment;
   warn?: (message: string) => void;
-  onProfileVerified?: (
-    target: OpenShellGatewayTarget,
-    contract: CheckedInProviderProfileContract,
-  ) => void;
 }>;
 
 export type CliOpenShellProviderAdapter = Omit<OpenShellProviderAdapter, "importProviderProfile"> &
@@ -319,10 +315,13 @@ function namedGatewayEndpointOverrideError(
   }
 }
 
-/** Register one checked-in profile through the synchronous OpenShell CLI boundary. */
-export function importCliOpenShellProviderProfile(
+function importCliOpenShellProviderProfileWithCallback(
   request: ImportOpenShellProviderProfileRequest,
-  deps: CliOpenShellProviderAdapterDeps = {},
+  deps: CliOpenShellProviderAdapterDeps,
+  onProfileVerified?: (
+    target: OpenShellGatewayTarget,
+    contract: CheckedInProviderProfileContract,
+  ) => void,
 ): CliOpenShellProviderProfileResult {
   const environment = deps.environment ?? process.env;
   const targetError = namedGatewayEndpointOverrideError(request.target, environment);
@@ -374,7 +373,7 @@ export function importCliOpenShellProviderProfile(
         operation: "verify",
       };
     }
-    deps.onProfileVerified?.(request.target, contract);
+    onProfileVerified?.(request.target, contract);
     return { ok: true };
   };
 
@@ -407,6 +406,14 @@ export function importCliOpenShellProviderProfile(
     return { ok: false, error: importError, operation: "import" };
   }
   return validateExportedProfile(exportProfile());
+}
+
+/** Register one checked-in profile through the synchronous OpenShell CLI boundary. */
+export function importCliOpenShellProviderProfile(
+  request: ImportOpenShellProviderProfileRequest,
+  deps: CliOpenShellProviderAdapterDeps = {},
+): CliOpenShellProviderProfileResult {
+  return importCliOpenShellProviderProfileWithCallback(request, deps);
 }
 
 function parseProfileCredentialKeys(output: string, expectedProfileId: string): string[] | null {
@@ -789,17 +796,16 @@ export function createCliOpenShellProviderAdapter(
   };
 
   const importProviderProfile: CliOpenShellProviderAdapter["importProviderProfile"] = (request) => {
-    return importCliOpenShellProviderProfile(request, {
-      ...deps,
-      environment,
-      run,
-      onProfileVerified: (target, contract) => {
+    return importCliOpenShellProviderProfileWithCallback(
+      request,
+      { ...deps, environment, run },
+      (target, contract) => {
         const key = targetKey(target);
         const profiles = verifiedProfiles.get(key) ?? new Map();
         profiles.set(contract.profileId, contract);
         verifiedProfiles.set(key, profiles);
       },
-    });
+    );
   };
 
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (

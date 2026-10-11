@@ -37,6 +37,16 @@ inference_capable: false
 `;
 const TARGET = namedOpenShellGateway("nemoclaw");
 const SECRET = "credential-value";
+const PROFILE_EXPORT_ARGS = [
+  "provider",
+  "profile",
+  "-g",
+  "nemoclaw",
+  "export",
+  PROFILE.id,
+  "--output",
+  "json",
+];
 
 function captured(status: number | null, stdout = "", stderr = "", error?: Error) {
   return { status, stdout, stderr, ...(error ? { error } : {}) };
@@ -72,11 +82,33 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
     ).toEqual({ ok: true });
     await expect(adapter.createProvider(createProviderRequest())).resolves.toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args[1])).toEqual(["profile", "create", "profile"]);
+    expect(run.mock.calls[2]?.[0]).toEqual(PROFILE_EXPORT_ARGS);
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain(
       "cannot confirm which definition was used at bind time",
     );
     expect(warn.mock.calls[0]?.[0]).not.toContain(SECRET);
+  });
+
+  it("does not warn when the post-create export matches the verified profile", async () => {
+    const warn = vi.fn();
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0, JSON.stringify(PROFILE)))
+      .mockReturnValueOnce(captured(0))
+      .mockReturnValueOnce(captured(0, JSON.stringify(PROFILE)));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      warn,
+      readProfileFile: () => PROFILE_YAML,
+    });
+
+    expect(
+      adapter.importProviderProfile({ target: TARGET, profilePath: "/repo/profile.yaml" }),
+    ).toEqual({ ok: true });
+    await expect(adapter.createProvider(createProviderRequest())).resolves.toEqual({ ok: true });
+    expect(run.mock.calls[2]?.[0]).toEqual(PROFILE_EXPORT_ARGS);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("warns when post-create export times out without changing a successful result", async () => {
@@ -138,6 +170,7 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
       "provider",
       "provider",
     ]);
+    expect(run.mock.calls[3]?.[0]).toEqual(PROFILE_EXPORT_ARGS);
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain("gateway operator");
     expect(warn.mock.calls[0]?.[0]).not.toContain(SECRET);
