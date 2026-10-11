@@ -1009,9 +1009,16 @@ function currentCheckRollup(
         (check.detailsUrl?.includes("/actions/") ||
           (Boolean(check.workflowName) && !/\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""))),
     );
+    const hasActionsCounterpart = mergeRelevantStatusChecks.some(
+      (check) =>
+        check.__typename !== "StatusContext" && check.name === groupName && actionRunId(check),
+    );
     if (
       (requiredCheck || expectsActionEvidence) &&
-      group.some((check) => check.__typename !== "StatusContext" && !actionRunId(check))
+      group.some(
+        (check) =>
+          !actionRunId(check) && (check.__typename !== "StatusContext" || !hasActionsCounterpart),
+      )
     ) {
       incompleteAttemptEvidence.add(groupName);
     }

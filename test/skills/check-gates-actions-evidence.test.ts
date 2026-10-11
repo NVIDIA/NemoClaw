@@ -96,17 +96,24 @@ function prWorkflowCheck(runId: number, job: ActionJobFixture, startedAt: string
 
 describe("maintainer merge-gate contributor compliance", () => {
   it.each([
-    { state: "SUCCESS", pass: true, failing: [], pending: [] },
-    { state: "FAILURE", pass: false, failing: ["checks: FAILURE"], pending: [] },
-    { state: "PENDING", pass: false, failing: [], pending: ["checks"] },
+    { state: "SUCCESS", missingAction: "", pass: true, failing: [], pending: [] },
+    { state: "FAILURE", missingAction: "", pass: false, failing: ["checks: FAILURE"], pending: [] },
+    { state: "PENDING", missingAction: "", pass: false, failing: [], pending: ["checks"] },
+    {
+      state: "SUCCESS",
+      missingAction: "checks",
+      pass: false,
+      failing: ["checks: latest attempt evidence incomplete"],
+      pending: [],
+    },
   ])(
-    "evaluates required legacy status context $state without inventing an Actions attempt",
-    ({ state, pass, failing, pending }) => {
+    "evaluates legacy $state alongside required Actions evidence (missing: $missingAction)",
+    ({ state, missingAction, pass, failing, pending }) => {
       const result = runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
         statusChecks: [
-          ...successfulRequiredChecks(),
+          ...successfulRequiredChecks().filter((check) => check.name !== missingAction),
           {
             __typename: "StatusContext",
             context: "checks",
