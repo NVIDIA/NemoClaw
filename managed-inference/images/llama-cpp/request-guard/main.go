@@ -38,23 +38,15 @@ const (
 
 // Docker exec reaches this process through the daemon when an internal network
 // cannot publish a host port. The HTTP request guard still owns authentication.
-// The paired consumer is the managed Docker Desktop WSL private bridge in
-// PR #12664, within the accepted image scope of #8144 and #8231. The host bridge
-// owns Docker authority, exact container identity, and forwarding-process cleanup;
-// this command preserves the guard's existing bearer, route, and request limits.
-// Image publication precedes that caller's exact-digest pin and qualification;
-// existing recipes do not switch transport when this capability is published.
-// The checked-in caller at #12664 head fe78f505674037e8193ad6e8b2e75e573a8e443f
-// is owned by docker-llama-cpp-managed-lifecycle.ts and its private-bridge process.
-// It requires request-guard.stdio-forward=1 before creating a WSL container;
-// older images fail closed rather than falling back to host-port publication.
-// Native Linux retains its private-IP bridge. Recorded legacy receipts retain
-// their original topology for recovery, and failed setup rolls back through the
-// managed lifecycle's transaction-owned bridge/container cleanup.
-// The staged publication contract ends when #12664 selects and qualifies the new
-// immutable digest, retargets main, and merges. Until then, no recipe may select
-// this capability on the strength of an old-image qualification receipt.
-// Staged-rollout decision: https://github.com/NVIDIA/NemoClaw/pull/12944#issuecomment-6102710030
+// The planned consumer is the managed Docker Desktop WSL private bridge in
+// stacked PR #12664, not a caller present on this branch. Its candidate commit
+// fe78f505674037e8193ad6e8b2e75e573a8e443f owns image-capability validation,
+// Docker authority, container identity, and transaction cleanup. Native Linux
+// keeps its private-IP bridge; older WSL images are rejected before creation.
+// Publication alone leaves existing recipes unchanged. The staged rollout ends
+// only after the caller pins and qualifies the new immutable image and merges.
+// Prior staged-rollout decision (limited to its named commit):
+// https://github.com/NVIDIA/NemoClaw/pull/12944#issuecomment-6102710030
 func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
