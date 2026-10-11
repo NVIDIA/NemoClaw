@@ -64,22 +64,16 @@ func forwardStdio(input io.Reader, output io.Writer, address string, timeout tim
 }
 
 func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Conn) error {
-	inputReader := bufio.NewReader(input)
-	requestLine, readError := inputReader.ReadSlice('\n')
+	// Parse the request boundary before forwarding so pipelined stdin cannot
+	// submit another request whose response this one-shot command will discard.
+	request, readError := http.ReadRequest(bufio.NewReader(input))
 	if readError != nil {
 		return errors.New("request guard request forwarding failed")
 	}
-	separator := bytes.IndexByte(requestLine, ' ')
-	if separator < 1 {
-		return errors.New("request guard request forwarding failed")
-	}
-	request := &http.Request{Method: string(requestLine[:separator])}
-	requestLine = bytes.Clone(requestLine)
 
 	inputDone := make(chan error, 1)
 	go func() {
-		_, copyError := io.Copy(connection, io.MultiReader(bytes.NewReader(requestLine), inputReader))
-		inputDone <- copyError
+		inputDone <- request.Write(connection)
 	}()
 	responseDone := make(chan error, 1)
 	go func() {
@@ -127,6 +121,11 @@ func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Co
 			return errors.New("request guard request forwarding failed")
 		}
 	default:
+		// A rejected streaming request can finish before its body arrives. Close
+		// stdin to stop the request writer without waiting for the remaining body.
+		if closer, ok := input.(io.Closer); ok {
+			_ = closer.Close()
+		}
 	}
 	return nil
 }
