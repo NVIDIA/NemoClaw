@@ -6,6 +6,13 @@ use nemoclaw_e2e::{
 use nemoclaw_sdk::{CancellationToken, Deployment, Outcome, config::Document};
 use std::{fs, path::PathBuf, process::Command};
 
+/// Export refuses a deployment whose apply is unfinished before it observes
+/// anything, so this checks the saved state without reading the SDK's files.
+async fn assert_apply_unfinished(deployment: &Deployment, cancel: &CancellationToken) {
+    let error = deployment.export(cancel).await.unwrap_err().to_string();
+    assert!(error.contains("apply is unfinished"), "{error}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn cli_terminal_outputs_preserve_lifecycle_and_json_contract() {
@@ -305,9 +312,7 @@ async fn interrupted_create_preserves_pending_targets_allows_unrelated_intent_an
     let effects = fixture.state.lock().unwrap().effects;
     assert!(deployment.plan_destroy(&cancel).await.is_err());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    let record: serde_json::Value =
-        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(record["pending"], true);
+    assert_apply_unfinished(&deployment, &cancel).await;
     let mut changed = document.clone();
     changed.spec.sandboxes[0]
         .agent
@@ -842,10 +847,7 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     let established = fs::read(&state_path).unwrap();
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(effects, 4);
-    let intent: serde_json::Value =
-        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(intent["pending"], true);
-    assert_eq!(intent["succeeded"], false);
+    assert_apply_unfinished(&deployment, &cancel).await;
     let error = deployment
         .apply(&document, &cancel)
         .await
@@ -861,10 +863,6 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     let recovery = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(recovery.changes.len(), 1);
     assert!(recovery.changes[0].resource.contains("agent_configuration"));
-    let intent: serde_json::Value =
-        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(intent["pending"], false);
-    assert_eq!(intent["succeeded"], true);
     let recovered = fs::read(&state_path).unwrap();
     let observed: serde_json::Value = serde_json::from_slice(&recovered).unwrap();
     let mut existing_resources = observed.clone();
@@ -974,9 +972,11 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
         Outcome::Destroyed
     );
     assert_eq!(initializations.load(std::sync::atomic::Ordering::SeqCst), 2);
-    let record: serde_json::Value =
-        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(record["document"], serde_json::to_value(&document).unwrap());
+    let error = deployment.export(&cancel).await.unwrap_err().to_string();
+    assert!(
+        error.contains("cannot export a destroyed deployment"),
+        "{error}"
+    );
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
@@ -1168,9 +1168,6 @@ async fn apply_health_failure_retains_resources_and_unchanged_apply_checks_again
     assert!(result.changes.is_empty());
     assert!(result.health[0].health.allows_apply_completion());
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
-    let record: serde_json::Value =
-        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
-    assert_eq!(record["succeeded"], true);
     let native_report =
         serde_json::json!({"fixture_check":{"outcome":"failed","reason":"fixture_probe_failed"}});
     fixture.state.lock().unwrap().health_report = Some(serde_json::json!({
@@ -1335,9 +1332,8 @@ async fn successful_apply_checkpoints_mutations_before_reading_health() {
     let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
     let cancel = CancellationToken::new();
     let interrupt = cancel.clone();
-    let observed = Arc::new(Mutex::new((false, None)));
+    let observed = Arc::new(Mutex::new((false, false)));
     let captured = observed.clone();
-    let intent = directory.path().join("intent.json");
     let deployment =
         Deployment::new(directory.path(), &bundle).with_progress(Arc::new(move |event| {
             let mut observed = captured.lock().unwrap();
@@ -1351,10 +1347,7 @@ async fn successful_apply_checkpoints_mutations_before_reading_health() {
                     operation: "tofu.show",
                     ..
                 } if observed.0 => {
-                    observed.1 = Some(
-                        serde_json::from_slice::<serde_json::Value>(&fs::read(&intent).unwrap())
-                            .unwrap(),
-                    );
+                    observed.1 = true;
                     interrupt.cancel();
                 }
                 _ => {}
@@ -1364,21 +1357,18 @@ async fn successful_apply_checkpoints_mutations_before_reading_health() {
         deployment.apply(&document, &cancel).await,
         Err(nemoclaw_sdk::Error::Cancelled)
     ));
-    let record = observed
-        .lock()
-        .unwrap()
-        .1
-        .clone()
-        .expect("post-apply health observation");
-    assert_eq!(
-        record["pending"], false,
-        "mutation checkpoint must precede the health read"
-    );
-    assert_eq!(
-        record["succeeded"], false,
-        "health has not established success"
-    );
+    assert!(observed.lock().unwrap().1, "post-apply health observation");
     let effects = fixture.state.lock().unwrap().effects;
+    // Export refuses an unfinished apply, so exporting shows that the mutation
+    // checkpoint preceded the health read.
+    assert_eq!(
+        Deployment::new(directory.path(), &bundle)
+            .export(&CancellationToken::new())
+            .await
+            .expect("mutation checkpoint must precede the health read"),
+        document
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
     let result = Deployment::new(directory.path(), &bundle)
         .apply(&document, &CancellationToken::new())
         .await

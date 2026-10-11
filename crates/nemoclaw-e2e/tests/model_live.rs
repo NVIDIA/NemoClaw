@@ -42,18 +42,23 @@ fn bindings(directory: &Path) -> BTreeMap<String, String> {
     }
     result
 }
+/// The applied inference service's specification and identity, as OpenTofu
+/// state records the provider's resource.
 fn service(directory: &Path) -> (Spec, String) {
-    let intent: Value =
-        serde_json::from_slice(&fs::read(directory.join("intent.json")).unwrap()).unwrap();
-    let document: Document = serde_json::from_value(intent["document"].clone()).unwrap();
-    let generations = serde_json::from_value(intent["generations"].clone()).unwrap();
-    let targets = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
-    let target = targets
+    let state: Value =
+        serde_json::from_slice(&fs::read(directory.join("runtime/terraform.tfstate")).unwrap())
+            .unwrap();
+    let resource = state["resources"]
+        .as_array()
+        .unwrap()
         .iter()
-        .find(|target| target.kind == "inference_service")
-        .unwrap();
-    let spec = serde_json::from_str(&target.values["spec"]).unwrap();
-    (spec, bindings(directory)[&target.address].clone())
+        .find(|resource| {
+            resource["mode"] == "managed" && resource["type"] == "nemoclaw_inference_service"
+        })
+        .expect("the runtime stage records the inference service");
+    let attributes = &resource["instances"][0]["attributes"];
+    let spec = serde_json::from_str(attributes["spec"].as_str().unwrap()).unwrap();
+    (spec, attributes["id"].as_str().unwrap().into())
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_LIVE_MODEL_CONFIG, NEMOCLAW_LIVE_MODEL_STATE, NEMOCLAW_TEST_BUNDLE; owns and destroys this experiment only"]
