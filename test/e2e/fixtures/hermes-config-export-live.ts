@@ -96,6 +96,7 @@ const CREDENTIAL_HTTP_REFUSAL =
   "V1alpha1 requires HTTPS when an inference provider declares a credential.";
 const PODMAN_REFUSAL =
   "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
+const MESSAGING_REFUSAL = "V1 export does not support messaging.";
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -345,6 +346,7 @@ export async function verifyHermesConfigExportLive(
     entry.credentialEnv.length > 0 &&
     entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
   const expectedRefusals = [
+    ...(entry.messaging != null ? [MESSAGING_REFUSAL] : []),
     ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
     ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
   ];

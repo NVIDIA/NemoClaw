@@ -301,6 +301,47 @@ describe("Hermes config export live evidence", () => {
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
+  it.each(["https", "http"])(
+    "accepts the exact messaging and %s export refusals from both aliases",
+    async (scheme) => {
+      mocks.load.mockReturnValue({
+        sandboxes: {
+          hermes: {
+            credentialEnv: "NVIDIA_API_KEY",
+            endpointUrl: `${scheme}://host.openshell.internal:35271/v1`,
+            gatewayName: "nemoclaw",
+            messaging: { schemaVersion: 1, plan: { channels: [] } },
+            workload: { kind: "managed-image", reference: IMAGE_REF },
+          },
+        },
+      });
+      const diagnostics = [
+        "Config export failed (unsupported).",
+        "V1 export does not support messaging.",
+        ...(scheme === "http"
+          ? ["V1alpha1 requires HTTPS when an inference provider declares a credential."]
+          : []),
+      ].join("\n");
+      mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
+
+      await expect(runEnabledFixture(["secret-value"])).resolves.toEqual({
+        checked: true,
+        passed: true,
+      });
+      expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+        outcome: "expected-refusal",
+        aliasesEquivalent: true,
+        checked: true,
+        credentialValuesOmitted: true,
+        outputFilesAbsent: true,
+        refusalCategory: "unsupported",
+        refusalDiagnosticMatches: true,
+      });
+      expect(mocks.writeText).not.toHaveBeenCalled();
+      expect(mocks.save).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["http", "https"])("accepts the exact Podman %s export refusal", async (scheme) => {
     mocks.load.mockReturnValue({
       sandboxes: {
