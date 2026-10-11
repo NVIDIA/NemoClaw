@@ -1105,7 +1105,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const tools = config.tools;
   tools.web ??= {};
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
-  if (managedImageCapabilityUnion) {
+  if (!webSearchProvider) {
+    // OpenClaw treats OPENROUTER_API_KEY as Perplexity search auth when search is unspecified.
     tools.web.search = { enabled: false };
   }
 
