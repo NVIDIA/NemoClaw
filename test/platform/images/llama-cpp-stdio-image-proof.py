@@ -6,6 +6,7 @@
 
 import json
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,8 @@ UPSTREAM_PORT = 18082
 TEST_KEY = "a" * 64
 FIXTURE = Path(__file__).with_name("fixtures") / "llama-cpp-stdio-upstream.c"
 SUBPROCESS_TIMEOUT_SECONDS = 60
+_cancelled_signal: int | None = None
+_cleanup_in_progress = False
 
 
 def docker(*arguments: str) -> str:
@@ -32,12 +35,31 @@ def cleanup(*arguments: str) -> bool:
             ("docker", *arguments), check=False, capture_output=True,
             timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
+        if result.returncode != 0 and arguments[:2] == ("rm", "--force") and b"No such container" in result.stderr:
+            return True  # --rm may already have removed an exited container.
         if result.returncode != 0:
             print(f"Docker cleanup {arguments!r} failed: stderr={result.stderr[:1200]!r}", file=sys.stderr)
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         print(f"Docker cleanup {arguments!r} unavailable or timed out", file=sys.stderr)
         return False
+
+
+def cancel_on_signal(signum: int, _frame: object) -> None:
+    global _cancelled_signal
+    if _cancelled_signal is None:
+        _cancelled_signal = signum
+    if not _cleanup_in_progress:
+        raise SystemExit(128 + _cancelled_signal)
+
+
+def install_cancellation_handlers() -> dict[int, object]:
+    global _cancelled_signal
+    _cancelled_signal = None
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+    for signum in previous:
+        signal.signal(signum, cancel_on_signal)
+    return previous
 
 
 def forward(container: str, authorization: str) -> tuple[int, bytes, bytes]:
@@ -83,6 +105,7 @@ def require_response(status: int, output: bytes, error: bytes, expected: bytes) 
 
 
 def prove(image: str, directory: Path) -> None:
+    global _cancelled_signal, _cleanup_in_progress
     upstream = directory / "llama-server"
     subprocess.run(
         ("cc", "-O2", "-std=c11", "-Wall", "-Wextra", "-Werror", str(FIXTURE), "-o", str(upstream)),
@@ -95,11 +118,12 @@ def prove(image: str, directory: Path) -> None:
     key.chmod(0o444)
     directory.chmod(0o755)
 
-    network = docker("network", "create", "--internal", "--driver", "bridge", directory.name)
-    container = ""
+    network = directory.name
+    container = f"{directory.name}-proof"
     try:
-        container = docker(
-            "run", "--detach", "--read-only", "--network", network,
+        docker("network", "create", "--internal", "--driver", "bridge", network)
+        docker(
+            "run", "--detach", "--rm", "--name", container, "--read-only", "--network", network,
             "--mount", f"type=bind,source={directory},target=/run/secrets,readonly",
             "--mount", f"type=bind,source={upstream},target=/usr/local/bin/llama-server,readonly",
             "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777",
@@ -138,16 +162,23 @@ def prove(image: str, directory: Path) -> None:
             raise RuntimeError(f"guard did not forward the complete upstream body: {output[-100:]!r}")
         print(f"Image {image!r}: internal-only Docker exec, bearer 401/200, open-stdin exit passed")
     except Exception:
-        if container:
-            try:
-                print(docker("logs", container)[-1200:], file=sys.stderr)
-            except (subprocess.SubprocessError, OSError):
-                print("Docker proof logs unavailable", file=sys.stderr)
+        try:
+            print(docker("logs", container)[-1200:], file=sys.stderr)
+        except (subprocess.SubprocessError, OSError):
+            print("Docker proof logs unavailable", file=sys.stderr)
         raise
     finally:
         primary_failure = sys.exc_info()[0] is not None
-        container_removed = not container or cleanup("rm", "--force", container)
-        network_removed = cleanup("network", "rm", network)
+        _cleanup_in_progress = True
+        try:
+            container_removed = cleanup("rm", "--force", container)
+            network_removed = cleanup("network", "rm", network)
+        finally:
+            _cleanup_in_progress = False
+            cancelled_signal = _cancelled_signal
+            _cancelled_signal = None
+        if cancelled_signal is not None:
+            raise SystemExit(128 + cancelled_signal)
         if not (container_removed and network_removed) and not primary_failure:
             raise RuntimeError("Docker proof resource cleanup failed")
 
@@ -155,5 +186,6 @@ def prove(image: str, directory: Path) -> None:
 if __name__ == "__main__":
     if len(sys.argv) != 2 or not sys.argv[1]:
         raise SystemExit("usage: llama-cpp-stdio-image-proof.py IMAGE")
+    install_cancellation_handlers()
     with tempfile.TemporaryDirectory(prefix="nemoclaw-llama-stdio-image-") as temporary:
         prove(sys.argv[1], Path(temporary))
