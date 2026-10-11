@@ -199,6 +199,20 @@ Commit, then run `cargo run -p nemoclaw-build --no-default-features -- changes i
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
 
+## Provider Schema Snapshots
+
+Each production provider's `tests/schema.txt` records its schema: the provider configuration and every resource and data source, with their attributes, types, constraints, and descriptions.
+The provider's `schema_matches_the_checked_in_snapshot` test renders the compiled schema and fails with a unified diff when the two differ.
+After an intended schema change, regenerate the snapshot and commit it with the change, so the review shows the schema diff:
+
+```sh
+NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-provider --test integration schema::
+NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p openshell-provider --test schema
+NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p fabric-provider --test schema
+```
+
+The same `schema.rs` files check rules across types, such as every `nemoclaw` and `openshell` resource generating an omitted owner and generation; add a rule there rather than an assertion about one type's attributes.
+
 ## CLI Tests
 
 Run `cargo test -p nemoclaw-cli` for argument, dispatch, I/O, and process tests.
