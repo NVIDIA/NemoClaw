@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { beforeEach, expect, it, vi } from "vitest";
+
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 
 const mocks = vi.hoisted(() => ({
   listRoots: vi.fn(),
@@ -127,7 +131,9 @@ it("marks observations that never start before cancellation (#12859)", async () 
   expect(snapshot.collectionStatus).toBe("partial");
 });
 
-it("joins a published OpenClaw configuration to its operation target (#12859)", async () => {
+it("joins a managed OpenClaw 2026.9.5 configuration to its operation target (#12859)", async () => {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+  const imageTag = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
   mocks.readRegistry.mockReturnValue({
     defaultSandbox: null,
     sandboxes: {
@@ -141,6 +147,23 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
       selected: {
         name: "selected",
         agent: "openclaw",
+        agentVersion: "2026.9.5",
+        imageTag,
+        workload: {
+          schemaVersion: 1,
+          kind: "managed-image",
+          reference: imageTag,
+          platform: "linux/amd64",
+          release: "v0.0.132",
+          sourceRevision: "b".repeat(40),
+          sourceCohort: "ghrun-123456-1",
+          capabilityContractVersion: 1,
+          startupProfileContractVersion: 1,
+          encodedProfile,
+          startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+          credentialProxyReplayRequired: false,
+          shared: true,
+        },
         gatewayPort: 8080,
         model: "nvidia/nemotron-3-ultra-550b-a55b",
         provider: "nvidia-prod",
@@ -220,7 +243,11 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
     deadlineAt: Date.now() + 10_000,
   });
   expect(read).toHaveBeenCalled();
-  expect(read).toHaveBeenCalledTimes(6);
+  expect(read).toHaveBeenCalledTimes(5);
+  expect(read).not.toHaveBeenCalledWith(
+    expect.objectContaining({ sandboxName: "selected", command: ["uname", "-s"] }),
+    expect.anything(),
+  );
   expect(event.parameters).toMatchObject({
     publishedEnvironmentCount: 2,
     configuredRuntimeCount: 2,
@@ -235,6 +262,8 @@ it("joins a published OpenClaw configuration to its operation target (#12859)", 
         agentHarnessId: "openclaw",
         agentsStatus: "reported",
         currentInferenceRouteStatus: "reported",
+        managedAgentVersion: "2026.9.5",
+        managedAgentVersionStatus: "reported",
       },
     ],
   });

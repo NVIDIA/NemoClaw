@@ -3,10 +3,12 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
+import * as childProcess from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { loadLlamaCppImageConfig } from "../../../scripts/checks/export-llama-cpp-image-config.mts";
 import {
@@ -16,7 +18,8 @@ import {
   expectedRegistryName,
   expectedRegistryOwner,
   hashModelFile,
-  insertQualificationLoopbackPublishArgv,
+  resolveRequestGuardAddress,
+  startQualificationLoopbackRelay,
   parseNvidiaSmi,
   parseQualificationInvocation,
   type QualificationInvocation,
@@ -36,6 +39,10 @@ import {
   type DockerLoopbackPublishAuthority,
 } from "../../../src/lib/inference/llama-cpp/host-local-runtime";
 
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+}));
+
 const BASE_SHA = "b".repeat(40);
 const HEAD_SHA = "a".repeat(40);
 const WORKFLOW_SHA = "c".repeat(40);
@@ -50,9 +57,6 @@ const config = loadLlamaCppImageConfig();
 const planSource = config.publication_qualification_plan;
 const planDigest = config.publication_qualification_plan_sha256;
 const plan = validateQualificationPlan(planSource, planDigest);
-function loopbackPublishAuthority(): ReturnType<typeof qualifyDockerLoopbackPublishAuthority> {
-  return qualifyDockerLoopbackPublishAuthority("28.3.3");
-}
 
 function trustedEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -337,7 +341,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("publishes the recipe-selected request guard on the loopback address without putting the API key in Docker arguments (#8667)", () => {
+  it("keeps the recipe-selected request guard internal without putting the API key in Docker arguments (#8667)", () => {
     const content = Buffer.from("qualification model fixture\n", "utf8");
     const testPlan = qualificationPlanForModel(content);
     const modelRoot = fs.realpathSync(
@@ -368,7 +372,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       } as const;
       const argv = buildServerContainerArgv(testPlan, {
         ...containerOptions,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
       });
       expect(argv).toEqual(
         expect.arrayContaining([
@@ -397,15 +400,9 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           "--no-agent",
         ]),
       );
-      const publishMappings = valuesAfter(argv, "--publish");
-      expect(publishMappings).toEqual([`127.0.0.1::${String(testPlan.recipe.serve.port)}`]);
-      expect(publishMappings.some((mapping) => mapping.startsWith("0.0.0.0:"))).toBe(false);
-      const imageIndex = argv.indexOf(imageReference);
-      expect(argv.slice(imageIndex - 2, imageIndex + 1)).toEqual([
-        "--publish",
-        publishMappings[0],
-        imageReference,
-      ]);
+      expect(valuesAfter(argv, "--env")).toEqual(["LLAMA_ARG_LOG_VERBOSITY=4"]);
+      expect(valuesAfter(argv, "--publish")).toEqual([]);
+      expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
       expect(valuesAfter(argv, "--entrypoint")).toEqual([
         "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
       ]);
@@ -437,14 +434,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       expect(valuesAfter(argv.slice(separator), "--n-predict")).toEqual([
         String(testPlan.recipe.serve.limits.maxOutputTokens),
       ]);
-      const agentQualificationArgv = buildServerContainerArgv(testPlan, {
-        ...containerOptions,
-        hostPort: testPlan.recipe.serve.port,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
-      });
-      expect(valuesAfter(agentQualificationArgv, "--publish")).toEqual([
-        `127.0.0.1:${String(testPlan.recipe.serve.port)}:${String(testPlan.recipe.serve.port)}`,
-      ]);
       const alternateContainerPort = 9_081;
       // The adapter must use its validated plan input instead of duplicating the current recipe port.
       const alternatePortPlan = {
@@ -456,10 +445,10 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
       } as unknown as QualificationPlan;
       const alternatePortArgv = buildServerContainerArgv(alternatePortPlan, {
         ...containerOptions,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
       });
-      expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([
-        `127.0.0.1::${String(alternateContainerPort)}`,
+      expect(valuesAfter(alternatePortArgv, "--publish")).toEqual([]);
+      expect(valuesAfter(alternatePortArgv, "--listen-port")).toEqual([
+        String(alternateContainerPort),
       ]);
       expect(valuesAfter(alternatePortArgv, "--listen-port")).toEqual([
         String(alternateContainerPort),
@@ -497,7 +486,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
           registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
           runtimeGid: 1001,
           runtimeUid: 0,
-          loopbackPublishAuthority: loopbackPublishAuthority(),
         }),
       ).toThrow(/runtime uid/u);
     } finally {
@@ -505,75 +493,190 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it.each([
-    { publishArgv: ["--publish", "0.0.0.0:8081:8081"] },
-    { publishArgv: ["--publish=0.0.0.0:8081:8081"] },
-    { publishArgv: ["-p", "0.0.0.0:8081:8081"] },
-    { publishArgv: ["-p0.0.0.0:8081:8081"] },
-    { publishArgv: ["--publish-all"] },
-    { publishArgv: ["--publish-all=true"] },
-    { publishArgv: ["-P"] },
-    { publishArgv: ["-P=true"] },
-  ])(
-    "rejects Docker publish aliases before inserting one loopback mapping at the image boundary [case %#] (#8667)",
-    ({ publishArgv }) => {
-      const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
-      const containerPort = 9_081;
-      const options = () => ({
-        containerPort,
-        imageReference,
-        loopbackPublishAuthority: loopbackPublishAuthority(),
+  describe("request guard address inspection", () => {
+    const names = {
+      containerName: "qualification-container",
+      networkName: "qualification-network",
+      registryOwner: "qualification-owner",
+    };
+
+    function dockerInspection() {
+      const fixture = {
+        containerOwner: names.registryOwner,
+        networkOwner: names.registryOwner,
+        containerStatus: 0,
+        networkStatus: 0,
+        network: { Id: "internal-network-id", Internal: true },
+        container: {
+          State: { Running: true },
+          NetworkSettings: {
+            Networks: {
+              [names.networkName]: { NetworkID: "internal-network-id", IPAddress: "172.29.0.7" },
+            },
+          },
+        },
+      };
+      vi.spyOn(childProcess, "spawnSync").mockImplementation((command, args = []) => {
+        expect(command).toBe("docker");
+        const network = args[0] === "network";
+        const owner = args.includes("--format");
+        expect(args.at(-1)).toBe(network ? names.networkName : names.containerName);
+        const stdout = owner
+          ? `${network ? fixture.networkOwner : fixture.containerOwner}\n`
+          : Buffer.from(JSON.stringify([network ? fixture.network : fixture.container]));
+        return {
+          pid: 1,
+          status: owner ? (network ? fixture.networkStatus : fixture.containerStatus) : 0,
+          signal: null,
+          stdout,
+          stderr: "",
+          output: [],
+        };
       });
-      const consumedAuthority = loopbackPublishAuthority();
+      return fixture;
+    }
 
-      expect(
-        insertQualificationLoopbackPublishArgv(["run", imageReference], {
-          ...options(),
-          loopbackPublishAuthority: consumedAuthority,
-        }),
-      ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run", imageReference], {
-          ...options(),
-          loopbackPublishAuthority: consumedAuthority,
-        }),
-      ).toThrow(/already consumed/u);
-      const authorityAfterRejectedBoundary = loopbackPublishAuthority();
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run"], {
-          ...options(),
-          loopbackPublishAuthority: authorityAfterRejectedBoundary,
-        }),
-      ).toThrow(/exactly one Docker image reference/u);
-      expect(
-        insertQualificationLoopbackPublishArgv(["run", imageReference], {
-          ...options(),
-          loopbackPublishAuthority: authorityAfterRejectedBoundary,
-        }),
-      ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options()),
-      ).toThrow(/exactly one Docker image reference/u);
+    it("returns the IPv4 address of an owned running container on its internal network (#8231)", () => {
+      dockerInspection();
+      expect(resolveRequestGuardAddress(names)).toBe("172.29.0.7");
+    });
 
-      expect(() =>
-        insertQualificationLoopbackPublishArgv(["run", ...publishArgv, imageReference], options()),
-      ).toThrow(/must not publish/u);
+    it.each([
+      "foreign container owner",
+      "foreign network owner",
+      "failed container inspection",
+      "failed network inspection",
+      "stopped container",
+      "external network",
+      "additional network",
+      "missing network endpoint",
+      "mismatched network ID",
+      "empty address",
+      "hostname address",
+      "IPv6 address",
+    ])("rejects %s before returning a relay target (#8231)", (scenario) => {
+      const fixture = dockerInspection();
+      const endpoints = fixture.container.NetworkSettings.Networks;
+      const endpoint = endpoints[names.networkName]!;
+      switch (scenario) {
+        case "foreign container owner":
+          fixture.containerOwner = "foreign-owner";
+          break;
+        case "foreign network owner":
+          fixture.networkOwner = "foreign-owner";
+          break;
+        case "failed container inspection":
+          fixture.containerStatus = 1;
+          break;
+        case "failed network inspection":
+          fixture.networkStatus = 1;
+          break;
+        case "stopped container":
+          fixture.container.State.Running = false;
+          break;
+        case "external network":
+          fixture.network.Internal = false;
+          break;
+        case "additional network":
+          endpoints.other = { NetworkID: "other-id", IPAddress: "172.30.0.7" };
+          break;
+        case "missing network endpoint":
+          delete endpoints[names.networkName];
+          break;
+        case "mismatched network ID":
+          endpoint.NetworkID = "other-id";
+          break;
+        case "empty address":
+          endpoint.IPAddress = "";
+          break;
+        case "hostname address":
+          endpoint.IPAddress = "example.com";
+          break;
+        case "IPv6 address":
+          endpoint.IPAddress = "fd00::7";
+          break;
+        default:
+          throw new Error("unknown inspection scenario");
+      }
+      expect(() => resolveRequestGuardAddress(names)).toThrow(/qualification relay requires/u);
+    });
+  });
 
-      expect(
-        insertQualificationLoopbackPublishArgv(
-          ["run", imageReference, "-p", "guard-value"],
-          options(),
-        ),
-      ).toEqual([
-        "run",
-        "--publish",
-        `127.0.0.1::${String(containerPort)}`,
-        imageReference,
-        "-p",
-        "guard-value",
-      ]);
-    },
-  );
+  it("forwards through localhost while synchronous qualification commands run and closes the listener (#8231)", async () => {
+    // A worker-owned echo endpoint keeps both ends independent of this test's blocked event loop.
+    const { Worker } = await import("node:worker_threads");
+    const upstream = new Worker(
+      `
+      const net = require('node:net');
+      const {parentPort} = require('node:worker_threads');
+      const server = net.createServer(s => s.pipe(s));
+      server.listen(0, '127.0.0.1', () => parentPort.postMessage(server.address().port));
+    `,
+      { eval: true },
+    );
+    let relay: Awaited<ReturnType<typeof startQualificationLoopbackRelay>> | undefined;
+    try {
+      const targetPort = await new Promise<number>((resolve) => upstream.once("message", resolve));
+      relay = await startQualificationLoopbackRelay("127.0.0.1", targetPort, 2);
+      const response = childProcess.spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `
+        const s = require('node:net').createConnection({host:'127.0.0.1',port:${relay.port}}, () => s.write('relay-proof'));
+        s.once('data', d => { process.stdout.write(d); s.destroy(); });
+        s.on('error', () => process.exit(1));
+      `,
+        ],
+        { encoding: "utf8", timeout: 3000 },
+      );
+      expect(response.status).toBe(0);
+      expect(response.stdout).toBe("relay-proof");
+      await expect(
+        startQualificationLoopbackRelay("127.0.0.1", targetPort, 2, relay.port),
+      ).rejects.toThrow(/could not listen/u);
+      await relay.close();
+      const closed = await new Promise<boolean>((resolve) => {
+        const socket = net.createConnection({ host: "127.0.0.1", port: relay!.port });
+        socket.on("error", () => resolve(true));
+        socket.on("connect", () => {
+          socket.destroy();
+          resolve(false);
+        });
+      });
+      expect(closed).toBe(true);
+    } finally {
+      await relay?.close();
+      await upstream.terminate();
+    }
+  });
+
+  it("closes a relay connection when the request guard is unavailable (#8231)", async () => {
+    const reserve = net.createServer();
+    await new Promise<void>((resolve) => reserve.listen(0, "127.0.0.1", resolve));
+    const targetPort = (reserve.address() as net.AddressInfo).port;
+    await new Promise<void>((resolve) => reserve.close(() => resolve()));
+    const relay = await startQualificationLoopbackRelay("127.0.0.1", targetPort, 1);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.createConnection({ host: "127.0.0.1", port: relay.port });
+        socket.setTimeout(2000, () => {
+          socket.destroy();
+          reject(new Error("relay did not close"));
+        });
+        socket.on("error", () => {});
+        socket.on("close", () => resolve());
+      });
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it("rejects relay addresses and ports before opening a listener (#8231)", async () => {
+    await expect(startQualificationLoopbackRelay("example.com", 8081, 10)).rejects.toThrow(/IPv4/u);
+    await expect(startQualificationLoopbackRelay("127.0.0.1", 0, 10)).rejects.toThrow(/port/u);
+    await expect(startQualificationLoopbackRelay("127.0.0.1", 8081, 0)).rejects.toThrow(/timeout/u);
+  });
 
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {
     const labels = {

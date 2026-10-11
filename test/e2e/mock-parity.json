@@ -78,11 +78,13 @@
     },
     {
       "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
+      "liveSources": ["test/e2e/live/managed-image-protected-runtime-helpers.ts"],
       "fast": [
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
         "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
