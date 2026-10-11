@@ -282,12 +282,15 @@ export async function runRebuildBackupPhase(
       );
     }
     if (retainedPolicy && backupManifest && retainedHandoff) {
+      // Resolve the payload before handing the window over: a throw here
+      // must still reach the release in `finally`.
+      const policySourcePath = fs.realpathSync(
+        path.join(backupManifest.backupPath, retainedHandoff.file),
+      );
       transferSourceWindow = true;
       return {
         backupManifest,
-        policySourcePath: fs.realpathSync(
-          path.join(backupManifest.backupPath, retainedHandoff.file),
-        ),
+        policySourcePath,
         ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
       };
     }
@@ -315,10 +318,11 @@ export async function runRebuildBackupPhase(
         );
       }
     }
+    const policySourcePath = writeRebuildPolicySource(policy);
     transferSourceWindow = true;
     return {
       backupManifest,
-      policySourcePath: writeRebuildPolicySource(policy),
+      policySourcePath,
       ...(sourceBackupWindow ? { sourceOpenClawDoctorWindow: sourceBackupWindow } : {}),
     };
   } finally {

@@ -335,6 +335,58 @@ describe("rebuild policy handoff", () => {
     );
   });
 
+  it("releases the source quiesce window when resolving a retained policy handoff throws", async () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retained-handoff-"));
+    temporaryDirectories.push(backupPath);
+    const retainedPolicy = "version: 1\nnetwork_policies: {}\n";
+    const sha256 = createHash("sha256").update(retainedPolicy).digest("hex");
+    const file = `rebuild-policy-handoff.${sha256}.yaml`;
+    fs.writeFileSync(path.join(backupPath, file), retainedPolicy, { mode: 0o600 });
+    const backup = vi.fn(async () => ({
+      version: 1,
+      sandboxName: "alpha",
+      timestamp: "2026-09-01T00-00-00-000Z",
+      agentType: "openclaw",
+      agentVersion: null,
+      expectedVersion: null,
+      dir: "/sandbox/.openclaw",
+      backupPath,
+      blueprintDigest: "digest",
+      rebuildPolicyHandoff: { file, sha256 },
+    }));
+    vi.spyOn(fs, "realpathSync").mockImplementation(() => {
+      throw new Error("ENOENT: retained policy handoff is no longer resolvable");
+    });
+
+    await expect(runRebuildBackupPhase(input(), backup)).rejects.toThrow(
+      "retained policy handoff is no longer resolvable",
+    );
+
+    // The window never reaches the caller, so this phase must release it.
+    expect(mocks.finishOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+  });
+
+  it("releases the source quiesce window when writing the captured policy source throws", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-missing-"));
+    temporaryDirectories.push(directory);
+    mocks.secureTempFile.mockReturnValue(path.join(directory, "missing", "policy.yaml"));
+
+    await expect(
+      runRebuildBackupPhase(
+        input(),
+        vi.fn(async () => null),
+      ),
+    ).rejects.toThrow(/ENOENT/);
+
+    expect(mocks.finishOpenClawBackupQuiesce).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      kind: "backup",
+    });
+  });
+
   it("rejects a literal credential before creating a rebuild policy handoff", async () => {
     const credential = "opaque-url-credential";
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
