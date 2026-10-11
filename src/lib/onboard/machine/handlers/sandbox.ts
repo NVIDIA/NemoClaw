@@ -950,11 +950,12 @@ class SandboxStateFlow<
       this.options.agent,
       !this.options.fromDockerfile,
     );
+    const selection = this.sandboxCreateSelection();
     return [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       ...apfCreateFingerprintFields(this.options.apfInterceptorRequested === true),
-      this.options.provider,
-      this.options.model,
+      selection.provider,
+      selection.model,
       this.options.preferredInferenceApi ?? "default",
       ...Object.values(
         compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
@@ -1225,12 +1226,13 @@ class SandboxStateFlow<
         `  Error: sandbox '${sandboxName}' changed OpenShell gateways while onboarding was in progress. Retry onboarding.`,
       );
     }
+    const selection = this.sandboxCreateSelection();
     const compatibility = this.deps.checkGatewayRouteCompatibility({
       gatewayName: this.options.gatewayName,
       sandboxName: null,
       route: {
-        provider: this.options.provider,
-        model: this.options.model,
+        provider: selection.provider,
+        model: selection.model,
         endpointUrl: this.options.endpointUrl,
         preferredInferenceApi: this.options.preferredInferenceApi,
         credentialEnv: this.options.credentialEnv,
@@ -1246,6 +1248,25 @@ class SandboxStateFlow<
     this.deps.error(message);
     this.deps.exitProcess(1);
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
+  }
+
+  private isProviderlessApfCreate(): boolean {
+    return (
+      this.options.apfInterceptorRequested === true &&
+      this.options.provider.trim().length === 0 &&
+      this.options.model.trim().length === 0
+    );
+  }
+
+  // A resumed run can reach sandbox creation with the selection recorded only
+  // in the onboarding session (#12864). Route checks, the create intent, the
+  // create call, and its receipt must all use this one selection.
+  private sandboxCreateSelection(): { model: string; provider: string } {
+    const session = this.isProviderlessApfCreate() ? null : this.options.session;
+    return {
+      model: this.options.model || session?.model || "",
+      provider: this.options.provider || session?.provider || "",
+    };
   }
 
   private reserveCreateRouteForSession(sandboxName: string, model: string, provider: string): void {
@@ -1875,9 +1896,10 @@ class SandboxStateFlow<
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const registeredEntry = this.deps.getSandboxRegistryEntry(sandboxName);
+    const selection = this.sandboxCreateSelection();
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeInferenceCreateIntentFields(this.options.provider, registeredEntry),
+      ...nativeInferenceCreateIntentFields(selection.provider, registeredEntry),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
@@ -1903,7 +1925,7 @@ class SandboxStateFlow<
             !recreate &&
             !this.options.fromDockerfile,
           agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
-          provider: this.options.provider,
+          provider: selection.provider,
           entry: registeredEntry,
           sessionId: state.session?.sessionId,
           env: this.options.env,
@@ -2300,22 +2322,8 @@ class SandboxStateFlow<
         deferSandboxEffectsUntilIdentityVerification,
       );
       this.assertProviderlessApfCreatePlan(createIntent);
-      const providerlessApf =
-        this.options.apfInterceptorRequested === true &&
-        this.options.provider.trim().length === 0 &&
-        this.options.model.trim().length === 0;
-      // A resumed run can reach sandbox creation with the selection recorded
-      // only in the session file; the create must publish that selection
-      // instead of a model-less route (#12864).
-      const sessionSelection =
-        providerlessApf || !this.options.session
-          ? null
-          : {
-              model: this.options.session.model ?? "",
-              provider: this.options.session.provider ?? "",
-            };
-      const createModel = this.options.model || sessionSelection?.model || "";
-      const createProvider = this.options.provider || sessionSelection?.provider || "";
+      const providerlessApf = this.isProviderlessApfCreate();
+      const { model: createModel, provider: createProvider } = this.sandboxCreateSelection();
       this.assertGatewayRouteCompatible(requestedSandboxName);
       await this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(

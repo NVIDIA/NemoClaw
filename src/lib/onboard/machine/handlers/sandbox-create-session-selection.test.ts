@@ -20,6 +20,8 @@ describe("handleSandboxState create selection recovery (#12864)", () => {
       model: "qwen3.5:9b",
     });
     const { deps, calls } = createDeps({}, session);
+    // Echo the requested name so registration must target the created sandbox.
+    calls.createSandbox.mockImplementation(async (...args: unknown[]) => String(args[4]));
 
     await handleSandboxState({
       ...baseOptions(deps, session),
@@ -34,6 +36,15 @@ describe("handleSandboxState create selection recovery (#12864)", () => {
     expect(createArgs).toHaveLength(17);
     expect(createArgs.at(-16)).toBe("qwen3.5:9b");
     expect(createArgs.at(-15)).toBe("ollama-local");
+    expect(createArgs.at(-13)).toBe("review-interrupted");
+    expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: expect.objectContaining({ model: "qwen3.5:9b", provider: "ollama-local" }),
+      }),
+    );
+    expect(session.checkpoint?.effectGroups.sandbox_create?.fingerprint).toContain(
+      "|ollama-local|qwen3.5:9b|",
+    );
     expect(createArgs.at(-3)).toMatchObject({
       sessionId: session.sessionId,
       selection: { model: "qwen3.5:9b", provider: "ollama-local" },
@@ -43,7 +54,7 @@ describe("handleSandboxState create selection recovery (#12864)", () => {
       expect.objectContaining({ model: "qwen3.5:9b", provider: "ollama-local" }),
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
-      "my-assistant",
+      "review-interrupted",
       expect.objectContaining({ model: "qwen3.5:9b", provider: "ollama-local" }),
     );
     expect(calls.complete).toHaveBeenCalledWith(

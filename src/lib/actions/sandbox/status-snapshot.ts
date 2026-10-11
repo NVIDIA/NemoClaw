@@ -350,6 +350,11 @@ function sanitizedStatusDetail(error: unknown): string {
     .slice(0, 240);
 }
 
+interface SessionRecordedSelection {
+  provider: string;
+  model: string;
+}
+
 /**
  * The registry is the status authority, but a resumed run can leave the
  * sandbox-scoped model recorded only in the onboarding session (#12864).
@@ -357,18 +362,27 @@ function sanitizedStatusDetail(error: unknown): string {
  * loader is caller-injected because this module's import fan-out and
  * onboard-session's fan-in both sit at their architecture budgets.
  */
-function readSessionRecordedModel(
+function readSessionRecordedSelection(
   sandboxName: string,
   loadOnboardSession: (() => Session | null) | null,
-): string | null {
+): SessionRecordedSelection | null {
   try {
     const session = loadOnboardSession?.() ?? null;
     if (!session || session.sandboxName !== sandboxName) return null;
     const model = typeof session.model === "string" ? session.model.trim() : "";
-    return model.length > 0 ? model : null;
+    const provider = typeof session.provider === "string" ? session.provider.trim() : "";
+    return model.length > 0 && provider.length > 0 ? { provider, model } : null;
   } catch {
     return null;
   }
+}
+
+/** A session model may fill the status model only for the provider that status reports. */
+function sessionModelForProvider(
+  selection: SessionRecordedSelection | null,
+  provider: string | null | undefined,
+): string | null {
+  return selection !== null && selection.provider === provider ? selection.model : null;
 }
 
 function processRecoveryFailure(
@@ -489,7 +503,7 @@ export async function collectSandboxStatusSnapshot(
   const sb = Object.hasOwn(opts, "sandboxEntry")
     ? (opts.sandboxEntry ?? null)
     : getSandbox(sandboxName);
-  const sessionRecordedModel = readSessionRecordedModel(
+  const sessionSelection = readSessionRecordedSelection(
     sandboxName,
     opts.deps?.loadOnboardSessionForStatus ?? null,
   );
@@ -622,7 +636,8 @@ export async function collectSandboxStatusSnapshot(
       sb,
       lookup,
       rpcIssue,
-      currentModel: (sb && sb.model) || sessionRecordedModel || "unknown",
+      currentModel:
+        (sb && sb.model) || sessionModelForProvider(sessionSelection, sb?.provider) || "unknown",
       currentProvider: (sb && sb.provider) || "unknown",
       recordedRoute: sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null,
       liveRoute: null,
@@ -645,8 +660,10 @@ export async function collectSandboxStatusSnapshot(
   // When the durable route lost its model, the bound onboarding session is the
   // only remaining record of the selection (#12864).
   const currentModel = sb
-    ? sb.model || sessionRecordedModel || "unknown"
-    : (live && live.model) || sessionRecordedModel || "unknown";
+    ? sb.model || sessionModelForProvider(sessionSelection, sb.provider) || "unknown"
+    : (live && live.model) ||
+      sessionModelForProvider(sessionSelection, live?.provider) ||
+      "unknown";
   const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
   if (!suppressInferenceProbe && lookup.state === "present" && nativeProvider && sb) {
     const expected = nativeAttachment;

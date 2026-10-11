@@ -797,4 +797,25 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     expect(snapshot.currentModel).toBe("unknown");
     expect(snapshot.currentProvider).toBe("ollama-local");
   });
+
+  it("ignores an onboarding session model recorded for a different provider (#12864)", async () => {
+    capture.mockResolvedValue({
+      status: 1,
+      output: "",
+    } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(
+        { provider: "ollama-local", model: null },
+        {
+          loadOnboardSessionForStatus: () =>
+            createSession({ sandboxName: "alpha", provider: "nvidia-prod", model: "qwen3.5:9b" }),
+        },
+      ),
+    );
+
+    expect(snapshot.currentModel).toBe("unknown");
+    expect(snapshot.currentProvider).toBe("ollama-local");
+  });
 });
