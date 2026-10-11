@@ -548,6 +548,7 @@ onboarding, it requires the persisted sandbox state to contain the configured Di
 uses the shared Hermes export fixture to run both real CLI launchers. Both must refuse the unsupported
 messaging state without publishing a file or exposing credentials. The E2E support tests cover the
 deterministic refusal selection and diagnostic comparison.
+The target owns the shared export fixture in the catalogue so fixture changes select this live check.
 The target removes redundant CLI-presence, sandbox-list, and standalone provider-get probes: later
 live commands use both CLIs, read the persisted sandbox entry, and require the named provider to be
 attached before testing its rewrite. Its health check requires Hermes's `"ok"` response before
