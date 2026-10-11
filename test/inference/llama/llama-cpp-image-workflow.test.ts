@@ -220,6 +220,7 @@ describe("llama.cpp image PR workflow", () => {
         "scripts/checks/verify-llama-cpp-image-publication-evidence.sh",
         "test/inference/llama/llama-cpp-image-publication-evidence.test.ts",
         "test/platform/images/llama-cpp-stdio-image-proof.py",
+        "test/platform/images/llama-cpp-stdio-image-proof-test.py",
         "test/platform/images/fixtures/llama-cpp-stdio-upstream.c",
       ]),
     );

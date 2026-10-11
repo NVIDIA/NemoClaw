@@ -4,6 +4,7 @@
 """Deterministic cleanup failure coverage without a Docker daemon."""
 
 import importlib.util
+import io
 from pathlib import Path
 import subprocess
 import tempfile
@@ -22,6 +23,7 @@ class CleanupTest(unittest.TestCase):
         for failure in ("none", "container", "network", "timeout", "unavailable", "primary"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 calls = []
+                output, errors = io.StringIO(), io.StringIO()
 
                 def run(arguments, **kwargs):
                     if arguments[0] == "cc":
@@ -36,7 +38,7 @@ class CleanupTest(unittest.TestCase):
                     failed = (
                         failure in ("container", "primary") and arguments[1] == "rm"
                     ) or (failure == "network" and arguments[1] == "network")
-                    return subprocess.CompletedProcess(arguments, int(failed))
+                    return subprocess.CompletedProcess(arguments, int(failed), stderr=b"cleanup denied")
 
                 def docker(*arguments):
                     if arguments[:2] == ("network", "create"):
@@ -57,13 +59,24 @@ class CleanupTest(unittest.TestCase):
 
                 with patch.object(proof.subprocess, "run", run), patch.object(
                     proof, "docker", docker,
-                ), patch.object(proof, "forward", forward):
+                ), patch.object(proof, "forward", forward), patch.object(
+                    proof.sys, "stdout", output,
+                ), patch.object(proof.sys, "stderr", errors):
                     if failure == "none":
                         proof.prove("image", Path(directory))
                     else:
                         message = "primary failure" if failure == "primary" else "resource cleanup failed"
                         with self.assertRaisesRegex(RuntimeError, message):
                             proof.prove("image", Path(directory))
+                self.assertNotIn("PR-built", output.getvalue())
+                if failure == "none":
+                    self.assertIn("Image 'image':", output.getvalue())
+                if failure in ("container", "primary"):
+                    self.assertIn("('rm', '--force', 'container')", errors.getvalue())
+                    self.assertIn("cleanup denied", errors.getvalue())
+                if failure == "network":
+                    self.assertIn("('network', 'rm', 'network')", errors.getvalue())
+                    self.assertIn("cleanup denied", errors.getvalue())
                 self.assertEqual(calls, [
                     ("docker", "rm", "--force", "container"),
                     ("docker", "network", "rm", "network"),

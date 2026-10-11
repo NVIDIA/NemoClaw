@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Exercise the PR-built request guard through Docker exec without a GPU or published port."""
+"""Exercise the supplied image request guard through Docker exec without a GPU or published port."""
 
 import json
 from pathlib import Path
@@ -33,10 +33,10 @@ def cleanup(*arguments: str) -> bool:
             timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
-            print("Docker proof cleanup failed", file=sys.stderr)
+            print(f"Docker cleanup {arguments!r} failed: stderr={result.stderr[:1200]!r}", file=sys.stderr)
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
-        print("Docker proof cleanup unavailable or timed out", file=sys.stderr)
+        print(f"Docker cleanup {arguments!r} unavailable or timed out", file=sys.stderr)
         return False
 
 
@@ -116,9 +116,9 @@ def prove(image: str, directory: Path) -> None:
         inspect = json.loads(docker("inspect", container))[0]
         ports = inspect["NetworkSettings"].get("Ports") or {}
         if inspect["HostConfig"].get("PortBindings") or any(ports.values()):
-            raise RuntimeError("PR image published a container port")
+            raise RuntimeError("Image published a container port")
         if not json.loads(docker("network", "inspect", network))[0]["Internal"]:
-            raise RuntimeError("PR image network permits egress")
+            raise RuntimeError("Image network permits egress")
 
         # Only an unavailable listener is transient during container startup.
         # The unauthorized GET is idempotent and each attempt is retained in CI logs.
@@ -136,7 +136,7 @@ def prove(image: str, directory: Path) -> None:
         require_response(status, output, error, b"200")
         if not output.endswith(b"\r\n\r\nOK"):
             raise RuntimeError(f"guard did not forward the complete upstream body: {output[-100:]!r}")
-        print("PR-built image: internal-only Docker exec, bearer 401/200, open-stdin exit passed")
+        print(f"Image {image!r}: internal-only Docker exec, bearer 401/200, open-stdin exit passed")
     except Exception:
         if container:
             try:

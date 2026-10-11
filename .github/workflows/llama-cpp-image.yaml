@@ -16,6 +16,7 @@ on:
       - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
       - "test/inference/llama/llama-cpp-image-workflow.test.ts"
       - "test/platform/images/llama-cpp-stdio-image-proof.py"
+      - "test/platform/images/llama-cpp-stdio-image-proof-test.py"
       - "test/platform/images/fixtures/llama-cpp-stdio-upstream.c"
   workflow_dispatch:
     inputs:
