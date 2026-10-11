@@ -1289,7 +1289,11 @@ export function createSetupInference(
             await deps.verifyOnboardInferenceSmoke({
               provider,
               model,
-              endpointUrl,
+              endpointUrl:
+                nativeHostedEndpoint ??
+                nativeHostedProviderAttachment?.endpointUrl ??
+                hostedNativeProvider(provider)?.endpoint ??
+                endpointUrl,
               credentialEnv,
               pinnedAddresses: endpointPinnedAddresses,
               trustedPrivateCapability: endpointTrustedPrivateCapability,

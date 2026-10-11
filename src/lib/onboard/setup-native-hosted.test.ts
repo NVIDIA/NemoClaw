@@ -12,7 +12,7 @@ vi.mock("./sandbox-lifecycle", async (importOriginal) => ({
 }));
 
 describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) => {
-  it("reserves the selected attachment without changing the shared route (#12589)", async () => {
+  it.each(["explicit", "omitted"])("uses %s native endpoint (#12589)", async (endpointMode) => {
     const receipt = {
       schemaVersion: 1,
       profileId: provider.profileId,
@@ -46,6 +46,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) =>
     } as unknown as OpenShellProviderAdapter;
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
     const verifyInferenceRoute = vi.fn();
+    const verifyOnboardInferenceSmoke = vi.fn(async () => undefined);
     const updateSandbox = vi.fn(() => true);
     const writeAuthority = vi.fn();
     const setup = createSetupInference({
@@ -62,7 +63,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) =>
       getSandbox: () => null,
       upsertProvider: vi.fn(),
       verifyInferenceRoute,
-      verifyOnboardInferenceSmoke: vi.fn(async () => undefined),
+      verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: {
         HERMES_PROVIDER_NAME: "hermes-provider",
@@ -114,7 +115,7 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) =>
         "alpha",
         "supported-model",
         provider.logicalProvider,
-        provider.endpoint,
+        endpointMode === "explicit" ? provider.endpoint : null,
         provider.credentialEnv,
         null,
         [],
@@ -135,6 +136,18 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label onboarding", (provider) =>
         nativeHostedProviderAttachment: receipt,
         provider: provider.logicalProvider,
       }),
+    );
+    expect(verifyOnboardInferenceSmoke.mock.calls).toEqual(
+      provider.logicalProvider === "hermes-provider"
+        ? []
+        : [
+            [
+              expect.objectContaining({
+                provider: provider.logicalProvider,
+                endpointUrl: provider.endpoint,
+              }),
+            ],
+          ],
     );
     expect(verifyInferenceRoute).not.toHaveBeenCalled();
     expect(runOpenshell).not.toHaveBeenCalled();
