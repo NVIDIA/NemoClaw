@@ -43,24 +43,13 @@ impl Bundle {
                 return Err(Error::Bundle("bundle is incomplete"));
             }
         }
-        for (name, digest) in &manifest.files {
-            if name.is_empty()
-                || Path::new(name)
-                    .components()
-                    .any(|c| !matches!(c, Component::Normal(_)))
-                || name.contains('\\')
-            {
-                return Err(Error::Bundle("invalid bundle path"));
-            }
-            let path = directory.join(name);
-            if !fs::symlink_metadata(&path)
-                .map_err(|_| Error::Bundle("bundle file is unavailable"))?
-                .is_file()
-                || hash_file(&path)? != *digest
-            {
-                return Err(Error::Bundle("bundle file integrity check failed"));
-            }
-        }
+        let files: Vec<_> = manifest.files.iter().collect();
+        // Hash files concurrently; the first failure in manifest order decides
+        // the error, as it would when checking them one at a time.
+        let checks = verify_concurrently(&files, |(name, digest)| {
+            verify_file(&directory, name, digest)
+        });
+        checks.into_iter().collect::<Result<(), Error>>()?;
         Ok(Self {
             directory,
             manifest,
@@ -69,6 +58,57 @@ impl Bundle {
     pub fn tofu(&self) -> PathBuf {
         self.directory.join("libexec").join(executable("tofu"))
     }
+}
+fn verify_file(directory: &Path, name: &str, digest: &str) -> Result<(), Error> {
+    if name.is_empty()
+        || Path::new(name)
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        || name.contains('\\')
+    {
+        return Err(Error::Bundle("invalid bundle path"));
+    }
+    let path = directory.join(name);
+    if !fs::symlink_metadata(&path)
+        .map_err(|_| Error::Bundle("bundle file is unavailable"))?
+        .is_file()
+        || hash_file(&path)? != digest
+    {
+        return Err(Error::Bundle("bundle file integrity check failed"));
+    }
+    Ok(())
+}
+/// Run `check` on every item across a few threads, returning results in item order.
+fn verify_concurrently<T: Sync, R: Send>(items: &[T], check: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(items.len());
+    if workers <= 1 {
+        return items.iter().map(check).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut results: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(item) = items.get(index) else {
+                            return done;
+                        };
+                        done.push((index, check(item)));
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("bundle verification thread"))
+            .collect()
+    });
+    results.sort_by_key(|(index, _)| *index);
+    results.into_iter().map(|(_, result)| result).collect()
 }
 /// Metadata that changes when a file is written or replaced.
 #[derive(Clone, Debug, PartialEq, Eq)]

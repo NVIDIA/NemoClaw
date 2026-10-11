@@ -106,14 +106,28 @@ impl Deployment {
         let mut stages = Vec::new();
         if !record.root_destroyed() {
             let (changes, planned) = operation
-                .plan_teardown_stage(&bundle, &store, &record, false, &root_graph, cancel)
+                .plan_teardown_stage(
+                    &bundle,
+                    &store,
+                    &record,
+                    (false, &bindings),
+                    &root_graph,
+                    cancel,
+                )
                 .await?;
             result.changes.extend(changes);
             stages.push((&store, false, planned));
         }
         if let Some((stage, graph)) = runtime.as_ref().zip(runtime_graph.as_ref()) {
             let (changes, planned) = operation
-                .plan_teardown_stage(&bundle, stage, &record, true, graph, cancel)
+                .plan_teardown_stage(
+                    &bundle,
+                    stage,
+                    &record,
+                    (true, &runtime_bindings),
+                    graph,
+                    cancel,
+                )
                 .await?;
             result.changes.extend(changes);
             stages.push((stage, true, planned));
@@ -170,25 +184,17 @@ impl Deployment {
         result.outcome = Outcome::Destroyed;
         Ok(result)
     }
+    /// Plan one stage's teardown from the bindings already read from its state;
+    /// nothing has changed that state since.
     async fn plan_teardown_stage(
         &self,
         bundle: &Bundle,
         store: &Store,
         record: &Record,
-        runtime: bool,
+        (runtime, bindings): (bool, &BTreeMap<String, StateBinding>),
         compiled: &compile::CompiledTeardown,
         cancel: &CancellationToken,
     ) -> Result<(Vec<Change>, bool), Error> {
-        let bindings = self
-            .state_bindings(
-                bundle,
-                store,
-                &record.document,
-                &record.generations,
-                runtime,
-                cancel,
-            )
-            .await?;
         if bindings.is_empty() {
             if record.succeeded() || record.destroying() {
                 return Err(Error::Conflict(
@@ -198,7 +204,7 @@ impl Deployment {
             return Ok((Vec::new(), false));
         }
         let expected = with_observations(
-            &teardown_expected(record, &bindings, runtime)?,
+            &teardown_expected(record, bindings, runtime)?,
             &compiled.observations,
         );
         self.initialize(bundle, store, &compiled.graph, cancel)
@@ -213,7 +219,7 @@ impl Deployment {
             )
             .await?;
         Ok((
-            check_destroy_plan(&plan, &expected, &bindings, &compiled.retained)?,
+            check_destroy_plan(&plan, &expected, bindings, &compiled.retained)?,
             true,
         ))
     }
@@ -405,7 +411,7 @@ mod tests {
                 &bundle,
                 &store,
                 &record,
-                false,
+                (false, &BTreeMap::new()),
                 &compiled,
                 &CancellationToken::new(),
             )

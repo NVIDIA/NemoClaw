@@ -180,6 +180,87 @@ async fn authored_service_storage_applies_refreshes_and_names_invalid_attributes
     }
 }
 
+// Retained storage is never recreated: refresh refuses a volume that is
+// missing, labeled for another owner, or replaced under the same name, and
+// leaves the saved binding unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
+async fn missing_foreign_or_substituted_storage_stops_plan_and_apply_without_changing_state() {
+    for kind in KINDS {
+        let (engine, volumes) = volume_engine().await;
+        let workspace = workspace();
+        let name = "retained-credentials";
+        configure(
+            &workspace,
+            kind,
+            name,
+            Some((OWNER, &"b".repeat(32))),
+            &engine.endpoint,
+        );
+        success(
+            &workspace,
+            &["apply", "-input=false", "-auto-approve", "-no-color"],
+        );
+        let state = fs::read(workspace.path().join("terraform.tfstate")).unwrap();
+        let retained = volumes.lock().unwrap().volumes[name].clone();
+        for fault in ["missing", "foreign", "substituted"] {
+            let mut damaged = retained.clone();
+            match fault {
+                "missing" => {
+                    volumes.lock().unwrap().volumes.remove(name);
+                }
+                "foreign" => {
+                    damaged["Labels"]["nemoclaw.nvidia.com/uid"] =
+                        json!("ffffffff-ffff-ffff-ffff-ffffffffffff");
+                }
+                _ => damaged["CreatedAt"] = json!("2026-10-09T00:00:00Z"),
+            }
+            let reason = if fault == "missing" {
+                "bound persistent storage is absent; recreation forbidden"
+            } else {
+                "observed ownership, generation, or durable identity changed"
+            };
+            if fault != "missing" {
+                volumes
+                    .lock()
+                    .unwrap()
+                    .volumes
+                    .insert(name.into(), damaged.clone());
+            }
+            for args in [
+                &["plan", "-input=false", "-no-color"][..],
+                &["apply", "-input=false", "-auto-approve", "-no-color"],
+            ] {
+                let output = run(&workspace, args);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    !output.status.success() && stderr.contains(reason),
+                    "{kind} {fault}: {} must fail with {reason:?}: {stderr}",
+                    args[0]
+                );
+                assert_eq!(
+                    fs::read(workspace.path().join("terraform.tfstate")).unwrap(),
+                    state,
+                    "{kind} {fault}: {} changed the state",
+                    args[0]
+                );
+            }
+            let current = volumes.lock().unwrap().volumes.get(name).cloned();
+            assert_eq!(
+                current,
+                (fault != "missing").then_some(damaged),
+                "{kind} {fault}"
+            );
+            assert_eq!(volumes.lock().unwrap().creates, 1, "{kind} {fault}");
+            volumes
+                .lock()
+                .unwrap()
+                .volumes
+                .insert(name.into(), retained.clone());
+        }
+    }
+}
+
 fn state_attributes(workspace: &TofuWorkspace) -> Value {
     let state: Value =
         serde_json::from_slice(&success(workspace, &["show", "-json"]).stdout).unwrap();
