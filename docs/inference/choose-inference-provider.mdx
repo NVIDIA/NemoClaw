@@ -32,7 +32,7 @@ Use this status table to distinguish validated provider integrations from adapte
 | Provider | Status | Endpoint type | Notes |
 |----------|--------|---------------|-------|
 | NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
-| OpenRouter | Tested | OpenAI-compatible | First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with a host runtime adapter URL; host-side validation and runtime traffic send the default OpenRouter attribution headers. |
+| OpenRouter | Tested | OpenAI-compatible | First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw attaches the native OpenRouter provider to the selected sandbox; host-side validation and agent requests send the required OpenRouter attribution headers. |
 | OpenAI | Tested | Native OpenAI-compatible | Uses OpenAI model IDs |
 | Other OpenAI-compatible endpoint | Tested with limitations | Custom OpenAI-compatible | Custom base-URL adapter for servers that implement OpenAI-compatible `/v1/chat/completions` or `/v1/responses`. Behavior on OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints. |
 | Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
@@ -60,7 +60,7 @@ Hosted providers use provider-managed endpoints and curated model choices.
 | Google Gemini | Google OpenAI-compatible Chat Completions | `GEMINI_API_KEY` | [Use Google Gemini](../hosted-inference/use-google-gemini) |
 
 <AgentOnly variant="hermes">
-Hermes onboarding also offers [Hermes Provider](../hosted-inference/use-hermes-provider), which uses the host OpenShell provider registered by NemoClaw.
+Hermes onboarding also offers [Hermes Provider](../hosted-inference/use-hermes-provider), which uses a sandbox-attached OpenShell provider registered by NemoClaw.
 </AgentOnly>
 
 ## Local Providers

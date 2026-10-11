@@ -17,12 +17,12 @@ vi.mock("../fixtures/managed-image-receipt.ts", () => ({
 const disposables: Array<() => unknown> = [];
 afterEach(async () => {
   for (const dispose of disposables.splice(0).reverse()) await dispose();
+  vi.doUnmock("../live/openclaw-inference-switch-helpers.ts");
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  vi.doUnmock("../live/openclaw-inference-switch-helpers.ts");
 });
 
-it("keeps the public NVIDIA key out of the native switch baseline", async () => {
+async function loadNativeSwitchRun() {
   vi.resetModules();
   captured.test.mockClear();
   vi.stubEnv("NEMOCLAW_SWITCH_PROVIDER", "nvidia-prod");
@@ -30,13 +30,6 @@ it("keeps the public NVIDIA key out of the native switch baseline", async () => 
   const exists = fs.existsSync;
   vi.spyOn(fs, "existsSync").mockImplementation((file) =>
     String(file).endsWith("bin/nemoclaw.js") ? true : exists(file),
-  );
-  const result = { exitCode: 0, stdout: "", stderr: "" };
-  const stop = new Error("onboarding captured");
-  const nemoclaw = vi.fn(
-    async (_args: string[], _options: { env: NodeJS.ProcessEnv; redactionValues: string[] }) => {
-      throw stop;
-    },
   );
   await import("../live/openclaw-inference-switch.test.ts");
   const { startTestProgress } = await import("../fixtures/progress.ts");
@@ -47,6 +40,18 @@ it("keeps the public NVIDIA key out of the native switch baseline", async () => 
   );
   disposables.push(() => progress.stop());
   const run = captured.test.mock.calls[0]![2] as (input: object) => Promise<void>;
+  return { progress, run };
+}
+
+it("keeps the public NVIDIA key out of the native switch baseline", async () => {
+  const { progress, run } = await loadNativeSwitchRun();
+  const result = { exitCode: 0, stdout: "", stderr: "" };
+  const stop = new Error("onboarding captured");
+  const nemoclaw = vi.fn(
+    async (_args: string[], _options: { env: NodeJS.ProcessEnv; redactionValues: string[] }) => {
+      throw stop;
+    },
+  );
   const required = vi.fn((name: string) => {
     expect(name).toBe("NVIDIA_API_KEY");
     return "nvapi-public-fixture-key";
@@ -67,6 +72,9 @@ it("keeps the public NVIDIA key out of the native switch baseline", async () => 
     }),
   ).rejects.toBe(stop);
   expect(required).toHaveBeenCalledExactlyOnceWith("NVIDIA_API_KEY");
+  const args = nemoclaw.mock.calls[0]![0];
+  const customDockerfile = args[args.indexOf("--from") + 1];
+  expect(fs.readFileSync(customDockerfile, "utf8")).toContain("ARG NEMOCLAW_MESSAGING_PLAN_B64=");
   const options = nemoclaw.mock.calls[0]![1];
   const environment = options.env;
   expect(environment.NEMOCLAW_PROVIDER).toBe("custom");
@@ -79,31 +87,39 @@ it("keeps the public NVIDIA key out of the native switch baseline", async () => 
   expect(options.redactionValues).toContain("openclaw-switch-baseline-credential");
 });
 
-it("rejects an invalid NVIDIA key before starting the baseline provider", async () => {
-  vi.resetModules();
-  captured.test.mockClear();
-  vi.stubEnv("NEMOCLAW_SWITCH_PROVIDER", "nvidia-prod");
-  vi.stubEnv("NEMOCLAW_SWITCH_MOCK_ANTHROPIC", "0");
-  const startBaseline = vi.fn();
-  vi.doMock("../live/openclaw-inference-switch-helpers.ts", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../live/openclaw-inference-switch-helpers.ts")>()),
-    startMockOpenClawBaselineProvider: startBaseline,
-  }));
-  const exists = fs.existsSync;
-  vi.spyOn(fs, "existsSync").mockImplementation((file) =>
-    String(file).endsWith("bin/nemoclaw.js") ? true : exists(file),
-  );
-
-  await import("../live/openclaw-inference-switch.test.ts");
-  const run = captured.test.mock.calls[0]![2] as (input: object) => Promise<void>;
-  const required = vi.fn(() => "invalid-key");
-  await expect(
-    run({
-      artifacts: { target: { declare: vi.fn() } },
-      runtimeProvider: { requireAvailable: vi.fn() },
-      secrets: { required },
-    }),
-  ).rejects.toThrow("NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key");
-  expect(required).toHaveBeenCalledExactlyOnceWith("NVIDIA_API_KEY");
-  expect(startBaseline).not.toHaveBeenCalled();
-});
+it.each([
+  {
+    label: "invalid",
+    required: () => "invalid-key",
+    expected: "NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key",
+  },
+  {
+    label: "missing",
+    required: () => {
+      throw new Error("NVIDIA_API_KEY unavailable");
+    },
+    expected: "NVIDIA_API_KEY unavailable",
+  },
+])(
+  "rejects a $label NVIDIA key before starting the baseline provider",
+  async ({ required, expected }) => {
+    const startBaseline = vi.fn();
+    vi.doMock("../live/openclaw-inference-switch-helpers.ts", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../live/openclaw-inference-switch-helpers.ts")>()),
+      startMockOpenClawBaselineProvider: startBaseline,
+    }));
+    const { progress, run } = await loadNativeSwitchRun();
+    const getKey = vi.fn(required);
+    await expect(
+      run({
+        artifacts: { target: { declare: vi.fn() } },
+        cleanup: { trackDisposable: vi.fn() },
+        progress,
+        runtimeProvider: { requireAvailable: vi.fn() },
+        secrets: { required: getKey },
+      }),
+    ).rejects.toThrow(expected);
+    expect(getKey).toHaveBeenCalledExactlyOnceWith("NVIDIA_API_KEY");
+    expect(startBaseline).not.toHaveBeenCalled();
+  },
+);

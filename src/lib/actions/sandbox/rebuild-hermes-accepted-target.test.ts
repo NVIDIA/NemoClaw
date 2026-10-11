@@ -23,6 +23,7 @@ const phaseMocks = vi.hoisted(() => ({
   runPreflight: vi.fn(),
   runRestore: vi.fn(),
   recordSandboxStopIntent: vi.fn(),
+  recordRebuildCompletion: vi.fn(),
 }));
 
 vi.mock("../../state/registry", async (importOriginal) => ({
@@ -100,6 +101,7 @@ vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
 
 vi.mock("./rebuild-post-restore-phase", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-post-restore-phase")>()),
+  recordRebuildCompletion: phaseMocks.recordRebuildCompletion,
   recoverHermesCronRestore: phaseMocks.recoverCronRestore,
   runHermesCronRestoreTransaction: phaseMocks.runCronRestoreTransaction,
   runRebuildPostRestorePhase: phaseMocks.runPostRestore,
@@ -137,6 +139,7 @@ describe("Hermes accepted replacement recovery", () => {
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
     phaseMocks.recordSandboxStopIntent.mockReturnValue(true);
     phaseMocks.runPostRestore.mockResolvedValue({
+      complete: true,
       mutableConfigPermissionsVerified: true,
     });
     phaseMocks.retireRemovedImmutabilityStateRecord.mockReturnValue(true);
@@ -219,7 +222,7 @@ describe("Hermes accepted replacement recovery", () => {
     });
     phaseMocks.runPostRestore.mockImplementation(async () => {
       events.push("post-restore");
-      return { mutableConfigPermissionsVerified: true };
+      return { complete: true, mutableConfigPermissionsVerified: true };
     });
     phaseMocks.enforceRemovedImmutabilityMigrationBoundary.mockReturnValue({
       stateRecord: "/tmp/shields-alpha.json",
@@ -269,6 +272,24 @@ describe("Hermes accepted replacement recovery", () => {
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
     expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
+  });
+
+  it("records an incomplete accepted replacement recovery as changed", async () => {
+    phaseMocks.recoverCronRestore.mockReturnValue("unsupported");
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
+    expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+    expect(phaseMocks.recordRebuildCompletion).toHaveBeenCalledWith(
+      "alpha",
+      false,
+      false,
+      expect.objectContaining({ name: "alpha" }),
+      true,
+    );
   });
 
   it("observes current MCP sources when another sandbox owns the recovery transaction", async () => {
@@ -340,6 +361,7 @@ describe("Hermes accepted replacement recovery", () => {
       recoveryArtifacts: [],
     });
     phaseMocks.runPostRestore.mockResolvedValue({
+      complete: false,
       mutableConfigPermissionsVerified: false,
     });
 

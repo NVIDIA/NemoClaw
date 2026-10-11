@@ -12,6 +12,19 @@ vi.mock("../agent/candidate-authority", () => ({
   acceptedCandidateReceiptDigests: () => authority.digests,
 }));
 
+vi.mock("../state/onboard-session", async (original) => ({
+  ...(await original<typeof import("../state/onboard-session")>()),
+  loadSession: () => ({ sandboxName: "unrelated", endpointUrl: "https://wrong.example/v1" }),
+}));
+
+import { HOSTED_NATIVE_PROVIDERS, hostedNativeProvider } from "../inference/native-provider/hosted";
+import { getSandboxInferenceConfig, resolveAgentInferenceApi } from "../inference/config";
+import { prepareRebuildResumeConfig } from "../actions/sandbox/rebuild-resume-config";
+import { prepareManagedRebuildProfileHandoff } from "../actions/sandbox/agents/managed-workload-rebuild-profile";
+import type { RebuildTargetConfig } from "../actions/sandbox/rebuild-target-preflight";
+import { createManagedWorkloadOnboardRuntime } from "./managed-workload/onboard-orchestration";
+import { rebindManagedStartupProfileForClone } from "./managed-startup/clone-rebinder";
+import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   type CandidateQualificationFixture,
@@ -86,7 +99,7 @@ function piEntry(): SandboxEntry {
   } as unknown as SandboxEntry;
 }
 
-function runtime(providerId = "mxc"): SandboxWorkloadRuntimeCapabilities {
+function runtimeCapabilities(providerId = "mxc"): SandboxWorkloadRuntimeCapabilities {
   return {
     driverName: providerId,
     managedImageSelectionPolicy: "require-managed",
@@ -155,7 +168,7 @@ describe("Pi candidate managed rebuild", () => {
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = releaseCatalog;
 
     const handoff = await prepareManagedWorkloadRebuildHandoff(piEntry(), {
-      runtime: runtime(),
+      runtime: runtimeCapabilities(),
       provider: provider(),
       version: "0.0.100",
     });
@@ -175,13 +188,148 @@ describe("Pi candidate managed rebuild", () => {
     expect(releaseCatalog).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ...HOSTED_NATIVE_PROVIDERS.filter((provider) => provider.api === "openai-completions"),
+    hostedNativeProvider("hermes-provider", "https://authenticated.nous.example/v1")!,
+    { logicalProvider: "compatible-endpoint", endpoint: "https://custom.example/v1" },
+    { logicalProvider: "ollama-local", endpoint: "http://localhost:11434/v1" },
+  ])(
+    "preserves Pi $logicalProvider routing through onboarding, rebuild and recovery",
+    async (definition) => {
+      publish(writeReceipt());
+      const native = "profileId" in definition;
+      const attachment = native
+        ? {
+            schemaVersion: 1 as const,
+            profileId: definition.profileId,
+            providerName: definition.providerName,
+            providerId: "owned-provider-id",
+            ...("endpointUrl" in definition
+              ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+              : {}),
+          }
+        : undefined;
+      const expectedEndpoint = native
+        ? definition.endpoint.replace(/\/+$/, "")
+        : "https://inference.local/v1";
+      const runtime = createManagedWorkloadOnboardRuntime(
+        {
+          computePlan: { driverName: "docker", gatewayLauncher: "nemoclaw" },
+          managedWorkloadRebuild: null,
+          tempManagedRuntime: false,
+          stockManagedRuntime: true,
+          tempManagedRuntimeCatalog: null,
+          agentName: "pi",
+          legacyDockerfilePath: "agents/pi/Dockerfile",
+          customDockerfilePath: null,
+          rootDir: process.cwd(),
+          model: "supported-model",
+          provider: definition.logicalProvider,
+          preferredInferenceApi: "openai-completions",
+          endpointUrl: definition.endpoint,
+          nativeProvider: native,
+          startupProfile: {
+            chatUiUrl: "",
+            effectiveDashboardPort: 0,
+            manageDashboard: false,
+            dashboardBindAddress: undefined,
+            wslExposure: false,
+            hermesDashboardState: { config: null, enabled: false },
+            webSearch: null,
+            toolDisclosure: "progressive",
+            hermesToolGateways: [],
+            messagingPlan: null,
+            dcodeAutoApprovalMode: "disabled",
+            observabilityEnabled: false,
+            environment: {},
+          },
+          note: vi.fn(),
+          fallbackBuildEstimate: () => null,
+        },
+        { getSandboxInferenceConfig, resolveAgentInferenceApi },
+      );
+      const built = runtime.ensurePreparedProfile({ source: { kind: "managed-image" } } as never)!;
+      const entry = piEntry();
+      Object.assign(entry, {
+        provider: definition.logicalProvider,
+        model: "supported-model",
+        endpointUrl: definition.endpoint,
+        preferredInferenceApi: "openai-completions",
+        nativeHostedProviderAttachment: attachment,
+        credentialEnv: native ? definition.credentialEnv : "COMPATIBLE_API_KEY",
+        workload: {
+          ...entry.workload,
+          encodedProfile: built.encodedProfile,
+          startupProfileSha256: built.startupProfileSha256,
+        },
+      });
+      const resume = prepareRebuildResumeConfig(entry.name, entry, "pi", vi.fn(), (message) => {
+        throw new Error(message);
+      })!;
+      expect(resume.nativeHostedProviderAttachment).toEqual(attachment);
+      const catalog = (await prepareManagedWorkloadRebuildHandoff(entry, {
+        runtime: runtimeCapabilities(),
+        provider: provider(),
+        version: "0.0.100",
+      }))!;
+      const rebuilt = prepareManagedRebuildProfileHandoff({
+        catalogHandoff: catalog,
+        targetConfig: {
+          agentDefinition: { runtime: { kind: "terminal" }, forwardPort: 0 },
+          resumeConfig: resume,
+          durableConfig: { webSearchConfig: null },
+          hermesToolGateways: [],
+        } as unknown as RebuildTargetConfig,
+        recreateOptions: {
+          toolDisclosure: "progressive",
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+        } as Parameters<typeof prepareManagedRebuildProfileHandoff>[0]["recreateOptions"],
+        messagingPlan: null,
+        environment: {},
+      });
+      const recovered = rebindManagedStartupProfileForClone({
+        sourceSandboxName: entry.name,
+        destinationSandboxName: "recovered-pi",
+        expectedAgent: "pi",
+        destinationDashboardPort: null,
+        encodedProfile: rebuilt.replacementProfile.encodedProfile,
+        startupProfileSha256: rebuilt.replacementProfile.startupProfileSha256,
+        currentSource: entry,
+      });
+      expect(built.profile.inference?.routedBaseUrl.replace(/\/+$/, "")).toBe(expectedEndpoint);
+      expect(rebuilt.replacementProfile.profile.inference?.routedBaseUrl.replace(/\/+$/, "")).toBe(
+        expectedEndpoint,
+      );
+      expect(recovered.profile.inference?.routedBaseUrl.replace(/\/+$/, "")).toBe(expectedEndpoint);
+      expect(
+        mapManagedStartupProfileToAgentEnvironment(
+          built.profile,
+          {},
+        ).configurationEnvironment.NEMOCLAW_INFERENCE_BASE_URL.replace(/\/+$/, ""),
+      ).toBe(expectedEndpoint);
+      expect(
+        mapManagedStartupProfileToAgentEnvironment(
+          rebuilt.replacementProfile.profile,
+          {},
+        ).configurationEnvironment.NEMOCLAW_INFERENCE_BASE_URL.replace(/\/+$/, ""),
+      ).toBe(expectedEndpoint);
+      expect(
+        mapManagedStartupProfileToAgentEnvironment(
+          recovered.profile,
+          {},
+        ).configurationEnvironment.NEMOCLAW_INFERENCE_BASE_URL.replace(/\/+$/, ""),
+      ).toBe(expectedEndpoint);
+    },
+  );
+
   it("refuses a candidate rebuild without qualification authority (#7927)", async () => {
     delete process.env.NEMOCLAW_CANDIDATE_AGENTS;
     delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT;
 
     await expect(
       prepareManagedWorkloadRebuildHandoff(piEntry(), {
-        runtime: runtime(),
+        runtime: runtimeCapabilities(),
         provider: provider(),
         version: "0.0.100",
       }),
@@ -193,7 +341,7 @@ describe("Pi candidate managed rebuild", () => {
 
     await expect(
       prepareManagedWorkloadRebuildHandoff(piEntry(), {
-        runtime: runtime(),
+        runtime: runtimeCapabilities(),
         provider: provider(),
         version: "0.0.100",
       }),

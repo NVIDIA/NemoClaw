@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { recordTelemetryTarget } from "../telemetry/operation";
 import { getCredential } from "../../credentials/store";
 import {
   type WebSearchProvider,
@@ -302,6 +303,13 @@ export async function preflightAuthoritativeOnboardRuntime(
     recreateOptions.rebuildGatewayAuthority = gatewayAuthority;
     return true;
   } catch (err) {
+    recordTelemetryTarget({
+      scope: "sandbox",
+      sandboxName,
+      gatewayName: recreateOptions.targetGatewayName,
+      outcome: "failed",
+      state: "unchanged",
+    });
     printRebuildPreflightFailure(
       "the replacement onboarding host/runtime checks did not pass.",
       err instanceof Error ? err.message : String(err),

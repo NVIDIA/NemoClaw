@@ -188,12 +188,13 @@ async function runPreinstallUpgradeGuard(
       ? ""
       : `installed_openshell_version() { printf '${openshellVersion}'; }`;
 
+  writeExecutable(path.join(bin, "npm"), "#!/usr/bin/env bash\nexit 99\n");
   writeExecutable(
     oldCli,
     `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then printf 'nemoclaw v0.0.99\\n'; exit 0; fi
 printf 'old:%s\\n' "$*" >> "${cliLog}"
 if [ "\${1:-}" = "--help" ]; then printf 'nemoclaw backup-all\\n'; fi
-exit 0
 `,
   );
   writeExecutable(
