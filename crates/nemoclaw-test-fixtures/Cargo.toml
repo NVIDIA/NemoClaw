@@ -16,6 +16,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+nemoclaw-openshell = { path = "../nemoclaw-openshell" }
 tar.workspace = true
 openshell-core.workspace = true
 tonic.workspace = true

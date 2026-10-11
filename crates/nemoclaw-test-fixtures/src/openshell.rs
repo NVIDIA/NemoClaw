@@ -960,3 +960,49 @@ fn delete_profile(
         outcome: p::DeletionOutcome::Completed.into(),
     })
 }
+
+/// One of the openshell provider's contract fixtures as the backend rows
+/// OpenTofu sends for its resources, in apply order: the workspace, provider
+/// profiles, provider registrations, then sandboxes. Backend tests in the
+/// provider crates start from these instead of the SDK's compiled targets.
+pub fn contract_rows(
+    name: &str,
+) -> Vec<(&'static str, std::collections::BTreeMap<String, String>)> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../openshell-provider/tests/contract/fixtures")
+        .join(format!("{name}.tf.json"));
+    let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let workspace = fixture["resource"]["openshell_workspace"]
+        .as_object()
+        .and_then(|bodies| bodies.values().next())
+        .and_then(|body| body["name"].as_str())
+        .unwrap()
+        .to_owned();
+    let mut rows = Vec::new();
+    for kind in ["workspace", "provider_profile", "provider", "sandbox"] {
+        let resource = nemoclaw_openshell::resource_type(kind).unwrap();
+        let structured = nemoclaw_openshell::structured_inputs(kind);
+        for body in fixture["resource"][&resource].as_object().unwrap().values() {
+            let mut row = std::collections::BTreeMap::new();
+            for (attribute, value) in body.as_object().unwrap() {
+                if matches!(attribute.as_str(), "depends_on" | "lifecycle") {
+                    continue;
+                }
+                if let Some(input) = structured.iter().find(|input| input.attribute == attribute) {
+                    if let Some(encoded) = input.row_value(value.clone()).unwrap() {
+                        row.insert(input.field.into(), encoded);
+                    }
+                    continue;
+                }
+                let text = value
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{name}: {attribute} is not a string"))
+                    .replace("${openshell_workspace.deployment.name}", &workspace)
+                    .replace("$${", "${");
+                row.insert(attribute.clone(), text);
+            }
+            rows.push((kind, row));
+        }
+    }
+    rows
+}

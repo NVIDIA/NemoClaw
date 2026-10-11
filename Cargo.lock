@@ -1058,6 +1058,7 @@ dependencies = [
  "nemoclaw-openshell",
  "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
+ "openshell-core",
  "openshell-provider",
  "regex",
  "rustls",
@@ -1068,6 +1069,7 @@ dependencies = [
  "tf-provider",
  "tokio",
  "tokio-util",
+ "tonic",
 ]
 
 [[package]]
@@ -2824,6 +2826,7 @@ name = "nemoclaw-test-fixtures"
 version = "0.1.0"
 dependencies = [
  "http",
+ "nemoclaw-openshell",
  "openshell-core",
  "prost",
  "rustls",

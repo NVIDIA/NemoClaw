@@ -31,8 +31,6 @@ mod managed;
 mod model_live;
 #[path = "multiple_providers.rs"]
 mod multiple_providers;
-#[path = "openshell.rs"]
-mod openshell;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
 #[path = "remote_service.rs"]
