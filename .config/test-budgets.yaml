@@ -4,9 +4,11 @@
 # Wall-clock budgets for each test step, in seconds, enforced on the Linux CI
 # runners; other platforms report their times without failing. wall_seconds
 # bounds a step's nextest run, the live-docker step's nextest commands together,
-# or each lifecycle partition; test_seconds bounds any one test in it. Lower a
-# budget when a change makes the step faster; raising one needs the reason in
-# the pull request. See docs/contributing/testing.md.
+# or each lifecycle partition; test_seconds bounds any one test in it. The
+# step's profile in .config/nextest.toml must use test_seconds as its
+# slow-timeout period; it stops a test at a multiple of it. Lower a budget when
+# a change makes the step faster; raising one needs the reason in the pull
+# request. See docs/contributing/testing.md.
 
 # Unit and integration tests: 27 s on linux_amd64, slowest test 5.1 s.
 test:

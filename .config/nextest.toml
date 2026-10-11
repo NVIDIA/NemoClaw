@@ -7,7 +7,12 @@ status-level = "slow"
 failure-output = "immediate-final"
 retries = 0
 test-threads = 8
-slow-timeout = { period = "30s", terminate-after = 10 }
+# Each profile reports a test as slow at its step's per-test limit in
+# .config/test-budgets.yaml and stops it at a small multiple of that limit, a
+# margin for the platforms and local runs that only report budgets. The test
+# step stops a test at three times its limit: its slowest test takes nearly
+# twice the limit on macOS. A test in crates/nemoclaw-build checks both files.
+slow-timeout = { period = "8s", terminate-after = 3 }
 
 # Each test step writes a JUnit report that `cargo ci` summarizes into where
 # its time went.
@@ -17,6 +22,7 @@ path = "test.xml"
 [profile.lifecycle]
 inherits = "ci"
 test-threads = 4
+slow-timeout = { period = "90s", terminate-after = 2 }
 # These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
 # Selecting the fake ssh relay's ignored test also archives nemoclaw-test-fixtures'
 # executables beside the extracted tests: the relay, which fake engines need on
@@ -45,7 +51,7 @@ path = "lifecycle.xml"
 [profile.live-docker]
 inherits = "ci"
 test-threads = 1
-slow-timeout = { period = "60s", terminate-after = 10 }
+slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
 (package(nemoclaw-runtime) & test(/^ollama_cache::/))
 | (package(nemoclaw-build) & (
@@ -66,7 +72,7 @@ default-filter = '''
 [profile.live-kind]
 inherits = "ci"
 test-threads = 1
-slow-timeout = { period = "120s", terminate-after = 10 }
+slow-timeout = { period = "120s", terminate-after = 2 }
 default-filter = '''
 package(nemoclaw-sdk) & (test(/^kubernetes_live::/) | test(/^kubernetes_gateway::/))
 '''

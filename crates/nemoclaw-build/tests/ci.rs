@@ -343,6 +343,97 @@ fn budgets_name_each_step_over_its_wall_time_and_each_test_over_its_limit() {
     }
 }
 
+// What nextest 0.9 writes when it stops a test at its profile's slow-timeout.
+const TIMED_OUT_JUNIT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="2" skipped="0" failures="1" errors="0" uuid="c63ea36d-14ff-45b3-a2b1-68b75ae7caf4" timestamp="2026-10-11T03:38:03.026-07:00" time="24.012">
+    <testsuite name="nemoclaw-sdk" tests="2" skipped="0" errors="0" failures="1">
+        <testcase name="state::reads" classname="nemoclaw-sdk" timestamp="2026-10-11T03:38:03.030-07:00" time="0.012"/>
+        <testcase name="state::hangs" classname="nemoclaw-sdk" timestamp="2026-10-11T03:38:03.030-07:00" time="24.006">
+            <failure type="test timeout"/>
+            <system-out>
+running 1 test
+</system-out>
+            <system-err></system-err>
+        </testcase>
+    </testsuite>
+</testsuites>
+"#;
+
+#[test]
+fn a_test_nextest_stops_is_named_with_its_time_and_limit() {
+    let run = ci::timing::Run::parse(TIMED_OUT_JUNIT).unwrap();
+    assert!(run.tests[1].failed);
+    let budget = ci::timing::Budgets::parse("test:\n  wall_seconds: 45\n  test_seconds: 8\n")
+        .unwrap()
+        .get("test")
+        .unwrap();
+    assert_eq!(
+        run.over(budget),
+        ["nemoclaw-sdk state::hangs took 24.0 s; the limit is 8 s".to_owned()]
+    );
+}
+
+/// Seconds in a nextest duration that the profiles write as whole seconds.
+fn nextest_seconds(duration: &str) -> u64 {
+    duration
+        .strip_suffix('s')
+        .and_then(|seconds| seconds.parse().ok())
+        .unwrap_or_else(|| {
+            panic!("write the nextest duration {duration:?} in whole seconds, as \"8s\"")
+        })
+}
+
+// Each nextest profile reports a test as slow at its step's per-test limit and
+// stops it at a small multiple of that limit: the margin for the platforms and
+// local runs that only report budgets. Changing a limit in one file and not
+// the other fails here.
+#[test]
+fn each_nextest_profile_stops_a_test_near_its_per_test_limit() {
+    let budgets =
+        ci::timing::Budgets::parse(include_str!("../../../.config/test-budgets.yaml")).unwrap();
+    let nextest: toml::Table = include_str!("../../../.config/nextest.toml")
+        .parse()
+        .unwrap();
+    let profiles = nextest["profile"].as_table().unwrap();
+    for step in Step::ALL
+        .into_iter()
+        .chain([Step::Archive, Step::LiveDocker, Step::LiveKind])
+    {
+        let Some((profile, _)) = step.junit() else {
+            continue;
+        };
+        let limit = budgets.get(step.name()).unwrap().test_seconds;
+        // A profile without its own timeout inherits its parent's.
+        let mut name = profile;
+        let timeout = loop {
+            let table = profiles[name].as_table().unwrap();
+            if let Some(timeout) = table.get("slow-timeout") {
+                break timeout;
+            }
+            name = table
+                .get("inherits")
+                .and_then(toml::Value::as_str)
+                .unwrap_or_else(|| panic!("the {profile} nextest profile sets no slow-timeout"));
+        };
+        let period = nextest_seconds(timeout["period"].as_str().unwrap());
+        let terminate_after = timeout
+            .get("terminate-after")
+            .and_then(toml::Value::as_integer)
+            .unwrap_or_else(|| panic!("the {profile} nextest profile never stops a test"));
+        assert_eq!(
+            period,
+            limit,
+            "the {profile} nextest profile reports a test as slow after {period} s, but the {} step allows {limit} s per test",
+            step.name()
+        );
+        assert!(
+            (1..=3).contains(&terminate_after),
+            "the {profile} nextest profile stops a test after {} s, more than three times the {limit} s limit",
+            period * terminate_after.unsigned_abs()
+        );
+    }
+}
+
 const RERUN_JUNIT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="1" failures="0" errors="0" uuid="5b8f75da-b026-4226-b5dc-19f49fa7c054" timestamp="2026-10-09T00:30:00.000+00:00" time="3.000">
     <testsuite name="nemoclaw-sdk::integration" tests="1" disabled="0" errors="0" failures="0">
