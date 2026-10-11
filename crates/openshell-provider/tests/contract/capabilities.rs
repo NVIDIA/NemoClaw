@@ -79,7 +79,7 @@ impl Local {
 /// without changing the gateway or state. nemoclaw-openshell's observation
 /// tests own each incompatibility reason.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; fake OpenShell gateway"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn gateway_capabilities_gate_plans_and_saved_plan_applies() {
     let gateway = Fixture::start().await;
     let local = Local::new(&gateway.endpoint);
@@ -224,7 +224,7 @@ async fn gateway_capability_observations_preserve_metadata_and_fail_closed_witho
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; fake OpenShell gateway"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn gateway_capability_reads_wait_for_unknown_bootstrap_dependencies() {
     let gateway = Fixture::start().await;
     gateway.state.lock().unwrap().fail_read = Some(("gateway", tonic::Code::Unavailable));

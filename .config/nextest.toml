@@ -20,13 +20,15 @@ test-threads = 4
 # These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
 # Selecting the fake ssh relay's ignored test also archives nemoclaw-test-fixtures'
 # executables beside the extracted tests: the relay, which fake engines need on
-# platforms without Unix sockets, the SSH simulator, and the fixture provider.
+# platforms without Unix sockets, and the SSH simulator. The fixture provider's
+# ignored test does the same for the provider protocol tests.
 default-filter = '''
 test(native_state_json_preserves_module_and_instance_identity_without_refresh)
 | (package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
 | (package(nemoclaw-sdk) & test(runtime_export_declares_the_native_helm_provider_inputs))
 | ((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
 | (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
+| (package(nemoclaw-fixture-provider) & binary(=archive))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^sandbox_readiness::/) | test(/^deployment::/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)

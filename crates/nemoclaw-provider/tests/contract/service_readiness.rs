@@ -1,28 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::fs;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
 async fn standalone_readiness_defers_to_apply_rechecks_unchanged_services_and_allows_destroy() {
     standalone_readiness(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
 async fn standalone_proxy_readiness_rechecks_identity_and_credentials_without_sdk_or_gateway() {
     standalone_readiness(true).await;
 }
 
 async fn standalone_readiness(proxy: bool) {
-    let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
-    let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = crate::workspace();
     let root = directory.path();
     // Beside the providers, where Windows finds it before the relay on PATH.
     nemoclaw_test_fixtures::ssh::install_simulator(root, root);

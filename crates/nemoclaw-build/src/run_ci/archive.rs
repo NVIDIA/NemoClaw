@@ -20,18 +20,12 @@ pub(super) fn package_inputs(tools: &Tools<'_>) -> Result<()> {
         std::env::current_exe()?,
         Path::new(".build/ci").join(nemoclaw_build_executable("nemoclaw-build")),
     )?;
-    // Protocol fixtures locate sibling providers beside this explicit binary,
-    // and the lifecycle step puts the fake ssh first on PATH where Unix
-    // sockets are missing.
-    for name in [
-        "terraform-provider-nemoclaw",
-        "terraform-provider-openshell",
-        "terraform-provider-fabric",
-        "nemoclaw-fixture-ssh",
-    ] {
-        let path = Path::new("target/debug").join(nemoclaw_build_executable(name));
-        archive.append_path(&path)?;
-    }
+    // The lifecycle step puts the fake ssh first on PATH where Unix sockets
+    // are missing. The providers need no copy here: the bundle ships them, and
+    // nextest archives each provider package's executables with its tests.
+    archive.append_path(
+        Path::new("target/debug").join(nemoclaw_build_executable("nemoclaw-fixture-ssh")),
+    )?;
     archive.finish()?;
     Ok(())
 }

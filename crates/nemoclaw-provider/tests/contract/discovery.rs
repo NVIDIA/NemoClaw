@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::http_fixture as transport;
-use crate::tofu::TofuWorkspace;
 use nemoclaw_sdk::fabric_catalog::{FabricCatalog, IMAGE_CATALOG_LABEL};
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -15,14 +13,8 @@ use std::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
-    let tofu =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
-    );
-    assert!(tofu.is_absolute() && provider.is_absolute());
     let requests = Arc::new(AtomicUsize::new(0));
     let seen = requests.clone();
     let catalog = FabricCatalog::bundled();
@@ -39,7 +31,7 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
         };
         Some((200, serde_json::to_vec(&body).unwrap()))
     }).await;
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = crate::workspace();
     let root = directory.path();
     // An engine nothing serves: a missing socket, or a closed loopback port.
     let unreachable = if cfg!(unix) {
@@ -101,13 +93,8 @@ async fn discovery_plan_reads_target_metadata_without_gateway_or_mutations() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn authored_fabric_requirements_take_the_configuration_and_policy_reads_separately() {
-    let tofu =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
-    );
     let catalog_json = serde_json::to_string(&FabricCatalog::bundled()).unwrap();
     let fixture = transport::Fixture::engine(move |request| {
         let body = match request.path.as_str() {
@@ -117,7 +104,7 @@ async fn authored_fabric_requirements_take_the_configuration_and_policy_reads_se
         Some((200, serde_json::to_vec(&body).unwrap()))
     })
     .await;
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = crate::workspace();
     let write = |configuration: &str, reads: &str| {
         fs::write(
             directory.path().join("main.tf"),
@@ -192,15 +179,9 @@ output "status" {{
 // Its managed gateway needs a local engine, which only Unix clients reach.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabilities() {
     use nemoclaw_sdk::{compile::compile, config::Document};
-    let tofu =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
-    );
-    assert!(tofu.is_absolute() && provider.is_absolute());
     let document =
         Document::parse(include_bytes!("../../../../examples/onboarding/openclaw.yaml").as_slice())
             .unwrap();
@@ -265,7 +246,7 @@ async fn compiled_discovery_requires_runtime_metadata_but_allows_unknown_capabil
         },
         "output":output
     });
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = crate::workspace();
     let root = directory.path();
     fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
     for selected in 0..5 {

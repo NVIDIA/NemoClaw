@@ -12,7 +12,7 @@ mod capabilities;
 mod http;
 mod readiness;
 
-use nemoclaw_test_fixtures::{executable, openshell::Fixture, tofu::TofuWorkspace};
+use nemoclaw_test_fixtures::{Bundle, openshell::Fixture, tofu::TofuWorkspace};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -23,34 +23,20 @@ use std::{
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
 
-fn tofu() -> PathBuf {
-    let tofu = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit pinned OpenTofu path"),
-    );
-    assert!(tofu.is_absolute());
-    tofu
+/// The fabric provider Cargo built from this checkout, the one under test.
+fn fabric() -> PathBuf {
+    nemoclaw_test_fixtures::package_executable!("terraform-provider-fabric")
 }
 
-/// A provider built beside NEMOCLAW_TEST_PROVIDER, as the lifecycle tests
-/// receive it.
-fn provider(name: &str) -> PathBuf {
-    let nemoclaw = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider build path"),
-    );
-    assert!(nemoclaw.is_absolute());
-    nemoclaw
-        .parent()
-        .unwrap()
-        .join(executable(&format!("terraform-provider-{name}")))
-}
-
-/// A workspace with the openshell and fabric providers.
+/// A workspace with the fabric provider under test and the bundle's openshell
+/// provider.
 fn workspace() -> TofuWorkspace {
+    let bundle = Bundle::from_env();
     TofuWorkspace::with_providers(
-        tofu(),
+        bundle.tofu(),
         &[
-            ("openshell", &provider("openshell")),
-            ("fabric", &provider("fabric")),
+            ("openshell", &bundle.provider("openshell")),
+            ("fabric", &fabric()),
         ],
     )
 }
@@ -132,7 +118,7 @@ fn every_fabric_type_has_a_contract_test() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; fake OpenShell gateway"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn pi_configuration_updates_without_replacing_the_sandbox() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint, &[]);

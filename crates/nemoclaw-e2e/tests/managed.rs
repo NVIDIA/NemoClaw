@@ -5,13 +5,12 @@ use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
 #[test]
-#[ignore = "requires explicit retained runtime state, OpenTofu and production provider paths; reads owned storage only"]
+#[ignore = "requires explicit retained runtime state and NEMOCLAW_TEST_BUNDLE; reads owned storage only"]
 fn provider_refreshes_retained_storage_without_changes() {
     let path = |name| PathBuf::from(std::env::var_os(name).expect("explicit qualification path"));
-    let tofu = path("NEMOCLAW_TEST_TOFU");
-    let provider = path("NEMOCLAW_TEST_PROVIDER");
+    let bundle = nemoclaw_test_fixtures::Bundle::from_env();
     let retained = path("NEMOCLAW_TEST_RUNTIME_STATE");
-    assert!(tofu.is_absolute() && provider.is_absolute() && retained.is_absolute());
+    assert!(retained.is_absolute());
     let original = fs::read(&retained).unwrap();
     let mut state: Value = serde_json::from_slice(&original).unwrap();
     state["resources"].as_array_mut().unwrap().retain(|r| {
@@ -26,7 +25,7 @@ fn provider_refreshes_retained_storage_without_changes() {
         2,
         "requires the two retained storage resources"
     );
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = TofuWorkspace::new(&bundle, bundle.provider("nemoclaw"));
     let mut graph = json!({"terraform":{"required_providers":{"nemoclaw":{"source":"registry.opentofu.org/nvidia/nemoclaw","version":"0.1.0"}}},"provider":{"nemoclaw":{}},"resource":{}});
     for resource in resources {
         assert_eq!(resource["instances"].as_array().unwrap().len(), 1);

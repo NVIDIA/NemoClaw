@@ -13,10 +13,11 @@ test:
   wall_seconds: 45
   test_seconds: 8
 
-# Each lifecycle partition: 229 s on linux_amd64, slowest test 74 s.
+# Each lifecycle partition: at most 207 s on linux_amd64 and linux_arm64,
+# slowest test 67 s.
 lifecycle:
-  wall_seconds: 360
-  test_seconds: 120
+  wall_seconds: 300
+  test_seconds: 90
 
 # Live / Docker, its four nextest commands together: at most 255 s on
 # linux_amd64 and 210 s on linux_arm64 in 11 v1 runs. Its slowest test,
