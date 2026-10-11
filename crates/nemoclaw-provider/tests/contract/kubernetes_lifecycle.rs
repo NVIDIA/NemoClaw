@@ -10,7 +10,7 @@
 
 use crate::{kube_api::Objects, tofu::TofuWorkspace, transport::Fixture};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{collections::BTreeMap, fs};
 
 const NAME: &str = "nc-0123456789abcdef-gateway";
 const NAMESPACE: &str = "agents";
@@ -102,13 +102,9 @@ struct Platform {
 
 impl Platform {
     async fn start() -> Self {
-        let path =
-            |name| PathBuf::from(std::env::var_os(name).expect("explicit qualification path"));
-        let (tofu, provider) = (path("NEMOCLAW_TEST_TOFU"), path("NEMOCLAW_TEST_PROVIDER"));
-        assert!(tofu.is_absolute() && provider.is_absolute());
         let objects = cluster();
         let api = objects.serve().await;
-        let workspace = TofuWorkspace::new(tofu, provider);
+        let workspace = crate::workspace();
         let kubeconfig = json!({
             "apiVersion": "v1", "kind": "Config",
             "clusters": [{"name": "fixture", "cluster": {"server": api.endpoint}}],
