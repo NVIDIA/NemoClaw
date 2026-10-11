@@ -15,7 +15,7 @@ import {
   hardenPodmanSocketDirectory,
   type PodmanSocketAuthorityDeps,
 } from "../../adapters/podman";
-import { ensureConfigDir } from "../../state/config-io";
+import { writePrivateConfig } from "./portable-private-config";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
 import { isPortableExperimentalProfile } from "./portable-profile";
@@ -398,20 +398,10 @@ const receiptPath = portableDemoReceiptPath;
 const defaultStateDir = defaultPortableDemoStateDir;
 
 function writeReceipt(receipt: PortableDemoLifecycleReceipt, stateDir: string): void {
-  const filePath = receiptPath(receipt.sandboxName, stateDir);
-  ensureConfigDir(path.dirname(filePath));
-  let file;
-  try {
-    file = openRegularFileNoFollow(filePath, { writable: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    file = openRegularFileNoFollow(filePath, { create: true, mode: 0o600, writable: true });
-  }
-  try {
-    file.replaceUtf8(`${JSON.stringify(receipt, null, 2)}\n`, 0o600);
-  } finally {
-    file.close();
-  }
+  writePrivateConfig(
+    receiptPath(receipt.sandboxName, stateDir),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+  );
 }
 
 function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycleReceipt {

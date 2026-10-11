@@ -10,14 +10,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  readModelSelectionProvenance,
+  type ModelSelectionProvenance,
+  parseServingProfileProvenance,
+  type ServingProfileProvenance,
+} from "./onboard-session/selection-provenance";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
-import {
-  parseServingProfileProvenance,
-  type ServingProfileProvenance,
-} from "../inference/serving/profile-provenance";
 import {
   normalizeWebSearchConfig,
   webSearchEnvFor,
@@ -286,6 +288,7 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
   vllmInstallModel: string | null;
   /** GPU exposed to the host-side managed vLLM container for this onboarding attempt. */
@@ -324,18 +327,6 @@ export interface Session {
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
-  // SHA-256 hex digest of every legacy credential value successfully
-  // written to the OpenShell gateway during this onboard session, keyed by
-  // env-name. Persisted across process restarts so a `--resume` run that
-  // skips already-completed upserts still knows the migration completed
-  // earlier and can safely remove ~/.nemoclaw/credentials.json on the
-  // final completeSession. Storing the hash (not just the env-name) lets
-  // us detect when the legacy file value was edited between runs, when
-  // the gateway provider was reset out-of-band, or when an unrelated
-  // session is found on disk — in any of those cases the in-memory
-  // migrated set is NOT seeded from the persisted record, so the cleanup
-  // gate keeps the file until the *current* value is actually re-migrated.
-  migratedLegacyValueHashes: Record<string, string> | null;
   gpuPassthrough: boolean;
   telegramConfig: TelegramConfig | null;
   wechatConfig: WechatConfig | null;
@@ -368,6 +359,7 @@ export interface SessionUpdates {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  modelSelectionProvenance?: ModelSelectionProvenance | null;
   servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
@@ -384,7 +376,6 @@ export interface SessionUpdates {
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
-  migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
@@ -594,15 +585,6 @@ function readCanonicalIsoTimestamp(value: SessionJsonValue | undefined): string 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((entry): entry is string => typeof entry === "string");
-}
-
-function readStringRecord(value: SessionJsonValue | undefined): Record<string, string> | null {
-  if (!isObject(value)) return null;
-  const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof k === "string" && typeof v === "string") result[k] = v;
-  }
-  return result;
 }
 
 function isStepStatus(value: string): value is StepStatus {
@@ -1011,6 +993,13 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    ...(readModelSelectionProvenance(overrides.modelSelectionProvenance)
+      ? {
+          modelSelectionProvenance: readModelSelectionProvenance(
+            overrides.modelSelectionProvenance,
+          ),
+        }
+      : {}),
     vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
     vllmGpuDevice: parseVllmGpuDevice(overrides.vllmGpuDevice),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
@@ -1045,9 +1034,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
-      ? readStringRecord(overrides.migratedLegacyValueHashes)
-      : null,
     gpuPassthrough: overrides.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     wechatConfig: parseWechatConfig(overrides.wechatConfig),
@@ -1157,6 +1143,9 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    ...(readModelSelectionProvenance(data.modelSelectionProvenance)
+      ? { modelSelectionProvenance: readModelSelectionProvenance(data.modelSelectionProvenance) }
+      : {}),
     vllmInstallModel,
     vllmGpuDevice,
     servingProfileProvenance,
@@ -1182,7 +1171,6 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
-    migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
     wechatConfig: parseWechatConfig(data.wechatConfig),
@@ -1705,6 +1693,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "sandboxName", updates.sandboxName);
   assignNullableString(safe, "provider", updates.provider);
   assignNullableString(safe, "model", updates.model);
+  if (updates.modelSelectionProvenance === null) safe.modelSelectionProvenance = null;
+  else {
+    const provenance = readModelSelectionProvenance(updates.modelSelectionProvenance);
+    if (provenance) safe.modelSelectionProvenance = provenance;
+  }
   if (updates.servingProfileProvenance === null) {
     safe.servingProfileProvenance = null;
   } else {
@@ -1774,13 +1767,6 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else {
     const messagingPlan = parseSandboxMessagingPlan(updates.messagingPlan);
     if (messagingPlan) safe.messagingPlan = messagingPlan;
-  }
-  if (isObject(updates.migratedLegacyValueHashes)) {
-    const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(updates.migratedLegacyValueHashes)) {
-      if (typeof k === "string" && typeof v === "string") cleaned[k] = v;
-    }
-    safe.migratedLegacyValueHashes = cleaned;
   }
   if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
     safe.gpuPassthrough = updates.gpuPassthrough;

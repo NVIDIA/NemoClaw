@@ -22,7 +22,15 @@ test(
     },
   },
   async ({ artifacts, cleanup, progress }) => {
-    await qualifyManagedVolumeMigration({ artifacts, cleanup, progress });
+    progress.phase("create owned legacy state on the selected container engine");
+    await qualifyManagedVolumeMigration(
+      { artifacts, cleanup },
+      {
+        copy: () =>
+          progress.phase("reject a failed real helper then migrate and select retained state"),
+        evidence: () => progress.phase("record real-engine migration evidence"),
+      },
+    );
   },
 );
 
@@ -56,6 +64,37 @@ test(
       syntheticBoundary:
         "Only the OpenAI-compatible inference response is synthetic; runtime construction and agent execution are real.",
     });
-    await qualifyManagedImageActivation({ artifacts, cleanup, host, lifecycle, progress, sandbox });
+    progress.phase("validate exact candidate catalog and host runtime");
+    await qualifyManagedImageActivation(
+      { artifacts, cleanup, host, lifecycle, progress, sandbox },
+      {
+        agents: {
+          openclaw: {
+            onboard: () => progress.phase("onboard and exercise OpenClaw"),
+            publicLifecycle: () =>
+              progress.phase("stop and start OpenClaw through public NemoClaw lifecycle"),
+            cleanup: () => progress.phase("destroy and verify OpenClaw cleanup"),
+          },
+          hermes: {
+            onboard: () => progress.phase("onboard and exercise Hermes"),
+            publicLifecycle: () =>
+              progress.phase("stop and start Hermes through public NemoClaw lifecycle"),
+            cleanup: () => progress.phase("destroy and verify Hermes cleanup"),
+          },
+          "langchain-deepagents-code": {
+            onboard: () => progress.phase("onboard and exercise Deep Agents Code"),
+            publicLifecycle: () =>
+              progress.phase("stop and start Deep Agents Code through public NemoClaw lifecycle"),
+            cleanup: () => progress.phase("destroy and verify Deep Agents Code cleanup"),
+          },
+        },
+        hermesSecretBoundary: () =>
+          progress.phase("prove Hermes secret-boundary refusal before native restart"),
+        externalImages: () =>
+          progress.phase(
+            "prove buildless external-image onboarding, drift rejection, rebuild, and retention",
+          ),
+      },
+    );
   },
 );

@@ -62,6 +62,20 @@ describe("retained managed volume migration", () => {
       });
       lifecycle.commit();
       expect(h.volumes.size).toBe(2);
+      const copyArgs = h.calls.find((args) => args[0] === "create")!;
+      expect(
+        copyArgs.filter((_, index) => ["--mount", "--volume"].includes(copyArgs[index - 1]!)),
+      ).toEqual(
+        providerId === "podman"
+          ? [
+              `${h.source.Name}:/source:ro,nocopy`,
+              `${[...h.volumes.keys()][1]}:/destination:rw,nocopy`,
+            ]
+          : [
+              `type=volume,src=${h.source.Name},dst=/source,volume-nocopy,readonly`,
+              `type=volume,src=${[...h.volumes.keys()][1]},dst=/destination,volume-nocopy`,
+            ],
+      );
       expect(managedStateVolumeMigrationPhase(h.root, h.context)).toBe("verified");
     },
   );
@@ -88,7 +102,7 @@ describe("retained managed volume migration", () => {
       const helper = h.calls.find((args) => args[0] === "create")!;
       expect(helper).toContain(MANAGED_STATE_COPY_IMAGE);
       expect(helper).toContain(
-        `type=volume,src=${h.source.Name},dst=/source,readonly,volume-nocopy`,
+        `type=volume,src=${h.source.Name},dst=/source,volume-nocopy,readonly`,
       );
       expect(helper).toContain("none");
       expect(helper).toContain("--read-only");

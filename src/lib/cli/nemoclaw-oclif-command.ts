@@ -21,6 +21,44 @@ import {
   reportRemovedImmutabilityUpgrade,
 } from "../state/migrations/removed-immutability";
 import { log } from "./logger";
+import { withTelemetryOperation } from "../actions/telemetry/operation";
+import { isTelemetryConfigurationKey, type TelemetryOperation } from "../domain/telemetry/event";
+
+function telemetryOperation(
+  commandId: string | undefined,
+  argv: readonly string[],
+): TelemetryOperation | null {
+  if (argv.includes("--help") || argv.includes("-h")) return null;
+  const operations: Record<string, TelemetryOperation> = {
+    onboard: "sandbox_create",
+    update: "update",
+    "upgrade-sandboxes": "upgrade_sandboxes",
+    "sandbox:rebuild": "sandbox_rebuild",
+    "sandbox:destroy": "sandbox_destroy",
+    "sandbox:recover": "sandbox_recover",
+    "inference:set": "inference_set",
+    "sandbox:inference:set": "inference_set",
+    "sandbox:agents:add": "agent_add",
+    "sandbox:agents:delete": "agent_delete",
+    "sandbox:agents:apply": "agents_apply",
+    "sandbox:channels:add": "messaging_add",
+    "sandbox:channels:remove": "messaging_remove",
+    "sandbox:channels:stop": "messaging_pause",
+    "sandbox:channels:start": "messaging_resume",
+    "sandbox:policy:add": "policy_change",
+    "sandbox:policy:remove": "policy_change",
+    "sandbox:policy:exclude": "policy_change",
+    "sandbox:policy:restore": "policy_change",
+  };
+  if (commandId === "sandbox:config:set") {
+    const keyIndex = argv.indexOf("--key");
+    const key =
+      argv.find((argument) => argument.startsWith("--key="))?.slice(6) ??
+      (keyIndex >= 0 ? argv[keyIndex + 1] : undefined);
+    return isTelemetryConfigurationKey(key) ? "settings_change" : null;
+  }
+  return commandId ? (operations[commandId] ?? null) : null;
+}
 
 export type CommandExitResult = {
   exitCode?: number | null;
@@ -102,6 +140,12 @@ export abstract class NemoClawCommand extends Command {
   }
 
   protected override async _run<T>(): Promise<T> {
+    return withTelemetryOperation(telemetryOperation(this.id, this.argv), () =>
+      this.runLifecycleBoundary<T>(),
+    );
+  }
+
+  private async runLifecycleBoundary<T>(): Promise<T> {
     if (await this.runBeforeLifecycleBoundary()) return undefined as T;
     const commandId = this.id;
     const portablePolicy =

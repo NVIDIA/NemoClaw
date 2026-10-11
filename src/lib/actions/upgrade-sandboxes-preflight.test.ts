@@ -21,7 +21,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../cli/branding", () => ({ CLI_NAME: "nemoclaw" }));
 vi.mock("../cli/terminal-style", () => ({ B: "", D: "", G: "", R: "", YW: "" }));
 vi.mock("../core/version", () => ({ getVersion: mocks.getVersion }));
-vi.mock("../credentials/store", () => ({ prompt: mocks.prompt }));
+vi.mock("../credentials/store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../credentials/store")>()),
+  prompt: mocks.prompt,
+}));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeUpgradeSandboxesOptions: (options: unknown) => options,
 }));

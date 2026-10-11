@@ -681,11 +681,11 @@ describe("gateway lifecycle late binding", () => {
         gatewayPort: 9777,
         getCachedOpenshellBinary: () => null,
         getBlueprintMaxOpenshellVersion: () => null,
-        getInstalledOpenshellVersion: () => "0.0.116",
+        getInstalledOpenshellVersion: () => "0.1.2",
         isOpenshellDevVersion: () => false,
         runCapture: () => "",
         shouldUseOpenshellDevChannel: () => false,
-        supportedOpenshellFallbackVersion: "0.0.116",
+        supportedOpenshellFallbackVersion: "0.1.2",
         loadDockerDriverGatewayEnv: gatewayBinding.createGatewayEnvLoader(
           await vi.importActual<typeof import("../docker-driver-gateway-env")>(
             "../docker-driver-gateway-env",

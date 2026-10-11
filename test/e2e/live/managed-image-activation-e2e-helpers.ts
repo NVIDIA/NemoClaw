@@ -55,17 +55,18 @@ import {
   preflightManagedStateVolumes,
 } from "../../../src/lib/onboard/managed-workload/managed-state-volumes.ts";
 import { type MigrationEngine } from "../../../src/lib/onboard/managed-workload/managed-state-volume-migration.ts";
-import { MANAGED_STATE_COPY_IMAGE } from "../../../src/lib/onboard/managed-workload/managed-state-volume-copy.ts";
+import {
+  MANAGED_STATE_COPY_IMAGE,
+  managedStateVolumeMountArgs,
+} from "../../../src/lib/onboard/managed-workload/managed-state-volume-copy.ts";
 
 const API_KEY = "nemoclaw-managed-activation-e2e-key";
 
 /** Real engine/provider evidence; deterministic identity and failure matrices stay in unit tests. */
-export async function qualifyManagedVolumeMigration({
-  artifacts,
-  cleanup,
-  progress,
-}: Pick<RuntimeFixtures, "artifacts" | "cleanup" | "progress">): Promise<void> {
-  progress.phase("create owned legacy state on the selected container engine");
+export async function qualifyManagedVolumeMigration(
+  { artifacts, cleanup }: Pick<RuntimeFixtures, "artifacts" | "cleanup">,
+  phases: { copy: () => void; evidence: () => void },
+): Promise<void> {
   const runtimeProvider =
     process.env.NEMOCLAW_GATEWAY_RUNTIME === "podman"
       ? createCurrentPodmanRuntimeProviderBundle()
@@ -139,8 +140,7 @@ export async function qualifyManagedVolumeMigration({
       "--network",
       "none",
       "--read-only",
-      "--mount",
-      `type=volume,src=${volume},dst=/state,volume-nocopy${readonly ? ",readonly" : ""}`,
+      ...managedStateVolumeMountArgs(runtimeProvider.identity.id, volume, "/state", readonly),
       "--entrypoint",
       "/usr/local/bin/node",
       MANAGED_STATE_COPY_IMAGE,
@@ -160,7 +160,7 @@ export async function qualifyManagedVolumeMigration({
   );
   const readback = `const fs=require("node:fs"); const s=fs.lstatSync("/state/marker"); process.stdout.write(JSON.stringify([fs.readFileSync("/state/marker","utf8"),s.uid,s.gid,s.mode,fs.readlinkSync("/state/link")]));`;
   const before = probe(root.resourceIdentity, readback);
-  progress.phase("reject a failed real helper then migrate and select retained state");
+  phases.copy();
   // The process really exits nonzero; no mocked success or synthetic filesystem is involved.
   const failCopy: MigrationEngine = (args, timeout) =>
     run(args[0] === "create" ? [...args.slice(0, -1), "process.exit(42)"] : args, timeout);
@@ -176,7 +176,7 @@ export async function qualifyManagedVolumeMigration({
     before,
     before,
   ]);
-  progress.phase("record real-engine migration evidence");
+  phases.evidence();
   await artifacts.writeJson("managed-volume-migration.json", {
     provider: runtimeProvider.identity.id,
     source: root.resourceIdentity,
@@ -246,6 +246,14 @@ type RuntimeFixtures = {
   readonly lifecycle: LifecyclePhaseFixture;
   readonly progress: TestProgress;
   readonly sandbox: SandboxClient;
+};
+type ManagedActivationPhases = {
+  readonly agents: Record<
+    ShippedManagedImageAgent,
+    { onboard: () => void; publicLifecycle: () => void; cleanup: () => void }
+  >;
+  readonly hermesSecretBoundary: () => void;
+  readonly externalImages: () => void;
 };
 
 export function managedActivationOnboardArgs(
@@ -822,48 +830,6 @@ export async function verifyExactCleanup(
   });
 }
 
-function enterOnboardPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
-  switch (agent) {
-    case "openclaw":
-      progress.phase("onboard and exercise OpenClaw");
-      return;
-    case "hermes":
-      progress.phase("onboard and exercise Hermes");
-      return;
-    case "langchain-deepagents-code":
-      progress.phase("onboard and exercise Deep Agents Code");
-      return;
-  }
-}
-
-function enterPublicLifecyclePhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
-  switch (agent) {
-    case "openclaw":
-      progress.phase("stop and start OpenClaw through public NemoClaw lifecycle");
-      return;
-    case "hermes":
-      progress.phase("stop and start Hermes through public NemoClaw lifecycle");
-      return;
-    case "langchain-deepagents-code":
-      progress.phase("stop and start Deep Agents Code through public NemoClaw lifecycle");
-      return;
-  }
-}
-
-function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAgent): void {
-  switch (agent) {
-    case "openclaw":
-      progress.phase("destroy and verify OpenClaw cleanup");
-      return;
-    case "hermes":
-      progress.phase("destroy and verify Hermes cleanup");
-      return;
-    case "langchain-deepagents-code":
-      progress.phase("destroy and verify Deep Agents Code cleanup");
-      return;
-  }
-}
-
 export async function collectOnboardFailureRuntimeDiagnostics(
   artifacts: ArtifactSink,
   host: HostCliClient,
@@ -992,8 +958,9 @@ async function qualifyAgent(
   endpointUrl: string,
   agent: ShippedManagedImageAgent,
   contract: ManagedImageContractV1,
+  phases: ManagedActivationPhases,
 ): Promise<void> {
-  const { artifacts, cleanup, host, lifecycle, progress, sandbox } = fixtures;
+  const { artifacts, cleanup, host, lifecycle, sandbox } = fixtures;
   const sandboxName = SANDBOX_NAMES[agent];
   const env = commandEnv(guard, catalogPath, endpointUrl);
   cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
@@ -1002,7 +969,7 @@ async function qualifyAgent(
   cleanup.trackSandbox(host, sandboxName, { env, timeoutMs: 3 * 60_000 });
   await preclean(host, lifecycle, sandbox, sandboxName, env);
 
-  enterOnboardPhase(progress, agent);
+  phases.agents[agent].onboard();
   const onboard = await host.nemoclaw(
     managedActivationOnboardArgs(catalogPath, agent, sandboxName),
     {
@@ -1023,7 +990,7 @@ async function qualifyAgent(
   await runAgentTurn(sandbox, agent, sandboxName, "before", env);
   if (agent === "openclaw") await runOpenClawSubagentTurn(sandbox, sandboxName, env);
   if (agent === "hermes") {
-    progress.phase("prove Hermes secret-boundary refusal before native restart");
+    phases.hermesSecretBoundary();
     await proveHermesRestartSecretBoundary(host, sandbox, sandboxName, env);
   }
   const marker = `managed-activation-${agent}-${Date.now()}`;
@@ -1045,7 +1012,7 @@ async function qualifyAgent(
     },
   );
 
-  enterPublicLifecyclePhase(progress, agent);
+  phases.agents[agent].publicLifecycle();
   const stop = await host.nemoclaw([sandboxName, "stop"], {
     artifactName: `${agent}-public-stop`,
     env,
@@ -1091,7 +1058,7 @@ async function qualifyAgent(
   ).toBe(true);
   await runAgentTurn(sandbox, agent, sandboxName, "after", env);
 
-  enterCleanupPhase(progress, agent);
+  phases.agents[agent].cleanup();
   await sandbox.cleanupSandbox(sandboxName, {
     artifactName: `managed-activation-openshell-delete-${agent}`,
     env,
@@ -1272,9 +1239,11 @@ async function qualifyExternalImage(
   };
 }
 
-export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): Promise<void> {
+export async function qualifyManagedImageActivation(
+  fixtures: RuntimeFixtures,
+  phases: ManagedActivationPhases,
+): Promise<void> {
   const { artifacts, cleanup, host, progress } = fixtures;
-  progress.phase("validate exact candidate catalog and host runtime");
   const catalogPath = requiredCatalogPath();
   const contracts = exactCatalog(catalogPath);
   const containerEngine: ContainerEngine =
@@ -1322,12 +1291,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
       inference.baseUrl,
       agent,
       contracts.get(agent)!,
+      phases,
     );
   }
 
-  progress.phase(
-    "prove buildless external-image onboarding, drift rejection, rebuild, and retention",
-  );
+  phases.externalImages();
   const externalImages = [];
   for (const agent of externalImageActivationAgents(containerEngine)) {
     externalImages.push(

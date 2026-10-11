@@ -11,6 +11,7 @@ import type { ManagedStartupStateRoot } from "../managed-startup/state-roots";
 import {
   MANAGED_STATE_COPY_IMAGE,
   managedStateVolumeCopyProgram,
+  managedStateVolumeMountArgs,
 } from "./managed-state-volume-copy";
 
 type Root = Pick<ManagedStartupStateRoot, "resourceIdentity" | "ownershipLabels" | "mountTarget">;
@@ -570,10 +571,13 @@ export function migrateManagedStateVolume(
         "64",
         "--label",
         `${MIGRATION_LABEL}=${scope.binding}`,
-        "--mount",
-        `type=volume,src=${root.resourceIdentity},dst=/source,readonly,volume-nocopy`,
-        "--mount",
-        `type=volume,src=${scope.destination},dst=/destination,volume-nocopy`,
+        ...managedStateVolumeMountArgs(context.providerId, root.resourceIdentity, "/source", true),
+        ...managedStateVolumeMountArgs(
+          context.providerId,
+          scope.destination,
+          "/destination",
+          false,
+        ),
         "--entrypoint",
         "/usr/local/bin/node",
         MANAGED_STATE_COPY_IMAGE,

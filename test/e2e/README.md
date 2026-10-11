@@ -83,6 +83,10 @@ It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JO
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
 The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
+The `managed-image-protected-runtime` qualification-relay case uses a digest-pinned Node HTTP fixture on an owned internal Docker network.
+It exercises the qualification runner's address inspection and relay, then removes the fixture resources.
+This case needs Docker but no GPU, model, OpenShell sandbox, or provider credential.
+The deterministic qualification-runner tests retain ownership of TCP forwarding, invalid-input coverage, and listener closure.
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
@@ -1095,6 +1099,10 @@ preparation. It checks the selected destination's marker and metadata against th
 retained original, and removes only its disposable fixture volumes and helpers.
 This case needs no inference service, gateway, GPU, or sudo. It proves the engine
 copy and selection boundary, not OpenShell sandbox attachment or agent recovery.
+The helper uses Docker's `--mount volume-nocopy` or Podman's `--volume :nocopy`
+syntax, retaining a read-only source on both engines. Each test declares its own
+phase callbacks; helpers invoke them only when the corresponding operation starts.
+Migration and activation results remain separate, including their cleanup evidence.
 
 The migration case fits the existing assertion budget by removing duplicate or
 deterministic checks from the activation helper:

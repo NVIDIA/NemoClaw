@@ -5,6 +5,21 @@
 export const MANAGED_STATE_COPY_IMAGE =
   "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
 
+/** Podman 5.7 accepts nocopy through --volume, not its --mount parser. */
+export function managedStateVolumeMountArgs(
+  providerId: string,
+  volume: string,
+  target: string,
+  readonly: boolean,
+): [string, string] {
+  return providerId === "podman"
+    ? ["--volume", `${volume}:${target}:${readonly ? "ro" : "rw"},nocopy`]
+    : [
+        "--mount",
+        `type=volume,src=${volume},dst=${target},volume-nocopy${readonly ? ",readonly" : ""}`,
+      ];
+}
+
 /** Runs only inside the isolated helper, with a read-only source volume. */
 export function managedStateVolumeCopyProgram(): string {
   return String.raw`

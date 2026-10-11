@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/onboard/credential-provider-registration.js";
 import { handleFinalizationState } from "../../src/lib/onboard/machine/handlers/finalization.js";
 import type { MessagingTokenDef } from "../../src/lib/onboard/messaging-prep.js";
+import { createSession, normalizeSession } from "../../src/lib/state/onboard-session.js";
 import type { Session } from "../../src/lib/state/onboard-session.js";
 import { withProcessEnv } from "../support/setup-inference-test-harness.js";
 
@@ -97,6 +98,35 @@ async function finalizeMigration(
 }
 
 describe("legacy credential reconciliation", () => {
+  it("keeps the legacy file when only a prior session claims migration (#12859)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-resume-"));
+    const legacyDir = path.join(tmpDir, ".nemoclaw");
+    const legacyFile = path.join(legacyDir, "credentials.json");
+    fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(legacyFile, JSON.stringify({ OPENAI_API_KEY: LEGACY_SECRET }), {
+      mode: 0o600,
+    });
+    try {
+      await withProcessEnv({ HOME: tmpDir, OPENAI_API_KEY: undefined }, async () => {
+        const priorSession = {
+          ...createSession(),
+          migratedLegacyValueHashes: { OPENAI_API_KEY: "a".repeat(64) },
+        };
+        expect(normalizeSession(priorSession)).not.toHaveProperty("migratedLegacyValueHashes");
+        const stagedKeys = stageLegacyCredentialsToEnv();
+        const stagedValues = new Map(stagedKeys.map((key) => [key, process.env[key] ?? ""]));
+
+        await finalizeMigration(stagedKeys, new Set(), stagedValues);
+
+        expect(JSON.parse(fs.readFileSync(legacyFile, "utf8"))).toEqual({
+          OPENAI_API_KEY: LEGACY_SECRET,
+        });
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it.each(REGISTRATION_SCENARIOS)("$label (#7617)", async (scenario) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credential-migration-"));
     const legacyDir = path.join(tmpDir, ".nemoclaw");
@@ -186,7 +216,6 @@ describe("legacy credential reconciliation", () => {
             updateSession: (mutator) => mutator(session) ?? session,
             stagedLegacyValues,
             migratedLegacyKeys,
-            persistMigratedLegacyKeys: () => undefined,
           };
           const registration = createCredentialProviderRegistration(deps);
           const tokenDefs: MessagingTokenDef[] = [
@@ -314,7 +343,6 @@ describe("legacy credential reconciliation", () => {
             providerExists ||= args[1] === "create";
             return result;
           });
-          const persistMigratedLegacyKeys = vi.fn();
           const registration = createCredentialProviderRegistration({
             root: path.join(import.meta.dirname, "../.."),
             runOpenshell:
@@ -324,7 +352,6 @@ describe("legacy credential reconciliation", () => {
             updateSession: (mutator) => mutator(session) ?? session,
             stagedLegacyValues,
             migratedLegacyKeys,
-            persistMigratedLegacyKeys,
           });
           const resolved = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
           await (route === "direct"
@@ -365,7 +392,6 @@ describe("legacy credential reconciliation", () => {
           );
           expect(resolved).toBe(LEGACY_SECRET);
           expect(migratedLegacyKeys).toEqual(new Set(["NVIDIA_API_KEY"]));
-          expect(persistMigratedLegacyKeys).toHaveBeenCalledOnce();
           expect(runOpenshell.mock.calls.flatMap(([args]) => args)).not.toContain(LEGACY_SECRET);
           expect(
             fs.existsSync(legacyFile) ? JSON.parse(fs.readFileSync(legacyFile, "utf8")) : null,
