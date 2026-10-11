@@ -40,15 +40,6 @@ const (
 
 // Docker exec reaches this process through the daemon when an internal network
 // cannot publish a host port. The HTTP request guard still owns authentication.
-// The planned consumer is the managed Docker Desktop WSL private bridge in
-// stacked PR #12664, not a caller present on this branch. Its candidate commit
-// fe78f505674037e8193ad6e8b2e75e573a8e443f owns image-capability validation,
-// Docker authority, container identity, and transaction cleanup. Native Linux
-// keeps its private-IP bridge; older WSL images are rejected before creation.
-// Publication alone leaves existing recipes unchanged. The staged rollout ends
-// only after the caller pins and qualifies the new immutable image and merges.
-// Prior staged-rollout decision (limited to its named commit):
-// https://github.com/NVIDIA/NemoClaw/pull/12944#issuecomment-6102710030
 func forwardStdio(input io.Reader, output io.Writer, address string, timeout time.Duration) error {
 	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
