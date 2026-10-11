@@ -176,7 +176,7 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
     expect(warn.mock.calls[0]?.[0]).not.toContain(SECRET);
   });
 
-  it("warns when an attached provider reports a type without a verified profile", async () => {
+  it("does not warn when an attached generic provider has no verified profile", async () => {
     const warn = vi.fn();
     const run = vi
       .fn<RunProviderCommand>()
@@ -185,9 +185,36 @@ describe("provider profile warnings after a binding mutation (#12940)", () => {
       .mockReturnValueOnce(
         captured(
           0,
-          "Name: test-provider\nType: other-profile\nCredential keys: TEST_TOKEN\nConfig keys: <none>",
+          "Name: test-provider\nType: generic\nCredential keys: TEST_TOKEN\nConfig keys: <none>",
         ),
       );
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      warn,
+      readProfileFile: () => PROFILE_YAML,
+    });
+
+    expect(
+      adapter.importProviderProfile({ target: TARGET, profilePath: "/repo/profile.yaml" }),
+    ).toEqual({ ok: true });
+    await expect(
+      adapter.attachProvider({
+        target: TARGET,
+        sandboxName: "alpha",
+        providerName: "test-provider",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns when the attached provider cannot be inspected after a verified import", async () => {
+    const warn = vi.fn();
+    const run = vi
+      .fn<RunProviderCommand>()
+      .mockReturnValueOnce(captured(0, JSON.stringify(PROFILE)))
+      .mockReturnValueOnce(captured(0))
+      .mockReturnValueOnce(captured(1, "", SECRET));
     const adapter = createCliOpenShellProviderAdapter({
       run,
       warn,

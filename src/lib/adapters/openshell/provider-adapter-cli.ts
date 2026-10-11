@@ -938,10 +938,10 @@ export function createCliOpenShellProviderAdapter(
           target: request.target,
           providerName: request.providerName,
         });
-        if (provider.ok && profiles.has(provider.value.type)) {
-          warnIfVerifiedProfileChanged(request, provider.value.type);
-        } else {
+        if (!provider.ok) {
           warnIncompleteVerification();
+        } else if (profiles.has(provider.value.type)) {
+          warnIfVerifiedProfileChanged(request, provider.value.type);
         }
       } catch {
         warnIncompleteVerification();
