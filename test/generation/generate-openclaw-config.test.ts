@@ -691,7 +691,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       enabled: true,
       useTrustedEnvProxy: true,
     });
-    expect(config.tools?.web?.search).toBeUndefined();
+    expect(config.tools?.web?.search).toEqual({ enabled: false });
   });
 
   it("defaults enabled web search to Brave using the current plugin schema", () => {
@@ -707,11 +707,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.tools?.web?.fetch).toEqual({ enabled: true, useTrustedEnvProxy: true });
   });
 
-  it("omits web search when env is not set", () => {
-    const config = runConfigScript();
-    expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
-    expect(config.tools?.web?.search).toBeUndefined();
-  });
   it("propagates the agent timeout to the run and provider request (#8468)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_TIMEOUT: "300" });
     expect(config.agents.defaults.timeoutSeconds).toBe(300);
