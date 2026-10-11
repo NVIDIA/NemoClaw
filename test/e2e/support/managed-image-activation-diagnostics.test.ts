@@ -35,6 +35,7 @@ import {
   normalizeExternalImageRuntimeId,
   ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS,
   preclean,
+  qualifyAgent,
   summarizeOnboardFailureStartupSignals,
   waitForManagedActivationSandboxDeletion,
   waitForManagedActivationSandboxAbsence,
@@ -866,6 +867,103 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });
+
+  it.each([
+    {
+      stop: 1,
+      start: 0,
+      expectedEvents: ["stop", "tail:-c", expect.stringMatching(/^(docker|podman):ps$/u), "start"],
+      readyCalls: 0,
+      error: "lifecycle output",
+    },
+    {
+      stop: 0,
+      start: 1,
+      expectedEvents: ["stop", "start", "tail:-c", expect.stringMatching(/^(docker|podman):ps$/u)],
+      readyCalls: 0,
+      error: "lifecycle output",
+    },
+    {
+      stop: 1,
+      start: 1,
+      expectedEvents: ["stop", "tail:-c", expect.stringMatching(/^(docker|podman):ps$/u), "start"],
+      readyCalls: 0,
+      error: "lifecycle output",
+    },
+    {
+      stop: 0,
+      start: 0,
+      expectedEvents: ["stop", "start"],
+      readyCalls: 1,
+      error: "reached readiness",
+    },
+  ])(
+    "retains diagnostics before reporting stop=$stop/start=$start",
+    async ({ stop, start, expectedEvents, readyCalls, error }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restart-diagnostics-"));
+      const events: string[] = [];
+      const ok = { exitCode: 0, stdout: "PONG", stderr: "" };
+      const command = vi
+        .fn(async (executable: string, args: readonly string[]) => {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          events.push(`${executable}:${args[0]}`);
+          return { ...ok, stdout: "" };
+        })
+        .mockResolvedValueOnce(ok);
+      const nemoclaw = vi
+        .fn()
+        .mockResolvedValueOnce(ok)
+        .mockImplementationOnce(async () => {
+          events.push("stop");
+          return { ...ok, exitCode: stop, stderr: "lifecycle output" };
+        })
+        .mockImplementationOnce(async () => {
+          events.push("start");
+          return { ...ok, exitCode: start, stderr: "lifecycle output" };
+        });
+      const ready = vi.fn(async () => {
+        throw new Error("reached readiness");
+      });
+      const cleanupSandbox = vi.fn(async () => ok);
+      try {
+        await expect(
+          qualifyAgent(
+            {
+              artifacts: new ArtifactSink(directory),
+              cleanup: { trackDisposable: vi.fn(), trackSandbox: vi.fn() },
+              host: {
+                command,
+                nemoclaw,
+                bestEffortCleanupSandbox: vi.fn(async () => ok),
+                cleanupGatewayRegistration: vi.fn(async () => ok),
+              },
+              lifecycle: {
+                stopGatewayRuntime: vi.fn(),
+                waitForSandboxReadyAfterGatewayRestart: ready,
+              },
+              progress: { phase: vi.fn() },
+              sandbox: {
+                cleanupSandbox,
+                exec: vi.fn(async () => ok),
+                execShell: vi.fn(async () => ok),
+              },
+            } as never,
+            { env: {} } as never,
+            "/unused-catalog.json",
+            "http://inference.invalid/v1",
+            "langchain-deepagents-code",
+            {} as never,
+          ),
+        ).rejects.toThrow(error);
+        expect(events).toEqual(expectedEvents);
+        expect(ready).toHaveBeenCalledTimes(readyCalls);
+        // Only initial cleanup ran; failure evidence precedes later resource deletion.
+        expect(cleanupSandbox).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("installs activation proof plugins through native OpenClaw ownership", () => {
     const script = managedActivationOpenClawPluginScript();
