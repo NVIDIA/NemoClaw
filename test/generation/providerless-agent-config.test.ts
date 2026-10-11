@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import { createManagedWorkloadOnboardRuntime } from "../../src/lib/onboard/managed-workload/onboard-orchestration";
@@ -25,11 +25,7 @@ import {
   patchOpenClawInferenceConfig,
   runInferenceSet,
 } from "../../src/lib/actions/inference-set";
-import {
-  createDeps,
-  OPENCLAW_TARGET,
-  HERMES_TARGET,
-} from "../../src/lib/actions/inference-set.test-support";
+import { createDeps, OPENCLAW_TARGET, HERMES_TARGET } from "../helpers/inference-set";
 import { PROVIDERLESS_INFERENCE_ENV } from "../../src/lib/providerless-inference";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -268,7 +264,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
       ),
     ).toBe(false);
   });
-  it("leaves generated configuration absent when the later route update fails", async () => {
+  it("leaves generated configuration absent when native provider creation fails", async () => {
     const generated = generate(agent, dockerEnvironment(agent));
     expect(generated.result.status, generated.result.stderr).toBe(0);
     const config = generated.read();
@@ -276,7 +272,10 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
       config,
       entry: { name: "alpha", agent, provider: null, model: null },
       target: agent === "hermes" ? HERMES_TARGET : OPENCLAW_TARGET,
-      openshellStatus: 1,
+    });
+    const createProvider = vi.spyOn(deps.providerAdapter!, "createProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "provider creation failed" },
     });
     await expect(
       runInferenceSet(
@@ -284,6 +283,7 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
         deps,
       ),
     ).rejects.toThrow();
+    expect(createProvider).toHaveBeenCalledOnce();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expectAbsent[agent](config);
   });

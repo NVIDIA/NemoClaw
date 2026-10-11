@@ -30,7 +30,7 @@
       "src/lib/runner.ts": 73,
       "src/lib/sandbox-name-contract.ts": 20,
       "src/lib/security/redact.ts": 50,
-      "src/lib/state/mcp-lifecycle-lock.ts": 18,
+      "src/lib/state/mcp-lifecycle-lock.ts": 17,
       "src/lib/state/onboard-session.ts": 35,
       "src/lib/state/registry.ts": 84,
       "src/lib/state/state-root.ts": 21,
@@ -64,7 +64,7 @@
   "allowedCycles": [],
   "maxRootFiles": {
     "src/lib/onboard": 299,
-    "src/lib/actions": 18,
+    "src/lib/actions": 17,
     "src/lib/actions/sandbox": 165,
     "src/lib/state": 30,
     "src/lib/inference": 63,

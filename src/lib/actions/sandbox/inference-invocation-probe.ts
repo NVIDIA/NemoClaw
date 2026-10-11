@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { nativeHostedAgentConfig } from "../../inference/native-provider/agent-config";
 import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import type {
   OpenShellSandboxBufferedCommandExecutor,
@@ -49,6 +51,7 @@ export type SandboxInferenceInvocationInput = {
   model: string;
   preferredInferenceApi: string | null;
   nativeProvider?: boolean;
+  nativeEndpointUrl?: string;
 };
 
 export type SandboxInferenceInvocationResult =
@@ -88,18 +91,36 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     input.preferredInferenceApi,
   );
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const hosted = hostedNativeProvider(input.provider, input.nativeEndpointUrl);
+  const nativeHosted = input.nativeProvider === true ? hosted : undefined;
+  if (input.nativeProvider === true && !useNativeNvidia && !nativeHosted) {
+    throw new Error("Unsupported native inference probe selection");
+  }
   const baseUrl = (
     useNativeNvidia
       ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-      : isNativeNvidiaProvider(input.provider)
-        ? "https://inference.local/v1"
-        : config.inferenceBaseUrl
+      : nativeHosted
+        ? nativeHosted.endpoint
+        : isNativeNvidiaProvider(input.provider) || hosted
+          ? "https://inference.local/v1"
+          : config.inferenceBaseUrl
   ).replace(/\/+$/u, "");
-  const apiBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+  // Gemini's existing OpenAI-compatible API ends in /v1beta/openai, not /v1.
+  const apiBaseUrl =
+    nativeHosted && config.inferenceApi !== "anthropic-messages"
+      ? baseUrl
+      : baseUrl.endsWith("/v1")
+        ? baseUrl
+        : `${baseUrl}/v1`;
+  const attributionHeaders = nativeHosted
+    ? Object.entries(nativeHostedAgentConfig(input.provider, baseUrl)?.headers ?? {}).map(
+        ([name, value]) => `${name}: ${value}`,
+      )
+    : [];
   if (config.inferenceApi === "anthropic-messages") {
     return {
       endpoint: `${apiBaseUrl}/messages`,
-      headers: ["anthropic-version: 2023-06-01"],
+      headers: ["anthropic-version: 2023-06-01", ...attributionHeaders],
       payload: {
         model: input.model,
         max_tokens: MIN_PROBE_REPLY_TOKENS,
@@ -110,7 +131,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   if (config.inferenceApi === "openai-responses" || config.inferenceApi === "responses") {
     return {
       endpoint: `${apiBaseUrl}/responses`,
-      headers: [],
+      headers: attributionHeaders,
       payload: {
         model: input.model,
         input: "Reply with OK",
@@ -120,7 +141,7 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
   }
   return {
     endpoint: `${apiBaseUrl}/chat/completions`,
-    headers: [],
+    headers: attributionHeaders,
     payload: {
       model: input.model,
       [resolveMaxTokensField(input.model)]: resolveProbeReplyTokens(input.provider, input.model),
@@ -137,20 +158,43 @@ export function resolveSandboxInferenceInvocationEndpoint(
   return buildProbeRequest(input).endpoint;
 }
 
+/** Accept only an OpenShell-issued placeholder, never a host credential. */
+function nativeHostedAuthHeaderScript(provider: string): string {
+  const definition = hostedNativeProvider(provider);
+  if (!definition) throw new Error("Unsupported native hosted inference probe");
+  const env = definition.credentialEnv;
+  const value = "${" + env + ":-}";
+  const header = definition.api === "anthropic-messages" ? "x-api-key:" : "Authorization: Bearer";
+  return [
+    `case "${value}" in *[!a-zA-Z0-9:_]*) exit 2 ;; esac`,
+    `printf '%s' "${value}" | LC_ALL=C grep -Eq '^openshell:resolve:env:((v[0-9]{1,20}|s[a-f0-9]{64})_)?${env}$' || exit 2`,
+    `AUTH_HEADER="${header} ${value}"`,
+  ].join("; ");
+}
+
 export function buildSandboxInferenceInvocationCommand(
   input: SandboxInferenceInvocationInput,
 ): string {
   const request = buildProbeRequest(input);
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
+  const nativeHosted =
+    input.nativeProvider === true
+      ? hostedNativeProvider(input.provider, input.nativeEndpointUrl)
+      : undefined;
+  const nativeAuth = useNativeNvidia
+    ? NATIVE_NVIDIA_AUTH_HEADER_SCRIPT
+    : nativeHosted
+      ? nativeHostedAuthHeaderScript(nativeHosted.logicalProvider)
+      : undefined;
   const headerArgs =
     ["Content-Type: application/json", ...request.headers]
       .map((header) => `-H ${shellQuote(header)}`)
-      .join(" ") + (useNativeNvidia ? ' -H "$AUTH_HEADER"' : "");
+      .join(" ") + (nativeAuth ? ' -H "$AUTH_HEADER"' : "");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
-    ...(useNativeNvidia ? [NATIVE_NVIDIA_AUTH_HEADER_SCRIPT] : []),
+    ...(nativeAuth ? [nativeAuth] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
     `code=$(curl -q -sS --connect-timeout 5 --max-time ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} --max-filesize ${INFERENCE_INVOCATION_MAX_RESPONSE_BYTES} -o "$body" -w '%{http_code}' ${headerArgs} --data-binary ${payload} ${endpoint}) || { rc=$?; printf 'curl-error:%s\\n' "$rc"; exit "$rc"; }`,

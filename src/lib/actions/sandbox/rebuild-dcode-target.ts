@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { GATEWAY_PORT } from "../../core/ports";
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
@@ -15,6 +15,7 @@ export type DcodeRebuildRegistryEntry = SandboxGatewayBinding & {
   agent?: string | null;
   dashboardPort?: number | null;
   nativeNvidiaProviderAttachment?: unknown;
+  nativeHostedProviderAttachment?: unknown;
 };
 
 export type DcodeRebuildResumeConfig = {
@@ -26,6 +27,7 @@ export type DcodeRebuildResumeConfig = {
 
 export type ResolvedDcodeRebuildTarget = {
   nativeProvider?: boolean;
+  nativeEndpointUrl?: string;
   agent: typeof DCODE_AGENT_NAME;
   gatewayName: string;
   gatewayPort: number;
@@ -64,6 +66,10 @@ export function resolveDcodeRebuildTarget(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${gatewayPort}.`,
     );
   }
+  const nativeAttachment = recordedNativeProviderAttachment({
+    ...entry,
+    provider: resumeConfig.provider,
+  });
   return {
     agent: DCODE_AGENT_NAME,
     gatewayName,
@@ -71,8 +77,13 @@ export function resolveDcodeRebuildTarget(
     provider: requiredString(resumeConfig.provider, "inference provider"),
     model: requiredString(resumeConfig.model, "inference model"),
     preferredInferenceApi: resumeConfig.preferredInferenceApi,
-    ...(normalizeNativeNvidiaProviderAttachment(entry.nativeNvidiaProviderAttachment)
-      ? { nativeProvider: true }
+    ...(nativeAttachment
+      ? {
+          nativeProvider: true,
+          ...(nativeAttachment.endpointUrl
+            ? { nativeEndpointUrl: nativeAttachment.endpointUrl }
+            : {}),
+        }
       : {}),
   };
 }
