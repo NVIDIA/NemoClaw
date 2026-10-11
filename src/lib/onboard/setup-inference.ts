@@ -805,6 +805,7 @@ export function createSetupInference(
         let nativeHostedEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
         let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
+        let retainedNativeHostedCredential = false;
         let nativeNvidiaProviderAttachment: NativeNvidiaProviderAttachment | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
@@ -975,17 +976,19 @@ export function createSetupInference(
                 "Native hosted setup is missing its provider adapter or ownership store.",
               );
             }
+            const credentialValue =
+              deps.hydrateCredentialEnv(credentialEnv || hosted.credentialEnv) || null;
             nativeHostedProviderAttachment = await prepareHostedNativeProvider({
               provider,
               adapter: deps.providerAdapter,
               gatewayName,
-              credentialValue:
-                deps.hydrateCredentialEnv(credentialEnv || hosted.credentialEnv) || null,
+              credentialValue,
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               recordedSandbox: sandboxName ? deps.getSandbox?.(sandboxName) : null,
               readAuthority: deps.getNativeHostedProviderAuthority,
               writeAuthority: deps.setNativeHostedProviderAuthority,
             });
+            retainedNativeHostedCredential = !credentialValue;
             return null;
           }
 
@@ -1280,7 +1283,7 @@ export function createSetupInference(
             deps.log(
               "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
             );
-          } else if (options.skipHostInferenceSmoke === true) {
+          } else if (options.skipHostInferenceSmoke === true || retainedNativeHostedCredential) {
             deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
           } else {
             await deps.verifyOnboardInferenceSmoke({
