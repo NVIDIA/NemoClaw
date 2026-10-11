@@ -35,6 +35,7 @@ function fixture(startupStatus: "READY" | "FAILED" | "" = "READY") {
   let nextPid = 40_001;
   const processes = new Map<number, readonly string[]>();
   const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const sleep = vi.fn();
   const openApiKeyDescriptor = vi.fn(() => 17);
   const closeApiKeyDescriptor = vi.fn();
   const spawnProcess = vi.fn(
@@ -56,7 +57,7 @@ function fixture(startupStatus: "READY" | "FAILED" | "" = "READY") {
     readProcessArgv: (pid) => processes.get(pid) ?? null,
     openApiKeyDescriptor,
     closeApiKeyDescriptor,
-    sleep: vi.fn(),
+    sleep,
   });
   return {
     closeApiKeyDescriptor,
@@ -64,8 +65,35 @@ function fixture(startupStatus: "READY" | "FAILED" | "" = "READY") {
     openApiKeyDescriptor,
     processes,
     signals,
+    sleep,
     spawnProcess,
   };
+}
+
+function forcedStopFixture(remainingPolls: number) {
+  let alive = true;
+  let forced = false;
+  const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const sleep = vi.fn(() => {
+    remainingPolls -= Number(forced);
+    alive = alive && (!forced || remainingPolls > 0);
+  });
+  const controller = createDockerLlamaCppPrivateBridgeController({
+    processIsAlive: () => alive,
+    signalProcess: (pid, signal) => {
+      signals.push({ pid, signal });
+      forced ||= signal === "SIGKILL";
+    },
+    listProcessIds: () => [40_001],
+    readProcessArgv: () => [
+      process.execPath,
+      path.join(__dirname, "docker-llama-cpp-private-bridge-process.js"),
+      "--transaction",
+      TRANSACTION,
+    ],
+    sleep,
+  });
+  return { alive: () => alive, controller, signals, sleep };
 }
 
 function defaultCredentialOpenerFixture() {
@@ -160,6 +188,42 @@ describe("Docker llama.cpp private bridge controller", () => {
     controller.stopTransaction(TRANSACTION);
     controller.assertStopped(TRANSACTION);
     expect(signals).toEqual([{ pid: 40_001, signal: "SIGTERM" }]);
+  });
+
+  it("waits for forced process exit before reporting the transaction stopped", () => {
+    const { alive, controller, signals, sleep } = forcedStopFixture(2);
+    let elapsed = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => (elapsed += 1_000));
+    try {
+      controller.stopTransaction(TRANSACTION);
+      controller.assertStopped(TRANSACTION);
+      expect(signals).toEqual([
+        { pid: 40_001, signal: "SIGTERM" },
+        { pid: 40_001, signal: "SIGKILL" },
+      ]);
+      expect(sleep).toHaveBeenCalled();
+      expect(alive()).toBe(false);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("reports a process that remains alive after forced stop", () => {
+    const { alive, controller, signals } = forcedStopFixture(Number.POSITIVE_INFINITY);
+    let elapsed = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => (elapsed += 1_000));
+    try {
+      expect(() => controller.stopTransaction(TRANSACTION)).toThrow(
+        `process 40001 for transaction ${TRANSACTION} remained active after SIGKILL`,
+      );
+      expect(signals).toEqual([
+        { pid: 40_001, signal: "SIGTERM" },
+        { pid: 40_001, signal: "SIGKILL" },
+      ]);
+      expect(alive()).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("replaces drifted authority for the same transaction without touching another process", () => {

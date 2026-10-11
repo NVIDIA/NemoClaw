@@ -297,7 +297,12 @@ export function createDockerLlamaCppPrivateBridgeController(
     return matches[0]!;
   };
 
-  const stopProcessIds = (matches: readonly number[]): void => {
+  const waitForExit = (pid: number, deadline: number): boolean => {
+    while (processIsAlive(pid) && Date.now() < deadline) sleep(PROCESS_EXIT_POLL_MS);
+    return !processIsAlive(pid);
+  };
+
+  const stopProcessIds = (transactionId: string, matches: readonly number[]): void => {
     for (const pid of matches) {
       try {
         signalProcess(pid, "SIGTERM");
@@ -307,12 +312,16 @@ export function createDockerLlamaCppPrivateBridgeController(
     }
     const deadline = Date.now() + PROCESS_EXIT_WAIT_MS;
     for (const pid of matches) {
-      while (processIsAlive(pid) && Date.now() < deadline) sleep(PROCESS_EXIT_POLL_MS);
-      if (processIsAlive(pid)) {
+      if (!waitForExit(pid, deadline)) {
         try {
           signalProcess(pid, "SIGKILL");
         } catch {
           // A concurrently exited exact process is already stopped.
+        }
+        if (!waitForExit(pid, Date.now() + PROCESS_EXIT_WAIT_MS)) {
+          throw new Error(
+            `Docker llama.cpp private bridge process ${String(pid)} for transaction ${transactionId} remained active after SIGKILL.`,
+          );
         }
       }
     }
@@ -329,7 +338,7 @@ export function createDockerLlamaCppPrivateBridgeController(
         return;
       }
       const stale = transactionProcessIds(authority.transactionId);
-      if (stale.length > 0) stopProcessIds(stale);
+      if (stale.length > 0) stopProcessIds(authority.transactionId, stale);
       const apiKeyDescriptor = openApiKeyDescriptor(authority.apiKeyPath);
       let apiKeyOpen = true;
       let startupDescriptor: number | undefined;
@@ -353,7 +362,7 @@ export function createDockerLlamaCppPrivateBridgeController(
         waitForStartup(startupDescriptor, sleep);
         child.unref();
       } catch (error) {
-        stopProcessIds(transactionProcessIds(authority.transactionId));
+        stopProcessIds(authority.transactionId, transactionProcessIds(authority.transactionId));
         throw error;
       } finally {
         if (apiKeyOpen) closeApiKeyDescriptor(apiKeyDescriptor);
@@ -369,7 +378,7 @@ export function createDockerLlamaCppPrivateBridgeController(
       }
     },
     stopTransaction(transactionId: string) {
-      stopProcessIds(transactionProcessIds(transactionId));
+      stopProcessIds(transactionId, transactionProcessIds(transactionId));
     },
   });
 }
