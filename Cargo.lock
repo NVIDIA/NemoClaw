@@ -2598,6 +2598,8 @@ name = "nemoclaw-e2e"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "bollard",
  "fabric-provider",
  "getrandom 0.4.3",
  "http",
@@ -2626,6 +2628,7 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tower",
+ "url",
 ]
 
 [[package]]
@@ -2786,7 +2789,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
- "bollard",
  "bollard-stubs",
  "getrandom 0.4.3",
  "interprocess",

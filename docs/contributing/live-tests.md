@@ -297,7 +297,8 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Gateway Recovery
 
-The SDK's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
+nemoclaw-e2e's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
+It reaches that stage through the SDK's `test-scenarios` setup, which only nemoclaw-e2e enables, then destroys through the public API.
 Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
 The test does not create sandboxes or request inference.
 It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.
@@ -308,9 +309,9 @@ From the repository root:
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
 NEMOCLAW_TEST_GATEWAY_DOCUMENT=/absolute/path/to/gateway.yaml \
 NEMOCLAW_TEST_GATEWAY_STATE=/absolute/path/to/new-state \
-cargo test -p nemoclaw-sdk \
-  managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu \
-  --lib -- --ignored
+cargo test -p nemoclaw-e2e --test integration \
+  managed_gateway::managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu \
+  -- --ignored --exact
 ```
 
 The test checks read-only planning, unchanged apply, stopped/deleted process recovery, retained credential identity, and destroy/reapply.

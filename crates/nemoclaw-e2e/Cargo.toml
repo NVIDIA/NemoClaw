@@ -44,9 +44,13 @@ tokio-stream.workspace = true
 tar.workspace = true
 
 [dev-dependencies]
+base64 = "0.22.1"
+bollard.workspace = true
+nemoclaw-sdk = { path = "../nemoclaw-sdk", features = ["test-scenarios"] }
 k8s-openapi.workspace = true
 kube.workspace = true
 time.workspace = true
+url.workspace = true
 serde-saphyr.workspace = true
 getrandom.workspace = true
 

@@ -29,15 +29,14 @@ slow-timeout = { period = "90s", terminate-after = 2 }
 # platforms without Unix sockets, and the SSH simulator. The fixture provider's
 # ignored test does the same for the provider protocol tests.
 default-filter = '''
-(package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
-| ((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
+((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
 | (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
 | (package(nemoclaw-fixture-provider) & binary(=archive))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^sandbox_readiness::/) | test(/^deployment::/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)
     | test(/^multiple_providers::/) | test(/^remote_service::/)
-    | test(/^inference_discovery::/)
+    | test(/^inference_discovery::/) | test(/^helm_recovery::/)
 ))
 '''
 
@@ -74,11 +73,9 @@ default-filter = '''
 ))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
+    | test(/^managed_gateway::/)
 ))
-| (package(nemoclaw-sdk) & (
-    test(managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu)
-    | test(the_issuer_image_serves_both_documents_over_https)
-))
+| (package(nemoclaw-sdk) & test(the_issuer_image_serves_both_documents_over_https))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
 '''
 
