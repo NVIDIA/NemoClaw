@@ -302,9 +302,17 @@ test.for(hostedCases)(
     );
     expect(config.exitCode, resultText(config)).toBe(0);
     const providerConfig = hermes ? YAML.parse(config.stdout).model : JSON.parse(config.stdout);
+    // OpenClaw startup stamps the supervisor's current revision into the handle.
+    // Compare its credential binding independently of that runtime-generated scope.
+    providerConfig.apiKey = providerConfig.apiKey?.replace(
+      /^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u,
+      "openshell:resolve:env:",
+    );
     expect(providerConfig).toMatchObject({
       [hermes ? "base_url" : "baseUrl"]: selected.endpoint,
-      [hermes ? "api_key" : "apiKey"]: `openshell:resolve:env:${selected.placeholder}`,
+      [hermes ? "api_key" : "apiKey"]: hermes
+        ? `\${${selected.placeholder}}`
+        : `openshell:resolve:env:${selected.placeholder}`,
     });
     progress.phase("verify hosted credential isolation");
     const isolation = await sandbox.exec(sandboxName, hostedCredentialScanCommand(apiKey), {

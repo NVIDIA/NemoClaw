@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { HOSTED_NATIVE_PROVIDERS } from "../../../../src/lib/inference/native-provider/hosted.ts";
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
   SHIPPED_MANAGED_IMAGE_AGENTS,
@@ -144,6 +145,39 @@ describe("Pi managed model catalog generation", () => {
     expect(status).not.toBe(0);
     expect(stderr).toContain("NEMOCLAW_MODEL must not be empty.");
   });
+
+  it.each(HOSTED_NATIVE_PROVIDERS.filter((provider) => provider.api === "openai-completions"))(
+    "generates native $label routing without writing the host credential (#12589)",
+    (provider) => {
+      const { home, status, stderr } = generate({
+        NEMOCLAW_MODEL: "selected-model",
+        NEMOCLAW_UPSTREAM_PROVIDER: provider.logicalProvider,
+        NEMOCLAW_INFERENCE_BASE_URL: provider.endpoint,
+        [provider.credentialEnv]: "host-credential-must-not-be-written",
+      });
+      try {
+        expect(status, stderr).toBe(0);
+        const text = fs.readFileSync(path.join(home, ".pi", "agent", "models.json"), "utf8");
+        expect(JSON.parse(text).providers.openshell).toEqual({
+          api: "openai-completions",
+          apiKey: `\${${provider.credentialEnv}}`,
+          baseUrl: provider.endpoint,
+          models: [{ id: "selected-model" }],
+          ...(provider.logicalProvider === "openrouter-api"
+            ? {
+                headers: {
+                  "HTTP-Referer": "https://www.nvidia.com/nemoclaw/",
+                  "X-OpenRouter-Title": "NVIDIA NemoClaw",
+                },
+              }
+            : {}),
+        });
+        expect(text).not.toContain("host-credential-must-not-be-written");
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("keeps every provider credential out of the generated catalog", () => {
     const { home } = generate({

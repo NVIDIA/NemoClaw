@@ -10,7 +10,8 @@ content:
   type: "how_to"
 ---
 The OpenAI provider routes NemoClaw inference to the OpenAI API through OpenShell.
-The sandbox uses the managed `inference.local` route and does not receive the raw OpenAI API key.
+The agent calls `https://api.openai.com/v1` through a sandbox-attached OpenShell provider.
+OpenShell injects the credential; the sandbox receives only a placeholder.
 
 ## Credential
 

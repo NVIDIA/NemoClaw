@@ -239,6 +239,9 @@ export function prepareSandboxCreatePolicy(
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
       inferenceProvider: intent.inferenceProvider,
+      ...(intent.nativeHostedProviderAttachment
+        ? { nativeHostedProviderAttachment: intent.nativeHostedProviderAttachment }
+        : {}),
       // Channel presets bind `{sandboxName}-<channel>-bridge`; without the name,
       // composing them throws.
       sandboxName: intent.sandboxName,

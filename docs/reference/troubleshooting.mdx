@@ -1331,10 +1331,12 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 ### Onboarding reports a model-catalog HTTP 404
 
-NemoClaw's OpenRouter adapter serves Chat Completions but does not serve a model catalog.
-An `HTTP 404` response from `https://inference.local/v1/models` is expected when the recorded provider is `openrouter-api`.
+The retained legacy OpenRouter shared-route adapter serves Chat Completions but does not serve a model catalog.
+An `HTTP 404` response from `https://inference.local/v1/models` is expected only when the sandbox still uses that legacy shared route with recorded provider `openrouter-api`.
 NemoClaw accepts that response only after a bounded inference request serves the selected model.
 Onboarding and `status` report the route ready when that request succeeds.
+
+New OpenRouter selections use a sandbox-attached native provider. Their readiness check verifies that attachment and sends an inference request to the native endpoint; a shared-route catalog response does not qualify them.
 
 Re-check the route and the recorded provider and model:
 
@@ -1349,7 +1351,7 @@ Confirm the OpenRouter credential and selected model, then continue the recorded
 $$nemoclaw onboard --resume
 ```
 
-For other providers, an `HTTP 404` response still means that the route served no supported model catalog.
+For other shared-route providers, an `HTTP 404` response still means that the route served no supported model catalog.
 Confirm the recorded provider and model, and confirm that the endpoint serves `/v1/models`.
 Then continue the recorded session:
 
@@ -1756,7 +1758,7 @@ nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
 
 ### Trusted route-probe helper is missing
 
-Deep Agents sandboxes created by older NemoClaw images may not contain the image-owned `/usr/local/lib/nemoclaw/dcode-managed-exec` helper. Current `connect`, `status`, and `doctor` fail closed when that helper is missing because NemoClaw cannot run the authoritative `inference.local` route probe safely.
+Deep Agents sandboxes created by older NemoClaw images may not contain the image-owned `/usr/local/lib/nemoclaw/dcode-managed-exec` helper. Current `connect`, `status`, and `doctor` fail closed when that helper is missing because NemoClaw cannot run the authoritative inference check for the selected provider path safely.
 
 If the output says the trusted Deep Agents Code route-probe helper is missing, rebuild the sandbox with the current image and retry the command:
 
@@ -2042,7 +2044,7 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints, it verifies the recorded sandbox attachment and sends the request directly to `https://integrate.api.nvidia.com/v1/chat/completions`; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while NVIDIA Endpoints retries only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+The main `Inference` line checks the provider path from inside the sandbox and sends an inference request over the path the agent uses. For shared-route providers, `status` probes `https://inference.local/v1/models` before it sends the request through `https://inference.local`. For NVIDIA Endpoints and fixed hosted selections with a recorded native attachment, it verifies that attachment and sends the request to the selected native endpoint; it does not probe `inference.local`. When an inference request returns a transient gateway status, `status` makes up to three request attempts before it reports a failure. Shared-route retries repeat the route probe and request, while native providers retry only the native request. It prints the next attempt and two-second delay to stderr before each retry. Each inference request attempt has a 90-second request timeout. If the main line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
 
 For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. If a local-backend diagnostic fails, start the backend. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. Docker Desktop on Windows Subsystem for Linux (WSL) reaches host loopback directly, so its auth-proxy diagnostic is non-authoritative. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration, then rerun onboarding.
 
@@ -2164,7 +2166,7 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 <AgentOnly variant="openclaw">
 
-Every OpenClaw onboarding run with an OpenAI-compatible endpoint sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
+Every OpenClaw onboarding run with a custom OpenAI-compatible endpoint sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
 If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
 Messaging setup is not the root cause.
 

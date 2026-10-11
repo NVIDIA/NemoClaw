@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "./inference-credential.ts";
+import { nativeHostedAgentConfig } from "./inference/native-provider/agent-config.ts";
+import { managedInferenceApiKey } from "./inference-credential.ts";
 
-// The inference.local route replaces this non-secret sentinel at egress.
-// Native NVIDIA routing instead expands the supervisor-issued environment handle.
+// Shared inference routing replaces this sentinel at egress. Native NVIDIA
+// routing instead expands the supervisor-issued environment handle.
 export const HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE";
 
 type HermesManagedProvider = {
   name: string;
-  api_key: typeof HERMES_PROXY_REWRITE_SENTINEL | typeof NVIDIA_INFERENCE_PLACEHOLDER;
+  api_key: string;
   discover_models: true;
   api?: string;
   base_url?: string;
@@ -28,7 +29,7 @@ export type HermesManagedRouting = {
     default: string;
     provider: "custom";
     base_url: string;
-    api_key: typeof HERMES_PROXY_REWRITE_SENTINEL | typeof NVIDIA_INFERENCE_PLACEHOLDER;
+    api_key: string;
     api_mode?: string;
     context_length?: number;
   };
@@ -78,10 +79,13 @@ export function applyHermesManagedRoute(
   config: Record<string, unknown>,
   route: HermesManagedRoute,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
+  const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
+  const apiKey = nativeHosted
+    ? `\${${nativeHosted.credentialEnv}}`
+    : managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   const providerName = route.upstreamProvider || "nemoclaw-inference";
   const providerKey = hermesProviderKey(providerName);
   const apiMode = hermesApiMode(route.inferenceApi);
-  const apiKey = managedInferenceApiKey(route.baseUrl, HERMES_PROXY_REWRITE_SENTINEL);
   const previousUpstream = isObjectRecord(config._nemoclaw_upstream)
     ? config._nemoclaw_upstream
     : {};
@@ -93,6 +97,7 @@ export function applyHermesManagedRoute(
     provider: "custom",
     base_url: route.baseUrl,
     api_key: apiKey,
+    ...(nativeHosted?.headers ? { default_headers: nativeHosted.headers } : {}),
   };
   if (apiMode) modelConfig.api_mode = apiMode;
   if (route.contextWindow !== null && route.contextWindow !== undefined) {
@@ -104,6 +109,7 @@ export function applyHermesManagedRoute(
     name: providerName,
     api: route.baseUrl,
     api_key: apiKey,
+    ...(nativeHosted?.headers ? { default_headers: nativeHosted.headers } : {}),
     default_model: route.model,
     discover_models: true,
   };
@@ -113,6 +119,7 @@ export function applyHermesManagedRoute(
     name: providerName,
     base_url: route.baseUrl,
     api_key: apiKey,
+    ...(nativeHosted?.headers ? { default_headers: nativeHosted.headers } : {}),
     discover_models: true,
   };
   if (apiMode) customProvider.api_mode = apiMode;

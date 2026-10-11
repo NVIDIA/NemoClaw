@@ -97,7 +97,7 @@
       "name": "OpenRouter",
       "status": "tested",
       "endpoint_type": "OpenAI-compatible",
-      "notes": "First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with a host runtime adapter URL; host-side validation and runtime traffic send the default OpenRouter attribution headers."
+      "notes": "First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw attaches the native OpenRouter provider to the selected sandbox; host-side validation and agent requests send the required OpenRouter attribution headers."
     },
     {
       "name": "OpenAI",
@@ -190,7 +190,7 @@
       "name": "LangChain Deep Agents Code",
       "status": "tested",
       "default": false,
-      "notes": "Terminal-oriented coding agent runtime with no in-sandbox gateway or dashboard, built on the Deep Agents SDK. Its manifest is `agents/langchain-deepagents-code/manifest.yaml`, and its binary is `dcode`. Onboard with `nemo-deepagents onboard` or `nemoclaw onboard --agent langchain-deepagents-code`, and follow [the quickstart](/user-guide/deepagents/get-started/quickstart). NemoClaw runs it as a managed agent runtime: unmanaged sandbox, Model Context Protocol (MCP) server, and shell overrides are rejected, and credential-bearing proxy URLs are dropped from persisted shell environment values. Most inference uses OpenShell's `inference.local` endpoint through the Deep Agents Code OpenAI-compatible provider. NVIDIA Endpoints uses a sandbox-attached provider for `integrate.api.nvidia.com`. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
+      "notes": "Terminal-oriented coding agent runtime with no in-sandbox gateway or dashboard, built on the Deep Agents SDK. Its manifest is `agents/langchain-deepagents-code/manifest.yaml`, and its binary is `dcode`. Onboard with `nemo-deepagents onboard` or `nemoclaw onboard --agent langchain-deepagents-code`, and follow [the quickstart](/user-guide/deepagents/get-started/quickstart). NemoClaw runs it as a managed agent runtime: unmanaged sandbox, Model Context Protocol (MCP) server, and shell overrides are rejected, and credential-bearing proxy URLs are dropped from persisted shell environment values. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. Live runtime acceptance, broader launch material, and terminal-agent diagnostics are tracked at open issue #4861."
     }
   ],
 
@@ -208,7 +208,7 @@
     {
       "name": "Managed inference",
       "status": "tested",
-      "notes": "Provider-routed model calls through OpenShell, transparent to the agent. Most providers use `inference.local` inside the sandbox; NVIDIA Endpoints uses a sandbox-attached provider for `integrate.api.nvidia.com`. OpenShell keeps provider credentials outside the sandbox. Supports every entry in the Providers table."
+      "notes": "Provider-routed model calls through OpenShell, transparent to the agent. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. Custom and local providers retain the shared `inference.local` route. OpenShell keeps provider credentials outside the sandbox. Supports every entry in the Providers table."
     },
     {
       "name": "Declarative network policy",

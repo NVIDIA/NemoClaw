@@ -34,6 +34,25 @@ describe("terminal inference finalization dependency", () => {
     });
   });
 
+  it("passes the sandbox native attachment to the terminal inference verifier", async () => {
+    const nativeHostedProviderAttachment = { providerId: "owned-id" };
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
+      load: () => ({
+        sandboxes: { "deep-code": { gatewayName: "nemoclaw", nativeHostedProviderAttachment } },
+      }),
+    } as never);
+    const probeOnboardInferenceInvocation = vi.fn(async () => ({ ok: true }));
+    vi.spyOn(finalizationHandlerRuntime, "loadVerifyDeployment").mockReturnValue({
+      probeOnboardInferenceInvocation,
+    } as never);
+    await finalizationHandlerDeps.probeTerminalInference(input);
+    expect(probeOnboardInferenceInvocation).toHaveBeenCalledExactlyOnceWith({
+      ...input,
+      gatewayName: "nemoclaw",
+      nativeHostedProviderAttachment,
+    });
+  });
+
   it("fails closed when the sandbox gateway identity is unavailable", async () => {
     vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
       load: () => ({ sandboxes: {} }),

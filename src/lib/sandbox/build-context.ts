@@ -157,6 +157,17 @@ function stageReviewedNpmAuditPolicy(rootDir: string, buildCtx: string): void {
   normalizeReadModesForDockerCopy(stagedCiDir);
 }
 
+function stageNativeInferenceConfig(rootDir: string, buildCtx: string): void {
+  const relativeDir = path.join("src", "lib", "inference", "native-provider");
+  fs.mkdirSync(path.join(buildCtx, relativeDir), { recursive: true });
+  for (const fileName of ["agent-config.ts", "hosted.ts", "contract.ts"]) {
+    fs.copyFileSync(
+      path.join(rootDir, relativeDir, fileName),
+      path.join(buildCtx, relativeDir, fileName),
+    );
+  }
+}
+
 function stageLegacySandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),
@@ -194,6 +205,7 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "src", "lib", "providerless-inference.ts"),
     path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
   );
+  stageNativeInferenceConfig(rootDir, buildCtx);
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
@@ -365,6 +377,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "src", "lib", "providerless-inference.ts"),
     path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
   );
+  stageNativeInferenceConfig(rootDir, buildCtx);
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(

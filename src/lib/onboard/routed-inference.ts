@@ -15,7 +15,12 @@
  */
 
 import { HOST_GATEWAY_URL } from "../inference/local";
-import { DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV, loadBlueprintProfile } from "./model-router";
+import { withModelRouterPortLifecycleLock } from "../inference/gateway-route-mutation-lock";
+import {
+  DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV,
+  loadBlueprintProfile,
+  resolveModelRouterPort,
+} from "./model-router";
 
 export type UpsertProviderResult = {
   ok: boolean;
@@ -122,4 +127,19 @@ export async function upsertRoutedProvider(
     resolvedCredentialEnv,
     result,
   };
+}
+
+export function withRoutedInferencePortLock<T>(
+  routed: boolean,
+  operation: () => Promise<T> | T,
+  deps: {
+    withModelRouterPortLifecycleLock?: typeof withModelRouterPortLifecycleLock;
+    getModelRouterPort?: typeof resolveModelRouterPort;
+  },
+): Promise<T> | T {
+  if (!routed) return operation();
+  return (deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock)(
+    (deps.getModelRouterPort ?? resolveModelRouterPort)(),
+    operation,
+  );
 }

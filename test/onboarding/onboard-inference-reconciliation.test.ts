@@ -25,6 +25,7 @@ import {
 } from "../helpers/onboard-split-context";
 import {
   createDirectCommandRouter,
+  runProductionSetupInferenceCredentialBoundary,
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
@@ -44,8 +45,8 @@ const HERMES_API_KEY_PROVIDER_METADATA = [
   "",
 ].join("\n");
 
-const OPENAI_API_PROVIDER_METADATA = [
-  "Name: openai-api",
+const COMPATIBLE_PROVIDER_METADATA = [
+  "Name: compatible-endpoint",
   "Type: openai",
   "Credential keys: OPENAI_API_KEY",
   "Config keys: OPENAI_BASE_URL",
@@ -848,7 +849,7 @@ const { isInferenceRouteReady } = require(${onboardPath});
 console.log(JSON.stringify({
   same: isInferenceRouteReady("team-gateway", "nvidia-prod", "nvidia/nemotron-3-super-120b-a12b"),
   otherModel: isInferenceRouteReady("team-gateway", "nvidia-prod", "nvidia/other-model"),
-  otherProvider: isInferenceRouteReady("team-gateway", "openai-api", "nvidia/nemotron-3-super-120b-a12b"),
+  otherProvider: isInferenceRouteReady("team-gateway", "compatible-endpoint", "nvidia/nemotron-3-super-120b-a12b"),
 }));
 `,
     );
@@ -929,47 +930,35 @@ const { isOpenclawReady } = require(${onboardPath});
     }
   });
 
-  it("uses native Anthropic provider creation without embedding the secret in argv", async () => {
-    await withProcessEnv({ ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 1, stdout: "", stderr: "" }
-            : undefined,
-      });
-
-      await harness.setupInference(
-        "test-box",
-        "claude-sonnet-4-5",
-        "anthropic-prod",
-        "https://api.anthropic.com",
-        "ANTHROPIC_API_KEY",
-      );
-
-      const commands = harness.commands;
-      assert.equal(commands.length, 3);
-      assert.match(commands[0].command, /^provider get -g nemoclaw /);
-      assert.match(commands[1].command, /^provider create -g nemoclaw /);
-      assert.match(commands[1].command, /--type anthropic/);
-      assert.match(commands[1].command, /--credential ANTHROPIC_API_KEY/);
-      assert.doesNotMatch(commands[1].command, /sk-ant-TEST-NOT-A-REAL-VALUE/);
-      assert.match(commands[2].command, /^inference set -g nemoclaw /);
-      assert.match(commands[2].command, /--provider anthropic-prod/);
+  it("creates native Anthropic access without embedding the secret in argv (#12589)", () => {
+    const { commands, credentialEvidence } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "ANTHROPIC_API_KEY",
+      credentialValue: "sk-ant-TEST-NOT-A-REAL-VALUE",
+      endpointUrl: "https://api.anthropic.com",
+      model: "claude-sonnet-4-5",
+      provider: "anthropic-prod",
     });
+    const created = credentialEvidence.providerCommand.argv.join(" ");
+    assert.match(created, /^provider create -g nemoclaw /);
+    assert.match(created, /--type nemoclaw-anthropic-inference-v1/);
+    assert.match(created, /--credential ANTHROPIC_API_KEY/);
+    assert.deepEqual(credentialEvidence.argvContainingSecret, []);
+    assert.deepEqual(credentialEvidence.secretBearingCommands, ["provider create"]);
+    assert.ok(commands.every(({ argv }) => !(argv[0] === "inference" && argv[1] === "set")));
   });
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", async () => {
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }
+            ? { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" }
             : undefined,
       });
 
       await harness.setupInference(
         "test-box",
         "gpt-5.4",
-        "openai-api",
+        "compatible-endpoint",
         "https://api.openai.com/v1",
         "OPENAI_API_KEY",
       );
@@ -977,7 +966,7 @@ const { isOpenclawReady } = require(${onboardPath});
       const commands = harness.commands;
       assert.equal(commands.length, 3);
       assert.match(commands[0].command, /^provider get -g nemoclaw /);
-      assert.match(commands[1].command, /^provider update -g nemoclaw openai-api/);
+      assert.match(commands[1].command, /^provider update -g nemoclaw compatible-endpoint/);
       assert.doesNotMatch(commands[1].command, /--type/);
       assert.match(commands[2].command, /^inference set -g nemoclaw --no-verify/);
     });
@@ -989,8 +978,8 @@ const { isOpenclawReady } = require(${onboardPath});
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
           results: [
-            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
-            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" },
           ],
         },
         {
@@ -1013,7 +1002,7 @@ const { isOpenclawReady } = require(${onboardPath});
         await harness.setupInference(
           "test-box",
           "gpt-5.4",
-          "openai-api",
+          "compatible-endpoint",
           "https://api.openai.com/v1",
           "OPENAI_API_KEY",
         );
@@ -1036,7 +1025,7 @@ const { isOpenclawReady } = require(${onboardPath});
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }],
+          results: [{ status: 0, stdout: COMPATIBLE_PROVIDER_METADATA, stderr: "" }],
         },
         {
           name: "inference-set",
@@ -1054,7 +1043,7 @@ const { isOpenclawReady } = require(${onboardPath});
         result = await harness.setupInference(
           "test-box",
           "gpt-5.4",
-          "openai-api",
+          "compatible-endpoint",
           "https://api.openai.com/v1",
           "OPENAI_API_KEY",
         );

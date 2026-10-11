@@ -332,8 +332,8 @@ describe("patchOpenClawInferenceConfig", () => {
       mode: "merge",
       providers: {
         anthropic: {
-          baseUrl: "https://inference.local",
-          apiKey: "unused",
+          baseUrl: "https://api.anthropic.com",
+          apiKey: "openshell:resolve:env:ANTHROPIC_API_KEY",
           api: "anthropic-messages",
           models: [
             {

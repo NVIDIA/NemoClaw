@@ -6,7 +6,7 @@ import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-ad
 import type { OpenClawConfigUpdate } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import { baseSession, createDeps } from "../../../test/helpers/inference-set";
 
 describe("runInferenceSet OpenClaw routing", () => {
   it("requires recreation instead of silently migrating a legacy NVIDIA sandbox", async () => {
@@ -384,7 +384,7 @@ describe("runInferenceSet OpenClaw routing", () => {
       providerAdapter,
     });
 
-    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps);
+    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(detachProvider).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
@@ -442,10 +442,10 @@ describe("runInferenceSet OpenClaw routing", () => {
       resolveCredentialValue: () => "",
     });
 
-    await runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps);
+    await runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps);
 
     expect(entry).toMatchObject({
-      provider: "openai-api",
+      provider: "nvidia-router",
     });
     expect(entry.nativeNvidiaProviderAttachment).toBeUndefined();
     expect(entry).not.toHaveProperty("nativeNvidiaProviderAuthority");
@@ -554,7 +554,7 @@ describe("runInferenceSet OpenClaw routing", () => {
     });
 
     await expect(
-      runInferenceSet({ provider: "openai-api", model: "gpt-5.4", noVerify: true }, deps),
+      runInferenceSet({ provider: "nvidia-router", model: "gpt-5.4", noVerify: true }, deps),
     ).rejects.toThrow("Could not detach native NVIDIA provider from sandbox 'alpha'");
 
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();

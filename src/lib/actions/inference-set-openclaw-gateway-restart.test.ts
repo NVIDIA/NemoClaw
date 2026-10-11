@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { defaultInferenceGatewayRestart } from "./inference-set-gateway-restart";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import { baseSession, createDeps } from "../../../test/helpers/inference-set";
 
 const nativeNvidiaReceipt = {
   schemaVersion: 1 as const,

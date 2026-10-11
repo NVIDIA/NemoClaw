@@ -668,8 +668,8 @@ startGateway(null).catch((error) => {
     assert.equal(evidence.parentCredentialUnchanged, true);
   });
 
-  it("uses the OpenShell 0.0.116 provider path without a compatibility-profile mutation", () => {
-    const { commands } = runProductionSetupInferenceCredentialBoundary({
+  it("creates native OpenAI access through the production credential boundary (#12589)", () => {
+    const { commands, credentialEvidence } = runProductionSetupInferenceCredentialBoundary({
       credentialEnv: "OPENAI_API_KEY",
       credentialValue: "sk-TEST-NOT-A-REAL-VALUE",
       endpointUrl: "https://api.openai.com/v1",
@@ -677,25 +677,23 @@ startGateway(null).catch((error) => {
       provider: "openai-api",
     });
     const commandSequence = commands.map(({ argv }) => argv.join(" "));
-
-    assert.equal(commandSequence[0], "inference get -g nemoclaw");
-    assert.equal(commandSequence[1], "provider get -g nemoclaw openai-api");
     assert.ok(
       commandSequence.some((command) =>
-        /^provider update -g nemoclaw openai-api(?: |$)/.test(command),
+        command.includes("provider profile -g nemoclaw export nemoclaw-openai-inference-v1"),
       ),
     );
     assert.ok(
-      commandSequence.some((command) =>
-        /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
-          command,
-        ),
+      commandSequence.some(
+        (command) =>
+          /^provider create -g nemoclaw/.test(command) &&
+          command.includes("nemoclaw-openai-api-v1"),
       ),
     );
-    assert.ok(
-      commands.every(({ argv }) => !(argv[0] === "provider" && argv[1] === "profile")),
-      `unexpected compatibility-profile command: ${commandSequence.join(" | ")}`,
-    );
+    assert.ok(commands.every(({ argv }) => !(argv[0] === "inference" && argv[1] === "set")));
+    assert.deepEqual(credentialEvidence.argvContainingSecret, []);
+    assert.deepEqual(credentialEvidence.secretBearingCommands, ["provider create"]);
+    assert.equal(credentialEvidence.providerCommand.env.OPENAI_API_KEY, "sk-TEST-NOT-A-REAL-VALUE");
+    assert.equal(credentialEvidence.parentCredentialUnchanged, true);
   });
 
   it.each(["unreadable selection", "native model edit"])(
@@ -834,13 +832,13 @@ const { createSandbox } = require(${onboardPath});
     30_000,
   );
 
-  it("accepts a complete configured route from the typed observer", async () => {
+  it("accepts a complete configured legacy custom route from the typed observer", async () => {
     const route = createInferenceRouteHelpers({
       observeInferenceRoute: () => ({
         ok: true,
         value: {
           state: "configured",
-          route: { provider: "openai-api", model: "gpt-5.4" },
+          route: { provider: "compatible-endpoint", model: "gpt-5.4" },
         },
       }),
     });
@@ -852,7 +850,7 @@ const { createSandbox } = require(${onboardPath});
             ? {
                 status: 0,
                 stdout:
-                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                  "Name: compatible-endpoint\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
                 stderr: "",
               }
             : undefined,
@@ -862,12 +860,12 @@ const { createSandbox } = require(${onboardPath});
       await harness.setupInference(
         "test-box",
         "gpt-5.4",
-        "openai-api",
+        "compatible-endpoint",
         "https://api.openai.com/v1",
         "OPENAI_API_KEY",
       );
 
-      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw compatible-endpoint");
       assert.equal(harness.commands.length, 3);
     });
   });

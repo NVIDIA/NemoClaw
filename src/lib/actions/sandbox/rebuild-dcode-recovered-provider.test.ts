@@ -34,7 +34,7 @@ describe("rebuildSandbox DCode recovered provider", () => {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("Malformed native NVIDIA provider attachment");
+      ).rejects.toThrow("Malformed native provider attachment; sandbox is untouched");
 
       expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
       expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();

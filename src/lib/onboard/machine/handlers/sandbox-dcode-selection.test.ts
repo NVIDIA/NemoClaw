@@ -210,6 +210,7 @@ describe("handleSandboxState live DCode selection", () => {
       "model",
       "openai-completions",
       null,
+      false,
     );
     expect(calls.createSandbox.mock.calls[0]?.at(-2)).toEqual({
       resolved: expect.any(Object),
@@ -245,20 +246,50 @@ describe("handleSandboxState live DCode selection", () => {
     });
   });
 
-  it("reuses a ready sandbox only after the live selection is verified (#6311)", async () => {
-    const getDcodeSelectionDrift = vi.fn(async () => ({ changed: false, unknown: false }));
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      getDcodeSelectionDrift,
-      getSandboxRegistryEntry: (name) => dcodeRegistryEntry(name),
-    });
+  it.each([
+    undefined,
+    {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-openai-inference-v1",
+      providerName: "nemoclaw-openai-api-v1",
+      providerId: "provider-id",
+    },
+  ])(
+    "uses the recorded attachment when verifying a ready sandbox: %j",
+    async (nativeHostedProviderAttachment) => {
+      const getDcodeSelectionDrift = vi.fn(async () => ({
+        changed: false,
+        unknown: false,
+      }));
+      const { deps, calls } = createDeps({
+        getSandboxReuseState: () => "ready",
+        getDcodeSelectionDrift,
+        getSandboxRegistryEntry: (name) => ({
+          ...dcodeRegistryEntry(name, {
+            provider: "openai-api",
+            model: "model",
+          }),
+          nativeHostedProviderAttachment,
+        }),
+      });
 
-    await handleSandboxState(dcodeOptions(deps));
+      await handleSandboxState({
+        ...dcodeOptions(deps),
+        provider: "openai-api",
+      });
 
-    expect(getDcodeSelectionDrift).toHaveBeenCalledOnce();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
-  });
+      expect(getDcodeSelectionDrift).toHaveBeenCalledExactlyOnceWith(
+        "saved",
+        "openai-api",
+        "model",
+        "openai-completions",
+        null,
+        Boolean(nativeHostedProviderAttachment),
+      );
+      expect(calls.createSandbox).not.toHaveBeenCalled();
+      expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
+    },
+  );
 
   it("reuses a ready OpenRouter-compatible sandbox after endpoint-aware verification (#9555)", async () => {
     const endpointUrl = "https://openrouter.ai/api/v1/";
@@ -286,6 +317,7 @@ describe("handleSandboxState live DCode selection", () => {
       "nvidia/nemotron-3-ultra-550b-a55b",
       "openai-completions",
       endpointUrl,
+      false,
     );
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");

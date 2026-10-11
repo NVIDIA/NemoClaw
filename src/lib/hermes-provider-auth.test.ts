@@ -195,6 +195,66 @@ describe("Hermes provider OpenShell credential handoff", () => {
     }
   });
 
+  it.each(["oauth", "api_key"])(
+    "hands %s credentials to native registration without creating a legacy provider",
+    async (method) => {
+      const auth = loadAuth();
+      const runOpenshell = vi.fn();
+      const registerInferenceCredential = vi.fn(async () => ({ credentialEnv: "OPENAI_API_KEY" }));
+      const state =
+        method === "api_key"
+          ? await auth.ensureHermesProviderApiKeyCredentials("alpha", {
+              apiKey: "host-secret",
+              runOpenshell,
+              registerInferenceCredential,
+            })
+          : await auth.ensureHermesProviderOAuthCredentials("alpha", {
+              runOpenshell,
+              registerInferenceCredential,
+              noBrowser: true,
+              log: () => {},
+              fetch: async (url: string | URL) =>
+                new Response(
+                  JSON.stringify(
+                    String(url).endsWith("/api/oauth/device/code")
+                      ? {
+                          device_code: "device",
+                          user_code: "user",
+                          verification_uri: "https://portal.example/verify",
+                          expires_in: 900,
+                          interval: 1,
+                        }
+                      : String(url).endsWith("/api/oauth/token")
+                        ? {
+                            access_token: "access-token",
+                            refresh_token: "refresh-token",
+                            expires_in: 900,
+                            token_type: "Bearer",
+                          }
+                        : {
+                            api_key: "host-secret",
+                            key_id: "key-id",
+                            expires_in: 1800,
+                            inference_base_url: "https://staging.nous.example/v1",
+                          },
+                  ),
+                  { status: 200, headers: { "Content-Type": "application/json" } },
+                ),
+            });
+      expect(registerInferenceCredential).toHaveBeenCalledExactlyOnceWith({
+        apiKey: "host-secret",
+        credentialEnv: method === "api_key" ? "NOUS_API_KEY" : "OPENAI_API_KEY",
+        baseUrl:
+          method === "api_key"
+            ? "https://inference-api.nousresearch.com/v1"
+            : "https://staging.nous.example/v1",
+      });
+      expect(state.credential_env).toBe("OPENAI_API_KEY");
+      expect(runOpenshell).not.toHaveBeenCalled();
+      expect(JSON.stringify(state)).not.toMatch(/host-secret|access-token|refresh-token/u);
+    },
+  );
+
   it("registers a separate managed-tool refresh provider without writing raw OAuth state", async () => {
     const originalHome = process.env.HOME;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tool-oauth-"));
