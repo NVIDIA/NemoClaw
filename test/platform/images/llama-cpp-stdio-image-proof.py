@@ -26,7 +26,7 @@ def docker(*arguments: str) -> str:
     ).strip()
 
 
-def cleanup(*arguments: str) -> None:
+def cleanup(*arguments: str) -> bool:
     try:
         result = subprocess.run(
             ("docker", *arguments), check=False, capture_output=True,
@@ -34,8 +34,10 @@ def cleanup(*arguments: str) -> None:
         )
         if result.returncode != 0:
             print("Docker proof cleanup failed", file=sys.stderr)
-    except subprocess.TimeoutExpired:
-        print("Docker proof cleanup timed out", file=sys.stderr)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        print("Docker proof cleanup unavailable or timed out", file=sys.stderr)
+        return False
 
 
 def forward(container: str, authorization: str) -> tuple[int, bytes, bytes]:
@@ -143,9 +145,11 @@ def prove(image: str, directory: Path) -> None:
                 print("Docker proof logs unavailable", file=sys.stderr)
         raise
     finally:
-        if container:
-            cleanup("rm", "--force", container)
-        cleanup("network", "rm", network)
+        primary_failure = sys.exc_info()[0] is not None
+        container_removed = not container or cleanup("rm", "--force", container)
+        network_removed = cleanup("network", "rm", network)
+        if not (container_removed and network_removed) and not primary_failure:
+            raise RuntimeError("Docker proof resource cleanup failed")
 
 
 if __name__ == "__main__":

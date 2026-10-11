@@ -190,6 +190,19 @@ function runCandidateIndexFilter(filter: string, candidate: unknown, amd64: stri
 }
 
 describe("llama.cpp image PR workflow", () => {
+  it("fails image proof on resource cleanup failure while preserving primary errors", () => {
+    const result = spawnSync(
+      "python3",
+      ["test/platform/images/llama-cpp-stdio-image-proof-test.py"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 10_000,
+      },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+
   const config = required(workflow.jobs?.config, "config job is missing");
   const build = required(workflow.jobs?.["pr-build"], "native PR build job is missing");
   const buildArgGuard = namedStep(build, "Validate native PR image build args");
