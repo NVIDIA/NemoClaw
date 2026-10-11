@@ -82,7 +82,8 @@ The `lifecycle` profile selects the isolated bundle fixtures and native-state te
 The `lifecycle` step passes the platform's bundle as `NEMOCLAW_TEST_BUNDLE`, the tests' only input; each provider's contract tests run the provider Cargo built from the checkout.
 CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
 Each platform's build-and-test job and bundle job run in parallel on separate runners; its lifecycle workers start when both finish.
-Linux and macOS run two nextest hash partitions on separate runners and Windows runs three, each with four test slots.
+Linux and macOS run two nextest slice partitions on separate runners and Windows runs three, each with four test slots.
+A slice partition deals the sorted lifecycle tests round-robin, which spreads the slow e2e scenarios evenly; adding or removing a test moves later tests to other partitions.
 Each platform starts its workers after its own jobs; it does not wait for other platforms.
 The existing `Test / PLATFORM` required checks succeed only when that platform's build, bundle, and lifecycle jobs succeed.
 After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.
@@ -111,8 +112,8 @@ Plain `cargo ci` still runs the complete local suite.
 After `cargo ci build` and `cargo ci bundle`, select one partition explicitly:
 
 ```sh
-cargo ci lifecycle --partition hash:1/2
-cargo ci lifecycle --partition hash:2/2
+cargo ci lifecycle --partition slice:1/2
+cargo ci lifecycle --partition slice:2/2
 ```
 
 To reproduce the archive handoff, run `cargo ci archive` after building.
@@ -124,7 +125,7 @@ Copy both archives into `.build/ci` and the bundle into `dist/PLATFORM` in a sep
 
 ```sh
 tar -xf .build/ci/lifecycle-inputs.tar
-.build/ci/nemoclaw-build ci lifecycle --archive-file .build/ci/lifecycle.tar.zst --partition hash:1/2
+.build/ci/nemoclaw-build ci lifecycle --archive-file .build/ci/lifecycle.tar.zst --partition slice:1/2
 ```
 
 The worker remaps test working directories to this checkout and extracts nextest files into `.build/ci/extracted`.

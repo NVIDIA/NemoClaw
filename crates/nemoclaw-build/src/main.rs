@@ -64,7 +64,7 @@ enum Action {
         /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
         /// archive, live-docker, and live-kind run only when named.
         step: Option<String>,
-        /// Nextest partition for an explicitly selected lifecycle run (for example hash:1/2).
+        /// Nextest partition for an explicitly selected lifecycle run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
         /// Run lifecycle tests from a nextest archive instead of compiling them.

@@ -158,13 +158,18 @@ jobs:
         run: |
           tar -xf .build/ci/lifecycle-inputs.tar
           tar -xf .build/ci/bundle.tar
+      # Slices deal the platform's sorted lifecycle tests round-robin, so the
+      # slow e2e scenarios, which sort next to each other, split evenly. Hash
+      # buckets left one Linux partition about 50 s slower than the other.
+      # A slice depends on the selected test list: adding a test moves later
+      # tests to other partitions.
       - name: Execute lifecycle partition without compiling
         env:
           LIFECYCLE_SHARD: ${{ matrix.shard }}
           LIFECYCLE_SHARDS: ${{ strategy.job-total }}
         run: >-
           .build/ci/nemoclaw-build ci lifecycle
-          --partition "hash:${LIFECYCLE_SHARD}/${LIFECYCLE_SHARDS}"
+          --partition "slice:${LIFECYCLE_SHARD}/${LIFECYCLE_SHARDS}"
           --archive-file .build/ci/lifecycle.tar.zst
       - name: Upload lifecycle timings
         if: always()
