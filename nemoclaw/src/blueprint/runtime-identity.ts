@@ -993,7 +993,7 @@ export async function prepareRuntimeIdentity(
   );
   if (profileExport.exitCode !== 0) {
     throw new Error(
-      `Failed to inspect runtime identity provider profile '${config.provider_type}': ${deps.formatError(commandOutput(profileExport))}`,
+      `Failed to inspect runtime identity provider profile '${config.provider_type}': ${deps.formatError(commandOutput(profileExport), [clientId, refreshToken, clientSecret ?? ""])}`,
     );
   }
   let importedProfile: ParsedRuntimeIdentityProfile;

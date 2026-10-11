@@ -493,10 +493,17 @@ describe("runtime identity contract", () => {
   it("stops before provider creation when a fresh import cannot be verified", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
-      { exitCode: 1, stdout: "", stderr: "export denied" },
+      {
+        exitCode: 1,
+        stdout: "export denied for client-id",
+        stderr: "refresh-secret client-secret",
+      },
     ]);
 
-    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/export denied/);
+    const error = await prepareRuntimeIdentity(config, deps).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("export denied for <redacted>");
+    expect((error as Error).message).not.toMatch(/client-id|refresh-secret|client-secret/u);
     expect(calls.map(({ args }) => commandKey(args))).not.toContain(
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
     );
