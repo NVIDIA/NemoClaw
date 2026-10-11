@@ -60,10 +60,12 @@ filter = 'binary_id(=openshell-provider::contract)'
 slow-timeout = { period = "12s", terminate-after = 2 }
 
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
-# images and owned inputs these tests read. One at a time: they share one engine.
+# images and owned inputs these tests read. The Docker tests share one engine,
+# so they run one at a time; the offline runtime rebuild uses no engine and
+# compiles alongside them.
 [profile.live-docker]
 inherits = "ci"
-test-threads = 1
+test-threads = 2
 slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
 (package(nemoclaw-runtime) & test(/^ollama_cache::/))
@@ -95,3 +97,11 @@ path = "live-kind.xml"
 
 [profile.live-docker.junit]
 path = "live-docker.xml"
+
+[test-groups]
+docker-engine = { max-threads = 1 }
+
+# Everything but the rebuild uses the engine.
+[[profile.live-docker.overrides]]
+filter = 'not (package(nemoclaw-build) & test(retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache))'
+test-group = "docker-engine"
