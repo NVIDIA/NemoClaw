@@ -146,7 +146,6 @@ const {
 const {
   OllamaProbeFailureTracker,
 }: typeof import("./onboard/ollama-probe-failure-tracker") = require("./onboard/ollama-probe-failure-tracker");
-const crypto = require("node:crypto");
 const os = require("os");
 const path = require("path");
 const runner: typeof import("./runner") = require("./runner");
@@ -795,53 +794,15 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
 // branch that upserts a placeholder under the same env-key name).
 const stagedLegacyValues: Map<string, string> = new Map<string, string>();
 
-// Env-keys whose successful gateway upsert actually used the staged legacy
-// value. Seeded from the persisted onboard session at the start of every
-// run so a `--resume` invocation that skips already-completed upserts still
-// remembers the migrations the prior attempt committed. The post-onboard
+// Env-keys whose successful gateway upsert used the staged legacy value in
+// this run. A resumed run starts empty because an earlier write cannot prove
+// the gateway still holds the credential. The post-onboard
 // legacy-file cleanup is gated on `stagedLegacyKeys ⊆ migratedLegacyKeys`
 // so picking a local inference provider, disabling a preselected messaging
 // channel, or any other path that upserts a different value under the same
 // env-key name leaves the file alone instead of stranding the user's only
 // copy.
 const migratedLegacyKeys: Set<string> = new Set<string>();
-
-// SHA-256 hex digest of `value`. Used to fingerprint migrated legacy
-// secrets in the persisted onboard session so a later `--resume` can
-// detect when the legacy file value was edited between runs (or another
-// session is on disk with stale entries) and refuse to inherit a stale
-// "migrated" mark.
-function legacyValueHash(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-// Mirror the in-memory `migratedLegacyKeys` set into the persisted onboard
-// session along with each entry's value hash. `--resume` invocations that
-// skip the upsert wrappers entirely use this to inherit migration state
-// from the previous attempt — but only when the staged value at restore
-// time still hashes to the same digest, so an edit to the legacy file or
-// an out-of-band gateway reset cannot satisfy the cleanup gate.
-function persistMigratedLegacyKeys(): void {
-  try {
-    const hashes: Record<string, string> = {};
-    for (const key of migratedLegacyKeys) {
-      const stagedValue = stagedLegacyValues.get(key);
-      if (stagedValue !== undefined) {
-        hashes[key] = legacyValueHash(stagedValue);
-      }
-    }
-    onboardSession.updateSession((current: Session) => {
-      current.migratedLegacyValueHashes = hashes;
-      return current;
-    });
-  } catch {
-    // updateSession can throw if the session file isn't yet writable
-    // (e.g. very early in the run before lockless state is established).
-    // The cleanup gate in this same process still consults the in-memory
-    // set, so a missed write only matters if THIS run later crashes and
-    // a future --resume needs the persisted value. Best effort.
-  }
-}
 
 const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifier({
   runOpenshell,
@@ -857,7 +818,6 @@ const registration = credentialProviderRegistration.createCredentialProviderRegi
   updateSession: onboardSession.updateSession,
   stagedLegacyValues,
   migratedLegacyKeys,
-  persistMigratedLegacyKeys,
 });
 const { applyMessagingProviders, upsertProvider, providerMatchesGatewayCredential } = registration;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
@@ -927,7 +887,7 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
   ...reasoningMode.compatibleEndpointReasoningConfigureDeps,
 });
 
-const { promptRemoteModel, promptInputModel } = modelPrompts;
+const { promptRemoteModel, promptInputModel, recordDefaultModelSelection } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
 
@@ -1950,6 +1910,7 @@ async function handleRemoteProviderSelection(
       remoteConfig.defaultModel;
     if (isNonInteractive()) {
       state.model = defaultModel;
+      recordDefaultModelSelection(state, defaultModel, requestedModel, recoveredFromSandbox);
     } else {
       let hermesProviderModels: string[] = [];
       try {
@@ -1966,6 +1927,8 @@ async function handleRemoteProviderSelection(
         );
       }
       state.model = await promptRemoteModel(remoteConfig.label, selected.key, defaultModel, null, {
+        onModelSelected: state.onModelSelected,
+        catalogModelSource: modelPrompts.providerModelCatalogSource(hermesProviderModels),
         otherShowsFullList: true,
         remoteModelOptions: { [selected.key]: hermesProviderModels },
         topLevelModelLimit: 10,
@@ -2055,7 +2018,10 @@ async function handleRemoteProviderSelection(
       defaultModel,
       backToSelection: BACK_TO_SELECTION,
       isNonInteractive,
-      promptInputModel,
+      promptInputModel: (label, defaultModel, validator) =>
+        promptInputModel(label, defaultModel, validator, {
+          onModelSelected: state.onModelSelected,
+        }),
       replaceNamedCredential,
       credentialMutationGuard: credentialMutationGuardFor(state),
       exitProcess: (code) => process.exit(code),
@@ -2075,6 +2041,7 @@ async function handleRemoteProviderSelection(
     }
     if (isNonInteractive()) {
       state.model = defaultModel;
+      recordDefaultModelSelection(state, defaultModel, requestedModel, recoveredFromSandbox);
       state.assertRouteCompatible?.();
       if (useNoAuth) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
       else
@@ -2162,6 +2129,7 @@ async function handleRemoteProviderSelection(
     while (true) {
       if (isNonInteractive()) {
         state.model = defaultModel;
+        recordDefaultModelSelection(state, defaultModel, requestedModel, recoveredFromSandbox);
       } else if (openrouterSelection.isOpenRouterProvider(selected.key)) {
         state.model = await openrouterSelection.selectModel({
           state,
@@ -2177,9 +2145,12 @@ async function handleRemoteProviderSelection(
           selected.key,
           defaultModel,
           modelValidator,
+          { onModelSelected: state.onModelSelected },
         );
       } else {
-        state.model = await promptInputModel(remoteConfig.label, defaultModel, modelValidator);
+        state.model = await promptInputModel(remoteConfig.label, defaultModel, modelValidator, {
+          onModelSelected: state.onModelSelected,
+        });
       }
       if (isBackToSelection(state.model)) {
         console.log("  Returning to provider selection.");
@@ -2618,6 +2589,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     span: null,
   };
   let [completed, preserveIncompleteSession, preserveDeferredExitSession] = [false, false, false];
+  const telemetryCompletion = onboardSessionBootstrap.createOnboardOperationCompletion({
+    sandboxName: initialEntryOptions.requestedSandboxName ?? undefined,
+    pending: opts.rebuildPolicySourcePath !== undefined,
+    getSandbox: registry.getSandbox,
+    updateSandbox: registry.updateSandbox,
+  });
   registerIncompleteOnboardExitHandlerForSession(
     { ...onboardSession, releaseOnboardLock: portableRetirementEntry.release },
     () => completed || preserveIncompleteSession,
@@ -2709,15 +2686,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       for (const key of stagedLegacyKeys) {
         const value = process.env[key];
         if (value) stagedLegacyValues.set(key, value);
-      }
-      if (resume) {
-        const persistedHashes = session?.migratedLegacyValueHashes ?? {};
-        for (const [key, hash] of Object.entries(persistedHashes)) {
-          if (typeof key !== "string" || typeof hash !== "string") continue;
-          const currentValue = stagedLegacyValues.get(key);
-          if (currentValue === undefined || legacyValueHash(currentValue) !== hash) continue;
-          migratedLegacyKeys.add(key);
-        }
       }
       if (stagedLegacyKeys.length > 0) {
         console.error(
@@ -2830,6 +2798,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedGpuPassthrough: opts.gpu === true,
       };
       type InitialOnboardFlowContext = typeof initialFlowContext;
+      telemetryCompletion.captureExisting(() => registry.load().sandboxes);
       const preflightSandboxName = entryDecisions.selectPreflightSandboxName(
         initialFlowContext.sandboxName,
         isNonInteractive(),
@@ -3142,6 +3111,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         recordRepairEvent,
       });
+      telemetryCompletion.sandboxName =
+        coreFlowResult.context.sandboxName || telemetryCompletion.sandboxName;
       if (isCoreFlowCompleteBeforeFinalization(coreFlowResult)) {
         sandboxCancelRollback.disarm();
         await portableRetirementEntry.supersede(lockedRuntime.checkpointProfile);
@@ -3285,17 +3256,22 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           liveFinalFlowContext = context;
         },
       });
+      telemetryCompletion.sandboxName =
+        finalFlowResult.session.sandboxName || telemetryCompletion.sandboxName;
       completed = finalFlowResult.session.machine.state === "complete";
       if (completed && finalFlowResult.session.sandboxName) {
         await portableRetirementEntry.supersede(lockedRuntime.checkpointProfile);
       }
+      await telemetryCompletion.accept(completed);
       process.exitCode = completed ? 0 : 1;
     });
   } catch (error) {
+    telemetryCompletion.reject(error);
     preserveDeferredExitSession =
       onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
     throw error;
   } finally {
+    const telemetryGatewayName = GATEWAY_NAME;
     try {
       await hermesApiPortReservationScope.release();
       restorePortableEnvScope();
@@ -3312,6 +3288,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       restorePortableEnvScope();
       hostMountScope.restore();
     }
+    telemetryCompletion.record(completed, telemetryGatewayName);
     if (preserveDeferredExitSession) preserveIncompleteSession = true;
   }
   preserveIncompleteSession = true;

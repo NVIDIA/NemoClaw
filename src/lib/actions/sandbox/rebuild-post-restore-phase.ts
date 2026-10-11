@@ -15,13 +15,12 @@ import {
 } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as sandboxVersion from "../../sandbox/version";
 import { inspectMutableHermesConfigPerms } from "../../sandbox/mutable-config-perms";
-import { escapeTerminalText } from "../../policy/preset-scope-render";
 import * as registry from "../../state/registry";
 import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import { redactBoundedRebuildFailure } from "./rebuild-preflight-confirmation";
+import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -104,6 +103,7 @@ export interface RebuildPostRestorePhaseInput {
 }
 
 export interface RebuildPostRestoreVerification {
+  readonly complete: boolean;
   readonly mutableConfigPermissionsVerified: boolean;
 }
 
@@ -473,9 +473,9 @@ export async function runRebuildPostRestorePhase(
     if (mutableConfigPermissionsVerified) {
       log("Verified the rebuilt Hermes mutable config posture");
     } else {
-      const detail = escapeTerminalText(
-        redactBoundedRebuildFailure(mutableConfigVerification.errors.join("; ")),
-      ).slice(0, 4096);
+      const detail = redactBoundedRebuildTerminalDiagnostic(
+        mutableConfigVerification.errors.join("; "),
+      );
       log(`Hermes mutable config posture was not verified: ${detail}`);
       console.error(
         `  Hermes config write permissions could not be verified: ${detail || "No diagnostic was returned."}`,
@@ -680,5 +680,7 @@ export async function runRebuildPostRestorePhase(
     return;
   }
   printHermesApiTokenChangeNotice(sandboxName, targetAgentName);
-  return { mutableConfigPermissionsVerified };
+  return { complete: postRestoreComplete, mutableConfigPermissionsVerified };
 }
+
+export { recordRebuildCompletion } from "../telemetry/upgrade";
