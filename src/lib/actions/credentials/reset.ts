@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resetNativeHostedProvider, type NativeHostedResetDeps } from "./reset-native-hosted";
+import { hostedNativeProvider } from "../../inference/native-provider/hosted";
+import { isNativeHostedProviderName } from "../../inference/native-provider/hosted-attachment";
 import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import type {
   OpenShellProviderAdapter,
@@ -28,7 +31,7 @@ import { withGatewayRouteMutationLock } from "../../inference/gateway-route-muta
 import {
   clearNativeNvidiaProviderAuthority,
   listNativeNvidiaProviderAttachmentSandboxNames,
-} from "../../state/registry/native-nvidia-provider-authority";
+} from "../../state/registry/native-provider-authority";
 import { forgetExtraProvider } from "../global";
 
 export type CredentialsResetInput = {
@@ -42,12 +45,14 @@ export type CredentialsResetResult = {
   failureLines: readonly string[];
 };
 
-export type CredentialsResetDeps = Readonly<{
-  providerAdapter?: OpenShellProviderAdapter;
-  clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
-  listNativeNvidiaProviderAttachmentSandboxNames?: typeof listNativeNvidiaProviderAttachmentSandboxNames;
-  withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
-}>;
+export type CredentialsResetDeps = Readonly<
+  NativeHostedResetDeps & {
+    providerAdapter?: OpenShellProviderAdapter;
+    clearNativeNvidiaProviderAuthority?: typeof clearNativeNvidiaProviderAuthority;
+    listNativeNvidiaProviderAttachmentSandboxNames?: typeof listNativeNvidiaProviderAttachmentSandboxNames;
+    withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
+  }
+>;
 
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
   ok: boolean;
@@ -167,6 +172,12 @@ export async function runCredentialsResetAction(
   if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
+  if (hostedNativeProvider(key) || isNativeHostedProviderName(key)) {
+    return (deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
+      target.gatewayName,
+      async () => (await resetNativeHostedProvider(key, target, providerAdapter, deps))!,
+    );
+  }
   const resetProvider = async (): Promise<CredentialsResetResult> => {
     if (nativeNvidiaProvider) {
       const blockers = nativeNvidiaResetBlockers(deps, target.gatewayName);

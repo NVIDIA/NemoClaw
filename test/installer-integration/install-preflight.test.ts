@@ -27,7 +27,6 @@ import {
 } from "../helpers/installer-sourced-env";
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
-const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
 // This installer test owns the fake compiled-tree exemption.
 const INSTALLER_ONBOARD_MODULE_DIR = path.join("dist", "lib", "onboard");
@@ -99,7 +98,19 @@ run_onboard < "$PROMPT_INPUT_FILE"
 describe("installer runtime preflight", { timeout: 90_000 }, () => {
   it("attempts nvm upgrade when system Node.js is below minimum version", () => {
     const checkout = installerCheckout("nemoclaw-install-preflight-");
-    checkout.writeCommand("node", [{ args: ["--version"], stdout: "v18.19.1\n" }], ["HOME"]);
+    const telemetryArgs = [
+      path.join(path.dirname(INSTALLER), "dist/lib/cli/installer-telemetry-entry.js"),
+      "begin",
+      "install",
+    ];
+    checkout.writeCommand(
+      "node",
+      [
+        { args: ["--version"], stdout: "v18.19.1\n" },
+        { args: telemetryArgs, stdout: "" },
+      ],
+      ["HOME"],
+    );
     checkout.writeCommand("npm", [{ args: ["--version"], stdout: "9.8.1\n" }], ["HOME"]);
     // Failing the download keeps the test on the nvm upgrade error path.
     checkout.writeCommand(
@@ -120,13 +131,21 @@ describe("installer runtime preflight", { timeout: 90_000 }, () => {
     const result = checkout.run("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, "../.."),
       env: checkout.environment({
-        // Bypass the #2671 fail-fast license gate — this test exercises the
-        // Node-version-detection / nvm-upgrade path, not the license path.
+        // Accept the third-party notice so this test reaches the Node/nvm preflight (#2671).
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       }),
     });
     checkout.assertCommandRoutesUsed();
     expect(checkout.commandRecords()).toEqual([
+      {
+        command: "node",
+        args: telemetryArgs,
+        environment: { HOME: checkout.root },
+        route: 1,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      },
       {
         command: "node",
         args: ["--version"],
@@ -174,26 +193,7 @@ describe("installer runtime preflight", { timeout: 90_000 }, () => {
     } = installerCheckout("nemoclaw-install-fallback-");
     const gitLog = path.join(tmp, "git.log");
 
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then
-  echo "v22.19.0"
-  exit 0
-fi
-case "\${1:-}:\${2:-}" in
-  *scripts/lib/openshell-sdk-install.mts:prepare|*scripts/lib/openshell-sdk-install.mts:check) exit 0 ;;
-esac
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then
-  exit 0
-fi
-echo "unexpected node invocation: $*" >&2
-exit 99
-`,
-    );
+    writeNodeStub(fakeBin, { evaluateInline: false });
 
     writeExecutable(
       path.join(fakeBin, "git"),
@@ -2337,7 +2337,7 @@ fi
 exit 0`,
     });
 
-    const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
+    const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
       encoding: "utf-8",
       env: {
@@ -2384,7 +2384,7 @@ fi
 exit 0`,
     });
 
-    const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
+    const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
       encoding: "utf-8",
       env: {
@@ -2411,7 +2411,7 @@ exit 0`,
     const repoLike = path.join(tmp, "repo");
     fs.mkdirSync(path.join(repoLike, "scripts"), { recursive: true });
     const rootInstaller = path.join(repoLike, "install.sh");
-    fs.copyFileSync(CURL_PIPE_INSTALLER, rootInstaller);
+    fs.copyFileSync(INSTALLER, rootInstaller);
     writeExecutable(
       path.join(repoLike, "scripts", "install.sh"),
       `#!/usr/bin/env bash
@@ -2462,7 +2462,7 @@ fi
 exit 0`,
     );
 
-    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const installerInput = fs.readFileSync(INSTALLER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
       input: installerInput,
@@ -2523,7 +2523,7 @@ fi
 exit 0`,
     });
 
-    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const installerInput = fs.readFileSync(INSTALLER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
       input: installerInput,
@@ -2585,7 +2585,7 @@ fi
 exit 0`,
     });
 
-    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const installerInput = fs.readFileSync(INSTALLER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
       input: installerInput,

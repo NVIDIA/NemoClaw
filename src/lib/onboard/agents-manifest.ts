@@ -169,11 +169,25 @@ export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
   return out;
 }
 
+// Only a freshly validated operator selection establishes model source. Retained
+// rebuild environment data must not create a new selection receipt.
+const selectedManifests = new WeakMap<NodeJS.ProcessEnv, AgentsManifestPayload>();
+
+export function takeSelectedAgentsManifest(
+  env: NodeJS.ProcessEnv = process.env,
+): AgentsManifestPayload | null {
+  const payload = selectedManifests.get(env) ?? null;
+  selectedManifests.delete(env);
+  return payload;
+}
+
 export function applyAgentsManifestEnv(
   filePath: string,
   env: NodeJS.ProcessEnv = process.env,
 ): AgentsManifestPayload {
+  selectedManifests.delete(env);
   const payload = loadAgentsManifest(filePath);
   env.NEMOCLAW_EXTRA_AGENTS_JSON = JSON.stringify(payload);
+  selectedManifests.set(env, payload);
   return payload;
 }

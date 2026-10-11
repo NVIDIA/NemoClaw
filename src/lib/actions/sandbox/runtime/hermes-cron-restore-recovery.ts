@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordTelemetryTarget } from "../../telemetry/operation";
 import * as agentRuntime from "../../../agent/runtime";
 import { inspectPortableAgentReceiptDisposition } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "../lifecycle/lock";
@@ -63,4 +64,5 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
     },
     { timeoutMs: RECOVERY_LOCK_TIMEOUT_MS },
   );
+  recordTelemetryTarget({ scope: "sandbox", sandboxName, outcome: "completed", state: "applied" });
 }

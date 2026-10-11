@@ -6,8 +6,6 @@ import {
   formatGatewayRouteConflict,
   type GatewayRouteCompatibilityResult,
   isAdvisoryGatewayRouteConflict,
-  nativeInferenceProviderForSandbox,
-  normalizeNativeNvidiaProviderAttachment,
 } from "../../../inference/gateway-route-compatibility";
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
@@ -21,6 +19,7 @@ import {
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import {
+  decisionUnset,
   decisionValue,
   isDecisionSelected,
   isDecisionUnset,
@@ -99,6 +98,7 @@ import {
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
 import {
+  nativeInferenceCreateIntentFields,
   sandboxCreateInferenceSelection,
   withSandboxImageRegistrationFence,
 } from "../../sandbox-registration";
@@ -121,6 +121,7 @@ import {
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  initialOpenClawToolDisclosure,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -132,22 +133,6 @@ type SandboxRecreateWorkloadSkipReason = Extract<
   ReplacedSandboxWorkloadCleanupResult,
   { readonly status: "skipped" }
 >["reason"];
-
-function nativeNvidiaCreateIntentFields(
-  provider: string | null | undefined,
-  entry: SandboxEntry | null,
-): {
-  inferenceProvider: string | null;
-  nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
-} {
-  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    entry?.nativeNvidiaProviderAttachment,
-  );
-  return {
-    inferenceProvider: nativeInferenceProviderForSandbox(provider),
-    ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
-  };
-}
 
 const SANDBOX_RECREATE_WORKLOAD_SKIP_DIAGNOSTIC = {
   "replacement-unproven": "  Obsolete sandbox image retirement skipped: replacement-unproven",
@@ -372,6 +357,7 @@ export interface SandboxStateOptions<
       sandboxName: string;
       inferenceProvider?: string | null;
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+      nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -1888,12 +1874,10 @@ class SandboxStateFlow<
     deferSandboxEffectsUntilIdentityVerification: boolean,
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
+    const registeredEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      ...nativeNvidiaCreateIntentFields(
-        this.options.provider,
-        this.deps.getSandboxRegistryEntry(sandboxName),
-      ),
+      ...nativeInferenceCreateIntentFields(this.options.provider, registeredEntry),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
@@ -1906,11 +1890,24 @@ class SandboxStateFlow<
       hostMounts: this.options.hostMounts,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     });
+    const recreate = requiresSandboxRecreation(decision, this.options.recreateSandbox(false));
     return {
       resolved,
-      recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
+      recreate,
       ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
-      toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      toolDisclosure:
+        initialOpenClawToolDisclosure({
+          fresh:
+            decision.kind === "create" &&
+            !this.options.resume &&
+            !recreate &&
+            !this.options.fromDockerfile,
+          agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+          provider: this.options.provider,
+          entry: registeredEntry,
+          sessionId: state.session?.sessionId,
+          env: this.options.env,
+        }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
@@ -2332,6 +2329,14 @@ class SandboxStateFlow<
       });
       this.deps.updateSession((current) => {
         current.messagingPlan = messagingPlan;
+        const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+        if (messagingPlan === null && (agentName === "openclaw" || agentName === "hermes")) {
+          if (state.selectedMessagingChannels.length === 0)
+            recordCheckpointMessaging(current, null);
+          else if (current.checkpoint) {
+            current.checkpoint = { ...current.checkpoint, messaging: decisionUnset() };
+          }
+        }
         return current;
       });
       const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata } =
@@ -2367,6 +2372,7 @@ class SandboxStateFlow<
                     selection: sandboxCreateInferenceSelection({
                       provider: createProvider,
                       model: createModel,
+                      modelSelectionProvenance: this.options.session.modelSelectionProvenance,
                       endpointUrl: this.options.endpointUrl,
                       endpointSource: this.options.endpointSource,
                       credentialEnv: this.options.credentialEnv,

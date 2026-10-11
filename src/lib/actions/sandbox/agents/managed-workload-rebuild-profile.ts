@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordedNativeProviderAttachment } from "../../../inference/native-provider/recorded-selection";
 import { rebindLoopbackDashboardUrlPort } from "../../../dashboard/url";
 import { resolveContextWindowForModel } from "../../../inference/context-window";
 import type { SandboxMessagingPlan } from "../../../messaging";
@@ -88,11 +89,14 @@ export function prepareManagedRebuildProfileHandoff(input: {
       ? `http://127.0.0.1:${String(effectiveDashboardPort)}`
       : rebindLoopbackDashboardUrlPort(previousHermesBrowserUrl, effectiveDashboardPort)
     : "";
+  const nativeAttachment = recordedNativeProviderAttachment(resumeConfig);
   const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,
     resumeConfig.provider,
     resumeConfig.model,
     resumeConfig.preferredInferenceApi,
+    Boolean(nativeAttachment),
+    nativeAttachment?.endpointUrl,
   );
   const upstreamProvider =
     agent === "hermes" && resumeConfig.provider === "hermes-provider"
