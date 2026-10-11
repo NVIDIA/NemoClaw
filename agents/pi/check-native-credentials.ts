@@ -8,6 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HOSTED_NATIVE_PROVIDERS } from "../../src/lib/inference/native-provider/hosted.ts";
+import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
+} from "../../src/lib/inference/native-nvidia/contract.ts";
 
 // Exercise the installed, pinned Pi resolver during image construction. No provider calls or keys.
 const runtime =
@@ -16,9 +21,14 @@ const runtime =
 const { resolveConfigValue, getMissingConfigValueEnvVarNames } = await import(
   pathToFileURL(join(runtime, "dist/core/resolve-config-value.js")).href
 );
-for (const provider of HOSTED_NATIVE_PROVIDERS.filter(
-  (item) => item.api === "openai-completions",
-)) {
+for (const provider of [
+  ...HOSTED_NATIVE_PROVIDERS.filter((item) => item.api === "openai-completions"),
+  {
+    logicalProvider: NVIDIA_HOSTED_LOGICAL_PROVIDER,
+    endpoint: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+    credentialEnv: NVIDIA_HOSTED_CREDENTIAL_ENV,
+  },
+]) {
   const home = mkdtempSync(join(tmpdir(), "pi-native-credential-"));
   try {
     const result = spawnSync(
@@ -38,14 +48,16 @@ for (const provider of HOSTED_NATIVE_PROVIDERS.filter(
     assert.equal(result.status, 0, result.stderr);
     const text = readFileSync(join(home, ".pi/agent/models.json"), "utf8");
     const key = JSON.parse(text).providers.openshell.apiKey;
-    const handle = `openshell:resolve:env:v7_${provider.credentialEnv}`;
-    assert.equal(
-      resolveConfigValue(key, { [provider.credentialEnv]: handle }),
-      handle,
-      provider.logicalProvider,
-    );
+    for (const scope of ["v7", "v8", `s${"a".repeat(64)}`]) {
+      const handle = `openshell:resolve:env:${scope}_${provider.credentialEnv}`;
+      assert.equal(
+        resolveConfigValue(key, { [provider.credentialEnv]: handle }),
+        handle,
+        provider.logicalProvider,
+      );
+      assert.equal(text.includes(handle), false);
+    }
     assert.equal(text.includes("synthetic-build-secret"), false);
-    assert.equal(text.includes(handle), false);
     // A missing injected value must not fall back to an unscoped resolver alias.
     delete process.env[provider.credentialEnv];
     assert.equal(resolveConfigValue(key, {}), undefined);
@@ -54,4 +66,4 @@ for (const provider of HOSTED_NATIVE_PROVIDERS.filter(
     rmSync(home, { recursive: true, force: true });
   }
 }
-console.log("Pi native credential resolution passed for four hosted providers.");
+console.log("Pi native credential resolution passed for NVIDIA and four hosted providers.");
