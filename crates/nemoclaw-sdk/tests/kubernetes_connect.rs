@@ -4,7 +4,7 @@
 //! port forward and the client credentials OpenShell requires.
 #![cfg(unix)]
 
-use crate::kube_api::{Objects, client};
+use crate::{kube_api::Objects, kube_client::client};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use nemoclaw_sdk::{
     Error,
