@@ -102,6 +102,7 @@ export function dcodeProfileInput(
     "openai-api",
     "gpt-5",
     "openai-completions",
+    false,
   );
   return {
     ...profileInput(),

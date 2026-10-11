@@ -41,6 +41,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   chatUiUrl: string;
   provider: string | null;
   endpointUrl?: string | null;
+  nativeProvider?: boolean;
   compatibleEndpointReasoning?: "true" | "false";
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -121,6 +122,7 @@ export async function prepareSandboxDockerfilePatch({
   chatUiUrl,
   provider,
   endpointUrl = null,
+  nativeProvider,
   compatibleEndpointReasoning,
   preferredInferenceApi,
   webSearchConfig,
@@ -214,6 +216,7 @@ export async function prepareSandboxDockerfilePatch({
       const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);
       return {
         agentName: managedAgentName,
+        nativeProvider,
         buildIdPolicy,
         toolDisclosure,
         ...(!fromDockerfile ? { trustedManagedDockerfile: true } : {}),

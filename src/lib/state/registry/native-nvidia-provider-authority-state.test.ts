@@ -7,7 +7,7 @@ import {
   normalizeNativeNvidiaProviderAuthorities,
   readNativeNvidiaProviderAuthority,
   removeNativeNvidiaProviderAuthority,
-} from "./native-nvidia-provider-authority-state";
+} from "./native-provider-authority-state";
 
 const receipt = {
   schemaVersion: 1 as const,

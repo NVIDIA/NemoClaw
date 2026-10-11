@@ -16,6 +16,8 @@ import {
   HERMES_MANAGED_POLICY_SCHEMA_VERSION,
 } from "../../../agents/hermes/config/managed-policy.ts";
 
+import { HOSTED_NATIVE_PROVIDERS } from "../../../src/lib/inference/native-provider/hosted";
+
 const READER_PATH = path.join(
   import.meta.dirname,
   "../../..",
@@ -81,6 +83,84 @@ function loadWithPython(document: unknown) {
 }
 
 describe("Hermes managed policy", () => {
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "accepts the runtime credential reference for $label",
+    (provider) => {
+      const policy = buildHermesManagedPolicy(
+        {
+          ...SETTINGS,
+          baseUrl: provider.endpoint,
+          upstreamProvider: provider.logicalProvider,
+          inferenceApi: provider.api,
+        },
+        {},
+      );
+      expect(policy.config.model?.api_key).toBe(`\${${provider.credentialEnv}}`);
+      const result = loadWithPython(policy);
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it("accepts the Hermes credential reference at an authenticated endpoint", () => {
+    const policy = buildHermesManagedPolicy(
+      {
+        ...SETTINGS,
+        baseUrl: "https://authenticated-hermes.example:8443/inference/v1/",
+        upstreamProvider: "hermes-provider",
+      },
+      {},
+    );
+    const result = loadWithPython(policy);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    ["openai-api", "https://api.openai.com/v1", "${ANTHROPIC_API_KEY}"],
+    ["anthropic-prod", "https://api.openai.com/v1", "${ANTHROPIC_API_KEY}"],
+    ["openai-api", "https://api.openai.com/v2", "${OPENAI_API_KEY}"],
+    ["openai-api", "https://api.openai.com:8443/v1", "${OPENAI_API_KEY}"],
+    ["openai-api", "https://api.openai.com.example/v1", "${OPENAI_API_KEY}"],
+    ["custom", "https://api.openai.com/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://authenticated-hermes.example/v1", "${GEMINI_API_KEY}"],
+    ["hermes-provider", "https://inference.local/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://localhost/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://gateway.internal/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "http://authenticated-hermes.example/v1", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://do-not-echo@authenticated-hermes.example/v1", "${OPENAI_API_KEY}"],
+    [
+      "hermes-provider",
+      "https://authenticated-hermes.example/v1?token=do-not-echo",
+      "${OPENAI_API_KEY}",
+    ],
+    ["hermes-provider", "https://authenticated-hermes.example/v1#do-not-echo", "${OPENAI_API_KEY}"],
+    ["hermes-provider", "https://authenticated-hermes.example/v1%2fother", "${OPENAI_API_KEY}"],
+  ])("rejects a mismatched hosted route for %s at %s", (provider, baseUrl, apiKey) => {
+    const policy = buildHermesManagedPolicy(SETTINGS, {});
+    policy.config._nemoclaw_upstream!.provider = provider;
+    policy.config.model!.base_url = baseUrl;
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+    expect(result.stderr).not.toContain("do-not-echo");
+  });
+
+  it.each([
+    "openshell:resolve:env:OPENAI_API_KEY",
+    "openshell:resolve:env:v7_OPENAI_API_KEY",
+    "${UNRELATED_API_KEY}",
+    "synthetic-raw-credential",
+  ])("rejects a baked or unrelated hosted credential %s", (apiKey) => {
+    const policy = buildHermesManagedPolicy(
+      { ...SETTINGS, baseUrl: "https://api.openai.com/v1", upstreamProvider: "openai-api" },
+      {},
+    );
+    policy.config.model!.api_key = apiKey;
+    const result = loadWithPython(policy);
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain(apiKey);
+  });
+
   it.each(NATIVE_NVIDIA_URLS)(
     "accepts the native NVIDIA inference placeholder at %s",
     (baseUrl) => {
@@ -194,7 +274,9 @@ describe("Hermes managed policy", () => {
     const result = loadWithPython(malformedPolicy);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("must use the OpenShell proxy rewrite sentinel");
+    expect(result.stderr).toContain(
+      "must use an OpenShell credential placeholder or proxy rewrite sentinel",
+    );
     expect(result.stderr).not.toContain(rawCredential);
   });
 

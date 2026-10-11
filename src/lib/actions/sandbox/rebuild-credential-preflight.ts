@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { normalizeNativeNvidiaProviderAttachment } from "../../inference/native-nvidia/contract";
+import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -178,21 +179,24 @@ export async function preflightRebuildCredentials(
     sb.endpointUrl,
   );
   const rebuildProvider = sb.provider;
-  const nativeAttachment = normalizeNativeNvidiaProviderAttachment(
-    sb.nativeNvidiaProviderAttachment,
-  );
+  let nativeAttachment;
+  try {
+    nativeAttachment = recordedNativeProviderAttachment(sb);
+  } catch {
+    bail("Invalid native provider authority; sandbox is untouched");
+    return false;
+  }
   if (nativeAttachment) {
+    const nativeCredentialEnv = fixedNativeProviderForAttachment(nativeAttachment).credentialEnv;
     if (
-      !(await checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail, {
+      !(await checkRebuildGatewayProviderOrBail(rebuildProvider, nativeCredentialEnv, log, bail, {
         nativeAttachment,
       }))
     )
       return false;
     return preflightRebuildHostCredential(
-      { ...sb, credentialEnv: rebuildCredentialEnv },
-      rebuildCredentialEnv
-        ? rebuildOnboardDependencies.hydrateCredentialEnv(rebuildCredentialEnv)
-        : null,
+      { ...sb, credentialEnv: nativeCredentialEnv },
+      rebuildOnboardDependencies.hydrateCredentialEnv(nativeCredentialEnv),
       bail,
     );
   }

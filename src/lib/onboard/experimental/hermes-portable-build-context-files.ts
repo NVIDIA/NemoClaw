@@ -4,6 +4,7 @@
 /** Exact shipped files admitted by the schema-7 Hermes Dockerfile COPY contract. */
 export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/a2a-neutral.patch", mode: "100644" },
+  { path: "agents/hermes/check-native-credentials.ts", mode: "100644" },
   { path: "agents/hermes/config/build-env.ts", mode: "100644" },
   { path: "agents/hermes/config/generate.ts", mode: "100644" },
   { path: "agents/hermes/config/hermes-env.ts", mode: "100644" },
@@ -144,6 +145,9 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
     mode: "100644",
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },
+  { path: "src/lib/inference/native-provider/agent-config.ts", mode: "100644" },
+  { path: "src/lib/inference/native-provider/contract.ts", mode: "100644" },
+  { path: "src/lib/inference/native-provider/hosted.ts", mode: "100644" },
   { path: "src/lib/inference-credential.ts", mode: "100644" },
   { path: "src/lib/messaging/AGENTS.md", mode: "100644" },
   { path: "src/lib/messaging/applier/agent-config-remove.test.ts", mode: "100644" },

@@ -74,6 +74,7 @@ export type CreatedSandboxFinalizationOptions = {
   model: string;
   preferredInferenceApi: string | null;
   endpointUrl?: string | null;
+  nativeProvider?: boolean;
 };
 
 export type CreatedSandboxFinalizationDeps = {
@@ -94,6 +95,7 @@ export type CreatedSandboxFinalizationDeps = {
     model: string,
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
+    nativeProvider: boolean,
   ): Promise<SelectionDrift>;
   prepareRegistration?(): SandboxEntry | Promise<SandboxEntry>;
   revalidatePreparedRegistration?(prepared: SandboxEntry): SandboxEntry | Promise<SandboxEntry>;
@@ -603,6 +605,8 @@ type OnboardCreateIntent = {
   readonly observabilityEnabled?: boolean;
 } | null;
 type OnboardResolvedCreateIntent = {
+  readonly nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+  readonly nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly policy: {
     readonly options: object;
   };
@@ -756,6 +760,10 @@ export function createOnboardCreatedSandboxCompletion(
         model,
         preferredInferenceApi,
         endpointUrl,
+        nativeProvider: Boolean(
+          resolvedCreateIntent.nativeHostedProviderAttachment ||
+          resolvedCreateIntent.nativeNvidiaProviderAttachment,
+        ),
       },
       registration: {
         sandboxName,
@@ -1004,6 +1012,7 @@ export async function finalizeCreatedSandbox(
           options.preferredInferenceApi,
           options.gatewayName,
           deps.revalidateSandboxIdentity,
+          { endpointUrl: options.endpointUrl, nativeProvider: options.nativeProvider ?? false },
         );
       } catch (error) {
         await abortOpenClawRestoreWindow();
@@ -1036,6 +1045,7 @@ export async function finalizeCreatedSandbox(
       options.model,
       options.preferredInferenceApi,
       options.endpointUrl ?? null,
+      options.nativeProvider ?? false,
     );
     if (finalSelection.changed || finalSelection.unknown) {
       deps.error(
