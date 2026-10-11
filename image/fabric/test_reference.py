@@ -12,6 +12,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import bridge_protocol
 import fabric
 from dummy_backend import Backend
 
@@ -193,15 +194,21 @@ class StandaloneValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prompt.json"
             path.write_bytes(encoded)
-            request = fabric.parse_command(["invoke", "--agent", "main", "--input", str(path)])
+            request = bridge_protocol.parse_command(
+                ["invoke", "--agent", "main", "--input", str(path)]
+            )
             self.assertEqual(request["input"], prompt)
             with io.TextIOWrapper(io.BytesIO(encoded)) as stream, patch("sys.stdin", stream):
-                request = fabric.parse_command(["invoke", "--agent", "main", "--input", "-"])
+                request = bridge_protocol.parse_command(
+                    ["invoke", "--agent", "main", "--input", "-"]
+                )
             self.assertEqual(request["input"], prompt)
             for value in ("Hello", [], None, 42, True):
                 path.write_text(json.dumps(value))
-                with self.subTest(value=value), self.assertRaises(fabric.ProtocolError):
-                    fabric.parse_command(["invoke", "--agent", "main", "--input", str(path)])
+                with self.subTest(value=value), self.assertRaises(bridge_protocol.ProtocolError):
+                    bridge_protocol.parse_command(
+                        ["invoke", "--agent", "main", "--input", str(path)]
+                    )
 
     def test_validate_does_not_connect_to_a_host_or_start_a_runtime(self):
         with tempfile.TemporaryDirectory() as directory:

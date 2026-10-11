@@ -81,7 +81,7 @@ COPY --from=harness-wheels /requirements.txt /opt/nemoclaw/source/requirements.t
 COPY --from=harness-wheels --chmod=0644 /sources/fabric.tar.gz /opt/nemoclaw/source/
 COPY --from=harness-wheels /build /opt/nemoclaw/source/local/
 COPY --from=harness-wheels /provenance.json /opt/nemoclaw/provenance.json
-COPY image/fabric/backend.py image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
+COPY image/fabric/backend.py image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/catalog.py image/fabric/runtime_metadata.py image/fabric/runtime.json /opt/nemoclaw/
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python
 RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
@@ -201,7 +201,7 @@ FROM ${PYTHON_IMAGE} AS dummy
 RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
     && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
-COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/runtime.json /opt/nemoclaw/
+COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/runtime.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python PYTHONDONTWRITEBYTECODE=1 HOME=/sandbox
@@ -213,5 +213,5 @@ ENTRYPOINT ["/usr/local/bin/fabric-agent"]
 CMD ["serve", "--agent", "main"]
 
 FROM dummy AS reference-tests
-COPY image/fabric/test_reference.py image/fabric/dummy_backend.py /tests/
+COPY image/fabric/test_reference.py image/fabric/test_protocol.py image/fabric/dummy_backend.py /tests/
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'
