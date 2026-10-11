@@ -25,6 +25,10 @@ mod health;
 mod hosted_parity;
 #[path = "inference_discovery.rs"]
 mod inference_discovery;
+#[path = "kubernetes_chart.rs"]
+mod kubernetes_chart;
+#[path = "kubernetes_live.rs"]
+mod kubernetes_live;
 #[path = "managed.rs"]
 mod managed;
 #[path = "model_live.rs"]
