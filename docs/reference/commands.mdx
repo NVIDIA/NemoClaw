@@ -256,6 +256,7 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 ### `$$nemoclaw config export <sandbox>`
 
 Export a supported registered OpenClaw, Hermes, or LangChain Deep Agents Code sandbox as a credential-value-free `nemoclaw.nvidia.com/v1alpha1` `NemoClawConfig` document.
+Version 1 cannot export a sandbox whose registry retains messaging state. The command writes no YAML or output file in that case. Removing the last channel leaves messaging state in the registry, so it does not make that sandbox exportable. Use a supported sandbox without messaging state for Version 1 export.
 The command reads the registry and current OpenShell state without changing the sandbox.
 It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent.
 If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
