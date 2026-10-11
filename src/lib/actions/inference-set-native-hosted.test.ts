@@ -97,6 +97,29 @@ function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = [
   return { deps, calls, attached, authorities, entry };
 }
 
+it("rejects Pi runtime switching before changing its native attachment (#12589)", async () => {
+  const { deps, calls, entry, attached } = fixture();
+  entry.agent = "pi";
+  entry.provider = "openai-api";
+  const definition = hostedNativeProvider("openai-api")!;
+  entry.nativeHostedProviderAttachment = {
+    schemaVersion: 1,
+    profileId: definition.profileId,
+    providerName: definition.providerName,
+    providerId: "owned-provider-id",
+  };
+  attached.get("alpha")!.add(definition.providerName);
+  const previous = structuredClone(entry);
+  await expect(
+    runInferenceSet({ provider: "openrouter-api", model: "replacement-model" }, deps),
+  ).rejects.toThrow("inference set supports OpenClaw and Hermes");
+  expect(entry).toEqual(previous);
+  expect([...attached.get("alpha")!]).toEqual([definition.providerName]);
+  expect(calls.attachProvider).not.toHaveBeenCalled();
+  expect(calls.detachProvider).not.toHaveBeenCalled();
+  expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+});
+
 describe.each(HOSTED_NATIVE_PROVIDERS)("inference set native $label", (definition) => {
   it("attaches and probes only the selected sandbox without changing the shared route", async () => {
     const { deps, calls, attached, authorities } = fixture();

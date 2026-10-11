@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as sandboxCommandCli from "../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
@@ -16,12 +16,22 @@ import { createPodmanRuntimeProviderBundle } from "../../onboard/runtime-provide
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import * as crossPortRegistryEsm from "../../state/registry/cross-port";
 import { type SandboxStartDeps, startSandbox } from "./start";
 import { resolveSandboxInferenceInvocationEndpoint } from "./inference-invocation-probe";
 import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
 } from "../../inference/native-provider/hosted";
+
+// connect.ts loads this registry through require. Keep injected lifecycle fixtures
+// independent of host sandboxes; the sibling-gateway test restores the real lookup.
+const crossPortRegistry =
+  require("../../state/registry/cross-port") as typeof import("../../state/registry/cross-port");
+beforeEach(() => {
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue(null);
+  vi.spyOn(crossPortRegistryEsm, "getSandboxAcrossGatewayRoots").mockReturnValue(null);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -149,6 +159,7 @@ function providerRegistry(providerId: "docker" | "podman") {
 
 describe("startSandbox native lifecycle", () => {
   it("starts a sandbox from its sibling gateway registry and clears stop intent there", async () => {
+    vi.restoreAllMocks();
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-cross-root-"));
     const registryDir = path.join(home, ".nemoclaw", "gateways", "8245");
     const registryFile = path.join(registryDir, "sandboxes.json");
@@ -767,6 +778,13 @@ const restartProviders = [
   },
 ] as const;
 
+const restartCases = restartProviders.flatMap((provider) =>
+  (provider.api === "openai-completions" ? ["openclaw", "pi"] : ["openclaw"]).map((agent) => ({
+    ...provider,
+    agent,
+  })),
+);
+
 describe("startSandbox persisted native inference selection", () => {
   const hermesEndpoint = "https://authenticated.nous.example/api/v1";
   const hermesDefinition = hostedNativeProvider("hermes-provider", hermesEndpoint)!;
@@ -846,8 +864,8 @@ describe("startSandbox persisted native inference selection", () => {
     );
   });
 
-  it.each(restartProviders)(
-    "restarts $logicalProvider using its attached native endpoint",
+  it.each(restartCases)(
+    "restarts $agent with $logicalProvider using its attached native endpoint",
     async (definition) => {
       const endpoints: string[] = [];
       const probeInferenceInvocation = vi.fn<
@@ -866,6 +884,7 @@ describe("startSandbox persisted native inference selection", () => {
       h.getSandbox.mockReturnValue(
         sandbox({
           stopped: true,
+          agent: definition.agent,
           provider: definition.logicalProvider,
           model: "fixture-model",
           preferredInferenceApi: definition.api,
@@ -890,8 +909,8 @@ describe("startSandbox persisted native inference selection", () => {
     },
   );
 
-  it.each(restartProviders)(
-    "retains the legacy shared route for $logicalProvider without native authority",
+  it.each(restartCases)(
+    "retains the $agent legacy shared route for $logicalProvider without native authority",
     async (definition) => {
       const endpoints: string[] = [];
       const h = harness({
@@ -902,6 +921,7 @@ describe("startSandbox persisted native inference selection", () => {
       });
       h.getSandbox.mockReturnValue(
         sandbox({
+          agent: definition.agent,
           provider: definition.logicalProvider,
           model: "fixture-model",
           preferredInferenceApi: definition.api,
