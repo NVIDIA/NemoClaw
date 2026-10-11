@@ -639,7 +639,17 @@ $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
 
 Choose how the selected agent presents its session-authorized tools to the model. `progressive` is the default: OpenClaw and Hermes use their native Tool Search implementations, while Deep Agents Code initially shows its core tools plus `search_tools` after at least one MCP tool loads successfully. `direct` presents all registered tools directly. This setting changes model context only; it does not bypass OpenShell policy, credentials, approvals, hooks, or sandbox controls.
 
-The flag takes precedence over `NEMOCLAW_TOOL_DISCLOSURE`. A new sandbox defaults to `progressive` when neither is set. NemoClaw records the selected value with the onboarding session and sandbox so rebuilds preserve it and ambient shell variables cannot silently change an internal rebuild. Model-specific compatibility safeguards may downgrade a selected `progressive` mode to direct exposure for that model without changing the recorded preference. To change an existing sandbox, recreate it explicitly:
+The flag takes precedence over `NEMOCLAW_TOOL_DISCLOSURE`. New sandboxes default to `progressive` when neither is set. NemoClaw records the selected value with the onboarding session and sandbox so rebuilds preserve it and ambient shell variables cannot silently change an internal rebuild. Model-specific compatibility safeguards may downgrade a selected `progressive` mode to direct exposure for that model without changing the recorded preference.
+
+<AgentOnly variant="openclaw">
+
+A fresh managed OpenClaw sandbox using local Ollama or vLLM defaults to `direct` instead.
+This exception applies only to the first creation for that session.
+Existing sandbox state and explicit `--tool-disclosure` or `NEMOCLAW_TOOL_DISCLOSURE` selections take precedence.
+
+</AgentOnly>
+
+To change an existing sandbox, recreate it explicitly:
 
 ```bash
 $$nemoclaw onboard --name my-assistant --recreate-sandbox --tool-disclosure direct
