@@ -892,6 +892,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runnerKey: "hermes-discord",
     hostPreparation: "hermes-swap",
     runnerComparison: true,
+    owningPaths: ["test/e2e/fixtures/hermes-config-export-live.ts"],
     environment: {
       ...hostedInference,
       NEMOCLAW_AGENT: "hermes",
