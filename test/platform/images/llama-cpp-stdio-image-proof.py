@@ -69,7 +69,10 @@ def forward(container: str, authorization: str) -> tuple[int, bytes, bytes]:
         "Connection: keep-alive\r\n\r\n"
     ).encode("ascii")
     process = subprocess.Popen(
-        ("docker", "exec", "-i", container, GUARD, "--stdio-forward", "--listen-port", str(LISTEN_PORT)),
+        (
+            "docker", "exec", "-i", container, GUARD, "--stdio-forward", "--listen-port",
+            str(LISTEN_PORT), "--forward-timeout-seconds", "10",
+        ),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

@@ -34,12 +34,11 @@ const (
 	maximumHeaderBytes    = 1024 * 1024
 	maximumOutputTokens   = 1024 * 1024
 	maximumTimeoutSeconds = 24 * 60 * 60
-	// The managed recipe allows 15 minutes; allow five more before ending stalled forwarding.
-	stdioForwardTimeout = 20 * time.Minute
 )
 
 // Docker exec reaches this process through the daemon when an internal network
-// cannot publish a host port. The HTTP request guard still owns authentication.
+// cannot publish a host port. The caller supplies its forwarding deadline from
+// its launch contract; the HTTP request guard still owns authentication.
 func forwardStdio(input io.Reader, output io.Writer, address string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	connection, err := net.DialTimeout("tcp", address, min(5*time.Second, timeout))
@@ -130,15 +129,19 @@ func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Co
 	return nil
 }
 
-func stdioForwardAddress(args []string) (string, error) {
-	if len(args) != 3 || args[0] != "--stdio-forward" || args[1] != "--listen-port" {
-		return "", errors.New("stdio forwarding requires --listen-port")
+func stdioForwardArguments(args []string) (string, time.Duration, error) {
+	if len(args) != 5 || args[0] != "--stdio-forward" || args[1] != "--listen-port" || args[3] != "--forward-timeout-seconds" {
+		return "", 0, errors.New("stdio forwarding requires --listen-port and --forward-timeout-seconds")
 	}
 	port, err := strconv.Atoi(args[2])
 	if err != nil || port < 1 || port > 65535 {
-		return "", errors.New("stdio forwarding listen port is invalid")
+		return "", 0, errors.New("stdio forwarding listen port is invalid")
 	}
-	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
+	timeoutSeconds, err := strconv.ParseInt(args[4], 10, 64)
+	if err != nil || positiveBounded(timeoutSeconds, maximumTimeoutSeconds, "forward timeout seconds") != nil {
+		return "", 0, errors.New("stdio forwarding timeout is invalid")
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Duration(timeoutSeconds) * time.Second, nil
 }
 
 type guardConfig struct {
@@ -796,12 +799,12 @@ func run(config guardConfig, command []string) int {
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--stdio-forward" {
-		address, err := stdioForwardAddress(os.Args[1:])
+		address, timeout, err := stdioForwardArguments(os.Args[1:])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(2)
 		}
-		if err := forwardStdio(os.Stdin, os.Stdout, address, stdioForwardTimeout); err != nil {
+		if err := forwardStdio(os.Stdin, os.Stdout, address, timeout); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}

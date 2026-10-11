@@ -28,9 +28,6 @@ import (
 )
 
 func TestForwardStdioBoundsStalledGuardResponse(t *testing.T) {
-	if stdioForwardTimeout <= 15*time.Minute || stdioForwardTimeout > 20*time.Minute {
-		t.Fatal("stdio deadline must exceed the managed request timeout by no more than five minutes")
-	}
 	for name, request := range map[string]string{
 		"guard response": "GET /v1/models HTTP/1.1\r\nHost: guard\r\n\r\n",
 		"partial stdin":  "GET /v1/models",
@@ -69,20 +66,46 @@ func TestForwardStdioBoundsStalledGuardResponse(t *testing.T) {
 }
 
 func TestStdioForwardAddressUsesDeclaredGuardPort(t *testing.T) {
-	address, err := stdioForwardAddress([]string{"--stdio-forward", "--listen-port", "9137"})
-	if err != nil || address != "127.0.0.1:9137" {
-		t.Fatalf("declared guard address = %q, %v", address, err)
+	address, timeout, err := stdioForwardArguments([]string{"--stdio-forward", "--listen-port", "9137", "--forward-timeout-seconds", "37"})
+	if err != nil || address != "127.0.0.1:9137" || timeout != 37*time.Second {
+		t.Fatalf("declared guard address = %q, timeout = %s, error = %v", address, timeout, err)
 	}
 	for _, args := range [][]string{
 		{"--stdio-forward"},
-		{"--stdio-forward", "--listen-port", "0"},
-		{"--stdio-forward", "--listen-port", "65536"},
-		{"--stdio-forward", "--listen-port", "invalid"},
-		{"--stdio-forward", "--listen-port", "9137", "extra"},
+		{"--stdio-forward", "--listen-port", "0", "--forward-timeout-seconds", "37"},
+		{"--stdio-forward", "--listen-port", "65536", "--forward-timeout-seconds", "37"},
+		{"--stdio-forward", "--listen-port", "invalid", "--forward-timeout-seconds", "37"},
+		{"--stdio-forward", "--listen-port", "9137", "--forward-timeout-seconds", "0"},
+		{"--stdio-forward", "--listen-port", "9137", "--forward-timeout-seconds", "86401"},
+		{"--stdio-forward", "--listen-port", "9137", "--forward-timeout-seconds", "invalid"},
+		{"--stdio-forward", "--listen-port", "9137", "extra", "37"},
 	} {
-		if _, err := stdioForwardAddress(args); err == nil {
+		if _, _, err := stdioForwardArguments(args); err == nil {
 			t.Fatalf("accepted invalid stdio arguments: %v", args)
 		}
+	}
+}
+
+func TestConfiguredStdioForwardTimeoutEndsStalledInput(t *testing.T) {
+	_, timeout, err := stdioForwardArguments([]string{"--stdio-forward", "--listen-port", "9137", "--forward-timeout-seconds", "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	input, writer := io.Pipe()
+	defer input.Close()
+	defer writer.Close()
+	started := time.Now()
+	err = forwardStdio(input, io.Discard, listener.Addr().String(), timeout)
+	if err == nil || err.Error() != "request guard response forwarding timed out" {
+		t.Fatalf("stalled input returned %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 900*time.Millisecond || elapsed > 4*time.Second {
+		t.Fatalf("configured one-second forwarding timeout elapsed in %s", elapsed)
 	}
 }
 
@@ -92,7 +115,7 @@ func TestForwardStdioPreservesGuardAuthentication(t *testing.T) {
 		_, _ = io.WriteString(writer, `{"data":[]}`)
 	}))
 	port := guard.Listener.Addr().(*net.TCPAddr).Port
-	address, err := stdioForwardAddress([]string{"--stdio-forward", "--listen-port", strconv.Itoa(port)})
+	address, _, err := stdioForwardArguments([]string{"--stdio-forward", "--listen-port", strconv.Itoa(port), "--forward-timeout-seconds", "5"})
 	if err != nil {
 		t.Fatalf("declared guard port: %v", err)
 	}
