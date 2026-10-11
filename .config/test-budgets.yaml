@@ -12,7 +12,9 @@
 #
 # binaries budgets test binaries by their nextest name: summed_seconds bounds
 # the binary's test times added up across a platform's lifecycle partitions,
-# and test_seconds bounds any one of its tests.
+# and test_seconds bounds any one of its tests. Each binary's override in the
+# lifecycle profile in .config/nextest.toml must use its test_seconds as the
+# slow-timeout period.
 
 # Unit and integration tests: 27 s on linux_amd64, slowest test 5.1 s.
 test:

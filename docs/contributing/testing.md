@@ -103,17 +103,19 @@ The `test-`, `lifecycle-`, `live-docker-`, and `live-kind-` timing artifacts con
 
 It also budgets each provider's contract binary: the binary's test times added up across a platform's lifecycle partitions, and a limit for any one of its tests:
 
-| Binary | Summed budget | Per-test limit |
-|---|---|---|
-| `fabric-provider::contract` | 40 s | 22 s |
-| `nemoclaw-provider::contract` | 110 s | 10 s |
-| `openshell-provider::contract` | 190 s | 12 s |
+| Binary | Summed budget | Per-test limit | Nextest stops a test after |
+|---|---|---|---|
+| `fabric-provider::contract` | 40 s | 22 s | 44 s |
+| `nemoclaw-provider::contract` | 110 s | 10 s | 20 s |
+| `openshell-provider::contract` | 190 s | 12 s | 24 s |
 
 On the Linux CI runners, a step over its budget, or with a test over its limit, fails and names each offender with its time and limit; macOS, Windows, and local runs only report them.
 Each step's profile in [`.config/nextest.toml`](../../.config/nextest.toml) reports a test as slow when it reaches the per-test limit and stops it at a multiple of the limit, which leaves a margin for the runs that only report budgets.
 The `test` step stops a test at three times its limit because its slowest test takes nearly twice the limit on macOS; the other steps stop a test at twice their limit.
+An override in the `lifecycle` profile stops each budgeted binary's tests at twice that binary's limit.
 Nextest marks a stopped test `TIMEOUT` and fails the step on every platform; `cargo ci` names the test with its time and limit.
-When you change a per-test limit, change the profile's `slow-timeout` period to match; a `nemoclaw-build` test fails when the period differs from the limit or the profile stops a test later than three times the limit.
+When you change a per-test limit, change the matching `slow-timeout` period too: the profile's for a step, or the `binary_id` override's for a binary.
+A `nemoclaw-build` test fails when a period differs from its limit, when a profile or override stops a test later than three times its limit, or when a budgeted binary and an override lack each other.
 The `Lifecycle timing` job checks the binary budgets, because a binary's tests run in several partitions; plain `cargo ci` runs the whole lifecycle suite in one step and reports them there.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.

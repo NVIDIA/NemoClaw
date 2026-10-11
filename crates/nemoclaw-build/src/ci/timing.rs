@@ -54,6 +54,13 @@ impl Budgets {
         self.binaries.get(binary).copied()
     }
 
+    /// Each budgeted test binary and its budget, by name.
+    pub fn binaries(&self) -> impl Iterator<Item = (&str, BinaryBudget)> {
+        self.binaries
+            .iter()
+            .map(|(binary, budget)| (binary.as_str(), *budget))
+    }
+
     /// Whether any test binary has a budget.
     #[must_use]
     pub fn has_binaries(&self) -> bool {

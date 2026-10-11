@@ -394,10 +394,31 @@ fn nextest_seconds(duration: &str) -> u64 {
         })
 }
 
+/// Check that the nextest `slow-timeout` set by `setting` reports a test as
+/// slow after `limit`, the per-test limit of `budget`, and stops it within
+/// three times that limit.
+fn assert_stops_near_limit(setting: &str, timeout: &toml::Value, budget: &str, limit: u64) {
+    let period = nextest_seconds(timeout["period"].as_str().unwrap());
+    let terminate_after = timeout
+        .get("terminate-after")
+        .and_then(toml::Value::as_integer)
+        .unwrap_or_else(|| panic!("{setting} never stops a test"));
+    assert_eq!(
+        period, limit,
+        "{setting} reports a test as slow after {period} s, but {budget} allows {limit} s per test"
+    );
+    assert!(
+        (1..=3).contains(&terminate_after),
+        "{setting} stops a test after {} s, more than three times the {limit} s limit of {budget}",
+        period * terminate_after.unsigned_abs()
+    );
+}
+
 // Each nextest profile reports a test as slow at its step's per-test limit and
 // stops it at a small multiple of that limit: the margin for the platforms and
-// local runs that only report budgets. Changing a limit in one file and not
-// the other fails here.
+// local runs that only report budgets. A budgeted test binary's override does
+// the same with the binary's limit. Changing a limit in one file and not the
+// other fails here.
 #[test]
 fn each_nextest_profile_stops_a_test_near_its_per_test_limit() {
     let budgets =
@@ -426,21 +447,46 @@ fn each_nextest_profile_stops_a_test_near_its_per_test_limit() {
                 .and_then(toml::Value::as_str)
                 .unwrap_or_else(|| panic!("the {profile} nextest profile sets no slow-timeout"));
         };
-        let period = nextest_seconds(timeout["period"].as_str().unwrap());
-        let terminate_after = timeout
-            .get("terminate-after")
-            .and_then(toml::Value::as_integer)
-            .unwrap_or_else(|| panic!("the {profile} nextest profile never stops a test"));
-        assert_eq!(
-            period,
+        assert_stops_near_limit(
+            &format!("the {profile} nextest profile"),
+            timeout,
+            &format!("the {} step", step.name()),
             limit,
-            "the {profile} nextest profile reports a test as slow after {period} s, but the {} step allows {limit} s per test",
-            step.name()
         );
+    }
+
+    // The budgeted binaries are the providers' contract tests, which only the
+    // lifecycle profile runs.
+    let (lifecycle, _) = Step::Lifecycle.junit().unwrap();
+    let overrides: Vec<(&str, &toml::Value)> = profiles[lifecycle]
+        .get("overrides")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| Some((entry.get("filter")?.as_str()?, entry.get("slow-timeout")?)))
+        .collect();
+    let mut budgeted = Vec::new();
+    for (binary, budget) in budgets.binaries() {
+        let filter = format!("binary_id(={binary})");
+        let timeout = overrides
+            .iter()
+            .find(|(candidate, _)| *candidate == filter)
+            .map(|(_, timeout)| *timeout)
+            .unwrap_or_else(|| {
+                panic!("the {lifecycle} nextest profile has no slow-timeout override with filter {filter:?}")
+            });
+        assert_stops_near_limit(
+            &format!("the {lifecycle} nextest override for {binary}"),
+            timeout,
+            binary,
+            budget.test_seconds,
+        );
+        budgeted.push(filter);
+    }
+    for (filter, _) in &overrides {
         assert!(
-            (1..=3).contains(&terminate_after),
-            "the {profile} nextest profile stops a test after {} s, more than three times the {limit} s limit",
-            period * terminate_after.unsigned_abs()
+            budgeted.iter().any(|budgeted| budgeted == filter),
+            "the {lifecycle} nextest override with filter {filter:?} has no binary budget in .config/test-budgets.yaml"
         );
     }
 }

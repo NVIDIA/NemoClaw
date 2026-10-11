@@ -46,6 +46,21 @@ test(native_state_json_preserves_module_and_instance_identity_without_refresh)
 [profile.lifecycle.junit]
 path = "lifecycle.xml"
 
+# Each provider's contract tests have their own per-test limit in
+# .config/test-budgets.yaml; stop them at twice it, like the profile's other
+# tests.
+[[profile.lifecycle.overrides]]
+filter = 'binary_id(=fabric-provider::contract)'
+slow-timeout = { period = "22s", terminate-after = 2 }
+
+[[profile.lifecycle.overrides]]
+filter = 'binary_id(=nemoclaw-provider::contract)'
+slow-timeout = { period = "10s", terminate-after = 2 }
+
+[[profile.lifecycle.overrides]]
+filter = 'binary_id(=openshell-provider::contract)'
+slow-timeout = { period = "12s", terminate-after = 2 }
+
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
 # images and owned inputs these tests read. One at a time: they share one engine.
 [profile.live-docker]
