@@ -543,6 +543,16 @@ of credential values. It then changes the fixture's recorded sandbox fingerprint
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
+The `hermes-discord` target owns the live messaging refusal boundary for #12987. After Discord
+onboarding, it requires the persisted sandbox state to contain the configured Discord channel, then
+uses the shared Hermes export fixture to run both real CLI launchers. Both must refuse the unsupported
+messaging state without publishing a file or exposing credentials. The E2E support tests cover the
+deterministic refusal selection and diagnostic comparison.
+The target removes redundant CLI-presence, sandbox-list, and standalone provider-get probes: later
+live commands use both CLIs, read the persisted sandbox entry, and require the named provider to be
+attached before testing its rewrite. It retains the HTTP health result; `hermes-e2e` owns the
+response-body check. No live assertion count increases.
+
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
 the disabled baseline. The TUI check then runs without changing that registry baseline. The installed
