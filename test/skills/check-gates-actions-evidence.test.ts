@@ -95,6 +95,33 @@ function prWorkflowCheck(runId: number, job: ActionJobFixture, startedAt: string
 }
 
 describe("maintainer merge-gate contributor compliance", () => {
+  it.each([
+    { state: "SUCCESS", pass: true, failing: [], pending: [] },
+    { state: "FAILURE", pass: false, failing: ["checks: FAILURE"], pending: [] },
+    { state: "PENDING", pass: false, failing: [], pending: ["checks"] },
+  ])(
+    "evaluates required legacy status context $state without inventing an Actions attempt",
+    ({ state, pass, failing, pending }) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          {
+            __typename: "StatusContext",
+            context: "checks",
+            state,
+            startedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const output = JSON.parse(result.stdout);
+      expect(output.gates.ci.pass, JSON.stringify(output.gates.ci)).toBe(pass);
+      expect(output.gates.ci.failingChecks ?? []).toEqual(failing);
+      expect(output.gates.ci.pendingChecks ?? []).toEqual(pending);
+    },
+  );
+
   it("requires PR/base SHA evidence for optional Actions checks", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",

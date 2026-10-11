@@ -1009,7 +1009,10 @@ function currentCheckRollup(
         (check.detailsUrl?.includes("/actions/") ||
           (Boolean(check.workflowName) && !/\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""))),
     );
-    if ((requiredCheck || expectsActionEvidence) && group.some((check) => !actionRunId(check))) {
+    if (
+      (requiredCheck || expectsActionEvidence) &&
+      group.some((check) => check.__typename !== "StatusContext" && !actionRunId(check))
+    ) {
       incompleteAttemptEvidence.add(groupName);
     }
     if (group.length === 1) {
