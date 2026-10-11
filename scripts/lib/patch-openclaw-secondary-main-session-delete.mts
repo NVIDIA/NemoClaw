@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
-export const SUPPORTED_OPENCLAW_VERSION = "2026.9.2";
+export const SUPPORTED_OPENCLAW_VERSION = "2026.9.5";
 export const MARKER = "/* nemoclaw secondary-agent main-session delete compatibility */";
 export const WORKER_MARKER =
   "/* nemoclaw worker secondary-agent main-session delete compatibility */";
@@ -111,7 +111,7 @@ function readVersion(distDir: string): string {
 function resolveTargets(distDir: string): [string, string] {
   const targets = fs
     .readdirSync(distDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^sessions-delete-.*\.js$/u.test(entry.name))
+    .filter((entry) => entry.isFile() && /^sessions-delete-.*\.m?js$/u.test(entry.name))
     .map((entry) => path.join(distDir, entry.name))
     .filter((file) => fs.readFileSync(file, "utf8").includes("Cannot delete the main session ("));
   if (targets.length !== 1) {

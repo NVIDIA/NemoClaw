@@ -130,6 +130,7 @@ function writeSlackPackage(
   root: string,
   options: {
     moduleType?: "commonjs" | "esm";
+    extension?: "js" | "mjs";
     withMentionState?: boolean;
     withNativeContextBindings?: boolean;
     withNativeSenderBinding?: boolean;
@@ -148,7 +149,7 @@ function writeSlackPackage(
       ...(options.moduleType === "esm" ? { type: "module" } : {}),
     }),
   );
-  const prepareFile = path.join(distDir, "prepare-fixture.js");
+  const prepareFile = path.join(distDir, `prepare-fixture.${options.extension ?? "js"}`);
   fs.writeFileSync(prepareFile, prepareModuleSource(options));
   return prepareFile;
 }
@@ -419,11 +420,12 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("patches the OpenClaw 2026.9.1 denied-sender gate", () => {
+  it.each(["js", "mjs"] as const)("patches the native denied-sender gate in %s", (extension) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-native-deny-"));
     const prepareFile = writeSlackPackage(tmp, {
       moduleType: "esm",
       nativeDeniedMentionFeedback: true,
+      extension,
     });
     try {
       const original = fs.readFileSync(prepareFile, "utf8");

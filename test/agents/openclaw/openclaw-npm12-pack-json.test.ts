@@ -102,6 +102,37 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     }
   });
 
+  it("validates the 2026.9.5 mjs parser and its exact reexport facade", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-npm12-facade-"));
+    const source = path.join(root, "install-source-utils-parser.mjs");
+    const facade = path.join(root, "install-source-utils-facade.mjs");
+    const resolver = path.join(root, "npm-registry-spec-fixture.mjs");
+    try {
+      fs.writeFileSync(
+        source,
+        nativeParserFixture()
+          .replace("s as resolveNpmJsonEntries", "x as unused, s as resolveNpmJsonEntries")
+          .replace("npm-registry-spec-fixture.js", "npm-registry-spec-fixture.mjs") +
+          "export { parse as s };\n",
+      );
+      fs.writeFileSync(resolver, nativeResolverFixture() + "export const x = 1;\n");
+      fs.writeFileSync(
+        facade,
+        'import { s as resolveNpmSpecMetadata } from "./install-source-utils-parser.mjs";\nexport { resolveNpmSpecMetadata };\n',
+      );
+      expect(patchOpenClawNpm12PackJson(root, "2026.9.5")).toBe("already-patched");
+      const { resolveNpmSpecMetadata } = (await import(pathToFileURL(facade).href)) as {
+        resolveNpmSpecMetadata(raw: string): unknown[];
+      };
+      const metadata = { name: "openclaw", version: "2026.9.5" };
+      expect(resolveNpmSpecMetadata(JSON.stringify({ openclaw: metadata }))).toEqual([metadata]);
+      fs.appendFileSync(facade, "export const unexpected = true;\n");
+      expect(() => patchOpenClawNpm12PackJson(root, "2026.9.5")).toThrow(/facade/);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("pins the two-file parser layout for OpenClaw 2026.3.11", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-npm12-2026-3-11-"));
     try {

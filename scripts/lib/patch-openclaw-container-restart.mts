@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "2026.9.2";
+const VERSION = "2026.9.5";
 const MARKER = "// nemoclaw: reload sandbox plugins with a fresh process image";
 const ORIGINAL = `\treturn {
 \t\tmode: "disabled",
@@ -85,6 +85,44 @@ export function patchHostSafeRestart(source: string): string {
   );
 }
 
+const PROXY_SHUTDOWN_MARKER = "// nemoclaw: let the gateway finish shutdown before proxy exit";
+const PROXY_SHUTDOWN_TARGET =
+  "\t\tunregisterProxySignalExitBarrier = registerSignalExitBarrier(stopStartedProxy);\n\t\tconst shutdown = (exitCode) => {";
+const PROXY_SHUTDOWN_REPLACEMENT = `\t\tunregisterProxySignalExitBarrier = registerSignalExitBarrier(stopStartedProxy);
+\t\t${PROXY_SHUTDOWN_MARKER}
+\t\tif (isGatewayRunInvocation) {
+\t\t\tonExit = () => killStartedProxy();
+\t\t\tprocess$1.once("exit", onExit);
+\t\t\treturn;
+\t\t}
+\t\tconst shutdown = (exitCode) => {`;
+
+// In 2026.9.5 the CLI proxy's signal handler exits while the gateway is still
+// closing its server, leaving its owner lease in a reused managed state volume.
+// Keep proxy cleanup registered, with process exit owned by the gateway lifecycle.
+export function patchGatewayProxyShutdown(source: string): string {
+  const matches = [
+    ...source.matchAll(/\tconst installProxySignalHandlers = \(\) => \{[\s\S]*?\n\t\};/gu),
+  ];
+  if (matches.length !== 1) throw new Error("Expected one native proxy signal installer");
+  const original = matches[0]![0];
+  if (source.includes(PROXY_SHUTDOWN_MARKER)) {
+    if (
+      source.split(PROXY_SHUTDOWN_MARKER).length !== 2 ||
+      original.split(PROXY_SHUTDOWN_REPLACEMENT).length !== 2
+    ) {
+      throw new Error("Incomplete OpenClaw gateway proxy shutdown patch");
+    }
+    return source;
+  }
+  if (original.split(PROXY_SHUTDOWN_TARGET).length !== 2) {
+    throw new Error("Unrecognized OpenClaw proxy shutdown boundary");
+  }
+  return source.replace(original, () =>
+    original.replace(PROXY_SHUTDOWN_TARGET, () => PROXY_SHUTDOWN_REPLACEMENT),
+  );
+}
+
 export function patchOpenClawContainerRestart(distDir: string, audit = false): void {
   const metadata = JSON.parse(fs.readFileSync(path.join(distDir, "..", "package.json"), "utf8"));
   // The Dockerfile restricts these pins to explicitly selected legacy E2E fixtures.
@@ -94,7 +132,7 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
   }
   const safeRestartFiles = fs
     .readdirSync(distDir)
-    .filter((name) => name.startsWith("lifecycle-") && name.endsWith(".js"))
+    .filter((name) => name.startsWith("lifecycle-") && /\.m?js$/u.test(name))
     .map((name) => path.join(distDir, name))
     .filter((file) =>
       fs.readFileSync(file, "utf8").includes("async function runSafeGatewayRestart("),
@@ -106,6 +144,9 @@ export function patchOpenClawContainerRestart(distDir: string, audit = false): v
       patch: patchContainerRestart,
     },
     { target: safeRestartFiles[0]!, patch: patchHostSafeRestart },
+    ...(metadata.version === VERSION
+      ? [{ target: path.join(distDir, "cli", "run-main.js"), patch: patchGatewayProxyShutdown }]
+      : []),
   ].map(({ target, patch }) => {
     const source = fs.readFileSync(target, "utf8");
     return { target, source, patched: patch(source) };

@@ -22,6 +22,11 @@ import {
   serializeManagedStartupRootApplyRequest,
 } from "./root-apply";
 
+import {
+  OPENCLAW_OWNER_LEASE_EXECUTION_TIMEOUT_MS,
+  WAIT_FOR_OPENCLAW_OWNER_LEASE,
+} from "./openclaw-owner-lease";
+
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_ID_RE = /^(?:sha256:)?[a-f0-9]{64}$/u;
 const ROOT_APPLY_TIMEOUT_MS = 300_000;
@@ -185,10 +190,10 @@ function inspectExactCreatedRuntime(
     Config?: { Labels?: Record<string, string> };
     State?: { Running?: boolean; Paused?: boolean; Restarting?: boolean; Dead?: boolean };
   };
-  const containerId = String(row.Id ?? "")
+  const containerId = (typeof row.Id === "string" ? row.Id : "")
     .toLowerCase()
     .replace(/^sha256:/u, "");
-  const image = String(row.Image ?? "").toLowerCase();
+  const image = (typeof row.Image === "string" ? row.Image : "").toLowerCase();
   const providerId = input.bundle.identity.id as "docker" | "podman";
   const labels = row.Config?.Labels ?? {};
   const managed =
@@ -388,6 +393,25 @@ export function applyProviderManagedStartupRootRequest(
       );
       const phase = String(status.stdout).trim();
       if (status.status === 0 && (phase === "pending" || phase === "committed")) {
+        if (phase === "pending" && input.request.agent === "openclaw") {
+          const lease = executeExact(
+            runtime,
+            [
+              "/usr/bin/env",
+              "-i",
+              ...FIXED_ROOT_ENV,
+              "python3",
+              "-I",
+              "-c",
+              WAIT_FOR_OPENCLAW_OWNER_LEASE,
+            ],
+            { timeoutMs: OPENCLAW_OWNER_LEASE_EXECUTION_TIMEOUT_MS },
+          );
+          if (lease.status !== 0 || lease.error) {
+            lastFailure = "OpenClaw owner lease did not settle before managed startup";
+            break;
+          }
+        }
         return runtime.transaction;
       }
       if (status.status === 0 && phase === "absent") return null;

@@ -44,6 +44,7 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "/usr/local/share/nemoclaw/dcode-proxy-port"
     | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
     | "/usr/local/share/nemoclaw/dcode-upstream-provider"
+    | "/usr/local/share/nemoclaw/openclaw-proxy-url"
     | "/usr/local/share/nemoclaw/pi-proxy-host"
     | "/usr/local/share/nemoclaw/pi-proxy-port";
   readonly contents: string;
@@ -410,7 +411,14 @@ function mapOpenClawProfile(
     configurationEnvironment: sortedEnvironment(configurationEnvironment),
     runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
     applicationRuntime: applicationRuntimePlan(profile, environment),
-    materials: Object.freeze([corporateCaMaterial(profile)]),
+    materials: Object.freeze([
+      corporateCaMaterial(profile),
+      rootOwnedFile(
+        "NEMOCLAW_PROXY_HOST",
+        "/usr/local/share/nemoclaw/openclaw-proxy-url",
+        `http://${profile.proxy.managedHost}:${profile.proxy.managedPort}`,
+      ),
+    ]),
     actions: applicationActions(profile, "openclaw"),
   });
 }

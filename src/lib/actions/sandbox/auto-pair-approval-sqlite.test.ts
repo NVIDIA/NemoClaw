@@ -237,7 +237,7 @@ describe("auto-pair approval SQLite compatibility", () => {
         "        os.rename(database_path + '-shm.validated', database_path + '-shm')",
       ].join("\n");
       const postBinding =
-        "        if schema_version is None or schema_version[0] != OPENCLAW_STATE_SCHEMA_VERSION:";
+        "        if schema_version is None or schema_version[0] not in OPENCLAW_STATE_SCHEMA_VERSIONS:";
       const script = originalScript
         .replace(schemaRead, attack)
         .replace(
@@ -279,61 +279,66 @@ describe("auto-pair approval SQLite compatibility", () => {
     }
   });
 
-  pyIt25s("uses canonical SQLite snapshots without recreating legacy device state", () => {
-    const policy = readAutoPairApprovalPolicyModule();
-    expect(policy).toBeTruthy();
-    const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
-      emitSummary: true,
-      emitReceipt: true,
-      localDeviceOnly: true,
-      budget: { maxApprovals: 1 },
-    });
-    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-pair-")));
-    try {
-      const stateDir = path.join(tmpDir, "openclaw-state");
-      const databaseDir = path.join(stateDir, "state");
-      const databasePath = path.join(databaseDir, "openclaw.sqlite");
-      const approveCallsFile = path.join(tmpDir, "approve-calls.log");
-      fs.mkdirSync(databaseDir, { recursive: true });
-      const legacyIdentityDir = path.join(stateDir, "identity");
-      const legacyDevicesDir = path.join(stateDir, "devices");
-      fs.mkdirSync(legacyIdentityDir);
-      fs.mkdirSync(legacyDevicesDir);
-      const staleLegacyFiles = new Map([
-        [path.join(legacyIdentityDir, "device.json"), "stale legacy identity\n"],
-        [path.join(legacyIdentityDir, "device-auth.json"), "stale legacy auth\n"],
-        [path.join(legacyDevicesDir, "pending.json"), "stale legacy pending\n"],
-        [path.join(legacyDevicesDir, "paired.json"), "stale legacy paired\n"],
-      ]);
-      for (const [file, content] of staleLegacyFiles) {
-        fs.writeFileSync(file, content);
-      }
-      const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
-      const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
-      const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-      const publicKeyRaw = publicKey.export({ type: "spki", format: "der" }).subarray(-32);
-      const publicKeyText = publicKeyRaw.toString("base64url");
-      const deviceId = crypto.createHash("sha256").update(publicKeyRaw).digest("hex");
-      const requestId = "sqlite-upgrade-1";
-      const beforeToken = "sqlite-before-token";
-      const afterToken = "sqlite-after-token";
-      const unrelatedDeviceId = "unrelated-device";
-      const unrelatedToken = "unrelated-token-must-not-reach-approval-child";
-      const fixture = {
-        deviceId,
-        publicKeyPem,
-        privateKeyPem,
-        publicKeyText,
-        requestId,
-        beforeToken,
-        unrelatedDeviceId,
-        unrelatedToken,
-      };
-      const setup = spawnSync(
-        "python3",
-        [
-          "-c",
-          `import json, os, sqlite3, sys
+  pyIt.each([15, 17])(
+    "uses canonical schema %i snapshots without recreating legacy device state",
+    (schemaVersion) => {
+      const policy = readAutoPairApprovalPolicyModule();
+      expect(policy).toBeTruthy();
+      const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
+        emitSummary: true,
+        emitReceipt: true,
+        localDeviceOnly: true,
+        budget: { maxApprovals: 1 },
+      });
+      const tmpDir = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-pair-")),
+      );
+      try {
+        const stateDir = path.join(tmpDir, "openclaw-state");
+        const databaseDir = path.join(stateDir, "state");
+        const databasePath = path.join(databaseDir, "openclaw.sqlite");
+        const approveCallsFile = path.join(tmpDir, "approve-calls.log");
+        fs.mkdirSync(databaseDir, { recursive: true });
+        const legacyIdentityDir = path.join(stateDir, "identity");
+        const legacyDevicesDir = path.join(stateDir, "devices");
+        fs.mkdirSync(legacyIdentityDir);
+        fs.mkdirSync(legacyDevicesDir);
+        const staleLegacyFiles = new Map([
+          [path.join(legacyIdentityDir, "device.json"), "stale legacy identity\n"],
+          [path.join(legacyIdentityDir, "device-auth.json"), "stale legacy auth\n"],
+          [path.join(legacyDevicesDir, "pending.json"), "stale legacy pending\n"],
+          [path.join(legacyDevicesDir, "paired.json"), "stale legacy paired\n"],
+        ]);
+        for (const [file, content] of staleLegacyFiles) {
+          fs.writeFileSync(file, content);
+        }
+        const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+        const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+        const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+        const publicKeyRaw = publicKey.export({ type: "spki", format: "der" }).subarray(-32);
+        const publicKeyText = publicKeyRaw.toString("base64url");
+        const deviceId = crypto.createHash("sha256").update(publicKeyRaw).digest("hex");
+        const requestId = "sqlite-upgrade-1";
+        const beforeToken = "sqlite-before-token";
+        const afterToken = "sqlite-after-token";
+        const unrelatedDeviceId = "unrelated-device";
+        const unrelatedToken = "unrelated-token-must-not-reach-approval-child";
+        const fixture = {
+          deviceId,
+          publicKeyPem,
+          privateKeyPem,
+          publicKeyText,
+          requestId,
+          beforeToken,
+          unrelatedDeviceId,
+          unrelatedToken,
+          schemaVersion,
+        };
+        const setup = spawnSync(
+          "python3",
+          [
+            "-c",
+            `import json, os, sqlite3, sys
 db, raw = sys.argv[1:]
 f = json.loads(raw)
 os.umask(0o007)
@@ -345,8 +350,8 @@ CREATE TABLE device_identities (identity_key TEXT PRIMARY KEY, device_id TEXT, p
 CREATE TABLE device_pairing_pending (request_id TEXT PRIMARY KEY, device_id TEXT, public_key TEXT, display_name TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT, browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT, remote_ip TEXT, silent INTEGER, is_repair INTEGER, ts INTEGER, refreshed_at_ms INTEGER);
 CREATE TABLE device_pairing_paired (device_id TEXT PRIMARY KEY, public_key TEXT, display_name TEXT, operator_label TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT, browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT, approved_scopes_json TEXT, remote_ip TEXT, tokens_json TEXT, approved_via TEXT, node_surface_json TEXT, pending_node_surface_json TEXT, created_at_ms INTEGER, approved_at_ms INTEGER, last_seen_at_ms INTEGER, last_seen_reason TEXT);
 CREATE TABLE device_auth_tokens (device_id TEXT, role TEXT, token TEXT, scopes_json TEXT, updated_at_ms INTEGER, PRIMARY KEY (device_id, role));
-PRAGMA user_version = 15;
 ''')
+c.execute(f"PRAGMA user_version = {f['schemaVersion']}")
 c.execute('INSERT INTO device_identities VALUES (?,?,?,?,?,?)', ('primary', f['deviceId'], f['publicKeyPem'], f['privateKeyPem'], 1, 1))
 c.execute('INSERT INTO device_pairing_pending VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (f['requestId'], f['deviceId'], f['publicKeyText'], None, None, None, 'cli', 'cli', None, 'operator', json.dumps(['operator']), json.dumps(['operator.write']), None, 0, 1, 1, None))
 tokens = {'operator': {'token': f['beforeToken'], 'role': 'operator', 'scopes': ['operator.pairing']}}
@@ -358,41 +363,41 @@ c.execute('INSERT INTO device_auth_tokens VALUES (?,?,?,?,?)', (f['unrelatedDevi
 c.commit()
 os._exit(0)
 `,
-          databasePath,
-          JSON.stringify(fixture),
-        ],
-        { encoding: "utf-8" },
-      );
-      expect(setup.status, setup.stderr).toBe(0);
-      const wal = fs.statSync(`${databasePath}-wal`);
-      const sharedMemory = fs.statSync(`${databasePath}-shm`);
-      expect([wal.isFile(), wal.nlink, wal.gid, wal.mode & 0o007, wal.size > 0]).toEqual([
-        true,
-        1,
-        process.getegid!(),
-        0,
-        true,
-      ]);
-      expect([
-        sharedMemory.isFile(),
-        sharedMemory.nlink,
-        sharedMemory.gid,
-        sharedMemory.mode & 0o007,
-        sharedMemory.size > 0,
-      ]).toEqual([true, 1, process.getegid!(), 0, true]);
-      const walProof = spawnSync(
-        "python3",
-        [
-          "-c",
-          "import sqlite3,sys; p=sys.argv[1]; assert sqlite3.connect(f'file:{p}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{p}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_identities').fetchone()[0] == 1",
-          databasePath,
-        ],
-        { encoding: "utf-8" },
-      );
-      expect(walProof.status, walProof.stderr).toBe(0);
-      fs.writeFileSync(
-        path.join(tmpDir, "openclaw"),
-        `#!/usr/bin/env python3
+            databasePath,
+            JSON.stringify(fixture),
+          ],
+          { encoding: "utf-8" },
+        );
+        expect(setup.status, setup.stderr).toBe(0);
+        const wal = fs.statSync(`${databasePath}-wal`);
+        const sharedMemory = fs.statSync(`${databasePath}-shm`);
+        expect([wal.isFile(), wal.nlink, wal.gid, wal.mode & 0o007, wal.size > 0]).toEqual([
+          true,
+          1,
+          process.getegid!(),
+          0,
+          true,
+        ]);
+        expect([
+          sharedMemory.isFile(),
+          sharedMemory.nlink,
+          sharedMemory.gid,
+          sharedMemory.mode & 0o007,
+          sharedMemory.size > 0,
+        ]).toEqual([true, 1, process.getegid!(), 0, true]);
+        const walProof = spawnSync(
+          "python3",
+          [
+            "-c",
+            "import sqlite3,sys; p=sys.argv[1]; assert sqlite3.connect(f'file:{p}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{p}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_identities').fetchone()[0] == 1",
+            databasePath,
+          ],
+          { encoding: "utf-8" },
+        );
+        expect(walProof.status, walProof.stderr).toBe(0);
+        fs.writeFileSync(
+          path.join(tmpDir, "openclaw"),
+          `#!/usr/bin/env python3
 import json, os, sqlite3, sys
 args = sys.argv[1:]
 if args[:2] != ['devices', 'approve']:
@@ -436,34 +441,34 @@ c.execute("UPDATE device_auth_tokens SET token = ?, scopes_json = ?, updated_at_
 c.commit()
 print('{}')
 `,
-        { mode: 0o755 },
-      );
+          { mode: 0o755 },
+        );
 
-      const result = spawnSync("sh", ["-c", script], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          PATH: `${tmpDir}:/usr/bin:/bin`,
-          OPENCLAW_STATE_DIR: stateDir,
-          OPENCLAW_GATEWAY_PORT: "18789",
-          OPENCLAW_GATEWAY_TOKEN: "must-not-reach-restored-clone",
-        },
-        timeout: 10_000,
-      });
-      expect(result.status, result.stderr).toBe(0);
-      expect(
-        parseAutoPairApprovalReceipt(result.stdout),
-        `${result.stdout}\n${result.stderr}`,
-      ).toBe("approved-one");
-      expect(fs.readFileSync(approveCallsFile, "utf-8")).toBe(`${requestId}\n`);
-      for (const [file, content] of staleLegacyFiles) {
-        expect(fs.readFileSync(file, "utf-8")).toBe(content);
-      }
-      const verify = spawnSync(
-        "python3",
-        [
-          "-c",
-          `import json, sqlite3, sys
+        const result = spawnSync("sh", ["-c", script], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            PATH: `${tmpDir}:/usr/bin:/bin`,
+            OPENCLAW_STATE_DIR: stateDir,
+            OPENCLAW_GATEWAY_PORT: "18789",
+            OPENCLAW_GATEWAY_TOKEN: "must-not-reach-restored-clone",
+          },
+          timeout: 10_000,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(
+          parseAutoPairApprovalReceipt(result.stdout),
+          `${result.stdout}\n${result.stderr}`,
+        ).toBe("approved-one");
+        expect(fs.readFileSync(approveCallsFile, "utf-8")).toBe(`${requestId}\n`);
+        for (const [file, content] of staleLegacyFiles) {
+          expect(fs.readFileSync(file, "utf-8")).toBe(content);
+        }
+        const verify = spawnSync(
+          "python3",
+          [
+            "-c",
+            `import json, sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 print(json.dumps({
   'pending': c.execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0],
@@ -471,31 +476,32 @@ print(json.dumps({
   'auth': c.execute("SELECT token, scopes_json FROM device_auth_tokens WHERE device_id = ? AND role = 'operator'", (sys.argv[2],)).fetchone(),
   'unrelated': c.execute("SELECT token FROM device_auth_tokens WHERE device_id = ? AND role = 'operator'", (sys.argv[3],)).fetchone()[0],
 }))`,
-          databasePath,
-          deviceId,
-          unrelatedDeviceId,
-        ],
-        { encoding: "utf-8" },
-      );
-      expect(verify.status, verify.stderr).toBe(0);
-      const observed = JSON.parse(verify.stdout);
-      expect(observed.pending).toBe(0);
-      expect(JSON.parse(observed.paired).operator).toEqual({
-        token: afterToken,
-        role: "operator",
-        scopes: ["operator.pairing", "operator.read", "operator.write"],
-      });
-      expect(observed.auth[0]).toBe(afterToken);
-      expect(JSON.parse(observed.auth[1])).toEqual([
-        "operator.pairing",
-        "operator.read",
-        "operator.write",
-      ]);
-      expect(observed.unrelated).toBe(unrelatedToken);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+            databasePath,
+            deviceId,
+            unrelatedDeviceId,
+          ],
+          { encoding: "utf-8" },
+        );
+        expect(verify.status, verify.stderr).toBe(0);
+        const observed = JSON.parse(verify.stdout);
+        expect(observed.pending).toBe(0);
+        expect(JSON.parse(observed.paired).operator).toEqual({
+          token: afterToken,
+          role: "operator",
+          scopes: ["operator.pairing", "operator.read", "operator.write"],
+        });
+        expect(observed.auth[0]).toBe(afterToken);
+        expect(JSON.parse(observed.auth[1])).toEqual([
+          "operator.pairing",
+          "operator.read",
+          "operator.write",
+        ]);
+        expect(observed.unrelated).toBe(unrelatedToken);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   pyIt25s("fails closed on an invalid canonical database instead of using legacy JSON", () => {
     const policy = readAutoPairApprovalPolicyModule();
@@ -538,14 +544,14 @@ print(json.dumps({
     }
   });
 
-  pyIt25s("rejects an unsupported canonical schema", () => {
+  pyIt.each([14, 16, 18])("rejects unsupported canonical schema %i", (schemaVersion) => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
       emitReceipt: true,
       localDeviceOnly: true,
     });
-    expectUnsafeCanonicalState(script, 14);
+    expectUnsafeCanonicalState(script, schemaVersion);
   });
 
   pyIt25s("does not create a missing shared-memory sidecar for a nonempty WAL", () => {

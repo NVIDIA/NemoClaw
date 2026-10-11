@@ -7,12 +7,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  parseAuditConfig,
+  selectReviewedLockedGraphIdentity,
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
-const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz";
+const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz";
 const MESSAGING_BUILD_APPLIER = path.join(
   REPO_ROOT,
   "src",
@@ -127,7 +131,33 @@ function runBaseImageBuildArgGuard(
   }
 }
 
-describe("OpenClaw 2026.9.2 dependency review contract", () => {
+describe("OpenClaw 2026.9.5 dependency review contract", () => {
+  it("audits only production-selected OpenClaw runtime and plugin archives", () => {
+    const audit = parseAuditConfig(
+      readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+    );
+    const graph = audit.lockedGraphs.find(({ id }) => id === "openclaw-runtime");
+    expect(graph).toBeDefined();
+    const selected = selectReviewedLockedGraphIdentity(
+      path.join(REPO_ROOT, graph!.directory, "package-lock.json"),
+      graph!,
+    );
+    const selectedVersion = selected.packageSpec.slice(selected.packageSpec.lastIndexOf("@") + 1);
+    const openClawArchives = audit.archivePackages.filter(
+      ({ packageSpec }) =>
+        packageSpec.startsWith("openclaw@") || packageSpec.startsWith("@openclaw/"),
+    );
+    expect(openClawArchives.length).toBeGreaterThan(0);
+    expect(openClawArchives.map(({ packageSpec }) => packageSpec)).toContain(
+      `@openclaw/googlechat@${selectedVersion}`,
+    );
+    expect(
+      openClawArchives.map(({ packageSpec }) =>
+        packageSpec.slice(packageSpec.lastIndexOf("@") + 1),
+      ),
+    ).toEqual(openClawArchives.map(() => selectedVersion));
+  });
+
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
@@ -179,8 +209,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
     Dockerfile) end_marker='# Patch OpenClaw media fetch' ;;
     Dockerfile.base) end_marker='# Baseline health check.' ;;
   esac
-  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.9.2/,/$end_marker/p" "$dockerfile")"
-  check_contains "$openclaw_block" "ARG OPENCLAW_2026_9_2_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
+  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.9.5/,/$end_marker/p" "$dockerfile")"
+  check_contains "$openclaw_block" "ARG OPENCLAW_2026_9_5_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
   check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
   check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
   check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"

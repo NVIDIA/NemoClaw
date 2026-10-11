@@ -27,7 +27,9 @@ describe("native OpenClaw SQLite archive sanitation", () => {
         PRAGMA secure_delete = ON;
         CREATE TABLE device_identities (identity_key TEXT PRIMARY KEY, private_key_pem TEXT);
         CREATE TABLE session_state (session_id TEXT PRIMARY KEY, summary TEXT);
+        CREATE TABLE state_leases (scope TEXT, lease_key TEXT, owner TEXT);
         INSERT INTO session_state VALUES ('session-1', 'keep me');
+        INSERT INTO state_leases VALUES ('gateway-owner', 'global', 'source-container');
       `);
         const begin = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
         const end = ["-----END", "PRIVATE KEY-----"].join(" ");
@@ -51,6 +53,9 @@ describe("native OpenClaw SQLite archive sanitation", () => {
           session_id: "session-1",
           summary: "keep me",
         });
+        expect(archived.prepare("SELECT COUNT(*) AS count FROM state_leases").get()).toEqual({
+          count: 0,
+        });
         archived.close();
         expect(textContainsHighConfidenceCredential(fs.readFileSync(archivedPath, "utf8"))).toBe(
           false,
@@ -58,6 +63,11 @@ describe("native OpenClaw SQLite archive sanitation", () => {
         const live = new DatabaseSync(databasePath, { readOnly: true });
         expect(live.prepare("SELECT COUNT(*) AS count FROM device_identities").get()).toEqual({
           count: 1,
+        });
+        expect(live.prepare("SELECT * FROM state_leases").get()).toEqual({
+          scope: "gateway-owner",
+          lease_key: "global",
+          owner: "source-container",
         });
         live.close();
       } finally {

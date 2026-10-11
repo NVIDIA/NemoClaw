@@ -393,6 +393,88 @@ describe("reviewed npm cache seed", () => {
     expect(fs.existsSync(path.join(outputDirectory, offlinePack.filename!))).toBe(true);
   });
 
+  it("keeps bundled-only versions out of fresh offline package resolution", async () => {
+    const input = fixture();
+    const lock = JSON.parse(fs.readFileSync(input.lockfilePath, "utf8"));
+    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = {
+      "bundled-child": "2.0.0",
+      "bundled-only": "3.0.0",
+    };
+    lock.packages[`node_modules/${PACKAGE_NAME}`].bundleDependencies.push("bundled-only");
+    lock.packages[`node_modules/${PACKAGE_NAME}/node_modules/bundled-only`] = {
+      inBundle: true,
+      version: "3.0.0",
+    };
+    lock.packages[`node_modules/${PACKAGE_NAME}/node_modules/bundled-child`] = {
+      inBundle: true,
+      version: "2.0.0",
+    };
+    const childArchive = Buffer.from("reviewed standalone child archive");
+    const childPath = path.join(input.root, "child.tgz");
+    fs.writeFileSync(childPath, childArchive);
+    const childIntegrity = `sha512-${createHash("sha512").update(childArchive).digest("base64")}`;
+    lock.packages["node_modules/bundled-child"] = {
+      version: "1.0.0",
+      integrity: childIntegrity,
+      resolved: "https://registry.npmjs.org/bundled-child/-/bundled-child-1.0.0.tgz",
+    };
+    fs.writeFileSync(input.lockfilePath, JSON.stringify(lock));
+    const put = cachePutFromInstalledNpm();
+    await seedReviewedNpmCache(
+      request(
+        input,
+        new Map([
+          [PACKAGE_SPEC, input.archivePath],
+          ["bundled-child@1.0.0", childPath],
+        ]),
+      ),
+      put,
+    );
+    const npmEnv = {
+      ...process.env,
+      NPM_CONFIG_CACHE: input.cacheDirectory,
+      NPM_CONFIG_OFFLINE: "true",
+      NPM_CONFIG_REGISTRY: REGISTRY_ORIGIN,
+    };
+    const versions = () =>
+      JSON.parse(
+        execFileSync("npm", ["view", "bundled-child", "versions", "--json"], {
+          encoding: "utf8",
+          env: npmEnv,
+        }),
+      );
+    expect(versions()).toEqual(["1.0.0", "2.0.0"]);
+    expect(
+      JSON.parse(
+        execFileSync("npm", ["view", "bundled-only", "versions", "--json"], {
+          encoding: "utf8",
+          env: npmEnv,
+        }),
+      ),
+    ).toEqual(["3.0.0"]);
+    await seedReviewedNpmCache(
+      {
+        ...request(input, new Map()),
+        packumentsOnly: true,
+        omitBundledVersions: true,
+      },
+      put,
+    );
+    expect(versions()).toEqual(["1.0.0"]);
+    expect(
+      execFileSync("npm", ["view", "bundled-only", "versions", "--json"], {
+        encoding: "utf8",
+        env: npmEnv,
+      }).trim(),
+    ).toBe("");
+    expect(
+      execFileSync("npm", ["view", "bundled-child@*", "dist.integrity"], {
+        encoding: "utf8",
+        env: npmEnv,
+      }).trim(),
+    ).toBe(childIntegrity);
+  });
+
   it("rejects an unreviewed npm version before loading npm cache internals", async () => {
     const input = fixture();
     const binDirectory = path.join(input.root, "bin");

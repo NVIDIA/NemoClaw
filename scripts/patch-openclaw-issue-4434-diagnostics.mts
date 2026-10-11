@@ -48,7 +48,7 @@ function fail(message: string): never {
 
 function listJsFiles(dir: string): string[] {
   return (fs.readdirSync(dir, { withFileTypes: true }) as DirentLike[])
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .filter((entry) => entry.isFile() && /\.m?js$/u.test(entry.name))
     .map((entry) => path.join(dir, entry.name));
 }
 

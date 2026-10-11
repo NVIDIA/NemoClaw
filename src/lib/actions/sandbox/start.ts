@@ -5,7 +5,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import { retryUntilAsync } from "../../core/retry";
-import { DEFAULT_SANDBOX_EXEC_TIMEOUT_MS } from "../../adapters/sandbox/command-transport";
 import { cliName } from "../../onboard/branding";
 import {
   classifyRegisteredPortableAgentLifecycle,
@@ -34,8 +33,7 @@ import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   isSandboxGatewayRunningForStatus,
-  resolveGatewayRecoveryWaitSeconds,
-  waitForStartedHermesGatewayProcess,
+  waitForStartedNativeGatewayProcess as observeStartedNativeGatewayProcess,
 } from "./status/process-recovery";
 import {
   resolveSandboxLifecycleProvider,
@@ -95,7 +93,6 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
   log?: (message: string) => void;
 }
 
-const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
 
 /** Observe native startup only after an intentional stop; never relaunch the agent here. */
@@ -109,34 +106,18 @@ async function waitForStartedNativeGatewayProcess(
   if ((nativeAgent !== "hermes" && nativeAgent !== "openclaw") || sandbox.stopped !== true) {
     return undefined;
   }
-  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
-  const delay = async (delayMs: number) => {
-    log(`  Native agent gateway is still starting; checking again in ${delayMs / 1_000} seconds…`);
-    await (deps.delayGatewayProcessProbe ?? sleep)(delayMs);
-  };
-  if (nativeAgent === "hermes") {
-    return await waitForStartedHermesGatewayProcess(sandboxName, gatewayName, {
-      probe,
-      ...(deps.delayGatewayProcessProbe ? { sleep: deps.delayGatewayProcessProbe } : {}),
+  return await observeStartedNativeGatewayProcess(
+    sandboxName,
+    nativeAgent,
+    getPersistedSandboxTargetGatewayName(sandbox),
+    {
+      environment: deps.environment,
+      probe: deps.probeGatewayProcess,
+      delay: deps.delayGatewayProcessProbe,
+      now: deps.now,
       log,
-    });
-  }
-
-  const now = deps.now ?? (() => performance.now());
-  const deadline =
-    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
-  while (now() < deadline) {
-    const remaining = Math.floor(deadline - now());
-    if (remaining < 1) break;
-    const running = await probe(sandboxName, gatewayName, {
-      startup: { timeoutMs: Math.min(DEFAULT_SANDBOX_EXEC_TIMEOUT_MS, remaining) },
-    });
-    if (now() >= deadline) break;
-    if (running !== false) return running;
-    await delay(Math.min(GATEWAY_PROCESS_SETTLEMENT_DELAY_MS, deadline - now()));
-  }
-  return false;
+    },
+  );
 }
 
 /**

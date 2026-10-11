@@ -1939,6 +1939,70 @@ start_persistent_gateway_log_mirror() {
   fi
 }
 
+wait_for_openclaw_auto_pair_startup() {
+  # OpenClaw 2026.9.5 CLI preflight opens the shared state database even for
+  # devices list. Let the gateway finish its migrations before another CLI
+  # competes for state-lifecycle ownership. The native startup probe excludes
+  # downstream channel health and does not require device pairing.
+  local deadline=$((SECONDS + 330)) status
+  OPENCLAW_AUTO_PAIR_STARTUP_FAILURE="startup-timeout"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if ! openclaw_supervised_pid_is_live "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"; then
+      OPENCLAW_AUTO_PAIR_STARTUP_FAILURE="startup-gateway-exited"
+      return 1
+    fi
+    status="$(curl -q --noproxy '*' --proxy '' --silent --output /dev/null \
+      --max-time 1 --write-out '%{http_code}' \
+      "http://127.0.0.1:${_DASHBOARD_PORT}/startupz")" || status=""
+    if [ "$status" = 200 ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[auto-pair] gateway startup deadline reached" >&2
+  return 1
+}
+
+record_openclaw_auto_pair_startup_failure() {
+  # The existing persistent gateway log survives replacement of /tmp. Append
+  # only a fixed diagnostic through verified descriptors, without creating paths.
+  python3 - "$OPENCLAW_AUTO_PAIR_STARTUP_FAILURE" <<'PYAUTOSTARTUP'
+import json
+import os
+import stat
+import sys
+
+state = sys.argv[1]
+if state not in ('startup-timeout', 'startup-gateway-exited'):
+    sys.exit(1)
+directory_fd = log_fd = None
+try:
+    directory_fd = os.open('/sandbox/.openclaw/logs', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = os.fstat(directory_fd)
+    if directory.st_uid != os.geteuid() or stat.S_IMODE(directory.st_mode) != 0o755:
+        raise OSError('unsafe persistent log directory')
+    log_fd = os.open('gateway-persistent.log', os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=directory_fd)
+    metadata = os.fstat(log_fd)
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o644):
+        raise OSError('unsafe persistent log file')
+    message = ('[auto-pair-status] ' + json.dumps({'schemaVersion': 1, 'state': state},
+               separators=(',', ':')) + '\n').encode('utf-8')
+    if os.write(log_fd, message) != len(message):
+        raise OSError('incomplete persistent diagnostic')
+    os.fsync(log_fd)
+except OSError:
+    print('[auto-pair] could not preserve startup diagnostic in the managed gateway log', file=sys.stderr)
+    sys.exit(1)
+finally:
+    if log_fd is not None:
+        os.close(log_fd)
+    if directory_fd is not None:
+        os.close(directory_fd)
+PYAUTOSTARTUP
+}
+
 start_auto_pair() {
   # Run auto-pair as sandbox user (it talks to the gateway via CLI)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
@@ -1957,6 +2021,11 @@ start_auto_pair() {
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
       # shellcheck source=/dev/null
       builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
+    fi
+    export NEMOCLAW_AUTO_PAIR_STARTUP_STATUS="ready"
+    if ! wait_for_openclaw_auto_pair_startup; then
+      record_openclaw_auto_pair_startup_failure || true
+      export NEMOCLAW_AUTO_PAIR_STARTUP_STATUS="$OPENCLAW_AUTO_PAIR_STARTUP_FAILURE"
     fi
     export OPENCLAW_BIN="$OPENCLAW"
     exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
@@ -2016,6 +2085,11 @@ def publish_status(state):
         if status_fd is not None:
             os.close(status_fd)
 
+
+startup_status = os.environ.pop('NEMOCLAW_AUTO_PAIR_STARTUP_STATUS', 'ready')
+if startup_status in ('startup-timeout', 'startup-gateway-exited'):
+    publish_status(startup_status)
+    sys.exit(1)
 
 print('[auto-pair] watcher started', flush=True)
 publish_status('running')
@@ -4471,9 +4545,9 @@ EOF
   return 1
 }
 
-# v0.0.123 seeded an empty approvals file that OpenClaw cannot migrate.
+# Older images seeded empty approvals and update-check files that OpenClaw cannot migrate.
 # Retain nonempty files for native migration, including malformed user data.
-remove_empty_legacy_exec_approvals() {
+remove_empty_legacy_state_placeholders() {
   run_openclaw_config_as_owner /usr/bin/python3 -I - /sandbox/.openclaw <<'PY'
 import os
 import stat
@@ -4495,36 +4569,36 @@ try:
     fds.append(parent_fd)
     root_fd = os.open(os.path.basename(config), directory_flags, dir_fd=parent_fd)
     fds.append(root_fd)
-    name = 'exec-approvals.json'
-    try:
-        before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        sys.exit(0)
-    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-        raise ValueError('unsafe approvals file')
-    if before.st_size != 0:
-        sys.exit(0)
-    target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
-    fds.append(target_fd)
-    if (before.st_dev != os.fstat(root_fd).st_dev
-            or stable(os.fstat(target_fd)) != stable(before)
-            or os.read(target_fd, 1)
-            or identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
-            or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
-            or stable(os.stat(name, dir_fd=root_fd, follow_symlinks=False)) != stable(before)
-            or stable(os.fstat(target_fd)) != stable(before)):
-        raise ValueError('approvals file changed')
-    os.unlink(name, dir_fd=root_fd)
-    os.fsync(root_fd)
-    try:
-        os.stat(name, dir_fd=root_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        pass
-    else:
-        raise ValueError('approvals file reappeared')
-    print('[migration] Removed empty legacy exec-approvals.json placeholder', file=sys.stderr)
+    for name in ('exec-approvals.json', 'update-check.json'):
+        try:
+            before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise ValueError('unsafe legacy state file')
+        if before.st_size != 0:
+            continue
+        target_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
+        fds.append(target_fd)
+        if (before.st_dev != os.fstat(root_fd).st_dev
+                or stable(os.fstat(target_fd)) != stable(before)
+                or os.read(target_fd, 1)
+                or identity(os.stat(parent, follow_symlinks=False)) != identity(os.fstat(parent_fd))
+                or identity(os.stat(os.path.basename(config), dir_fd=parent_fd, follow_symlinks=False)) != identity(os.fstat(root_fd))
+                or stable(os.stat(name, dir_fd=root_fd, follow_symlinks=False)) != stable(before)
+                or stable(os.fstat(target_fd)) != stable(before)):
+            raise ValueError('legacy state file changed')
+        os.unlink(name, dir_fd=root_fd)
+        os.fsync(root_fd)
+        try:
+            os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise ValueError('legacy state file reappeared')
+        print(f'[migration] Removed empty legacy {name} placeholder', file=sys.stderr)
 except (OSError, ValueError):
-    print('[SECURITY] Refusing unsafe legacy approvals migration', file=sys.stderr)
+    print('[SECURITY] Refusing unsafe legacy state placeholder migration', file=sys.stderr)
     sys.exit(1)
 finally:
     for fd in reversed(fds):
@@ -4787,7 +4861,7 @@ const { pathToFileURL } = require("node:url");
   const dist = path.join(packageRoot, "dist");
   const stateModules = fs
     .readdirSync(dist)
-    .filter((name) => /^openclaw-state-db-.*\.js$/.test(name))
+    .filter((name) => /^openclaw-state-db-.*\.m?js$/.test(name))
     .sort();
   let stateApi;
   for (const candidate of stateModules) {
@@ -4846,10 +4920,10 @@ const { pathToFileURL } = require("node:url");
       );
     }
 
-    const schemaModules = fs
-      .readdirSync(dist)
-      .filter((name) => /^openclaw-state-db-cache-.*\.js$/.test(name))
-      .sort();
+    // Older releases export the schema from the cache module; 2026.9.5
+    // exports it from the state database implementation. Inspect both through
+    // the reviewed state module family and reject ambiguous schema exports.
+    const schemaModules = stateModules;
     const auditStart = "CREATE TABLE IF NOT EXISTS audit_events (";
     const auditIdentityStart = "CREATE TABLE IF NOT EXISTS audit_identity_keys (";
     let canonicalSchema;
@@ -4982,7 +5056,7 @@ const { pathToFileURL } = require("node:url");
   const dist = path.join(packageRoot, "dist");
   const leaseModules = fs
     .readdirSync(dist)
-    .filter((name) => /^startup-migration-checkpoint-.*\.js$/.test(name))
+    .filter((name) => /^startup-migration-checkpoint-.*\.m?js$/.test(name))
     .sort();
   for (const candidate of leaseModules) {
     const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
@@ -5206,7 +5280,7 @@ prepare_openshell_sqlite_tmpdir || exit 1
 
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
-remove_empty_legacy_exec_approvals || exit 1
+remove_empty_legacy_state_placeholders || exit 1
 remove_restored_legacy_device_identity || exit 1
 
 echo 'Setting up NemoClaw...' >&2

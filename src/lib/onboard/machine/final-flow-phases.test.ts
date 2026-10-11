@@ -109,7 +109,7 @@ describe("final onboard flow phases", () => {
       "nemoclaw-19090",
     );
     expect(waitForStartedOpenclawGatewayProcess.mock.invocationCallOrder[0]).toBeLessThan(
-      setupOpenclaw.mock.invocationCallOrder[0],
+      setupOpenclaw.mock.invocationCallOrder[0]!,
     );
     expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
       "my-sandbox",
