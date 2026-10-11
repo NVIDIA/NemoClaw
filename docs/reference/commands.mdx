@@ -533,17 +533,33 @@ If onboarding cannot complete after sandbox creation, NemoClaw preserves the san
 When available, NemoClaw records and prints the create-attempt label as the exact `ai.nvidia.nemoclaw.create-attempt=<value>` selector.
 When available, NemoClaw also records a durable identity fingerprint for recovery.
 Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
-Run `$$nemoclaw <sandbox-name> destroy` to check retained recovery and reconcile verified residual state.
+<Warning>
+Save any files you need from the retained sandbox before running `destroy`.
+The command can clear the agent's native home before its final identity check, even if a later check blocks deletion.
+A successful delete permanently removes the sandbox and its workspace files.
+OpenShell deletes by mutable sandbox name.
+A matching identity check cannot prevent another gateway client from replacing the sandbox between the final check and deletion.
+Use live retained cleanup only when no independent OpenShell client can replace this sandbox name during cleanup.
+</Warning>
+
+Run `$$nemoclaw <sandbox-name> destroy` to attempt retained cleanup and reconcile verified residual state.
 
 Use the result from `destroy` to choose the next action:
 
-- If OpenShell reports the sandbox present, `destroy` preserves the record and removes no resources. OpenShell exposes no atomic delete-by-identity primitive. Neither NemoClaw nor manual inspection can bind a later mutable-name delete to the durable identity fingerprint. You can inspect the owning gateway for diagnosis, but do not delete the sandbox by mutable name. Live retained-sandbox removal is not supported yet. Use a different explicit sandbox name while this record remains blocked.
+- If OpenShell reports the sandbox present and its durable identity matches the recovery record, `destroy` checks that identity during cleanup and immediately before deletion. It can delete the retained sandbox. A failed check or deletion preserves the recovery record. If you cannot prevent another gateway client from replacing the sandbox name during cleanup, use a different explicit name instead.
 - If OpenShell cannot determine whether the sandbox is present, `destroy` reports unknown presence, removes no resources, and preserves the recovery record. Correct the OpenShell gateway or list failure, then rerun `destroy`.
 - If OpenShell confirms the sandbox is absent, `destroy` selects one retained record from its registry generation, gateway, create-attempt evidence, and available identity fingerprint.
   Before pending identity publication, it can instead select one record with a durable identity fingerprint when the pending reservation belongs to the recorded onboarding session, the saved session recovery evidence matches the record, and the registry has no lifecycle identity evidence.
   Provider and Docker cleanup then apply their own immutable identity checks.
   `destroy` removes only qualified residual resources and clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
+
+If `destroy` reports identity drift after provider cleanup, inspect the reported detached provider attachments.
+Before restoring them, stop other OpenShell clients from replacing this sandbox name.
+Verify the retained sandbox's durable identity and confirm that the detached attachments belonged to it.
+Only then rerun the owning provider setup workflow to restore those attachments.
+If you cannot prevent replacement or verify attachment ownership, leave the attachments untouched and use a different sandbox name.
+Keep the recovery record and retry `destroy` only after resolving the identity drift.
 
 If OpenShell did not return a durable identity fingerprint, `destroy` cannot authorize deletion of a live sandbox. It can still select one recovery record that matches the immutable registry generation, gateway, and create-attempt evidence. It clears that record only after the owning gateway reports absence and verified residual cleanup succeeds. If the sandbox is present or presence is unknown, preserve the record and do not delete by mutable name. If NemoClaw could not save recovery evidence, preserve the registry entry and terminal output.
 
@@ -3864,7 +3880,7 @@ If onboarding also set `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, pass its original
 Use the dedicated gateway state directory created for that port, not a shared or parent directory.
 Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
 Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
-If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a bounded process scan proves that no live process claims its state. A listener, unreadable process identity, or a scan that reaches its probe limit preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
 If a prior uninstall removed a non-default gateway but retained its registry and backups, rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall --destroy-user-data` to remove that retained data.
 This recovery requires the default state directory for that port, with `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` unset, and retained rows that explicitly identify Docker.
 The selected gateway registration, runtime directory, processes, listener and sandbox containers must be absent.
@@ -3890,7 +3906,7 @@ Do not stop a process or delete the lock from that record.
 NemoClaw preserves a recent malformed lock for 30 seconds because another process can still be writing it.
 Wait at least 30 seconds, then retry.
 Successful managed cleanup recursively removes that directory and all contents; `--keep-openshell` preserves it.
-Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a complete process-absence scan; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
+Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a bounded process-absence scan that proves no live process claims its state; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
 
 ```bash
 NEMOCLAW_GATEWAY_PORT=<port> \

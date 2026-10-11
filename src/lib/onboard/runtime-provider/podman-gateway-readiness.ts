@@ -85,12 +85,17 @@ function readProcessExecutable(pid: number): string | null {
   return readGatewayProcEntry(pid, "exe");
 }
 
-const DEFAULT_DEPS: PodmanGatewayReadinessDeps = {
-  currentUid: () => (typeof process.getuid === "function" ? process.getuid() : -1),
-  readOwnedFile: readOwnedDockerDriverGatewayRuntimeFile,
+/** The production reader handoff, shared with its caller-level regression tests. */
+export const podmanGatewayDefaultProcessReaders = Object.freeze({
   readProcessArguments,
   readProcessExecutable,
   readProcessEnvironment: readGatewayProcessEnvironment,
+});
+
+const DEFAULT_DEPS: PodmanGatewayReadinessDeps = {
+  currentUid: () => (typeof process.getuid === "function" ? process.getuid() : -1),
+  readOwnedFile: readOwnedDockerDriverGatewayRuntimeFile,
+  ...podmanGatewayDefaultProcessReaders,
   readManagedService: (environment) =>
     getTrustedActiveOpenShellGatewayUserServiceIdentity({ env: environment, platform: "linux" }),
   runtimeFileMissing: (filePath) => {

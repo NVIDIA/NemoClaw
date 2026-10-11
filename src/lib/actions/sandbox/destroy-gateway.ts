@@ -11,6 +11,7 @@ import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
+  removeDockerDriverGatewayBinding,
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
@@ -306,6 +307,7 @@ export async function cleanupGatewayAfterLastSandbox(
   if (externallySupervised) {
     return;
   }
+  removeDockerDriverGatewayBinding(os.homedir(), perGatewayState.port, perGatewayState.stateDir);
   if (runtimeProvider?.gateway.ownsHostReadiness !== true) {
     dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
       ignoreError: true,

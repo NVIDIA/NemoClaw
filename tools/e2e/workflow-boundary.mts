@@ -264,6 +264,7 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
   "catalogue-standard",
   "catalogue-nvidia-api",
   "catalogue-nvidia-inference",
+  "catalogue-hosted-inference",
   "catalogue-github-read",
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
@@ -2654,7 +2655,7 @@ const PRE_CANDIDATE_RUN_SHA256: Readonly<Record<string, string>> = {
     "ee0b2e6c6aa4552b228bd1cc3ba4e1f9cd72701c30b81f7d5fbf9bc011fb51c7",
   "Authorize Launchable E2E maintainer dispatch":
     "bbf442a006b47016eda56133eb400a48c6931c55364c1220b84327b5ffd6f171",
-  "Generate E2E target matrix": "ee26da3b8da6b988773803d2a05f7763d560b565f145599c39d22b2e528e8c6b",
+  "Generate E2E target matrix": "38d815704e195bc7bd923da65b2accd49aee88d909842cddbea7e13de077fb29",
 };
 
 function requirePreCandidateEnvironment(
