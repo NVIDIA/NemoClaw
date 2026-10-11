@@ -34,6 +34,8 @@ const (
 	maximumHeaderBytes    = 1024 * 1024
 	maximumOutputTokens   = 1024 * 1024
 	maximumTimeoutSeconds = 24 * 60 * 60
+	// The managed recipe allows 15 minutes; exit before the caller kills Docker exec at 30.
+	stdioForwardTimeout = 20 * time.Minute
 )
 
 // Docker exec reaches this process through the daemon when an internal network
@@ -794,7 +796,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(2)
 		}
-		if err := forwardStdio(os.Stdin, os.Stdout, address, time.Duration(maximumTimeoutSeconds+5)*time.Second); err != nil {
+		if err := forwardStdio(os.Stdin, os.Stdout, address, stdioForwardTimeout); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}

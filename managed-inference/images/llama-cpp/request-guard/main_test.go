@@ -28,6 +28,9 @@ import (
 )
 
 func TestForwardStdioBoundsStalledGuardResponse(t *testing.T) {
+	if stdioForwardTimeout <= 15*time.Minute || stdioForwardTimeout >= 30*time.Minute {
+		t.Fatal("stdio deadline must allow the managed request and expire before its Docker caller")
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
