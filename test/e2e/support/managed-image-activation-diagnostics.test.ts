@@ -868,25 +868,35 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     }
   });
 
+  const diagnosticEvents = [
+    "tail:-c",
+    ...["ps", "inspect", "logs", "cp"].map((command) =>
+      expect.stringMatching(new RegExp(`^(docker|podman):${command}$`, "u")),
+    ),
+  ];
+
   it.each([
     {
       stop: 1,
       start: 0,
-      expectedEvents: ["stop", "tail:-c", expect.stringMatching(/^(docker|podman):ps$/u), "start"],
+      expectedEvents: ["stop", ...diagnosticEvents, "start"],
+      expectedLogs: ["before-start evidence\n"],
       readyCalls: 0,
       error: "lifecycle output",
     },
     {
       stop: 0,
       start: 1,
-      expectedEvents: ["stop", "start", "tail:-c", expect.stringMatching(/^(docker|podman):ps$/u)],
+      expectedEvents: ["stop", "start", ...diagnosticEvents],
+      expectedLogs: ["after-start evidence\n"],
       readyCalls: 0,
       error: "lifecycle output",
     },
     {
       stop: 1,
       start: 1,
-      expectedEvents: ["stop", "tail:-c", expect.stringMatching(/^(docker|podman):ps$/u), "start"],
+      expectedEvents: ["stop", ...diagnosticEvents, "start"],
+      expectedLogs: ["before-start evidence\n"],
       readyCalls: 0,
       error: "lifecycle output",
     },
@@ -894,22 +904,46 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
       stop: 0,
       start: 0,
       expectedEvents: ["stop", "start"],
+      expectedLogs: [],
       readyCalls: 1,
       error: "reached readiness",
     },
   ])(
     "retains diagnostics before reporting stop=$stop/start=$start",
-    async ({ stop, start, expectedEvents, readyCalls, error }) => {
+    async ({ stop, start, expectedEvents, expectedLogs, readyCalls, error }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restart-diagnostics-"));
       const events: string[] = [];
       const ok = { exitCode: 0, stdout: "PONG", stderr: "" };
+      const artifacts = new ArtifactSink(directory);
+      let startupLog = "before-start evidence\n";
+      const diagnosticCommand = async (
+        executable: string,
+        args: readonly string[],
+        stdout = "",
+      ) => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        events.push(`${executable}:${args[0]}`);
+        return { ...ok, stdout };
+      };
+      const copy = vi.fn(async (executable: string, args: readonly string[]) => {
+        await diagnosticCommand(executable, args);
+        fs.writeFileSync(String(args[2]), startupLog);
+        return ok;
+      });
       const command = vi
-        .fn(async (executable: string, args: readonly string[]) => {
-          await new Promise<void>((resolve) => setImmediate(resolve));
-          events.push(`${executable}:${args[0]}`);
-          return { ...ok, stdout: "" };
-        })
-        .mockResolvedValueOnce(ok);
+        .fn(diagnosticCommand)
+        .mockResolvedValueOnce(ok)
+        .mockImplementationOnce(diagnosticCommand)
+        .mockImplementationOnce((executable, args) =>
+          diagnosticCommand(
+            executable,
+            args,
+            `${"a".repeat(64)}\tmanaged-container\timage\tExited\n`,
+          ),
+        )
+        .mockImplementationOnce(diagnosticCommand)
+        .mockImplementationOnce(diagnosticCommand)
+        .mockImplementationOnce(copy);
       const nemoclaw = vi
         .fn()
         .mockResolvedValueOnce(ok)
@@ -919,6 +953,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
         })
         .mockImplementationOnce(async () => {
           events.push("start");
+          startupLog = "after-start evidence\n";
           return { ...ok, exitCode: start, stderr: "lifecycle output" };
         });
       const ready = vi.fn(async () => {
@@ -929,7 +964,7 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
         await expect(
           qualifyAgent(
             {
-              artifacts: new ArtifactSink(directory),
+              artifacts,
               cleanup: { trackDisposable: vi.fn(), trackSandbox: vi.fn() },
               host: {
                 command,
@@ -956,6 +991,16 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
           ),
         ).rejects.toThrow(error);
         expect(events).toEqual(expectedEvents);
+        expect(
+          copy.mock.calls.map(() =>
+            fs.readFileSync(
+              artifacts.pathFor(
+                "managed-activation-onboard-failure-langchain-deepagents-code-container-1-nemoclaw-start.log",
+              ),
+              "utf8",
+            ),
+          ),
+        ).toEqual(expectedLogs);
         expect(ready).toHaveBeenCalledTimes(readyCalls);
         // Only initial cleanup ran; failure evidence precedes later resource deletion.
         expect(cleanupSandbox).toHaveBeenCalledOnce();
