@@ -427,15 +427,45 @@ describe("runtime identity contract", () => {
     );
   });
 
-  it("continues provider setup if the post-creation export fails", async () => {
+  it.each([
+    ["fails", "export denied refresh-secret"],
+    ["times out", "OpenShell command timed out after 30 seconds refresh-secret"],
+  ])("warns and continues provider setup if the post-creation export %s", async (_case, error) => {
     responses.set("provider get acme-okta-runtime", [missingProvider]);
     responses.set("provider profile export okta-runtime-v1 --output yaml", [
       { exitCode: 0, stdout: profileDocument, stderr: "" },
-      { exitCode: 1, stdout: "", stderr: "export denied" },
+      { exitCode: 1, stdout: "", stderr: error },
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
-    expect(warnings).toEqual([]);
+    expect(warnings).toEqual([
+      expect.stringContaining(
+        "profile 'okta-runtime-v1' could not be verified after a provider change",
+      ),
+    ]);
+    expect(warnings[0]).toContain("Ask the gateway operator to inspect the profile");
+    expect(warnings[0]).not.toMatch(
+      /refresh-secret|client-secret|client-id|export denied|atomic/iu,
+    );
+  });
+
+  it("warns and continues provider setup if the post-creation export throws", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    const run = deps.run;
+    let exportCount = 0;
+    deps.run = (args, options) =>
+      commandKey(args) === "provider profile export okta-runtime-v1 --output yaml" &&
+      ++exportCount === 2
+        ? Promise.reject(new Error("refresh-secret"))
+        : run(args, options);
+
+    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+    expect(warnings).toEqual([
+      expect.stringContaining(
+        "profile 'okta-runtime-v1' could not be verified after a provider change",
+      ),
+    ]);
+    expect(warnings[0]).not.toContain("refresh-secret");
   });
 
   it("rejects a fresh import that exports a different profile before provider creation", async () => {
@@ -1089,6 +1119,25 @@ describe("runtime identity contract", () => {
       expect.stringContaining("cannot confirm which definition was used at bind time"),
     ]);
     expect(warnings[0]).not.toMatch(/refresh-secret|client-secret|client-id|atomic/iu);
+  });
+
+  it("warns after attachment if the profile export fails without changing the attach result", async () => {
+    responses.set("settings get --global --json", [providersV2Enabled, providersV2Enabled]);
+    responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
+      { exitCode: 1, stdout: "", stderr: "export denied refresh-secret" },
+    ]);
+
+    const receipt = await prepareRuntimeIdentity(config, deps);
+    await expect(attachRuntimeIdentity(receipt, "sandbox", deps)).resolves.toBe(true);
+    expect(warnings).toEqual([
+      expect.stringContaining(
+        "profile 'okta-runtime-v1' could not be verified after a provider change",
+      ),
+    ]);
+    expect(warnings[0]).not.toContain("refresh-secret");
   });
 
   it("attaches a provider whose refresh is configured before its first mint", async () => {

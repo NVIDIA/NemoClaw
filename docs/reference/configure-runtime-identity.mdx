@@ -228,10 +228,12 @@ An export failure, timeout, or mismatch stops apply before provider creation.
 The runner preserves a mismatched gateway profile because another gateway client may own it.
 Ask the gateway operator to inspect the profile before retrying.
 After a match, the runner creates the provider, configures gateway-managed OAuth refresh, and performs the initial token rotation.
-After provider creation and attachment, the runner tries to export the profile again.
-If an export succeeds and differs from the verified definition, the runner warns that the gateway catalog changed.
+After provider creation, the runner tries to export the profile before it configures credential refresh.
+After attachment, it tries another export.
+If either export succeeds with a different definition, the runner warns that the gateway catalog changed.
 NemoClaw cannot confirm which definition OpenShell used at bind time.
-The warning does not roll back setup. A failed post-mutation export also leaves the operation result unchanged.
+If either export fails or times out, the runner warns that verification did not complete and asks the gateway operator to inspect the profile.
+These warnings contain no credential values and do not roll back setup.
 
 Before attachment, the runner creates or reuses the configured inference provider.
 For a reused sandbox and provider, it preserves the live route only when the provider, model, and requested timeout match the blueprint.

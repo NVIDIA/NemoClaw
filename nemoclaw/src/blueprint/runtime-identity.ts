@@ -662,38 +662,50 @@ function profileDigest(document: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(document)).digest("hex");
 }
 
+function warnWithoutChangingResult(deps: RuntimeIdentityCommandDeps, message: string): void {
+  try {
+    deps.warn(message);
+  } catch {
+    // A warning callback must not change the result of a completed mutation.
+  }
+}
+
 async function warnIfProfileChanged(
   receipt: RuntimeIdentityReceipt,
   policy: RuntimeIdentityProfilePolicy,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
   if (!receipt.verified_profile_sha256) return;
+  let result: RuntimeIdentityCommandResult | undefined;
   try {
-    const result = await deps.run(
+    result = await deps.run(
       ["openshell", "provider", "profile", "export", receipt.provider_type, "--output", "yaml"],
       { timeoutMs: 30_000 },
     );
-    if (result.exitCode !== 0) return;
-    let matches = false;
-    try {
-      const profile = parseRuntimeIdentityProfile(
-        result.stdout,
-        receipt,
-        policy,
-        "Gateway profile",
-      );
-      matches = profileDigest(profile.document) === receipt.verified_profile_sha256;
-    } catch {
-      // A readable but incompatible profile also differs from the verified definition.
-    }
-    if (!matches) {
-      deps.warn(
-        `Runtime identity provider profile '${receipt.provider_type}' changed in the gateway catalog. ` +
-          "NemoClaw cannot confirm which definition was used at bind time. Ask the gateway operator to inspect the profile.",
-      );
-    }
   } catch {
-    // This post-mutation check is best effort; an export failure leaves the operation result intact.
+    // The export may throw, including on timeout. Report only the outcome, never command output.
+  }
+  if (result?.exitCode !== 0) {
+    warnWithoutChangingResult(
+      deps,
+      `Runtime identity provider profile '${receipt.provider_type}' could not be verified after a provider change. ` +
+        "Ask the gateway operator to inspect the profile. NemoClaw continues setup without post-change verification.",
+    );
+    return;
+  }
+  let matches = false;
+  try {
+    const profile = parseRuntimeIdentityProfile(result.stdout, receipt, policy, "Gateway profile");
+    matches = profileDigest(profile.document) === receipt.verified_profile_sha256;
+  } catch {
+    // A readable but incompatible profile also differs from the verified definition.
+  }
+  if (!matches) {
+    warnWithoutChangingResult(
+      deps,
+      `Runtime identity provider profile '${receipt.provider_type}' changed in the gateway catalog. ` +
+        "NemoClaw cannot confirm which definition was used at bind time. Ask the gateway operator to inspect the profile.",
+    );
   }
 }
 
