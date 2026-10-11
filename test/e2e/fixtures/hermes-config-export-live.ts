@@ -299,11 +299,6 @@ export async function verifyHermesConfigExportLive(
 
   const registry = load();
   const entry = registry.sandboxes[input.sandboxName]!;
-  const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
-    target: namedOpenShellGateway(entry.gatewayName ?? ""),
-    sandboxName: input.sandboxName,
-    scope: "effective",
-  });
   const nemoclawPath = path.join(exportDirectory, "nemoclaw.yaml");
   const nemohermesPath = path.join(exportDirectory, "nemohermes.yaml");
   const commonOptions = {
@@ -410,6 +405,11 @@ export async function verifyHermesConfigExportLive(
   });
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
+  const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    target: namedOpenShellGateway(entry.gatewayName ?? ""),
+    sandboxName: input.sandboxName,
+    scope: "effective",
+  });
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
   const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);
 
