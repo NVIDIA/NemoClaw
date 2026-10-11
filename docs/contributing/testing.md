@@ -82,13 +82,14 @@ The `lifecycle` profile selects the isolated bundle fixtures and native-state te
 The `lifecycle` step passes the platform's bundle as `NEMOCLAW_TEST_BUNDLE`, the tests' only input; each provider's contract tests run the provider Cargo built from the checkout.
 CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
 Each platform's build-and-test job and bundle job run in parallel on separate runners; its lifecycle workers start when both finish.
-Linux and macOS run two nextest hash partitions on separate runners and Windows runs three, each with four test slots.
+Linux and macOS run two nextest slice partitions on separate runners and Windows runs three, each with four test slots.
+A slice partition deals the sorted lifecycle tests round-robin, which spreads the slow e2e scenarios evenly; adding or removing a test moves later tests to other partitions.
 Each platform starts its workers after its own jobs; it does not wait for other platforms.
-The existing `Test / PLATFORM` required checks succeed only when that platform's build, bundle, and lifecycle jobs succeed.
+The existing `Test / PLATFORM` required checks succeed only when that platform's build, bundle, lifecycle, and `Lifecycle timing` jobs succeed.
 After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.
 In GitHub Actions, the report is added to the job summary.
 Each platform's `Lifecycle timing` job then reports the whole lifecycle suite from the partitions' JUnit reports, using each partition's latest attempt and naming any partition without one; its wall time is the slowest partition's.
-That job never fails the platform.
+That report also shows each budgeted test binary against its budget, with the binary's tests from every partition.
 The `test-`, `lifecycle-`, `live-docker-`, and `live-kind-` timing artifacts contain the JUnit reports with per-test durations, with the partition in each lifecycle artifact name; the `live-docker` report covers all four of its nextest commands.
 
 [`.config/test-budgets.yaml`](../../.config/test-budgets.yaml) gives each test step a wall-clock budget and a limit for any one test:
@@ -100,11 +101,20 @@ The `test-`, `lifecycle-`, `live-docker-`, and `live-kind-` timing artifacts con
 | `live-docker` | 360 s | 180 s | 360 s |
 | `live-kind` | 270 s | 120 s | 240 s |
 
+It also budgets each provider's contract binary: the binary's test times added up across a platform's lifecycle partitions, and a limit for any one of its tests:
+
+| Binary | Summed budget | Per-test limit |
+|---|---|---|
+| `fabric-provider::contract` | 40 s | 22 s |
+| `nemoclaw-provider::contract` | 110 s | 10 s |
+| `openshell-provider::contract` | 190 s | 12 s |
+
 On the Linux CI runners, a step over its budget, or with a test over its limit, fails and names each offender with its time and limit; macOS, Windows, and local runs only report them.
 Each step's profile in [`.config/nextest.toml`](../../.config/nextest.toml) reports a test as slow when it reaches the per-test limit and stops it at a multiple of the limit, which leaves a margin for the runs that only report budgets.
 The `test` step stops a test at three times its limit because its slowest test takes nearly twice the limit on macOS; the other steps stop a test at twice their limit.
 Nextest marks a stopped test `TIMEOUT` and fails the step on every platform; `cargo ci` names the test with its time and limit.
 When you change a per-test limit, change the profile's `slow-timeout` period to match; a `nemoclaw-build` test fails when the period differs from the limit or the profile stops a test later than three times the limit.
+The `Lifecycle timing` job checks the binary budgets, because a binary's tests run in several partitions; plain `cargo ci` runs the whole lifecycle suite in one step and reports them there.
 Both profiles finish the remaining tests after a failure.
 Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
 Nextest does not run doctests, so the separate Cargo command remains required.
@@ -115,8 +125,8 @@ Plain `cargo ci` still runs the complete local suite.
 After `cargo ci build` and `cargo ci bundle`, select one partition explicitly:
 
 ```sh
-cargo ci lifecycle --partition hash:1/2
-cargo ci lifecycle --partition hash:2/2
+cargo ci lifecycle --partition slice:1/2
+cargo ci lifecycle --partition slice:2/2
 ```
 
 To reproduce the archive handoff, run `cargo ci archive` after building.
@@ -128,7 +138,7 @@ Copy both archives into `.build/ci` and the bundle into `dist/PLATFORM` in a sep
 
 ```sh
 tar -xf .build/ci/lifecycle-inputs.tar
-.build/ci/nemoclaw-build ci lifecycle --archive-file .build/ci/lifecycle.tar.zst --partition hash:1/2
+.build/ci/nemoclaw-build ci lifecycle --archive-file .build/ci/lifecycle.tar.zst --partition slice:1/2
 ```
 
 The worker remaps test working directories to this checkout and extracts nextest files into `.build/ci/extracted`.
@@ -202,6 +212,20 @@ Unclassified files, dependency or feature changes in the image build, manual run
 Commit, then run `cargo run -p nemoclaw-build --no-default-features -- changes images --base origin/v1` to see the decision and its reason.
 Rust- or documentation-only pushes skip that image build; their schema and descriptor consumption tests remain in the Rust suite.
 These checks use no live credentials and do not establish GPU inference or live OpenShell deployment behavior.
+
+## Provider Schema Snapshots
+
+Each production provider's `tests/schema.txt` records its schema: the provider configuration and every resource and data source, with their attributes, types, constraints, and descriptions.
+The provider's `schema_matches_the_checked_in_snapshot` test renders the compiled schema and fails with a unified diff when the two differ.
+After an intended schema change, regenerate the snapshot and commit it with the change, so the review shows the schema diff:
+
+```sh
+NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p nemoclaw-provider --test integration schema::
+NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p openshell-provider --test schema
+NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p fabric-provider --test schema
+```
+
+The same `schema.rs` files check rules across types, such as every `nemoclaw` and `openshell` resource generating an omitted owner and generation; add a rule there rather than an assertion about one type's attributes.
 
 ## CLI Tests
 

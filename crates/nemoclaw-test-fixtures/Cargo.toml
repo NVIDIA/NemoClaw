@@ -27,7 +27,9 @@ tokio.workspace = true
 tokio-stream.workspace = true
 rustls.workspace = true
 serde_json.workspace = true
+similar = "3.2.0"
 tempfile.workspace = true
+tf-provider.workspace = true
 
 [lints]
 workspace = true

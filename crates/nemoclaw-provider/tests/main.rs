@@ -5,8 +5,6 @@
 
 mod support;
 
-#[path = "hardware_schema.rs"]
-mod hardware_schema;
 #[path = "managed_gateway_live.rs"]
 mod managed_gateway_live;
 #[path = "planning.rs"]

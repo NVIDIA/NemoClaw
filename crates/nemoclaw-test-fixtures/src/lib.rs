@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A fake OpenShell gateway, owned OpenTofu workspaces, the bundle they run,
-//! and fixture executables, shared by the provider contract tests and the
-//! end-to-end tests.
+//! fixture executables, and schema snapshots, shared by the provider tests and
+//! the end-to-end tests.
 pub mod bundle;
 pub mod openshell;
+pub mod schema;
 pub mod ssh;
 pub mod tofu;
 

@@ -279,6 +279,69 @@ fn enforces_budgets() -> bool {
     std::env::consts::OS == "linux" && std::env::var_os("GITHUB_ACTIONS").is_some()
 }
 
+/// How a timing report names the budgets in its table of budgeted binaries.
+const BINARY_BUDGETS: &str = "Binary budgets: summed time and per-test limit as in the table";
+
+fn read_budgets() -> std::result::Result<ci::timing::Budgets, String> {
+    std::fs::read_to_string(".config/test-budgets.yaml")
+        .map_err(|error| error.to_string())
+        .and_then(|yaml| ci::timing::Budgets::parse(&yaml))
+}
+
+/// Append to `report` the budgets that `applied` names, whether this run
+/// enforces them, and each line of `over`.
+fn append_verdict(report: &mut String, applied: &str, over: &[String]) {
+    use std::fmt::Write as _;
+    let enforced = if enforces_budgets() {
+        ""
+    } else {
+        " (reported only; budgets apply on Linux CI runners)"
+    };
+    let _ = writeln!(report, "\n{applied}{enforced}.");
+    if over.is_empty() {
+        report.push_str("Within budget.\n");
+    }
+    for line in over {
+        let _ = writeln!(report, "- Over budget: {line}");
+    }
+}
+
+/// Report a platform's whole lifecycle suite from its partitions' JUnit
+/// artifacts under `directory`, and add the report to the GitHub job summary.
+/// On the Linux CI runners, fails when a budgeted test binary, or one of its
+/// tests, exceeds its budget.
+pub(super) fn report_lifecycle_suite(
+    directory: &Path,
+    platform: &str,
+    shards: &[u32],
+) -> Result<()> {
+    let budgets = read_budgets();
+    let unbudgeted = ci::timing::Budgets::default();
+    let timing = ci::timing::partitioned_report(
+        directory,
+        platform,
+        shards,
+        15,
+        budgets.as_ref().unwrap_or(&unbudgeted),
+    )?;
+    let mut report = timing.report;
+    match &budgets {
+        Err(error) => report.push_str(&format!("\nCannot read the test budgets: {error}\n")),
+        Ok(budgets) if budgets.has_binaries() => {
+            append_verdict(&mut report, BINARY_BUDGETS, &timing.over);
+        }
+        Ok(_) => {}
+    }
+    publish(&report);
+    if enforces_budgets() && !timing.over.is_empty() {
+        return Err(format!(
+            "lifecycle on {platform} exceeded a binary budget in .config/test-budgets.yaml"
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// Report where a test step, or its lifecycle `partition`, spent its time,
 /// from the JUnit report it wrote after `begun`, and add the report to the
 /// GitHub job summary. Returns what exceeds the step's budget, if any.
@@ -295,50 +358,47 @@ fn report_timing(step: Step, partition: Option<&str>, begun: Instant) -> Vec<Str
     if !fresh {
         return Vec::new();
     }
-    let budgets = std::fs::read_to_string(".config/test-budgets.yaml")
-        .map_err(|error| error.to_string())
-        .and_then(|yaml| ci::timing::Budgets::parse(&yaml));
-    let (mut report, budget, over) = match std::fs::read_to_string(&path)
+    let budgets = read_budgets();
+    let run = match std::fs::read_to_string(&path)
         .map_err(|error| error.to_string())
         .and_then(|xml| ci::timing::Run::parse(&xml))
     {
-        Ok(run) => {
-            let label = match partition {
-                Some(partition) => format!("{} partition {partition}", step.name()),
-                None => step.name().to_owned(),
-            };
-            let budget = budgets
-                .as_ref()
-                .ok()
-                .and_then(|budgets| budgets.get(step.name()));
-            let over = budget.map(|budget| run.over(budget)).unwrap_or_default();
-            (run.report(&label, 15), budget, over)
-        }
+        Ok(run) => run,
         Err(error) => {
             eprintln!("cannot read test timings from {}: {error}", path.display());
             return Vec::new();
         }
     };
-    if let Err(error) = &budgets {
-        report.push_str(&format!("\nCannot read the test budgets: {error}\n"));
-    }
-    if let Some(budget) = budget {
-        use std::fmt::Write as _;
-        let enforced = if enforces_budgets() {
-            ""
-        } else {
-            " (reported only; budgets apply on Linux CI runners)"
-        };
-        let _ = writeln!(
-            report,
-            "\nBudget: {} s wall, {} s per test{enforced}.",
-            budget.wall_seconds, budget.test_seconds
-        );
-        if over.is_empty() {
-            report.push_str("Within budget.\n");
-        }
-        for line in &over {
-            let _ = writeln!(report, "- Over budget: {line}");
+    let label = match partition {
+        Some(partition) => format!("{} partition {partition}", step.name()),
+        None => step.name().to_owned(),
+    };
+    let mut report = run.report(&label, 15);
+    let mut over = Vec::new();
+    match &budgets {
+        Err(error) => report.push_str(&format!("\nCannot read the test budgets: {error}\n")),
+        Ok(budgets) => {
+            if let Some(budget) = budgets.get(step.name()) {
+                over = run.over(budget);
+                append_verdict(
+                    &mut report,
+                    &format!(
+                        "Budget: {} s wall, {} s per test",
+                        budget.wall_seconds, budget.test_seconds
+                    ),
+                    &over,
+                );
+            }
+            // A whole lifecycle suite in one run, as plain `cargo ci` runs it,
+            // holds each binary's tests. A partition holds only some, so in CI
+            // the platform's Lifecycle timing job checks the binary budgets.
+            if step == Step::Lifecycle && partition.is_none() && budgets.has_binaries() {
+                let binaries = run.binary_budgets(budgets);
+                report.push_str("\nBudgeted binaries:\n\n");
+                report.push_str(&binaries.report);
+                append_verdict(&mut report, BINARY_BUDGETS, &binaries.over);
+                over.extend(binaries.over);
+            }
         }
     }
     publish(&report);
