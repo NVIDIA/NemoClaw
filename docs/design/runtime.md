@@ -92,7 +92,7 @@ The retained downloader targets the private cache layout of the [pinned Ollama 0
 Before loading, its [inventory check](../../crates/nemoclaw-runtime/src/ollama/runtime/observation.rs) requires the running Ollama to report the authored model name and digest.
 A missing model or mismatched digest stops startup; the runtime does not repair the cache by pulling a mutable tag.
 Custom images must satisfy this same behavioral contract; a version string alone does not establish compatibility.
-The [model cache test](../contributing/integration-tests.md#model-cache-compatibility) checks that this image reads NemoClaw's synthetic cache with the exact expected name, digest, and size, and that the pinned Hub client writes beyond the expected size before rejecting an oversized response.
+The [model cache test](../contributing/live-tests.md#model-cache-compatibility) checks that this image reads NemoClaw's synthetic cache with the exact expected name, digest, and size, and that the pinned Hub client writes beyond the expected size before rejecting an oversized response.
 These checks use no GPU or inference; they do not establish model compatibility.
 
 Model-specific preparation belongs in an [inline recipe](recipes.md).

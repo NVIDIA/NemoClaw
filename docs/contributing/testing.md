@@ -11,97 +11,99 @@ cargo ci
 
 The command needs the pinned Rust toolchain and a C linker.
 It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
-It then runs formatting, Clippy, the workspace tests and doctests, the schema check, a bundle build, and the bundle lifecycle tests, stopping at the first failure.
-A warm run on Linux ARM64 takes about ten minutes, mostly in the workspace and lifecycle tests.
-
-Run one step with `cargo ci STEP`, for example `cargo ci lifecycle`.
-The steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and `lifecycle`; every step first checks the pinned tools.
-CI uses the same steps on separate runners: each platform builds its bundle in a parallel job, and lifecycle workers execute the built tests from an archive instead of compiling them again.
-It does not run the image, documentation, or dependency workflows, or another platform's job.
-
-On Linux with a local Docker engine that uses the [containerd image store](../build.md), `cargo ci live-docker` runs the Docker live tests; plain `cargo ci` never selects it.
-Run `cargo ci build` and `cargo ci bundle` first.
-The step pulls the pinned OpenShell and Ollama images, builds an agent image (Pi on ARM64, OpenClaw on AMD64) and two proxy images under a fresh `nc-live-` tag, and writes owned gateway documents with fresh UUIDs, ports, and `172.30.200-254.0/24` subnets.
-It then runs the `live-docker` nextest profile: the Ollama cache, runtime archive, offline runtime rebuild, standalone cache, Docker proxy, gateway recovery, gateway isolation, and profile revision tests, one at a time.
-Afterward it removes the images it built and every container, volume, and network labelled with its UUIDs, whether or not the tests pass; pulled images remain.
-It requests no inference and needs no GPU or credentials.
-A run on Linux ARM64 takes about five minutes after the build.
-
-On native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images), `cargo ci live-kind` runs the Kubernetes live tests; plain `cargo ci` never selects it either.
-Run `cargo ci build` and `cargo ci bundle` first.
-The step downloads the pinned kind executable by checksum into `.tools`, creates a kind cluster with a fresh `nc-live-` name from the pinned node image, and installs the pinned Agent Sandbox release in it, as a platform would.
-It builds an agent image from this checkout (Pi on ARM64, OpenClaw on AMD64), exports its metadata bundle, and loads the image into the cluster by digest.
-It then runs three live tests and both chart-render tests in the `live-kind` nextest profile with the verified bundle; no Helm CLI is required.
-The render tests check that Kubernetes keeps the chart's gateway UID and OpenShift uses the observed namespace UID and group while retaining `runAsNonRoot`.
-The gateway test runs OpenTofu and its Helm provider with an empty `PATH`, installs the managed gateway's storage, development issuer and Helm release, makes an authenticated OpenShell call through the in-process port forward, and checks that a token from another key is refused.
-It removes the gateway, checks that storage remains, reinstalls it on the kept storage, and removes it again.
-The agent test applies through the public SDK with a caller-relative kubeconfig, creates a sandbox, and requires apply to stop only at the agent health check, which the pinned Fabric reports as unsupported ([#12443](https://github.com/NVIDIA/NemoClaw/issues/12443)).
-It exports the authored configuration without readiness checks, then destroys the deployment while retaining gateway storage.
-The OpenShift-profile test writes namespace UID-range annotations on kind and checks the gateway and sandbox pod UIDs through the same SDK flow.
-Kind does not enforce OpenShift security context constraints, so this does not qualify OpenShift admission or platform compatibility.
-The step deletes the cluster and removes its built image tag whether or not the tests pass; pulled images and build caches remain.
-Set `NEMOCLAW_KEEP_KIND_CLUSTER=1` before running to keep the cluster for inspection; remove it afterward with the printed kind command.
-The tests request no inference and need no GPU or credentials.
-Initial image builds need network access and can take longer than the tests.
-See [live prerequisites and retained state](live-tests.md#kubernetes-gateway-without-the-helm-cli).
-
+It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and system tests, stopping at the first failure.
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
 
-## CI Workflows
+## Test Layers
 
-| Workflow | Checks |
-|---|---|
-| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64`; on Linux also `Live / Docker` and `Live / Kind`, through `cargo ci live-docker` and `cargo ci live-kind` |
-| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
-| CI / Dependencies | `Policy` |
-| CD / Documentation | `Validate`, then PR preview, staging, or release publication |
-| Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
+Put each test in the cheapest layer that can check its behavior, and assert only behavior that the test's crate owns.
 
-The first eight checks are required by the `v1` ruleset, including documentation validation.
-Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
-Superseded PR runs are cancelled, and their `Test / PLATFORM` checks report as cancelled rather than failed.
-The image workflow also cancels superseded pushes; its manual runs use a separate concurrency group and finish.
-Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
-Documentation and dependency pushes finish; newer pushes replace older pending runs.
-Like the lifecycle workers, the live jobs run their platform's archived test executables and bundle, so they compile nothing.
-They run on pull requests that can affect them, `v1` pushes, `run-live/` branch pushes, and manual runs.
-A live failure fails that platform's `Test / PLATFORM` check, as a lifecycle failure does.
-On a pull request, `Build and test` runs `nemoclaw-build changes live`, and both live jobs skip when the change cannot affect them.
-A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
-[Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suite.
-Run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` after committing to see the decision.
-The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
-
-## Test Runner
-
-Every `CI / Native` platform uses cargo-nextest 0.9.144 for both the `ci` and `lifecycle` profiles.
-`cargo ci tools` installs its prebuilt executable after checksum verification; installation cannot fall back to compiling it.
-`cargo ci test` runs tests not marked `#[ignore]` with the `ci` profile, then the doctests.
-The `ci` profile runs at most eight tests concurrently and does not retry failures.
-The `lifecycle` profile selects the isolated bundle fixtures and native-state test, with four concurrent tests.
-The `lifecycle` step passes the platform's bundle as `NEMOCLAW_TEST_BUNDLE`, the tests' only input; each provider's contract tests run the provider Cargo built from the checkout.
-CI retains the same workspace and target selection across builds so Cargo can reuse the compiled tests.
-Each platform's build-and-test job and bundle job run in parallel on separate runners; its lifecycle workers start when both finish.
-Linux and macOS run two nextest slice partitions on separate runners and Windows runs three, each with four test slots.
-A slice partition deals the sorted lifecycle tests round-robin, which spreads the slow e2e scenarios evenly; adding or removing a test moves later tests to other partitions.
-Each platform starts its workers after its own jobs; it does not wait for other platforms.
-The existing `Test / PLATFORM` required checks succeed only when that platform's build, bundle, lifecycle, and `Lifecycle timing` jobs succeed.
-After each test step, `cargo ci` prints where the time went: the step's test count, wall time, and summed test time, the time per test binary and module, and the 15 slowest tests; a lifecycle partition reports its own tests.
-In GitHub Actions, the report is added to the job summary.
-Each platform's `Lifecycle timing` job then reports the whole lifecycle suite from the partitions' JUnit reports, using each partition's latest attempt and naming any partition without one; its wall time is the slowest partition's.
-That report also shows each budgeted test binary against its budget, with the binary's tests from every partition.
-The `test-`, `lifecycle-`, `live-docker-`, and `live-kind-` timing artifacts contain the JUnit reports with per-test durations, with the partition in each lifecycle artifact name; the `live-docker` report covers all four of its nextest commands.
-
-[`.config/test-budgets.yaml`](../../.config/test-budgets.yaml) gives each test step a wall-clock budget and a limit for any one test:
-
-| Step | Wall budget | Per-test limit | Nextest stops a test after |
+| Layer | Checks | Test binaries | `cargo ci` step |
 |---|---|---|---|
-| `test` | 45 s | 8 s | 24 s |
-| `lifecycle`, each partition | 300 s | 90 s | 180 s |
-| `live-docker` | 360 s | 180 s | 360 s |
-| `live-kind` | 270 s | 120 s | 240 s |
+| Unit | One crate's rules, with in-process fakes | Each crate's library tests and `integration` binary, and every other test not marked `#[ignore]` | `test` |
+| Contract | Each provider type through pinned OpenTofu | The ignored tests in `nemoclaw-provider::contract`, `openshell-provider::contract`, and `fabric-provider::contract` | `lifecycle` |
+| System | SDK and CLI orchestration over a bundle | The other ignored tests that the `lifecycle` profile selects, mostly in `nemoclaw-e2e::integration` | `lifecycle` |
+| Live | Real Docker engines, kind clusters, and owned remote hosts | Ignored tests that the `live-docker` and `live-kind` profiles select, and the opt-in tests in [live tests](live-tests.md) | `live-docker`, `live-kind`, or none |
 
-It also budgets each provider's contract binary: the binary's test times added up across a platform's lifecycle partitions, and a limit for any one of its tests:
+### Unit
+
+Unit tests check one crate's rules: configuration parsing and validation, compilation, planning, provider backends, CLI argument and output handling, and the build tool.
+They live in each crate's `src` modules and in its `integration` test binary, `tests/main.rs`; the providers' `schema` binaries also belong here.
+They use in-process fakes and temporary files and need no bundle:
+
+- [`crates/test-support/http.rs`](../../crates/test-support/http.rs) serves HTTP and Docker-style engine APIs, and [`kube_api.rs`](../../crates/test-support/kube_api.rs) an in-memory Kubernetes API; crates include them as private modules.
+- `nemoclaw-test-fixtures` provides a fake OpenShell gateway, the fake `ssh` relay, and an SSH simulator.
+
+Each contract binary's coverage test, such as `every_type_has_a_contract_test`, is not ignored and runs with the unit tests.
+A test that needs OpenTofu, a bundle, Docker, or a cluster must be marked `#[ignore]` with the reason, and selected by a nextest profile.
+
+### Contract
+
+A contract test applies one provider type through the OpenTofu that `NEMOCLAW_TEST_BUNDLE` supplies, against fake engines, gateways, model servers, or Kubernetes APIs, and checks what OpenTofu plans, applies, refreshes, and tears down, including after failures.
+Each production provider has one `contract` binary under `tests/contract`.
+It runs the provider Cargo built from the checkout, so it tests the change without a new bundle; OpenTofu and the other providers it needs come from the bundle.
+A coverage test in each binary requires a contract test for every type the provider serves.
+[Run integration tests](integration-tests.md#contract-tests) describes each binary.
+
+### System
+
+A system test runs the SDK or the bundled CLI through a whole lifecycle over a bundle: export, unchanged reapply, interrupted creation, failed readiness, and destroy with retained storage.
+System tests live in `nemoclaw-e2e`'s `integration` binary; its `deployment`, `export_observations`, `fabric_deployment`, `multiple_providers`, `remote_service`, `inference_discovery`, and `sandbox_readiness` modules run in this layer.
+The `lifecycle` profile in [`.config/nextest.toml`](../../.config/nextest.toml) also selects ignored `nemoclaw-sdk` library tests that run the bundle's OpenTofu: the native state test, the Helm recovery tests, and the Helm provider export test.
+It also selects one ignored test each in `nemoclaw-test-fixtures` and `nemoclaw-fixture-provider`, so that `cargo ci archive` packages their fixture executables with the tests.
+[Run integration tests](integration-tests.md#system-tests) describes the scenarios.
+
+### Live
+
+Live tests use real Docker engines, kind clusters, images, or remote hosts, and touch only resources they own.
+The `live-docker` profile selects the Docker tests in `nemoclaw-runtime`, `nemoclaw-build`, `nemoclaw-e2e`, `nemoclaw-sdk`, and `nemoclaw-provider`; the `live-kind` profile selects `nemoclaw-sdk`'s `kubernetes_live` and `kubernetes_gateway` tests.
+Other ignored tests, such as the Brev, Spark, and hosted-model tests, run only when selected by hand or by the Live / Brev workflow.
+[Run live tests](live-tests.md) gives each test's prerequisites and the state it retains.
+
+## Run Each Layer
+
+Run every command from the repository root.
+`cargo ci STEP` runs one step after checking the pinned tools.
+The default steps are `tools`, `fmt`, `clippy`, `build`, `test`, `schema`, `bundle`, and `lifecycle`; `archive`, `live-docker`, and `live-kind` run only when named.
+
+| Layer | All of it | One binary or test |
+|---|---|---|
+| Unit | `cargo ci test` | `cargo test -p CRATE` |
+| Contract and system | `cargo ci bundle`, then `cargo ci lifecycle` | `NEMOCLAW_TEST_BUNDLE=$PWD/dist/PLATFORM cargo test -p CRATE --test BINARY FILTER -- --ignored` |
+| Live | `cargo ci bundle`, then `cargo ci live-docker` or `cargo ci live-kind` | See [live tests](live-tests.md) |
+
+`cargo ci test` runs the tests not marked `#[ignore]` with the `ci` nextest profile, then the doctests, which nextest does not run.
+The `ci` profile runs at most eight tests concurrently, retries nothing, and finishes the remaining tests after a failure.
+
+The contract, system, and live tests take one input: `NEMOCLAW_TEST_BUNDLE`, the absolute path of a bundle.
+`cargo ci bundle` builds the host platform's bundle in `dist/PLATFORM`, such as `dist/linux_arm64`, and `cargo ci lifecycle` passes that path to the `lifecycle` profile, which runs four tests at a time.
+A contract test runs the provider built from the checkout, but a system test runs the bundle's CLI and providers: rebuild the bundle after changing them.
+[Run integration tests](integration-tests.md#opentofu-and-bundle-lifecycle) covers the fixture executables that a single `cargo test` needs.
+
+`cargo ci live-docker` needs Linux with a local Docker engine that uses the [containerd image store](../build.md).
+It pulls the pinned OpenShell and Ollama images, builds an agent image (Pi on ARM64, OpenClaw on AMD64) and two proxy images under a fresh `nc-live-` tag, and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
+It runs the `live-docker` profile one test at a time in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
+Afterward it removes the images it built and every container, volume, and network labelled with its UUIDs, whether or not the tests pass; pulled images remain.
+It requests no inference and needs no GPU or credentials.
+
+`cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images).
+It downloads the pinned kind executable by checksum into `.tools`, creates a cluster with a fresh `nc-live-` name, installs the pinned Agent Sandbox release, and loads an agent image built from this checkout by digest.
+It then runs the `live-kind` profile one test at a time: three live tests and two chart-render tests, which need no Helm CLI.
+It deletes the cluster and its image tag whether or not the tests pass; set `NEMOCLAW_KEEP_KIND_CLUSTER=1` to keep the cluster for inspection.
+[Run live tests](live-tests.md#kubernetes-gateway-without-the-helm-cli) describes what each test checks.
+
+## Budgets and Per-Test Limits
+
+[`.config/test-budgets.yaml`](../../.config/test-budgets.yaml) gives each test step a wall-clock budget and a limit for any one test, in seconds:
+
+| Step | Budget bounds | Wall budget | Per-test limit | Nextest stops a test after |
+|---|---|---|---|---|
+| `test` | The `ci` nextest run, without the doctests | 45 s | 8 s | 24 s |
+| `lifecycle` | Each partition's nextest run | 300 s | 90 s | 180 s |
+| `live-docker` | Its four nextest commands together | 360 s | 180 s | 360 s |
+| `live-kind` | The nextest run | 270 s | 120 s | 240 s |
+
+Its `binaries` section budgets each provider's contract binary by its nextest name: the binary's test times summed across a platform's lifecycle partitions, and a limit for any one of its tests:
 
 | Binary | Summed budget | Per-test limit | Nextest stops a test after |
 |---|---|---|---|
@@ -109,33 +111,108 @@ It also budgets each provider's contract binary: the binary's test times added u
 | `nemoclaw-provider::contract` | 110 s | 10 s | 20 s |
 | `openshell-provider::contract` | 190 s | 12 s | 24 s |
 
-On the Linux CI runners, a step over its budget, or with a test over its limit, fails and names each offender with its time and limit; macOS, Windows, and local runs only report them.
-Each step's profile in [`.config/nextest.toml`](../../.config/nextest.toml) reports a test as slow when it reaches the per-test limit and stops it at a multiple of the limit, which leaves a margin for the runs that only report budgets.
-The `test` step stops a test at three times its limit because its slowest test takes nearly twice the limit on macOS; the other steps stop a test at twice their limit.
-An override in the `lifecycle` profile stops each budgeted binary's tests at twice that binary's limit.
-Nextest marks a stopped test `TIMEOUT` and fails the step on every platform; `cargo ci` names the test with its time and limit.
-When you change a per-test limit, change the matching `slow-timeout` period too: the profile's for a step, or the `binary_id` override's for a binary.
-A `nemoclaw-build` test fails when a period differs from its limit, when a profile or override stops a test later than three times its limit, or when a budgeted binary and an override lack each other.
-The `Lifecycle timing` job checks the binary budgets, because a binary's tests run in several partitions; plain `cargo ci` runs the whole lifecycle suite in one step and reports them there.
-Both profiles finish the remaining tests after a failure.
-Use the [fixture prerequisites](integration-tests.md#opentofu-and-bundle-lifecycle) before selecting ignored tests; the profiles do not configure a bundle or authorize live resources.
-Nextest does not run doctests, so the separate Cargo command remains required.
+Budgets are measured from each step's JUnit report, so compilation, image builds, and cluster setup do not count.
+
+### Where Budgets Are Enforced
+
+Budgets fail a run only on the Linux GitHub Actions runners, where `GITHUB_ACTIONS` is set; macOS, Windows, and local runs report them without failing.
+
+- The `test` step, each lifecycle partition, and each live suite check their step budget when the step ends; a step over its wall budget, or with a test over its limit, fails and names each offender with its time and limit.
+- Each platform's `Lifecycle timing` job checks the binary budgets, because a binary's tests run in several partitions.
+  Plain `cargo ci` and `cargo ci lifecycle` run the whole lifecycle suite in one step and report them there too.
+- Nextest stops a test on every platform: each profile reports a test as slow at its per-test limit and stops it at a multiple of the limit, three times for the `test` step and twice for the others.
+  An override in the `lifecycle` profile does the same for each budgeted binary with that binary's limit.
+  Nextest marks a stopped test `TIMEOUT` and fails the step.
+
+The multiple leaves a margin for the platforms that only report budgets; the `test` step uses three because its slowest test takes nearly twice its limit on macOS.
+
+### Change a Budget
+
+Lower a budget when a change makes its step faster; a pull request that raises one must give the reason.
+When you change a per-test limit, change the matching `slow-timeout` period in [`.config/nextest.toml`](../../.config/nextest.toml) as well: the step's profile, or the binary's `binary_id` override in the `lifecycle` profile.
+To budget another test binary, add it under `binaries` and add a `lifecycle` override with the filter `binary_id(=NAME)`.
+Then run the tests that keep the two files in sync:
+
+```sh
+cargo test -p nemoclaw-build --test integration ci::
+```
+
+They fail when a step that writes a JUnit report has no budget, a provider's contract binary has no budget, a `slow-timeout` period differs from its limit, a profile or override stops a test later than three times its limit, or a budgeted binary and an override lack each other.
+
+## Timing Reports
+
+After each test step, `cargo ci` prints where the time went and, in GitHub Actions, adds it to the job summary:
+
+- the step's test count, wall time, and summed test time;
+- the 15 test modules with the most summed time, each with its binary, test count, and slowest test, and the 15 slowest tests;
+- the step's budget, whether this run enforces it, and each total or test over it.
+
+A lifecycle partition reports only its own tests.
+Each platform's `Lifecycle timing` job reports the whole lifecycle suite from the partitions' JUnit reports: each partition's latest attempt, naming any partition without a report, with the slowest partition's time as the suite's wall time.
+It also shows each budgeted binary's test count, summed time, and slowest test against its budget, with its tests from every partition.
+To produce the same report locally, download the `lifecycle-PLATFORM-SHARD-ATTEMPT` artifacts into subdirectories of one directory and run:
+
+```sh
+cargo run -q --locked -p nemoclaw-build --no-default-features -- lifecycle-timing DIRECTORY --platform linux_amd64 --shards '[1, 2]'
+```
+
+CI keeps each step's JUnit report, with per-test durations, for 14 days in the `test-PLATFORM-ATTEMPT`, `lifecycle-PLATFORM-SHARD-ATTEMPT`, `live-docker-PLATFORM-ATTEMPT`, and `live-kind-PLATFORM-ATTEMPT` artifacts; the `live-docker` report joins its four nextest commands.
+
+## How CI Runs the Tests
+
+| Workflow | Checks |
+|---|---|
+| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
+| CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
+| CI / Dependencies | `Policy` |
+| CD / Documentation | `Validate`, then PR preview, staging, or release publication |
+| Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
+
+The `v1` ruleset requires the first eight checks.
+Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
+A `Test / PLATFORM` check succeeds only when every job of that platform succeeds, including its live suites when they run.
+
+### Jobs of One Platform
+
+Each platform in [CI / Native](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/native-platform.yml) on its own runners:
+
+1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, `schema`, and `archive`: the unit layer, and the archive that later jobs run.
+2. `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
+3. When both finish, the `Lifecycle` jobs run the contract and system layers in partitions; on Linux, `Live / Docker` and `Live / Kind` start with them.
+4. When the partitions finish, `Lifecycle timing` reports the whole lifecycle suite and checks the binary budgets.
+
+Each platform starts its jobs after its own build; it does not wait for the other platforms.
+Superseded pull request runs are cancelled, and their `Test / PLATFORM` checks report as cancelled rather than failed.
+Push runs finish, because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
+The image workflow cancels superseded pull request runs and pushes, but not manual runs; documentation and dependency pushes finish.
+
+### Partitions
+
+Linux and macOS run the lifecycle suite in two nextest slice partitions and Windows in three, each on its own runner with four test slots.
+A slice partition deals the sorted test list round-robin, which spreads the slow system scenarios, which sort next to each other, across partitions.
+Adding or removing a test moves later tests to other partitions.
+
+### Archives
+
+`cargo ci archive` writes two files that let other runners run the tests without compiling:
+
+- `.build/ci/lifecycle.tar.zst`, a nextest archive of the test binaries that the `lifecycle` profile selects, on Linux also those that the `live-docker` and `live-kind` profiles select, and the executables their packages build;
+- `.build/ci/lifecycle-inputs.tar`, which keeps the executable permissions of the pinned tools, the `nemoclaw-build` executable, and the fake `ssh` relay.
+
+The bundle job uploads `dist/PLATFORM` separately.
+Lifecycle and live jobs extract both archives and the bundle, then run `.build/ci/nemoclaw-build ci STEP --archive-file .build/ci/lifecycle.tar.zst`, which remaps the tests' working directories to the checkout and extracts the tests into `.build/ci/extracted`.
+CI keeps these artifacts for one day; rerunning a failed job reuses its producers' artifacts, even from an earlier attempt, and after they expire the complete workflow must be rerun.
 
 ### Run a Lifecycle Partition
 
-Plain `cargo ci` still runs the complete local suite.
+Plain `cargo ci` runs the complete lifecycle suite in one step.
 After `cargo ci build` and `cargo ci bundle`, select one partition explicitly:
 
 ```sh
 cargo ci lifecycle --partition slice:1/2
-cargo ci lifecycle --partition slice:2/2
 ```
 
 To reproduce the archive handoff, run `cargo ci archive` after building.
-It writes `.build/ci/lifecycle.tar.zst` and `.build/ci/lifecycle-inputs.tar`.
-The first contains only binaries selected by the lifecycle profile, the executables their packages build, and their nextest metadata; the second preserves the pinned tools, `nemoclaw-build` executable, the fake `ssh` relay, and their executable permissions.
-The bundle is not included; CI builds it in a parallel job and transfers `dist/PLATFORM` separately.
-`cargo ci bundle` builds its own `nemoclaw-build`, so it does not need the `build` step first.
 Copy both archives into `.build/ci` and the bundle into `dist/PLATFORM` in a separate checkout of the same revision on the same operating system and architecture, then run:
 
 ```sh
@@ -143,12 +220,26 @@ tar -xf .build/ci/lifecycle-inputs.tar
 .build/ci/nemoclaw-build ci lifecycle --archive-file .build/ci/lifecycle.tar.zst --partition slice:1/2
 ```
 
-The worker remaps test working directories to this checkout and extracts nextest files into `.build/ci/extracted`.
-Repeating the command overwrites that extraction directory's archived files.
-The worker does not compile; it writes JUnit timings under `target/nextest/lifecycle`.
-Both options require an explicitly selected `lifecycle` step, so they cannot silently narrow plain `cargo ci`.
-CI retains the input archives for one day; rerunning a failed shard uses its producer's artifact, even from an earlier attempt.
-After the artifact expires, rerun the complete workflow to rebuild it.
+The worker compiles nothing and writes JUnit timings under `target/nextest/lifecycle`; repeating the command overwrites the extracted files.
+`--partition` requires the `lifecycle` step, and `--archive-file` requires `lifecycle`, `live-docker`, or `live-kind`, so neither narrows plain `cargo ci`.
+
+### Windows
+
+Windows has no Unix sockets for fake container engines, so tests reach them over SSH through the fake relay `nemoclaw-fixture-ssh`, which forwards `ssh://127.0.0.1:PORT` to the fixture's loopback port.
+[`Fixture::engine`](../../crates/test-support/http.rs) serves the engine on a Unix socket where one exists and otherwise installs the relay as `ssh` beside the test executable.
+The `lifecycle` step also puts the relay first on `PATH` as `ssh`, so the providers and CLI that OpenTofu and the SDK start reach it too.
+Use `Fixture::engine` for a fake engine so that the test runs on every platform; compile a test that needs a Unix-only fixture only on Unix with `#[cfg(unix)]`.
+
+### Live Suites on Pull Requests
+
+`Live / Docker` and `Live / Kind` run on the Linux platforms only, from that platform's archive and bundle, after enabling Docker's containerd image store on the runner.
+They run on every `v1` push, `run-live/` branch push, and manual run.
+On a pull request, `Build and test` runs `nemoclaw-build changes live` against the base commit, and both live jobs skip when the change cannot affect them.
+A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
+[Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suites.
+After committing, run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` to see the decision.
+A live failure fails that platform's `Test / PLATFORM` check.
+The Brev workflow remains opt-in; see [live prerequisites and cleanup](live-tests.md#bare-brev).
 
 ## Dependency Policy
 
@@ -303,14 +394,14 @@ cargo llvm-cov report --ignore-filename-regex nemoclaw-e2e
 
 There is no coverage threshold or CI coverage job.
 
-## Integration and Live Tests
+## Write Tests
 
-Write integration tests as input, operation, and expected result.
-For deployment tests, keep the YAML and expected plan/apply resource actions easy to find.
+Write each test as input, operation, and expected result, and name the observable behavior and its conditions in its title.
+For deployment tests, keep the YAML and expected plan and apply resource actions easy to find.
 Use assertions and the test runner's output for failures; do not add separate reports, host inventories, or project-tracking metadata to tests.
 Keep inference requests, fault injection, and recovery checks in explicitly named scenarios.
 
-- [Run integration tests](integration-tests.md) with an explicit bundle path.
+- [Run integration tests](integration-tests.md) for the contract and system layers.
 - [Run live tests](live-tests.md) only against explicitly owned resources.
 
 ### SSH Engine Transport

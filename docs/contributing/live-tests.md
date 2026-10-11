@@ -295,6 +295,96 @@ It invokes the hosted runtime separately from apply with caller-supplied input.
 The test checks managed runtime bindings as well as the hosted agent identity across export/reapply and destroys only the supplied deployment.
 
 
+## Docker Live Suite
+
+`cargo ci live-docker` builds the images and writes the owned inputs for the Ollama cache, runtime image, Docker provider, standalone cache, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+To run one of them by hand, supply its inputs as its section describes.
+
+## Model Cache Compatibility
+
+On native Linux with local Docker, pull the Ollama base image pinned in this checkout before selecting the opt-in cache test.
+The test creates a temporary cache and one container, exposes its inventory API on an ephemeral loopback port, and removes both afterward.
+It resumes complete synthetic files through NemoClaw's verifier, then checks the actual Ollama inventory and version.
+It downloads no model and exposes no GPU.
+From the repository root:
+
+```sh
+ollama_base=$(awk '$1 == "FROM" { print $2; exit }' runtimes/ollama/Dockerfile)
+docker pull "$ollama_base"
+NEMOCLAW_TEST_OLLAMA_CACHE=1 cargo test -p nemoclaw-runtime --test integration ollama_cache:: -- --ignored --nocapture
+```
+
+A failure identifies either the cache contract or a mismatch between the runtime image and `versions.json`.
+Correct the runtime pin or adapter before rerunning; never point the fixture at a deployment's cache.
+If the test process is forcibly killed, inspect containers with label `org.nemoclaw.test=ollama-cache` and remove only the container created by that run.
+
+Evaluate the Hugging Face client shipped in the vLLM base image with a private loopback server:
+
+```sh
+vllm_base=$(awk '$1 == "FROM" { print $2; exit }' runtimes/vllm/Dockerfile)
+docker pull "$vllm_base"
+docker run --rm --runtime=runc --network none --env HF_HUB_DISABLE_PROGRESS_BARS=1 \
+  --volume "$PWD/runtimes/vllm/test_download.py:/test_download.py:ro" \
+  --entrypoint python3 "$vllm_base" /test_download.py
+```
+
+This test documents why post-download verification cannot preserve bounded writes with the evaluated client.
+It expects the client to write an oversized fixture before raising a size error; if that behavior changes, reevaluate whether the owner client can replace NemoClaw's downloader.
+
+
+## Runtime Image Loading
+
+On a native Linux host, complete the [runtime image build prerequisites](../build.md#build-a-runtime-image).
+This test builds a uniquely named scratch image without downloading a base image, exports an OCI archive, loads it, and checks access by the exported digest.
+It removes its image tag afterward; Docker's build cache remains.
+Run from the repository root:
+
+```sh
+NEMOCLAW_TEST_RUNTIME_IMAGE=1 cargo test -p nemoclaw-build --no-default-features --bin nemoclaw-build runtime_archive_loads_with_its_exported_digest -- --ignored
+```
+
+A failure reports the build, load, or identity check that failed; correct the Docker configuration and rerun.
+It does not start containers, run inference, or publish an image.
+
+
+## Docker Provider Lifecycle
+
+On Linux with local Docker, provide a verified bundle and two different, already loaded digest-pinned images containing the Ollama proxy executable.
+Run from the repository root:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_OLLAMA_PROXY_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
+NEMOCLAW_TEST_OLLAMA_PROXY_REPLACEMENT_IMAGE=repository@sha256:YOUR_REPLACEMENT_DIGEST \
+  cargo test -p nemoclaw-e2e --test integration docker_provider_proxy:: -- --ignored
+```
+
+This test creates uniquely named local containers and credential volumes and removes only those owned resources afterward.
+It checks SDK apply, export/reapply, failed readiness, image changes and container replacement with the same key, destroy retention, and rejection of missing, foreign, or substituted retained volumes.
+OpenShell and the upstream Ollama inventory are local protocol fixtures; no model executes.
+
+
+## Standalone Cache and Credential Resources
+
+On Linux with Docker, select a verified bundle, an explicit local engine socket, and an already loaded digest-pinned image containing `python3` and `sha256sum`, such as an agent image.
+The fixture container runs as root, so the image's own user does not matter.
+From the repository root:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_CACHE_ENGINE=unix:///var/run/docker.sock \
+NEMOCLAW_TEST_CACHE_IMAGE=repository@sha256:YOUR_IMAGE_DIGEST \
+  cargo test -p nemoclaw-e2e --test integration cache_provider:: -- --ignored
+```
+
+The [hand-written HCL](../../crates/nemoclaw-e2e/tests/fixtures/cache_provider.tf) composes `docker_volume`, `docker_container`, and `nemoclaw_inference_storage`; no SDK compiler or deployment coordinator runs.
+The fixture creates fresh owned resources, checks no-op, replacement, failed-start recovery, retained teardown/reapply, and cache reconstruction with the same credential.
+Missing or substituted credential volumes must stop apply before compute creation and preserve state.
+Teardown sets the container count to zero while keeping both volume declarations; `tofu destroy` is deliberately blocked by their retention rules.
+The test removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
+The container's Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
+
+
 ## Docker Gateway Recovery
 
 The SDK's `managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu` test exercises only the managed runtime stage with a real gateway, Docker, both providers, and OpenTofu.
