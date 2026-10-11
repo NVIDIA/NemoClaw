@@ -380,6 +380,7 @@ jobs:
       catalogue_standard_matrix: ${{ steps.matrix.outputs.catalogue_standard_matrix }}
       catalogue_nvidia_api_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_api_matrix }}
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
+      catalogue_hosted_inference_matrix: ${{ steps.matrix.outputs.catalogue_hosted_inference_matrix }}
       catalogue_github_read_matrix: ${{ steps.matrix.outputs.catalogue_github_read_matrix }}
       gateway_runtimes: ${{ steps.matrix.outputs.gateway_runtimes }}
       runtime_providers_by_job: ${{ steps.matrix.outputs.runtime_providers_by_job }}
@@ -680,6 +681,7 @@ jobs:
               echo 'catalogue_standard_matrix=[]'
               echo 'catalogue_nvidia_api_matrix=[]'
               echo 'catalogue_nvidia_inference_matrix=[]'
+              echo 'catalogue_hosted_inference_matrix=[]'
               echo 'catalogue_github_read_matrix=[]'
               echo 'gateway_runtimes=["docker"]'
               echo 'runtime_providers_by_job={"native-runtime-qualification-producer":["docker"]}'
@@ -3276,6 +3278,55 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@9650336899bf836db5844381a97cbc2b0fe4a2b8
         with:
           enabled: "true"
+
+  catalogue-hosted-inference:
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
+    if: ${{ needs.generate-matrix.outputs.catalogue_hosted_inference_matrix != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate-matrix.outputs.catalogue_hosted_inference_matrix) }}
+    uses: ./.github/workflows/e2e-standard-profile.yaml
+    with:
+      candidate_repository: ${{ inputs.checkout_repository || github.repository }}
+      candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
+      risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
+      risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
+      cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
+      credential_boundary: selected hosted inference API key
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      hosted_inference_model: ${{ vars[matrix.model_env] }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
+      test_file: ${{ matrix.test_file }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      install_mode: ${{ matrix.install_mode }}
+      install_non_interactive: ${{ matrix.install_non_interactive }}
+      restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
+      host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: false
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
+      trusted_main: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}
 
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
@@ -6294,6 +6345,7 @@ jobs:
         catalogue-standard,
         catalogue-nvidia-api,
         catalogue-nvidia-inference,
+        catalogue-hosted-inference,
         catalogue-github-read,
         openshell-gateway-auth-contract,
         external-gateway-health,
@@ -6313,7 +6365,7 @@ jobs:
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}
     permissions:
       actions: read
       contents: read
@@ -6335,6 +6387,13 @@ jobs:
         env:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           TEST_MATRIX: ${{ needs.generate-matrix.outputs.test_matrix }}
+          JOB_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          JOB_CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
+          JOB_BASE_SHA: ${{ inputs.base_sha }}
+          JOB_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MATRIX_RESULT: ${{ needs.generate-matrix.result }}
+          SELECTED_WORKFLOW_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}

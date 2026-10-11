@@ -31,10 +31,16 @@ import {
 import { SANDBOX_SURVIVAL_TARGET_TIMEOUT_MINUTES } from "./sandbox-survival-timeout-contract.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
+import {
+  HOSTED_PROVIDER_SMOKE_CASES,
+  hostedProviderSmokeEnvironment,
+} from "./hosted-provider-smoke.mts";
+
 export const E2E_EXECUTION_PROFILES = [
   "standard",
   "nvidia-api",
   "nvidia-inference",
+  "hosted-inference",
   "github-read",
 ] as const;
 export type E2eExecutionProfile = (typeof E2E_EXECUTION_PROFILES)[number];
@@ -102,6 +108,7 @@ export interface E2eCatalogueTarget {
 }
 
 export interface E2eCatalogueMatrixRow {
+  model_env?: string;
   id: string;
   execution_id: string;
   runtime_provider: E2eRuntimeProvider;
@@ -158,6 +165,7 @@ type TargetOptions = Omit<
   agentRuntime: E2eAgentRuntime;
   environmentOrInferenceEndpoint: string;
   unresolvedReason?: string;
+  releaseRequired?: boolean;
   owningPaths?: readonly string[];
   environment?: Readonly<Record<string, string>>;
   hostPackages?: readonly E2eHostPackage[];
@@ -990,6 +998,31 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_SANDBOX_NAME: "e2e-issue-4462",
     },
   }),
+  ...HOSTED_PROVIDER_SMOKE_CASES.map((selected) =>
+    dockerOnlyTarget(`hosted-inference-${selected.selector}`, {
+      displayName: `Inference: completes a native ${selected.label} agent request`,
+      agentRuntime: selected.selector === "hermes" ? "hermes" : "openclaw",
+      prAdvisorSelectable: true,
+      owningPaths: [
+        "test/e2e/live/inference-routing-credential-scan.ts",
+        `managed-inference/provider-profiles/nemoclaw-${selected.selector}-inference-v1.yaml`,
+        ...(["openai", "anthropic", "hermes"].includes(selected.selector)
+          ? ["src/lib/inference/native-provider/", "src/lib/onboard/setup-inference.ts"]
+          : []),
+        ...(selected.selector === "hermes" ? ["src/lib/hermes-provider-auth.ts"] : []),
+      ],
+      environmentOrInferenceEndpoint: `Ubuntu; ${selected.label} hosted inference`,
+      profile: "hosted-inference",
+      releaseRequired: false,
+      testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
+      selector: `^${selected.id}`,
+      timeoutMinutes: 30,
+      installMode: "none",
+      restoreCli: true,
+      exposeCliBin: true,
+      environment: { NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE: selected.selector },
+    }),
+  ),
   managedRuntimeTarget("inference-routing", {
     displayName: "Inference: rejects unsafe routes and proves runtime identities",
     agentRuntime: "openclaw + langchain-deepagents-code",
@@ -1830,15 +1863,17 @@ export function catalogueTargetsForChangedFiles(
   changedFiles: readonly string[],
 ): E2eCatalogueTarget[] {
   const files = [...new Set(changedFiles)];
-  if (files.some((file) => E2E_CATALOGUE_SHARED_PATHS.some((owner) => pathMatches(file, owner)))) {
-    return [...E2E_TARGET_CATALOGUE];
-  }
-  return E2E_TARGET_CATALOGUE.filter((entry) =>
-    files.some(
-      (file) =>
-        file === entry.testFile || entry.owningPaths.some((owner) => pathMatches(file, owner)),
-    ),
+  const shared = files.some((file) =>
+    E2E_CATALOGUE_SHARED_PATHS.some((owner) => pathMatches(file, owner)),
   );
+  return E2E_TARGET_CATALOGUE.filter((entry) => {
+    const ownsSource = files.some((file) =>
+      entry.owningPaths.some((owner) => pathMatches(file, owner)),
+    );
+    // Native hosted behavior is qualified only by explicit selection until Slice 2 lands.
+    if (entry.profile === "hosted-inference") return false;
+    return shared || ownsSource || files.includes(entry.testFile);
+  });
 }
 
 export function catalogueHostPackages(
@@ -1860,6 +1895,13 @@ export function catalogueMatrix(
     .filter((entry) => entry.profile === profile)
     .flatMap((entry) =>
       e2eRuntimeProviders(entry.gatewayRuntimes, gatewayRuntimes).map((runtimeProvider) => ({
+        ...(profile === "hosted-inference"
+          ? {
+              model_env: HOSTED_PROVIDER_SMOKE_CASES.find(
+                (selected) => entry.id === `hosted-inference-${selected.selector}`,
+              )!.modelEnv,
+            }
+          : {}),
         id: entry.id,
         execution_id: runtimeExecutionId(entry.id, entry.shard, runtimeProvider),
         runtime_provider: runtimeProvider,
@@ -1895,6 +1937,12 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
     throw new Error(`E2E target ${id} does not own test file ${testFile}`);
   }
   Object.assign(process.env, entry.environment);
+  if (entry.profile === "hosted-inference") {
+    const selectedEnvironment = hostedProviderSmokeEnvironment(id, process.env);
+    for (const selected of HOSTED_PROVIDER_SMOKE_CASES) delete process.env[selected.credential];
+    delete process.env.HOSTED_INFERENCE_API_KEY;
+    Object.assign(process.env, selectedEnvironment);
+  }
   if (entry.exposeCliBin) {
     process.env.NEMOCLAW_CLI_BIN = path.join(process.cwd(), "bin", "nemoclaw.js");
   }

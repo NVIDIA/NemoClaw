@@ -54,6 +54,7 @@ import {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
   runRebuildPostRestorePhase,
+  recordRebuildCompletion,
 } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
@@ -94,12 +95,14 @@ import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 
 export { stageMessagingManifestPlanForRebuild };
 
-function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): void {
+function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): boolean {
   try {
-    if (cleanup() === false) console.warn(warning);
+    if (cleanup() !== false) return true;
   } catch {
-    console.warn(warning);
+    // Retain the existing non-fatal cleanup behavior.
   }
+  console.warn(warning);
+  return false;
 }
 
 function rebuildFailureDetail(error: unknown): string {
@@ -236,6 +239,10 @@ async function rebuildSandboxUnlocked(
   } = targetConfig;
   let recreateOptions = stagedRecreateOptions;
   const { staleRecovery } = liveState;
+  let telemetryVerified = false;
+  let telemetryMutated = false;
+  let telemetryCleanupOnly = false;
+  let telemetryCleanupComplete = true;
   let preparedImage = initiallyPreparedImage;
   let recoveryManifest = validatedRecoveryManifest;
   let rebuildPolicySourcePath: string | null = null;
@@ -489,6 +496,8 @@ async function rebuildSandboxUnlocked(
         console.log(`  Completed retained recovery cleanup for '${sandboxName}'.`);
         console.log(`  Backup is preserved at: ${cleanupManifest.backupPath}`);
         log(`Completed retained recovery cleanup ${cleanupJournal.id} for '${sandboxName}'`);
+        telemetryVerified = true;
+        telemetryCleanupOnly = true;
         return;
       }
 
@@ -665,6 +674,7 @@ async function rebuildSandboxUnlocked(
             `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
           );
         }
+        telemetryMutated = true;
         const restored = await runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
@@ -744,6 +754,7 @@ async function rebuildSandboxUnlocked(
         log(
           `Recovered and restored journaled replacement ${recreateJournal.id} for '${sandboxName}'`,
         );
+        telemetryVerified = postRestoreVerification?.complete === true;
         return;
       }
 
@@ -925,9 +936,11 @@ async function rebuildSandboxUnlocked(
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
         onDeleteStateAmbiguous: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
       });
@@ -1041,6 +1054,7 @@ async function rebuildSandboxUnlocked(
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
       }
       retainPolicyHandoffForRecovery = false;
+      telemetryVerified = postRestoreVerification?.complete === true;
     } finally {
       if (sourceOpenClawDoctorWindow) {
         await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
@@ -1052,40 +1066,53 @@ async function rebuildSandboxUnlocked(
         (handoffManifest.rebuildPolicyHandoff || handoffManifest.rebuildMcpHandoff) &&
         !retainPolicyHandoffForRecovery
       ) {
-        runBestEffortRebuildCleanup(
-          () =>
-            clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
-          "  Warning: bounded rebuild recovery handoff could not be removed.",
-        );
+        telemetryCleanupComplete =
+          runBestEffortRebuildCleanup(
+            () =>
+              clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
+            "  Warning: bounded rebuild recovery handoff could not be removed.",
+          ) && telemetryCleanupComplete;
       } else if (rebuildPolicySourcePath && rebuildPolicySourceIsEphemeral) {
         const retainedPolicySourcePath = rebuildPolicySourcePath;
-        runBestEffortRebuildCleanup(
-          () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
-          `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
-        );
+        telemetryCleanupComplete =
+          runBestEffortRebuildCleanup(
+            () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
+            `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
+          ) && telemetryCleanupComplete;
       }
     }
   } finally {
     if (stoppedSource)
+      telemetryCleanupComplete =
+        runBestEffortRebuildCleanup(
+          stoppedSource.dispose,
+          `  Warning: private stopped-state capture files could not be fully removed. Remove ${JSON.stringify(stoppedSource.cleanupDirectory)} before retrying.`,
+        ) && telemetryCleanupComplete;
+    telemetryCleanupComplete =
       runBestEffortRebuildCleanup(
-        stoppedSource.dispose,
-        `  Warning: private stopped-state capture files could not be fully removed. Remove ${JSON.stringify(stoppedSource.cleanupDirectory)} before retrying.`,
-      );
-    runBestEffortRebuildCleanup(
-      dcodePreflight.cleanup,
-      "  Warning: temporary DCode rebuild inputs could not be fully removed.",
-    );
-    runBestEffortRebuildCleanup(
-      () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
-      "  Warning: temporary rebuild base-image handoff could not be removed.",
-    );
+        dcodePreflight.cleanup,
+        "  Warning: temporary DCode rebuild inputs could not be fully removed.",
+      ) && telemetryCleanupComplete;
+    telemetryCleanupComplete =
+      runBestEffortRebuildCleanup(
+        () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
+        "  Warning: temporary rebuild base-image handoff could not be removed.",
+      ) && telemetryCleanupComplete;
     if (preparedImage) {
       const retainedPreparedImage = preparedImage;
-      runBestEffortRebuildCleanup(
-        () => disposePreparedBuildContext(retainedPreparedImage),
-        "  Warning: temporary rebuild image inputs could not be fully removed.",
-      );
+      telemetryCleanupComplete =
+        runBestEffortRebuildCleanup(
+          () => disposePreparedBuildContext(retainedPreparedImage),
+          "  Warning: temporary rebuild image inputs could not be fully removed.",
+        ) && telemetryCleanupComplete;
     }
+    await recordRebuildCompletion(
+      sandboxName,
+      telemetryVerified && telemetryCleanupComplete,
+      telemetryCleanupOnly,
+      sandboxEntry,
+      telemetryMutated,
+    );
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();
   }
