@@ -54,7 +54,8 @@ vi.mock("./state/onboard-session.js", () => ({
   loadSession: vi.fn(),
 }));
 
-vi.mock("./runner.js", () => ({
+vi.mock("./runner.js", async (importOriginal) => ({
+  ROOT: (await importOriginal<typeof import("./runner.js")>()).ROOT,
   validateName: (name: string) => {
     if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
       throw new Error(`Invalid sandbox name: '${name}'`);
