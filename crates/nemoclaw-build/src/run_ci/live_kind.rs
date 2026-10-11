@@ -66,6 +66,7 @@ pub(super) async fn run_live_kind(
     platform: &str,
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
+    images: Option<&Path>,
 ) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the Kubernetes live tests run on Linux only".into());
@@ -144,20 +145,16 @@ pub(super) async fn run_live_kind(
     ]))?;
 
     // An agent image from this checkout, by digest, loaded into the node and
-    // described by its metadata bundle. Pi is the smaller image but is built
-    // only for ARM64; OpenClaw is built for both.
-    let (target, harness) = if platform == "linux_arm64" {
-        ("pi", "nvidia.fabric.pi")
-    } else {
-        ("openclaw", "nvidia.fabric.openclaw")
-    };
+    // described by its metadata bundle.
+    let (target, harness) = live_images::agent(platform);
     let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
     let prefix = format!("{name}-agent");
     let tag = format!("{prefix}:{target}");
-    let images = ImagesCleanup(tag.clone());
-    run(Command::new(std::env::current_exe()?)
-        .args(["images", "build", "--platform", &docker_platform, target])
-        .env("IMAGE_PREFIX", &prefix))?;
+    let cleanup = ImagesCleanup(tag.clone());
+    match images {
+        Some(archive) => live_images::load(archive, &prefix, &[target], &mut Vec::new())?,
+        None => live_images::build_agent(platform, &prefix)?,
+    }
     let id = String::from_utf8(
         Command::new("docker")
             .args(["image", "inspect", "--format", "{{.Id}}", &tag])
@@ -203,7 +200,7 @@ pub(super) async fn run_live_kind(
         .env("NEMOCLAW_TEST_AGENT_METADATA", &metadata);
     let result = run(&mut command);
     drop(cluster);
-    drop(images);
+    drop(cleanup);
     result
 }
 

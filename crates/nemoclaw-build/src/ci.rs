@@ -30,6 +30,9 @@ pub enum Step {
     LiveDocker,
     /// Kubernetes live tests on a temporary kind cluster; opt-in.
     LiveKind,
+    /// Build the Linux live suites' images once and save them for the live
+    /// jobs to load; opt-in.
+    LiveImages,
 }
 
 impl Step {
@@ -57,13 +60,19 @@ impl Step {
             Step::Archive => "archive",
             Step::LiveDocker => "live-docker",
             Step::LiveKind => "live-kind",
+            Step::LiveImages => "live-images",
         }
     }
 
     pub fn parse(name: &str) -> Option<Step> {
         Step::ALL
             .into_iter()
-            .chain([Step::Archive, Step::LiveDocker, Step::LiveKind])
+            .chain([
+                Step::Archive,
+                Step::LiveDocker,
+                Step::LiveKind,
+                Step::LiveImages,
+            ])
             .find(|step| step.name() == name)
     }
 
@@ -84,7 +93,7 @@ impl Step {
     /// or through the built tool and have none.
     pub fn cargo_args(self) -> &'static [&'static [&'static str]] {
         match self {
-            Step::Tools | Step::Schema | Step::Bundle => &[],
+            Step::Tools | Step::Schema | Step::Bundle | Step::LiveImages => &[],
             Step::LiveKind => &[&[
                 "nextest",
                 "run",

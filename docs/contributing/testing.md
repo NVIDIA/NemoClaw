@@ -43,6 +43,10 @@ The step deletes the cluster and removes its built image tag whether or not the 
 Set `NEMOCLAW_KEEP_KIND_CLUSTER=1` before running to keep the cluster for inspection; remove it afterward with the printed kind command.
 The tests request no inference and need no GPU or credentials.
 Initial image builds need network access and can take longer than the tests.
+
+To build the live images once for both suites, run `cargo ci live-images`.
+It builds the agent image and both proxy images under `nc-live-images`, saves them to `.build/ci/live-images.tar.zst` through the `zstd` command, and removes the local names.
+Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images under its own fresh prefix instead of building, so its cleanup still removes only what it created.
 See [live prerequisites and retained state](live-tests.md#kubernetes-gateway-without-the-helm-cli).
 
 To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
@@ -64,9 +68,10 @@ The image workflow also cancels superseded pushes; its manual runs use a separat
 Native push runs finish because only `v1` pushes save the shared Rust caches; a newer push still replaces an older pending run.
 Documentation and dependency pushes finish; newer pushes replace older pending runs.
 Like the lifecycle workers, the live jobs run their platform's archived test executables and bundle, so they compile nothing.
+A `Build live images` job runs `cargo ci live-images` once per Linux platform, alongside the build and bundle jobs, and both live jobs load its archive.
 They run on pull requests that can affect them, `v1` pushes, `run-live/` branch pushes, and manual runs.
 A live failure fails that platform's `Test / PLATFORM` check, as a lifecycle failure does.
-On a pull request, `Build and test` runs `nemoclaw-build changes live`, and both live jobs skip when the change cannot affect them.
+On a pull request, `Build live images` runs `nemoclaw-build changes live`; when the change cannot affect the live suites, it builds nothing and both live jobs skip.
 A file inside a crate counts when that crate is in the live build: the packages whose tests run live and the CLI and providers the bundle ships, with their dependencies.
 [Path rules](../../.config/determinator-live.toml) classify other files; unclassified files, dependency or feature changes in the live build, and failed analyses run the suite.
 Run `cargo run -p nemoclaw-build --no-default-features -- changes live --base origin/v1` after committing to see the decision.

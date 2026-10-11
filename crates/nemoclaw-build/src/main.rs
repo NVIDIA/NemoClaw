@@ -70,6 +70,10 @@ enum Action {
         /// Run lifecycle tests from a nextest archive instead of compiling them.
         #[arg(long)]
         archive_file: Option<PathBuf>,
+        /// Load the live suites' images from this `ci live-images` archive
+        /// instead of building them.
+        #[arg(long)]
+        images: Option<PathBuf>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -515,6 +519,7 @@ async fn main() -> Result<()> {
         step,
         partition,
         archive_file,
+        images,
     } = cli.command
     {
         return run_ci::run_steps(
@@ -522,6 +527,7 @@ async fn main() -> Result<()> {
             step.as_deref(),
             partition.as_deref(),
             archive_file.as_deref(),
+            images.as_deref(),
         )
         .await;
     }
