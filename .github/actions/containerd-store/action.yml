@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Use the containerd image store
+description: Switch the runner's Docker engine to the containerd image store.
+# The Docker suite loads OCI archives and local images by digest, and the
+# Kubernetes suite reads an agent image's metadata from its OCI index; both
+# need Docker's containerd image store, and hosted runners use the classic one.
+# The live images job builds with it too, so the images it saves load the same.
+runs:
+  using: composite
+  steps:
+    - name: Use the containerd image store
+      shell: bash
+      run: |
+        config=/etc/docker/daemon.json
+        if [ -s "$config" ]; then current=$(sudo cat "$config"); else current='{}'; fi
+        printf '%s' "$current" | jq '.features["containerd-snapshotter"] = true' | sudo tee "$config" >/dev/null
+        sudo systemctl restart docker
+        docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1

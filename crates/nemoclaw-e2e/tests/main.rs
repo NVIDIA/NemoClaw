@@ -25,14 +25,16 @@ mod health;
 mod hosted_parity;
 #[path = "inference_discovery.rs"]
 mod inference_discovery;
+#[path = "kubernetes_chart.rs"]
+mod kubernetes_chart;
+#[path = "kubernetes_live.rs"]
+mod kubernetes_live;
 #[path = "managed.rs"]
 mod managed;
 #[path = "model_live.rs"]
 mod model_live;
 #[path = "multiple_providers.rs"]
 mod multiple_providers;
-#[path = "openshell.rs"]
-mod openshell;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
 #[path = "remote_service.rs"]

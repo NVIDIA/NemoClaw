@@ -8,6 +8,8 @@ use std::{ffi::OsString, time::Instant};
 
 #[path = "run_ci/live_docker.rs"]
 mod live_docker;
+#[path = "run_ci/live_images.rs"]
+mod live_images;
 #[path = "run_ci/live_kind.rs"]
 mod live_kind;
 
@@ -161,6 +163,7 @@ fn run_step(
     step: Step,
     partition: Option<&str>,
     archive_file: Option<&Path>,
+    images: Option<&Path>,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -175,8 +178,15 @@ fn run_step(
     match step {
         Step::Tools => unreachable!("tools install in-process"),
         Step::LiveDocker => {
-            return live_docker::run_live_docker(tools.pins, platform, &configure, archive_file);
+            return live_docker::run_live_docker(
+                tools.pins,
+                platform,
+                &configure,
+                archive_file,
+                images,
+            );
         }
+        Step::LiveImages => return live_images::build(platform),
         Step::LiveKind => unreachable!("live-kind runs asynchronously"),
         Step::Schema | Step::Bundle => {
             if step == Step::Bundle {
@@ -426,6 +436,7 @@ pub(super) async fn run_steps(
     selected: Option<&str>,
     partition: Option<&str>,
     archive_file: Option<&Path>,
+    images: Option<&Path>,
 ) -> Result<()> {
     if partition.is_some() && selected != Some("lifecycle") {
         return Err("--partition requires ci lifecycle".into());
@@ -434,6 +445,9 @@ pub(super) async fn run_steps(
         && !matches!(selected, Some("lifecycle" | "live-docker" | "live-kind"))
     {
         return Err("--archive-file requires ci lifecycle, live-docker, or live-kind".into());
+    }
+    if images.is_some() && !matches!(selected, Some("live-docker" | "live-kind")) {
+        return Err("--images requires ci live-docker or live-kind".into());
     }
     let tools = Tools {
         pins,
@@ -473,9 +487,9 @@ pub(super) async fn run_steps(
             let configure = |command: &mut Command| {
                 command.env("PROTOC", &protoc).env("PATH", &path);
             };
-            live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file).await
+            live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file, images).await
         } else {
-            run_step(&tools, &platform, step, partition, archive_file)
+            run_step(&tools, &platform, step, partition, archive_file, images)
         };
         let elapsed = begun.elapsed().as_secs();
         let over = report_timing(step, partition, begun);

@@ -248,7 +248,7 @@ provider "nemoclaw" {{ {destroy} }}
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; in-memory Kubernetes API"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; in-memory Kubernetes API"]
 async fn kubernetes_resources_apply_observe_the_release_and_tear_down_keeping_storage() {
     let platform = Platform::start().await;
     platform.configure(Stage::Prepared);
@@ -375,7 +375,7 @@ async fn kubernetes_resources_apply_observe_the_release_and_tear_down_keeping_st
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; in-memory Kubernetes API"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; in-memory Kubernetes API"]
 async fn kubernetes_resources_refuse_replaced_or_missing_objects_without_recreating_them() {
     let platform = Platform::deployed().await;
     let original = platform.snapshot();

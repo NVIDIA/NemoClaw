@@ -37,13 +37,10 @@ jobs:
     timeout-minutes: 60
     outputs:
       artifact: ${{ steps.identity.outputs.artifact }}
-      live: ${{ steps.changes.outputs.live }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The second commit is a pull request merge commit's base.
-          fetch-depth: 2
       - uses: ./.github/actions/setup-rust
         with:
           platform: ${{ inputs.platform }}
@@ -67,21 +64,6 @@ jobs:
         run: cargo ci schema
       - name: Archive lifecycle executables and inputs
         run: cargo ci archive
-      # Deciding here lets the live jobs skip without starting a runner.
-      - name: Decide whether this change can affect the live suites
-        id: changes
-        if: inputs.live
-        env:
-          EVENT: ${{ github.event_name }}
-        run: |
-          # Pushes and manual runs always run the live suites.
-          if [ "$EVENT" != pull_request ]; then
-            echo live=true >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          base=$(git rev-parse HEAD^1)
-          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
-            changes live --base "$base" >> "$GITHUB_OUTPUT"
       - name: Identify lifecycle artifact
         id: identity
         run: echo "artifact=lifecycle-inputs-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
@@ -216,13 +198,69 @@ jobs:
           tar -xf .build/ci/lifecycle-inputs.tar "$tool"
           "$tool" lifecycle-timing .build/ci/timings --platform "$TEST_PLATFORM" --shards "$SHARDS"
 
+  # The live suites' images, built once per platform alongside the build and
+  # bundle jobs; both live jobs load them instead of building their own.
+  live-images:
+    name: Build live images
+    if: inputs.live
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+      live: ${{ steps.changes.outputs.live }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The second commit is a pull request merge commit's base.
+          fetch-depth: 2
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: ${{ inputs.platform }}
+          save-cache: "false"
+      # Deciding here skips the image build, and both live jobs, when a change
+      # cannot affect the live suites.
+      - name: Decide whether this change can affect the live suites
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # Pushes and manual runs always run the live suites.
+          if [ "$EVENT" != pull_request ]; then
+            echo live=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base=$(git rev-parse HEAD^1)
+          cargo run --locked --quiet -p nemoclaw-build --no-default-features --target-dir target/ci-runner -- \
+            changes live --base "$base" >> "$GITHUB_OUTPUT"
+      - if: steps.changes.outputs.live == 'true'
+        uses: ./.github/actions/containerd-store
+      - name: Build and save the live images
+        if: steps.changes.outputs.live == 'true'
+        run: cargo ci live-images
+      - name: Identify live images artifact
+        if: steps.changes.outputs.live == 'true'
+        id: identity
+        run: echo "artifact=live-images-${TEST_PLATFORM}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Upload live images
+        if: steps.changes.outputs.live == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: .build/ci/live-images.tar.zst
+          include-hidden-files: true
+          # Already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
   # Like the lifecycle shards, the live suites run this platform's archived test
-  # executables and bundle, compile nothing, and count toward the platform's
-  # required Test / PLATFORM check.
+  # executables and bundle, load its live images, compile nothing, and count
+  # toward the platform's required Test / PLATFORM check.
   live-docker:
     name: Live / Docker
-    needs: [build, bundle]
-    if: inputs.live && needs.build.outputs.live == 'true'
+    needs: [build, bundle, live-images]
+    if: inputs.live && needs.live-images.outputs.live == 'true'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
@@ -235,11 +273,12 @@ jobs:
           suite: live-docker
           tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
+          images: ${{ needs.live-images.outputs.artifact }}
 
   live-kind:
     name: Live / Kind
-    needs: [build, bundle]
-    if: inputs.live && needs.build.outputs.live == 'true'
+    needs: [build, bundle, live-images]
+    if: inputs.live && needs.live-images.outputs.live == 'true'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
@@ -252,3 +291,4 @@ jobs:
           suite: live-kind
           tests: ${{ needs.build.outputs.artifact }}
           bundle: ${{ needs.bundle.outputs.artifact }}
+          images: ${{ needs.live-images.outputs.artifact }}

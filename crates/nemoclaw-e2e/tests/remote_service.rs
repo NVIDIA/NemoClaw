@@ -166,6 +166,20 @@ impl Scenario {
         run(&self.root, &self.bundle, command, file, success).await
     }
 
+    /// Why `nemoclaw export` refuses this deployment; the reason names its
+    /// unfinished or destroyed state without reading the SDK's files.
+    async fn export_refusal(&self) -> String {
+        let output = tokio::process::Command::new(self.bundle.join("bin/nemoclaw"))
+            .arg("--state-dir")
+            .arg(self.root.join("deployment"))
+            .arg("export")
+            .output()
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        String::from_utf8(output.stderr).unwrap()
+    }
+
     /// Applies the authored document and returns the engine it leaves, which
     /// later unchanged applies must reproduce.
     async fn apply(&self) -> Value {
@@ -410,7 +424,11 @@ async fn partial_destroy_retains_storage(s: &Scenario) {
     assert!(destroyed["network"].is_null());
     assert!(destroyed["container"].is_null());
     assert_eq!(destroyed["effects"], partial["effects"]);
-    assert_eq!(read(root, "deployment/intent.json")["destroyed"], true);
+    let refusal = s.export_refusal().await;
+    assert!(
+        refusal.contains("cannot export a destroyed deployment"),
+        "{refusal}"
+    );
 }
 
 // Fail before a process exists: the provider has already committed the
@@ -428,7 +446,8 @@ async fn recover_failed_creation_and_startup(s: &Scenario) -> Value {
     save(root, "control.json", &json!({"startup_failure":true}));
     s.run("apply", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["creates"], 1);
-    assert_eq!(read(root, "deployment/intent.json")["runtimePending"], true);
+    let refusal = s.export_refusal().await;
+    assert!(refusal.contains("apply is unfinished"), "{refusal}");
     let runtime_state = read(root, "deployment/runtime/terraform.tfstate");
     let resources = runtime_state["resources"].as_array().unwrap();
     for expected in ["docker_container", "docker_network"] {

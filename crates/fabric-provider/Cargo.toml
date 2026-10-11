@@ -32,6 +32,8 @@ tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+openshell-core.workspace = true
+tonic.workspace = true
 nemoclaw-test-fixtures = { path = "../nemoclaw-test-fixtures" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

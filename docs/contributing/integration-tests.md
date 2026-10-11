@@ -105,7 +105,7 @@ On Unix, `fabric_capabilities` reads a fake Docker engine's image metadata: a co
 
 ## System Tests
 
-The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module, and a few ignored `nemoclaw-sdk` library tests.
+The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module, and the ignored Helm recovery tests in the `nemoclaw-sdk` library.
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts:
 
 ```sh
@@ -132,13 +132,8 @@ In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` che
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
 `separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_drift` check OpenClaw tool policies, with observation failures that change nothing.
 
-The `lifecycle` profile also selects these `nemoclaw-sdk` library tests, which run the bundle's OpenTofu:
-
-- `native_state_json_preserves_module_and_instance_identity_without_refresh`, with built-in OpenTofu resources only;
-- the `deployment::runtime::helm_recovery::tests` against an in-memory Kubernetes API;
-- `runtime_export_declares_the_native_helm_provider_inputs`.
-
-Run them with `NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle cargo test -p nemoclaw-sdk --lib -- --ignored helm_recovery`, or the test's name instead of `helm_recovery`.
+The `lifecycle` profile also selects the `nemoclaw-sdk` library's `deployment::runtime::helm_recovery::tests`, which run the bundle's OpenTofu against an in-memory Kubernetes API.
+Run them with `NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle cargo test -p nemoclaw-sdk --lib -- --ignored helm_recovery`.
 
 ### Standalone Sandbox Completion
 
@@ -173,7 +168,8 @@ cargo test -p nemoclaw-sdk --test integration -- service_references:: multiple_p
 
 The [Docker-provider lifecycle fixture](live-tests.md#docker-provider-lifecycle) checks the managed proxy through the SDK and its production provider graph.
 
-Authenticated OpenShell, stalled exec streams, and launch compatibility run in the default workspace suite.
+The OpenShell and Fabric backends' tests against the fake gateway, in each provider's `src/fake_gateway_tests.rs`, run in the default workspace suite; they include bound exec identity and a deadline for an exec stream that never finishes.
+Launch compatibility runs there too.
 `agent_compatibility` checks passive launch mode, caller identity, harness selection, and default policy restrictions without frozen launch snapshots.
 The separately scheduled Fabric lifecycle cases and installed-adapter image tests exercise the supported harnesses.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.

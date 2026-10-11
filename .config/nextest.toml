@@ -29,9 +29,7 @@ slow-timeout = { period = "90s", terminate-after = 2 }
 # platforms without Unix sockets, and the SSH simulator. The fixture provider's
 # ignored test does the same for the provider protocol tests.
 default-filter = '''
-test(native_state_json_preserves_module_and_instance_identity_without_refresh)
-| (package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
-| (package(nemoclaw-sdk) & test(runtime_export_declares_the_native_helm_provider_inputs))
+(package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
 | ((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
 | (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
 | (package(nemoclaw-fixture-provider) & binary(=archive))
@@ -89,7 +87,7 @@ inherits = "ci"
 test-threads = 1
 slow-timeout = { period = "120s", terminate-after = 2 }
 default-filter = '''
-package(nemoclaw-sdk) & (test(/^kubernetes_live::/) | test(/^kubernetes_gateway::/))
+package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/))
 '''
 
 [profile.live-kind.junit]

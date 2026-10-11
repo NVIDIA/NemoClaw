@@ -37,8 +37,8 @@ To render the pinned chart through the bundled provider without cluster access:
 
 ```sh
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test --locked -p nemoclaw-sdk --test integration \
-    kubernetes_gateway::the_pinned_chart_renders_with_the_sdk_values -- --ignored --exact
+  cargo test --locked -p nemoclaw-e2e --test integration \
+    kubernetes_chart::the_pinned_chart_renders_with_the_sdk_values -- --ignored --exact
 ```
 
 The render test also rejects an unavailable chart digest.
@@ -50,7 +50,7 @@ Supply the cluster's kubeconfig and context, and a verified immutable bundle bui
 NEMOCLAW_TEST_KUBECONFIG=/absolute/path/to/owned-kubeconfig \
 NEMOCLAW_TEST_KUBE_CONTEXT=kind-owned-test \
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/immutable/bundle \
-  cargo test --locked -p nemoclaw-sdk --test integration \
+  cargo test --locked -p nemoclaw-e2e --test integration \
     kubernetes_live::the_gateway_installs_authenticates_and_is_removed_keeping_storage \
     -- --ignored --exact --nocapture
 ```

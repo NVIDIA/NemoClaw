@@ -7,6 +7,8 @@ mod agent_configuration;
 mod bridge;
 mod capabilities;
 mod configuration;
+#[cfg(test)]
+mod fake_gateway_tests;
 #[cfg(all(test, unix))]
 mod fixture;
 mod provider;
