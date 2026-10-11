@@ -61,6 +61,7 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     },
     restoreBackupPath: null,
     terminalAgent: false,
+    persistUnverifiedCreateIdentity: vi.fn(),
   };
 }
 

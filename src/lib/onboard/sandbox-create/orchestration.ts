@@ -3140,6 +3140,39 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           onboardSession.markRetainedSandboxRecovery,
         ),
       );
+    const persistUnverifiedCreateIdentity = ({
+      createAttemptNonce,
+      liveIdentityFingerprint,
+      route,
+    }: {
+      readonly createAttemptNonce: string;
+      readonly liveIdentityFingerprint: string;
+      readonly route: import("../docker-gpu-route").SelectedDockerGpuRoute;
+    }): void => {
+      if (pendingCreateIdentity?.state === "verified-create") {
+        throw new Error("Cannot replace a verified create identity with an unverified receipt.");
+      }
+      const boundary: VerifiedSandboxCreateBoundary = {
+        sandboxName,
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        ...(openshellGatewayStateDir ? { openshellGatewayStateDir } : {}),
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
+        createAttemptNonce,
+        ...(managedBootstrapIdentity ? { managedBootstrapIdentity } : {}),
+        route,
+      };
+      const checkpoint = pendingSandboxCreateIdentityForBoundary(
+        boundary,
+        pendingCreateIdentity,
+        "created-unverified",
+      );
+      registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), checkpoint, {
+        ...(pendingCreateIdentity ? { expected: pendingCreateIdentity } : {}),
+      });
+      pendingCreateIdentity = checkpoint;
+    };
     let selectedOpenShellGpuDiagnostics = openShellGpuDiagnostics;
     const runCreateFlow = async (
       createRequest: import("../../adapters/openshell/sandbox-lifecycle").CreateOpenShellSandboxRequest,
@@ -3340,6 +3373,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   sandboxIdentityFingerprint ?? null,
                   createAttemptNonce ?? null,
                 ),
+              persistUnverifiedCreateIdentity,
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,
