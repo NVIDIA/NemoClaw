@@ -27,44 +27,31 @@ import (
 	"time"
 )
 
-func TestForwardStdioUsesLoopbackGuardConnection(t *testing.T) {
-	request := "GET /v1/models HTTP/1.1\r\nHost: guard\r\n\r\n"
+func TestForwardStdioBoundsStalledGuardResponse(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("listen: %v", err)
+		t.Fatal(err)
 	}
 	defer listener.Close()
-	serverDone := make(chan error, 1)
+	serverDone := make(chan struct{})
 	go func() {
-		connection, acceptError := listener.Accept()
-		if acceptError != nil {
-			serverDone <- acceptError
+		defer close(serverDone)
+		connection, err := listener.Accept()
+		if err != nil {
 			return
 		}
 		defer connection.Close()
-		forwarded := make([]byte, len(request))
-		_, readError := io.ReadFull(connection, forwarded)
-		if readError != nil {
-			serverDone <- readError
-			return
-		}
-		if string(forwarded) != request {
-			serverDone <- fmt.Errorf("unexpected request: %q", forwarded)
-			return
-		}
-		_, serverDoneError := io.WriteString(connection, "HTTP/1.1 200 OK\r\nContent-Length: 16\r\n\r\nguarded response")
-		serverDone <- serverDoneError
+		_, _ = io.Copy(io.Discard, connection) // Consume the request without replying.
 	}()
-	var output bytes.Buffer
-	if err := forwardStdio(strings.NewReader(request), &output, listener.Addr().String()); err != nil {
-		t.Fatalf("forward request: %v", err)
+	started := time.Now()
+	err = forwardStdio(strings.NewReader("GET /v1/models HTTP/1.1\r\nHost: guard\r\n\r\n"), io.Discard, listener.Addr().String(), 50*time.Millisecond)
+	if err == nil || err.Error() != "request guard response forwarding timed out" {
+		t.Fatalf("stalled guard returned %v", err)
 	}
-	if err := <-serverDone; err != nil {
-		t.Fatalf("guard exchange: %v", err)
+	if time.Since(started) > time.Second {
+		t.Fatal("stalled guard exceeded its bounded response wait")
 	}
-	if output.String() != "HTTP/1.1 200 OK\r\nContent-Length: 16\r\n\r\nguarded response" {
-		t.Fatalf("unexpected response: %q", output.String())
-	}
+	<-serverDone
 }
 
 func TestStdioForwardAddressUsesDeclaredGuardPort(t *testing.T) {
@@ -112,7 +99,7 @@ func TestForwardStdioPreservesGuardAuthentication(t *testing.T) {
 			}
 			request += "\r\n"
 			var output bytes.Buffer
-			if err := forwardStdio(strings.NewReader(request), &output, address); err != nil {
+			if err := forwardStdio(strings.NewReader(request), &output, address, 5*time.Second); err != nil {
 				t.Fatalf("forward request: %v", err)
 			}
 			response, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(output.Bytes())), nil)
@@ -138,7 +125,7 @@ func TestForwardStdioCompletesRejectedHeadWithoutBody(t *testing.T) {
 	defer writer.Close()
 	result := make(chan error, 1)
 	var output bytes.Buffer
-	go func() { result <- forwardStdio(input, &output, guard.Listener.Addr().String()) }()
+	go func() { result <- forwardStdio(input, &output, guard.Listener.Addr().String(), 5*time.Second) }()
 	request := "HEAD /v1/models HTTP/1.1\r\nHost: guard\r\nAuthorization: Bearer opaque-test-value\r\n\r\n"
 	if _, err := io.WriteString(writer, request); err != nil {
 		t.Fatalf("write request: %v", err)
@@ -171,7 +158,9 @@ func TestForwardStdioFinishesKeepAliveResponse(t *testing.T) {
 	request := "GET /v1/models HTTP/1.1\r\nHost: guard\r\nAuthorization: Bearer opaque-test-value\r\n\r\n"
 	result := make(chan error, 1)
 	var output bytes.Buffer
-	go func() { result <- forwardStdio(strings.NewReader(request), &output, guard.Listener.Addr().String()) }()
+	go func() {
+		result <- forwardStdio(strings.NewReader(request), &output, guard.Listener.Addr().String(), 5*time.Second)
+	}()
 	select {
 	case err := <-result:
 		if err != nil {
@@ -219,7 +208,7 @@ func TestForwardStdioPreservesInterimContinue(t *testing.T) {
 		serverDone <- writeError
 	}()
 	var output bytes.Buffer
-	if err := forwardStdio(strings.NewReader(request), &output, listener.Addr().String()); err != nil {
+	if err := forwardStdio(strings.NewReader(request), &output, listener.Addr().String(), 5*time.Second); err != nil {
 		t.Fatalf("forward request: %v", err)
 	}
 	if err := <-serverDone; err != nil {
@@ -249,7 +238,7 @@ func TestForwardStdioRejectsUnavailableGuard(t *testing.T) {
 	address := listener.Addr().String()
 	listener.Close()
 	var output bytes.Buffer
-	if err := forwardStdio(strings.NewReader("request"), &output, address); err == nil {
+	if err := forwardStdio(strings.NewReader("request"), &output, address, 5*time.Second); err == nil {
 		t.Fatal("unavailable request guard was accepted")
 	}
 	if output.Len() != 0 {
@@ -288,7 +277,7 @@ func TestForwardStdioReturnsAfterResponseWithOpenInput(t *testing.T) {
 	defer writer.Close()
 	result := make(chan error, 1)
 	var output bytes.Buffer
-	go func() { result <- forwardStdio(input, &output, listener.Addr().String()) }()
+	go func() { result <- forwardStdio(input, &output, listener.Addr().String(), 5*time.Second) }()
 	if _, err := writer.Write([]byte(request)); err != nil {
 		t.Fatalf("write request: %v", err)
 	}
@@ -326,7 +315,7 @@ func TestForwardStdioReportsCompletedInputError(t *testing.T) {
 		serverDone <- readError
 	}()
 	var output bytes.Buffer
-	err = forwardStdio(iotest.ErrReader(fmt.Errorf("injected input failure")), &output, listener.Addr().String())
+	err = forwardStdio(iotest.ErrReader(fmt.Errorf("injected input failure")), &output, listener.Addr().String(), 5*time.Second)
 	if err == nil || err.Error() != "request guard request forwarding failed" {
 		t.Fatalf("unexpected input forwarding result: %v", err)
 	}

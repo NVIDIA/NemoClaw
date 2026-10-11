@@ -422,8 +422,21 @@ describe("llama.cpp image PR workflow", () => {
     expect(publish.steps?.indexOf(logout)).toBeLessThan(
       publish.steps?.indexOf(anonymousPull) ?? Number.POSITIVE_INFINITY,
     );
-    expect(publish.steps?.indexOf(anonymousPull)).toBeLessThan(
-      publish.steps?.indexOf(uploadAnonymousPull) ?? Number.POSITIVE_INFINITY,
+    const publishedProof = namedStep(
+      publish,
+      "Exercise published request guard through Docker exec",
+    );
+    expect(publishedProof.env?.IMAGE).toBe(
+      "${{ needs.config.outputs.publication_repository }}@${{ steps.build.outputs.digest }}",
+    );
+    expect(publishedProof.run).toBe(
+      namedStep(build, "Exercise packaged request guard through Docker exec").run,
+    );
+    expect(publish.steps!.indexOf(anonymousPull)).toBeLessThan(
+      publish.steps!.indexOf(publishedProof),
+    );
+    expect(publish.steps!.indexOf(publishedProof)).toBeLessThan(
+      publish.steps!.indexOf(uploadAnonymousPull),
     );
     expect(publish.steps?.indexOf(uploadAnonymousPull)).toBeLessThan(
       publish.steps?.indexOf(uploadDigest) ?? Number.POSITIVE_INFINITY,

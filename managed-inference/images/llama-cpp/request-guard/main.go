@@ -47,12 +47,15 @@ const (
 // only after the caller pins and qualifies the new immutable image and merges.
 // Prior staged-rollout decision (limited to its named commit):
 // https://github.com/NVIDIA/NemoClaw/pull/12944#issuecomment-6102710030
-func forwardStdio(input io.Reader, output io.Writer, address string) error {
+func forwardStdio(input io.Reader, output io.Writer, address string, timeout time.Duration) error {
 	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
 		return errors.New("request guard is unavailable")
 	}
 	defer connection.Close()
+	if err := connection.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return errors.New("request guard forwarding deadline failed")
+	}
 	inputReader := bufio.NewReader(input)
 	requestLine, readError := inputReader.ReadSlice('\n')
 	if readError != nil {
@@ -103,6 +106,9 @@ func forwardStdio(input io.Reader, output io.Writer, address string) error {
 	case outputError = <-responseDone:
 	}
 	if outputError != nil {
+		if os.IsTimeout(outputError) {
+			return errors.New("request guard response forwarding timed out")
+		}
 		return errors.New("request guard response forwarding failed")
 	}
 	// The guard can finish a response before Docker closes stdin. The command
@@ -788,7 +794,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(2)
 		}
-		if err := forwardStdio(os.Stdin, os.Stdout, address); err != nil {
+		if err := forwardStdio(os.Stdin, os.Stdout, address, time.Duration(maximumTimeoutSeconds+5)*time.Second); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
