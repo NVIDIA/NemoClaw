@@ -28,8 +28,8 @@ import (
 )
 
 func TestForwardStdioBoundsStalledGuardResponse(t *testing.T) {
-	if stdioForwardTimeout <= 15*time.Minute || stdioForwardTimeout >= 30*time.Minute {
-		t.Fatal("stdio deadline must allow the managed request and expire before its Docker caller")
+	if stdioForwardTimeout <= 15*time.Minute || stdioForwardTimeout > 20*time.Minute {
+		t.Fatal("stdio deadline must exceed the managed request timeout by no more than five minutes")
 	}
 	for name, request := range map[string]string{
 		"guard response": "GET /v1/models HTTP/1.1\r\nHost: guard\r\n\r\n",

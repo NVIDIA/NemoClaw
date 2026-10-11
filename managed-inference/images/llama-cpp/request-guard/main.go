@@ -34,7 +34,7 @@ const (
 	maximumHeaderBytes    = 1024 * 1024
 	maximumOutputTokens   = 1024 * 1024
 	maximumTimeoutSeconds = 24 * 60 * 60
-	// The managed recipe allows 15 minutes; exit before the caller kills Docker exec at 30.
+	// The managed recipe allows 15 minutes; allow five more before ending stalled forwarding.
 	stdioForwardTimeout = 20 * time.Minute
 )
 
