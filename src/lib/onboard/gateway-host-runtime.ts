@@ -28,6 +28,7 @@ import {
   startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 import { isDefaultGatewayPort } from "./gateway-binding";
+import { readGatewayProcEntry } from "./gateway/process-proc-entry";
 import {
   isDockerDriverGatewayHttpReady,
   isGatewayHttpReady,
@@ -341,11 +342,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
 
   function readListenerExecPath(pid: number): string | null {
     if (deps.readProcExe) return deps.readProcExe(pid);
-    try {
-      return fs.realpathSync.native(`/proc/${pid}/exe`);
-    } catch {
-      return null;
-    }
+    return readGatewayProcEntry(pid, "exe");
   }
 
   function readProcCgroup(pid: number): string | null {
