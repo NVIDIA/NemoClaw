@@ -41,14 +41,29 @@ const (
 // Docker exec reaches this process through the daemon when an internal network
 // cannot publish a host port. The HTTP request guard still owns authentication.
 func forwardStdio(input io.Reader, output io.Writer, address string, timeout time.Duration) error {
-	connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+	deadline := time.Now().Add(timeout)
+	connection, err := net.DialTimeout("tcp", address, min(5*time.Second, timeout))
 	if err != nil {
 		return errors.New("request guard is unavailable")
 	}
 	defer connection.Close()
-	if err := connection.SetDeadline(time.Now().Add(timeout)); err != nil {
+	if err := connection.SetDeadline(deadline); err != nil {
 		return errors.New("request guard forwarding deadline failed")
 	}
+	completed := make(chan error, 1)
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	go func() { completed <- forwardStdioConnection(input, output, connection) }()
+	select {
+	case err := <-completed:
+		return err
+	case <-timer.C:
+		// This one-request CLI exits even if stdin or stdout remains blocked.
+		return errors.New("request guard response forwarding timed out")
+	}
+}
+
+func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Conn) error {
 	inputReader := bufio.NewReader(input)
 	requestLine, readError := inputReader.ReadSlice('\n')
 	if readError != nil {

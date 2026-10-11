@@ -31,30 +31,41 @@ func TestForwardStdioBoundsStalledGuardResponse(t *testing.T) {
 	if stdioForwardTimeout <= 15*time.Minute || stdioForwardTimeout >= 30*time.Minute {
 		t.Fatal("stdio deadline must allow the managed request and expire before its Docker caller")
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for name, request := range map[string]string{
+		"guard response": "GET /v1/models HTTP/1.1\r\nHost: guard\r\n\r\n",
+		"partial stdin":  "GET /v1/models",
+	} {
+		t.Run(name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			serverDone := make(chan struct{})
+			go func() {
+				defer close(serverDone)
+				connection, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer connection.Close()
+				_, _ = io.Copy(io.Discard, connection) // Consume the request without replying.
+			}()
+			started := time.Now()
+			input, writer := io.Pipe()
+			go func() { _, _ = io.WriteString(writer, request) }()
+			err = forwardStdio(input, io.Discard, listener.Addr().String(), 50*time.Millisecond)
+			_ = input.Close()
+			_ = writer.Close()
+			if err == nil || err.Error() != "request guard response forwarding timed out" {
+				t.Fatalf("stalled guard returned %v", err)
+			}
+			if time.Since(started) > time.Second {
+				t.Fatal("stalled guard exceeded its bounded response wait")
+			}
+			<-serverDone
+		})
 	}
-	defer listener.Close()
-	serverDone := make(chan struct{})
-	go func() {
-		defer close(serverDone)
-		connection, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer connection.Close()
-		_, _ = io.Copy(io.Discard, connection) // Consume the request without replying.
-	}()
-	started := time.Now()
-	err = forwardStdio(strings.NewReader("GET /v1/models HTTP/1.1\r\nHost: guard\r\n\r\n"), io.Discard, listener.Addr().String(), 50*time.Millisecond)
-	if err == nil || err.Error() != "request guard response forwarding timed out" {
-		t.Fatalf("stalled guard returned %v", err)
-	}
-	if time.Since(started) > time.Second {
-		t.Fatal("stalled guard exceeded its bounded response wait")
-	}
-	<-serverDone
 }
 
 func TestStdioForwardAddressUsesDeclaredGuardPort(t *testing.T) {
