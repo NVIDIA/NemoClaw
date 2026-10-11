@@ -206,6 +206,8 @@ describe("llama.cpp image PR workflow", () => {
         "scripts/checks/export-llama-cpp-image-config.mts",
         "scripts/checks/verify-llama-cpp-image-publication-evidence.sh",
         "test/inference/llama/llama-cpp-image-publication-evidence.test.ts",
+        "test/platform/images/llama-cpp-stdio-image-proof.py",
+        "test/platform/images/fixtures/llama-cpp-stdio-upstream.c",
       ]),
     );
     expect(Object.keys(workflow.on ?? {})).toEqual(["pull_request", "workflow_dispatch"]);
@@ -228,6 +230,10 @@ describe("llama.cpp image PR workflow", () => {
       group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
     });
     expect(build.if).toBe("github.event_name == 'pull_request'");
+    const proof = namedStep(build, "Exercise packaged request guard through Docker exec");
+    expect(proof.env?.IMAGE).toBe("nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}");
+    expect(proof.run).toContain('test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"');
+    expect(build.steps!.indexOf(proof)).toBeGreaterThan(build.steps!.indexOf(validate));
   });
 
   it("passes declarative source, base image, runtime ID, and platform values to each image build (#8231)", () => {
@@ -302,6 +308,9 @@ describe("llama.cpp image PR workflow", () => {
     );
     expect(validate.run).toContain(
       'Labels["io.nvidia.nemoclaw.inference-server.request-guard.authentication"] == "managed-bearer-v1"',
+    );
+    expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"] == "1"',
     );
     expect(validate.run).toContain(
       'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',

@@ -15,6 +15,8 @@ on:
       - "test/inference/llama/llama-cpp-image.test.ts"
       - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
       - "test/inference/llama/llama-cpp-image-workflow.test.ts"
+      - "test/platform/images/llama-cpp-stdio-image-proof.py"
+      - "test/platform/images/fixtures/llama-cpp-stdio-upstream.c"
   workflow_dispatch:
     inputs:
       publish:
@@ -216,6 +218,7 @@ jobs:
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.revision"] == $upstream
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.archive-sha256"] == $archive
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.authentication"] == "managed-bearer-v1"
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.stdio-forward"] == "1"
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256"] == $requestGuardGoArchive
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.development-base"] == $dev
@@ -252,6 +255,14 @@ jobs:
           done < <(jq --raw-output '.[]' <<< "$RUNTIME_FORBIDDEN_PATHS")
           docker rm "$container_id" >/dev/null
           trap - EXIT
+
+      - name: Exercise packaged request guard through Docker exec
+        shell: bash
+        env:
+          IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test/platform/images/llama-cpp-stdio-image-proof.py "$IMAGE"
 
   publication-gate:
     name: Validate trusted publication request
