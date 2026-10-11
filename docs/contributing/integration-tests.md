@@ -105,7 +105,7 @@ On Unix, `fabric_capabilities` reads a fake Docker engine's image metadata: a co
 
 ## System Tests
 
-The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module, and the ignored Helm recovery tests in the `nemoclaw-sdk` library.
+The system tests are ignored tests in `nemoclaw-e2e`'s `integration` binary, which the `lifecycle` profile selects by module.
 They use the local gRPC OpenShell fixture and simulated SSH and Docker hosts:
 
 ```sh
@@ -126,14 +126,24 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `inference_discovery` | Optional catalog failures that keep complete unchanged plans and report uncertainty |
 | `sandbox_readiness` | Standalone sandbox completion; see [below](#standalone-sandbox-completion) |
 | `remote_service` | Services on simulated SSH hosts; see [SSH service fixtures](#ssh-service-fixtures) |
+| `helm_recovery` | On Unix, Helm release recovery during destroy against an in-memory Kubernetes API: outages and permission failures before and after the saved plan, cancellation after the release is deleted, and an interrupted destroy that a preview leaves unchanged and a retry recovers; see [below](#helm-release-recovery) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
 `rejected_policy_fails_promptly_with_context_and_allows_recovery_or_destroy` checks a simulated gateway admission rejection with sandbox context in text and JSON output, retained bindings, recovery, and destroy.
 `separate_agent_sandboxes_cli_export_reapply_and_policy_drift` and `tool_disclosure_cli_export_reapply_and_drift` check OpenClaw tool policies, with observation failures that change nothing.
 
-The `lifecycle` profile also selects the `nemoclaw-sdk` library's `deployment::runtime::helm_recovery::tests`, which run the bundle's OpenTofu against an in-memory Kubernetes API.
-Run them with `NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle cargo test -p nemoclaw-sdk --lib -- --ignored helm_recovery`.
+### Helm Release Recovery
+
+The `helm_recovery` tests run the bundle's OpenTofu and Helm provider against the in-memory Kubernetes API in `crates/test-support/kube_api.rs`, then call the SDK's public `destroy`, `plan_destroy`, and `export`.
+Installing a release through `apply` would pull the pinned chart, so each test starts from a fixture release that the Helm provider imports.
+The SDK's test-only `test-scenarios` feature builds that starting state; `nemoclaw-e2e` enables it in its dev-dependencies, so the tests need no extra flag.
+On Unix, run them with:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test integration -- --ignored helm_recovery::
+```
 
 ### Standalone Sandbox Completion
 
