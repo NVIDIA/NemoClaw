@@ -23,7 +23,8 @@ On Linux with a local Docker engine that uses the [containerd image store](../bu
 Run `cargo ci build` and `cargo ci bundle` first.
 The step pulls the pinned OpenShell and Ollama images, builds an agent image (Pi on ARM64, OpenClaw on AMD64) and two proxy images under a fresh `nc-live-` tag, and writes owned gateway documents with fresh UUIDs, ports, and `172.30.200-254.0/24` subnets.
 It then runs the `live-docker` nextest profile: the Ollama cache, runtime archive, offline runtime rebuild, standalone cache, Docker proxy, gateway recovery, gateway isolation, and profile revision tests, one at a time.
-Afterward it removes the images it built and every container, volume, and network labelled with its UUIDs, whether or not the tests pass; pulled images remain.
+Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
+When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
 It requests no inference and needs no GPU or credentials.
 A run on Linux ARM64 takes about five minutes after the build.
 

@@ -44,52 +44,121 @@ fn ollama_base() -> Result<String> {
         .ok_or_else(|| "runtimes/ollama/Dockerfile has no base image".into())
 }
 
-/// Everything this run creates, removed on drop whatever the outcome.
+/// The images this run builds and the deployment UUIDs its documents own.
 struct Owned {
     images: Vec<String>,
     uids: Vec<String>,
 }
 
-impl Drop for Owned {
-    fn drop(&mut self) {
-        for image in &self.images {
+impl Owned {
+    /// Remove what this run's deployments retain, then the images it built.
+    fn remove(&mut self) -> Result<()> {
+        let removed = remove_retained(docker, &std::mem::take(&mut self.uids));
+        for image in self.images.drain(..) {
             let _ = docker()
-                .args(["image", "rm", "--force", image])
+                .args(["image", "rm", "--force", &image])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
         }
-        // Gateway tests retain storage by design. Remove only resources that
-        // carry one of this run's fresh deployment UUIDs.
-        for uid in &self.uids {
-            let filter = format!("label={UID_LABEL}={uid}");
-            for (list, remove) in [
-                (
-                    ["ps", "--all", "--quiet", "--filter"],
-                    &["rm", "--force"][..],
-                ),
-                (
-                    ["volume", "ls", "--quiet", "--filter"],
-                    &["volume", "rm"][..],
-                ),
-                (
-                    ["network", "ls", "--quiet", "--filter"],
-                    &["network", "rm"][..],
-                ),
-            ] {
-                let Ok(found) = docker_output(&[&list[..], &[filter.as_str()]].concat()) else {
-                    continue;
-                };
-                for id in found.lines().filter(|id| !id.is_empty()) {
-                    let _ = docker()
-                        .args(remove)
-                        .arg(id)
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .status();
+        removed
+    }
+}
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        // Covers a run that stopped before calling `remove`.
+        if let Err(error) = self.remove() {
+            eprintln!("{error}");
+        }
+    }
+}
+
+/// OpenShell's Docker driver labels each sandbox's containers and volumes
+/// with its `sandbox_label`, which NemoClaw sets to the gateway's name.
+const SANDBOX_NAMESPACE_LABEL: &str = "openshell.ai/sandbox-namespace";
+
+/// Selects the OpenShell sandbox objects of a deployment's managed gateway,
+/// named after its workspace.
+fn sandbox_filter(uid: &str) -> String {
+    let digest = nemoclaw_build::hex(&Sha256::digest(uid.as_bytes()));
+    let workspace = format!("nc-{}", &digest[..16]);
+    format!("label={SANDBOX_NAMESPACE_LABEL}={workspace}-gateway")
+}
+
+/// Object kinds in removal order: Docker refuses to remove a volume or
+/// network that a container still uses.
+const RETAINED: [(&str, &[&str], &[&str]); 3] = [
+    (
+        "container",
+        &["container", "ls", "--all", "--quiet", "--filter"],
+        &["container", "rm", "--force"],
+    ),
+    (
+        "volume",
+        &["volume", "ls", "--quiet", "--filter"],
+        &["volume", "rm"],
+    ),
+    (
+        "network",
+        &["network", "ls", "--quiet", "--filter"],
+        &["network", "rm"],
+    ),
+];
+
+/// Remove each UID's labelled objects and its gateway's sandbox objects, then
+/// fail naming any sandbox object OpenShell left and anything that remains.
+fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> {
+    let list = |args: &[&str], filter: &str| -> Option<Vec<String>> {
+        let output = docker()
+            .args(args)
+            .arg(filter)
+            .stderr(Stdio::inherit())
+            .output()
+            .ok()?;
+        output.status.success().then(|| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+    };
+    let mut problems = Vec::new();
+    for uid in uids {
+        let sandbox = sandbox_filter(uid);
+        let owner = format!("label={UID_LABEL}={uid}");
+        for (kind, ls, _) in RETAINED {
+            problems.extend(
+                list(ls, &sandbox)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|id| format!("{kind} {id} left in the sandbox namespace")),
+            );
+        }
+        for (_, ls, rm) in RETAINED {
+            for filter in [&sandbox, &owner] {
+                for id in list(ls, filter).unwrap_or_default() {
+                    let _ = docker().args(rm).arg(&id).stdout(Stdio::null()).status();
                 }
             }
         }
+        for (kind, ls, _) in RETAINED {
+            for filter in [&sandbox, &owner] {
+                match list(ls, filter) {
+                    Some(ids) => problems.extend(
+                        ids.into_iter()
+                            .map(|id| format!("{kind} {id} remains after removal")),
+                    ),
+                    None => problems.push(format!("cannot list {kind}s with {filter}")),
+                }
+            }
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("live Docker cleanup failed: {}", problems.join(", ")).into())
     }
 }
 
@@ -301,7 +370,7 @@ pub(super) fn run_live_docker(
         .map(|name| format!("test({name})"))
         .collect::<Vec<_>>()
         .join(" | ");
-    let result = (|| {
+    let result: Result<()> = (|| {
         // `-E` narrows the profile's default filter rather than replacing it.
         nextest(&format!("not ({gateway})"), None)?;
         for (name, document) in GATEWAY_TESTS.iter().zip(&documents) {
@@ -316,5 +385,146 @@ pub(super) fn run_live_docker(
             eprintln!("cannot join the live-docker JUnit reports: {error}");
         }
     }
-    result
+    result?;
+    owned.remove()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A Docker CLI over `kind id key=value [running]` lines. Like Docker, it
+    /// needs `--all` for stopped containers and `--force` for running ones.
+    /// Unlike Docker, it refuses volume and network removal while any container
+    /// remains. It cannot remove `stuck` IDs or list `unlistable` kinds.
+    fn fake_docker(
+        directory: &Path,
+        resources: &str,
+        stuck: &str,
+        unlistable: &str,
+    ) -> impl Fn() -> Command {
+        fs::write(directory.join("resources"), resources).unwrap();
+        fs::write(directory.join("stuck"), stuck).unwrap();
+        fs::write(directory.join("unlistable"), unlistable).unwrap();
+        let script = directory.join("docker");
+        fs::write(
+            &script,
+            r#"cd "$(dirname "$0")" || exit 1
+for last; do :; done
+case " $* " in *" --all "*) all=1 ;; *) all= ;; esac
+case " $* " in *" --force "*) force=1 ;; *) force= ;; esac
+case "$1 $2" in
+"container ls" | "volume ls" | "network ls")
+    grep -qx "$1" unlistable && exit 1
+    awk -v kind="$1" -v label="${last#label=}" -v all="$all" \
+        '$1 == kind && $3 == label && (all || kind != "container" || $4 == "running") { print $2 }' \
+        resources ;;
+"container rm" | "volume rm" | "network rm")
+    grep -qx "$last" stuck && exit 1
+    [ "$1" = container ] || ! grep -q '^container ' resources || exit 1
+    [ -n "$force" ] || ! grep -qx "container $last .* running" resources || exit 1
+    grep -v "^$1 $last " resources > remaining
+    mv remaining resources ;;
+*) exit 2 ;;
+esac
+"#,
+        )
+        .unwrap();
+        // Executing a file just written races the forks of parallel tests.
+        move || {
+            let mut command = Command::new("sh");
+            command.arg(&script).stdin(Stdio::null());
+            command
+        }
+    }
+
+    #[cfg(feature = "sdk")]
+    #[test]
+    fn the_sandbox_filter_uses_the_sdk_workspace() {
+        let uid = live::uuid().unwrap();
+        let document = live::gateway_document(&GatewayInputs {
+            name: "live-gateway",
+            uid: &uid,
+            port: 17950,
+            subnet: "172.30.202.0/24",
+            image: &format!("nc-live@sha256:{}", "a".repeat(64)),
+            harness: "nvidia.fabric.pi",
+        });
+        let workspace = nemoclaw_sdk::config::Document::parse(document.as_bytes())
+            .unwrap()
+            .workspace();
+        assert_eq!(
+            sandbox_filter(&uid),
+            format!("label={SANDBOX_NAMESPACE_LABEL}={workspace}-gateway")
+        );
+    }
+
+    #[test]
+    fn each_uid_loses_its_labelled_objects() {
+        let directory = tempfile::tempdir().unwrap();
+        let resources = format!(
+            "network n1 {UID_LABEL}=a\nvolume v1 {UID_LABEL}=a\ncontainer c1 {UID_LABEL}=a\n\
+             volume v2 {UID_LABEL}=b\nvolume kept {UID_LABEL}=other\n"
+        );
+        let docker = fake_docker(directory.path(), &resources, "", "");
+        remove_retained(&docker, &["a".into(), "b".into()]).unwrap();
+        assert_eq!(
+            fs::read_to_string(directory.path().join("resources")).unwrap(),
+            format!("volume kept {UID_LABEL}=other\n")
+        );
+    }
+
+    #[test]
+    fn sandbox_leftovers_fail_the_run_and_are_removed() {
+        let directory = tempfile::tempdir().unwrap();
+        let sandbox = sandbox_filter("a").replacen("label=", "", 1);
+        let resources = format!(
+            "volume v1 {UID_LABEL}=a\nvolume s1 {sandbox}\ncontainer s2 {sandbox} running\n\
+             volume kept {UID_LABEL}=other\n"
+        );
+        let docker = fake_docker(directory.path(), &resources, "", "");
+        let error = remove_retained(&docker, &["a".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("container s2 left in the sandbox namespace"),
+            "{error}"
+        );
+        assert!(
+            error.contains("volume s1 left in the sandbox namespace"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.path().join("resources")).unwrap(),
+            format!("volume kept {UID_LABEL}=other\n")
+        );
+    }
+
+    #[test]
+    fn an_object_that_survives_removal_fails_naming_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let resources = format!("container c1 {UID_LABEL}=a\nnetwork n1 {UID_LABEL}=a\n");
+        let docker = fake_docker(directory.path(), &resources, "n1\n", "");
+        let error = remove_retained(&docker, &["a".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("network n1 remains after removal"),
+            "{error}"
+        );
+        assert!(!error.contains("c1"), "{error}");
+    }
+
+    #[test]
+    fn a_kind_that_cannot_be_listed_fails_instead_of_passing() {
+        let directory = tempfile::tempdir().unwrap();
+        let docker = fake_docker(directory.path(), "", "", "volume\n");
+        let error = remove_retained(&docker, &["a".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("cannot list volumes with label={UID_LABEL}=a")),
+            "{error}"
+        );
+    }
 }

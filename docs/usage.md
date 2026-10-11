@@ -74,6 +74,7 @@ Podman's changing compatibility `/info.ID` is not a durable identity.
 Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
 A missing or replaced bound network is a conflict, not permission to recreate it.
 Destroy retains that network and gateway storage.
+Removing them from Podman is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 
 ## Fabric Health During Apply
 
@@ -377,3 +378,46 @@ See [retention details](state.md#deletion-and-retention) for surviving resources
 
 The local lock excludes other NemoClaw operations on the same state directory, not other gateway clients.
 OpenShell deletes by name without an ID/version condition, so a concurrent replacement between the final identity check and delete cannot be eliminated by this client.
+
+### Remove Retained Resources
+
+This procedure removes what destroy retains on Docker engines when you retire a deployment.
+It does not cover a Podman, Kubernetes, or OpenShift gateway, or the workspace on an external gateway; keep the state directory for those ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+
+**Removal permanently deletes the managed gateway's database, workspace, and keys, plus model downloads, prepared data, and managed vLLM and Ollama proxy credentials.**
+It does not revoke upstream keys or remove images, external gateways, or engines.
+
+Finish destroy first: `nemoclaw plan --destroy --state-dir .local/deployment` must print `No resource changes planned.`, then the entries to remove under `Retained resources:`.
+The commands select objects by UID alone, so confirm that no other deployment, including one copied from the same example, uses this `metadata.uid`.
+Run the commands with Docker access to each engine the deployment selects: the managed gateway's `spec.gateway.engine`, each service's `placement.engine`, and each Ollama proxy's `engine`.
+For SSH placement, connect to that host using the already configured SSH identity; do not substitute the client's local Docker daemon.
+From any directory, set `deployment_engine` to one of those engines and `deployment_uid` to the UID, then list the deployment's objects:
+
+```sh
+deployment_engine=unix:///var/run/docker.sock
+deployment_uid=REPLACE_WITH_METADATA_UID
+owner_label="label=nemoclaw.nvidia.com/uid=$deployment_uid"
+docker --host "$deployment_engine" container ls --all --filter "$owner_label" --format '{{.Names}} {{.Status}}'
+docker --host "$deployment_engine" volume ls --filter "$owner_label" --format '{{.Name}}'
+docker --host "$deployment_engine" network ls --filter "$owner_label" --format '{{.Name}}'
+```
+
+Continue only if each listed name matches a `Retained resources:` entry in the [retained Docker objects](state.md#find-retained-docker-objects) table and no listed container is running.
+Then remove them:
+
+```sh
+docker --host "$deployment_engine" container ls --all --quiet --filter "$owner_label" | xargs -r docker --host "$deployment_engine" container rm
+docker --host "$deployment_engine" volume ls --quiet --filter "$owner_label" | xargs -r docker --host "$deployment_engine" volume rm
+docker --host "$deployment_engine" network ls --quiet --filter "$owner_label" | xargs -r docker --host "$deployment_engine" network rm
+```
+
+Rerun the list commands to confirm they print nothing; the removal is safe to repeat.
+If a volume or network remains, Docker's error identifies the container still using it; keep the state directory until you resolve that.
+Repeat on each engine.
+If an entry is not in the table, this procedure does not cover it; keep the state directory.
+If no engine had objects for an entry, check the engines and the UID, and keep the state directory until you find them.
+When every entry's objects are gone, remove the `.local/deployment` directory.
+To deploy again, use a fresh `metadata.uid` and a new state directory; apply refuses a state directory whose gateway storage or credentials were removed.
+
+The [live Docker suite](contributing/testing.md) removes its gateways' UID-labelled objects and fails if any remain.
+Removal of managed service volumes and of objects on SSH engines is not verified, and there is no purge command ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
