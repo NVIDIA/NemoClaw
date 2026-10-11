@@ -85,7 +85,7 @@ it("lists registered sandboxes that retain native NVIDIA provider ownership", as
   vi.resetModules();
   try {
     const registry = await import("./registry");
-    const authority = await import("./registry/native-nvidia-provider-authority");
+    const authority = await import("./registry/native-provider-authority");
     registry.registerSandbox({
       name: "alpha",
       provider: "nvidia-prod",

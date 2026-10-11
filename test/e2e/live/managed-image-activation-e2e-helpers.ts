@@ -862,7 +862,7 @@ export async function collectOnboardFailureRuntimeDiagnostics(
   }
 }
 
-async function qualifyAgent(
+export async function qualifyAgent(
   fixtures: RuntimeFixtures,
   guard: ContainerBuildGuard,
   catalogPath: string,
@@ -929,6 +929,9 @@ async function qualifyAgent(
     redactionValues: [API_KEY],
     timeoutMs: 120_000,
   });
+  if (stop.exitCode !== 0) {
+    await collectOnboardFailureRuntimeDiagnostics(artifacts, host, agent, sandboxName, env);
+  }
   const start = await host.nemoclaw([sandboxName, "start"], {
     artifactName: `${agent}-public-start`,
     env,
