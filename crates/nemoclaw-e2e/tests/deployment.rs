@@ -939,7 +939,19 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
         .apply(&document, &cancel)
         .await
         .unwrap();
-    let deployment = Deployment::new(directory.path(), &bundle);
+    let initializations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = initializations.clone();
+    let deployment = Deployment::new(directory.path(), &bundle).with_progress(std::sync::Arc::new(
+        move |event| {
+            if let nemoclaw_sdk::Progress::Completed {
+                operation: "tofu.init",
+                ..
+            } = event
+            {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        },
+    ));
     let effects = fixture.state.lock().unwrap().effects;
     assert_eq!(
         deployment
@@ -951,10 +963,17 @@ async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_refere
         4
     );
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    // Teardown initializes the stage once to read its bindings and once for
+    // its teardown graph; it does not read the same state again.
+    assert_eq!(
+        initializations.swap(0, std::sync::atomic::Ordering::SeqCst),
+        2
+    );
     assert_eq!(
         deployment.destroy(&cancel).await.unwrap().outcome,
         Outcome::Destroyed
     );
+    assert_eq!(initializations.load(std::sync::atomic::Ordering::SeqCst), 2);
     let record: serde_json::Value =
         serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
     assert_eq!(record["document"], serde_json::to_value(&document).unwrap());
