@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! An in-memory Kubernetes API server for SDK tests.
+//! An in-memory Kubernetes API server, shared through private source modules
+//! by SDK and provider tests. Includers also include `http.rs` as
+//! `transport`; this module needs no Kubernetes client crate.
 //!
 //! It stores objects by path and answers get, list, create (assigning a UID)
 //! and delete with a UID precondition. That is enough for the SDK's cluster
@@ -61,6 +63,22 @@ fn path(object: &Value) -> String {
     )
 }
 
+/// Whether `path` names a collection rather than one object: after the
+/// `/api/VERSION` or `/apis/GROUP/VERSION` prefix, a collection is
+/// `PLURAL` or `namespaces/NAMESPACE/PLURAL`.
+fn is_collection(path: &str) -> bool {
+    let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
+    let prefix = if segments.first() == Some(&"apis") {
+        3
+    } else {
+        2
+    };
+    matches!(
+        segments.get(prefix..).unwrap_or_default(),
+        [_] | ["namespaces", _, _]
+    )
+}
+
 fn status(code: u16, reason: &str) -> Option<(u16, Vec<u8>)> {
     Some((
         code,
@@ -116,12 +134,7 @@ impl Objects {
                     })
                     .map(|(_, object)| object.clone())
                     .collect();
-                if items.is_empty()
-                    && path
-                        .rsplit('/')
-                        .next()
-                        .is_some_and(|last| !last.ends_with('s'))
-                {
+                if items.is_empty() && !is_collection(path) {
                     return status(404, "NotFound");
                 }
                 Some((
@@ -175,10 +188,4 @@ impl Objects {
         })
         .await
     }
-}
-
-/// A client for a fixture started by `Objects::serve`.
-pub fn client(fixture: &Fixture) -> kube::Client {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    kube::Client::try_from(kube::Config::new(fixture.endpoint.parse().unwrap())).unwrap()
 }
