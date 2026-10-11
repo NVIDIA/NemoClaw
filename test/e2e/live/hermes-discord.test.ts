@@ -491,7 +491,7 @@ test(
         redactionValues,
         timeoutMs: 20_000,
       });
-      switch (health.exitCode === 0) {
+      switch (health.exitCode === 0 && /"ok"/i.test(resultText(health))) {
         case true:
           attempt = 16;
           break;
@@ -499,7 +499,10 @@ test(
           await sleep(4_000);
       }
     }
-    expect(health?.exitCode, health ? resultText(health) : "missing health result").toBe(0);
+    expect(
+      health && health.exitCode === 0 && /"ok"/i.test(resultText(health)),
+      health ? resultText(health) : "missing health result",
+    ).toBe(true);
 
     progress.phase("verify config export refuses persisted Discord messaging");
     expect(getConfiguredMessagingChannelsFromEntry(load().sandboxes[SANDBOX_NAME])).toContain(

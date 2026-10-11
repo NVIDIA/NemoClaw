@@ -550,8 +550,9 @@ messaging state without publishing a file or exposing credentials. The E2E suppo
 deterministic refusal selection and diagnostic comparison.
 The target removes redundant CLI-presence, sandbox-list, and standalone provider-get probes: later
 live commands use both CLIs, read the persisted sandbox entry, and require the named provider to be
-attached before testing its rewrite. It retains the HTTP health result; `hermes-e2e` owns the
-response-body check. No live assertion count increases.
+attached before testing its rewrite. Its health check requires Hermes's `"ok"` response before
+continuing because later phases depend on that instance being ready. No live assertion count
+increases.
 
 The `ubuntu-repo-cloud-langchain-deepagents-code` target owns live Deep Agents export evidence for
 Issue #11860. Its ordered checks first exercise opt-in observability and thread approval, then restore
