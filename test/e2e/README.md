@@ -1092,6 +1092,33 @@ OpenShell readiness, the durable external-image receipt, identity-drift
 rejection before replacement, rebuild from the recorded digest, NemoClaw
 destruction, and shared image retention.
 
+The same Docker and rootless Podman jobs run a separate legacy-volume migration
+case before agent activation. It uses the production runtime provider and pinned
+copy helper, injects one failed helper process, then retries through normal volume
+preparation. It checks the selected destination's marker and metadata against the
+retained original, and removes only its disposable fixture volumes and helpers.
+This case needs no inference service, gateway, GPU, or sudo. It proves the engine
+copy and selection boundary, not OpenShell sandbox attachment or agent recovery.
+The helper uses Docker's `--mount volume-nocopy` or Podman's `--volume :nocopy`
+syntax, retaining a read-only source on both engines. Each test declares its own
+phase callbacks; helpers invoke them only when the corresponding operation starts.
+Migration and activation results remain separate, including their cleanup evidence.
+
+The migration case fits the existing assertion budget by removing duplicate or
+deterministic checks from the activation helper:
+
+| Removed live check | Retained evidence owner |
+| --- | --- |
+| Four checks repeated after cleanup polling | The same poll's terminal errors and two-inventory absence condition; negative cases in `support/managed-image-activation-diagnostics.test.ts` |
+| Separate architecture non-null assertion | Per-contract platform parsing still rejects mismatches; architecture cases in `src/lib/onboard/sandbox-workload-preparation.test.ts` |
+| Catalog cohort and extra-key fixture guards | Production catalog validation and positive/negative source tests in `sandbox-workload-preparation.test.ts`; live per-agent digest selection remains |
+| Engine `info` exit assertion | Keep the diagnostic artifact; real onboarding, lifecycle and engine inventory operations establish availability |
+| Constant managed-receipt `shared` field | Receipt construction in `src/lib/onboard/managed-workload/onboard-orchestration.test.ts`; live digest and provenance checks remain |
+| Incomplete-copy resolver assertion | `managed-state-volume-migration.test.ts`; live E2E retains actual helper failure, retry, distinct destination, data preservation and cleanup |
+
+No lifecycle, security-refusal, original-data preservation, or cleanup outcome is
+removed. The live budget decreases from 28 to 26 assertion points for this file.
+
 ## Device-auth health classification
 
 Issue #11946 retired the standalone `device-auth-health` target. The target

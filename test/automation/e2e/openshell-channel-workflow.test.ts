@@ -42,9 +42,9 @@ function resolveLaunchableVersion(options: { channel: string; explicit?: string 
 
 describe("OpenShell channel workflow boundary", () => {
   it.each([
-    { channel: "stable", expected: "v0.0.116" },
-    { channel: "auto", expected: "v0.0.116" },
-    { channel: "stable", explicit: "0.0.116", expected: "v0.0.116" },
+    { channel: "stable", expected: "v0.1.2" },
+    { channel: "auto", expected: "v0.1.2" },
+    { channel: "stable", explicit: "0.1.2", expected: "v0.1.2" },
   ])("resolves launchable channel $channel to $expected", ({ channel, explicit, expected }) => {
     const result = resolveLaunchableVersion({ channel, explicit });
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -61,11 +61,11 @@ describe("OpenShell channel workflow boundary", () => {
 
   it.each([
     { channel: "dev" },
-    { channel: "dev", explicit: "v0.0.116" },
+    { channel: "dev", explicit: "v0.1.2" },
     { channel: "stable", explicit: "v9.9.9" },
   ])("rejects unsupported launchable OpenShell selection %#", ({ channel, explicit }) => {
     const result = resolveLaunchableVersion({ channel, explicit });
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain("requires exact stable OpenShell 0.0.116");
+    expect(`${result.stdout}${result.stderr}`).toContain("requires exact stable OpenShell 0.1.2");
   });
 });

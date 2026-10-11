@@ -7,6 +7,10 @@ import { exactGatewayRelease } from "../fixtures/openshell-v0116-qualification.t
 
 describe("external gateway release qualification", () => {
   it.each([
+    ["openshell-gateway 0.1.2\n", "0.1.2"],
+    ["openshell-gateway v0.1.2\n", "0.1.2"],
+    ["openshell-gateway 0.1.2-dev.1\n", "0.1.2-dev.1"],
+    ["diagnostic 0.0.116\nopenshell-gateway 0.1.2\n", null],
     ["openshell-gateway 0.0.116\n", "0.0.116"],
     ["openshell-gateway v0.0.116\n", "0.0.116"],
     ["openshell-gateway 0.0.116-dev.1\n", "0.0.116-dev.1"],

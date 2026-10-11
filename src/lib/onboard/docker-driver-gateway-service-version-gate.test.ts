@@ -252,7 +252,7 @@ describe("package-managed gateway version gate (#8094)", () => {
       message: expect.stringContaining("development build"),
     });
     expect(result).toMatchObject({
-      message: expect.stringContaining("exact stable OpenShell 0.0.116"),
+      message: expect.stringContaining("exact stable OpenShell 0.1.2"),
     });
   });
 

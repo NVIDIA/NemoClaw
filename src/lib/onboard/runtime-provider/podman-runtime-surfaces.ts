@@ -343,6 +343,7 @@ export function prepareNativePodmanGatewayHostRuntime(
       sandboxNamespace: "omitted" as const,
       hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
       includeSupervisorBin: false,
+      driverConfigLayout: "inline-supervisor" as const,
       processOwnership: "runtime-marker" as const,
     }),
     network: Object.freeze({

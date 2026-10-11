@@ -245,10 +245,7 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
 
   it("rejects a changed archive before creating an npm cache", () => {
     const { root, probe } = fixture();
-    const archive = path.join(
-      root,
-      "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.0.116.tgz",
-    );
+    const archive = path.join(root, "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.1.2.tgz");
     writeFileSync(archive, "corrupted archive");
     const result = probe("prepare");
     expect(result.status).toBe(1);
@@ -260,7 +257,7 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
     const { root, probe } = fixture();
     const configPath = path.join(root, "ci", "reviewed-npm-audit.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    config.sourceRegistryPackage.integrity = "sha512-reviewed-identity-drift";
+    config.sourceRegistryPackageReplacement.integrity = "sha512-reviewed-identity-drift";
     writeFileSync(configPath, JSON.stringify(config));
 
     const result = probe("prepare");

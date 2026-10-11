@@ -15,11 +15,12 @@ import {
   hardenPodmanSocketDirectory,
   type PodmanSocketAuthorityDeps,
 } from "../../adapters/podman";
-import { ensureConfigDir } from "../../state/config-io";
+import { writePrivateConfig } from "./portable-private-config";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
 import { isPortableExperimentalProfile } from "./portable-profile";
 import {
+  PODMAN_ISOLATION_ROLE_LABEL,
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
@@ -226,6 +227,7 @@ export interface PreparedPortableDemoSandboxDestroyAuthority {
 }
 
 interface PodmanContainerInspection {
+  isolatedPair: boolean;
   containerId: string;
   sandboxId: string;
   running: boolean;
@@ -396,20 +398,10 @@ const receiptPath = portableDemoReceiptPath;
 const defaultStateDir = defaultPortableDemoStateDir;
 
 function writeReceipt(receipt: PortableDemoLifecycleReceipt, stateDir: string): void {
-  const filePath = receiptPath(receipt.sandboxName, stateDir);
-  ensureConfigDir(path.dirname(filePath));
-  let file;
-  try {
-    file = openRegularFileNoFollow(filePath, { writable: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    file = openRegularFileNoFollow(filePath, { create: true, mode: 0o600, writable: true });
-  }
-  try {
-    file.replaceUtf8(`${JSON.stringify(receipt, null, 2)}\n`, 0o600);
-  } finally {
-    file.close();
-  }
+  writePrivateConfig(
+    receiptPath(receipt.sandboxName, stateDir),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+  );
 }
 
 function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycleReceipt {
@@ -625,6 +617,7 @@ function inspectPodmanContainer(
   sandboxName: string,
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
   result: CommandResult = podman(["inspect", containerId]),
+  role: "sandbox" | "supervisor" = "sandbox",
 ): PodmanContainerInspection {
   requireCommand(result, `Inspecting portable sandbox '${sandboxName}'`);
   let parsed: unknown;
@@ -643,11 +636,15 @@ function inspectPodmanContainer(
   const sandboxId = labels?.[PODMAN_SANDBOX_ID_LABEL];
   const expectedContainerName =
     typeof sandboxId === "string"
-      ? `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`
+      ? role === "supervisor"
+        ? `openshell-supervisor-${sandboxId}`
+        : `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`
       : null;
   if (
     inspection.Id !== containerId ||
     inspection.Name !== expectedContainerName ||
+    (labels?.[PODMAN_ISOLATION_ROLE_LABEL] !== role &&
+      !(role === "sandbox" && labels?.[PODMAN_ISOLATION_ROLE_LABEL] === undefined)) ||
     labels?.[PODMAN_MANAGED_LABEL] !== "true" ||
     labels?.[PODMAN_SANDBOX_NAME_LABEL] !== sandboxName ||
     labels?.[PODMAN_SANDBOX_NAMESPACE_LABEL] !== PODMAN_SANDBOX_NAMESPACE ||
@@ -664,7 +661,13 @@ function inspectPodmanContainer(
     typeof state.Status === "string" && state.Status.trim().length > 0
       ? state.Status.trim().toLowerCase()
       : null;
-  return { containerId, sandboxId, running: state.Running, status };
+  return {
+    isolatedPair: labels[PODMAN_ISOLATION_ROLE_LABEL] === "sandbox",
+    containerId,
+    sandboxId,
+    running: state.Running,
+    status,
+  };
 }
 
 function isMissingPodmanContainer(result: CommandResult): boolean {
@@ -689,6 +692,8 @@ function discoverPodmanContainer(
     `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
     "--filter",
     `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
+    "--filter",
+    `label!=${PODMAN_ISOLATION_ROLE_LABEL}=supervisor`,
     "--format",
     "{{.ID}}",
   ]);
@@ -826,66 +831,82 @@ export function preparePortableDemoSandboxRemoval(
     transport.assertRuntimeAuthority();
     return current;
   };
-  const inspectPresence = (): boolean => {
+  const inspectPresence = (): string[] => {
     const loaded = assertReceiptAndAuthority();
     const matches = matchingPortableSandboxContainerIds(
       receiptRecord.sandboxName,
       transport.podman,
     );
-    if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
+    const companions = matches.filter((id) => id !== receiptRecord.containerId);
+    const ambiguous = (): never => {
       throw new Error(
         `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
       );
-    }
+    };
+    if (new Set(matches).size !== matches.length || companions.length > 1) ambiguous();
     const result = transport.podman(["inspect", receiptRecord.containerId]);
-    if (isMissingPodmanContainer(result)) {
-      if (matches.length === 0) return false;
-      throw new Error(
-        `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
+    const workloadPresent = !isMissingPodmanContainer(result);
+    if (workloadPresent) {
+      requireReceiptOwnedInspection(
+        loaded,
+        inspectPodmanContainer(
+          receiptRecord.containerId,
+          receiptRecord.sandboxName,
+          transport.podman,
+          result,
+        ),
       );
     }
-    const inspection = inspectPodmanContainer(
-      receiptRecord.containerId,
-      receiptRecord.sandboxName,
-      transport.podman,
-      result,
-    );
-    requireReceiptOwnedInspection(loaded, inspection);
-    if (matches.length !== 1) {
+    if (workloadPresent !== matches.includes(receiptRecord.containerId)) {
       throw new Error(
         `Portable demo lifecycle could not prove the label index for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
+    for (const id of companions) {
+      // The receipt binds the sandbox ID. Its 0.1.2 companion must have the
+      // pinned driver's supervisor name, role and all the same ownership labels.
+      const companion = (() => {
+        try {
+          return inspectPodmanContainer(
+            id,
+            receiptRecord.sandboxName,
+            transport.podman,
+            transport.podman(["inspect", id]),
+            "supervisor",
+          );
+        } catch {
+          return ambiguous();
+        }
+      })();
+      if (companion.sandboxId !== receiptRecord.sandboxId) ambiguous();
+    }
     transport.assertRuntimeAuthority();
-    return true;
+    // Remove the supervisor before its workload so its control process stops first.
+    return [...companions, ...(workloadPresent ? [receiptRecord.containerId] : [])];
   };
-  const present = inspectPresence();
+  const containerIds = inspectPresence();
   const revalidate = (): void => {
-    if (inspectPresence() !== present) {
+    if (!isDeepStrictEqual(inspectPresence(), containerIds)) {
       throw new Error(
         `Portable demo lifecycle container presence changed for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
   };
+  const requireAbsent = (id: string): void => {
+    const inspected = transport.podman(["inspect", id]);
+    if (isMissingPodmanContainer(inspected)) return;
+    requireCommand(inspected, `Verifying portable sandbox '${receiptRecord.sandboxName}' removal`);
+    throw new Error(
+      `Portable sandbox '${receiptRecord.sandboxName}' still has a recorded Podman container`,
+    );
+  };
   const verifyAbsent = (): void => {
     assertReceiptAndAuthority();
-    const inspected = transport.podman(["inspect", receiptRecord.containerId]);
-    if (!isMissingPodmanContainer(inspected)) {
-      if (inspected.status !== 0 || inspected.error) {
-        requireCommand(
-          inspected,
-          `Verifying portable sandbox '${receiptRecord.sandboxName}' removal`,
-        );
-      }
-      throw new Error(
-        `Portable sandbox '${receiptRecord.sandboxName}' still has its recorded Podman container`,
-      );
-    }
-    const remaining = matchingPortableSandboxContainerIds(
-      receiptRecord.sandboxName,
-      transport.podman,
-    );
-    if (remaining.length !== 0) {
+    for (const id of new Set([receiptRecord.containerId, ...containerIds])) requireAbsent(id);
+    // Never filter out a supervisor or replacement when proving cleanup.
+    if (
+      matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport.podman).length !== 0
+    ) {
       throw new Error(
         `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
       );
@@ -893,12 +914,23 @@ export function preparePortableDemoSandboxRemoval(
     transport.assertRuntimeAuthority();
   };
   return {
-    present,
+    present: containerIds.length !== 0,
     receipt: receiptRecord,
     revalidate,
     removeAndVerify: () => {
-      assertReceiptAndAuthority();
-      if (present) transport.podman(["rm", "--force", receiptRecord.containerId]);
+      revalidate();
+      for (let index = 0; index < containerIds.length; index += 1) {
+        if (!isDeepStrictEqual(inspectPresence(), containerIds.slice(index))) {
+          throw new Error(
+            `Portable demo lifecycle container presence changed for sandbox '${receiptRecord.sandboxName}'`,
+          );
+        }
+        const id = containerIds[index]!;
+        transport.podman(["rm", "--force", id]);
+        // A timed-out removal may have completed. Prove absence before touching
+        // the next resource; do not retry the mutation or rely on its exit code.
+        requireAbsent(id);
+      }
       verifyAbsent();
     },
     verifyAbsent,
@@ -1495,6 +1527,80 @@ export function removePortableDemoSandboxLifecycleReceipt(
   removeReceipt(sandboxName, stateDir);
 }
 
+function transitionPortablePair(
+  action: "start" | "stop",
+  receipt: PortableDemoLifecycleReceipt,
+  context: PortableDemoLifecycleContext,
+  stateDir: string,
+  authority: PortablePodmanLifecycleTransport,
+  capture: NonNullable<PortableDemoLifecycleDeps["captureOpenshell"]>,
+  beforeMutation: () => void = () => undefined,
+): boolean {
+  const assertCurrent = (): void => {
+    if (!isDeepStrictEqual(loadReceipt(receipt.sandboxName, stateDir), receipt)) {
+      throw new Error("Portable lifecycle receipt changed before the OpenShell transition");
+    }
+    requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+    authority.assertRuntimeAuthority();
+    const inspection = inspectPodmanContainer(
+      receipt.containerId,
+      receipt.sandboxName,
+      authority.podman,
+    );
+    requireReceiptOwnedInspection(receipt, inspection);
+    if (!inspection.isolatedPair) throw new Error("Portable workload isolation role changed");
+    authority.assertRuntimeAuthority();
+  };
+  const scope = ["-g", context.gatewayName, "--workspace", PODMAN_SANDBOX_WORKSPACE];
+  const phase = (): string => {
+    assertCurrent();
+    const result = capture(
+      ["sandbox", "get", ...scope, "-o", "json", "--", receipt.sandboxName],
+      COMMAND_TIMEOUT_MS,
+    );
+    if (result.status !== 0 || result.error)
+      throw new Error("OpenShell sandbox identity query failed");
+    let value: unknown;
+    try {
+      value = JSON.parse(String(result.stdout ?? ""));
+    } catch {
+      throw new Error("OpenShell sandbox identity query returned invalid JSON");
+    }
+    if (
+      !isRecord(value) ||
+      value.id !== receipt.sandboxId ||
+      value.name !== receipt.sandboxName ||
+      value.workspace !== PODMAN_SANDBOX_WORKSPACE ||
+      typeof value.phase !== "string"
+    ) {
+      throw new Error("OpenShell gateway sandbox identity does not match the portable receipt");
+    }
+    assertCurrent();
+    return value.phase.toLowerCase();
+  };
+  const target = action === "start" ? "ready" : "stopped";
+  if (phase() === target) return false;
+  beforeMutation();
+  assertCurrent();
+  // The gateway refreshes the authenticated bootstrap and manages both containers.
+  // A raw workload start cannot perform that transition.
+  const result = capture(
+    ["sandbox", action, ...scope, "--", receipt.sandboxName],
+    action === "start" ? EXEC_READY_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+  );
+  const observed = phase();
+  if (observed !== target || ((result.status !== 0 || result.error) && !isCommandTimeout(result))) {
+    throw new Error(
+      "OpenShell sandbox " +
+        action +
+        " did not establish " +
+        target +
+        "; no raw Podman fallback was attempted",
+    );
+  }
+  return true;
+}
+
 /**
  * Recover the hidden portable profile after its Podman container or startup session stops.
  * Remove this temporary recovery path after #8058 supplies the durable provider lifecycle contract.
@@ -1542,13 +1648,29 @@ export function recoverPortableDemoSandboxLifecycle(
       `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
     );
   }
-  if (!inspection.running) {
+  const openshellBinary = deps.openshellBinary ?? commandEnv.NEMOCLAW_OPENSHELL_BIN ?? "openshell";
+  const capture =
+    deps.captureOpenshell ??
+    ((args, timeoutMs) => defaultCaptureOpenshell(openshellBinary, args, timeoutMs, commandEnv));
+  if (!inspection.running || inspection.isolatedPair) {
     lifecycleTiming.setContainerAction("started");
     inspection = lifecycleTiming.measure("containerStart", () => {
-      requireCommand(
-        podman(["start", receipt.containerId]),
-        `Starting portable sandbox '${sandboxName}'`,
-      );
+      if (inspection.isolatedPair) {
+        const changed = transitionPortablePair(
+          "start",
+          receipt,
+          context,
+          stateDir,
+          authority,
+          capture,
+        );
+        lifecycleTiming.setContainerAction(changed ? "started" : "reused");
+      } else {
+        requireCommand(
+          podman(["start", receipt.containerId]),
+          `Starting portable sandbox '${sandboxName}'`,
+        );
+      }
       return inspectPodmanContainer(receipt.containerId, sandboxName, podman);
     });
     if (!inspection.running) {
@@ -1560,10 +1682,6 @@ export function recoverPortableDemoSandboxLifecycle(
     lifecycleTiming.setContainerAction("reused");
   }
 
-  const openshellBinary = deps.openshellBinary ?? commandEnv.NEMOCLAW_OPENSHELL_BIN ?? "openshell";
-  const capture =
-    deps.captureOpenshell ??
-    ((args, timeoutMs) => defaultCaptureOpenshell(openshellBinary, args, timeoutMs, commandEnv));
   const timing = { now: clock, sleep: deps.sleep ?? defaultSleep };
   const gatewayName = context.gatewayName;
   const execReady = lifecycleTiming.measure("execReady", () =>
@@ -1772,6 +1890,56 @@ export function stopPortableDemoSandboxLifecycle(
     requireReceiptOwnedInspection(receipt, stopped);
     return !stopped.running && stopped.status === "exited";
   };
+
+  if (inspection.isolatedPair) {
+    const companions = matchingPortableSandboxContainerIds(sandboxName, authority.podman).filter(
+      (id) => id !== receipt.containerId,
+    );
+    if (companions.length !== 1) {
+      throw new Error(`Portable sandbox '${sandboxName}' requires one receipt-bound supervisor`);
+    }
+    const supervisorId = companions[0]!;
+    const inspectSupervisor = (): PodmanContainerInspection => {
+      const supervisor = inspectPodmanContainer(
+        supervisorId,
+        sandboxName,
+        authority.podman,
+        authority.podman(["inspect", supervisorId]),
+        "supervisor",
+      );
+      if (supervisor.sandboxId !== receipt.sandboxId) {
+        throw new Error(`Portable sandbox '${sandboxName}' supervisor identity changed`);
+      }
+      return supervisor;
+    };
+    inspectSupervisor();
+    const openshellBinary =
+      deps.openshellBinary ?? commandEnv.NEMOCLAW_OPENSHELL_BIN ?? "openshell";
+    const capture =
+      deps.captureOpenshell ??
+      ((args, timeoutMs) => defaultCaptureOpenshell(openshellBinary, args, timeoutMs, commandEnv));
+    const changed = transitionPortablePair(
+      "stop",
+      receipt,
+      context,
+      stateDir,
+      authority,
+      capture,
+      () => {
+        beforeStop();
+        inspectSupervisor();
+      },
+    );
+    const inspectPairExitedState = (): boolean => {
+      const workloadExited = inspectExitedState();
+      const supervisor = inspectSupervisor();
+      return workloadExited && !supervisor.running && supervisor.status === "exited";
+    };
+    if (!waitFor(STOP_SETTLEMENT_TIMEOUT_MS, timing, inspectPairExitedState)) {
+      throw new Error(`Portable sandbox '${sandboxName}' did not settle into the exited state`);
+    }
+    return { kind: changed ? "stopped" : "already-stopped" };
+  }
 
   if (!inspection.running) {
     if (inspection.status === "exited") return { kind: "already-stopped" };

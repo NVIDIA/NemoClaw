@@ -145,20 +145,20 @@ assert_openshell_version() {
 
 case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
   stable | auto) ;;
-  dev) fail "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported." ;;
+  dev) fail "NemoClaw requires exact stable OpenShell 0.1.2; the dev channel is not supported." ;;
   *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
 esac
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
-    stable | auto) OPENSHELL_VERSION="v0.0.116" ;;
+    stable | auto) OPENSHELL_VERSION="v0.1.2" ;;
   esac
 fi
 assert_openshell_version "$OPENSHELL_VERSION"
 if [[ "$OPENSHELL_VERSION" != v* ]]; then
   OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
 fi
-if [[ "$OPENSHELL_VERSION" != "v0.0.116" ]]; then
-  fail "NemoClaw requires exact stable OpenShell 0.0.116; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
+if [[ "$OPENSHELL_VERSION" != "v0.1.2" ]]; then
+  fail "NemoClaw requires exact stable OpenShell 0.1.2; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
 fi
 if [ "${1:-}" = "--print-openshell-version" ]; then
   printf '%s\n' "$OPENSHELL_VERSION"
@@ -217,14 +217,14 @@ openshell_cli_asset_for_arch() {
 openshell_cli_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.116:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e"
+    v0.1.2:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "7eb6917285331a09e3300266a0558616481a5e9927cae2612ea07c4045b6dd6f"
       ;;
-    v0.0.116:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43"
+    v0.1.2:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "9880c5776688231d5242deb046cdee361734f94901b9123949a0baf29fdadd9e"
       ;;
-    v0.0.116:openshell-checksums-sha256.txt)
-      printf '%s\n' "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e"
+    v0.1.2:openshell-checksums-sha256.txt)
+      printf '%s\n' "13ed9929ef1a9bc0dbbbbddfd13f14870cea2f64bee3786d848c7b1836785dc7"
       ;;
     *)
       return 1

@@ -232,6 +232,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
           sandboxNamespace: "scoped",
           hostGatewayIp: null,
           includeSupervisorBin: true,
+          driverConfigLayout: "split-supervisor",
           processOwnership: "scoped-namespace",
         },
         network: {

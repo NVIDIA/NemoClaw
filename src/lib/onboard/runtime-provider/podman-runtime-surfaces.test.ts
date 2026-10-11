@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { PodmanBoundContainerEngine } from "../../adapters/podman";
 import { createCurrentPodmanRuntimeProviderBundle } from "./podman";
 import {
+  observePodmanManagedContainer,
+  PODMAN_ISOLATION_ROLE_LABEL,
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
@@ -235,6 +237,7 @@ describe("current Podman runtime provider", () => {
         sandboxNamespace: "omitted",
         hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
         includeSupervisorBin: false,
+        driverConfigLayout: "inline-supervisor",
         processOwnership: "runtime-marker",
       },
       network: {
@@ -318,5 +321,55 @@ describe("current Podman runtime provider", () => {
       `${NATIVE_PODMAN_SANDBOX_HOST_ADDRESS}/32`,
     ]);
     expect(capture).toHaveBeenCalledWith(["network", "inspect", "openshell-docker"], 30_000);
+  });
+});
+
+describe("Podman split workload discovery", () => {
+  it("excludes the supervisor companion before requiring one workload", () => {
+    const engine = runtimeEngine(() => ({
+      ...exactLabels(),
+      [PODMAN_ISOLATION_ROLE_LABEL]: "sandbox",
+    }));
+    const capture = engine.capture;
+    vi.mocked(engine.capture).mockImplementationOnce((args) => ({
+      status: 0,
+      stdout: args.includes("label!=openshell.ai/isolation-role=supervisor")
+        ? CONTAINER_ID + "\n"
+        : CONTAINER_ID + "\n" + "b".repeat(64) + "\n",
+      stderr: "",
+    }));
+    expect(observePodmanManagedContainer(engine, SANDBOX_NAME)?.containerId).toBe(CONTAINER_ID);
+    expect(capture).toHaveBeenCalledWith(
+      ["container", "inspect", CONTAINER_ID],
+      expect.any(Number),
+    );
+  });
+
+  it("retains discovery of legacy workloads without an isolation role", () => {
+    const engine = runtimeEngine(exactLabels);
+    expect(observePodmanManagedContainer(engine, SANDBOX_NAME)?.containerId).toBe(CONTAINER_ID);
+  });
+
+  it.each(["supervisor", "unknown", ""])("rejects an inspected role of %j", (role) => {
+    const engine = runtimeEngine(() => ({
+      ...exactLabels(),
+      [PODMAN_ISOLATION_ROLE_LABEL]: role,
+    }));
+    expect(() => observePodmanManagedContainer(engine, SANDBOX_NAME)).toThrow(
+      "unexpected isolation role",
+    );
+  });
+
+  it("rejects multiple workloads after excluding supervisors", () => {
+    const engine = runtimeEngine(exactLabels);
+    vi.mocked(engine.capture).mockReturnValueOnce({
+      status: 0,
+      stdout: CONTAINER_ID + "\n" + "b".repeat(64) + "\n",
+      stderr: "",
+    });
+    expect(() => observePodmanManagedContainer(engine, SANDBOX_NAME)).toThrow(
+      "has 2 managed containers",
+    );
+    expect(engine.capture).toHaveBeenCalledTimes(1);
   });
 });

@@ -174,9 +174,7 @@ export function computeOpenshellInstallEnv(
   if (channel === "dev") {
     const error = deps.error ?? ((m: string) => console.error(m));
     error("");
-    error(
-      "  ✗ NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
-    );
+    error("  ✗ NemoClaw requires exact stable OpenShell 0.1.2; the dev channel is not supported.");
     error("");
     return { env: null };
   }

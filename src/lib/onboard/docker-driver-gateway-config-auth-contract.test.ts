@@ -6,19 +6,57 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { parse as parseToml } from "smol-toml";
+import { prepareDockerDriverGatewayConfigEnv } from "./docker-driver-gateway-config";
 
 import {
-  DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   jwtBundlePaths,
   mintOpenShellStyleSandboxJwt,
-  parseTomlInteger,
   parseTomlString,
   validateOpenShellStyleSandboxJwt,
   writeGatewayConfig,
 } from "../../../test/support/openshell-gateway-config-helpers";
 
 describe("docker-driver-gateway auth contract", () => {
-  it("emits an OpenShell 0.0.85-compatible sandbox JWT bundle and TTL contract", () => {
+  it("permits existing create-plan JSON without granting external attachments or host binds", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-admission-"));
+    try {
+      const env = writeGatewayConfig(stateDir);
+      const parsed = parseToml(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf8")) as {
+        openshell: { drivers: { docker: Record<string, unknown> } };
+      };
+      const driver = parsed.openshell.drivers.docker;
+      expect(driver.allow_driver_config).toBe(true);
+      expect(driver.enable_bind_mounts).toBeUndefined();
+      // No override: pinned OpenShell keeps admission enabled with its required labels.
+      expect(driver.resource_admission).toBeUndefined();
+      expect(env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS).toBeUndefined();
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+  it.each(["disabled driver JSON", "disabled resource admission"])(
+    "does not adopt a noncanonical config with %s",
+    (change) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-admission-"));
+      try {
+        const env = writeGatewayConfig(stateDir);
+        const before = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf8");
+        const changed =
+          change === "disabled driver JSON"
+            ? before.replace("allow_driver_config = true", "allow_driver_config = false")
+            : before + "\n[openshell.drivers.docker.resource_admission]\nenabled = false\n";
+        fs.writeFileSync(env.OPENSHELL_GATEWAY_CONFIG, changed);
+        expect(() =>
+          prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
+        ).toThrow("the config does not match NemoClaw's generated form");
+        expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf8")).toBe(changed);
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
+  it("emits an OpenShell 0.1.2 sandbox JWT bundle with non-expiring sessions", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
@@ -27,7 +65,9 @@ describe("docker-driver-gateway auth contract", () => {
       const publicKeyPath = parseTomlString(toml, "public_key_path");
       const kidPath = parseTomlString(toml, "kid_path");
       const gatewayId = parseTomlString(toml, "gateway_id");
-      const ttlSecs = parseTomlInteger(toml, "ttl_secs");
+      const parsed = parseToml(toml) as {
+        openshell: { gateway: { gateway_jwt: Record<string, unknown> } };
+      };
       const kid = fs.readFileSync(kidPath, "utf-8").trim();
       const now = Math.floor(Date.now() / 1000);
       const sandboxId = "sandbox-contract";
@@ -36,7 +76,7 @@ describe("docker-driver-gateway auth contract", () => {
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
-      expect(ttlSecs).toBe(DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS);
+      expect(parsed.openshell.gateway.gateway_jwt.ttl_secs).toBeUndefined();
 
       const token = mintOpenShellStyleSandboxJwt({
         signingKeyPath,
@@ -44,7 +84,7 @@ describe("docker-driver-gateway auth contract", () => {
         gatewayId,
         sandboxId,
         iat: now,
-        exp: ttlSecs === 0 ? 0 : now + ttlSecs,
+        exp: 0,
       });
 
       const payload = validateOpenShellStyleSandboxJwt({
@@ -60,7 +100,7 @@ describe("docker-driver-gateway auth contract", () => {
         iss: `openshell-gateway:${gatewayId}`,
         aud: `openshell-gateway:${gatewayId}`,
       });
-      expect(payload?.exp).toBe(ttlSecs === 0 ? 0 : now + ttlSecs);
+      expect(payload?.exp).toBe(0);
       expect(() =>
         validateOpenShellStyleSandboxJwt({
           token,
@@ -116,14 +156,17 @@ describe("docker-driver-gateway auth contract", () => {
     }
   });
 
-  it("emits the complete OpenShell 0.0.85 gateway auth TOML schema", () => {
+  it("emits the OpenShell 0.1.2 gateway authentication schema", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
 
       expect(toml).toContain("[openshell.gateway.tls]");
-      expect(toml).toContain("require_client_auth = true");
+      expect(toml).toContain("version = 2");
+      expect(toml).toContain("client_ca_path = ");
+      expect(toml).not.toContain("require_client_auth");
+      expect(toml).not.toContain("[openshell.gateway.oidc]");
       expect(toml).toContain("[openshell.gateway.mtls_auth]");
       expect(toml).toContain("enabled = true");
       expect(toml).toContain("[openshell.gateway.gateway_jwt]");
@@ -131,7 +174,7 @@ describe("docker-driver-gateway auth contract", () => {
       expect(toml).toContain("public_key_path = ");
       expect(toml).toContain("kid_path = ");
       expect(toml).toContain("gateway_id = ");
-      expect(toml).toContain(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`);
+      expect(toml).not.toContain("ttl_secs =");
       expect(toml).toContain("[openshell.gateway.auth]");
       expect(toml).toContain("allow_unauthenticated_users = false");
       expect(toml).toContain("guest_tls_ca = ");
@@ -165,7 +208,7 @@ describe("docker-driver-gateway auth contract", () => {
         gatewayId: gatewayIdA,
         sandboxId: sandboxIdA,
         iat: now,
-        exp: now + DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+        exp: 0,
       });
 
       expect(

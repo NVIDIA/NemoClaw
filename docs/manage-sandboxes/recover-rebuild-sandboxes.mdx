@@ -274,9 +274,9 @@ When NemoClaw can identify the exact stopped Docker container and prove its immu
 
 When that provider-owned capture is not available, rebuild asks OpenShell to start the exact stopped sandbox for the duration of the pre-recreate state backup and asks OpenShell to return it to `Stopped` afterward, the same lifecycle path `$$nemoclaw backup-all` uses. If OpenShell cannot start the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-backup notice only when a partial backup was retained. If the backup succeeds but OpenShell cannot return the sandbox to `Stopped`, rebuild also aborts and reports the failed transition. If neither path can establish stopped-source authority, repair the OpenShell lifecycle state or recover the data manually before retrying; NemoClaw does not fall back to a selective directory copy.
 
-<AgentOnly variant="openclaw">
-On OpenShell 0.0.116, `start` cannot restart a sandbox in `Phase: Error`.
-</AgentOnly>
+OpenShell 0.1.2 can restart a sandbox in `Phase: Error` when it records a failed main process and its exit code.
+It also permits retry after a provisioning timeout once compute cleanup completes.
+Other `Error` states remain rejected; inspect the reported failure instead of assuming every error is restartable.
 
 If OpenShell still reports the sandbox in `Phase: Error` but its Docker-driver container is missing,
 rebuild cannot back up its live workspace and stops before replacement. Recover the workspace from

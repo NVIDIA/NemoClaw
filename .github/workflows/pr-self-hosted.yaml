@@ -75,7 +75,7 @@ jobs:
                   or .filename == ".github/workflows/sandbox-images.yaml"
                   or .filename == "package.json"
                   or .filename == "package-lock.json"
-                  or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.116.json"
+                  or .filename == "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.2.json"
                   or .filename == "src/lib/actions/sandbox/runtime/hermes-lifecycle.ts"
                   or .filename == "src/lib/hermes-managed-route.ts"
                   or .filename == "src/lib/providerless-inference.ts"

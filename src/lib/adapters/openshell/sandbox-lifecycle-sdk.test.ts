@@ -41,11 +41,17 @@ describe("OpenShell SDK sandbox lifecycle", () => {
     expect(connect).toHaveBeenCalledTimes(2);
     expect(get).toHaveBeenCalledTimes(4);
     expect(startSandbox).toHaveBeenCalledWith(
-      { name: "alpha", workspace: "default" },
+      {
+        name: "alpha",
+        workspaceScope: { selection: { case: "workspace", value: "default" } },
+      },
       { signal: expect.any(AbortSignal) },
     );
     expect(stopSandbox).toHaveBeenCalledWith(
-      { name: "alpha", workspace: "default" },
+      {
+        name: "alpha",
+        workspaceScope: { selection: { case: "workspace", value: "default" } },
+      },
       { signal: expect.any(AbortSignal) },
     );
     expect(get).toHaveBeenCalledWith("alpha", { signal: expect.any(AbortSignal) });

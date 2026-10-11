@@ -159,6 +159,8 @@ export interface RuntimeProviderGatewayHostRuntime {
     readonly sandboxNamespace: "scoped" | "omitted";
     readonly hostGatewayIp: string | null;
     readonly includeSupervisorBin: boolean;
+    /** Driver layout projected by the provider, independent of gateway schema version. */
+    readonly driverConfigLayout: "split-supervisor" | "inline-supervisor";
     readonly processOwnership: "scoped-namespace" | "runtime-marker";
   };
   readonly network: {

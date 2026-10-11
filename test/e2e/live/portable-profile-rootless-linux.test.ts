@@ -9,6 +9,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import { redactFullWithUrls } from "../../../src/lib/security/redact.ts";
+
 import * as importedGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver-gateway-local-tls.ts";
 import * as importedBuildContextStage from "../../../src/lib/onboard/build-context-stage.ts";
@@ -18,6 +20,7 @@ import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebu
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { capturePodmanSocketAuthority } from "../../../src/lib/adapters/podman/index.ts";
 import { captureHermesPortableOpenShellExecutableAuthority } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
+import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import {
@@ -59,7 +62,7 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import { OPENSHELL_V012_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import {
   cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
@@ -399,7 +402,7 @@ function requireOpenShellResult(
 ): string {
   assert.ok(
     result.status === 0 && !result.error,
-    `${label} failed: ${String(result.error?.message ?? result.stderr ?? result.stdout)}`,
+    `${label} failed (status ${String(result.status)}): ${redactFullWithUrls(String(result.error?.message || result.stderr || result.stdout))}`,
   );
   return String(result.stdout).trim();
 }
@@ -535,7 +538,7 @@ function waitForOpenShellSandboxAbsent(
         10_000,
       );
       try {
-        const sandboxes = JSON.parse(String(result.stdout)) as unknown;
+        const sandboxes = parseStrictOpenShellSandboxListJson(String(result.stdout));
         return {
           absent:
             result.status === 0 &&
@@ -811,6 +814,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         },
       } satisfies Parameters<typeof startSandbox>[1];
       const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
+      console.log("Historical Hermes public start:", JSON.stringify(upgradeResult));
       const firstStop = await withMcpLifecycleLock(
         sandboxName,
         () =>
@@ -1224,7 +1228,7 @@ async function main(progress: TestProgress): Promise<void> {
       gatewayPort: 8080,
       stateDir,
       podmanSocketPath: `${runtimeDir}/podman/podman.sock`,
-      getDockerSupervisorImage: () => OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+      getDockerSupervisorImage: () => OPENSHELL_V012_QUALIFICATION.supervisorImage,
       resolveSandboxBin: () => sandboxBin,
     });
     assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://${PORTABLE_HOST_GATEWAY_IP}:8080`);

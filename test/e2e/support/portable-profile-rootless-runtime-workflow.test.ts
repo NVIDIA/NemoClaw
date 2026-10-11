@@ -160,10 +160,10 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain(
-      'import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";',
+      'import { OPENSHELL_V012_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";',
     );
     expect(liveTest).toContain(
-      "getDockerSupervisorImage: () => OPENSHELL_V0116_QUALIFICATION.supervisorImage",
+      "getDockerSupervisorImage: () => OPENSHELL_V012_QUALIFICATION.supervisorImage",
     );
     expect(liveTest).not.toContain("OPENSHELL_V0106_QUALIFICATION");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");

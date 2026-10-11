@@ -723,6 +723,7 @@
         "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-driver-config-test-wrapper.ts",
+        "test/e2e/live/openshell-exact-main-driver-config.ts",
         "test/e2e/live/openshell-exact-main-exec.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts",
         "test/e2e/live/openclaw-stopped-recovery.ts",

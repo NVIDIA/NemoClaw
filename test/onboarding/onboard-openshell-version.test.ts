@@ -424,7 +424,7 @@ describe("computeOpenshellInstallEnv", () => {
       },
     );
     expect(result.env).toBe(null);
-    expect(errors.join("\n")).toContain("requires exact stable OpenShell 0.0.116");
+    expect(errors.join("\n")).toContain("requires exact stable OpenShell 0.1.2");
   });
 
   it("overlays MIN/MAX/PIN env vars from blueprint when latest exceeds max", () => {

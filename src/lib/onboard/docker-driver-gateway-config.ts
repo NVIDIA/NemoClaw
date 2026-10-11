@@ -109,7 +109,7 @@ function alternateGatewayRuntimeProjection(
   driver: string,
   driverConfig: Record<string, unknown>,
 ): RuntimeProviderGatewayHostRuntime {
-  const namespace = driverConfig.sandbox_namespace;
+  const namespace = driverConfig.sandbox_label ?? driverConfig.sandbox_namespace;
   const hostGatewayIp = driverConfig.host_gateway_ip;
   const socketPath = driverConfig.socket_path;
   return {
@@ -121,6 +121,9 @@ function alternateGatewayRuntimeProjection(
       sandboxNamespace: isNonEmptyString(namespace) ? "scoped" : "omitted",
       hostGatewayIp: isNonEmptyString(hostGatewayIp) ? hostGatewayIp : null,
       includeSupervisorBin: isNonEmptyString(driverConfig.supervisor_bin),
+      driverConfigLayout: isNonEmptyString(driverConfig.network_name)
+        ? "inline-supervisor"
+        : "split-supervisor",
     },
   };
 }
@@ -685,23 +688,36 @@ function existingGatewayIdentityFromConfig(
     if (!parsed || !openshell || !gateway || !gatewayJwt || !drivers || !driverConfig) {
       throw ambiguousGatewayConfig(configPath, "the config does not match NemoClaw's schema");
     }
+    const schemaVersion = openshell.version;
+    if (schemaVersion !== 1 && schemaVersion !== 2) {
+      throw ambiguousGatewayConfig(configPath, "unsupported gateway schema version");
+    }
+    const legacyDriver =
+      schemaVersion === 1 || runtime.gatewayConfig.driverConfigLayout === "inline-supervisor";
     const requiredDriverFields = [
       "grpc_endpoint",
-      ...(runtime.gatewayConfig.hostGatewayIp === null ? [] : ["host_gateway_ip"]),
+      ...(!legacyDriver || runtime.gatewayConfig.hostGatewayIp === null ? [] : ["host_gateway_ip"]),
       ...(runtime.socketPath === null ? [] : ["socket_path"]),
-      "network_name",
+      ...(legacyDriver ? ["network_name"] : []),
       "supervisor_image",
-      "guest_tls_ca",
-      "guest_tls_cert",
-      "guest_tls_key",
     ];
     if (!requiredDriverFields.every((field) => isNonEmptyString(driverConfig[field]))) {
       throw ambiguousGatewayConfig(configPath, "the driver config is incomplete");
     }
 
+    const guestTlsOwner = schemaVersion === 1 ? driverConfig : gateway;
+    if (
+      !["guest_tls_ca", "guest_tls_cert", "guest_tls_key"].every((field) =>
+        isNonEmptyString(guestTlsOwner[field]),
+      )
+    ) {
+      throw ambiguousGatewayConfig(configPath, "the guest TLS config is incomplete");
+    }
+
     const configuredGatewayId = gatewayJwt.gateway_id;
     const configuredGatewayJwtTtl = gatewayJwt.ttl_secs;
-    const namespace = driverConfig.sandbox_namespace;
+    const namespace =
+      schemaVersion === 2 ? driverConfig.sandbox_label : driverConfig.sandbox_namespace;
     const legacyGatewayId = legacyGatewayIdForStateDir(stateDir);
     const scopedGatewayId = gatewayIdForStateDir(stateDir);
     const hasLegacyNamespace =
@@ -734,7 +750,14 @@ function existingGatewayIdentityFromConfig(
     }
     assignStringEnv(parsedEnv, "OPENSHELL_GRPC_ENDPOINT", driverConfig.grpc_endpoint);
     assignStringEnv(parsedEnv, "OPENSHELL_PODMAN_SOCKET", driverConfig.socket_path);
-    assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_NETWORK_NAME", driverConfig.network_name);
+    // Docker 0.1.2 rejects network_name as a driver setting. Keep the
+    // component's inspected host bridge as canonical NemoClaw metadata instead.
+    const componentNetwork = legacyDriver
+      ? driverConfig.network_name
+      : originalToml.match(
+          /^# nemoclaw-external-component-network = "([a-zA-Z0-9][a-zA-Z0-9_.-]{0,254})"$/mu,
+        )?.[1];
+    assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_NETWORK_NAME", componentNetwork);
     assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_SUPERVISOR_IMAGE", driverConfig.supervisor_image);
     const configuredSandboxBin =
       typeof driverConfig.supervisor_bin === "string" ? driverConfig.supervisor_bin : undefined;
@@ -751,6 +774,7 @@ function existingGatewayIdentityFromConfig(
       canonicalGatewayJwtTtl,
       configuredRuntime,
       externalComponent,
+      schemaVersion,
     );
     if (originalToml !== canonicalToml) {
       throw ambiguousGatewayConfig(
@@ -845,27 +869,43 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   gatewayJwtTtlSecs = DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   projectedRuntime?: RuntimeProviderGatewayHostRuntime,
   externalComponent?: ExternalComponentGatewayConfiguration | null,
+  schemaVersion: 1 | 2 = 2,
 ): string {
   const runtime = resolveGatewayRuntimeProjection(gatewayEnv, projectedRuntime);
   const driver = runtime.openShellDriver;
+  const legacyDriver =
+    schemaVersion === 1 || runtime.gatewayConfig.driverConfigLayout === "inline-supervisor";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
+  const guestTlsConfig = localTlsDir
+    ? [
+        `guest_tls_ca = ${tomlString(path.join(localTlsDir, "ca.crt"))}`,
+        `guest_tls_cert = ${tomlString(path.join(localTlsDir, "client", "tls.crt"))}`,
+        `guest_tls_key = ${tomlString(path.join(localTlsDir, "client", "tls.key"))}`,
+      ]
+    : [];
   const dockerEntries: [string, string | boolean | undefined][] = [
+    // NemoClaw create plans use driver JSON for managed state, tmpfs and GPU selection.
+    // Opt in on our gateway only; upstream resource admission and bind-mount gates remain.
+    ["allow_driver_config", schemaVersion === 2 ? true : undefined],
     ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
     [
-      "sandbox_namespace",
+      schemaVersion === 2 ? "sandbox_label" : "sandbox_namespace",
       runtime.gatewayConfig.sandboxNamespace === "scoped"
         ? (sandboxNamespace ?? undefined)
         : undefined,
     ],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
-    ["host_gateway_ip", runtime.gatewayConfig.hostGatewayIp ?? undefined],
+    [
+      "host_gateway_ip",
+      legacyDriver ? (runtime.gatewayConfig.hostGatewayIp ?? undefined) : undefined,
+    ],
     [
       "socket_path",
       externalComponent && "interceptor" in externalComponent
         ? externalComponentDockerSocket(runtime, gatewayEnv)
         : (runtime.socketPath ?? undefined),
     ],
-    ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
+    ["network_name", legacyDriver ? gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME : undefined],
     ["supervisor_image", gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE],
     // OpenShell 0.0.99 accepts supervisor_bin only for the Docker driver.
     // The Podman schema rejects the entire driver table when this Docker-only
@@ -874,9 +914,6 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
       "supervisor_bin",
       runtime.gatewayConfig.includeSupervisorBin ? (sandboxBin ?? undefined) : undefined,
     ],
-    ["guest_tls_ca", localTlsDir ? path.join(localTlsDir, "ca.crt") : undefined],
-    ["guest_tls_cert", localTlsDir ? path.join(localTlsDir, "client", "tls.crt") : undefined],
-    ["guest_tls_key", localTlsDir ? path.join(localTlsDir, "client", "tls.key") : undefined],
   ];
   const dockerConfig = dockerEntries
     .filter(
@@ -891,11 +928,14 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
 
   const sections = [
     "[openshell]",
-    "version = 1",
+    `version = ${schemaVersion}`,
     "",
     "[openshell.gateway]",
-    `compute_drivers = [${tomlString(driver)}]`,
+    schemaVersion === 2
+      ? `compute_driver = ${tomlString(driver)}`
+      : `compute_drivers = [${tomlString(driver)}]`,
     "disable_tls = false",
+    ...(schemaVersion === 2 ? guestTlsConfig : []),
     "",
   ];
   if (
@@ -916,7 +956,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
       `cert_path = ${tomlString(path.join(tlsDir, "server", "tls.crt"))}`,
       `key_path = ${tomlString(path.join(tlsDir, "server", "tls.key"))}`,
       `client_ca_path = ${tomlString(path.join(tlsDir, "ca.crt"))}`,
-      "require_client_auth = true",
+      ...(schemaVersion === 1 ? ["require_client_auth = true"] : []),
       "",
       "[openshell.gateway.mtls_auth]",
       "enabled = true",
@@ -926,7 +966,8 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
       `public_key_path = ${tomlString(jwtBundle.publicKeyPath)}`,
       `kid_path = ${tomlString(jwtBundle.kidPath)}`,
       `gateway_id = ${tomlString(gatewayId)}`,
-      `ttl_secs = ${gatewayJwtTtlSecs}`,
+      // Schema 2 omits TTL for non-expiring sandbox sessions; explicit zero is invalid.
+      ...(schemaVersion === 1 ? [`ttl_secs = ${gatewayJwtTtlSecs}`] : []),
       "",
       "[openshell.gateway.auth]",
       "allow_unauthenticated_users = false",
@@ -938,6 +979,8 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     if (!jwtBundle) throw new ExternalComponentContractError("declaration_invalid");
     const settings = validateExternalComponentGatewaySettings(externalComponent);
     const network = externalComponentGatewayNetwork(gatewayEnv, runtime, settings);
+    if (!legacyDriver)
+      sections.push(`# nemoclaw-external-component-network = ${tomlString(network.name)}`);
     sections.push(...renderExternalComponentConnections(settings, network.gatewayIp));
   } else if (externalComponent) {
     sections.push(
@@ -964,6 +1007,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
 
   sections.push(`[openshell.drivers.${driver}]`);
   if (dockerConfig) sections.push(dockerConfig);
+  if (schemaVersion === 1) sections.push(...guestTlsConfig);
   sections.push("");
 
   return sections.join("\n");

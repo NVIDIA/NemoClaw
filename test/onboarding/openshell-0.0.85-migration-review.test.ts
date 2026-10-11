@@ -36,8 +36,9 @@ describe("OpenShell migration executable contracts", () => {
       "utf8",
     );
     expect(helper).toContain("parse as parseToml");
-    expect(helper).toContain('expect(gateway.compute_drivers).toEqual(["docker"])');
-    expect(helper).toContain("Object.keys(drivers)");
+    expect(helper).toContain('expect(gateway.compute_driver).toBe("docker")');
+    expect(helper).toContain("expect(openshell.version).toBe(2)");
+    expect(helper).toContain('requireRecord(drivers.docker, "openshell.drivers.docker")');
     expect(helper).toContain("fs.realpathSync(`/proc/${gatewayPid}/exe`)");
     expect(helper).toContain('["-H", "-ltnp"]');
     expect(helper).toContain('"{{json .HostConfig.Binds}}"');
@@ -71,15 +72,15 @@ describe("OpenShell migration executable contracts", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.116.json",
+          "openshell-child-visible-credentials.v0.1.2.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.116"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.116"');
-    expect(manifest.openshellVersion).toBe("0.0.116");
+    expect(blueprint).toContain('min_openshell_version: "0.1.2"');
+    expect(blueprint).toContain('max_openshell_version: "0.1.2"');
+    expect(manifest.openshellVersion).toBe("0.1.2");
   });
   it("does not reintroduce newline-only code transports at migrated consumers", () => {
     const migratedConsumers = [

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -68,6 +68,9 @@ const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([
   // OpenShell v0.0.116 standalone sandbox binaries.
   ["326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40", "0.0.116"],
   ["7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d", "0.0.116"],
+  // OpenShell v0.1.2 standalone sandbox binaries.
+  ["5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1", "0.1.2"],
+  ["9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa", "0.1.2"],
 ]);
 
 export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | null {
@@ -76,7 +79,7 @@ export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | nul
 
 function executableSha256(candidate: string): string | null {
   try {
-    return createHash("sha256").update(fs.readFileSync(candidate)).digest("hex");
+    return crypto.createHash("sha256").update(fs.readFileSync(candidate)).digest("hex");
   } catch {
     return null;
   }
@@ -207,13 +210,20 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   }
   if (!REQUIRED_OPENSHELL_MCP_FEATURES.every((marker) => foundMarkers.has(marker))) return false;
 
-  // MCP policy enforcement and credential replacement execute in the sandbox
-  // supervisor. When that exact host artifact is available, require its native
-  // MCP marker rather than accepting a union of unrelated binaries.
+  // OpenShell 0.1.2 moved policy enforcement into the supervisor image. Only
+  // its exact pinned sandbox artifacts use that split here; version text alone
+  // cannot exempt another sandbox from the legacy marker check. Runtime policy
+  // verification remains mandatory before credential or provider changes.
   const sandboxMarker = Buffer.from(REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE);
   if (sandboxBin) {
     try {
-      return fs.readFileSync(sandboxBin).includes(sandboxMarker);
+      const content = fs.readFileSync(sandboxBin);
+      return (
+        content.includes(sandboxMarker) ||
+        pinnedOpenShellSandboxBuildVersion(
+          crypto.createHash("sha256").update(content).digest("hex"),
+        ) === "0.1.2"
+      );
     } catch {
       return false;
     }

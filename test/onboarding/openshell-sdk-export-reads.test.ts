@@ -47,7 +47,12 @@ describe("released OpenShell SDK export reads", () => {
         scope: "workspace",
         resourceVersion: "4",
         credentials: checkedIn.credentials,
-        endpoints: checkedIn.endpoints,
+        endpoints: checkedIn.endpoints.map((endpoint: Record<string, unknown>) => ({
+          ...endpoint,
+          access:
+            raw.NetworkAccessPreset[String(endpoint.access).replaceAll("-", "_").toUpperCase()],
+          enforcement: raw.NetworkEnforcementMode[String(endpoint.enforcement).toUpperCase()],
+        })),
         binaries: checkedIn.binaries.map((path: string) => ({ path })),
         inference_capable: checkedIn.inference_capable,
       });
@@ -78,14 +83,16 @@ describe("released OpenShell SDK export reads", () => {
           },
         },
       };
-      const result = await createProviders(async () => client).get({
-        target: { kind: "named", gatewayName: "nemoclaw" },
+      const request = {
+        target: { kind: "named", gatewayName: "nemoclaw" } as const,
         workspace: "default",
         name: "alpha",
         configKeys: [],
         profileContract: profileId,
         signal: new AbortController().signal,
-      });
+      };
+      const providers = createProviders(async () => client);
+      const result = await providers.get(request);
       expect(result?.managedProfile).toEqual({
         id: profileId,
         source: "user",
@@ -93,6 +100,9 @@ describe("released OpenShell SDK export reads", () => {
         resourceVersion: "4",
       });
       expect(result?.profileWorkspace).toBe("default");
+      // Decoding an invalid access preset must not qualify the shipped profile.
+      profile.endpoints[0].access = 0;
+      await expect(providers.get(request)).rejects.toMatchObject({ kind: "schema" });
     },
   );
 

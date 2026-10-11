@@ -39,6 +39,7 @@ import {
   addV00106OperationalTrust,
   alterRequiredReleaseValue,
   brevMutationFixtures,
+  npmReplacementFixtureVersion,
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
@@ -832,7 +833,7 @@ function expectTrustedRelease(
 }
 
 function parseNpmReplacement(source: string, digest: string, trustedDigest = digest) {
-  const root = createFixture();
+  const root = createFixture(npmReplacementFixtureVersion(source));
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
   fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));

@@ -48,7 +48,7 @@ function assertRuntimeVersion(version: string): () => void {
 
 describe("MCP bridge dev runtime compatibility", () => {
   it("selects the full lifecycle for the reviewed OpenShell runtime (#6426)", () => {
-    expect(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION).toBe("0.0.116");
+    expect(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION).toBe("0.1.2");
     expect(
       classifyMcpBridgeRuntimeCompatibility(
         assertRuntimeVersion(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION),
@@ -60,7 +60,7 @@ describe("MCP bridge dev runtime compatibility", () => {
     });
   });
 
-  it.each(["", "0.0.117"])(
+  it.each(["", "0.1.3"])(
     "does not accept an injected unvalidated runtime version %j",
     (actualVersion) => {
       expect(classifyMcpBridgeRuntimeCompatibility(() => actualVersion)).toEqual({

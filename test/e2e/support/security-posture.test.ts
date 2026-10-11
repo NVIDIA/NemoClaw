@@ -342,12 +342,12 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("security posture fixture", () => {
   it("accepts only the exact stable OpenShell version token", () => {
-    expect(parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116\n"))).toBe("0.0.116");
-    expect(() =>
-      parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116-rc.1\n")),
-    ).toThrow(/expected OpenShell 0\.0\.116/u);
-    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.0.116+dev\n"))).toThrow(
-      /expected OpenShell 0\.0\.116/u,
+    expect(parseExpectedOpenShellVersion(successfulProbe("openshell 0.1.2\n"))).toBe("0.1.2");
+    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.1.2-rc.1\n"))).toThrow(
+      /expected OpenShell 0\.1\.2/u,
+    );
+    expect(() => parseExpectedOpenShellVersion(successfulProbe("openshell 0.1.2+dev\n"))).toThrow(
+      /expected OpenShell 0\.1\.2/u,
     );
   });
 
@@ -1047,7 +1047,7 @@ describe("security posture fixture", () => {
       const command = vi
         .fn<HostCliClient["command"]>()
         .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-        .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"))
+        .mockResolvedValueOnce(successfulProbe("openshell 0.1.2\n"))
         .mockResolvedValueOnce(successfulProbe(capabilitySurfaceProof("connect")));
       const execShell = vi.fn<SandboxClient["execShell"]>(async (_name, script) =>
         String(script).includes("surface=exec")
@@ -1116,7 +1116,7 @@ describe("security posture fixture", () => {
         runtimeProxyEnvLocked: true,
         runtimeVersions: {
           managedImageRevision: MANAGED_IMAGE_REVISION,
-          openshell: "0.0.116",
+          openshell: "0.1.2",
         },
         splitProcess: {
           childSupervisor: directChildSupervisor,
@@ -1153,7 +1153,7 @@ describe("security posture fixture", () => {
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
+      .mockResolvedValueOnce(successfulProbe("openshell 0.1.2\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi
       .fn()
@@ -1191,7 +1191,7 @@ describe("security posture fixture", () => {
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
-      .mockResolvedValueOnce(successfulProbe("openshell 0.0.116\n"));
+      .mockResolvedValueOnce(successfulProbe("openshell 0.1.2\n"));
     const execShell = vi.fn<SandboxClient["execShell"]>();
     const resolvePrivilegedTarget = vi.fn(() => ({
       providerId: "podman",

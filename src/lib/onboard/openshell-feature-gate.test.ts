@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   hasRequiredOpenshellMessagingFeatures,
@@ -27,6 +28,68 @@ exit 0
 }
 
 describe("OpenShell MCP feature gate", () => {
+  it.each([
+    {
+      digest: "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1",
+      version: "0.1.2",
+      markers: true,
+      accepted: true,
+    },
+    {
+      digest: "9b527c257e7917d11cee34075369cdfb69a57764198da6e72cc0847cb9b427aa",
+      version: "0.1.2",
+      markers: true,
+      accepted: true,
+    },
+    { digest: "0".repeat(64), version: "0.1.2", markers: true, accepted: false },
+    {
+      digest: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40",
+      version: "0.1.2",
+      markers: true,
+      accepted: false,
+    },
+    {
+      digest: "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1",
+      version: "0.0.116",
+      markers: true,
+      accepted: false,
+    },
+    {
+      digest: "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1",
+      version: "0.1.2",
+      markers: false,
+      accepted: false,
+    },
+  ])(
+    "checks pinned split sandbox identity, component coherence and CLI capabilities [%j]",
+    ({ digest, version, markers, accepted }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-split-"));
+      const openshell = path.join(root, "openshell");
+      const sandbox = path.join(root, "openshell-sandbox");
+      const digestSpy = vi.spyOn(crypto, "createHash").mockReturnValue({
+        update: () => ({ digest: () => digest }),
+      } as unknown as ReturnType<typeof crypto.createHash>);
+      try {
+        writeExecutable(
+          openshell,
+          markers ? REQUIRED_OPENSHELL_MCP_FEATURES.join(" ") : "",
+          "0.1.2",
+        );
+        writeExecutable(sandbox, "split sandbox without policy markers", version);
+        expect(
+          hasRequiredOpenshellMessagingFeatures({
+            openshellBin: openshell,
+            gatewayBin: null,
+            sandboxBin: sandbox,
+          }),
+        ).toBe(accepted);
+      } finally {
+        digestSpy.mockRestore();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("identifies the pinned v0.0.72 sandbox artifacts without executing them", () => {
     const sandbox = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
