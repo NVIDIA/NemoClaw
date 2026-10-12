@@ -51,7 +51,6 @@ import {
   type TempSshConfigRunResult,
 } from "../sandbox/temp-ssh-config.js";
 import {
-  CREDENTIAL_PLACEHOLDER,
   isConfigValue,
   isCredentialField,
   isDependencyLockfile,
@@ -1306,25 +1305,6 @@ function nativeStructuredAuthorityKind(
   return null;
 }
 
-const OMIT_STRIPPED_CREDENTIAL = Symbol("omit stripped credential");
-
-function withoutStrippedCredentialFields(value: unknown): unknown {
-  if (value === CREDENTIAL_PLACEHOLDER) return OMIT_STRIPPED_CREDENTIAL;
-  if (Array.isArray(value)) {
-    return value.map((child) => {
-      const sanitized = withoutStrippedCredentialFields(child);
-      return sanitized === OMIT_STRIPPED_CREDENTIAL ? null : sanitized;
-    });
-  }
-  if (!isObjectRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, child]) => {
-      const sanitized = withoutStrippedCredentialFields(child);
-      return sanitized === OMIT_STRIPPED_CREDENTIAL ? [] : [[key, sanitized]];
-    }),
-  );
-}
-
 function sanitizedStructuredAuthority(
   payload: Buffer,
   size: number,
@@ -1369,27 +1349,58 @@ function sanitizedStructuredAuthority(
   }
   if (isDeepStrictEqual(sanitized, config)) return payload;
 
-  let serialized = Buffer.from(JSON.stringify(sanitized), "utf8");
-  if (serialized.byteLength > size && kind !== "openclaw-config") {
-    const compact = withoutStrippedCredentialFields(sanitized);
-    serialized = Buffer.from(
-      JSON.stringify(compact === OMIT_STRIPPED_CREDENTIAL ? null : compact),
-      "utf8",
-    );
+  const serialized = Buffer.from(JSON.stringify(sanitized), "utf8");
+  if (serialized.byteLength > NATIVE_STATE_CREDENTIAL_SCAN_MAX_BYTES) {
+    return `the machine-local configuration at '${normalized}' is too large to sanitize safely`;
   }
-  if (serialized.byteLength > size) {
-    return `the machine-local configuration at '${normalized}' cannot be sanitized in place`;
-  }
-  const replacement = Buffer.alloc(size, 0x20);
+  const replacement = Buffer.alloc(Math.max(size, serialized.byteLength), 0x20);
   serialized.copy(replacement);
   return replacement;
+}
+
+/** Grow a private tar member, copying the tail backwards to preserve overlapping ranges. */
+function growArchiveMember(
+  descriptor: number,
+  header: Buffer,
+  headerOffset: number,
+  nextOffset: number,
+  archiveSize: number,
+  replacementSize: number,
+): number {
+  const newNextOffset =
+    headerOffset + TAR_BLOCK_BYTES + Math.ceil(replacementSize / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+  const growth = newNextOffset - nextOffset;
+  if (!Number.isSafeInteger(archiveSize + growth))
+    throw new Error("the native archive is too large");
+  if (growth > 0) {
+    for (let end = archiveSize; end > nextOffset;) {
+      const start = Math.max(nextOffset, end - 1024 * 1024);
+      const chunk = readArchiveRange(descriptor, start, end - start);
+      if (!chunk || !writeArchiveRange(descriptor, start + growth, chunk)) {
+        throw new Error("could not grow the native archive");
+      }
+      end = start;
+    }
+  }
+  const paddingOffset = headerOffset + TAR_BLOCK_BYTES + replacementSize;
+  if (!writeArchiveRange(descriptor, paddingOffset, Buffer.alloc(newNextOffset - paddingOffset))) {
+    throw new Error("could not pad the native archive member");
+  }
+  header.write(`${replacementSize.toString(8).padStart(11, "0")}\0`, 124, 12, "ascii");
+  header.fill(0x20, 148, 156);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  if (!writeArchiveRange(descriptor, headerOffset, header)) {
+    throw new Error("could not update the native archive member size");
+  }
+  return growth;
 }
 
 /**
  * Remove machine-local runtime authority from the private archive copy. The
  * live native tree is never modified, and all other native state is retained.
- * Keeping each tar member at its original byte length makes this a bounded,
- * single-copy operation. Replacement startup creates fresh local authority.
+ * Structured configuration can grow during serialization. Move subsequent
+ * members in bounded chunks. Replacement startup creates fresh local authority.
  */
 export function sanitizeMachineLocalArchiveConfig(archivePath: string): string | null {
   const hermesTarget = ".hermes/.env";
@@ -1407,7 +1418,7 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
-    const archiveSize = fstatSync(descriptor).size;
+    let archiveSize = fstatSync(descriptor).size;
     let offset = 0;
     let nextPath: string | null = null;
     const found = new Set<string>();
@@ -1418,7 +1429,7 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
       const size = tarHeaderSize(header);
       if (size === null) return "the native archive has an invalid member size";
       const dataOffset = offset + TAR_BLOCK_BYTES;
-      const nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      let nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
       if (!Number.isSafeInteger(nextOffset) || nextOffset > archiveSize) {
         return "the native archive is truncated";
       }
@@ -1482,6 +1493,18 @@ export function sanitizeMachineLocalArchiveConfig(archivePath: string): string |
             replacement = sanitized;
           }
           if (replacement !== payload) {
+            if (replacement.byteLength > size) {
+              const growth = growArchiveMember(
+                descriptor,
+                header,
+                offset,
+                nextOffset,
+                archiveSize,
+                replacement.byteLength,
+              );
+              archiveSize += growth;
+              nextOffset += growth;
+            }
             if (!writeArchiveRange(descriptor, dataOffset, replacement)) {
               return `could not sanitize the machine-local configuration at '${normalized}'`;
             }
