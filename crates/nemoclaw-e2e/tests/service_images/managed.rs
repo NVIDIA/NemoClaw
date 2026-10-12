@@ -21,7 +21,7 @@ impl ManagedService {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("bin")).unwrap();
         std::os::unix::fs::symlink(
-            env!("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture"),
+            nemoclaw_test_fixtures::fixture_executable("nemoclaw-fixture-ssh-simulator"),
             root.path().join("bin/ssh"),
         )
         .unwrap();

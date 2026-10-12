@@ -84,7 +84,7 @@ output "observation" {{ value = data.fabric_capabilities.agent.observation_json 
 /// an explicit read policy that omits the runtime's paths, is unsupported, and
 /// a missing image is unknown; none of these fail apply or change the engine.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; fake Docker engine"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake Docker engine"]
 async fn capabilities_judge_the_image_for_the_configuration() {
     let digest = format!("registry/agent@sha256:{}", "a".repeat(64));
     let engine = engine(digest.clone()).await;
@@ -100,7 +100,8 @@ async fn capabilities_judge_the_image_for_the_configuration() {
         ),
         ("missing:image", "aarch64", runtime_reads, "unknown"),
     ] {
-        let workspace = TofuWorkspace::with_providers(tofu(), &[("fabric", &provider("fabric"))]);
+        let workspace =
+            TofuWorkspace::with_providers(Bundle::from_env().tofu(), &[("fabric", &fabric())]);
         fs::write(
             workspace.path().join("main.tf"),
             configuration(image, architecture, reads),

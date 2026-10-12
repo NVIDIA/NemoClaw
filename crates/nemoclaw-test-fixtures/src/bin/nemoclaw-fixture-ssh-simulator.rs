@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A simulated `ssh` for E2E tests: isolated Docker engine state and fixed
-//! host measurements, kept in the directory named by `NEMOCLAW_TEST_REMOTE`.
+//! A simulated `ssh` for provider contract and end-to-end tests: isolated
+//! Docker engine state and fixed host measurements, kept in the directory
+//! named by `NEMOCLAW_TEST_REMOTE`.
 //!
-//! Tests install this executable as `bin/ssh` on `PATH`. Each invocation
+//! Tests install this executable as `ssh` with
+//! [`nemoclaw_test_fixtures::ssh::install_simulator`]. Each invocation
 //! either prints a capacity observation or answers one Docker API request
 //! read from stdin, as `docker system dial-stdio` would.
 
@@ -565,7 +567,7 @@ fn create(state: &mut Value, fixture: &Value, request: &Request) -> (u16, Body) 
 }
 
 /// The fixture's state directory: NEMOCLAW_TEST_REMOTE, or the path that
-/// [`nemoclaw_e2e::install_ssh_simulator`] records beside this executable for
+/// [`nemoclaw_test_fixtures::ssh::install_simulator`] records beside this executable for
 /// callers that do not pass the environment on.
 fn root() -> PathBuf {
     if let Some(root) = std::env::var_os("NEMOCLAW_TEST_REMOTE") {
@@ -573,7 +575,7 @@ fn root() -> PathBuf {
     }
     let recorded = std::env::current_exe()
         .unwrap()
-        .with_file_name(nemoclaw_e2e::SSH_SIMULATOR_ROOT);
+        .with_file_name(nemoclaw_test_fixtures::ssh::SIMULATOR_ROOT);
     PathBuf::from(
         fs::read_to_string(&recorded)
             .unwrap_or_else(|_| panic!("set NEMOCLAW_TEST_REMOTE or write {}", recorded.display()))

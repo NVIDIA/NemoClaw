@@ -4,8 +4,6 @@
 use super::*;
 use crate::kubernetes::gateway::ADDRESS;
 
-#[cfg(all(test, unix))]
-mod tests;
 #[cfg(test)]
 mod validation_tests;
 

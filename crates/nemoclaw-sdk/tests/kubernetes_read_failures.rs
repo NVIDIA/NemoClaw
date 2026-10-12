@@ -13,7 +13,8 @@
 //! before the next read.
 #![cfg(unix)]
 
-use crate::kube_api::{Objects, client, collection};
+use crate::kube_api::{Objects, collection};
+use crate::kube_client::client;
 use crate::kube_faults::{
     Fault, Snapshot,
     platform::{self, Call, NAME, OWNER, assert_class, run},

@@ -93,13 +93,14 @@ impl Drop for Owned {
     }
 }
 
-/// Pull pinned images, build the agent and proxy images, write owned gateway
-/// documents, and return the environment the live-docker profile reads.
+/// Pull pinned images, build or load the agent and proxy images, write owned
+/// gateway documents, and return the environment the live-docker profile reads.
 fn prepare(
     pins: &Pins,
     platform: &str,
     bundle: &Path,
     inputs: &Path,
+    images: Option<&Path>,
     owned: &mut Owned,
 ) -> Result<Vec<(String, String)>> {
     if !platform.starts_with("linux_") {
@@ -124,34 +125,20 @@ fn prepare(
     let mut nonce = [0u8; 6];
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the live-test images")?;
     let prefix = format!("nc-live-{}", nemoclaw_build::hex(&nonce));
-    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
-    // Every test needs python3, sha256sum and node. Pi has them and is the
-    // smaller image, but is built only for ARM64; OpenClaw is built for both.
-    let (target, harness) = if platform == "linux_arm64" {
-        ("pi", "nvidia.fabric.pi")
-    } else {
-        ("openclaw", "nvidia.fabric.openclaw")
-    };
-    owned.images.push(format!("{prefix}:{target}"));
-    let status = Command::new(std::env::current_exe()?)
-        .args(["images", "build", "--platform", &docker_platform, target])
-        .env("IMAGE_PREFIX", &prefix)
-        .stdin(Stdio::null())
-        .status()?;
-    if !status.success() {
-        return Err(format!("cannot build the {target} agent image").into());
+    // Every test needs python3, sha256sum and node, which both agent images have.
+    let (target, harness) = live_images::agent(platform);
+    let names = live_images::names(platform);
+    match images {
+        Some(archive) => live_images::load(archive, &prefix, &names, &mut owned.images)?,
+        None => {
+            owned
+                .images
+                .extend(names.map(|name| format!("{prefix}:{name}")));
+            live_images::build_agent(platform, &prefix)?;
+            live_images::build_proxies(&prefix)?;
+        }
     }
     let agent = by_digest(&prefix, target)?;
-    // Two proxy images with distinct digests, for the image-change check.
-    for variant in ["a", "b"] {
-        let tag = format!("{prefix}:proxy-{variant}");
-        owned.images.push(tag.clone());
-        run(docker()
-            .args(["buildx", "build", "--load", "--quiet"])
-            .args(["-f", "image/ollama-proxy/Dockerfile", "--target", "runtime"])
-            .args(["--label", &format!("org.nemoclaw.test=proxy-{variant}")])
-            .args(["--tag", &tag, "."]))?;
-    }
 
     let used: Vec<String> = docker_output(&["network", "ls", "--quiet"])?
         .lines()
@@ -246,6 +233,8 @@ pub(super) fn run_live_docker(
     pins: &Pins,
     platform: &str,
     configure: &dyn Fn(&mut Command),
+    archive: Option<&Path>,
+    images: Option<&Path>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
@@ -258,7 +247,7 @@ pub(super) fn run_live_docker(
         images: Vec::new(),
         uids: Vec::new(),
     };
-    let environment = prepare(pins, platform, &bundle, inputs.path(), &mut owned)?;
+    let environment = prepare(pins, platform, &bundle, inputs.path(), images, &mut owned)?;
     let documents: Vec<String> = environment
         .iter()
         .find(|(key, _)| key == GATEWAY_DOCUMENTS)
@@ -271,27 +260,56 @@ pub(super) fn run_live_docker(
     let [args] = Step::LiveDocker.cargo_args() else {
         unreachable!("live-docker is one nextest command")
     };
-    let nextest = |filter: &str, document: Option<&str>| -> Result<()> {
-        let mut command = cargo();
-        configure(&mut command);
+    // Each nextest command rewrites the profile's JUnit report; keep each one,
+    // so the step reports and uploads all of its tests.
+    let Some((profile, file)) = Step::LiveDocker.junit() else {
+        unreachable!("live-docker writes a JUnit report")
+    };
+    let junit = Path::new("target").join("nextest").join(profile).join(file);
+    let mut reports = Vec::new();
+    let mut nextest = |filter: &str, document: Option<&str>| -> Result<()> {
+        let mut command = match archive {
+            Some(archive) => archived(Step::LiveDocker, archive, configure)?,
+            None => {
+                let mut command = cargo();
+                configure(&mut command);
+                command.args(*args);
+                command
+            }
+        };
         command
-            .args(*args)
             .args(["-E", filter])
             .envs(shared.iter().map(|(key, value)| (key, value)));
         if let Some(document) = document {
             command.env("NEMOCLAW_TEST_GATEWAY_DOCUMENT", document);
         }
-        run(&mut command)
+        // A command that writes no report must not repeat the previous one.
+        let _ = fs::remove_file(&junit);
+        let result = run(&mut command);
+        if let Ok(xml) = fs::read_to_string(&junit) {
+            reports.push(xml);
+        }
+        result
     };
     let gateway = GATEWAY_TESTS
         .iter()
         .map(|name| format!("test({name})"))
         .collect::<Vec<_>>()
         .join(" | ");
-    // `-E` narrows the profile's default filter rather than replacing it.
-    nextest(&format!("not ({gateway})"), None)?;
-    for (name, document) in GATEWAY_TESTS.iter().zip(&documents) {
-        nextest(&format!("test({name})"), Some(document))?;
+    let result = (|| {
+        // `-E` narrows the profile's default filter rather than replacing it.
+        nextest(&format!("not ({gateway})"), None)?;
+        for (name, document) in GATEWAY_TESTS.iter().zip(&documents) {
+            nextest(&format!("test({name})"), Some(document))?;
+        }
+        Ok(())
+    })();
+    if !reports.is_empty() {
+        let joined = ci::timing::join_consecutive(&reports)
+            .and_then(|xml| fs::write(&junit, xml).map_err(|error| error.to_string()));
+        if let Err(error) = joined {
+            eprintln!("cannot join the live-docker JUnit reports: {error}");
+        }
     }
-    Ok(())
+    result
 }

@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{http_fixture as docker, openshell::Fixture, tofu::TofuWorkspace};
+use crate::{http_fixture as docker, openshell::Fixture};
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -14,11 +13,8 @@ use std::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated engine and gateway fixtures"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated engine and gateway fixtures"]
 async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_teardown() {
-    let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
-    let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
-    assert!(tofu.is_absolute() && provider.is_absolute());
     let gateway = Fixture::start().await;
     let name = "nc-0123456789abcdef-gateway".to_owned();
     let owner = "302ff5e1-088d-42ce-959f-4ff4c3570c13".to_owned();
@@ -34,7 +30,7 @@ async fn managed_gateway_exit_preserves_bootstrap_state_and_allows_recovery_or_t
             "State":{"Running":active,"Status":if active {"running"} else {"exited"},"ExitCode":42,"Error":"PRIVATE_SENTINEL"}
         })).unwrap()))
     }).await;
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = crate::workspace();
     let root = directory.path();
     let mut graph = json!({
         "terraform":{"required_version":"= 1.12.6","required_providers":{

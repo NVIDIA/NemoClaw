@@ -3,16 +3,60 @@
 
 # Wall-clock budgets for each test step, in seconds, enforced on the Linux CI
 # runners; other platforms report their times without failing. wall_seconds
-# bounds a step's run, or each lifecycle partition; test_seconds bounds any one
-# test in it. Lower a budget when a change makes the step faster; raising one
-# needs the reason in the pull request. See docs/contributing/testing.md.
+# bounds a step's nextest run, the live-docker step's nextest commands together,
+# or each lifecycle partition; test_seconds bounds any one test in it. The
+# step's profile in .config/nextest.toml must use test_seconds as its
+# slow-timeout period; it stops a test at a multiple of it. Lower a budget when
+# a change makes the step faster; raising one needs the reason in the pull
+# request. See docs/contributing/testing.md.
+#
+# binaries budgets test binaries by their nextest name: summed_seconds bounds
+# the binary's test times added up across a platform's lifecycle partitions,
+# and test_seconds bounds any one of its tests. Each binary's override in the
+# lifecycle profile in .config/nextest.toml must use its test_seconds as the
+# slow-timeout period.
 
 # Unit and integration tests: 27 s on linux_amd64, slowest test 5.1 s.
 test:
   wall_seconds: 45
   test_seconds: 8
 
-# Each lifecycle partition: 229 s on linux_amd64, slowest test 74 s.
+# Each lifecycle partition: at most 207 s on linux_amd64 and linux_arm64,
+# slowest test 67 s.
 lifecycle:
+  wall_seconds: 300
+  test_seconds: 90
+
+# Live / Docker, its four nextest commands together: at most 255 s on
+# linux_amd64 and 210 s on linux_arm64 in 11 v1 runs. Its slowest test,
+# retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache,
+# took 110 s on linux_amd64 in a full report; in the v1 runs, whose reports
+# kept only the last command, it ran past 120 s in 5 of 11 linux_amd64 runs
+# and, by its command's wall time, under about 150 s.
+live-docker:
   wall_seconds: 360
+  test_seconds: 180
+
+# Live / Kind: at most 199 s on linux_amd64 and 171 s on linux_arm64 in 11 v1
+# runs; slowest test 83 s.
+live-kind:
+  wall_seconds: 270
   test_seconds: 120
+
+# Each provider's contract tests, measured in 14 v1 runs on linux_amd64 and
+# linux_arm64.
+binaries:
+  # 3 tests: at most 27 s summed; slowest test, the Pi configuration update,
+  # 16.4 s.
+  fabric-provider::contract:
+    summed_seconds: 40
+    test_seconds: 22
+  # 29 tests, which only the 3 latest runs had: at most 80 s summed; slowest
+  # test 6.9 s.
+  nemoclaw-provider::contract:
+    summed_seconds: 110
+    test_seconds: 10
+  # 44 tests: at most 142 s summed; slowest test 8.1 s.
+  openshell-provider::contract:
+    summed_seconds: 190
+    test_seconds: 12

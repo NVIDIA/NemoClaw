@@ -62,6 +62,6 @@ fn anything_but_a_loopback_dial_stdio_fails_like_ssh() {
 #[test]
 #[ignore = "run by the lifecycle profile to archive the relay with its tests"]
 fn the_relay_is_found_beside_the_test_executables() {
-    let relay = nemoclaw_test_fixtures::ssh_relay(std::path::Path::new("/nonexistent"));
+    let relay = nemoclaw_test_fixtures::ssh_relay();
     assert!(relay.is_file());
 }

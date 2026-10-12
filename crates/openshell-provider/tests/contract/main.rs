@@ -14,27 +14,14 @@ mod standalone;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/contract/fixtures");
 
+/// The bundle's pinned OpenTofu.
 fn tofu() -> std::path::PathBuf {
-    let tofu = std::path::PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit pinned OpenTofu path"),
-    );
-    assert!(tofu.is_absolute());
-    tofu
+    nemoclaw_test_fixtures::Bundle::from_env().tofu()
 }
 
-/// The openshell provider built beside NEMOCLAW_TEST_PROVIDER, as the
-/// lifecycle tests receive it.
+/// The openshell provider Cargo built from this checkout, the one under test.
 fn provider() -> std::path::PathBuf {
-    let nemoclaw = std::path::PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider build path"),
-    );
-    assert!(nemoclaw.is_absolute());
-    nemoclaw
-        .parent()
-        .unwrap()
-        .join(nemoclaw_test_fixtures::executable(
-            "terraform-provider-openshell",
-        ))
+    nemoclaw_test_fixtures::package_executable!("terraform-provider-openshell")
 }
 
 /// Credential variables the fixture's registrations name, with fixture values.
@@ -131,7 +118,7 @@ macro_rules! fixtures {
     ($($test:ident => $name:literal,)*) => {
         $(
             #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-            #[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; fake OpenShell gateway"]
+            #[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
             async fn $test() {
                 reads_back_unchanged($name).await;
             }

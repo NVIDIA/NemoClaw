@@ -10,7 +10,7 @@ fn output(tofu: &Standalone, name: &str) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; fake OpenShell gateway"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; fake OpenShell gateway"]
 async fn readiness_reports_the_configured_agent_and_its_failed_health() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint, &["readiness.tf"]);

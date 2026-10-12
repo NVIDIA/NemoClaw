@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The fake `ssh` relay to fake container engines on platforms without Unix
-//! sockets, shared by `nemoclaw-fixture-ssh` and `nemoclaw-e2e`'s SSH simulator.
+//! Fake `ssh` executables: the relay to fake container engines on platforms
+//! without Unix sockets, shared by `nemoclaw-fixture-ssh` and the SSH
+//! simulator `nemoclaw-fixture-ssh-simulator`, and the simulator's installation.
 //!
 //! NemoClaw reaches an SSH engine with `ssh [options] -- TARGET docker system
 //! dial-stdio`. For a TARGET of `ssh://127.0.0.1:PORT`, [`relay`] copies
@@ -58,4 +59,19 @@ pub fn relay(address: SocketAddr) -> ExitCode {
     }
     drop(requests);
     ExitCode::SUCCESS
+}
+
+/// The file beside an installed SSH simulator that names its state directory.
+pub const SIMULATOR_ROOT: &str = "nemoclaw-test-remote";
+
+/// Install the SSH simulator as `ssh` in `bin`, recording `root` beside it
+/// for callers that do not pass `NEMOCLAW_TEST_REMOTE` on.
+pub fn install_simulator(bin: &std::path::Path, root: &std::path::Path) {
+    std::fs::create_dir_all(bin).unwrap();
+    std::fs::copy(
+        crate::fixture_executable("nemoclaw-fixture-ssh-simulator"),
+        bin.join(crate::executable("ssh")),
+    )
+    .unwrap();
+    std::fs::write(bin.join(SIMULATOR_ROOT), root.to_str().unwrap()).unwrap();
 }

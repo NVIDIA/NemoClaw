@@ -10,7 +10,8 @@
 //! 429, 503 and 504 for minutes.
 
 #![allow(dead_code)]
-use crate::kube_api::{Objects, client, status};
+use crate::kube_api::{Objects, status};
+use crate::kube_client::client;
 use crate::transport::Fixture;
 use serde_json::Value;
 use std::{

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Storage install: the namespace, prerequisite check and credential key.
 
-use crate::kube_api::{Objects, client};
+use crate::{kube_api::Objects, kube_client::client};
 use nemoclaw_sdk::{
     ObservationError,
     kubernetes::{
@@ -258,4 +258,30 @@ async fn a_dropped_connection_during_the_storage_class_list_is_a_transport_failu
         apply_with_fault(STORAGE_CLASSES_PATH, Fault::Dropped).await,
         Err(ObservationError::Transport)
     );
+}
+
+/// The in-memory API reports an absent object as missing, even one whose name
+/// ends in `s` like a collection's.
+#[tokio::test]
+async fn the_in_memory_api_reports_absent_objects_as_missing() {
+    use nemoclaw_sdk::kubernetes::cluster::Owned;
+    let objects = cluster(true);
+    let fixture = objects.serve().await;
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    for (kind, namespace, name) in [
+        ("Namespace", "", "agents"),
+        ("Secret", "agents", "credentials"),
+    ] {
+        let owned = Owned {
+            api_version: "v1".into(),
+            kind: kind.into(),
+            namespace: namespace.into(),
+            name: name.into(),
+            uid: String::new(),
+        };
+        assert!(
+            cluster.get(&owned).await.unwrap().is_none(),
+            "{kind} {name}"
+        );
+    }
 }

@@ -1,80 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_e2e::{http_fixture::Fixture, tofu::TofuWorkspace};
-use serde_json::{Value, json};
-use std::{
-    fs,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated HTTP fixture"]
-async fn provider_model_catalog_reads_are_read_only_and_keep_api_qualification_unknown() {
-    let tofu =
-        PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").expect("explicit OpenTofu required"));
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit provider required"),
-    );
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let seen = requests.clone();
-    let server = Fixture::start_tcp(move |request| {
-        seen.lock().unwrap().push((
-            request.method.clone(),
-            request.path.clone(),
-            request.header("authorization").is_some(),
-        ));
-        Some((200, br#"{"data":[{"id":"fixture-model"}]}"#.to_vec()))
-    })
-    .await;
-    let endpoint = format!("{}/v1", server.endpoint);
-    let directory = TofuWorkspace::new(tofu, provider);
-    let root = directory.path();
-    let graph = json!({"terraform":{"required_version":"= 1.12.6","required_providers":{"nemoclaw":{"source":"nvidia/nemoclaw"}}},"provider":{"nemoclaw":{}},"data":{"nemoclaw_inference_capabilities":{"current":{"endpoint":endpoint,"api":"openai-responses"}}},"output":{"observation":{"value":"${data.nemoclaw_inference_capabilities.current.observation_json}"}}});
-    fs::write(root.join("main.tf.json"), graph.to_string()).unwrap();
-    let run = |args: &[&str]| {
-        let result = directory.command().args(args).output().unwrap();
-        assert!(
-            result.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&result.stdout),
-            String::from_utf8_lossy(&result.stderr)
-        );
-        result
-    };
-    run(&["plan", "-input=false", "-no-color", "-out=plan.bin"]);
-    let plan: Value = serde_json::from_slice(&run(&["show", "-json", "plan.bin"]).stdout).unwrap();
-    let observation: Value = serde_json::from_str(
-        plan["planned_values"]["outputs"]["observation"]["value"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(observation["status"], "available");
-    assert_eq!(observation["models"], json!(["fixture-model"]));
-    assert_eq!(observation["api_verified"], false);
-    assert!(!root.join("terraform.tfstate").exists());
-    let requests = requests.lock().unwrap();
-    assert!(!requests.is_empty());
-    assert!(
-        requests
-            .iter()
-            .all(|request| *request == ("GET".to_owned(), "/v1/models".to_owned(), false))
-    );
-}
+//! Inference catalog discovery through SDK deployments. The provider's
+//! contract tests cover `nemoclaw_inference_capabilities` in authored HCL.
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated HTTP and gateway fixtures"]
 async fn optional_catalog_failures_preserve_complete_unchanged_plans_and_typed_uncertainty() {
+    use nemoclaw_e2e::http_fixture::Fixture;
     use nemoclaw_sdk::{
         CancellationToken, Deployment,
         config::{Document, InferenceApi, InferenceProviderKind},
     };
+    use serde_json::{Value, json};
     use std::{
+        fs,
+        path::PathBuf,
         process::Command,
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let mode = Arc::new(AtomicUsize::new(0));

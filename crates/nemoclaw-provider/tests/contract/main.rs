@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Contract tests: each nemoclaw type through pinned OpenTofu against fake
-//! Docker engines, gateways, and model servers. `every_type_has_a_contract_test`
-//! requires one for every type the provider serves.
+//! Docker engines, gateways, model servers, and Kubernetes APIs.
+//! `every_type_has_a_contract_test` requires one for every type the provider
+//! serves.
 
 #[path = "../../../test-support/http.rs"]
 mod http_fixture;
+/// The in-memory Kubernetes API shared with the SDK tests, which reaches its
+/// HTTP server as `transport`.
+#[path = "../../../test-support/kube_api.rs"]
+mod kube_api;
+use http_fixture as transport;
 /// Fabric catalog fixtures shared with the end-to-end tests.
 #[path = "../../../nemoclaw-e2e/src/image_runtime.rs"]
 #[allow(dead_code)]
@@ -13,8 +19,17 @@ mod image_runtime;
 
 mod discovery;
 mod gateway_readiness;
+// Managed gateway resources take only a local engine socket, which only Unix
+// clients reach.
+#[cfg(unix)]
+mod gateway_storage;
+mod inference_capabilities;
 mod kubernetes_hcl;
+mod kubernetes_lifecycle;
+mod provider_protocol;
 mod runtime_image;
+mod service_capacity;
+mod service_readiness;
 mod service_storage;
 // The bundled Docker provider reaches its engine with its own ssh arguments,
 // which the relay does not accept.
@@ -22,6 +37,17 @@ mod service_storage;
 mod vllm_runtime;
 
 pub use nemoclaw_test_fixtures::{openshell, tofu};
+
+/// The nemoclaw provider Cargo built from this checkout, the one under test.
+pub fn provider() -> std::path::PathBuf {
+    nemoclaw_test_fixtures::package_executable!("terraform-provider-nemoclaw")
+}
+
+/// A workspace with the provider under test, and OpenTofu and the openshell
+/// and fabric providers from the bundle.
+pub fn workspace() -> tofu::TofuWorkspace {
+    tofu::TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider())
+}
 
 /// Failed apply may record new data-source observations and condition
 /// results; its managed resources and lineage must still be preserved.
@@ -41,28 +67,7 @@ pub fn assert_same_managed_resources(actual: &[u8], expected: &[u8]) {
 }
 
 /// Types still tested only outside this binary, and why.
-const ELSEWHERE: [(&str, &str); 5] = [
-    (
-        "gateway_storage",
-        "nemoclaw-e2e managed and the live Docker gateway tests, which need Docker (#12879)",
-    ),
-    (
-        "managed_gateway",
-        "nemoclaw-e2e provider_protocol, which needs that crate's fixture provider (#12878)",
-    ),
-    (
-        "service_capacity",
-        "nemoclaw-e2e service_capacity, which needs that crate's SSH fixture (#12878)",
-    ),
-    (
-        "service_readiness",
-        "nemoclaw-e2e service_readiness, which needs that crate's SSH fixture (#12878)",
-    ),
-    (
-        "inference_capabilities",
-        "nemoclaw-e2e inference_discovery, only through SDK deployments (#12879)",
-    ),
-];
+const ELSEWHERE: [(&str, &str); 0] = [];
 
 /// Every resource and data source the provider serves appears in a contract
 /// test, or in [`ELSEWHERE`] with the reason it is not here yet.
@@ -85,8 +90,14 @@ fn every_type_has_a_contract_test() {
     let sources = [
         include_str!("discovery.rs"),
         include_str!("gateway_readiness.rs"),
+        include_str!("gateway_storage.rs"),
+        include_str!("inference_capabilities.rs"),
         include_str!("kubernetes_hcl.rs"),
+        include_str!("kubernetes_lifecycle.rs"),
+        include_str!("provider_protocol.rs"),
         include_str!("runtime_image.rs"),
+        include_str!("service_capacity.rs"),
+        include_str!("service_readiness.rs"),
         include_str!("service_storage.rs"),
         include_str!("vllm_runtime.rs"),
     ]

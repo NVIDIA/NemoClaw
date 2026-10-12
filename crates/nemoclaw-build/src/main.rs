@@ -64,12 +64,16 @@ enum Action {
         /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
         /// archive, live-docker, and live-kind run only when named.
         step: Option<String>,
-        /// Nextest partition for an explicitly selected lifecycle run (for example hash:1/2).
+        /// Nextest partition for an explicitly selected lifecycle run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
         /// Run lifecycle tests from a nextest archive instead of compiling them.
         #[arg(long)]
         archive_file: Option<PathBuf>,
+        /// Load the live suites' images from this `ci live-images` archive
+        /// instead of building them.
+        #[arg(long)]
+        images: Option<PathBuf>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -85,6 +89,19 @@ enum Action {
         /// Base revision, such as the pull request base commit.
         #[arg(long)]
         base: String,
+    },
+    /// Report a platform's whole lifecycle suite from its partitions' JUnit
+    /// artifacts, and add the report to the GitHub job summary. On the Linux
+    /// CI runners, fail when a test binary exceeds its budget.
+    LifecycleTiming {
+        /// Directory holding the downloaded lifecycle-PLATFORM-SHARD-ATTEMPT
+        /// artifacts, one subdirectory each.
+        directory: PathBuf,
+        #[arg(long)]
+        platform: String,
+        /// The shards CI ran, as a JSON list such as [1, 2].
+        #[arg(long)]
+        shards: String,
     },
 }
 #[derive(Clone, clap::ValueEnum)]
@@ -477,6 +494,16 @@ async fn main() -> Result<()> {
         }
         .map_err(Into::into);
     }
+    if let Action::LifecycleTiming {
+        directory,
+        platform,
+        shards,
+    } = &cli.command
+    {
+        let shards: Vec<u32> = serde_json::from_str(shards)
+            .map_err(|error| format!("--shards must be a JSON list of numbers: {error}"))?;
+        return run_ci::report_lifecycle_suite(directory, platform, &shards);
+    }
     if let Action::Changes { workflow, base } = &cli.command {
         let (workflow, name) = match workflow {
             ChangedWorkflow::Images => (nemoclaw_build::changes::Workflow::Images, "images"),
@@ -492,6 +519,7 @@ async fn main() -> Result<()> {
         step,
         partition,
         archive_file,
+        images,
     } = cli.command
     {
         return run_ci::run_steps(
@@ -499,6 +527,7 @@ async fn main() -> Result<()> {
             step.as_deref(),
             partition.as_deref(),
             archive_file.as_deref(),
+            images.as_deref(),
         )
         .await;
     }
@@ -513,8 +542,11 @@ async fn main() -> Result<()> {
         Action::Schema { .. } | Action::Docs { .. } | Action::Fern { .. } => {
             unreachable!("documentation generation returned before build tool checks")
         }
-        Action::Ci { .. } | Action::Images { .. } | Action::Changes { .. } => {
-            unreachable!("CI, image, and change commands returned before build tool checks")
+        Action::Ci { .. }
+        | Action::Images { .. }
+        | Action::Changes { .. }
+        | Action::LifecycleTiming { .. } => {
+            unreachable!("CI, image, change, and timing commands returned before build tool checks")
         }
         #[cfg(feature = "sdk")]
         Action::Bundle { platform } => {

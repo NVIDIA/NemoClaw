@@ -1,38 +1,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::tofu::TofuWorkspace;
 use nemoclaw_sdk::{compile, config::Document};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::fs;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
 async fn standalone_readiness_defers_to_apply_rechecks_unchanged_services_and_allows_destroy() {
     standalone_readiness(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated SSH fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
 async fn standalone_proxy_readiness_rechecks_identity_and_credentials_without_sdk_or_gateway() {
     standalone_readiness(true).await;
 }
 
 async fn standalone_readiness(proxy: bool) {
-    let tofu = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_TOFU").unwrap());
-    let provider = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_PROVIDER").unwrap());
-    assert!(tofu.is_absolute() && provider.is_absolute());
-    let directory = TofuWorkspace::new(tofu, provider);
+    let directory = crate::workspace();
     let root = directory.path();
     // Beside the providers, where Windows finds it before the relay on PATH.
-    nemoclaw_e2e::install_ssh_simulator(
-        std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
-            .expect("Cargo sets the fixture executable path"),
-        root,
-        root,
-    );
+    nemoclaw_test_fixtures::ssh::install_simulator(root, root);
     let document = Document::parse(
-        include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
+        include_bytes!("../../../nemoclaw-sdk/tests/fixtures/config/spark.yaml").as_slice(),
     )
     .unwrap();
     let mut document = serde_json::to_value(document).unwrap();
@@ -58,7 +49,7 @@ async fn standalone_readiness(proxy: bool) {
     let changed = model_changed.clone();
     let mutations = Arc::new(Mutex::new(Vec::new()));
     let seen = mutations.clone();
-    let server = nemoclaw_e2e::http_fixture::Fixture::start_tcp(move |request| {
+    let server = crate::http_fixture::Fixture::start_tcp(move |request| {
         if request.method != "GET" || request.path != "/api/tags" {
             seen.lock()
                 .unwrap()
@@ -134,7 +125,7 @@ async fn standalone_readiness(proxy: bool) {
             .command()
             .args(args)
             .env("NEMOCLAW_TEST_REMOTE", root)
-            .env("PATH", nemoclaw_e2e::path_with(root))
+            .env("PATH", nemoclaw_test_fixtures::path_with(root))
             .output()
             .unwrap();
         assert_eq!(

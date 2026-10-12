@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use nemoclaw_e2e::tofu::TofuWorkspace;
+use crate::tofu::TofuWorkspace;
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Output,
-};
+use std::{fs, path::Path, process::Output};
 
 struct Experiment {
     dir: TofuWorkspace,
@@ -16,7 +12,7 @@ impl Experiment {
     fn hardware_config(&self, invalid: bool) {
         use nemoclaw_sdk::{compile, config::Document};
         let document =
-            Document::parse(include_bytes!("../../../examples/spark/vllm.yaml").as_slice())
+            Document::parse(include_bytes!("../../../../examples/spark/vllm.yaml").as_slice())
                 .unwrap();
         let generations = [
             ("managed_gateway".into(), "a".repeat(32)),
@@ -42,13 +38,8 @@ impl Experiment {
         }).to_string()).unwrap();
     }
     fn new(provider: impl AsRef<Path>) -> Self {
-        let tofu = PathBuf::from(
-            std::env::var_os("NEMOCLAW_TEST_TOFU")
-                .expect("explicit pinned OpenTofu executable required"),
-        );
-        assert!(tofu.is_absolute());
         let this = Self {
-            dir: TofuWorkspace::new(tofu, provider),
+            dir: TofuWorkspace::new(&nemoclaw_test_fixtures::Bundle::from_env(), provider),
         };
         this.config("https://initial.example/v1");
         this.mode("normal");
@@ -93,12 +84,11 @@ impl Experiment {
 }
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
-    let e = Experiment::new(
-        std::env::var("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture")
-            .expect("Cargo sets the fixture executable path"),
-    );
+    let e = Experiment::new(nemoclaw_test_fixtures::fixture_executable(
+        "nemoclaw-fixture-provider",
+    ));
     e.hardware_config(true);
     let result = e.run(&["validate", "-json"]);
     assert!(!result.status.success());
@@ -156,12 +146,11 @@ fn real_tofu_checks_hardware_during_validation_planning_and_saved_plan_apply() {
 }
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and_absence() {
-    let e = Experiment::new(
-        std::env::var("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture")
-            .expect("Cargo sets the fixture executable path"),
-    );
+    let e = Experiment::new(nemoclaw_test_fixtures::fixture_executable(
+        "nemoclaw-fixture-provider",
+    ));
     e.success(&["apply", "-auto-approve", "-input=false"]);
     let original = e.state();
     assert_eq!(
@@ -202,13 +191,12 @@ fn real_tofu_preserves_failed_observations_and_reconciles_registration_drift_and
 }
 
 #[test]
-#[ignore = "requires NEMOCLAW_TEST_TOFU; no live services"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; no live services"]
 fn real_tofu_retains_a_tainted_instance_and_plans_its_replacement_after_creation_reports_a_later_failure()
  {
-    let e = Experiment::new(
-        std::env::var("CARGO_BIN_EXE_terraform-provider-nemoclaw-fixture")
-            .expect("Cargo sets the fixture executable path"),
-    );
+    let e = Experiment::new(nemoclaw_test_fixtures::fixture_executable(
+        "nemoclaw-fixture-provider",
+    ));
     e.mode("create-error");
     let output = e.run(&["apply", "-auto-approve", "-input=false"]);
     assert!(!output.status.success());
@@ -227,18 +215,15 @@ fn real_tofu_retains_a_tainted_instance_and_plans_its_replacement_after_creation
 // A managed gateway needs a local engine, which only Unix clients reach.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated Docker fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker fixture"]
 async fn production_provider_rechecks_network_and_image_prerequisites_before_saved_plan_apply() {
     use nemoclaw_sdk::{compile, config::Document};
     use std::sync::{Arc, Mutex};
 
-    let provider = PathBuf::from(
-        std::env::var_os("NEMOCLAW_TEST_PROVIDER").expect("explicit production provider required"),
-    );
-    assert!(provider.is_absolute());
+    let provider = crate::provider();
     let mode = Arc::new(Mutex::new("normal"));
     let shared = mode.clone();
-    let fixture = nemoclaw_e2e::http_fixture::Fixture::engine(move |request| {
+    let fixture = crate::http_fixture::Fixture::engine(move |request| {
         assert_eq!(request.method, "GET", "planning or rejected apply mutated Docker");
         let mode = *shared.lock().unwrap();
         let response = match request.path.split('?').next().unwrap() {
@@ -261,7 +246,7 @@ async fn production_provider_rechecks_network_and_image_prerequisites_before_sav
     }).await;
     let e = Experiment::new(provider);
     let document =
-        Document::parse(include_bytes!("../../../examples/spark/vllm.yaml").as_slice()).unwrap();
+        Document::parse(include_bytes!("../../../../examples/spark/vllm.yaml").as_slice()).unwrap();
     let generations = [
         ("managed_gateway".into(), "a".repeat(32)),
         ("inference_service".into(), "b".repeat(32)),

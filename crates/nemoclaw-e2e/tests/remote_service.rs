@@ -28,7 +28,7 @@ async fn run(root: &Path, bundle: &Path, command: &str, file: &str, success: boo
         process.arg(root.join(file));
     }
     let output = process
-        .env("PATH", nemoclaw_e2e::path_with(&root.join("bin")))
+        .env("PATH", nemoclaw_test_fixtures::path_with(&root.join("bin")))
         .env("NEMOCLAW_TEST_REMOTE", root)
         .output()
         .await
@@ -92,12 +92,7 @@ impl Scenario {
         let root = directory.path();
         // OpenTofu passes its providers only platform variables, so the fake ssh
         // finds its state in the file installed beside it, not the environment.
-        nemoclaw_e2e::install_ssh_simulator(
-            std::env::var("CARGO_BIN_EXE_nemoclaw-e2e-ssh-fixture")
-                .expect("Cargo sets the fixture executable path"),
-            &root.join("bin"),
-            root,
-        );
+        nemoclaw_test_fixtures::ssh::install_simulator(&root.join("bin"), root);
         let gateway = Fixture::start().await;
         gateway.state.lock().unwrap().driver = Some("podman".into());
         gateway.state.lock().unwrap().inference_exit = 1;
@@ -171,6 +166,20 @@ impl Scenario {
         run(&self.root, &self.bundle, command, file, success).await
     }
 
+    /// Why `nemoclaw export` refuses this deployment; the reason names its
+    /// unfinished or destroyed state without reading the SDK's files.
+    async fn export_refusal(&self) -> String {
+        let output = tokio::process::Command::new(self.bundle.join("bin/nemoclaw"))
+            .arg("--state-dir")
+            .arg(self.root.join("deployment"))
+            .arg("export")
+            .output()
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        String::from_utf8(output.stderr).unwrap()
+    }
+
     /// Applies the authored document and returns the engine it leaves, which
     /// later unchanged applies must reproduce.
     async fn apply(&self) -> Value {
@@ -183,27 +192,42 @@ impl Scenario {
     }
 }
 
-// Each remote service is split by what it proves: recovery while applying, and
-// behavior of an applied deployment. Both start from their own fresh state.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
-async fn remote_model_apply_recovers_failed_creation_and_lost_process_or_cache_keeping_data() {
-    apply_recovery("vllm").await;
-}
+// Every runtime plan, apply, export, or destroy after the service network
+// exists reads it, and the Docker provider waits 2 s before each read. Each
+// scenario therefore creates one runtime and runs every check that needs it.
+//
+// vLLM recovery runs in the bearer scenario below. The runtime-independent
+// checks of an applied deployment (the readiness gate, compute replacement
+// plans, and pull policy reapply) run once, against vLLM; the provider's
+// readiness and storage tests cover each runtime's own observations.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH/Docker and OpenShell fixtures"]
 async fn remote_model_reapply_and_drift_keep_bindings_and_stop_on_observation_failure() {
-    applied_deployment("vllm").await;
+    let s = Scenario::new("nvidia.fabric.openclaw", false, "vllm").await;
+    let stable = s.apply().await;
+    assert_eq!(stable["pulls"], 1);
+    export_and_reapply_are_unchanged(&s, &stable).await;
+    let state = readiness_is_checked_on_each_apply(&s, &stable).await;
+    image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
+    plans_stop_on_observation_failure(&s, &stable, &state, json!({"transport_failure":true})).await;
+    assert_no_probes(&s);
+    removed_pull_policy_reapplies_without_pulling(&s, &stable).await;
+    incompatible_image_blocks_changes_but_not_teardown(&s, &stable["volume"]).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker and application-health fixtures"]
-async fn remote_ollama_apply_recovers_failed_creation_and_lost_process_or_cache_keeping_data() {
-    apply_recovery("ollama").await;
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated Docker and application-health fixtures"]
-async fn remote_ollama_reapply_and_drift_keep_bindings_and_stop_on_observation_failure() {
-    applied_deployment("ollama").await;
+async fn remote_ollama_recovers_reapplies_and_stops_on_observation_failure_keeping_data() {
+    let s = Scenario::new("nvidia.fabric.openclaw", false, "ollama").await;
+    present_incompatible_images_fail_before_effects(&s).await;
+    plan_collects_no_host_capacity(&s).await;
+    let volume = recover_failed_creation_and_startup(&s).await;
+    pull_policy_change_is_planned_without_engine_effects(&s).await;
+    let stable = recover_lost_process_and_cache(&s, &volume).await;
+    export_and_reapply_are_unchanged(&s, &stable).await;
+    let state = s.runtime_state();
+    plans_stop_on_observation_failure(&s, &stable, &state, json!({"transport_failure":true})).await;
+    assert_no_probes(&s);
+    incompatible_image_blocks_changes_but_not_teardown(&s, &stable["volume"]).await;
 }
 
 // Bearer scenarios leave image compatibility, readiness, and transport checks,
@@ -223,24 +247,20 @@ async fn managed_bearer_credentials_survive_recovery_reapply_and_replacement_out
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
-async fn managed_bearer_storage_or_key_damage_stops_plan_and_apply_without_changing_bindings() {
+async fn managed_bearer_cleanup_recovers_damage_keeps_bindings_and_teardown_accepts_both_identities()
+ {
     let s = Scenario::new("nvidia.fabric.hermes", true, "vllm").await;
-    // The first apply leaves attributes that the next refresh normalizes; a
-    // failed apply that refreshes must be compared with the settled state.
-    s.apply().await;
-    let stable = s.apply().await;
+    let volume = s.apply().await["volume"].clone();
+    replacement_cleanup(&s.root, &s.bundle).await;
+    // Cleanup ends with applies that settle the state; a failed apply that
+    // refreshes must be compared with that settled state.
+    let stable = read(&s.root, "engine.json");
     let state = s.runtime_state();
     plans_stop_on_observation_failure(&s, &stable, &state, json!({"daemon":"other-engine"})).await;
     damaged_bearer_storage_stops_plan_and_apply(&s, &stable, &state).await;
     insecure_bearer_key_stops_apply(&s, &stable, &state).await;
-    destroy_retains_storage(&s, &stable["volume"]).await;
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
-async fn managed_bearer_replacement_cleanup_recovers_and_teardown_accepts_both_identities() {
-    let s = Scenario::new("nvidia.fabric.hermes", true, "vllm").await;
-    let volume = s.apply().await["volume"].clone();
-    replacement_cleanup(&s.root, &s.bundle).await;
+    // Teardown must also accept both current and pending-delete identities.
+    interrupt_cleanup(&s.root, true);
     incompatible_image_blocks_changes_but_not_teardown(&s, &volume).await;
 }
 
@@ -250,7 +270,7 @@ async fn managed_pi_applies_without_generation_and_refused_sandbox_changes_keep_
     let s = Scenario::new("nvidia.fabric.pi", false, "vllm").await;
     present_incompatible_images_fail_before_effects(&s).await;
     plan_collects_no_host_capacity(&s).await;
-    recover_failed_creation_and_startup(&s).await;
+    s.apply().await;
     refused_sandbox_changes_preserve_retained_intent(&s.root, &s.bundle, &s.gateway).await;
     s.run("destroy", "", true).await;
     assert!(read(&s.root, "engine.json")["container"].is_null());
@@ -287,29 +307,6 @@ async fn unverified_ollama_images_are_checked_after_pull_before_storage() {
         &Scenario::new("nvidia.fabric.openclaw", false, "ollama").await,
     )
     .await;
-}
-
-async fn apply_recovery(kind: &str) {
-    let s = Scenario::new("nvidia.fabric.openclaw", false, kind).await;
-    present_incompatible_images_fail_before_effects(&s).await;
-    plan_collects_no_host_capacity(&s).await;
-    let volume = recover_failed_creation_and_startup(&s).await;
-    pull_policy_change_is_planned_without_engine_effects(&s).await;
-    let stable = recover_lost_process_and_cache(&s, &volume).await;
-    destroy_retains_storage(&s, &stable["volume"]).await;
-}
-
-async fn applied_deployment(kind: &str) {
-    let s = Scenario::new("nvidia.fabric.openclaw", false, kind).await;
-    let stable = s.apply().await;
-    assert_eq!(stable["pulls"], 1);
-    export_and_reapply_are_unchanged(&s, &stable).await;
-    let state = readiness_is_checked_on_each_apply(&s, &stable).await;
-    image_change_plans_compute_replacement_without_effects(&s, &stable, &state).await;
-    plans_stop_on_observation_failure(&s, &stable, &state, json!({"transport_failure":true})).await;
-    assert_no_probes(&s);
-    removed_pull_policy_reapplies_without_pulling(&s, &stable).await;
-    incompatible_image_blocks_changes_but_not_teardown(&s, &stable["volume"]).await;
 }
 
 async fn pulled_incompatible_image_fails_before_storage(s: &Scenario) {
@@ -427,7 +424,11 @@ async fn partial_destroy_retains_storage(s: &Scenario) {
     assert!(destroyed["network"].is_null());
     assert!(destroyed["container"].is_null());
     assert_eq!(destroyed["effects"], partial["effects"]);
-    assert_eq!(read(root, "deployment/intent.json")["destroyed"], true);
+    let refusal = s.export_refusal().await;
+    assert!(
+        refusal.contains("cannot export a destroyed deployment"),
+        "{refusal}"
+    );
 }
 
 // Fail before a process exists: the provider has already committed the
@@ -445,7 +446,8 @@ async fn recover_failed_creation_and_startup(s: &Scenario) -> Value {
     save(root, "control.json", &json!({"startup_failure":true}));
     s.run("apply", "config.yaml", false).await;
     assert_eq!(read(root, "engine.json")["creates"], 1);
-    assert_eq!(read(root, "deployment/intent.json")["runtimePending"], true);
+    let refusal = s.export_refusal().await;
+    assert!(refusal.contains("apply is unfinished"), "{refusal}");
     let runtime_state = read(root, "deployment/runtime/terraform.tfstate");
     let resources = runtime_state["resources"].as_array().unwrap();
     for expected in ["docker_container", "docker_network"] {
@@ -645,28 +647,18 @@ async fn plans_stop_on_observation_failure(
     save(root, "control.json", &json!({}));
 }
 
+// The provider's storage contract tests cover missing, foreign, and
+// substituted volumes; one substituted credential volume shows that the CLI
+// stops before changing bindings.
 async fn damaged_bearer_storage_stops_plan_and_apply(s: &Scenario, stable: &Value, state: &[u8]) {
     let root = s.root.as_path();
-    let storage = "auth_volume";
-    for fault in ["missing", "foreign", "substituted"] {
-        let mut damaged = stable.clone();
-        match fault {
-            "missing" => damaged[storage] = Value::Null,
-            "foreign" => {
-                damaged[storage]["Labels"]["nemoclaw.nvidia.com/uid"] =
-                    json!("ffffffff-ffff-ffff-ffff-ffffffffffff");
-            }
-            "substituted" => {
-                damaged[storage]["CreatedAt"] = json!("2026-09-16T00:00:00Z");
-            }
-            _ => unreachable!(),
-        }
-        save(root, "engine.json", &damaged);
-        s.run("plan", "config.yaml", false).await;
-        s.run("apply", "config.yaml", false).await;
-        assert_eq!(read(root, "engine.json"), damaged);
-        assert_eq!(s.runtime_state(), state);
-    }
+    let mut damaged = stable.clone();
+    damaged["auth_volume"]["CreatedAt"] = json!("2026-09-16T00:00:00Z");
+    save(root, "engine.json", &damaged);
+    s.run("plan", "config.yaml", false).await;
+    s.run("apply", "config.yaml", false).await;
+    assert_eq!(read(root, "engine.json"), damaged);
+    assert_eq!(s.runtime_state(), state);
     save(root, "engine.json", stable);
 }
 
@@ -837,8 +829,6 @@ async fn replacement_cleanup(root: &Path, bundle: &Path) {
     interrupt_cleanup(root, false);
     run(root, bundle, "apply", "config.yaml", true).await;
     assert_eq!(read(root, "engine.json")["container"], before["container"]);
-    // Teardown must also accept both current and pending-delete identities.
-    interrupt_cleanup(root, true);
 }
 
 async fn refused_sandbox_changes_preserve_retained_intent(
@@ -937,6 +927,5 @@ async fn refused_sandbox_changes_preserve_retained_intent(
     assert_eq!(read(root, "engine.json"), engine);
     assert_eq!(gateway.state.lock().unwrap().effects, effects);
     gateway.state.lock().unwrap().fail_read = None;
-    run(root, bundle, "export", "", true).await;
     // The caller destroys directly, without applying the original YAML again.
 }

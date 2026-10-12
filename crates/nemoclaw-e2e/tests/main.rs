@@ -21,34 +21,42 @@ mod fabric_deployment;
 mod fabric_live;
 #[path = "health.rs"]
 mod health;
+// Unix only, as before it moved here from nemoclaw-sdk.
+#[cfg(unix)]
+#[path = "helm_recovery.rs"]
+mod helm_recovery;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
 #[path = "inference_discovery.rs"]
 mod inference_discovery;
+#[cfg(unix)]
+#[path = "../../test-support/kube_api.rs"]
+mod kube_api;
+#[path = "kubernetes_chart.rs"]
+mod kubernetes_chart;
+#[path = "kubernetes_live.rs"]
+mod kubernetes_live;
 #[path = "managed.rs"]
 mod managed;
+#[cfg(unix)]
+#[path = "managed_gateway.rs"]
+mod managed_gateway;
 #[path = "model_live.rs"]
 mod model_live;
 #[path = "multiple_providers.rs"]
 mod multiple_providers;
-#[path = "openshell.rs"]
-mod openshell;
 #[path = "openshell_contract_fixtures.rs"]
 mod openshell_contract_fixtures;
-#[path = "provider_protocol.rs"]
-mod provider_protocol;
 #[path = "remote_service.rs"]
 mod remote_service;
 #[path = "sandbox_readiness.rs"]
 mod sandbox_readiness;
-#[path = "service_capacity.rs"]
-mod service_capacity;
-#[path = "service_readiness.rs"]
-mod service_readiness;
 #[path = "spark.rs"]
 mod spark;
 #[path = "tls.rs"]
 mod tls;
+#[path = "../../test-support/http.rs"]
+mod transport;
 #[path = "web_search.rs"]
 mod web_search;
 

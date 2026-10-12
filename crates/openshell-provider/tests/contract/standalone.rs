@@ -100,7 +100,7 @@ impl Standalone {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_registrations_recreate_confirmed_absence_without_replacing_sandboxes() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -143,7 +143,7 @@ async fn standalone_registrations_recreate_confirmed_absence_without_replacing_s
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_registrations_replace_and_remove_without_destroy_mode() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -210,7 +210,7 @@ async fn standalone_registrations_replace_and_remove_without_destroy_mode() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_registrations_preserve_bindings_on_failed_or_foreign_observations() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -245,7 +245,7 @@ async fn standalone_registrations_preserve_bindings_on_failed_or_foreign_observa
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_registrations_recover_lost_create_response_without_duplicate_creation() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -265,7 +265,7 @@ async fn standalone_registrations_recover_lost_create_response_without_duplicate
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_registration_authentication_mode_replaces_but_secret_reference_rotation_updates()
  {
     let fixture = Fixture::start().await;
@@ -333,7 +333,7 @@ async fn standalone_registration_authentication_mode_replaces_but_secret_referen
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_applies_resources_without_sdk_encoding_or_coordination() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -356,7 +356,7 @@ async fn standalone_hcl_applies_resources_without_sdk_encoding_or_coordination()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_recovers_partial_creation_after_untaint_and_retains_workspace() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -411,7 +411,7 @@ async fn standalone_hcl_recovers_partial_creation_after_untaint_and_retains_work
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_rejects_missing_bound_resources_before_recreation() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -437,7 +437,7 @@ async fn standalone_hcl_rejects_missing_bound_resources_before_recreation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_rejects_replacement_and_unauthorized_removal_during_plan() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -462,7 +462,7 @@ async fn standalone_hcl_rejects_replacement_and_unauthorized_removal_during_plan
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_preserves_state_on_failed_observation_and_foreign_identity() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -507,7 +507,7 @@ async fn standalone_hcl_preserves_state_on_failed_observation_and_foreign_identi
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_recovers_lost_delete_response_without_repeating_the_mutation() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -548,7 +548,7 @@ async fn standalone_hcl_recovers_lost_delete_response_without_repeating_the_muta
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_hcl_defers_provider_endpoint_until_bootstrap_apply() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -561,7 +561,7 @@ async fn standalone_hcl_defers_provider_endpoint_until_bootstrap_apply() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn deferred_provider_rechecks_ownership_before_saved_plan_apply() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -584,7 +584,7 @@ async fn deferred_provider_rechecks_ownership_before_saved_plan_apply() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn deferred_provider_reports_apply_observation_failures_and_recovers() {
     let fixture = Fixture::start().await;
     fixture.state.lock().unwrap().fail_read = Some(("workspace", tonic::Code::Unavailable));
@@ -599,7 +599,7 @@ async fn deferred_provider_reports_apply_observation_failures_and_recovers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn deferred_provider_keeps_bindings_when_bootstrap_endpoint_changes() {
     let fixture = Fixture::start().await;
     let next = Fixture::start().await;
@@ -619,7 +619,7 @@ async fn deferred_provider_keeps_bindings_when_bootstrap_endpoint_changes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn unavailable_bound_gateway_blocks_bootstrap_replacement_before_apply() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -644,7 +644,7 @@ async fn unavailable_bound_gateway_blocks_bootstrap_replacement_before_apply() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn gateway_readiness_dependency_waits_for_startup_before_workspace_creation() {
     let fixture = Fixture::start().await;
     fixture.state.lock().unwrap().fail_read = Some(("gateway", tonic::Code::Unavailable));
@@ -698,7 +698,7 @@ async fn gateway_readiness_dependency_waits_for_startup_before_workspace_creatio
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_create_readback_rejects_substitution_and_retains_established_binding() {
     for field in [
         "id",
@@ -747,7 +747,7 @@ async fn standalone_create_readback_rejects_substitution_and_retains_established
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_registrations_recover_after_absence_was_committed_by_refresh_only() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);
@@ -783,7 +783,7 @@ async fn standalone_registrations_recover_after_absence_was_committed_by_refresh
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires NEMOCLAW_TEST_TOFU and NEMOCLAW_TEST_PROVIDER; isolated OpenShell fixture"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated OpenShell fixture"]
 async fn standalone_lost_create_reply_requires_original_intent_to_recover_untracked_registration() {
     let fixture = Fixture::start().await;
     let tofu = Standalone::new(&fixture.endpoint);

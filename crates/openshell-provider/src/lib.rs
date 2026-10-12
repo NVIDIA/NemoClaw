@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(test)]
+mod fake_gateway_tests;
+#[cfg(test)]
 mod tests;
 
 pub mod agent;

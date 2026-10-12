@@ -53,3 +53,24 @@ pub fn hash_file(path: &Path) -> Result<String, Error> {
     }
     Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn atomic_writes_are_private_to_their_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, existing) in [("new.json", false), ("replaced.json", true)] {
+            let path = directory.path().join(name);
+            if existing {
+                std::fs::write(&path, b"{}").unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            save_json(&path, &serde_json::json!({"private": true})).unwrap();
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "{name} is readable by others: {mode:o}");
+        }
+    }
+}

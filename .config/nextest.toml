@@ -7,7 +7,12 @@ status-level = "slow"
 failure-output = "immediate-final"
 retries = 0
 test-threads = 8
-slow-timeout = { period = "30s", terminate-after = 10 }
+# Each profile reports a test as slow at its step's per-test limit in
+# .config/test-budgets.yaml and stops it at a small multiple of that limit, a
+# margin for the platforms and local runs that only report budgets. The test
+# step stops a test at three times its limit: its slowest test takes nearly
+# twice the limit on macOS. A test in crates/nemoclaw-build checks both files.
+slow-timeout = { period = "8s", terminate-after = 3 }
 
 # Each test step writes a JUnit report that `cargo ci` summarizes into where
 # its time went.
@@ -17,33 +22,50 @@ path = "test.xml"
 [profile.lifecycle]
 inherits = "ci"
 test-threads = 4
+slow-timeout = { period = "90s", terminate-after = 2 }
 # These fixtures own temporary state and loopback endpoints. Live tests stay opt-in.
-# Selecting the fake ssh relay's ignored test also archives the relay beside the
-# extracted tests, where fake engines find it on platforms without Unix sockets.
+# Selecting the fake ssh relay's ignored test also archives nemoclaw-test-fixtures'
+# executables beside the extracted tests: the relay, which fake engines need on
+# platforms without Unix sockets, and the SSH simulator. The fixture provider's
+# ignored test does the same for the provider protocol tests.
 default-filter = '''
-test(native_state_json_preserves_module_and_instance_identity_without_refresh)
-| (package(nemoclaw-sdk) & test(/^deployment::runtime::helm_recovery::tests::/))
-| (package(nemoclaw-sdk) & test(runtime_export_declares_the_native_helm_provider_inputs))
-| ((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
+((package(nemoclaw-provider) | package(openshell-provider) | package(fabric-provider)) & binary(=contract))
 | (package(nemoclaw-test-fixtures) & binary(=ssh_relay))
+| (package(nemoclaw-fixture-provider) & binary(=archive))
 | (package(nemoclaw-e2e) & binary(=integration) & (
-    test(/^provider_protocol::/) | test(/^service_capacity::/) | test(/^service_readiness::/)
-    | test(/^sandbox_readiness::/) | test(/^deployment::/)
+    test(/^sandbox_readiness::/) | test(/^deployment::/)
     | test(/^export_observations::/) | test(/^fabric_deployment::/)
     | test(/^multiple_providers::/) | test(/^remote_service::/)
-    | test(/^inference_discovery::/)
+    | test(/^inference_discovery::/) | test(/^helm_recovery::/)
 ))
 '''
 
 [profile.lifecycle.junit]
 path = "lifecycle.xml"
 
+# Each provider's contract tests have their own per-test limit in
+# .config/test-budgets.yaml; stop them at twice it, like the profile's other
+# tests.
+[[profile.lifecycle.overrides]]
+filter = 'binary_id(=fabric-provider::contract)'
+slow-timeout = { period = "22s", terminate-after = 2 }
+
+[[profile.lifecycle.overrides]]
+filter = 'binary_id(=nemoclaw-provider::contract)'
+slow-timeout = { period = "10s", terminate-after = 2 }
+
+[[profile.lifecycle.overrides]]
+filter = 'binary_id(=openshell-provider::contract)'
+slow-timeout = { period = "12s", terminate-after = 2 }
+
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
-# images and owned inputs these tests read. One at a time: they share one engine.
+# images and owned inputs these tests read. The Docker tests share one engine,
+# so they run one at a time; the offline runtime rebuild uses no engine and
+# compiles alongside them.
 [profile.live-docker]
 inherits = "ci"
-test-threads = 1
-slow-timeout = { period = "60s", terminate-after = 10 }
+test-threads = 2
+slow-timeout = { period = "180s", terminate-after = 2 }
 default-filter = '''
 (package(nemoclaw-runtime) & test(/^ollama_cache::/))
 | (package(nemoclaw-build) & (
@@ -53,20 +75,18 @@ default-filter = '''
 ))
 | (package(nemoclaw-e2e) & binary(=integration) & (
     test(/^cache_provider::/) | test(/^docker_provider_proxy::/)
+    | test(/^managed_gateway::/)
 ))
-| (package(nemoclaw-sdk) & (
-    test(managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu)
-    | test(the_issuer_image_serves_both_documents_over_https)
-))
+| (package(nemoclaw-sdk) & test(the_issuer_image_serves_both_documents_over_https))
 | (package(nemoclaw-provider) & test(/^managed_gateway_live::/))
 '''
 
 [profile.live-kind]
 inherits = "ci"
 test-threads = 1
-slow-timeout = { period = "120s", terminate-after = 10 }
+slow-timeout = { period = "120s", terminate-after = 2 }
 default-filter = '''
-package(nemoclaw-sdk) & (test(/^kubernetes_live::/) | test(/^kubernetes_gateway::/))
+package(nemoclaw-e2e) & binary(=integration) & (test(/^kubernetes_live::/) | test(/^kubernetes_chart::/))
 '''
 
 [profile.live-kind.junit]
@@ -74,3 +94,11 @@ path = "live-kind.xml"
 
 [profile.live-docker.junit]
 path = "live-docker.xml"
+
+[test-groups]
+docker-engine = { max-threads = 1 }
+
+# Everything but the rebuild uses the engine.
+[[profile.live-docker.overrides]]
+filter = 'not (package(nemoclaw-build) & test(retained_runtime_rebuilds_offline_without_protobuf_or_a_dependency_cache))'
+test-group = "docker-engine"

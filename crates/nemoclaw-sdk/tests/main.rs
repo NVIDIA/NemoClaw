@@ -5,8 +5,10 @@
 
 #[path = "support/examples.rs"]
 mod examples;
-#[path = "support/kube_api.rs"]
+#[path = "../../test-support/kube_api.rs"]
 mod kube_api;
+#[path = "support/kube_client.rs"]
+mod kube_client;
 #[path = "support/kube_faults.rs"]
 mod kube_faults;
 #[path = "support/provider_scope.rs"]
@@ -94,8 +96,6 @@ mod kubernetes_corrupt_receipt;
 mod kubernetes_expired_authentication;
 #[path = "kubernetes_gateway.rs"]
 mod kubernetes_gateway;
-#[path = "kubernetes_live.rs"]
-mod kubernetes_live;
 #[path = "kubernetes_lost_create_response.rs"]
 mod kubernetes_lost_create_response;
 #[path = "kubernetes_managed_compile.rs"]
