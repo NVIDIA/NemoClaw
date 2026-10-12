@@ -58,45 +58,37 @@ runs:
           sha256:dba39bc41923592bef67980e4d179c8b6d8442a6157e67621e53abf969072e3a \
           80376484
 
-    - name: Download immutable native Podman amd64 toolchain
+    - name: Download immutable native Podman toolchains
       if: ${{ inputs.enabled == 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
-        archive="$RUNNER_TEMP/native-podman-e2e-amd64.zip"
-        directory="$RUNNER_TEMP/native-podman-e2e-toolchain-amd64"
-        [[ ! -e "$archive" && ! -L "$archive" && ! -e "$directory" && ! -L "$directory" ]]
-        gh api -H 'Accept: application/octet-stream' \
-          repos/NVIDIA/NemoClaw/releases/assets/602749331 >"$archive"
-        printf '%s  %s\n' \
+        download_and_verify_asset() {
+          local asset_id="$1"
+          local archive_digest="$2"
+          local archive="$3"
+          local directory="$4"
+          [[ ! -e "$archive" && ! -L "$archive" && ! -e "$directory" && ! -L "$directory" ]]
+          gh api -H 'Accept: application/octet-stream' \
+            "repos/NVIDIA/NemoClaw/releases/assets/$asset_id" >"$archive"
+          printf '%s  %s\n' "$archive_digest" "$archive" | sha256sum --check --strict -
+          mkdir "$directory"
+          unzip -q "$archive" -d "$directory"
+          (cd "$directory" && sha256sum --check --strict SHA256SUMS)
+          rm -f "$archive"
+        }
+        download_and_verify_asset \
+          602749331 \
           2a07674b09da33f24772936e5fc3e8d7e80dbbe096cc70e9fa32babc9177a006 \
-          "$archive" | sha256sum --check --strict -
-        mkdir "$directory"
-        unzip -q "$archive" -d "$directory"
-        (cd "$directory" && sha256sum --check --strict SHA256SUMS)
-        rm -f "$archive"
-
-    - name: Download immutable native Podman arm64 toolchain
-      if: ${{ inputs.enabled == 'true' }}
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-      run: |
-        set -euo pipefail
-        archive="$RUNNER_TEMP/native-podman-e2e-arm64.zip"
-        directory="$RUNNER_TEMP/native-podman-e2e-toolchain-arm64"
-        [[ ! -e "$archive" && ! -L "$archive" && ! -e "$directory" && ! -L "$directory" ]]
-        gh api -H 'Accept: application/octet-stream' \
-          repos/NVIDIA/NemoClaw/releases/assets/602749330 >"$archive"
-        printf '%s  %s\n' \
+          "$RUNNER_TEMP/native-podman-e2e-amd64.zip" \
+          "$RUNNER_TEMP/native-podman-e2e-toolchain-amd64"
+        download_and_verify_asset \
+          602749330 \
           dba39bc41923592bef67980e4d179c8b6d8442a6157e67621e53abf969072e3a \
-          "$archive" | sha256sum --check --strict -
-        mkdir "$directory"
-        unzip -q "$archive" -d "$directory"
-        (cd "$directory" && sha256sum --check --strict SHA256SUMS)
-        rm -f "$archive"
+          "$RUNNER_TEMP/native-podman-e2e-arm64.zip" \
+          "$RUNNER_TEMP/native-podman-e2e-toolchain-arm64"
 
     - name: Publish native Podman amd64 toolchain for this run
       if: ${{ inputs.enabled == 'true' }}
