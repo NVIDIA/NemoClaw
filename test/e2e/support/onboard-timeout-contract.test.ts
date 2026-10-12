@@ -19,6 +19,8 @@ import {
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+  PI_QUALIFICATION_TEST_TIMEOUT_MS,
+  PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
   catalogueTarget,
@@ -50,6 +52,16 @@ const dcodeExpectedRefusalTimeout = liveTargetTimeoutContract(
 afterEach(() => vi.unstubAllEnvs());
 
 describe("onboard final-handoff timeout contract", () => {
+  it("contains the hosted Pi lifecycle and native request, isolation, and cleanup", () => {
+    const boundedOperations = (90 + 20 + 5 + 1 + 5) * MINUTE_MS + 30_000;
+    expect(PI_QUALIFICATION_TEST_TIMEOUT_MS).toBeGreaterThan(boundedOperations);
+    expect(catalogueTarget("pi-agent-qualification-amd64").timeoutMinutes).toBe(
+      PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES,
+    );
+    expect(PI_QUALIFICATION_TARGET_TIMEOUT_MINUTES * MINUTE_MS).toBeGreaterThanOrEqual(
+      PI_QUALIFICATION_TEST_TIMEOUT_MS + 10 * MINUTE_MS,
+    );
+  });
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {
     expect(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(
       finalHandoffTimeoutMs * 2 + commandDiagnosticHeadroomMs,
