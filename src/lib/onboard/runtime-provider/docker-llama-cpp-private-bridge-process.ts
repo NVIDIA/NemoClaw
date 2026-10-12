@@ -12,6 +12,7 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const API_KEY_FILE_DESCRIPTOR = 3;
 const STARTUP_STATUS_DESCRIPTOR = 4;
 const AUTH_MODE = "api-key-fd3";
+const GUARD_FORWARD_TIMEOUT_SECONDS = 30 * 60;
 const UPSTREAM_CONTINUE_TIMEOUT_MS = 30_000;
 const UNAUTHORIZED_BODY = `${JSON.stringify({
   error: {
@@ -263,10 +264,12 @@ function createLlamaCppPrivateBridgeRequestHandler(
                       "--stdio-forward",
                       "--listen-port",
                       String(targetPort),
+                      "--forward-timeout-seconds",
+                      String(GUARD_FORWARD_TIMEOUT_SECONDS),
                     ],
                     {
                       stdio: ["pipe", "pipe", "ignore"],
-                      timeout: 30 * 60 * 1000,
+                      timeout: GUARD_FORWARD_TIMEOUT_SECONDS * 1_000,
                       killSignal: "SIGKILL",
                     },
                   );

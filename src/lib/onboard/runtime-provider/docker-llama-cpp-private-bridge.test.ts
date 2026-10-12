@@ -449,14 +449,22 @@ async function close(server: http.Server): Promise<void> {
   });
 }
 
-it("authenticates before spawning the qualified Docker stream and forwards its response", async () => {
+it("authenticates before forwarding through Docker with the required guard deadline (#12285)", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bridge-exec-"));
   const invocations = path.join(root, "invocations.json");
   fs.writeFileSync(
     path.join(root, "docker"),
     `#!${process.execPath}
 const fs = require("node:fs");
-fs.writeFileSync(${JSON.stringify(invocations)}, JSON.stringify(process.argv.slice(2)));
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(invocations)}, JSON.stringify(args));
+const guardArgs = args.slice(args.indexOf("/usr/local/bin/nemoclaw-llama-cpp-request-guard") + 1);
+if (guardArgs.length !== 5 || guardArgs[0] !== "--stdio-forward" ||
+    guardArgs[1] !== "--listen-port" || guardArgs[3] !== "--forward-timeout-seconds" ||
+    !Number.isSafeInteger(Number(guardArgs[4])) || Number(guardArgs[4]) < 1 ||
+    Number(guardArgs[4]) > 86400) {
+  process.exit(2);
+}
 let input = "";
 process.stdin.on("data", chunk => {
   input += chunk;
@@ -486,7 +494,7 @@ process.stdin.on("data", chunk => {
     expect(fs.existsSync(invocations)).toBe(false);
     const response = await request(port, { authorization: `Bearer ${API_KEY}` });
     expect([response.status, response.body]).toEqual([200, "OK"]);
-    expect(JSON.parse(fs.readFileSync(invocations, "utf8")).slice(-7)).toEqual([
+    expect(JSON.parse(fs.readFileSync(invocations, "utf8")).slice(-9)).toEqual([
       "exec",
       "-i",
       containerId,
@@ -494,6 +502,8 @@ process.stdin.on("data", chunk => {
       "--stdio-forward",
       "--listen-port",
       "8081",
+      "--forward-timeout-seconds",
+      "1800",
     ]);
     fs.appendFileSync(path.join(root, "docker"), "\n// executable changed after qualification\n");
     expect((await request(port, { authorization: `Bearer ${API_KEY}` })).status).toBe(502);

@@ -711,6 +711,7 @@ describe("runUpdateAction", () => {
       [string, readonly string[], { env?: NodeJS.ProcessEnv }]
     >;
     const options = calls[0]?.[2];
+    expect(options?.env?.NEMOCLAW_UPDATE_INVOKED).toBe("1");
     expect(options?.env?.BASH_ENV).toBeUndefined();
     expect(options?.env?.ENV).toBeUndefined();
     expect(options?.env?.NEMOCLAW_FRESH).toBeUndefined();

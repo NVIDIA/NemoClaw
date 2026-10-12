@@ -26,6 +26,7 @@ import {
   readDockerDriverGatewayProcessEnvironment,
   readDockerDriverGatewayProcessIdentity,
 } from "./docker-driver-gateway-process-identity";
+import { readGatewayProcEntry } from "./gateway/process-proc-entry";
 import { HOST_GATEWAY_PGREP_PATTERN } from "./host-gateway-process";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isPortableExperimentalProfile } from "./docker-driver-platform";
@@ -318,13 +319,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   }
 
   function readProcessExe(pid: number): string | null {
-    try {
-      const procExePath = `/proc/${pid}/exe`;
-      if (!fs.existsSync(procExePath)) return null;
-      return fs.readlinkSync(procExePath);
-    } catch {
-      return null;
-    }
+    return readGatewayProcEntry(pid, "exe");
   }
 
   function normalizeGatewayExecutablePath(value: string | null | undefined): string | null {

@@ -200,7 +200,6 @@ function realStageSandboxCredentialProviders(
     updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),
-    persistMigratedLegacyKeys: vi.fn(),
   });
   let crashPending = crashAfterFirstSuccess;
   const stageSandboxCredentialProviders = vi.fn(
