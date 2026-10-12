@@ -32,6 +32,25 @@ describe("runtime shared gateway route containment", () => {
     delete process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
   });
 
+  it("retains native Hermes metadata when switching models on the same provider", () => {
+    const metadata = {
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const baseline = entry("hermes-switch", { agent: "hermes", ...metadata });
+    const prepared = prepareInferenceSetRoute({
+      entry: baseline,
+      sandboxName: baseline.name,
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      customRoute: {},
+      session: null,
+      sandboxes: [baseline],
+    });
+    expect(prepared.preliminaryRegistryMetadata).toMatchObject(metadata);
+  });
+
   it("rejects an ambient gateway endpoint before OpenShell prep or state mutation", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
     const deps = createDeps({

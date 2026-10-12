@@ -192,7 +192,12 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: openshellGatewayName(),
   };
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
+  apiKey &&
+    Object.assign(out, {
+      NVIDIA_INFERENCE_API_KEY: apiKey,
+      NEMOCLAW_PROVIDER: "build",
+      NEMOCLAW_MODEL: process.env.NEMOCLAW_MODEL ?? DEFAULT_CLOUD_MODEL,
+    });
   USE_COMPATIBLE_HOSTED &&
     apiKey &&
     Object.assign(out, {
@@ -242,10 +247,9 @@ export async function prepareProxyResolutionRoute({
 }): Promise<{ model: string; requestOffset: number }> {
   const endpoint =
     mockBaseline?.baseUrl ??
-    process.env.NEMOCLAW_ENDPOINT_URL ??
-    (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
-      ? NVIDIA_HOSTED_NATIVE_ENDPOINT
-      : DEFAULT_HOSTED_INFERENCE_BASE_URL);
+    (USE_COMPATIBLE_HOSTED
+      ? (process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL)
+      : NVIDIA_HOSTED_NATIVE_ENDPOINT);
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
