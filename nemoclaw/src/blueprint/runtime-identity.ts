@@ -1170,9 +1170,13 @@ export async function attachRuntimeIdentity(
     receipt.provider_name,
   ]);
   if (attach.exitCode === 0 || /already attached/i.test(commandOutput(attach))) {
+    const attachmentCreated = attach.exitCode === 0;
+    if (attachmentCreated) {
+      deps.persistReceipt({ ...receipt, attachment_created: true });
+    }
     const policy = deps.profilePolicy ?? RUNTIME_IDENTITY_PROFILE_POLICIES[receipt.provider_type];
     if (policy) await warnIfProfileChanged(receipt, policy, deps);
-    return attach.exitCode === 0;
+    return attachmentCreated;
   }
   throw new Error(
     `Failed to attach runtime identity provider '${receipt.provider_name}': ${deps.formatError(commandOutput(attach))}`,

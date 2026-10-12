@@ -2018,20 +2018,7 @@ export async function actionApply(
     }
 
     if (runtimeIdentityReceipt) {
-      const attachmentCreated = await attachRuntimeIdentity(
-        runtimeIdentityReceipt,
-        sandboxName,
-        identityDeps,
-      );
-      runtimeIdentityReceipt = {
-        ...runtimeIdentityReceipt,
-        attachment_created: attachmentCreated,
-      };
-      try {
-        persistRunPlan();
-      } catch (error) {
-        throw error;
-      }
+      await attachRuntimeIdentity(runtimeIdentityReceipt, sandboxName, identityDeps);
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
     }
 

@@ -1149,6 +1149,71 @@ describe("blueprint identity wrapper", () => {
   });
 
   it.each([true, false])(
+    "records attachment ownership before the advisory profile export when created: %s",
+    async (created) => {
+      process.env.OKTA_CLIENT_ID = "client-id";
+      process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+      process.env.OKTA_CLIENT_SECRET = "client-secret";
+      responseQueue([
+        [
+          "provider get acme-okta-runtime",
+          [
+            failureResult("provider not found"),
+            ...Array.from({ length: 5 }, () => ({
+              exitCode: 0,
+              stdout: matchingProvider,
+              stderr: "",
+            })),
+          ],
+        ],
+        [
+          "sandbox provider attach test-sandbox acme-okta-runtime",
+          [created ? success : failureResult("already attached")],
+        ],
+      ]);
+      const originalRun = mockExeca.getMockImplementation()!;
+      let attachmentSeen = false;
+      let signalExport!: () => void;
+      let releaseExport!: () => void;
+      const exportStarted = new Promise<void>((resolve) => {
+        signalExport = resolve;
+      });
+      const exportReleased = new Promise<void>((resolve) => {
+        releaseExport = resolve;
+      });
+      const pauseExport = () => {
+        signalExport();
+        return exportReleased;
+      };
+      mockExeca.mockImplementation(async (command: string, args: string[]) => {
+        const commandText = args.join(" ");
+        attachmentSeen ||= commandText === "sandbox provider attach test-sandbox acme-okta-runtime";
+        await (attachmentSeen &&
+        commandText === "provider profile export okta-runtime-v1 --output yaml"
+          ? pauseExport()
+          : Promise.resolve());
+        return originalRun(command, args);
+      });
+
+      const apply = actionApply("default", blueprint({ identity: oktaIdentity() }));
+      try {
+        await exportStarted;
+        const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
+        expect(planEntry?.content).toBeDefined();
+        expect(JSON.parse(planEntry!.content!).identity.attachment_created).toBe(created);
+        expect(
+          mockExeca.mock.calls.some(([, args]) =>
+            (args as string[]).join(" ").startsWith("provider refresh rotate "),
+          ),
+        ).toBe(false);
+      } finally {
+        releaseExport();
+      }
+      await apply;
+    },
+  );
+
+  it.each([true, false])(
     "preserves runtime identity when other resources are owned: %s (#9833)",
     async (ownsOtherResources) => {
       const stateDir = "/fakehome/.nemoclaw/state/runs/identity-run";

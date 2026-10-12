@@ -250,7 +250,10 @@ describe("blueprint runtime identity lifecycle integration", () => {
       provider_created: true,
       attachment_created: true,
     });
-    expect(persistedReceipts).toEqual([{ ...receipt, attachment_created: false }]);
+    expect(persistedReceipts).toEqual([
+      { ...receipt, attachment_created: false },
+      { ...receipt, attachment_created: true },
+    ]);
     expect(warnings).toEqual([]);
     expect(state.profiles).toEqual(["okta-runtime-v1"]);
     expect(state.providers["e2e-okta-runtime"]).toMatchObject({
