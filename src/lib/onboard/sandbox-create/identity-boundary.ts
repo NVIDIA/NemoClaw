@@ -49,10 +49,11 @@ export function resolveLegacyCompatibilityFinalHandoffRuntime(input: {
 export function pendingSandboxCreateIdentityForBoundary(
   boundary: VerifiedSandboxCreateBoundary,
   prior?: PendingSandboxCreateIdentity | null,
+  state: PendingSandboxCreateIdentity["state"] = "verified-create",
 ): PendingSandboxCreateIdentity {
   const identity: PendingSandboxCreateIdentity = {
     schemaVersion: 1,
-    state: "verified-create",
+    state,
     gatewayName: boundary.gatewayName,
     gatewayPort: boundary.gatewayPort,
     ...(boundary.openshellGatewayStateDir
@@ -69,15 +70,16 @@ export function pendingSandboxCreateIdentityForBoundary(
   };
   if (!prior) return identity;
   const {
+    state: priorState,
     managedBootstrapIdentity: priorManagedBootstrapIdentity,
     exactFinalHandoffCommitStarted,
     exactFinalHandoffRuntimeId,
     exactFinalHandoffAcknowledged,
     ...priorIdentity
   } = prior;
-  const { managedBootstrapIdentity, ...identityBeforeManagedBootstrap } = identity;
+  const { state: _identityState, managedBootstrapIdentity, ...identityWithoutState } = identity;
   if (
-    !isDeepStrictEqual(priorIdentity, identityBeforeManagedBootstrap) ||
+    !isDeepStrictEqual(priorIdentity, identityWithoutState) ||
     (priorManagedBootstrapIdentity !== undefined &&
       priorManagedBootstrapIdentity !== managedBootstrapIdentity)
   ) {
@@ -85,9 +87,21 @@ export function pendingSandboxCreateIdentityForBoundary(
   }
   return {
     ...identity,
-    ...(exactFinalHandoffCommitStarted ? { exactFinalHandoffCommitStarted } : {}),
-    ...(exactFinalHandoffRuntimeId ? { exactFinalHandoffRuntimeId } : {}),
-    ...(exactFinalHandoffAcknowledged ? { exactFinalHandoffAcknowledged } : {}),
+    ...(state === "verified-create" &&
+    priorState === "verified-create" &&
+    exactFinalHandoffCommitStarted
+      ? { exactFinalHandoffCommitStarted }
+      : {}),
+    ...(state === "verified-create" &&
+    priorState === "verified-create" &&
+    exactFinalHandoffRuntimeId
+      ? { exactFinalHandoffRuntimeId }
+      : {}),
+    ...(state === "verified-create" &&
+    priorState === "verified-create" &&
+    exactFinalHandoffAcknowledged
+      ? { exactFinalHandoffAcknowledged }
+      : {}),
   };
 }
 
