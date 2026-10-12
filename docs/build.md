@@ -60,12 +60,11 @@ There is no v1 `uninstall` command or package-manager installation to reverse in
 
 Before removing a bundle, identify every deployment using it and keep a verified copy wherever its original tooling is still needed for recovery or teardown.
 Finish any operation using that bundle.
-If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first and retain its state for surviving resources.
+If retiring a deployment too, follow [destroy and retention](usage.md#destroy) first, then [Remove Retained Resources](usage.md#remove-retained-resources), keeping its state for anything that procedure does not cover ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 Then remove that dedicated bundle directory using your host's file manager and remove only its `bin` entry from your shell's `PATH` configuration.
 Open a new terminal and check `command -v nemoclaw` on a POSIX shell, or `Get-Command nemoclaw` in PowerShell, to identify any remaining installation.
 
 Do not delete deployment state, model volumes, unrelated tool installations, or shared caches as part of removing the local bundle.
-There is no supported way yet to purge retained runtime data ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 Rebuild a bundle from the recorded source revision if the removed tools are needed again; compatibility with another revision is not implied.
 
 ## Build Agent Images
@@ -157,7 +156,8 @@ The snapshot holds canonical descriptors and provenance only; it does not change
 
 Build the dummy `fabric-agent` image to exercise the provisioning interface without Fabric, a native agent, credentials, or a model.
 It uses the same command host as all ten interim adapter images and supplies a deterministic reference backend.
-It is a test fixture, excluded from the production `agents` target and SDK harness catalog.
+It is a test fixture, excluded from the production `agents` target and the bundled catalog.
+Its image catalog lists one [explicit descriptor](../image/fabric/dummy.fabric-adapter.json), so a deployment can run it by setting `harness.kind: org.nemoclaw.dummy` and the image's immutable reference; the [Docker live suite](contributing/live-tests.md#dummy-agent-lifecycle) deploys it that way.
 On Linux ARM64, run from the repository root:
 
 ```sh

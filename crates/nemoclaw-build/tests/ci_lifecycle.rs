@@ -104,10 +104,12 @@ case "$1 $2" in
         fi ;;
     'run '*)
         case "$*" in
-            *--installed*) printf '{"bridge":{"protocol":1}}\n' ;;
+            *dummy_catalog.py*) printf '{"bridge":{"protocol":1},"adapters":[{"descriptor":{"adapter_id":"org.nemoclaw.dummy"}}]}\n' ;;
+            *--installed*) printf '{"bridge":{"protocol":1},"adapters":[]}\n' ;;
             *) printf '{"protocol":1}\n' ;;
         esac ;;
     'image inspect') printf 'sha256:0123456789abcdef\n' ;;
+    'image ls') printf 'nc-live-images:unneeded\n' ;;
     'save '*) printf 'saved %s\n' "$*" ;;
     'load '*) while IFS= read -r line; do printf '%s\n' "$line" >> docker.stdin; done ;;
 esac
@@ -380,7 +382,7 @@ fn live_suites_accept_an_archive_of_their_tests() {
 }
 
 #[test]
-fn live_images_builds_the_agent_and_proxy_images_once_and_saves_them_compressed() {
+fn live_images_builds_the_agent_dummy_and_proxy_images_once_and_saves_them_compressed() {
     let fixture = Fixture::new();
     fixture.fake_container_tools();
     let output = fixture.run(&["live-images"]);
@@ -393,14 +395,19 @@ fn live_images_builds_the_agent_and_proxy_images_once_and_saves_them_compressed(
     // ARM64 builds Pi, under the shared prefix the live steps load.
     assert!(log.contains("buildx bake pi --load"), "{log}");
     assert!(log.contains("--tag nc-live-images:pi"), "{log}");
-    for variant in ["proxy-a", "proxy-b"] {
+    // The reference dummy runs the full Docker lifecycle without Fabric.
+    assert!(log.contains("buildx bake dummy --load"), "{log}");
+    assert!(log.contains("/opt/nemoclaw/dummy_catalog.py"), "{log}");
+    for variant in ["dummy", "proxy-a", "proxy-b"] {
         assert!(
             log.contains(&format!("--tag nc-live-images:{variant}")),
             "{log}"
         );
     }
     assert!(
-        log.contains("save nc-live-images:pi nc-live-images:proxy-a nc-live-images:proxy-b"),
+        log.contains(
+            "save nc-live-images:pi nc-live-images:dummy nc-live-images:proxy-a nc-live-images:proxy-b"
+        ),
         "{log}"
     );
     let archive =
@@ -445,7 +452,7 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
     assert!(!log.contains("buildx"), "{log}");
     let loaded = fs::read_to_string(fixture.0.path().join("docker.stdin")).unwrap();
     assert_eq!(loaded, "prebuilt images\n");
-    for image in ["pi", "proxy-a", "proxy-b"] {
+    for image in ["pi", "dummy", "proxy-a", "proxy-b"] {
         assert!(
             log.lines().any(|line| line
                 .strip_prefix(&format!("tag nc-live-images:{image} nc-live-"))
@@ -453,6 +460,12 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
             "{log}"
         );
     }
+    // Archive images this step does not use keep no shared name behind.
+    assert!(
+        log.lines()
+            .any(|line| line == "image rm nc-live-images:unneeded"),
+        "{log}"
+    );
 }
 
 #[test]
