@@ -65,8 +65,7 @@ The retained OpenShell workspace resource does not imply that sandbox files surv
 Credentials can also remain in retained runtime storage.
 See [managed vLLM authentication](inference.md#authenticate-a-managed-vllm-service), [Ollama proxy credentials](inference.md#use-external-ollama-through-a-managed-proxy), and [security](security.md) before retiring storage.
 
-A complete inventory and removal procedure for retained resources are tracked in [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640).
-There is no current purge command.
+To retire a deployment whose retained resources are on Docker engines, follow [Remove Retained Resources](usage.md#remove-retained-resources).
 
 ### Understand the Retained Resources
 
@@ -80,12 +79,28 @@ There is no current purge command.
 | Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
 | Managed vLLM credentials | Separate tracked credential volume retained |
 | Managed Ollama proxy | Container removed; tracked credential volume retained |
-| Managed gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |
+| Managed Docker or Podman gateway | Process removed; database, signing/encryption keys, bridge, and stopped initializer retained |
+| Managed Kubernetes gateway | Release and development issuer removed; namespace, credential key Secret, and the gateway's persistent volumes retained |
 | Local deployment state, bundle, and container images | Remain; removing the CLI bundle is separate from destroying its deployment |
 
 The [teardown implementation](../crates/nemoclaw-sdk/src/deployment/runtime/teardown.rs) selects retained bindings.
 Destroy's JSON `retained` list identifies tracked resource addresses; it is not an inventory of every host file or externally owned resource.
 Record those addresses and keep the state directory if you need to account for retained storage later.
+
+### Find Retained Docker Objects
+
+On Docker engines, each retained resource consists of Docker objects labelled `nemoclaw.nvidia.com/uid` with the deployment's UID.
+Their names start with the deployment's workspace, `WS` below: `nc-` followed by the first 16 hexadecimal digits of the SHA-256 digest of `metadata.uid`.
+
+| `plan --destroy` entry | Docker objects |
+|---|---|
+| `gateway storage` | Volume `WS-gateway-data`, network `WS-network`, and exited container `WS-gateway-initialize` |
+| `OpenShell workspace` on a managed gateway | Volume `WS-gateway-data`, shared with `gateway storage` |
+| `model cache/NAME` | Volume `WS-inference-NAME-data` for vLLM, or `WS-ollama-NAME-data` for Ollama |
+| `inference credentials/NAME` | Volume `WS-inference-NAME-auth` |
+| `proxy credentials/NAME` | Volume `WS-ollama-proxy-NAME-auth` |
+
+On an external gateway, the `OpenShell workspace` entry stays on that gateway.
 
 ## Recovery and Transfer
 

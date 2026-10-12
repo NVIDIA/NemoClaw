@@ -86,7 +86,8 @@ A contract test runs the provider built from the checkout, but a system test run
 It pulls the pinned OpenShell and Ollama images, builds an agent image (Pi on ARM64, OpenClaw on AMD64) and two proxy images under a fresh `nc-live-` prefix, and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
-Afterward it removes the images it built and every container, volume, and network labelled with its UUIDs, whether or not the tests pass; pulled images remain.
+Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
+When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
 It requests no inference and needs no GPU or credentials.
 
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images).
