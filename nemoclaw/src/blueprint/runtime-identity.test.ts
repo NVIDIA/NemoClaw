@@ -440,6 +440,9 @@ describe("runtime identity contract", () => {
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/incompatible binding/);
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
+    );
     expect(persistedReceipts).toEqual([]);
   });
 
