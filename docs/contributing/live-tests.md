@@ -157,7 +157,8 @@ The workspace remains after destroy.
 The `Live / Brev` workflow provisions an ordinary Brev CPU VM rather than a NemoClaw Launchable.
 Three jobs build the Linux AMD64 bundle and test binary, build the matching OpenClaw image, and provision the VM in parallel.
 Image transfer starts as soon as the image and VM are ready, overlapping any remaining bundle build.
-The image-loading job verifies the archive checksum and source revision, and requires Docker to retain the built image digest after loading.
+The image-loading job verifies the archive checksum and source revision, then requires Linux AMD64, the built repository digest, and installed OpenClaw runtime metadata before writing the image reference.
+See [candidate image export and verification](../build.md#export-and-verify-a-brev-candidate-image) for `cargo images candidate record` and `cargo images candidate load`.
 The lifecycle job waits for the bundle and loaded image, then transfers the bundle and runs the real inference and deployment checks on the fresh VM.
 Image compilation happens on the CI runner.
 A separate cleanup job runs after success, failure, or cancellation and requires two confirmed observations that its owned VM is absent.
@@ -179,7 +180,8 @@ Failures still request VM deletion; no keep-alive option is provided.
 If cleanup fails, rerun the original `Delete VM` job until deletion is verified.
 After successful cleanup, rerun all jobs for fresh qualification; rerunning only lifecycle qualification cannot reuse the deleted VM.
 Artifact and VM identities come from their producing jobs, including the original attempt when dependent jobs are retried.
-Intermediate artifacts contain the candidate bundle, test executable, and image archive with its revision and digest manifest; no credentials are included.
+Intermediate artifacts contain the candidate bundle, test executable, image archive with its revision and digest manifest, and compiled Rust image helper; no credentials are included.
+The guest uses the transferred helper for candidate loading and needs no Rust toolchain.
 These artifacts expire after one day; images are not published to a registry.
 Qualification transfers the inference credential through a private temporary file; the runner copy is removed after transfer, and the VM copy disappears with verified VM deletion.
 
