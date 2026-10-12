@@ -184,7 +184,7 @@ Launch compatibility runs there too.
 The separately scheduled Fabric lifecycle cases and installed-adapter image tests exercise the supported harnesses.
 The `tls` test generates certificates and verifies both trust directions and bearer references through a real TLS connection.
 
-The native CI matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64, and Windows x64.
+The `CI / Bundle` matrix builds and executes bundles on Linux ARM64/x64, macOS ARM64, and Windows x64.
 CI's protocol and lifecycle fixtures do not establish local Docker, Podman, GPU, or real model availability on those platforms.
 Report build results separately from runtime test results.
 

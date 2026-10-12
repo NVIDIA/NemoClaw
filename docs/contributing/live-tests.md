@@ -98,7 +98,7 @@ CLI failures appear in the test output.
 It never starts inference or substitutes another agent process through exec.
 
 If this test fails, passing lower-level fixture tests does not establish compatibility.
-Run it explicitly for candidate dependency upgrades, outside the default build; `CI / Native` retains the fast descriptor, reference, and protocol tests.
+Run it explicitly for candidate dependency upgrades, outside the default build; `CI / Bundle` retains the fast descriptor, reference, and protocol tests.
 
 ## Retained Storage Observations
 
@@ -392,6 +392,7 @@ It reaches that stage through the SDK's `test-scenarios` setup, which only nemoc
 Supply a verified bundle and an owned configuration with a fresh UID, free gateway port/subnet, Docker sandboxes, external inference, and no managed services.
 The test does not create sandboxes or request inference.
 It removes its gateway process on completion but retains the database, keys, initializer, bridge, and state.
+Remove them with [Remove Retained Resources](../usage.md#remove-retained-resources), using the test bundle's `nemoclaw` and `NEMOCLAW_TEST_GATEWAY_STATE` as the state directory.
 
 From the repository root:
 
@@ -425,7 +426,7 @@ Successful completion removes both owned sandboxes and gateway processes, but re
 The test calls the provider and SDK directly and creates no OpenTofu state directory.
 Keep the input documents to identify the retained resources.
 Another run requires fresh deployment UUIDs, ports, and subnets; the test refuses the previous run's retained resources.
-There is no verified cleanup procedure yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+After a successful run, remove each document's `gateway storage` objects with [Remove Retained Resources](../usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with absolute document paths and the local sandbox image's actual digest:
 
@@ -457,7 +458,7 @@ A successful run deletes the sandbox, provider registrations, profiles, and gate
 Retained gateway storage contains signing and encryption keys.
 The test creates no OpenTofu state; keep the input document to identify its resources, and use fresh inputs for another run.
 Failures retain resources for diagnosis; inspect only the printed owned gateway and its sandbox before cleanup.
-A cleanup procedure for retained storage is tracked in [#12640](https://github.com/NVIDIA/NemoClaw/issues/12640).
+After a successful run, remove the document's `gateway storage` objects with [Remove Retained Resources](../usage.md#remove-retained-resources), using its UID; the test has no state directory, so skip the steps that use one.
 
 From the repository root, with an absolute document path and the local sandbox image's actual digest:
 

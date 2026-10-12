@@ -63,6 +63,7 @@ For `plan` or `apply`, `--non-interactive` requires environment-provided credent
 Use environment references for provider secrets and protected files for gateway TLS keys.
 Configuration export preserves references; it cannot recover a lost credential value.
 Retiring a deployment requires separate decisions about upstream revocation, retained gateway/model/proxy storage, and caller-owned files.
+[Remove Retained Resources](usage.md#remove-retained-resources) removes retained storage from Docker engines.
 
 ### Diagnostic Disclosure
 

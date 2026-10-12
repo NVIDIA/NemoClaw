@@ -56,7 +56,7 @@ enum Action {
     Runtime {
         manifest: PathBuf,
     },
-    /// Run this platform's `CI / Native` steps, or one named step.
+    /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
     /// Build this command without default features (`cargo ci`), so it can
     /// install the pinned Protocol Buffers compiler before anything needs it.

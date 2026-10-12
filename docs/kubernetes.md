@@ -115,4 +115,5 @@ nemoclaw destroy --state-dir .local/kubernetes
 
 Destroy removes the sandboxes, the gateway release and the development issuer.
 It keeps the namespace, the credential key Secret and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
+Removing them is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 If destroy fails or is interrupted while removing the gateway release, follow [Recover an Interrupted Helm Removal](usage.md#recover-an-interrupted-helm-removal).

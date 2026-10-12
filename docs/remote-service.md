@@ -40,6 +40,7 @@ Cache and compute use native Docker-provider reconciliation; a cross-host transf
 
 Failed observations stop the operation; confirmed missing service compute can be recreated during explicit apply.
 Destroy retains model data and credentials and removes the service-owned network.
+Removing that retained data from an SSH engine is not verified ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 
 The current Docker-provider path is unqualified on GPU hardware; a separate-host deployment and other hardware remain qualification gates.
 

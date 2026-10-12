@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-name: CI / Native
+name: CI / Bundle
 on:
   push:
     # Push a run-live/ branch to run every job, including the live suites,
@@ -12,30 +12,30 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ci-native-${{ github.event_name }}-${{ github.ref }}
+  group: ci-bundle-${{ github.event_name }}-${{ github.ref }}
   # Only v1 pushes save the shared Rust caches, and a cold Windows or macOS build
   # outlasts the usual gap between merges. Cancelling pushes left those caches unwritten.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   linux_arm64:
-    uses: ./.github/workflows/native-platform.yml
+    uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04-arm
       platform: linux_arm64
       live: true
   linux_amd64:
-    uses: ./.github/workflows/native-platform.yml
+    uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: ubuntu-24.04
       platform: linux_amd64
       live: true
   darwin_arm64:
-    uses: ./.github/workflows/native-platform.yml
+    uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: macos-15
       platform: darwin_arm64
   windows_amd64:
-    uses: ./.github/workflows/native-platform.yml
+    uses: ./.github/workflows/bundle-platform.yml
     with:
       runner: windows-2025
       platform: windows_amd64

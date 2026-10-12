@@ -3,7 +3,7 @@
 
 # Tests
 
-Before pushing, run this platform's `CI / Native` checks from the repository root:
+Before pushing, run this platform's `CI / Bundle` checks from the repository root:
 
 ```sh
 cargo ci
@@ -86,7 +86,8 @@ A contract test runs the provider built from the checkout, but a system test run
 It pulls the pinned OpenShell and Ollama images, builds an agent image (Pi on ARM64, OpenClaw on AMD64) and two proxy images under a fresh `nc-live-` prefix, and writes gateway documents with fresh UUIDs, ports, and subnets in `172.30.200-254.0/24`.
 It runs the `live-docker` profile in four nextest commands: one for the tests that need no gateway document, then one for each of the three gateway tests with its own document.
 The tests that use Docker run one at a time, in the profile's `docker-engine` test group; the offline runtime rebuild uses no engine and compiles alongside them.
-Afterward it removes the images it built and every container, volume, and network labelled with its UUIDs, whether or not the tests pass; pulled images remain.
+Afterward it removes every container, volume, and network labelled with the documents' UUIDs, any sandbox objects in their gateways' OpenShell namespaces, and the images it built, whether or not the tests pass; pulled images remain.
+When the tests pass, the step fails if OpenShell left a sandbox object or if it cannot list or remove an object labelled with one of those UUIDs.
 It requests no inference and needs no GPU or credentials.
 
 `cargo ci live-kind` needs native Linux with Docker Buildx and the [containerd image store](../build.md#build-agent-images).
@@ -169,7 +170,7 @@ CI keeps each step's JUnit report, with per-test durations, for 14 days in the `
 
 | Workflow | Checks |
 |---|---|
-| CI / Native | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
+| CI / Bundle | `Test / linux_arm64`, `Test / linux_amd64`, `Test / darwin_arm64`, `Test / windows_amd64` |
 | CI / Images | `Build / linux_arm64`, `Build / linux_amd64` |
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
@@ -181,7 +182,7 @@ A `Test / PLATFORM` check succeeds only when every job of that platform succeeds
 
 ### Jobs of One Platform
 
-Each platform in [CI / Native](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/native-platform.yml) on its own runners:
+Each platform in [CI / Bundle](../../.github/workflows/rust.yml) runs [one workflow](../../.github/workflows/bundle-platform.yml) on its own runners:
 
 1. `Build and test` runs `cargo ci fmt`, `clippy`, `build`, `test`, `schema`, and `archive`: the unit layer, and the archive that later jobs run.
 2. `Build bundle` runs `cargo ci bundle` on a separate runner at the same time.
@@ -341,7 +342,7 @@ These tests use fixtures and temporary files; they do not start deployment workl
 
 ## CI Caches
 
-Native CI disables incremental compilation.
+`CI / Bundle` disables incremental compilation.
 Development and test builds use `debug = 1`, retaining line-number backtraces without full local-variable debug data.
 Profiles live in `.cargo/config.toml`, whose hash and the current month are part of the CI dependency cache prefix.
 Changing a profile, or starting a new month, therefore starts a fresh cache with a one-time dependency rebuild.

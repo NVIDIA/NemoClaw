@@ -46,7 +46,7 @@ Follow the [source-build guide](build.md) for tool versions and a verified CLI/O
 Keep the bundle unchanged while an operation uses it.
 
 The builder accepts `linux_arm64`, `linux_amd64`, `darwin_arm64`, `darwin_amd64`, and `windows_amd64` targets.
-Native CI builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
+`CI / Bundle` builds and tests on Linux ARM64, Linux AMD64, macOS ARM64, and Windows AMD64; that does not qualify GPU deployment on every platform.
 
 There are no release downloads or installer yet ([#12638](https://github.com/NVIDIA/NemoClaw/issues/12638)).
 
