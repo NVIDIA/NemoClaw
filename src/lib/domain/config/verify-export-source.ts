@@ -155,6 +155,39 @@ function hasEntries(value: unknown): boolean {
     : value !== undefined && value !== null && value !== false;
 }
 
+function hasExportExcludedMessaging(entry: ObservedExportRegistry): boolean {
+  if (!hasEntries(entry.messaging)) return false;
+  const plan = entry.messaging?.plan;
+  if (!plan || typeof plan.workflow !== "string") return true;
+  const emptyDerivedFields = {
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+    ...(plan.runtimeSetup !== undefined
+      ? { runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] } }
+      : {}),
+  };
+  // Compact persistence omits derived fields. Preserve raw fields so orphaned effects still reject export.
+  return !isDeepStrictEqual(
+    { ...entry.messaging, plan: { ...emptyDerivedFields, ...plan } },
+    {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: entry.name,
+        agent: entry.agent,
+        workflow: plan.workflow,
+        channels: [],
+        disabledChannels: [],
+        ...emptyDerivedFields,
+      },
+    },
+  );
+}
+
 function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
     [
@@ -353,7 +386,7 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       !exportWebSearchBinding(entry) && (entry.webSearchEnabled || entry.webSearchProvider),
       "web search",
     ],
-    ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
+    ["spec.sandboxes[].integrations.messaging", hasExportExcludedMessaging(entry), "messaging"],
     [
       "spec.sandboxes[].harness.interfaces.dashboard",
       entry.agent !== "openclaw" && entry.dashboardRemoteBindPrepared,
