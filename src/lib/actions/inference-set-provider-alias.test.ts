@@ -28,7 +28,7 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
-} from "./inference-set.test-support";
+} from "../../../test/helpers/inference-set";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
 const onboardProviders: any =

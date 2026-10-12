@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { readDockerDriverGatewayBinding, writeDockerDriverGatewayBinding } from "./state-dir";
 import { gatewayAdaptersForTest } from "../../../../test/helpers/openshell-gateway-adapters";
 import * as gatewayAuthority from "../gateway-teardown-authority";
 import { resolveGatewayOwner } from "../gateway-ownership";
@@ -46,13 +50,21 @@ function dependencies(
 describe("gateway process lifecycle", () => {
   it("resolves default teardown authority for the current named port", async () => {
     const target = { gatewayName: "nemoclaw-8091", gatewayPort: 8091 };
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-binding-removal-"));
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue(home);
+    writeDockerDriverGatewayBinding(home, target.gatewayPort, {
+      stateDir: path.join(home, "custom-gateway"),
+      dockerNetworkName: "custom-network",
+    });
     const authority = vi
       .spyOn(gatewayAuthority, "resolveGatewayTeardownAuthority")
       .mockReturnValue(
         resolveGatewayOwner({ ...target, declaration: null, hasPackagedService: false }),
       );
     try {
+      const destroy = vi.fn().mockResolvedValue(false);
       const deps = dependencies({
+        destroyGatewayWithVolumeCleanup: destroy,
         resolveAuthority: undefined,
         gatewayName: () => target.gatewayName,
         gatewayPort: () => target.gatewayPort,
@@ -64,8 +76,17 @@ describe("gateway process lifecycle", () => {
       expect(deps.lifecycle.removeGateway).toHaveBeenCalledWith({
         target: { kind: "named", gatewayName: target.gatewayName },
       });
+      await expect(createGatewayProcessLifecycle(deps).destroyGateway()).resolves.toBe(false);
+      expect(readDockerDriverGatewayBinding(home, target.gatewayPort)?.dockerNetworkName).toBe(
+        "custom-network",
+      );
+      destroy.mockResolvedValue(true);
+      await expect(createGatewayProcessLifecycle(deps).destroyGateway()).resolves.toBe(true);
+      expect(readDockerDriverGatewayBinding(home, target.gatewayPort)).toBeNull();
     } finally {
       authority.mockRestore();
+      homedir.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 

@@ -29,6 +29,10 @@ export interface ForwardCleanupOptions extends ShellProbeRunOptions {
   sandboxName?: string;
 }
 
+export interface SandboxCleanupOptions extends ShellProbeRunOptions {
+  preserveGatewayRegistration?: boolean;
+}
+
 export interface ForwardListenerEvidence {
   valid: boolean;
   pid?: number;
@@ -312,17 +316,20 @@ export class HostCliClient {
 
   async destroySandbox(
     sandboxName: string,
-    options: ShellProbeRunOptions = {},
+    options: SandboxCleanupOptions = {},
   ): Promise<ShellProbeResult> {
-    return await this.nemoclaw([sandboxName, "destroy", "--yes"], {
+    const { preserveGatewayRegistration = false, ...probeOptions } = options;
+    const args = [sandboxName, "destroy", "--yes"];
+    if (preserveGatewayRegistration) args.push("--no-cleanup-gateway");
+    return await this.nemoclaw(args, {
       artifactName: `destroy-sandbox-${artifactLabel(sandboxName)}`,
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 15 * 60_000,
-      ...options,
+      ...probeOptions,
     });
   }
 
-  async cleanupSandbox(sandboxName: string, options: ShellProbeRunOptions = {}): Promise<void> {
+  async cleanupSandbox(sandboxName: string, options: SandboxCleanupOptions = {}): Promise<void> {
     const result = await this.destroySandbox(sandboxName, options);
     if (result.exitCode === 0) return;
     const text = resultText(result);

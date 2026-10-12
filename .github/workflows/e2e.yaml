@@ -177,6 +177,8 @@ jobs:
           retention-days: 1
 
   base-image-publication:
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.managed_image_required != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
@@ -356,7 +358,6 @@ jobs:
         run: node --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"
 
   generate-matrix:
-    needs: base-image-publication
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -374,9 +375,12 @@ jobs:
       release_required_jobs: ${{ steps.matrix.outputs.release_required_jobs }}
       selected_jobs: ${{ steps.matrix.outputs.selected_jobs }}
       selected_workflow_jobs: ${{ steps.matrix.outputs.selected_workflow_jobs }}
+      managed_image_required: ${{ steps.matrix.outputs.managed_image_required }}
+      openshell_version: ${{ steps.openshell_version.outputs.version }}
       catalogue_standard_matrix: ${{ steps.matrix.outputs.catalogue_standard_matrix }}
       catalogue_nvidia_api_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_api_matrix }}
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
+      catalogue_hosted_inference_matrix: ${{ steps.matrix.outputs.catalogue_hosted_inference_matrix }}
       catalogue_github_read_matrix: ${{ steps.matrix.outputs.catalogue_github_read_matrix }}
       gateway_runtimes: ${{ steps.matrix.outputs.gateway_runtimes }}
       runtime_providers_by_job: ${{ steps.matrix.outputs.runtime_providers_by_job }}
@@ -659,6 +663,7 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          NEMOCLAW_E2E_INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.include_staging_brev_launchable && 'true' || 'false' }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           NEMOCLAW_GATEWAY_RUNTIMES: ${{ inputs.jobs == 'portable-hermes-finalization' && 'podman' || inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}
           JOBS: ${{ inputs.jobs }}
@@ -676,6 +681,7 @@ jobs:
               echo 'catalogue_standard_matrix=[]'
               echo 'catalogue_nvidia_api_matrix=[]'
               echo 'catalogue_nvidia_inference_matrix=[]'
+              echo 'catalogue_hosted_inference_matrix=[]'
               echo 'catalogue_github_read_matrix=[]'
               echo 'gateway_runtimes=["docker"]'
               echo 'runtime_providers_by_job={"native-runtime-qualification-producer":["docker"]}'
@@ -684,6 +690,7 @@ jobs:
               echo 'hermes_selected=false'
               echo 'explicit_only_jobs=native-runtime-qualification-producer'
               echo 'release_required_jobs=[]'
+              echo 'managed_image_required=false'
             } >>"$GITHUB_OUTPUT"
             exit 0
           fi
@@ -697,10 +704,19 @@ jobs:
           fi
           npx --no-install tsx tools/e2e/workflow-plan.mts --ci-output
 
+      - id: openshell_version
+        name: Resolve reviewed candidate OpenShell version
+        if: ${{ contains(fromJSON(steps.matrix.outputs.selected_jobs), 'openshell-gateway-auth-contract') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'external-gateway-health') }}
+        env:
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --no-warnings tools/e2e/candidate-openshell-version.mts
+
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
-        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@dfb7fb7c0ae86b2926ec6e896bec72bacd9b23a2
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@5ec38cfc369b3dac4df5207d8dda20805a72cbda
         with:
           enabled: ${{ (contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') || contains(fromJSON(steps.matrix.outputs.selected_jobs), 'portable-hermes-finalization')) && 'true' || 'false' }}
           github-token: ${{ github.token }}
@@ -3263,6 +3279,55 @@ jobs:
         with:
           enabled: "true"
 
+  catalogue-hosted-inference:
+    name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
+    needs: [base-image-publication, generate-matrix, package-openshell-sdk]
+    if: ${{ needs.generate-matrix.outputs.catalogue_hosted_inference_matrix != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate-matrix.outputs.catalogue_hosted_inference_matrix) }}
+    uses: ./.github/workflows/e2e-standard-profile.yaml
+    with:
+      candidate_repository: ${{ inputs.checkout_repository || github.repository }}
+      candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
+      risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
+      risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
+      cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
+      credential_boundary: selected hosted inference API key
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      hosted_inference_model: ${{ vars[matrix.model_env] }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
+      test_file: ${{ matrix.test_file }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      install_mode: ${{ matrix.install_mode }}
+      install_non_interactive: ${{ matrix.install_non_interactive }}
+      restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
+      host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: false
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
+      trusted_main: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      HOSTED_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.workflow_ref == 'NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (matrix.id == 'hosted-inference-openai' && secrets.OPENAI_API_KEY || matrix.id == 'hosted-inference-anthropic' && secrets.ANTHROPIC_API_KEY || matrix.id == 'hosted-inference-gemini' && secrets.GEMINI_API_KEY || matrix.id == 'hosted-inference-openrouter' && secrets.OPENROUTER_API_KEY || matrix.id == 'hosted-inference-hermes' && secrets.NOUS_API_KEY) || '' }}
+
   catalogue-standard:
     name: ${{ matrix.display_name }} (${{ matrix.runtime_provider }})
     needs: [base-image-publication, generate-matrix, package-openshell-sdk]
@@ -3468,8 +3533,8 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_CANDIDATE_VERSION: "0.0.116"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
+      NEMOCLAW_CANDIDATE_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
+      NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       DOCKER_GRPC_PROBE_IMAGE: "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3543,11 +3608,11 @@ jobs:
       E2E_TARGET_ID: "external-gateway-health"
       E2E_AGENT_RUNTIME: "none"
       E2E_OBSERVABLE_OUTCOME: "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.116; no inference endpoint"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with reviewed candidate OpenShell; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ needs.generate-matrix.outputs.openshell_version }}
       NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4553,7 +4618,8 @@ jobs:
 
       - *dockerhub-auth
 
-      - name: Validate candidate activation contract
+      - id: candidate-contract
+        name: Validate candidate activation contract
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
@@ -4569,8 +4635,11 @@ jobs:
             exit 1
           }
           jq -e '
-            (keys | sort) == ["agents", "contractVersion", "jobId", "platforms"] and
-            .contractVersion == 1 and
+            (
+              ((keys | sort) == ["agents", "contractVersion", "jobId", "platforms"] and .contractVersion == 1) or
+              ((keys | sort) == ["agents", "contractVersion", "dcodeBaseSource", "jobId", "platforms"] and
+               .contractVersion == 2 and .dcodeBaseSource == "candidate")
+            ) and
             .jobId == "managed-image-multiarch-startup" and
             .agents == ["openclaw", "hermes", "langchain-deepagents-code"] and
             .platforms == ["linux/amd64", "linux/arm64"]
@@ -4578,10 +4647,12 @@ jobs:
             echo "::error::Protected managed-image activation contract is invalid" >&2
             exit 1
           }
+          printf 'dcode_source=%s\n' "$(jq -r '.dcodeBaseSource // "published"' "$activation")" >> "$GITHUB_OUTPUT"
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
       - id: hermes-base
         name: Resolve reviewed Hermes platform base image
+        if: ${{ inputs.checkout_sha == '' }}
         uses: ./.trusted-hermes-resolver/.github/actions/resolve-reviewed-hermes-platform
         with:
           dockerfile-path: agents/hermes/Dockerfile
@@ -4608,11 +4679,21 @@ jobs:
       - id: bases
         name: Resolve digest-pinned platform base images
         env:
+          CANDIDATE_BASES: ${{ inputs.checkout_sha != '' }}
           DCODE_BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
+          HERMES_BASE_REF: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}
           PLATFORM: ${{ matrix.platform }}
         shell: bash
         run: |
           set -euo pipefail
+          case "$CANDIDATE_BASES" in
+            true)
+              printf 'openclaw=candidate\nhermes=candidate\ndcode=candidate\n' >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            false) ;;
+            *) echo "::error::Invalid candidate base selection" >&2; exit 1 ;;
+          esac
           arch="${PLATFORM#linux/}"
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-protected-bases.XXXXXX")"
           trap 'rm -rf -- "$work_dir"' EXIT
@@ -4669,6 +4750,8 @@ jobs:
             exit 1
           }
           printf 'dcode=%s\n' "$dcode_reference" >> "$GITHUB_OUTPUT"
+          [[ "$HERMES_BASE_REF" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]]
+          printf 'hermes=%s\n' "$HERMES_BASE_REF" >> "$GITHUB_OUTPUT"
 
       - name: Start isolated protected managed-image registry
         shell: bash
@@ -4699,8 +4782,8 @@ jobs:
 
       - name: Build exact all-agent protected managed images
         env:
-          BASE_DCODE: ${{ steps.bases.outputs.dcode }}
-          BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}
+          BASE_DCODE: ${{ steps.candidate-contract.outputs.dcode_source == 'candidate' && 'candidate' || steps.bases.outputs.dcode }}
+          BASE_HERMES: ${{ steps.bases.outputs.hermes }}
           BASE_OPENCLAW: ${{ steps.bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
@@ -4902,13 +4985,20 @@ jobs:
   # assertions without the hosted cache.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
-    needs: [base-image-publication, generate-matrix, managed-image-multiarch-startup]
-    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
+    needs:
+      [
+        base-image-publication,
+        generate-matrix,
+        managed-image-multiarch-startup,
+        package-openshell-sdk,
+      ]
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && needs['package-openshell-sdk'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 75
     permissions:
       contents: read
     env:
+      CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker
@@ -5005,6 +5095,8 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
+        with:
+          build-cli: "false"
 
       - id: runtime-contract
         name: Validate protected runtime activation contract
@@ -5050,8 +5142,29 @@ jobs:
           printf 'runtime_user=%s\n' "$runtime_user" >> "$GITHUB_OUTPUT"
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
+      - id: openshell-projection
+        name: Bind reviewed candidate OpenShell runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts prepare > "$E2E_ARTIFACT_DIR/openshell-projection.json"
+
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Install reviewed OpenShell SDK from trusted controller
+        uses: ./.github/actions/install-reviewed-openshell-sdk
+
+      - name: Build trusted CLI with reviewed OpenShell runtime
+        shell: bash
+        run: npm run build:cli
+
       - id: runtime-hermes-base
         name: Resolve reviewed Hermes runtime base image
+        if: ${{ inputs.checkout_sha == '' }}
         uses: ./.github/actions/resolve-reviewed-hermes-platform
         with:
           dockerfile-path: .candidate-runtime/agents/hermes/Dockerfile
@@ -5060,6 +5173,7 @@ jobs:
       - id: runtime-bases
         name: Resolve digest-pinned amd64 runtime base images
         env:
+          CANDIDATE_BASES: ${{ inputs.checkout_sha != '' }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           DCODE_BASE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
           HERMES_BASE_REF: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
@@ -5069,8 +5183,8 @@ jobs:
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-runtime-bases.XXXXXX")"
           trap 'rm -rf -- "$work_dir"' EXIT
 
-          # The mutable base alias can move after the startup job prepared this cache.
-          # Reuse that job's exact OpenClaw base and preserve the other identity checks.
+          [[ "$CANDIDATE_BASES" == true || "$CANDIDATE_BASES" == false ]] || exit 1
+          # Consume the CPU job's immutable bases, not aliases resolved again on the GPU host.
           prepared_inputs="$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/prepared-inputs"
           [[ -f "$prepared_inputs" && ! -L "$prepared_inputs" ]] || {
             echo "::error::protected build cache has no safe prepared-input identity" >&2
@@ -5080,34 +5194,41 @@ jobs:
           [[ -z "$extra" &&
              "$cached_revision" == "$CHECKOUT_SHA" &&
              "$cached_platform" == "linux/amd64" &&
-             "$cached_hermes" == "$HERMES_BASE_REF" &&
-             "$cached_dcode" == "$DCODE_BASE_REF" &&
              "$(cat "$prepared_inputs")" == "$cached_revision $cached_platform $cached_openclaw $cached_hermes $cached_dcode" ]] || {
             echo "::error::protected build-cache identity does not match this run" >&2
             exit 1
           }
-          [[ "$cached_openclaw" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
-            echo "::error::prepared OpenClaw base is not an exact approved image reference" >&2
-            exit 1
+          resolve_cached_base() {
+            local name="$1" agent="$2" reference="$3" repository="$4" expected_published="$5"
+            local candidate_prefix="localhost:5000/nemoclaw-managed-protected-base/${agent}@"
+            local digest="${reference##*@}"
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
+            if [[ "$reference" == "${candidate_prefix}${digest}" ]]; then
+              local verified
+              verified="$(node scripts/checks/protected-dcode-base-receipt.mts verify \
+                "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base" \
+                "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent")"
+              [[ "$verified" == "$reference" ]] || {
+                echo "::error::prepared ${agent} base does not match this run's verified OCI artifact" >&2
+                exit 1
+              }
+            else
+              [[ "$CANDIDATE_BASES" == false && "$reference" == "${repository}@${digest}" &&
+                 ( -z "$expected_published" || "$reference" == "$expected_published" ) ]] || {
+                echo "::error::prepared ${agent} base does not match the selected source" >&2
+                exit 1
+              }
+              docker buildx imagetools inspect "$reference" --raw > "$work_dir/${name}-exact.raw"
+              [[ "sha256:$(sha256sum "$work_dir/${name}-exact.raw" | awk '{print $1}')" == "$digest" ]] || {
+                echo "::error::${agent} exact base bytes do not match the prepared digest" >&2
+                exit 1
+              }
+            fi
+            printf '%s=%s\n' "$name" "$reference" >> "$GITHUB_OUTPUT"
           }
-          openclaw_digest="${cached_openclaw##*@}"
-          docker buildx imagetools inspect "$cached_openclaw" --raw > "$work_dir/openclaw-exact.raw"
-          [[ "sha256:$(sha256sum "$work_dir/openclaw-exact.raw" | awk '{print $1}')" == "$openclaw_digest" ]] || {
-            echo "::error::OpenClaw exact base bytes do not match the prepared digest" >&2
-            exit 1
-          }
-          printf 'openclaw=%s\n' "$cached_openclaw" >> "$GITHUB_OUTPUT"
-          [[ "$DCODE_BASE_REF" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
-            echo "::error::dcode base publication returned an invalid exact reference" >&2
-            exit 1
-          }
-          dcode_digest="${DCODE_BASE_REF##*@}"
-          docker buildx imagetools inspect "$DCODE_BASE_REF" --raw > "$work_dir/dcode-exact.raw"
-          [[ "sha256:$(sha256sum "$work_dir/dcode-exact.raw" | awk '{print $1}')" == "$dcode_digest" ]] || {
-            echo "::error::dcode exact base bytes do not match the published digest" >&2
-            exit 1
-          }
-          printf 'dcode=%s\n' "$DCODE_BASE_REF" >> "$GITHUB_OUTPUT"
+          resolve_cached_base openclaw openclaw "$cached_openclaw" ghcr.io/nvidia/nemoclaw/sandbox-base ''
+          resolve_cached_base hermes hermes "$cached_hermes" ghcr.io/nvidia/nemoclaw/hermes-sandbox-base "$HERMES_BASE_REF"
+          resolve_cached_base dcode langchain-deepagents-code "$cached_dcode" ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base "$DCODE_BASE_REF"
 
       - name: Start isolated protected runtime registry
         shell: bash
@@ -5139,7 +5260,7 @@ jobs:
       - name: Build exact all-agent protected runtime images
         env:
           BASE_DCODE: ${{ steps.runtime-bases.outputs.dcode }}
-          BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
+          BASE_HERMES: ${{ steps.runtime-bases.outputs.hermes }}
           BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
           RUNTIME_USER: ${{ steps.runtime-contract.outputs.runtime_user }}
@@ -5173,8 +5294,10 @@ jobs:
             echo "::error::Protected NIM qualification must execute trusted workflow code" >&2
             exit 1
           }
+          node tools/e2e/protected-openshell-workspace.mts verify > "$E2E_ARTIFACT_DIR/openshell-projection-verified.json"
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell)"
+          OPENSHELL_BIN="$(command -v openshell)"
+          export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-protected-runtime.test.ts
 
@@ -5203,6 +5326,13 @@ jobs:
             echo "::error::Protected managed-image runtime registry listener remained after cleanup" >&2
             exit 1
           fi
+
+      - name: Restore trusted OpenShell sources
+        if: ${{ always() && steps.openshell-projection.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/e2e/protected-openshell-workspace.mts restore > "$E2E_ARTIFACT_DIR/openshell-projection-restored.json"
 
       - name: Upload protected managed-image runtime artifacts
         if: always()
@@ -6215,6 +6345,7 @@ jobs:
         catalogue-standard,
         catalogue-nvidia-api,
         catalogue-nvidia-inference,
+        catalogue-hosted-inference,
         catalogue-github-read,
         openshell-gateway-auth-contract,
         external-gateway-health,
@@ -6234,7 +6365,7 @@ jobs:
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || (github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs.generate-matrix.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_workflow_jobs || '[]'), 'catalogue-hosted-inference'))) }}
     permissions:
       actions: read
       contents: read
@@ -6256,6 +6387,13 @@ jobs:
         env:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           TEST_MATRIX: ${{ needs.generate-matrix.outputs.test_matrix }}
+          JOB_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          JOB_CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
+          JOB_BASE_SHA: ${{ inputs.base_sha }}
+          JOB_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          MATRIX_RESULT: ${{ needs.generate-matrix.result }}
+          SELECTED_WORKFLOW_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}
@@ -6308,6 +6446,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: Require every selected E2E result
         env:
+          MANAGED_IMAGE_REQUIRED: ${{ needs.generate-matrix.outputs.managed_image_required }}
           NEEDS_JSON: ${{ toJSON(needs) }}
           RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
           E2E_RESULT_PATH: ${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}

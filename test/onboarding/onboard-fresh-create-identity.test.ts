@@ -1217,10 +1217,12 @@ if (${JSON.stringify(
         assertRecoveryTuple(payload.retainedRecoveryRecords[0]);
         assert.match(result.stderr, /preserved incomplete sandbox 'my-assistant'/u);
         assert.match(result.stderr, new RegExp(identityFingerprint, "u"));
-        assert.match(result.stderr, /Do not delete the sandbox by mutable sandbox name/u);
         assert.match(result.stderr, /Shared inference providers are gateway configuration/u);
         assert.match(result.stderr, /not sandbox cleanup targets/u);
-        assert.match(result.stderr, /nemoclaw my-assistant destroy/u);
+        assert.match(
+          result.stderr,
+          /nemoclaw my-assistant destroy' to verify and remove the retained sandbox/u,
+        );
         assert.match(result.stderr, /clear the matching recovery record/u);
         assertCreateAttemptLabelReported();
 

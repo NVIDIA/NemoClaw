@@ -74,6 +74,13 @@ export type HermesProviderCredentialState = {
   agent_key_expires_at?: string | null;
 };
 
+/** Receives the credential only inside host-side registration, never in returned state. */
+export type HermesInferenceCredentialRegistrar = (input: {
+  apiKey: string;
+  credentialEnv: string;
+  baseUrl: string;
+}) => Promise<{ credentialEnv: string }>;
+
 function nonEmptyString(value: unknown): string | null {
   const normalized = String(value || "").trim();
   return normalized || null;
@@ -147,6 +154,7 @@ export async function ensureHermesProviderOAuthCredentials(
     noBrowser = false,
     baseUrl = oauth.DEFAULT_INFERENCE_BASE_URL,
     toolGatewayPresets = [],
+    registerInferenceCredential,
   }: {
     allowInteractiveLogin?: boolean;
     runOpenshell?: RunOpenshell | null;
@@ -155,6 +163,7 @@ export async function ensureHermesProviderOAuthCredentials(
     noBrowser?: boolean;
     baseUrl?: string;
     toolGatewayPresets?: string[];
+    registerInferenceCredential?: HermesInferenceCredentialRegistrar;
   } = {},
 ): Promise<HermesProviderCredentialState | null> {
   if (!runOpenshell) {
@@ -170,12 +179,19 @@ export async function ensureHermesProviderOAuthCredentials(
     minTtlSeconds: AGENT_KEY_MIN_TTL_SECONDS,
   });
   const inferenceBaseUrl = minted.inference_base_url || baseUrl;
-  await registerHermesInferenceProvider(
-    minted.api_key,
-    runOpenshell,
-    HERMES_INFERENCE_CREDENTIAL_ENV,
-    inferenceBaseUrl,
-  );
+  const native = registerInferenceCredential
+    ? await registerInferenceCredential({
+        apiKey: minted.api_key,
+        credentialEnv: HERMES_INFERENCE_CREDENTIAL_ENV,
+        baseUrl: inferenceBaseUrl,
+      })
+    : (await registerHermesInferenceProvider(
+        minted.api_key,
+        runOpenshell,
+        HERMES_INFERENCE_CREDENTIAL_ENV,
+        inferenceBaseUrl,
+      ),
+      undefined);
   if (Array.isArray(toolGatewayPresets) && toolGatewayPresets.length > 0) {
     const hermesToolGateway = getHermesToolGatewayBroker();
     await hermesToolGateway.registerHermesToolGatewayRefreshProvider(
@@ -190,7 +206,7 @@ export async function ensureHermesProviderOAuthCredentials(
   return {
     auth_method: "oauth",
     provider: HERMES_PROVIDER_NAME,
-    credential_env: HERMES_INFERENCE_CREDENTIAL_ENV,
+    credential_env: native?.credentialEnv ?? HERMES_INFERENCE_CREDENTIAL_ENV,
     inference_base_url: inferenceBaseUrl,
     agent_key_expires_at: agentKeyExpiresAt(minted),
   };
@@ -202,10 +218,12 @@ export async function ensureHermesProviderApiKeyCredentials(
     apiKey = null,
     runOpenshell = null,
     baseUrl = oauth.DEFAULT_INFERENCE_BASE_URL,
+    registerInferenceCredential,
   }: {
     apiKey?: string | null;
     runOpenshell?: RunOpenshell | null;
     baseUrl?: string;
+    registerInferenceCredential?: HermesInferenceCredentialRegistrar;
   } = {},
 ): Promise<HermesProviderCredentialState | null> {
   if (!runOpenshell) {
@@ -214,16 +232,23 @@ export async function ensureHermesProviderApiKeyCredentials(
   const normalizedApiKey = nonEmptyString(apiKey);
   if (!normalizedApiKey) return null;
 
-  await registerHermesInferenceProvider(
-    normalizedApiKey,
-    runOpenshell,
-    HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
-    baseUrl,
-  );
+  const native = registerInferenceCredential
+    ? await registerInferenceCredential({
+        apiKey: normalizedApiKey,
+        credentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+        baseUrl,
+      })
+    : (await registerHermesInferenceProvider(
+        normalizedApiKey,
+        runOpenshell,
+        HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+        baseUrl,
+      ),
+      undefined);
   return {
     auth_method: "api_key",
     provider: HERMES_PROVIDER_NAME,
-    credential_env: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+    credential_env: native?.credentialEnv ?? HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
     inference_base_url: baseUrl,
   };
 }

@@ -49,13 +49,20 @@ After first launch, OpenClaw owns this file and can add providers, tools, plugin
 The NemoClaw plugin reads the current native inference configuration for the `/nemoclaw status` and `/nemoclaw onboard` views.
 It registers a provider only when the native primary model selects `inference` and that provider is configured.
 Other provider registrations remain owned by OpenClaw.
-Onboarding metadata does not override the native provider, model, endpoint, or credential reference.
+Reading onboarding metadata does not change the native provider, model, endpoint, or credential reference.
 
 When you rerun onboarding with the same sandbox name, NemoClaw compares your requested inference provider and model with the recorded onboarding selection, not the native model in `openclaw.json`.
 If that selection matches and no other setting requires recreation, onboarding reuses the ready sandbox and preserves native configuration edits.
 Reuse preserves native web-search settings, including when no web-search provider is selected during onboarding.
 Choosing a different provider or model follows the existing recreation flow: interactive onboarding asks for confirmation, while non-interactive onboarding recreates automatically when the recorded selection is readable and differs.
 If the recorded selection is missing or unreadable, NemoClaw does not use native configuration edits as a reason to recreate the sandbox.
+
+For managed OpenClaw sandboxes, NemoClaw records a verified provider or model change before recreation.
+After restoring the backup, it applies that recorded selection to native inference configuration before restarting the gateway.
+Resuming the same recreation also applies the selection when its recreation record already authorizes this update.
+It preserves unrelated native configuration.
+This update excludes forced recreation and custom images.
+It does not infer a selection change from a backup or an older recreation record.
 
 Restart and reconnect preserve the current native configuration.
 Rebuild restores the complete native configuration captured immediately before rebuild.

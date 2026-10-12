@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
 import { runInferenceSet } from "./inference-set";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import { baseSession, createDeps } from "../../../test/helpers/inference-set";
 import {
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
@@ -72,7 +72,7 @@ describe("OpenRouter model switch verification", () => {
     expect(execute).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledWith(
       "alpha",
-      expect.stringContaining("https://inference.local/v1/chat/completions"),
+      expect.stringContaining("https://openrouter.ai/api/v1/chat/completions"),
       READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
       { gatewayName: "nemoclaw-18085" },
     );
@@ -102,7 +102,7 @@ describe("OpenRouter model switch verification", () => {
       error: "invalid response body",
     },
   ])(
-    "restores Ultra when the real sandbox probe receives $label (#12628)",
+    "preserves Ultra when the real sandbox probe receives $label (#12628)",
     async ({ status, stdout, error }) => {
       const execute = vi.fn<NonNullable<SandboxInferenceInvocationDeps["execute"]>>(async () => ({
         status,
@@ -127,7 +127,7 @@ describe("OpenRouter model switch verification", () => {
         READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
         { gatewayName: "nemoclaw-18085" },
       );
-      expect(routeSelections(deps).map((args) => args.at(-1))).toEqual([SUPER, ULTRA]);
+      expect(routeSelections(deps)).toEqual([]);
       expectNoConfigCommit(deps);
     },
   );
@@ -143,25 +143,15 @@ describe("OpenRouter model switch verification", () => {
       const result = await runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model }, deps);
 
       expect(result.model).toBe(model);
-      expect(routeSelections(deps)).toEqual([
-        [
-          "inference",
-          "set",
-          "-g",
-          "nemoclaw-18085",
-          "--no-verify",
-          "--provider",
-          OPENROUTER_PROVIDER_NAME,
-          "--model",
-          model,
-        ],
-      ]);
+      expect(routeSelections(deps)).toEqual([]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
         gatewayName: "nemoclaw-18085",
         sandboxName: "alpha",
         provider: OPENROUTER_PROVIDER_NAME,
         model,
         preferredInferenceApi: "openai-completions",
+        nativeProvider: true,
+        nativeEndpointUrl: undefined,
       });
       expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
         deps.calls.updateSandbox.mock.invocationCallOrder[0],
@@ -175,7 +165,7 @@ describe("OpenRouter model switch verification", () => {
   );
 
   it.each([401, 502])(
-    "restores Ultra when sandbox verification returns HTTP %s (#12628)",
+    "preserves Ultra when sandbox verification returns HTTP %s (#12628)",
     async (httpStatus) => {
       const deps = openRouterDeps();
       deps.calls.probeSandboxRoute.mockResolvedValue({
@@ -187,16 +177,16 @@ describe("OpenRouter model switch verification", () => {
       await expect(
         runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
       ).rejects.toThrow(
-        /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
+        /Sandbox-side verification rejected.*previous inference selection.*was not changed/s,
       );
 
-      expect(routeSelections(deps).map((args) => args.at(-1))).toEqual([SUPER, ULTRA]);
+      expect(routeSelections(deps)).toEqual([]);
       expect(deps.calls.probeSandboxRoute).toHaveBeenCalledOnce();
       expectNoConfigCommit(deps);
     },
   );
 
-  it("restores Ultra after sandbox transport retries fail (#12628)", async () => {
+  it("preserves Ultra after sandbox transport retries fail (#12628)", async () => {
     const deps = openRouterDeps();
     deps.calls.probeSandboxRoute.mockResolvedValue({
       ok: false,
@@ -206,47 +196,44 @@ describe("OpenRouter model switch verification", () => {
 
     await expect(
       runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
-    ).rejects.toThrow(/previous OpenShell inference selection was restored/);
+    ).rejects.toThrow(/previous inference selection.*was not changed/);
 
     expect(deps.calls.probeSandboxRoute).toHaveBeenCalledTimes(3);
-    expect(routeSelections(deps).map((args) => args.at(-1))).toEqual([SUPER, ULTRA]);
+    expect(routeSelections(deps)).toEqual([]);
     expectNoConfigCommit(deps);
   });
 
-  it("restores Ultra when the sandbox probe throws (#12628)", async () => {
+  it("preserves Ultra when the sandbox probe throws (#12628)", async () => {
     const deps = openRouterDeps();
     deps.calls.probeSandboxRoute.mockRejectedValue(new Error("sandbox dial failed"));
 
     await expect(
       runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
-    ).rejects.toThrow(/sandbox dial failed.*previous OpenShell inference selection was restored/s);
+    ).rejects.toThrow(/sandbox dial failed.*previous inference selection.*was not changed/s);
 
-    expect(routeSelections(deps).map((args) => args.at(-1))).toEqual([SUPER, ULTRA]);
+    expect(routeSelections(deps)).toEqual([]);
     expectNoConfigCommit(deps);
   });
 
-  it("reports a failed restore without committing agent configuration (#12628)", async () => {
+  it("reports failed attachment rollback without committing agent configuration (#12628)", async () => {
     const deps = openRouterDeps();
     deps.calls.probeSandboxRoute.mockResolvedValue({
       ok: false,
       httpStatus: 401,
       detail: "HTTP 401",
     });
-    const setInferenceRoute = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: false,
-        ambiguous: false,
-        error: { kind: "command", exitCode: 1, message: "restore failed" },
-      });
-    deps.inferenceRouteMutator = { setInferenceRoute };
+    const detachProvider = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "restore failed" },
+    });
+    deps.providerAdapter = { ...deps.providerAdapter, detachProvider };
 
     await expect(
       runInferenceSet({ provider: OPENROUTER_PROVIDER_NAME, model: SUPER }, deps),
-    ).rejects.toThrow(/Failed to restore the previous OpenShell inference selection/);
+    ).rejects.toThrow(/restore failed/);
 
-    expect(setInferenceRoute).toHaveBeenCalledTimes(2);
+    expect(detachProvider).toHaveBeenCalledOnce();
+    expect(routeSelections(deps)).toEqual([]);
     expectNoConfigCommit(deps);
   });
 });

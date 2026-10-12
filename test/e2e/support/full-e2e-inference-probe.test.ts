@@ -65,13 +65,32 @@ describe("full E2E sandbox inference probe", () => {
   it.each(["", "nvapi-raw-key", "$(exit 99)"])(
     "rejects the invalid native credential %j before invoking curl",
     (invalid) => {
-      const [, ...args] = buildFullE2eSandboxInferenceCommand("{}", "nvidia-prod");
-      const denied = spawnSync("/bin/bash", args, {
-        env: { PATH: "/nonexistent", NVIDIA_INFERENCE_API_KEY: invalid },
-        encoding: "utf8",
-      });
-      expect(denied.status).toBe(2);
-      expect(denied.stdout).toBe("");
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "full-e2e-invalid-probe-"));
+      try {
+        const marker = path.join(directory, "curl-invoked");
+        fs.writeFileSync(
+          path.join(directory, "curl"),
+          '#!/bin/sh\nprintf invoked > "$CURL_MARKER"\n',
+          {
+            mode: 0o700,
+          },
+        );
+        const [, ...args] = buildFullE2eSandboxInferenceCommand("{}", "nvidia-prod");
+        const denied = spawnSync("/bin/bash", args, {
+          env: {
+            PATH: `${directory}:/usr/bin:/bin`,
+            NVIDIA_INFERENCE_API_KEY: invalid,
+            CURL_MARKER: marker,
+          },
+          encoding: "utf8",
+        });
+        expect(denied.status).toBe(2);
+        expect(denied.stdout).toBe("");
+        expect(denied.stderr).toBe("");
+        expect(fs.existsSync(marker)).toBe(false);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
     },
   );
 

@@ -7,6 +7,24 @@ import type { ConfigObject } from "../security/credential-filter";
 import { patchHermesInferenceConfig } from "./inference-set";
 
 describe("patchHermesInferenceConfig", () => {
+  it("replaces every credential when switching to native NVIDIA inference and back", () => {
+    const config: ConfigObject = {};
+    patchHermesInferenceConfig(config, "vllm-local", "local-model");
+    patchHermesInferenceConfig(config, "nvidia-prod", "nvidia/test-model");
+    const placeholder = "${NVIDIA_INFERENCE_API_KEY}";
+    expect(config).toMatchObject({
+      model: { api_key: placeholder },
+      providers: { "nvidia-prod": { api_key: placeholder } },
+      custom_providers: [{ api_key: placeholder }],
+    });
+    patchHermesInferenceConfig(config, "vllm-local", "local-model");
+    expect(config).toMatchObject({
+      model: { base_url: "https://inference.local/v1", api_key: HERMES_PROXY_REWRITE_SENTINEL },
+      providers: { "vllm-local": { api_key: HERMES_PROXY_REWRITE_SENTINEL } },
+      custom_providers: [{ api_key: HERMES_PROXY_REWRITE_SENTINEL }],
+    });
+  });
+
   it("updates the complete Hermes route for the selected provider", () => {
     const config: ConfigObject = {
       model: {
@@ -32,8 +50,8 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.model).toEqual({
       default: "openai/gpt-5.4-mini",
       provider: "custom",
-      base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      base_url: "https://inference-api.nousresearch.com/v1",
+      api_key: "${OPENAI_API_KEY}",
     });
     expect(config._nemoclaw_upstream).toEqual({
       provider: "hermes-provider",
@@ -43,8 +61,8 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.providers).toEqual({
       "hermes-provider": {
         name: "hermes-provider",
-        api: "https://inference.local/v1",
-        api_key: HERMES_PROXY_REWRITE_SENTINEL,
+        api: "https://inference-api.nousresearch.com/v1",
+        api_key: "${OPENAI_API_KEY}",
         default_model: "openai/gpt-5.4-mini",
         discover_models: true,
       },
@@ -52,8 +70,8 @@ describe("patchHermesInferenceConfig", () => {
     expect(config.custom_providers).toEqual([
       {
         name: "hermes-provider",
-        base_url: "https://inference.local/v1",
-        api_key: HERMES_PROXY_REWRITE_SENTINEL,
+        base_url: "https://inference-api.nousresearch.com/v1",
+        api_key: "${OPENAI_API_KEY}",
         discover_models: true,
       },
     ]);
@@ -88,7 +106,7 @@ describe("patchHermesInferenceConfig", () => {
   });
 
   it.each(["no-key-required", "sk-real-looking-key-that-must-not-survive"])(
-    "replaces stale Hermes API keys with the OpenShell proxy rewrite sentinel [case %#]",
+    "replaces stale Hermes API keys with the native credential placeholder [case %#]",
     (api_key) => {
       const config: ConfigObject = {
         model: {
@@ -101,7 +119,7 @@ describe("patchHermesInferenceConfig", () => {
 
       patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
 
-      expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
+      expect((config.model as ConfigObject).api_key).toBe("${OPENAI_API_KEY}");
     },
   );
 
@@ -119,14 +137,14 @@ describe("patchHermesInferenceConfig", () => {
     expect(result.route).toMatchObject({
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-4-6",
-      inferenceBaseUrl: "https://inference.local",
+      inferenceBaseUrl: "https://api.anthropic.com",
       inferenceApi: "anthropic-messages",
     });
     expect(config.model).toEqual({
       default: "claude-sonnet-4-6",
       provider: "custom",
-      base_url: "https://inference.local",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      base_url: "https://api.anthropic.com",
+      api_key: "${ANTHROPIC_API_KEY}",
       api_mode: "anthropic_messages",
     });
   });
@@ -147,7 +165,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://integrate.api.nvidia.com/v1",
-      api_key: HERMES_PROXY_REWRITE_SENTINEL,
+      api_key: "${NVIDIA_INFERENCE_API_KEY}",
     });
   });
 

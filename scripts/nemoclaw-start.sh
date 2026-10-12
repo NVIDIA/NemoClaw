@@ -57,17 +57,28 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# OpenShell owns inference.local authentication. Clear its credential aliases
-# after entrypoint overrides are normalized, before setup can launch children.
-# Direct inference routes retain their credentials.
+# OpenShell owns managed inference authentication. Keep only its scoped,
+# non-secret runtime handle after entrypoint overrides are normalized; clear raw
+# credentials before setup can launch children. Direct routes retain credentials.
 is_managed_inference_route() {
-  # Match URL scheme and host case without spawning a credential-bearing child.
-  [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Ff][Ee][Rr][Ee][Nn][Cc][Ee]\.[Ll][Oo][Cc][Aa][Ll](:443)?(/.*)?$ ]]
+  # Match scheme/host case and default-port leading zeros without spawning a child.
+  [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Ff][Ee][Rr][Ee][Nn][Cc][Ee]\.[Ll][Oo][Cc][Aa][Ll](:0*443)?(/.*)?$ ]] \
+    || [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Tt][Ee][Gg][Rr][Aa][Tt][Ee]\.[Aa][Pp][Ii]\.[Nn][Vv][Ii][Dd][Ii][Aa]\.[Cc][Oo][Mm](:0*443)?/v1/?$ ]]
 }
 
 clear_managed_inference_credentials() {
+  # Refuse ambiguous native URLs before setup or a command can inherit secrets.
+  if [[ "${NEMOCLAW_INFERENCE_BASE_URL:-}" =~ ^[Hh][Tt][Tt][Pp][Ss]://[Ii][Nn][Tt][Ee][Gg][Rr][Aa][Tt][Ee]\.[Aa][Pp][Ii]\.[Nn][Vv][Ii][Dd][Ii][Aa]\.[Cc][Oo][Mm](:0*443|:)?([/?#]|$) ]] \
+    && ! is_managed_inference_route; then
+    unset NVIDIA_API_KEY NVIDIA_INFERENCE_API_KEY
+    printf '%s\n' '[SECURITY] Native NVIDIA inference requires https://integrate.api.nvidia.com/v1.' >&2
+    return 1
+  fi
   if is_managed_inference_route; then
-    unset NVIDIA_INFERENCE_API_KEY NVIDIA_API_KEY
+    unset NVIDIA_API_KEY
+    if ! [[ "${NVIDIA_INFERENCE_API_KEY:-}" =~ ^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_NVIDIA_INFERENCE_API_KEY$ ]]; then
+      unset NVIDIA_INFERENCE_API_KEY
+    fi
   fi
 }
 clear_managed_inference_credentials
@@ -866,6 +877,32 @@ parsed = subprocess.run(
 config = json.loads(parsed.stdout)
 
 refreshed = set()
+native_refreshed = False
+
+# A native NVIDIA handle persisted by the host-side config batch belongs to
+# the provider revision that issued it. After a supervisor restart, only the
+# current revision is available, so replace that exact config field before
+# OpenClaw starts. Never copy a raw value or rewrite config for other providers.
+models = config.get("models") if isinstance(config, dict) else None
+providers = models.get("providers") if isinstance(models, dict) else None
+native = providers.get("inference") if isinstance(providers, dict) else None
+if isinstance(native, dict) and native.get("baseUrl") == "https://integrate.api.nvidia.com/v1":
+    key = "NVIDIA_INFERENCE_API_KEY"
+    scoped = re.compile(rf"^{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{key}$")
+    saved = native.get("apiKey")
+    state = runtime_state(key)
+    current = state.get("value", "")
+    if (
+        isinstance(saved, str)
+        and scoped.fullmatch(saved)
+        and state.get("kind") == "placeholder"
+        and isinstance(current, str)
+        and scoped.fullmatch(current)
+        and saved != current
+    ):
+        native["apiKey"] = current
+        refreshed.add(key)
+        native_refreshed = True
 
 # Match each canonical placeholder only as an exact token. The OpenShell
 # placeholder grammar is "openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*",
@@ -994,7 +1031,7 @@ def walk_for_warnings(value, path):
 
 walk_for_warnings(updated, [])
 
-if updated != config:
+if updated != config or native_refreshed:
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(updated, f, indent=2)
         f.write("\n")
@@ -1659,7 +1696,7 @@ prepare_gateway_token_for_current_command() {
 }
 
 # Reconcile this function's legacy generated auth profile for the selected provider.
-# OpenShell authenticates managed inference.local routes on the host, so remove
+# OpenShell authenticates managed inference routes on the host, so remove
 # that generated credential reference. Preserve other user-managed profiles.
 # Direct routes retain their existing profile-writing behavior.
 write_auth_profile() {
@@ -4381,6 +4418,12 @@ EOF
     read -r marker_owner marker_mode marker_links <<EOF
 $marker_metadata
 EOF
+    # Atomic replacement can unlink the inode while stat reads it. Discard
+    # that snapshot and validate the current path within the existing gate budget.
+    if [ "$marker_links" = "0" ]; then
+      sleep 1
+      continue
+    fi
     if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
       || [ "$marker_mode" != "600" ] \
       || [ "$marker_links" != "1" ]; then
@@ -5087,6 +5130,12 @@ EOF
     read -r marker_owner marker_mode marker_links <<EOF
 $marker_metadata
 EOF
+    # Atomic replacement can unlink the inode while stat reads it. Discard
+    # that snapshot and validate the current path within the existing gate budget.
+    if [ "$marker_links" = "0" ]; then
+      sleep 1
+      continue
+    fi
     if [ "$marker_owner" != "$(stat -c '%u' /sandbox/.openclaw 2>/dev/null)" ] \
       || [ "$marker_mode" != "600" ] \
       || [ "$marker_links" != "1" ]; then
