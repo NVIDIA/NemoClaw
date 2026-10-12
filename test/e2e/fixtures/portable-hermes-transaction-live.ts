@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
 
 import {
   assertHermesPortableOpenShellExecutableAuthority,
@@ -25,11 +24,24 @@ import {
 } from "../../../src/lib/onboard/experimental/hermes-portable-onboarding.ts";
 import { createHermesPortableAsyncPolicyCapture } from "../../../src/lib/onboard/experimental/hermes-portable-policy-state.ts";
 import { captureHermesPortablePodmanExecutableAuthority } from "../../../src/lib/onboard/experimental/hermes-portable-podman-authority.ts";
+import { readHermesPortableLifecycleReceipt } from "../../../src/lib/onboard/experimental/hermes-portable-receipt.ts";
+import { PORTABLE_LOCAL_SANDBOX_IMAGE_REPO } from "../../../src/lib/domain/sandbox/image-tag.ts";
 import { withMcpLifecycleLock } from "../../../src/lib/state/mcp-lifecycle-lock-acquisition.ts";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { normalizeSandboxInferenceRouteSelection } from "../../../src/lib/state/registry/route-reservation.ts";
 import { registryEntryGatewayPort } from "../../../src/lib/state/gateway-registry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
+
+export async function withAmbientPodmanHost<T>(host: string, action: () => Promise<T>): Promise<T> {
+  const previous = process.env.CONTAINER_HOST;
+  process.env.CONTAINER_HOST = host;
+  try {
+    return await action();
+  } finally {
+    if (previous === undefined) delete process.env.CONTAINER_HOST;
+    else process.env.CONTAINER_HOST = previous;
+  }
+}
 
 export async function proveHermesPortableOnboardingTransaction(input: {
   artifactDir: string;
@@ -95,6 +107,9 @@ export async function proveHermesPortableOnboardingTransaction(input: {
     ...normalizeSandboxInferenceRouteSelection(inferenceRouteReservation.selection),
   };
   const imageRef: { value: string | null } = { value: null };
+  const cleanupPodman: {
+    current: ReturnType<typeof createHermesPortableContainerDeps>["podman"] | null;
+  } = { current: null };
   try {
     const transaction = await runHermesPortableOnboardingTransaction(
       {
@@ -126,19 +141,23 @@ export async function proveHermesPortableOnboardingTransaction(input: {
             input.runtimeAuthority,
             sourceEnv,
           ),
-        container: (socketAuthority, podmanAuthority) => ({
-          ...createHermesPortableContainerDeps(
+        container: (socketAuthority, podmanAuthority) => {
+          const containerDeps = createHermesPortableContainerDeps(
             socketAuthority,
             input.runtimeAuthority,
             podmanAuthority,
             sourceEnv,
-          ),
-          authenticatedHealth: createHermesPortableAuthenticatedHealthCapture(
-            sandboxName,
-            gatewayName,
-            capture,
-          ),
-        }),
+          );
+          cleanupPodman.current = containerDeps.podman;
+          return {
+            ...containerDeps,
+            authenticatedHealth: createHermesPortableAuthenticatedHealthCapture(
+              sandboxName,
+              gatewayName,
+              capture,
+            ),
+          };
+        },
         assertOpenShellExecutableAuthority: (authority) => {
           assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, sourceEnv);
         },
@@ -243,13 +262,12 @@ export async function proveHermesPortableOnboardingTransaction(input: {
     if (capture(["sandbox", "get", "-g", gatewayName, "-o", "json", sandboxName]).status === 0) {
       capture(["sandbox", "delete", "-g", gatewayName, sandboxName], 240_000);
     }
-    if (imageRef.value) {
-      spawnSync("podman", ["image", "rm", "--force", imageRef.value], {
-        env: process.env,
-        killSignal: "SIGKILL",
-        stdio: "ignore",
-        timeout: 15_000,
-      });
+    const receipt = readHermesPortableLifecycleReceipt(sandboxName, receiptStateDir);
+    const builtImageRef =
+      imageRef.value ??
+      (receipt ? `${PORTABLE_LOCAL_SANDBOX_IMAGE_REPO}:${receipt.receipt.transactionId}` : null);
+    if (builtImageRef && cleanupPodman.current) {
+      cleanupPodman.current(["image", "rm", "--force", builtImageRef], 15_000);
     }
     fs.rmSync(policyPath, { force: true });
   }

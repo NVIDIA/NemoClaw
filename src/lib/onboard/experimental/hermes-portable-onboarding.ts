@@ -632,6 +632,14 @@ async function defaultPortableImageAvailable(reference: string): Promise<boolean
       `http://${PORTABLE_LOCAL_REGISTRY}/v2/${LOCAL_SANDBOX_IMAGE_REPO}/manifests/${tag}`,
       {
         method: "HEAD",
+        headers: {
+          Accept: [
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+          ].join(", "),
+        },
         redirect: "error",
         signal: AbortSignal.timeout(5_000),
       },
