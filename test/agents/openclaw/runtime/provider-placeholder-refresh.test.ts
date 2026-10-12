@@ -27,7 +27,7 @@ function execFileResult(file, args, options) {
   );
 }
 
-describe.concurrent("native NVIDIA handle refresh", () => {
+describe.concurrent("native provider handle refresh", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   async function runRefresh(
     config: unknown,
@@ -114,6 +114,95 @@ describe.concurrent("native NVIDIA handle refresh", () => {
       );
     },
   );
+
+  describe.each([false, true])("OpenRouter refresh (root=%s)", (rootMode) => {
+    it.each(["v43", `s${"a".repeat(64)}`])(
+      "refreshes restored handles to generation %s (#13043)",
+      async (generation) => {
+        const oldHandle = "openshell:resolve:env:v42_OPENROUTER_API_KEY";
+        const config = {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: "https://openrouter.ai/api/v1",
+                apiKey: oldHandle,
+                models: [{ id: "nvidia/nemotron-3-ultra-550b-a55b" }],
+              },
+            },
+          },
+          agents: { defaults: { workspace: "/sandbox/.openclaw/workspace" } },
+          channels: { telegram: { botToken: oldHandle } },
+        };
+
+        const currentHandle = `openshell:resolve:env:${generation}_OPENROUTER_API_KEY`;
+        const run = await runRefresh(config, { OPENROUTER_API_KEY: currentHandle }, rootMode);
+        expect(run.result.status, run.result.stderr).toBe(0);
+        expect(run.config).toEqual({
+          ...config,
+          models: {
+            providers: {
+              inference: {
+                ...config.models.providers.inference,
+                apiKey: currentHandle,
+              },
+            },
+          },
+        });
+        expect(run.result.stderr).not.toContain(currentHandle);
+        const repeated = await runRefresh(
+          run.config,
+          { OPENROUTER_API_KEY: currentHandle },
+          rootMode,
+        );
+        expect(repeated.result.status, repeated.result.stderr).toBe(0);
+        expect(repeated.config).toEqual(run.config);
+      },
+    );
+
+    it.each([
+      { reason: "raw runtime key", runtime: "sk-or-test-secret" },
+      { reason: "missing runtime key", runtime: "" },
+      { reason: "unscoped runtime key", runtime: "openshell:resolve:env:OPENROUTER_API_KEY" },
+      { reason: "wrong provider key", runtime: "openshell:resolve:env:v43_OPENAI_API_KEY" },
+      { reason: "wrong key suffix", runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY_OTHER" },
+      { reason: "malformed generation", runtime: "openshell:resolve:env:vbad_OPENROUTER_API_KEY" },
+      {
+        reason: "different endpoint",
+        endpoint: "https://example.com/v1",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "wrong saved provider",
+        saved: "openshell:resolve:env:v42_OPENAI_API_KEY",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+      {
+        reason: "user-managed saved key",
+        saved: "user-managed-reference",
+        runtime: "openshell:resolve:env:v43_OPENROUTER_API_KEY",
+      },
+    ])(
+      "preserves OpenRouter configuration with $reason (#13043)",
+      async ({ runtime, endpoint, saved }) => {
+        const config = {
+          models: {
+            providers: {
+              inference: {
+                baseUrl: endpoint ?? "https://openrouter.ai/api/v1",
+                apiKey: saved ?? "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+              },
+            },
+          },
+        };
+        const run = await runRefresh(config, { OPENROUTER_API_KEY: runtime }, rootMode);
+        expect(run.result.status, run.result.stderr).toBe(0);
+        expect(run.config).toEqual(config);
+        expect(JSON.stringify(run.config)).not.toContain("sk-or-test-secret");
+        expect(run.result.stderr).not.toContain("sk-or-test-secret");
+        expect(run.handoffEnv).not.toContain("sk-or-test-secret");
+      },
+    );
+  });
 
   it.each([
     {

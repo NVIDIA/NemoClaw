@@ -879,15 +879,20 @@ config = json.loads(parsed.stdout)
 refreshed = set()
 native_refreshed = False
 
-# A native NVIDIA handle persisted by the host-side config batch belongs to
-# the provider revision that issued it. After a supervisor restart, only the
-# current revision is available, so replace that exact config field before
-# OpenClaw starts. Never copy a raw value or rewrite config for other providers.
+# Restored native handles belong to the sandbox/provider revision that issued
+# them. Refresh the exact inference field before the final gateway start, also
+# when resuming an interrupted rebuild. Accept only scoped runtime handles for
+# the matching endpoint and key; leave user-managed credentials unchanged.
 models = config.get("models") if isinstance(config, dict) else None
 providers = models.get("providers") if isinstance(models, dict) else None
 native = providers.get("inference") if isinstance(providers, dict) else None
-if isinstance(native, dict) and native.get("baseUrl") == "https://integrate.api.nvidia.com/v1":
-    key = "NVIDIA_INFERENCE_API_KEY"
+native_keys = {
+    "https://integrate.api.nvidia.com/v1": "NVIDIA_INFERENCE_API_KEY",
+    "https://openrouter.ai/api/v1": "OPENROUTER_API_KEY",
+}
+endpoint = native.get("baseUrl") if isinstance(native, dict) else None
+key = native_keys.get(endpoint) if isinstance(endpoint, str) else None
+if key:
     scoped = re.compile(rf"^{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{key}$")
     saved = native.get("apiKey")
     state = runtime_state(key)
