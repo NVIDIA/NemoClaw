@@ -242,6 +242,53 @@ describe("connect route containment", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("verifies an attached native NVIDIA provider without reading or mutating the shared route", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Gateway inference:\n  Not configured\n",
+      registryEntry: {
+        name: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "provider-123",
+        },
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.verifyNativeNvidiaProviderAttachmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        expected: expect.objectContaining({ providerId: "provider-123" }),
+      }),
+    );
+    expect(harness.nativeInferenceInvocationSpy).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      agentName: "openclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      preferredInferenceApi: null,
+      nativeProvider: true,
+    });
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "get"]),
+      expect.anything(),
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set"]),
+      expect.anything(),
+    );
+    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+  });
+
   it("aborts before route reads or repairs when the target changes gateways while waiting", async () => {
     let releaseLock!: () => void;
     const released = new Promise<void>((resolve) => {
@@ -464,11 +511,11 @@ describe("connect route containment", () => {
         "set",
         "-g",
         "nemoclaw-9090",
+        "--no-verify",
         "--provider",
         "anthropic-prod",
         "--model",
         "claude-sonnet-4-20250514",
-        "--no-verify",
       ]);
     }
     expect([...inferenceReads, ...inferenceWrites]).not.toContainEqual(

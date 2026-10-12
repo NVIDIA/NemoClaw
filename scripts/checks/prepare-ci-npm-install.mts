@@ -39,6 +39,7 @@ export type ReviewedSourceRegistryArtifactRequest = Readonly<{
   artifactDirectory: string;
   cacheDirectory: string;
   lockfilePath: string;
+  otherReviewedPackages?: readonly ReviewedSourceRegistryPackage[];
   reviewed: ReviewedSourceRegistryPackage;
   reviewedPackagesWithoutIntegrity: readonly Readonly<{
     label: string;
@@ -64,7 +65,15 @@ export async function seedReviewedSourceRegistryArtifact(
     throw new Error("reviewed OpenShell SDK artifact path must be a non-symlink directory");
   }
   const entries = readdirSync(artifactDirectory);
-  if (entries.length !== 1 || entries[0] !== request.reviewed.artifactName) {
+  const otherReviewedPackages = request.otherReviewedPackages ?? [];
+  const allowedNames = new Set([
+    request.reviewed.artifactName,
+    ...otherReviewedPackages.map(({ artifactName }) => artifactName),
+  ]);
+  if (
+    !entries.includes(request.reviewed.artifactName) ||
+    entries.some((entry) => !allowedNames.has(entry))
+  ) {
     throw new Error("reviewed OpenShell SDK artifact directory has unexpected contents");
   }
   const archivePath = resolve(join(artifactDirectory, request.reviewed.artifactName));
@@ -99,6 +108,16 @@ export async function seedReviewedSourceRegistryArtifact(
     label: request.reviewed.label,
     maximumBytes: MAXIMUM_ARCHIVE_BYTES,
   });
+  // Verify every supplied reviewed archive before staging only the lock-selected SDK.
+  for (const other of otherReviewedPackages) {
+    if (!entries.includes(other.artifactName)) continue;
+    readReviewedNpmArchiveFile({
+      archivePath: resolve(join(artifactDirectory, other.artifactName)),
+      expectedIntegrity: other.integrity,
+      label: other.label,
+      maximumBytes: MAXIMUM_ARCHIVE_BYTES,
+    });
+  }
   stage({ archive, artifactName: request.reviewed.artifactName, cacheDirectory });
 }
 
@@ -197,6 +216,9 @@ async function prepareCiNpmInstallWithConfig(
       artifactDirectory,
       cacheDirectory,
       lockfilePath: reviewedLockfilePath,
+      otherReviewedPackages: reviewedSourceRegistryPackages(config).filter(
+        ({ packageSpec }) => packageSpec !== reviewed.packageSpec,
+      ),
       registryOrigin: config.registryOrigin,
       reviewed,
       reviewedPackagesWithoutIntegrity: config.sourceRegistryPackagesWithoutIntegrity,

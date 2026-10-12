@@ -38,6 +38,7 @@ does not require renewed authorization for work the user already requested.
 | `nemoclaw-maintainer-evening` | Complete the cumulative documentation PR and release entry, show release context, and optionally start tag cutting. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify candidate evidence, record the maintainer's E2E decision, and cut one signed semver tag. |
 | [`nemoclaw-maintainer-e2e`](../nemoclaw-maintainer-e2e/SKILL.md) | Route requested local E2E, trusted GitHub dispatch, or read-only release evidence. |
+| [`nemoclaw-maintainer-audit-e2e-assertions`](../nemoclaw-maintainer-audit-e2e-assertions/SKILL.md) | Triage E2E failures by tracing every assertion and downstream gate before a repair push or rerun. |
 | `nemoclaw-maintainer-classify-ci-failure` | Classify one failed GitHub Actions job from bounded, redacted logs and an optional validated artifact. |
 | `nemoclaw-maintainer-analyze-ci-performance` | Analyze retained CLI test timings and base-image publication latency with bounded, read-only GitHub evidence. |
 | `nemoclaw-maintainer-analyze-pr-value-stream` | Measure one PR from its earliest observable branch push through merge, separate approval delay from automation time, and compare the latest revision with a target. |

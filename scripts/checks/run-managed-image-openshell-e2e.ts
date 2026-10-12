@@ -7,7 +7,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveAgent } from "../../src/lib/agent/onboard.ts";
+import { reserveCreateSandboxHermesApiPort, resolveAgent } from "../../src/lib/agent/onboard.ts";
+import type { OpenShellForwardPortObserver } from "../../src/lib/onboard/dashboard-port.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { createCliOpenShellSandboxCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command-cli.ts";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
@@ -27,7 +28,10 @@ import {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
-import type { RuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/contract.ts";
+import type {
+  completeProviderManagedStartup,
+  RuntimeProviderBundle,
+} from "../../src/lib/onboard/runtime-provider/access.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
 import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
 import { prepareSandboxCreateLaunch } from "../../src/lib/onboard/sandbox-create-launch.ts";
@@ -44,6 +48,7 @@ import {
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
+  createManagedImageSandboxWithDiagnostics,
   isManagedImageLocalInferenceKind,
   managedImageFailureDetail,
   type ManagedImageLocalInferenceKind,
@@ -171,6 +176,7 @@ const MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS = [
 
 type OnboardModule = {
   managedWorkloadOnboard: {
+    completeProviderManagedStartup: typeof completeProviderManagedStartup;
     managedStartupStateRoots(input: {
       readonly agent: ShippedManagedImageAgent;
       readonly sandboxName: string;
@@ -194,6 +200,7 @@ type OnboardModule = {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
   sleepSeconds(seconds: number): void;
   startGatewayForRecovery(options: { gatewayName: string; gatewayPort: number }): Promise<void>;
+  createForwardPortObserver(sandboxName: string, kind: "loopback"): OpenShellForwardPortObserver;
 };
 
 const REQUIRED_ONBOARD_OPERATIONS = [
@@ -202,6 +209,7 @@ const REQUIRED_ONBOARD_OPERATIONS = [
   "runCaptureOpenshell",
   "sleepSeconds",
   "startGatewayForRecovery",
+  "createForwardPortObserver",
 ] as const satisfies readonly (keyof OnboardModule)[];
 
 export function resolveManagedImageOnboardModule(onboardImport: unknown): OnboardModule {
@@ -230,11 +238,10 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
     typeof managedWorkload?.managedStartupStateRoots !== "function" ||
     typeof managedWorkload.managedStartupWorkspaceRoot !== "function" ||
     typeof managedWorkload?.prepareManagedStateVolumes !== "function" ||
-    typeof managedWorkload.removeManagedStateVolumes !== "function"
+    typeof managedWorkload.removeManagedStateVolumes !== "function" ||
+    typeof managedWorkload.completeProviderManagedStartup !== "function"
   ) {
-    throw new Error(
-      "managed-image onboard module is missing required managed state-volume operations",
-    );
+    throw new Error("managed-image onboard module is missing required managed workload operations");
   }
   return candidate as OnboardModule;
 }
@@ -527,7 +534,6 @@ export function assertOpenClawHeartbeatStart(
 export function managedOpenClawHeartbeatProbe(
   configPath: string = managedConfigPath("openclaw"),
   nodeExecutable = "/usr/local/bin/node",
-  sha256sumExecutable = "sha256sum",
 ): string {
   const shellQuote = (value: string): string => `'${value.replace(/'/gu, `'\\''`)}'`;
   const configProbe = [
@@ -539,11 +545,7 @@ export function managedOpenClawHeartbeatProbe(
     shellQuote(configPath),
     shellQuote(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
   ].join(" ");
-  return [
-    configProbe,
-    `cd ${shellQuote(path.dirname(configPath))}`,
-    `${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null`,
-  ].join(" && ");
+  return configProbe;
 }
 
 export function managedImageOpenShellProbe(
@@ -589,12 +591,7 @@ export function managedImageOpenShellProbe(
       `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
     ),
     ...(agent === "openclaw"
-      ? [
-          probeStep(
-            "OpenClaw managed isolated heartbeat and configuration hash",
-            managedOpenClawHeartbeatProbe(),
-          ),
-        ]
+      ? [probeStep("OpenClaw managed isolated heartbeat", managedOpenClawHeartbeatProbe())]
       : []),
     probeStep(
       "managed runtime environment must not be a symbolic link",
@@ -1023,6 +1020,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   process.env.PATH = `${path.join(os.homedir(), ".local", "bin")}:${process.env.PATH ?? ""}`;
 
   let onboard: OnboardModule | null = null;
+  let hermesApiPort: Awaited<ReturnType<typeof reserveCreateSandboxHermesApiPort>> | null = null;
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
   let runtimeProvider: RuntimeProviderBundle | null = null;
@@ -1050,6 +1048,14 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       gatewayPort: GATEWAY_PORT,
     });
     configureLocalInferenceRoute(onboard, input, process.env);
+    if (input.agent === "hermes") {
+      // Reserve the fixed API port used by this fixture's in-sandbox health probe.
+      hermesApiPort = await reserveCreateSandboxHermesApiPort({
+        sandboxName: input.sandbox,
+        env: { NEMOCLAW_HERMES_API_PORT: "8642" },
+        observeForwardPorts: onboard.createForwardPortObserver(input.sandbox, "loopback"),
+      });
+    }
 
     const baseProfile = managedStartupE2eProfile(input.agent, false, true, true);
     const protectedProfile =
@@ -1108,9 +1114,17 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       chatUiUrl: "",
       createArgs,
       env: {},
+      // The host CLI must find the isolated gateway without changing fixture configuration.
+      buildEnv: () =>
+        Object.fromEntries(
+          Object.entries(process.env).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
       hermesDashboardState: { config: null, enabled: false },
+      hermesApiPort: hermesApiPort?.effectivePort,
       manageDashboard: false,
       openshellShellCommand: (args: string[]) => args.map((arg) => JSON.stringify(arg)).join(" "),
       openshellArgv: onboard.openshellArgv,
@@ -1209,6 +1223,10 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         },
         {
           commandExecutor,
+          createSandbox: createManagedImageSandboxWithDiagnostics(
+            onboard.runOpenshell,
+            () => onboard!.openshellArgv([])[0],
+          ),
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
           sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
@@ -1235,8 +1253,25 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         );
       }
 
-      await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
       ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+      const sandbox = onboard.runOpenshell(["sandbox", "get", input.sandbox], {
+        ignoreError: true,
+        env: launch.sandboxEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const sandboxId = parseOpenShellSandboxId(String(sandbox.stdout ?? ""));
+      if (sandbox.status !== 0 || !sandboxId || !launch.managedBootstrapIdentity) {
+        throw new Error("Managed startup requires the exact sandbox and bootstrap identities.");
+      }
+      onboard.managedWorkloadOnboard.completeProviderManagedStartup({
+        runtimeProvider: selectedRuntimeProvider,
+        sandboxName: input.sandbox,
+        sandboxId,
+        bootstrapIdentity: launch.managedBootstrapIdentity,
+        request: rootApplyRequest,
+        expectedContainerId: ownedContainerId,
+      });
+      await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
       if (input.agent === "openclaw") {
         assertOpenClawHeartbeatStart(ownedContainerId, launch.sandboxEnv);
       }
@@ -1293,6 +1328,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     }
   } finally {
     process.exit = exit;
+    try {
+      await hermesApiPort?.reservation?.release();
+    } catch (error) {
+      cleanupErrors.push(
+        `Hermes API port reservation cleanup failed: ${managedImageFailureDetail(error)}`,
+      );
+    }
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),

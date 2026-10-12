@@ -44,17 +44,18 @@ describe("connectSandbox DCode probe preamble boundary", () => {
     const version = requireDist(
       "../../src/lib/sandbox/version.js",
     ) as typeof import("../../sandbox/version");
-    const ssh = requireDist(
-      "../../src/lib/adapters/openshell/sandbox-ssh-cli.js",
-    ) as typeof import("../../adapters/openshell/sandbox-ssh-cli");
+    const commandCli = requireDist(
+      "../../src/lib/adapters/openshell/sandbox-command-cli.js",
+    ) as typeof import("../../adapters/openshell/sandbox-command-cli");
     vi.mocked(version.checkAgentVersion).mockRestore();
     const run = vi.fn(async () => ({
-      kind: "completed" as const,
-      exitCode: 0,
+      outcome: { kind: "completed" as const, exitCode: 0 },
       stdout: "0.1.12",
       stderr: "",
     }));
-    vi.spyOn(ssh, "createCliOpenShellSandboxSshExecutor").mockReturnValue({ run });
+    vi.spyOn(commandCli, "createCliOpenShellSandboxCommandExecutor").mockReturnValue({
+      runBuffered: run,
+    } as never);
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
 

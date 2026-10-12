@@ -26,7 +26,7 @@ const ACTION_PATH = path.join(
 );
 const SCRIPT_PATH = path.join(REPO_ROOT, ".github", "scripts", "host-dependency-setup.sh");
 const ACTION_USES =
-  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75";
+  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@d511d704980d651909b52b18ee42fad41a017b7d";
 
 interface WorkflowStep {
   if?: string;
@@ -154,7 +154,7 @@ describe("E2E host dependency action boundary (#6961)", () => {
     expect(validateE2eWorkflow(workflow)).toContain(expectedError);
   });
 
-  it.each(["", "   ", "expect\ncurl", "curl"])(
+  it.each(["", "   ", "expect\ncurl", "curl", "runc"])(
     "executes the host helper with validated packages and bounded retries [%s] (#6961)",
     (invalidPackages) => {
       expect(fs.statSync(SCRIPT_PATH).mode & 0o111).not.toBe(0);
@@ -206,13 +206,16 @@ exit 64
         expect(rejected.status).toBe(1);
         expect(fs.existsSync(callsPath)).toBe(false);
 
-        const retried = runSetup("expect iptables", 3);
+        const retried = runSetup(
+          "expect iptables conmon fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
+          3,
+        );
         expect(retried.status, retried.stderr).toBe(0);
         expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
           "apt-get update",
           "apt-get update",
           "apt-get update",
-          "apt-get install -y --no-install-recommends expect iptables",
+          "apt-get install -y --no-remove --no-install-recommends expect iptables conmon fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap",
         ]);
 
         const exhausted = runSetup("expect", 4);

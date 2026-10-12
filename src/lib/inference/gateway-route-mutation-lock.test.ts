@@ -31,6 +31,28 @@ function observeNextLockPublicationAttempt(): { attempted: Promise<void>; restor
 }
 
 describe("gateway route mutation lock", () => {
+  it("rejects blank gateway names before running sync or async mutations", () => {
+    const operation = vi.fn();
+    expect(() => withGatewayRouteMutationLock(" \t", operation)).toThrow(
+      "OpenShell gateway name is required.",
+    );
+    expect(() => withGatewayRouteMutationLockSync(" \t", operation)).toThrow(
+      "OpenShell gateway name is required.",
+    );
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 65_536, 1.5, Number.NaN])(
+    "rejects invalid router port %s before running a lifecycle mutation",
+    (port) => {
+      const operation = vi.fn();
+      expect(() => withModelRouterPortLifecycleLock(port, operation)).toThrow(
+        "Model Router port must be an integer from 1 to 65535.",
+      );
+      expect(operation).not.toHaveBeenCalled();
+    },
+  );
+
   it("resolves default and overridden router lock directories without filesystem access", () => {
     const homeDir = "/srv/nemoclaw-controller";
     const expectedStateDir = path.join(homeDir, ".nemoclaw", "state");

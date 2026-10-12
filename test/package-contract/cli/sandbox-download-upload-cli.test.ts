@@ -159,33 +159,35 @@ require('node:module').syncBuiltinESMExports();
     },
   );
 
-  it("publishes a staged download to a host destination resolved against the caller cwd", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-"));
-    try {
-      writeSandboxRegistry(home);
-      const openshellLog = path.join(home, "openshell-calls.log");
-      const localBin = buildStubOpenshell(home, openshellLog);
-      const relativeHostDest = path.relative(process.cwd(), path.join(home, "out"));
+  it.each([
+    ["/sandbox/.openclaw/workspace/SOUL.md", "/sandbox/.openclaw/workspace/SOUL.md"],
+    ["-payload", "./-payload"],
+  ])(
+    "publishes %s to a host destination resolved against the caller cwd",
+    (source, expectedSource) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-"));
+      try {
+        writeSandboxRegistry(home);
+        const openshellLog = path.join(home, "openshell-calls.log");
+        const localBin = buildStubOpenshell(home, openshellLog);
+        const relativeHostDest = path.relative(process.cwd(), path.join(home, "out"));
 
-      const result = runWithEnv(
-        ["alpha", "download", "/sandbox/.openclaw/workspace/SOUL.md", relativeHostDest],
-        {
+        const result = runWithEnv(["alpha", "download", "--", source, relativeHostDest], {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
-        },
-      );
-      expect(result.code).toBe(0);
+        });
+        expect(result.code).toBe(0);
 
-      const calls = fs.readFileSync(openshellLog, "utf8");
-      const expectedHostDest = path.resolve(process.cwd(), relativeHostDest);
-      expect(calls).toMatch(
-        /sandbox download -g nemoclaw alpha \/sandbox\/\.openclaw\/workspace\/SOUL\.md .*nemoclaw-download-.*\/artifact/,
-      );
-      expect(fs.readFileSync(expectedHostDest, "utf8")).toBe("downloaded");
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        const calls = fs.readFileSync(openshellLog, "utf8");
+        const expectedHostDest = path.resolve(process.cwd(), relativeHostDest);
+        expect(calls).toContain(`sandbox download -g nemoclaw alpha ${expectedSource} `);
+        expect(calls).toMatch(/nemoclaw-download-.*\/artifact/);
+        expect(fs.readFileSync(expectedHostDest, "utf8")).toBe("downloaded");
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("defaults the host destination to the caller cwd when omitted", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-default-"));

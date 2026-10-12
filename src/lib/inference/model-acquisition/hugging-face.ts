@@ -50,7 +50,10 @@ export type HuggingFaceModelAcquisitionResult =
 
 export type HfDownloadAuthentication =
   | { readonly authenticated: false }
-  | { readonly authenticated: true; readonly source: (typeof HF_TOKEN_ENV_KEYS)[number] };
+  | {
+      readonly authenticated: true;
+      readonly source: (typeof HF_TOKEN_ENV_KEYS)[number];
+    };
 
 function pickHfTokenEntry(
   env: NodeJS.ProcessEnv = process.env,
@@ -195,11 +198,11 @@ function modelDownloadStallTimeoutMs(env: NodeJS.ProcessEnv = process.env): numb
 }
 
 function dockerEndpointIdentity(env: Readonly<Record<string, string>>): string {
-  const dockerContext = env.DOCKER_CONTEXT?.trim();
-  if (dockerContext) return `Docker context ${redactFull(dockerContext)}`;
   const dockerHost = env.DOCKER_HOST?.trim();
-  return dockerHost
-    ? `Docker host ${redactFullWithUrls(dockerHost)}`
+  if (dockerHost) return `Docker host ${redactFullWithUrls(dockerHost)}`;
+  const dockerContext = env.DOCKER_CONTEXT?.trim();
+  return dockerContext
+    ? `Docker context ${redactFull(dockerContext)}`
     : "the default Docker endpoint";
 }
 

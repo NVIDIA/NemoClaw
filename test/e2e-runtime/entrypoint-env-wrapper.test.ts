@@ -166,7 +166,7 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     const openClawPortBlock = sliceBlock(
       OPENCLAW_START,
       'NEMOCLAW_CMD=("$@")',
-      "# ── Mutable config permission normalize",
+      "run_oneshot_command() {",
     );
     const snippet = [
       normalizer,

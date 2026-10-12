@@ -24,7 +24,7 @@ if ((${#requested_packages[@]} == 0)); then
   echo "::error::Host dependency setup requires at least one package." >&2
   exit 1
 fi
-allowlist=" expect iptables "
+allowlist=" expect iptables conmon fuse-overlayfs golang-github-containers-common nftables slirp4netns uidmap "
 for package in "${requested_packages[@]}"; do
   if [[ "${allowlist}" != *" ${package} "* ]]; then
     echo "::error::Host dependency package '${package}' is outside the reviewed allowlist." >&2
@@ -43,4 +43,4 @@ for attempt in 1 2 3; do
   echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
   sleep $((attempt * 5))
 done
-sudo apt-get install -y --no-install-recommends "${requested_packages[@]}"
+sudo apt-get install -y --no-remove --no-install-recommends "${requested_packages[@]}"

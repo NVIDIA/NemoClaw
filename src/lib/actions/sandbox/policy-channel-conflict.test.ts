@@ -22,7 +22,7 @@ import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
 import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
-import * as processRecovery from "./process-recovery";
+import * as commandTransport from "../../adapters/sandbox/command-transport";
 
 function agentFixture(name: string): defs.AgentDefinition {
   return { name } as defs.AgentDefinition;
@@ -427,8 +427,9 @@ beforeEach(() => {
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
+  vi.spyOn(commandTransport, "executeSandboxExecCommand").mockRejectedValue(
+    new commandTransport.SandboxCommandTransportError("unavailable"),
+  );
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
@@ -1245,12 +1246,12 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(text).toContain("'telegram' bridge startup detected");
     expect(text).toContain("Telegram direct-message allowlist is empty");
     const execCommands = vi
-      .mocked(processRecovery.executeSandboxExecCommand)
+      .mocked(commandTransport.executeSandboxExecCommand)
       .mock.calls.map((call: unknown[]) => String(call[1]));
     expect(
       vi
-        .mocked(processRecovery.executeSandboxExecCommand)
-        .mock.calls.every((call) => call[3]?.localDockerFallbackPolicy === "read-only"),
+        .mocked(commandTransport.executeSandboxExecCommand)
+        .mock.calls.every((call) => call[3] === undefined || Object.keys(call[3]).length === 0),
     ).toBe(true);
     expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
     expect(
@@ -1481,7 +1482,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 });
 
 function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
-  vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(
+  vi.mocked(commandTransport.executeSandboxExecCommand).mockImplementation(
     async (_sandboxName: string, command: string) => {
       if (command.includes("cat") && command.includes("openclaw.json")) {
         return { status: 0, stdout: JSON.stringify(options.config), stderr: "" };
@@ -1489,7 +1490,7 @@ function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
       if (command.includes("tail -n 400") && command.includes("gateway.log")) {
         return { status: 0, stdout: options.log, stderr: "" };
       }
-      return null;
+      throw new commandTransport.SandboxCommandTransportError("unavailable");
     },
   );
 }

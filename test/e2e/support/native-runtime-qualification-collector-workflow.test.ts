@@ -115,6 +115,7 @@ describe("native runtime qualification collector workflow", () => {
       [
         ".github/actions/setup-reviewed-npm",
         "ci/reviewed-npm-audit.json",
+        "scripts/lib/npm-diagnostics.sh",
         "scripts/lib/reviewed-npm-audit.mts",
         ...localImportClosure(COLLECTOR_ENTRYPOINT),
       ].sort(),

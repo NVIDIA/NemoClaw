@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
@@ -15,6 +14,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { createPublicInstallWorkspace } from "../fixtures/public-install-workspace.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -164,12 +164,9 @@ test(
       scenarioLabel: "OpenClaw skill CLI",
     });
 
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-skill-cli-home-"));
+    const home = createPublicInstallWorkspace(cleanup);
     const env = testEnv(home);
     const localSkillDirectory = writeLocalSkillFixture(home);
-    cleanup.trackDisposable(`remove openclaw-skill-cli test home for ${SANDBOX_NAME}`, () => {
-      fs.rmSync(home, { recursive: true, force: true });
-    });
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy-openclaw-skill-cli",
       env,

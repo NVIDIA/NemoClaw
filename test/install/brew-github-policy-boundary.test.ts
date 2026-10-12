@@ -47,8 +47,39 @@ function resolveEffectivePolicy(presetNames: string[]): string {
 }
 
 describe("policy preset capability boundaries", () => {
-  it("allows GitHub git egress only when the github preset is active (#6502)", () => {
-    expect(allowsGitToReachGitHub(resolveEffectivePolicy(["brew"]))).toBe(false);
-    expect(allowsGitToReachGitHub(resolveEffectivePolicy(["brew", "github"]))).toBe(true);
+  it("removes the broader grant when replacing brew with brew-balanced (#10380)", () => {
+    const broad = resolveEffectivePolicy(["brew", "brew-balanced"]);
+    expect(YAML.parse(broad).network_policies.brew.endpoints).toContainEqual({
+      host: "raw.githubusercontent.com",
+      port: 443,
+      access: "full",
+    });
+    const entries = policies.extractPresetEntries(policies.loadPreset("brew")!);
+    const removed = policies.removePresetFromPolicy(broad, entries);
+    const narrowed = policies.mergePresetNamesIntoPolicy(removed, ["brew-balanced"]);
+    const document = YAML.parse(narrowed.policy);
+    expect(document.network_policies.brew).toBeUndefined();
+    expect(
+      document.network_policies["brew-balanced"].endpoints.find(
+        (endpoint: { host: string }) => endpoint.host === "raw.githubusercontent.com",
+      ),
+    ).toEqual({
+      host: "raw.githubusercontent.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      rules: [
+        { allow: { method: "GET", path: "/**" } },
+        { allow: { method: "HEAD", path: "/**" } },
+      ],
+    });
   });
+
+  it.each(["brew", "brew-balanced"])(
+    "requires the github preset for git egress alongside %s (#6502)",
+    (preset) => {
+      expect(allowsGitToReachGitHub(resolveEffectivePolicy([preset]))).toBe(false);
+      expect(allowsGitToReachGitHub(resolveEffectivePolicy([preset, "github"]))).toBe(true);
+    },
+  );
 });

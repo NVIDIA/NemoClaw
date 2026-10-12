@@ -316,21 +316,31 @@ export async function runLlamaCppPrivateBridge(
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
 
-  await Promise.all(
-    servers.map(
-      (server, index) =>
-        new Promise<void>((resolve, reject) => {
-          server.once("error", reject);
-          server.listen(
-            { host: authority.bindAddresses[index]!, port: authority.listenPort, exclusive: true },
-            () => resolve(),
-          );
-        }),
-    ),
-  );
-  await new Promise<void>((_resolve, reject) => {
-    for (const server of servers) server.once("error", reject);
-  });
+  try {
+    await Promise.all(
+      servers.map(
+        (server, index) =>
+          new Promise<void>((resolve, reject) => {
+            server.once("error", reject);
+            server.listen(
+              {
+                host: authority.bindAddresses[index]!,
+                port: authority.listenPort,
+                exclusive: true,
+              },
+              () => resolve(),
+            );
+          }),
+      ),
+    );
+    await new Promise<void>((_resolve, reject) => {
+      for (const server of servers) server.once("error", reject);
+    });
+  } finally {
+    process.removeListener("SIGINT", close);
+    process.removeListener("SIGTERM", close);
+    close();
+  }
 }
 
 if (require.main === module) {

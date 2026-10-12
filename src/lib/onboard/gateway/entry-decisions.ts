@@ -15,13 +15,22 @@ export function selectGatewayPortCheckOptions<T>(
   return portKind === "gateway" ? getOptions() : undefined;
 }
 
+/** Keep port-admission reporting separate from runtime ownership persistence. */
 export function acceptManagedListener(
   listenerPid: number | null,
-  accept: (pid: number) => void,
+  reportAccepted: () => void,
 ): boolean {
   if (listenerPid === null) return false;
-  accept(listenerPid);
+  reportAccepted();
   return true;
+}
+
+export function selectPreflightSandboxName(
+  knownName: string | null,
+  nonInteractive: boolean,
+  readDefaultName: () => string,
+): string | null {
+  return knownName ?? (nonInteractive ? readDefaultName() : null);
 }
 
 export function requireGatewayBinding<T>(binding: T | null): T {

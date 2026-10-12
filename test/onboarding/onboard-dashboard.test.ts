@@ -118,6 +118,27 @@ describe("onboard dashboard helpers", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it("reads the gateway token from native OpenClaw JSON5 config (#11764)", async () => {
+    const executor: OpenShellSandboxTransferExecutor = {
+      run: vi.fn(async (request) => {
+        fs.mkdirSync(request.destination, { recursive: true });
+        fs.writeFileSync(
+          path.join(request.destination, "openclaw.json"),
+          "{ gateway: { auth: { token: 'secret-token', }, }, }",
+        );
+        return {
+          outcome: { kind: "completed" as const, exitCode: 0 },
+          wasInterrupted: () => false,
+          release: vi.fn(),
+        };
+      }),
+    };
+
+    await expect(
+      createTokenHelpers(executor).fetchGatewayAuthTokenFromSandbox("alpha"),
+    ).resolves.toBe("secret-token");
+  });
+
   it("returns null and cleans up a partial download after transfer failure", async () => {
     let destination = "";
     const release = vi.fn(() => {

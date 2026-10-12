@@ -28,7 +28,7 @@ import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-end
 import { listExtraProviders } from "../../state/registry/extra-providers";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
-import { getPersistedSandboxTargetGateway } from "./gateway-target";
+import { getKnownSandboxTarget, getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
@@ -145,6 +145,14 @@ export function getMcpProviderInspectionRuntimeSelection(
     ...(localTlsDir ? { localTlsDir } : {}),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
+}
+
+export function resolveSandboxConfigRuntimeSelection(
+  sandboxName: string,
+): OpenShellRuntimeSelection {
+  const sandbox = getKnownSandboxTarget(sandboxName);
+  if (!sandbox) throw new Error(`Sandbox '${sandboxName}' has no recorded runtime target.`);
+  return getMcpProviderInspectionRuntimeSelection(sandbox);
 }
 
 export async function inspectMcpProvider(

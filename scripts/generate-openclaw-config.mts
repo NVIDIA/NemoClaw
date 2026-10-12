@@ -27,7 +27,10 @@
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
+import { nativeHostedAgentConfig } from "../src/lib/inference/native-provider/agent-config.ts";
+
 import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
+import { managedInferenceApiKey } from "../src/lib/inference-credential.ts";
 
 import {
   chmodSync,
@@ -83,7 +86,7 @@ const MANAGED_INFERENCE_HOSTNAME = "inference.local";
 // NemoClaw hands off this config.
 // NemoClaw does not own that runtime, so this is a generator-side mitigation,
 // not a source fix.
-// The runtime-overrides E2E validates this object with the pinned OpenClaw CLI;
+// The managed-image security E2E loads this value through the pinned OpenClaw CLI;
 // that does not prove live token reduction, so keep #4781 open. Remove this
 // override only after a newer pinned OpenClaw runtime has managed-inference
 // regression evidence that `/compact` completes and leaves a no-larger active
@@ -127,13 +130,12 @@ const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
   ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
-// The managed-image capability union installs diagnostics-otel and brave-plugin. It does not
-// install the Tavily Search plugin. OpenClaw validates each plugins.entries key even when
-// the entry is disabled, so omit Tavily from a neutral managed image (#10325).
+// The managed image preinstalls these optional plugins and keeps them disabled until selected.
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
   ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",
   "brave",
+  "tavily",
 ] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
@@ -729,8 +731,8 @@ function isManagedInferenceLocalRoute(
 
 // Managed inference sessions other than Local Ollama use OpenClaw's safeguard
 // compaction rather than its plain runtime compactor. A two-minute timeout
-// bounds each standard attempt. The N1x managed-vLLM profile needs five minutes
-// because its compaction request can exceed two minutes (#11805). OpenClaw
+// bounds each standard summarization request. The N1x managed-vLLM profile
+// retains its five-minute request timeout (#11805). OpenClaw
 // 2026.9.1 retired the configurable reserve fields, so its runtime owns prompt
 // headroom while NemoClaw retains the profile-specific timeout. Lifecycle notices
 // expose compaction progress, and successful compaction rotates the active transcript.
@@ -760,7 +762,12 @@ export function buildManagedInferenceSafeguardCompaction(
           timeoutSeconds: N1X_COMPACTION_TIMEOUT_SECONDS,
         }
       : {}),
-    qualityGuard: { ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard },
+    qualityGuard: {
+      ...MANAGED_INFERENCE_SAFEGUARD_COMPACTION.qualityGuard,
+      // Give N1x summaries one corrective attempt with audit feedback (#12297).
+      // Keep the audit enabled so failed summaries cannot replace conversation history.
+      ...(isN1xManagedVllm ? { maxRetries: 1 } : {}),
+    },
   };
 }
 
@@ -966,10 +973,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
       maxTokens,
     });
   }
+  const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
-      apiKey: "unused",
+      apiKey: nativeHosted?.apiKey ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
+      ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
       models: providerModels,
@@ -1096,7 +1105,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const tools = config.tools;
   tools.web ??= {};
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
-  if (managedImageCapabilityUnion) {
+  if (!webSearchProvider) {
+    // OpenClaw treats OPENROUTER_API_KEY as Perplexity search auth when search is unspecified.
     tools.web.search = { enabled: false };
   }
 

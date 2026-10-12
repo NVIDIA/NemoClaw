@@ -409,6 +409,7 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
   const denyTools: string[] = [];
   let server = "";
   let clearDenyTools = false;
+  let refreshPublicPins = false;
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -424,6 +425,10 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
       clearDenyTools = true;
       continue;
     }
+    if (token === "--refresh-public-pins") {
+      refreshPublicPins = true;
+      continue;
+    }
     if (token?.startsWith("-")) {
       throw new McpBridgeError(`Unknown mcp update option: ${token}`, 2);
     }
@@ -433,16 +438,25 @@ export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools)",
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins)",
       2,
     );
   }
 
-  if (!server || (denyTools.length === 0 && !clearDenyTools)) {
+  if (!server || (denyTools.length === 0 && !clearDenyTools && !refreshPublicPins)) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools)",
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools | --refresh-public-pins)",
       2,
     );
+  }
+  if (refreshPublicPins) {
+    if (denyTools.length > 0 || clearDenyTools) {
+      throw new McpBridgeError(
+        "Choose one update mode: public-pin refresh or denied-tool replacement.",
+        2,
+      );
+    }
+    return { server, refreshPublicPins: true };
   }
   if (denyTools.length > 0 && clearDenyTools) {
     throw new McpBridgeError(

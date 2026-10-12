@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
-export const SUPPORTED_OPENCLAW_VERSION = "2026.9.1";
+export const SUPPORTED_OPENCLAW_VERSION = "2026.9.2";
 export const MARKER = "/* nemoclaw secondary-agent main-session delete compatibility */";
 export const WORKER_MARKER =
   "/* nemoclaw worker secondary-agent main-session delete compatibility */";
@@ -129,7 +129,7 @@ function resolveTargets(distDir: string): [string, string] {
 export function patchOpenClawSecondaryAgentMainSessionDelete(distDir: string): PatchRunResult {
   const resolvedDist = path.resolve(distDir);
   const version = readVersion(resolvedDist);
-  if (version !== SUPPORTED_OPENCLAW_VERSION) {
+  if (version !== SUPPORTED_OPENCLAW_VERSION && version !== "2026.9.1") {
     if (["2026.3.11", "2026.4.24"].includes(version)) {
       return { status: "skipped-unsupported-version", version };
     }

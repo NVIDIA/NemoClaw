@@ -13,18 +13,22 @@ export async function assertDeepAgentsMcpConfig(
     serverName: string;
     mcpUrl: string;
     hostSecret: string;
+    completeNativeState?: { path: string; value: string };
   },
 ): Promise<void> {
   const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
+  const nativeStateCondition = options.completeNativeState
+    ? `pathlib.Path(${JSON.stringify(options.completeNativeState.path)}).read_text(encoding='utf-8') == ${JSON.stringify(options.completeNativeState.value)}`
+    : "True";
   const script = [
     "set -eu",
     "python3 - <<'PY'",
     "import json, pathlib, re",
-    "path = pathlib.Path('/sandbox/.deepagents/.nemoclaw-mcp.json')",
+    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
     "text = path.read_text(encoding='utf-8')",
     "data = json.loads(text)",
     `entry = data['mcpServers'][${JSON.stringify(options.serverName)}]`,
-    "assert entry['type'] == 'http'",
+    `assert entry['type'] == 'http' and ${nativeStateCondition}`,
     `assert entry['url'] == ${JSON.stringify(options.mcpUrl)}`,
     `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
     `assert ${JSON.stringify(options.hostSecret)} not in text`,

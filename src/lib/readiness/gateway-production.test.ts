@@ -814,6 +814,7 @@ describe("managed gateway port readiness (#7411)", () => {
           gatewayName,
           gatewayPort,
           expectedEndpoint: endpoint,
+          runtimeSocketPath: environment.OPENSHELL_PODMAN_SOCKET,
           managedGatewayEndpoints: expect.arrayContaining([endpoint]),
           portAvailable: false,
         }),
@@ -841,6 +842,7 @@ describe("managed gateway port readiness (#7411)", () => {
       await new Promise<void>((resolve) => reservation.close(() => resolve()));
       const gatewayName = `nemoclaw-${String(gatewayPort)}`;
       const endpoint = `https://169.254.2.2:${String(gatewayPort)}`;
+      const hostEndpoint = `https://127.0.0.1:${String(gatewayPort)}`;
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-readiness-real-"));
       const stateDir = path.join(root, "gateway-state");
       const openshell = path.join(root, "openshell");
@@ -850,11 +852,11 @@ describe("managed gateway port readiness (#7411)", () => {
         `#!/bin/sh
 case "$1" in
   --version) printf 'openshell 0.0.116\\n' ;;
-  status) printf 'Server Status\\nGateway: ${gatewayName}\\nServer: ${endpoint}/\\nConnected\\n' ;;
+  status) printf 'Server Status\\nGateway: ${gatewayName}\\nServer: ${hostEndpoint}/\\nConnected\\n' ;;
   gateway)
     case "$2" in
-      list) printf '%s\\n' '[{"name":"${gatewayName}","endpoint":"${endpoint}","active":true}]' ;;
-      *) printf 'Gateway Info\\nGateway: ${gatewayName}\\nGateway endpoint: ${endpoint}/\\n' ;;
+      list) printf '%s\\n' '[{"name":"${gatewayName}","endpoint":"${hostEndpoint}","active":true}]' ;;
+      *) printf 'Gateway Info\\nGateway: ${gatewayName}\\nGateway endpoint: ${hostEndpoint}/\\n' ;;
     esac
     ;;
   *) exit 1 ;;

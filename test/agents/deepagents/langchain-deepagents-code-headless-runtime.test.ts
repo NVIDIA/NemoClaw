@@ -13,6 +13,25 @@ import {
 } from "../../helpers/langchain-deepagents-code-headless.ts";
 
 describe("LangChain Deep Agents Code headless runtime contracts", () => {
+  it("retains a failed connect probe reason without publishing credentials (#11764)", () => {
+    const source = fs.readFileSync(headlessCheckPath, "utf8");
+    const probe = source.slice(
+      source.indexOf('  connect_output=""'),
+      source.indexOf("  # 8. Untrusted evidence"),
+    );
+    const output = runHeadlessCheckSnippet(
+      [
+        'nemoclaw_connect_probe() { printf "%s\\n" "route health failed: HTTP 000" "Bearer sk-abcdefghijklmnopqrstuvwxyz"; return 7; }',
+        'fail_test() { printf "%s\\n" "$1"; }',
+        probe,
+      ].join("\n"),
+    );
+    expect(output).toContain("route health failed: HTTP 000");
+    expect(output).toContain("exit 7");
+    expect(output).toContain("<REDACTED>");
+    expect(output).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
+  });
+
   it("binds bare connect to every observed OpenShell sandbox exec target (#7034)", () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-connect-target-"));
     const cliFixture = path.join(fixtureDir, "nemoclaw");

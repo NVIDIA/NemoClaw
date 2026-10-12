@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, it, type TestContext, vi } from "vitest";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { E2E_TEARDOWN_PHASE } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ProgressSummary } from "../fixtures/progress.ts";
@@ -24,7 +25,7 @@ type RunFixtureResult = {
 function runFixture(
   env: NodeJS.ProcessEnv,
   owner: Pick<TestContext, "onTestFinished" | "signal">,
-  timeoutMs = 20_000,
+  timeoutMs = execTimeout(20_000),
 ): Promise<RunFixtureResult> {
   let finish: (result: RunFixtureResult) => void = () => undefined;
   const resultPromise = new Promise<RunFixtureResult>((resolve) => {
@@ -59,7 +60,7 @@ function runFixture(
   return resultPromise;
 }
 
-vi.setConfig({ maxConcurrency: 7, testTimeout: 30_000 });
+vi.setConfig({ maxConcurrency: 7, testTimeout: testTimeout(30_000) });
 
 describe.concurrent("automatic E2E phase outcomes", () => {
   it("redacts target identities and explicit progress events before console output", async (context) => {
@@ -91,7 +92,7 @@ describe.concurrent("automatic E2E phase outcomes", () => {
 
   it(
     "reports the signal when a nested fixture exceeds its deadline",
-    { timeout: 15_000 },
+    { timeout: testTimeout(15_000) },
     async (context) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-signal-"));
       const timeoutReady = path.join(artifactDir, "timeout-ready");
@@ -112,7 +113,7 @@ describe.concurrent("automatic E2E phase outcomes", () => {
       try {
         await vi.waitFor(() => context.expect(fs.existsSync(timeoutReady)).toBe(true), {
           interval: 10,
-          timeout: 10_000,
+          timeout: execTimeout(10_000),
         });
         deadline.abort();
         const result = await resultPromise;
@@ -166,7 +167,7 @@ describe.concurrent("automatic E2E phase outcomes", () => {
     ],
   ] as const)(
     "records a real Vitest %s result on the originating phase",
-    { timeout: 30_000 },
+    { timeout: testTimeout(30_000) },
     async (
       [mode, status, slug, phaseLabel, expectedOutcome, expectedTeardownOutcome, minimumDurationMs],
       context,

@@ -59,7 +59,11 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-8091" },
-        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
       }),
     );
   });
@@ -79,8 +83,8 @@ describe("launch-readiness gateway health scope", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).toContain("echo UNAVAILABLE");
-    expect(runBuffered.mock.calls[0]?.[0].command[2]).not.toContain("echo STOPPED");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).toContain("echo UNAVAILABLE");
+    expect(runBuffered.mock.calls[0]?.[0].command.at(-1)).not.toContain("echo STOPPED");
   });
 
   it.each([
@@ -97,7 +101,7 @@ describe("launch-readiness gateway health scope", () => {
           outcome: { kind: "completed", exitCode: 0 },
           stdout: execFileSync(
             "sh",
-            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command[2]}`],
+            ["-c", `curl() { printf '%s' '${http}'; return ${code}; }; ${request.command.at(-1)}`],
             { encoding: "utf8" },
           ),
           stderr: "",
@@ -155,7 +159,11 @@ describe("launch-readiness gateway health scope", () => {
       expect.objectContaining({
         sandboxName: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw-19080" },
-        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+        command: expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("http://127.0.0.1:18789/health"),
+        ]),
       }),
     );
   });
@@ -198,6 +206,7 @@ const SANDBOX = "alpha";
 const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
+const OPENROUTER_GATEWAY_AGENTS = ["openclaw", "hermes"] as const;
 
 function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {
@@ -217,6 +226,8 @@ function dcodeHealthDeps(
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
+    gatewayHealth: vi.fn(async () => true),
+    forwardsHealthy: vi.fn(() => true),
     inferenceProbe: vi.fn(async () => ({
       healthy: true,
       broken: false,
@@ -303,4 +314,69 @@ describe("Deep Agents Code launch readiness", () => {
       }),
     );
   });
+});
+
+describe("OpenRouter launch readiness", () => {
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "accepts the %s catalog 404 after the recorded inference request succeeds (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({ ok: true });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).resolves.toBeUndefined();
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
+
+  it.each(OPENROUTER_GATEWAY_AGENTS)(
+    "rejects the %s catalog 404 when the recorded inference request fails (#12621)",
+    async (agentName) => {
+      const agent = loadAgent(agentName);
+      const entry = {
+        name: SANDBOX,
+        agent: agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      } as SandboxEntry;
+      const currentDeps = dcodeHealthDeps({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      });
+
+      await expect(
+        requireLaunchSemanticHealth(SANDBOX, GATEWAY, agentName, entry, agent, true, currentDeps),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<LaunchReadinessObservationError>>({
+          category: "health",
+          failedCheck: "inference request",
+        }),
+      );
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY,
+        agentName,
+        provider: "openrouter-api",
+        model: MODEL,
+        preferredInferenceApi: "openai-completions",
+      });
+    },
+  );
 });

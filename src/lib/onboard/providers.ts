@@ -18,6 +18,12 @@ const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
 const {
+  getNativeNvidiaProviderAuthority,
+  getNativeHostedProviderAuthority,
+  setNativeHostedProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} = require("../state/registry/native-provider-authority");
+const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
@@ -32,6 +38,7 @@ const {
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
   NON_INTERACTIVE_PROVIDER_VALID_VALUES,
+  getRemoteProviderConfigForName,
   normalizeNonInteractiveProviderKey,
 } = require("./inference-providers/provider-selection-keys");
 const { HERMES_PROVIDER_NAME } = require("./inference-providers/hermes-provider-identity");
@@ -176,6 +183,27 @@ const LOCAL_INFERENCE_POLICY_PROVIDERS = [...LOCAL_INFERENCE_PROVIDERS, "llama-c
 const OLLAMA_PROXY_CREDENTIAL_ENV = OLLAMA_LOCAL_CREDENTIAL_ENV;
 
 const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
+
+/** Return the OpenShell provider type owned by onboarding metadata. */
+function resolveInferenceProviderType(
+  providerName,
+  preferredInferenceApi = null,
+  remoteProviderConfig = REMOTE_PROVIDER_CONFIG,
+) {
+  const config = getRemoteProviderConfigForName(providerName, remoteProviderConfig);
+  // An OpenAI-only agent can intentionally use the OpenAI surface of a custom
+  // Anthropic endpoint. This is the one onboarding path where the persisted
+  // API family overrides the provider's default metadata.
+  if (
+    providerName === "compatible-anthropic-endpoint" &&
+    preferredInferenceApi === "openai-completions"
+  ) {
+    return "openai";
+  }
+  if (config) return config.providerType;
+  if (preferredInferenceApi === "anthropic-messages") return "anthropic";
+  return "openai";
+}
 
 // ── Provider label ───────────────────────────────────────────────
 
@@ -365,6 +393,17 @@ async function providerExistsInGateway(name, runOpenshell) {
   if (result.ok) return true;
   if (result.error.kind !== "schema" && result.error.kind !== "validation") return false;
   throw new Error(result.error.message);
+}
+
+function setupInferenceProviderDeps(runOpenshell) {
+  return {
+    providerExistsInGateway,
+    providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeNvidiaProviderAuthority,
+    getNativeHostedProviderAuthority,
+    setNativeHostedProviderAuthority,
+    setNativeNvidiaProviderAuthority,
+  };
 }
 
 /**
@@ -559,6 +598,9 @@ module.exports = {
   HOSTED_INFERENCE_MODEL,
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
+  getRemoteProviderConfigForName: (providerName, remoteProviderConfig = REMOTE_PROVIDER_CONFIG) =>
+    getRemoteProviderConfigForName(providerName, remoteProviderConfig),
+  resolveInferenceProviderType,
   getProviderLabel,
   getEffectiveProviderName,
   stageHostedInferenceSourceSecretEnv,
@@ -569,6 +611,7 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   upsertProvider,
+  setupInferenceProviderDeps,
   providerExistsInGateway,
   readGatewayProviderMetadata,
   getSandboxInferenceConfig,

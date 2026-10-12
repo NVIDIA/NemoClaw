@@ -13,6 +13,59 @@ import {
 } from "./provider-inference.test-support";
 
 describe("authoritative provider inference recovery", () => {
+  it("carries legacy no-auth route authority through final inference setup", async () => {
+    const endpointUrl = "http://localhost:11435/v1";
+    const credentialEnv = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+    const session = createSession({
+      sandboxName: "my-assistant",
+      provider: "compatible-endpoint",
+      model: "mock/legacy-no-auth",
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi: "openai-completions",
+    });
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      model: "mock/legacy-no-auth",
+      provider: "compatible-endpoint",
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi: "openai-completions",
+      recoveredFromSandbox: true,
+    }));
+    const { deps, calls } = createDeps({
+      setupNim,
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+    const { receipt, ledger } = activatedRecoveryReceipt({
+      sandboxName: "my-assistant",
+      sessionId: session.sessionId,
+      model: "mock/legacy-no-auth",
+      endpointUrl,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      providerRecoveryReceipt: receipt,
+      providerRecoveryReceiptLedger: ledger,
+      sandboxName: "my-assistant",
+      selectedMessagingChannels: ["telegram"],
+    });
+
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "mock/legacy-no-auth",
+      "compatible-endpoint",
+      endpointUrl,
+      credentialEnv,
+      null,
+      [],
+      expect.objectContaining({ allowLegacyRecordedNoAuthEndpoint: true }),
+    );
+  });
+
   it("stays enabled across messaging revalidation", async () => {
     const session = createSession({
       sandboxName: "my-assistant",

@@ -55,8 +55,8 @@ it.runIf(process.platform === "linux")(
     });
     expect(calls.slice(1).map((call) => call.command)).toEqual(["bash", "bash"]);
     expect(calls.slice(1).map((call) => call.args)).toEqual([
-      ["-lc", LAUNCH_TURN_SCRIPT],
-      ["-lc", LAUNCH_TURN_SCRIPT],
+      ["-c", LAUNCH_TURN_SCRIPT],
+      ["-c", LAUNCH_TURN_SCRIPT],
     ]);
     expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_EXIT_COMMAND)).toEqual([
       "/exit",

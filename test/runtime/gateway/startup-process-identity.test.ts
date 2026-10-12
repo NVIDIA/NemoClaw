@@ -275,10 +275,7 @@ if len(sys.argv) > 2:
 print(json.dumps(proof))
 `;
 
-const GUARDS = [
-  ["OpenClaw", path.resolve("scripts/openclaw-config-guard.py")],
-  ["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")],
-] as const;
+const GUARDS = [["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")]] as const;
 
 function runIdentityHarness(guardPath: string, ...args: string[]) {
   const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath, ...args], {
@@ -289,18 +286,6 @@ function runIdentityHarness(guardPath: string, ...args: string[]) {
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout);
 }
-
-it("uses private OpenClaw modes only for the authenticated same-user process tree", () => {
-  expect(runIdentityHarness(GUARDS[0][1], "modes")).toEqual({
-    same_user: [0o700, 0o600],
-    root_child: [0o2770, 0o660],
-    root_marker: [0o2770, 0o660],
-    direct_same_user: [0o700, 0o600],
-    direct_root: [0o2770, 0o660],
-    direct_foreign_user: [0o2770, 0o660],
-    direct_spoof: [0o2770, 0o660],
-  });
-});
 
 describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
   it("authenticates exactly one root namespace init and rejects stale or spoofed identities (#2426)", () => {
@@ -326,8 +311,8 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       bounded: false,
       openshell_supervised: true,
       openshell_supervised_direct: true,
-      openshell_supervisor_with_retained_command: name === "OpenClaw",
-      openshell_supervisor_with_retained_direct_command: name === "OpenClaw",
+      openshell_supervisor_with_retained_command: false,
+      openshell_supervisor_with_retained_direct_command: false,
       openshell_landlock_all_namespaces_denied: true,
       openshell_landlock_supervisor_namespace_denied: true,
       openshell_wrong_supervisor: false,
@@ -336,16 +321,16 @@ describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
       // #6565 reproduces nested PID namespaces only for OpenClaw. Hermes keeps
       // its independently tested same-namespace topology until it has a
       // Hermes-specific reproduction or acceptance requirement.
-      openshell_nested_pid_namespace: name === "OpenClaw",
+      openshell_nested_pid_namespace: false,
       openshell_cross_namespace_outer_pid: false,
-      openshell_nested_landlock_all_namespaces_denied: name === "OpenClaw",
-      openshell_nested_landlock_supervisor_namespace_denied: name === "OpenClaw",
+      openshell_nested_landlock_all_namespaces_denied: false,
+      openshell_nested_landlock_supervisor_namespace_denied: false,
       openshell_non_direct_child: false,
       openshell_spoof: false,
       openshell_duplicate: false,
       openshell_required_child: true,
       openshell_wrong_required_child: false,
-      openshell_nested_required_child: name === "OpenClaw",
+      openshell_nested_required_child: false,
       openshell_nested_wrong_required_child: false,
     });
   });

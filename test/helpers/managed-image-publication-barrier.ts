@@ -30,6 +30,7 @@ type BarrierOptions = {
 };
 
 type PromotionResult = {
+  aliasBytes: Record<string, string>;
   calls: string[];
   cohortContract: Record<string, unknown> | null;
   platformContracts: Record<string, Record<string, unknown>>;
@@ -40,6 +41,7 @@ type PromotionResult = {
 type PromotionOptions = {
   mutate?: CandidateMutation;
   publicationCohort?: string;
+  releaseTag?: string;
   retainStalePointerAliases?: boolean;
 };
 
@@ -56,7 +58,7 @@ function digestFor(agentIndex: number, platformIndex: number, offset: number): s
   return `sha256:${(offset + agentIndex * 2 + platformIndex).toString(16).padStart(64, "0")}`;
 }
 
-function candidates(): Candidate[] {
+function candidates(releaseTag: string | null = null): Candidate[] {
   return publicationAgents.flatMap((agent, agentIndex) =>
     publicationPlatforms.map((platform, platformIndex) => {
       const image = imageFor(agent);
@@ -158,11 +160,11 @@ function candidates(): Candidate[] {
           source: {
             repository,
             revision,
-            ref: "refs/heads/main",
+            ref: releaseTag ? `refs/tags/${releaseTag}` : "refs/heads/main",
             cohort,
           },
           run: { id: Number(runId), attempt: Number(runAttempt) },
-          release: null,
+          release: releaseTag,
         },
       };
     }),
@@ -373,7 +375,8 @@ fi
 `,
   );
   fs.chmodSync(path.join(bin, "docker"), 0o755);
-  const candidateValues = options.mutate ? options.mutate(candidates()) : candidates();
+  const sourceCandidates = candidates(options.releaseTag);
+  const candidateValues = options.mutate ? options.mutate(sourceCandidates) : sourceCandidates;
   fs.writeFileSync(
     candidateSet,
     `${JSON.stringify(candidateValues.map(({ contract }) => contract))}\n`,
@@ -393,6 +396,7 @@ fi
         CANDIDATE_SET: candidateSet,
         DOCKER_CALLS: calls,
         FAIL_COHORT_AGENT: failCohortAgent,
+        GITHUB_REF: options.releaseTag ? `refs/tags/${options.releaseTag}` : "refs/heads/main",
         GITHUB_REPOSITORY: repository,
         GITHUB_RUN_ATTEMPT: runAttempt,
         GITHUB_RUN_ID: runId,
@@ -417,7 +421,16 @@ fi
       }
     }
     const cohortContract = path.join(contracts, "cohort.json");
+    const aliasBytes: Record<string, string> = {};
+    for (const agent of publicationAgents) {
+      for (const tag of [revision, options.releaseTag].filter(Boolean)) {
+        const alias = `${imageFor(agent)}:${tag}`;
+        const aliasPath = referenceStatePath(root, alias);
+        if (fs.existsSync(aliasPath)) aliasBytes[alias] = fs.readFileSync(aliasPath, "utf8");
+      }
+    }
     return {
+      aliasBytes,
       calls: fs.existsSync(calls)
         ? fs.readFileSync(calls, "utf8").split(/\r?\n/u).filter(Boolean)
         : [],

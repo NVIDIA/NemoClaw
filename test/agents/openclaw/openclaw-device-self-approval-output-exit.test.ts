@@ -19,7 +19,14 @@ const APPROVAL = {
   device: { deviceId: "device-1" },
 };
 
-function runPatchedApprove(json: boolean) {
+type OutputFailure = "none" | "stall" | "callback-error";
+
+function runPatchedApprove(
+  json: boolean,
+  useLocalFallback = true,
+  outputFailure: OutputFailure = "none",
+  keepLeftoverHandle = true,
+) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-approve-output-"));
   const dist = path.join(tmp, "dist");
   fs.mkdirSync(dist);
@@ -41,10 +48,27 @@ defaultRuntime.writeJson = (value) => {
   process.stderr.write("approved-stderr\\n");
 };
 defaultRuntime.exit = (code) => realExit(code);
-setInterval(() => {}, 1000);
-setApprovalFailures([new Error("scope-upgrade-pending")]);
-approvePairingWithFallback({ json: ${String(json)} }, "request-1")
-  .then((result) => runDevicesApproveSuccess(result, { json: ${String(json)} }))
+if (${JSON.stringify(outputFailure)} === "stall") {
+  process.stdout.write = () => false;
+  process.stderr.write = () => false;
+} else if (${JSON.stringify(outputFailure)} === "callback-error") {
+  const stdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...args) => {
+    if (String(chunk).length === 0) {
+      const callback = args.at(-1);
+      if (typeof callback === "function") {
+        queueMicrotask(() => callback(new Error("stdout-drain-failed")));
+      }
+      return false;
+    }
+    return stdoutWrite(chunk, ...args);
+  };
+}
+if (${String(keepLeftoverHandle)}) setInterval(() => {}, 1000);
+setApprovalFailures(${useLocalFallback ? '[new Error("scope-upgrade-pending")]' : "[]"});
+const opts = { json: ${String(json)} };
+approvePairingWithFallback(opts, "request-1")
+  .then((result) => runDevicesApproveSuccess(result, opts))
   .catch((error) => {
     console.error(error);
     realExit(1);
@@ -57,9 +81,9 @@ approvePairingWithFallback({ json: ${String(json)} }, "request-1")
   });
   fs.rmSync(tmp, { recursive: true, force: true });
   expect(result.error).toBeUndefined();
-  expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+  expect(result.status, `${result.stdout}${result.stderr}`).toBe(outputFailure === "none" ? 0 : 1);
   expect(result.signal).toBeNull();
-  expect(result.stderr).toBe("approved-stderr\n");
+  expect(result.stderr).toBe(outputFailure === "stall" ? "" : "approved-stderr\n");
   return result.stdout;
 }
 
@@ -70,5 +94,20 @@ describe("OpenClaw devices approve output before forced exit (#12064)", () => {
 
   it("flushes JSON output before exiting with a leftover handle", () => {
     expect(JSON.parse(runPatchedApprove(true))).toEqual(APPROVAL);
+  });
+
+  it.each([
+    [false, "Approved ok (request-1)\n"],
+    [true, JSON.stringify({ requestId: "request-1", approved: true }) + "\n"],
+  ])("exits after direct gateway approval with a leftover handle", (json, expected) => {
+    expect(runPatchedApprove(json, false)).toBe(expected);
+  });
+
+  it("returns failure when approval output does not drain within the bound", () => {
+    expect(runPatchedApprove(false, false, "stall", false)).toBe("");
+  });
+
+  it("returns failure when an approval output callback reports an error", () => {
+    expect(runPatchedApprove(false, false, "callback-error")).toBe("Approved ok (request-1)\n");
   });
 });

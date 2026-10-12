@@ -72,16 +72,13 @@ function buildRunnerEnv(
   }
   if (replaceEnv) return normalizedExtra;
   if (executable !== undefined && path.basename(executable) === "docker") {
-    const selectedDockerContext = String(
-      normalizedExtra.DOCKER_CONTEXT ?? process.env.DOCKER_CONTEXT ?? "",
-    ).trim();
     const selectedDockerHost =
-      normalizedExtra.DOCKER_HOST ?? (selectedDockerContext ? undefined : process.env.DOCKER_HOST);
-    return buildDockerSubprocessEnv(process.env, selectedDockerHost, normalizedExtra, {
+      String(normalizedExtra.DOCKER_HOST ?? "").trim() ||
+      String(process.env.DOCKER_HOST ?? "").trim();
+    return buildDockerSubprocessEnv(process.env, selectedDockerHost || undefined, normalizedExtra, {
       preserveDockerConfig:
-        normalizedExtra.DOCKER_HOST === undefined &&
-        dockerAuthority?.source === "context" &&
-        selectedDockerHost === dockerAuthority.dockerHost,
+        selectedDockerHost !== "" &&
+        (normalizedExtra.DOCKER_CONFIG !== undefined || process.env.DOCKER_CONFIG !== undefined),
     });
   }
   return buildSubprocessEnv(normalizedExtra);

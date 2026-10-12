@@ -46,6 +46,8 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   gpuPassthrough: boolean;
   /** Validated process-local component authority for this fresh onboarding run. */
   externalComponent?: PreparedExternalComponent | null;
+  /** Process-local guard for mutations of the registered sandbox identity. */
+  revalidateSandboxIdentity?: (operation: string) => void;
 }
 
 export type ProviderModelSelectedOnboardFlowContext<Context extends OnboardFlowContext> =
@@ -101,6 +103,7 @@ export interface SandboxCreatedContextUpdate {
   hermesToolGateways: string[];
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
+  revalidateSandboxIdentity?: (operation: string) => void;
 }
 
 export function assertProviderModelSelectedContext<Context extends OnboardFlowContext>(

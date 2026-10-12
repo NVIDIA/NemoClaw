@@ -47,7 +47,11 @@ import {
   mergeBaselineEntryIntoPolicy,
   removeBaselineEntryFromPolicy,
 } from "./baseline-exclusion";
-import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
+import {
+  inspectGatewayPresetNames,
+  inspectPresetContentGatewayState,
+  recordPolicyResult,
+} from "./gateway-state";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "./microsoft-login-credential-binding";
 import {
   parseOpenShellPolicy,
@@ -79,6 +83,8 @@ import {
   prepareTrustedPrivatePolicyPresets,
   type TrustedPrivatePolicyPinCapability,
 } from "./trusted-private-endpoints";
+
+export { persistAppliedPolicySelection } from "./gateway-state";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -685,6 +691,8 @@ async function inspectLivePolicyBoundary(
   operation: string,
   requestedGatewayName?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  deadlineMs?: number,
+  now: () => number = Date.now,
 ): Promise<PolicyMutationContext> {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
@@ -722,18 +730,29 @@ async function inspectLivePolicyBoundary(
     );
   }
   const target = namedOpenShellGateway(gatewayName);
+  const remainingTimeoutMs = (): number | undefined => {
+    if (deadlineMs === undefined) return undefined;
+    const remainingMs = Math.floor(deadlineMs - now());
+    if (remainingMs <= 0) {
+      throw new PolicyObservationError(
+        `Refusing to ${operation}: the policy observation deadline expired.`,
+      );
+    }
+    return remainingMs;
+  };
   const inspection = requirePolicyObservation(
     await cliOpenShellSandboxPolicyReader.inspectSandboxPolicy({
       target,
       sandboxName,
       ...(runtimeSelection ? { runtimeSelection } : {}),
+      ...(deadlineMs === undefined ? {} : { timeoutMs: remainingTimeoutMs() }),
     }),
   );
   const basePolicyDocument = await readLivePolicyDocument(
     sandboxName,
     gatewayName,
     "base",
-    undefined,
+    remainingTimeoutMs(),
     runtimeSelection,
   );
   return {
@@ -767,6 +786,8 @@ export async function captureRecordedSandboxBasePolicy(
   sandboxName: string,
   operation: string,
   runtimeSelection?: OpenShellRuntimeSelection,
+  deadlineMs?: number,
+  now: () => number = Date.now,
 ): Promise<string> {
   return (
     await inspectLivePolicyBoundary(
@@ -774,6 +795,8 @@ export async function captureRecordedSandboxBasePolicy(
       operation,
       runtimeSelection?.gatewayName,
       runtimeSelection,
+      deadlineMs,
+      now,
     )
   ).basePolicyDocument;
 }
@@ -1109,7 +1132,14 @@ export async function setPolicyDocument(
     const concurrentRevision = observedVersion > originalVersion + 1;
 
     if (!concurrentRevision) {
-      if (requestedIsCurrent) return !recoveryOnly;
+      if (requestedIsCurrent) {
+        recordPolicyResult(
+          sandboxName,
+          recoveryOnly ? "failed" : "completed",
+          recoveryOnly ? "unchanged" : "applied",
+        );
+        return !recoveryOnly;
+      }
       if (outcome.kind === "ambiguous") {
         console.error(
           `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
@@ -1861,6 +1891,7 @@ async function removePreset(
     policyDocumentsMatch(currentPolicy, mergePresetIntoPolicy(currentPolicy, presetEntries));
   if (supersededByPersonal) {
     console.log(`  Preset '${presetName}' is already absent from the live OpenShell policy.`);
+    recordPolicyResult(sandboxName, "no_change", "unchanged");
     return true;
   }
 
@@ -1891,6 +1922,7 @@ async function removePreset(
 
   if (updated === currentPolicy) {
     console.log(`  Preset '${presetName}' is already absent from the live OpenShell policy.`);
+    recordPolicyResult(sandboxName, "no_change", "unchanged");
     return true;
   }
 
@@ -2023,7 +2055,10 @@ async function excludeBaselineEntry(
       return false;
     }
     const live = inspectLiveBaselineEntry(currentPolicy, key);
-    if (live.state === "absent") return true;
+    if (live.state === "absent") {
+      recordPolicyResult(sandboxName, "no_change", "unchanged");
+      return true;
+    }
     if (live.state !== "present" || live.digest !== digest) {
       console.error(
         `  Baseline entry '${key}' changed after preview. Rerun the command to review its current scope; no policy changes were made.`,
@@ -2068,7 +2103,10 @@ async function restoreBaselineEntry(
       );
       return false;
     }
-    if (!entry) return true;
+    if (!entry) {
+      recordPolicyResult(sandboxName, "no_change", "unchanged");
+      return true;
+    }
     const operation = `restore baseline policy entry '${key}'`;
     const context = await inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
     if (!context) return false;
@@ -2078,7 +2116,10 @@ async function restoreBaselineEntry(
       return false;
     }
     const live = inspectLiveBaselineEntry(currentPolicy, key);
-    if (live.state === "present" && live.digest === targetDigest) return true;
+    if (live.state === "present" && live.digest === targetDigest) {
+      recordPolicyResult(sandboxName, "no_change", "unchanged");
+      return true;
+    }
     if (live.state !== "absent") {
       console.error(
         `  Live baseline entry '${key}' differs from the current release baseline. Refusing to overwrite it.`,
@@ -2432,6 +2473,7 @@ async function applyPresetContent(
   }
 
   if (policyChanged) console.log(`  Applied preset: ${presetName}`);
+  else recordPolicyResult(sandboxName, "no_change", "unchanged");
   return true;
 }
 

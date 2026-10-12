@@ -197,13 +197,11 @@ installed_copy_schema_error() {
   else
     for item in \
       "validate-hermes-env-secret-boundary.py" \
-      "seed-hermes-dashboard-config.py" \
       "sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env" \
       "hermes-mcp-config-transaction.py" \
       "openshell-child-visible-credentials.v0.0.116.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
-      "node /opt/nemoclaw-hermes-config/generate-config.ts" \
-      "/sandbox/.hermes/profiles/dashboard-home"; do
+      "node /opt/nemoclaw-hermes-config/generate-config.ts"; do
       grep -Fq "$item" "$dockerfile" || missing+=("marker ${item}")
     done
     if grep -q '^ARG HERMES_SEMVER=' "$dockerfile"; then

@@ -3,7 +3,18 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  getTelemetryTarget,
+  isTelemetryOperationActive,
+  recordTelemetryTarget,
+  finishTelemetryOperation,
+} from "../telemetry/operation";
+import type { TelemetryOutcome, TelemetryState } from "../../domain/telemetry/event";
+
+import {
+  runOpenshell,
+  buildSelectedOpenShellSubprocessEnv,
+} from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { isNonInteractiveEnv, isNonInteractiveSession } from "../../core/non-interactive";
@@ -26,6 +37,7 @@ import {
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
   createMessagingPreEnableHookInputs,
+  findChannelConflicts,
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
@@ -42,7 +54,6 @@ import {
   toMessagingAgentId,
   tryGetMessagingAgentId,
 } from "../../messaging";
-import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
 import {
   hydrateMessagingChannelConfig,
@@ -86,20 +97,48 @@ import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import { getKnownSandboxTargetGatewayName, getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
-import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "../../adapters/sandbox/command-transport";
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 
 const isNonInteractive = () => isNonInteractiveSession();
-const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
-  runOpenshell([...args], {
-    env: options.env as NodeJS.ProcessEnv | undefined,
-    ignoreError: options.ignoreError,
-    input: options.input,
-    stdio: options.stdio as never,
-  });
+
+function telemetryGatewayName(sandboxName: string): string {
+  if (!isTelemetryOperationActive()) return "";
+  try {
+    return getKnownSandboxTargetGatewayName(sandboxName) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function recordConfigurationResult(
+  sandboxName: string,
+  outcome: TelemetryOutcome,
+  state: TelemetryState,
+): void {
+  if (!isTelemetryOperationActive()) return;
+  const gatewayName = telemetryGatewayName(sandboxName);
+  const previous = getTelemetryTarget(sandboxName, gatewayName);
+  if (outcome === "no_change" && previous?.outcome === "completed") return;
+  if (
+    outcome !== "completed" &&
+    state === "unchanged" &&
+    previous &&
+    ["applied", "pending", "partial"].includes(previous.state)
+  )
+    state = "partial";
+  recordTelemetryTarget({ scope: "configuration", sandboxName, gatewayName, outcome, state });
+}
+
+async function exitConfigurationFailure(sandboxName: string): Promise<never> {
+  recordConfigurationResult(sandboxName, "failed", "unchanged");
+  await finishTelemetryOperation(1);
+  return process.exit(1);
+}
 
 function removeDisabledChannelAgentConfigOrExit(
   sandboxName: string,
@@ -107,6 +146,15 @@ function removeDisabledChannelAgentConfigOrExit(
   plan: SandboxMessagingPlan,
 ): void {
   try {
+    const runtime = policyChannelDependencies.resolveConfigRuntimeSelection(sandboxName);
+    const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
+      runOpenshell(["-g", runtime.gatewayName, ...args], {
+        env: buildSelectedOpenShellSubprocessEnv(runtime, options.env),
+        replaceEnv: true,
+        ignoreError: options.ignoreError,
+        input: options.input,
+        stdio: options.stdio as never,
+      });
     MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(plan, channelId, {
       runOpenshell: runMessagingOpenshell,
     });
@@ -119,6 +167,7 @@ function removeDisabledChannelAgentConfigOrExit(
     console.error(
       `  Channel '${channelId}' remains disabled; fix the sandbox config error and re-run: ${CLI_NAME} ${sandboxName} channels remove ${channelId}`,
     );
+    recordConfigurationResult(sandboxName, "failed", "partial");
     process.exit(1);
   }
 }
@@ -180,8 +229,23 @@ function withSandboxMutationLockUnlessPreview<T>(
   dryRun: boolean | undefined,
   operation: () => Promise<T>,
 ): Promise<T> {
-  if (dryRun) return operation();
-  return withSandboxMutationLock(sandboxName, operation);
+  const run = async () => {
+    try {
+      return await operation();
+    } catch (error) {
+      const previous = getTelemetryTarget(sandboxName, telemetryGatewayName(sandboxName));
+      recordConfigurationResult(
+        sandboxName,
+        "failed",
+        previous && ["applied", "pending", "partial"].includes(previous.state)
+          ? "partial"
+          : "unavailable",
+      );
+      throw error;
+    }
+  };
+  if (dryRun) return run();
+  return withSandboxMutationLock(sandboxName, run);
 }
 
 /**
@@ -245,7 +309,7 @@ async function addSandboxPolicyUnlocked(
 
   if (source.kind === "error") {
     console.error(`  ${source.message}`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   if (source.kind === "file") {
@@ -255,14 +319,15 @@ async function addSandboxPolicyUnlocked(
       commandTrustedPrivateHosts,
     );
     if (!prepared) {
-      process.exit(1);
-      return;
+      return await exitConfigurationFailure(sandboxName);
     }
     const ok = await applyExternalPreset(sandboxName, prepared[0], {
       dryRun,
       yes: skipConfirm,
     });
-    if (!ok) process.exit(1);
+    if (!ok) {
+      return await exitConfigurationFailure(sandboxName);
+    }
     return;
   }
 
@@ -271,7 +336,7 @@ async function addSandboxPolicyUnlocked(
     const absDir = path.resolve(dirPath);
     if (!fs.existsSync(absDir) || !fs.statSync(absDir).isDirectory()) {
       console.error(`  Directory not found: ${dirPath}`);
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     const files = fs
       .readdirSync(absDir, { withFileTypes: true })
@@ -283,7 +348,7 @@ async function addSandboxPolicyUnlocked(
       .sort();
     if (files.length === 0) {
       console.error(`  No .yaml/.yml preset files in ${dirPath}`);
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     if (commandTrustedPrivateHosts.length === 0) {
       for (const file of files) {
@@ -294,8 +359,7 @@ async function addSandboxPolicyUnlocked(
           !(await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm }))
         ) {
           console.error(`  Aborting --from-dir: ${file} failed. Remaining presets not applied.`);
-          process.exit(1);
-          return;
+          return await exitConfigurationFailure(sandboxName);
         }
       }
       return;
@@ -308,16 +372,14 @@ async function addSandboxPolicyUnlocked(
       ...commandTrustedPrivateHosts,
     ]);
     if (!prepared) {
-      process.exit(1);
-      return;
+      return await exitConfigurationFailure(sandboxName);
     }
     for (const preset of prepared) {
       if (!(await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm }))) {
         console.error(
           `  Aborting --from-dir: ${preset.filePath} failed. Remaining presets not applied.`,
         );
-        process.exit(1);
-        return;
+        return await exitConfigurationFailure(sandboxName);
       }
     }
     return;
@@ -347,7 +409,7 @@ async function addSandboxPolicyUnlocked(
       console.error(
         `  Valid presets: ${allPresets.map((item: { name: string }) => item.name).join(", ")}`,
       );
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     if (applied.includes(preset.name)) {
       // #7323: the registry name alone must not block a re-add. Users edit
@@ -365,7 +427,7 @@ async function addSandboxPolicyUnlocked(
         console.error(
           `  Edit and re-apply it with --from-file, or run '${CLI_NAME} ${sandboxName} policy remove ${preset.name}' first.`,
         );
-        process.exit(1);
+        return await exitConfigurationFailure(sandboxName);
       }
       const appliedContent = await policies.loadPresetForSandbox(
         sandboxName,
@@ -374,7 +436,7 @@ async function addSandboxPolicyUnlocked(
       );
       if (!appliedContent) {
         console.error(`  Could not read the content of preset '${preset.name}'.`);
-        process.exit(1);
+        return await exitConfigurationFailure(sandboxName);
       }
       const appliedState = await policies.getPresetContentGatewayState(sandboxName, appliedContent);
       if (appliedState === "match") {
@@ -397,7 +459,7 @@ async function addSandboxPolicyUnlocked(
           console.error(
             "  No policy changes were made; inspect the live npm policy before retrying.",
           );
-          process.exit(1);
+          return await exitConfigurationFailure(sandboxName);
         } else {
           // The desired state already holds: exit 0 so converging scripts can
           // call `policy add` idempotently, mirroring how applyPreset treats a
@@ -405,6 +467,7 @@ async function addSandboxPolicyUnlocked(
           console.log(
             `  Preset '${preset.name}' is already applied and matches the live policy; nothing to do.`,
           );
+          recordConfigurationResult(sandboxName, "no_change", "unchanged");
           return;
         }
       }
@@ -415,7 +478,7 @@ async function addSandboxPolicyUnlocked(
         console.error(
           "  Could not read the live sandbox policy to compare (is the sandbox gateway running?).",
         );
-        process.exit(1);
+        return await exitConfigurationFailure(sandboxName);
       }
       if (appliedState !== "match") {
         // State-only notice: the downstream flow reports the dry-run,
@@ -439,14 +502,20 @@ async function addSandboxPolicyUnlocked(
     }
     answer = await pickPresetOrExit(() => policies.selectFromList(allPresets, { applied }), usage);
   }
-  if (!answer) return;
+  if (!answer) {
+    recordConfigurationResult(sandboxName, "cancelled", "unchanged");
+    return;
+  }
 
   const presetContent = await policies.loadPresetForSandbox(
     sandboxName,
     answer,
     messagingPolicyOptions,
   );
-  if (!presetContent) return;
+  if (!presetContent) {
+    recordConfigurationResult(sandboxName, "failed", "unchanged");
+    return;
+  }
 
   if (reapplyState) {
     // A re-add replaces the recorded entries, so use the state-aware heading
@@ -472,13 +541,17 @@ async function addSandboxPolicyUnlocked(
   }
 
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log("  --dry-run: no changes applied.");
     return;
   }
 
   if (!skipConfirm) {
     const confirm = await askPrompt(`  Apply '${answer}' to sandbox '${sandboxName}'? [Y/n]: `);
-    if (confirm.trim().toLowerCase().startsWith("n")) return;
+    if (confirm.trim().toLowerCase().startsWith("n")) {
+      recordConfigurationResult(sandboxName, "cancelled", "unchanged");
+      return;
+    }
   }
 
   if (
@@ -487,7 +560,7 @@ async function addSandboxPolicyUnlocked(
       ...messagingPolicyOptions,
     }))
   ) {
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   await refreshSandboxPolicyContextFile(sandboxName);
 }
@@ -544,6 +617,7 @@ async function applyExternalPreset(
   }
 
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log(`  --dry-run: '${loaded.presetName}' not applied.`);
     return true;
   }
@@ -552,7 +626,10 @@ async function applyExternalPreset(
     const confirm = await askPrompt(
       `  Apply '${loaded.presetName}' from ${loaded.filePath} to sandbox '${sandboxName}'? [Y/n]: `,
     );
-    if (confirm.trim().toLowerCase().startsWith("n")) return true; // user-cancel counts as success (no abort)
+    if (confirm.trim().toLowerCase().startsWith("n")) {
+      recordConfigurationResult(sandboxName, "cancelled", "unchanged");
+      return true; // Preserve the existing batch continuation contract.
+    }
   }
 
   try {
@@ -1105,6 +1182,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
 }
 
 async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
+  recordConfigurationResult(sandboxName, "completed", "pending");
   if (isNonInteractive()) {
     console.log("");
     console.log(
@@ -1121,7 +1199,13 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
     );
     return false;
   }
+  const gatewayName = telemetryGatewayName(sandboxName);
   await policyChannelDependencies.rebuildSandbox(sandboxName, ["--yes"]);
+  const rebuilt = getTelemetryTarget(sandboxName, gatewayName);
+  if (rebuilt && (rebuilt.outcome !== "completed" || rebuilt.state !== "applied")) {
+    recordTelemetryTarget({ ...rebuilt, scope: "configuration" });
+    return false;
+  }
   return true;
 }
 
@@ -1139,9 +1223,7 @@ async function runMessagingHealthChecksAfterRebuild(
     openclawBridgeHealth: {
       sandboxName,
       executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
-          localDockerFallbackPolicy: "read-only",
-        }),
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {}),
     },
   });
   try {
@@ -1405,21 +1487,21 @@ async function addSandboxChannelUnlocked(
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const manifest = resolveChannelManifest(rawChannelArg);
   if (!manifest) {
     console.error(`  Unknown channel '${rawChannelArg}'.`);
     console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   const canonical = manifest.id;
 
   const agent = resolveAgentForSandbox(sandboxName);
   if (!channelSupportedByAgent(manifest, agent)) {
     console.error("  This channel does not support the configured agent.");
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   // Disclose before credential collection, conflict prompts, or any gateway /
@@ -1431,6 +1513,7 @@ async function addSandboxChannelUnlocked(
   );
 
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
@@ -1443,6 +1526,7 @@ async function addSandboxChannelUnlocked(
       : initialDisclosedPresetState;
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
+    recordConfigurationResult(sandboxName, "cancelled", "unchanged");
     return; // user aborted; nothing registered or widened
   }
   // Credential axis passed; now channel-owned pre-enable hooks can catch
@@ -1456,6 +1540,7 @@ async function addSandboxChannelUnlocked(
       dependencies.preEnableHookRegistry,
     ))
   ) {
+    recordConfigurationResult(sandboxName, "cancelled", "unchanged");
     return; // user aborted; nothing registered or widened
   }
   assertAddChannelPlanActive(sandboxName, manifest, plan);
@@ -1470,7 +1555,7 @@ async function addSandboxChannelUnlocked(
         messagingConfig,
       }))
     ) {
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     await applyChannelAddToGatewayAndRegistry(
       sandboxName,
@@ -1483,7 +1568,7 @@ async function addSandboxChannelUnlocked(
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
       await removeChannelPresetIfPresent(sandboxName, canonical);
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     console.log("");
     const help = manifest.enrollmentHelp ?? manifest.inputs[0]?.prompt?.help;
@@ -1505,6 +1590,7 @@ async function addSandboxChannelUnlocked(
         );
       }
       await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+      recordConfigurationResult(sandboxName, "completed", "applied");
     }
     return;
   }
@@ -1512,7 +1598,7 @@ async function addSandboxChannelUnlocked(
   const channelDef = getChannelDef(canonical);
   if (!channelDef) {
     console.error(`  Unknown channel '${canonical}'.`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   const priorEntry = registry.getSandbox(sandboxName);
   const priorMessagingConfig = getMessagingChannelConfigFromPlan(
@@ -1541,7 +1627,7 @@ async function addSandboxChannelUnlocked(
       messagingConfig,
     }))
   ) {
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
@@ -1562,7 +1648,7 @@ async function addSandboxChannelUnlocked(
       priorCreds,
       priorMessagingConfig,
     });
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   if (registeredBridge) {
     console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
@@ -1576,7 +1662,7 @@ async function addSandboxChannelUnlocked(
       priorCreds,
       priorMessagingConfig,
     });
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
@@ -1587,6 +1673,7 @@ async function addSandboxChannelUnlocked(
       );
     }
     await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+    recordConfigurationResult(sandboxName, "completed", "applied");
   }
 }
 
@@ -1659,6 +1746,7 @@ async function rollbackChannelAdd(
         );
       }
     }
+    recordConfigurationResult(sandboxName, "failed", "partial");
     return { ok: false, residual };
   }
 
@@ -1678,6 +1766,13 @@ async function rollbackChannelAdd(
       `  ${YW}⚠${R} Rollback could not fully clean ${result.residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
     );
   }
+  recordTelemetryTarget({
+    scope: "configuration",
+    sandboxName,
+    gatewayName: telemetryGatewayName(sandboxName),
+    outcome: "failed",
+    state: result.ok ? "unchanged" : "partial",
+  });
   return result;
 }
 
@@ -1737,28 +1832,7 @@ function getSandboxChannelStatePaths(
   }
   const messagingAgentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
   const manifestStateDirs = messagingAgentId ? manifest?.state?.[messagingAgentId] : undefined;
-  if (manifestStateDirs !== undefined) {
-    return manifestStateDirs.map((stateDir) => `${configDir}/${stateDir}`);
-  }
-  const stateDirs = new Set(agent.stateDirs);
-  const paths: string[] = [];
-  const isHermesWhatsapp = agent.name === "hermes" && channelName === "whatsapp";
-  if (stateDirs.has("platforms")) {
-    paths.push(`${configDir}/platforms/${channelName}`);
-  }
-  if (isHermesWhatsapp && stateDirs.has("profiles")) {
-    paths.push(`${configDir}/profiles/dashboard-home/platforms/whatsapp/session`);
-  }
-  // Retain cleanup for the pre-profile Dashboard home while Hermes startup
-  // still treats it as migration input. This prevents legacy credentials from
-  // being migrated back into the canonical profile during a later rebuild.
-  if (isHermesWhatsapp && stateDirs.has("dashboard-home")) {
-    paths.push(`${configDir}/dashboard-home/platforms/whatsapp/session`);
-  }
-  if (paths.length === 0 && stateDirs.has(channelName)) {
-    paths.push(`${configDir}/${channelName}`);
-  }
-  return paths;
+  return (manifestStateDirs ?? []).map((stateDir) => `${configDir}/${stateDir}`);
 }
 
 function isSafeChannelStatePath(p: string): boolean {
@@ -1813,14 +1887,13 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first. A permitted reconciled runtime-provider retry runs before SSH.
- * OpenClaw WeChat stopped-state cleanup runs last.
+ * OpenShell owns running-sandbox execution.
+ * OpenClaw WeChat selects its owned stopped-state cleanup before command execution.
  * Fixes #3998.
  */
 async function clearSandboxChannelDurableState(
   sandboxName: string,
   channelName: string,
-  options: { readonly allowAbsentStoppedState?: boolean } = {},
 ): Promise<boolean> {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
@@ -1832,16 +1905,13 @@ async function clearSandboxChannelDurableState(
 
   const quoted = paths.map((p) => shellQuote(p)).join(" ");
   const cmd = `rm -rf -- ${quoted} && printf '%s\\n' ${shellQuote(CHANNEL_CLEAR_SENTINEL)}`;
-  const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
-    !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
+  const sentinelSeen = (result: { status: number; stdout?: string | null } | null): boolean =>
+    !!result &&
+    result.status === 0 &&
+    typeof result.stdout === "string" &&
+    result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = await executeSandboxExecCommand(sandboxName, cmd, undefined, {
-    localDockerFallbackPolicy: "reconciled",
-  });
-  if (!sentinelSeen(result)) {
-    result = await executeSandboxCommand(sandboxName, cmd);
-  }
-  if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
+  if (agent.name === "openclaw" && channelName === "wechat") {
     const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
       sandboxName,
       paths,
@@ -1851,19 +1921,32 @@ async function clearSandboxChannelDurableState(
       return true;
     }
     if (
-      options.allowAbsentStoppedState &&
-      [
-        "sandbox-registry-unavailable",
+      ![
+        "runtime-not-stopped",
         "provider-cleanup-unavailable",
+        "sandbox-registry-unavailable",
         "no-eligible-stopped-runtime",
       ].includes(stoppedCleanup.failure)
     ) {
-      return true;
+      console.error(
+        `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
+          `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
+      );
+      return false;
     }
+  }
+  let result: Awaited<ReturnType<typeof executeSandboxExecCommand>>;
+  try {
+    result = await executeSandboxExecCommand(sandboxName, cmd);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
     console.error(
-      `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
-        `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
+      `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state: ${error.message}`,
     );
+    console.error(
+      `    Restore sandbox lifecycle access, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${channelName}`,
+    );
+    return false;
   }
   if (!sentinelSeen(result)) {
     console.error(
@@ -1929,18 +2012,19 @@ async function removeSandboxChannelUnlocked(
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels remove <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const channel = getChannelDef(rawChannelArg);
   if (!channel) {
     console.error(`  Unknown channel '${rawChannelArg}'.`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   const canonical = rawChannelArg.trim().toLowerCase();
 
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log(`  --dry-run: would remove channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
@@ -1970,26 +2054,23 @@ async function removeSandboxChannelUnlocked(
       console.error(
         `  No channel configuration or credentials were changed; fix the tunnel teardown and re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
       );
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
   }
 
   // Channels with durable account or session state store auth blobs inside
-  // the sandbox that survive a rebuild via the state_dirs backup. Tear those
-  // down FIRST so a cleanup failure leaves the registry/policy untouched.
+  // the sandbox that survive a rebuild via complete native-home persistence.
+  // Tear those down FIRST so a cleanup failure leaves registry/policy untouched.
   // OpenClaw WeChat can additionally recover through a provider-owned stopped-state
   // helper because the same missing account file may block its entrypoint.
   // Bailing here is the only way to keep #3998 from recurring on cleanup
   // error. OpenClaw WeChat also checks for physical residue after an earlier
   // interrupted removal erased its logical plan or policy record. A missing
-  // registry, unavailable provider cleanup, or absent stopped runtime remains a quiet
-  // no-op only when no logical residue exists (#4001 review).
+  // registry or unavailable stopped-state cleanup does not prove durable state is absent.
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !(await clearSandboxChannelDurableState(sandboxName, canonical, {
-      allowAbsentStoppedState: !hasChannelResidue,
-    }))
+    !(await clearSandboxChannelDurableState(sandboxName, canonical))
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
@@ -1997,7 +2078,7 @@ async function removeSandboxChannelUnlocked(
     console.error(
       `    Restore sandbox lifecycle access or follow the cleanup diagnostic above, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
     );
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
@@ -2010,6 +2091,7 @@ async function removeSandboxChannelUnlocked(
   if (existingPlan && existingRemoval) {
     disabledAgentConfigPlan = existingPlan;
     removalPlanPersisted = true;
+    recordConfigurationResult(sandboxName, "completed", "pending");
     removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, existingPlan);
   } else if (
     registryEntry?.messaging?.plan &&
@@ -2019,15 +2101,17 @@ async function removeSandboxChannelUnlocked(
     const disabledPlan = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
     if (!disabledPlan) {
       console.error(`  Could not mark '${canonical}' disabled before removing it.`);
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
+    recordConfigurationResult(sandboxName, "completed", "pending");
     const removalPlan = markPlanChannelPendingRemoval(disabledPlan, canonical);
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, removalPlan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging removal for '${sandboxName}'.`);
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     disabledAgentConfigPlan = removalPlan;
     removalPlanPersisted = true;
+    recordConfigurationResult(sandboxName, "completed", "pending");
     removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, disabledAgentConfigPlan);
   }
 
@@ -2038,7 +2122,7 @@ async function removeSandboxChannelUnlocked(
     console.error(
       `  Resolve the policy error, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
     );
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   const teardown = await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys, {
     bestEffort: true,
@@ -2050,7 +2134,7 @@ async function removeSandboxChannelUnlocked(
     console.error(
       `  Resolve the gateway error, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
     );
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   clearChannelTokens(channel);
   if (tokenKeys.length > 0) {
@@ -2061,7 +2145,7 @@ async function removeSandboxChannelUnlocked(
 
   if (!removalPlanPersisted && !(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   // Token-based channels: best-effort tidy of any leftover dir. Token
@@ -2075,6 +2159,7 @@ async function removeSandboxChannelUnlocked(
   if (rebuilt && disabledAgentConfigPlan) {
     removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, disabledAgentConfigPlan);
   }
+  if (rebuilt) recordConfigurationResult(sandboxName, "completed", "applied");
 }
 
 async function sandboxChannelsSetEnabled(
@@ -2088,20 +2173,20 @@ async function sandboxChannelsSetEnabled(
   if (!channelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels ${verb} <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const manifest = resolveChannelManifest(channelArg);
   if (!manifest) {
     console.error(`  Unknown channel '${channelArg}'.`);
     console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const registryEntry = registry.getSandbox(sandboxName);
   if (!registryEntry) {
     console.error(`  Sandbox '${sandboxName}' not found in the registry.`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const canonical = manifest.id;
@@ -2109,19 +2194,20 @@ async function sandboxChannelsSetEnabled(
   const availableChannels = availableManifestChannelsForAgent(agent);
   if (!availableChannels.some((candidate) => candidate.id === canonical)) {
     console.error("  This channel does not support the configured agent.");
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
   if (!configuredChannels.includes(canonical)) {
     console.error(`  Channel '${canonical}' is not configured for '${sandboxName}'.`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   const alreadyDisabled = registry.getDisabledChannels(sandboxName).includes(canonical);
   if (alreadyDisabled === disabled) {
     console.log(
       `  Channel '${canonical}' is already ${disabled ? "disabled" : "enabled"} for '${sandboxName}'. Nothing to do.`,
     );
+    recordConfigurationResult(sandboxName, "no_change", "unchanged");
     return;
   }
 
@@ -2130,6 +2216,7 @@ async function sandboxChannelsSetEnabled(
   }
 
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log(`  --dry-run: would ${verb} channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
@@ -2137,7 +2224,7 @@ async function sandboxChannelsSetEnabled(
   const plan = await persistManifestChannelDisabledPlan(sandboxName, canonical, disabled);
   if (!plan) {
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   // A rebuild that disabled every channel can leave its providers on the
   // gateway but detached from the current sandbox. The enabled plan carries
@@ -2153,6 +2240,7 @@ async function sandboxChannelsSetEnabled(
       );
     }
   }
+  if (rebuilt) recordConfigurationResult(sandboxName, "completed", "applied");
 }
 
 export async function stopSandboxChannel(
@@ -2208,14 +2296,14 @@ async function removeSandboxPolicyUnlocked(
       console.error(
         `  Valid presets: ${allPresets.map((item: { name: string }) => item.name).join(", ") || "(none)"}`,
       );
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     if (!removable.includes(preset.name)) {
       console.error(`  Preset '${preset.name}' is not applied.`);
       if (gatewayPresets === null) {
         console.error("  Could not query the gateway, so only local state was checked.");
       }
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     answer = preset.name;
   } else {
@@ -2231,10 +2319,16 @@ async function removeSandboxPolicyUnlocked(
       usage,
     );
   }
-  if (!answer) return;
+  if (!answer) {
+    recordConfigurationResult(sandboxName, "cancelled", "unchanged");
+    return;
+  }
 
   const presetContent = await policies.loadPresetForSandbox(sandboxName, answer);
-  if (!presetContent) return;
+  if (!presetContent) {
+    recordConfigurationResult(sandboxName, "failed", "unchanged");
+    return;
+  }
 
   const endpoints = policies.getPresetEndpoints(presetContent);
   if (endpoints.length > 0) {
@@ -2242,17 +2336,21 @@ async function removeSandboxPolicyUnlocked(
   }
 
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log("  --dry-run: no changes applied.");
     return;
   }
 
   if (!skipConfirm) {
     const confirm = await askPrompt(`  Remove '${answer}' from sandbox '${sandboxName}'? [Y/n]: `);
-    if (confirm.trim().toLowerCase().startsWith("n")) return;
+    if (confirm.trim().toLowerCase().startsWith("n")) {
+      recordConfigurationResult(sandboxName, "cancelled", "unchanged");
+      return;
+    }
   }
 
   if (!(await policies.removePreset(sandboxName, answer))) {
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   await refreshSandboxPolicyContextFile(sandboxName);
 }
@@ -2283,13 +2381,13 @@ async function excludeSandboxBaselineUnlocked(
   if (!key) {
     console.error("  A baseline key is required.");
     console.error(`  Usage: ${CLI_NAME} <sandbox> policy exclude <key> [--force] [--dry-run]`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const baseline = policies.resolveSandboxBaselinePolicy(sandboxName);
   if (!baseline) {
     console.error(`  Could not read the baseline policy for sandbox '${sandboxName}'.`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const entry = policies.getSandboxBaselineEntry(sandboxName, key);
@@ -2298,14 +2396,14 @@ async function excludeSandboxBaselineUnlocked(
     console.error(
       `  Valid baseline keys: ${listBaselineEntryKeys(baseline.content).join(", ") || "(none)"}`,
     );
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   if (isProtectedBaselineExclusionKey(key)) {
     console.error(
       `  Baseline entry '${key}' is required for managed inference and cannot be excluded.`,
     );
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const featureImpact = getBaselineExclusionFeatureImpact(baseline.agent, key);
@@ -2313,7 +2411,7 @@ async function excludeSandboxBaselineUnlocked(
     console.error(
       `  Baseline entry '${key}' has no supported-feature impact disclosure and cannot be excluded safely.`,
     );
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   printBaselineEntryScope(
@@ -2325,6 +2423,7 @@ async function excludeSandboxBaselineUnlocked(
 
   const digest = digestBaselineEntry(entry);
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log("  --dry-run: no changes applied.");
     return;
   }
@@ -2333,16 +2432,21 @@ async function excludeSandboxBaselineUnlocked(
     console.error(
       "  Non-interactive exclusion requires explicit acknowledgement: pass --force (or --yes).",
     );
+    recordConfigurationResult(sandboxName, "skipped", "unchanged");
+    await finishTelemetryOperation(1);
     process.exit(1);
   }
   if (!explicitAck) {
     const confirm = await askPrompt(`  Exclude '${key}' from sandbox '${sandboxName}'? [y/N]: `);
-    if (!confirm.trim().toLowerCase().startsWith("y")) return;
+    if (!confirm.trim().toLowerCase().startsWith("y")) {
+      recordConfigurationResult(sandboxName, "cancelled", "unchanged");
+      return;
+    }
   }
 
   if (!(await policies.excludeBaselineEntry(sandboxName, key, digest))) {
     await refreshSandboxPolicyContextFile(sandboxName);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   console.log(`  ${G}✓${R} Excluded baseline entry '${key}' for '${sandboxName}'.`);
   await refreshSandboxPolicyContextFile(sandboxName);
@@ -2368,13 +2472,13 @@ async function restoreSandboxBaselineUnlocked(
   if (!key) {
     console.error("  A baseline key is required.");
     console.error(usage);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const baseline = policies.resolveSandboxBaselinePolicy(sandboxName);
   if (!baseline) {
     console.error(`  Could not read the baseline policy for sandbox '${sandboxName}'.`);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
 
   const entry = policies.getSandboxBaselineEntry(sandboxName, key);
@@ -2392,6 +2496,7 @@ async function restoreSandboxBaselineUnlocked(
   }
 
   if (dryRun) {
+    recordConfigurationResult(sandboxName, "checked", "unchanged");
     console.log("  --dry-run: no changes applied.");
     return;
   }
@@ -2401,6 +2506,8 @@ async function restoreSandboxBaselineUnlocked(
       "  Non-interactive restore requires explicit acknowledgement: pass --force (or --yes).",
     );
     console.error(usage);
+    recordConfigurationResult(sandboxName, "skipped", "unchanged");
+    await finishTelemetryOperation(1);
     process.exit(1);
   }
   if (!explicitAck) {
@@ -2412,17 +2519,18 @@ async function restoreSandboxBaselineUnlocked(
       if (code !== "EOF") throw error;
       console.error("  No input available on stdin, so policy restore cannot prompt.");
       console.error(usage);
-      process.exit(1);
+      return await exitConfigurationFailure(sandboxName);
     }
     if (!confirm.trim().toLowerCase().startsWith("y")) {
       console.log("  Cancelled.");
+      recordConfigurationResult(sandboxName, "cancelled", "unchanged");
       return;
     }
   }
 
   if (!(await policies.restoreBaselineEntry(sandboxName, key, { expectedTargetDigest }))) {
     await refreshSandboxPolicyContextFile(sandboxName);
-    process.exit(1);
+    return await exitConfigurationFailure(sandboxName);
   }
   console.log(`  ${G}✓${R} Restored baseline entry '${key}' for '${sandboxName}'.`);
   await refreshSandboxPolicyContextFile(sandboxName);

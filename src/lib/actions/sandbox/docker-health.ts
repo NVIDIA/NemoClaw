@@ -33,6 +33,8 @@ export interface SandboxDockerRuntime {
   containerName: string | null;
   /** True only after a successful owned-container observation returned no rows. */
   containerAbsenceConfirmed: boolean;
+  /** A failed container lookup cannot establish an identity mismatch. */
+  containerObservationFailed?: boolean;
 }
 
 interface ResolveDeps {
@@ -81,17 +83,23 @@ const defaultDeps: ResolveDeps = {
     ),
 };
 
+/** True only when the registry records the sandbox on the docker driver. */
+export function isDockerDriverSandbox(
+  sandboxName: string,
+  getSandbox: ResolveDeps["getSandbox"] = defaultDeps.getSandbox,
+): boolean {
+  try {
+    return getSandbox(sandboxName)?.openshellDriver === "docker";
+  } catch {
+    return false;
+  }
+}
+
 function resolveDockerDriverSandboxContainer(
   sandboxName: string,
   deps: ResolveDeps,
 ): string | null {
-  try {
-    if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
-      return null;
-    }
-  } catch {
-    return null;
-  }
+  if (!isDockerDriverSandbox(sandboxName, deps.getSandbox)) return null;
   return resolveSandboxContainerOwner(deps.dockerPsNames(), sandboxName, deps.listSandboxNames());
 }
 
@@ -148,18 +156,12 @@ export function getSandboxDockerRuntime(
   depsOverride: Partial<ResolveDeps> = {},
 ): SandboxDockerRuntime {
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
-  try {
-    if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
-      return missingDockerRuntime();
-    }
-  } catch {
-    return missingDockerRuntime();
-  }
+  if (!isDockerDriverSandbox(sandboxName, deps.getSandbox)) return missingDockerRuntime();
   let labeledContainers: ReturnType<typeof findLabeledSandboxContainers>;
   try {
     labeledContainers = deps.findLabeledSandboxContainers(sandboxName);
   } catch {
-    return missingDockerRuntime();
+    return { ...missingDockerRuntime(), containerObservationFailed: true };
   }
   const runningNames = labeledContainers
     .filter((container) => container.running)

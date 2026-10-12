@@ -135,6 +135,26 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
+  it("bounds every recorded policy read by one absolute observation deadline", async () => {
+    const now = vi.fn().mockReturnValueOnce(9_000).mockReturnValue(9_250);
+
+    await expect(
+      captureRecordedSandboxBasePolicy(
+        sandboxName,
+        "capture a bounded lifecycle policy",
+        undefined,
+        10_000,
+        now,
+      ),
+    ).resolves.toBe(livePolicy);
+    expect(mocks.inspectSandboxPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 1_000 }),
+    );
+    expect(mocks.readSandboxPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 750 }),
+    );
+  });
+
   it("confirms an ambiguous submission when authoritative readback matches", async () => {
     const context = await inspectPolicyMutationContext(sandboxName, "prepare policy confirmation");
 

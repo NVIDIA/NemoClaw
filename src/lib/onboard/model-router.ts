@@ -5,6 +5,12 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  type BlueprintInferenceProfile,
+  type BlueprintRouterConfig,
+  DEFAULT_MODEL_ROUTER_PORT,
+  loadBlueprintProfile,
+} from "../core/model-router-port";
 import { GATEWAY_PORT } from "../core/ports";
 import { requireValue } from "../core/require-value";
 import { compactText } from "../core/url-utils";
@@ -71,21 +77,12 @@ const MODEL_ROUTER_VENV_DIR = path.join(
 );
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
-export type BlueprintRouterConfig = {
-  enabled?: boolean;
-  port?: number;
-  pool_config_path?: string;
-  credential_env?: string;
-};
-
-export type BlueprintInferenceProfile = {
-  provider_name?: string;
-  endpoint?: string;
-  model: string;
-  credential_env?: string;
-  credential_default?: string;
-  router: BlueprintRouterConfig;
-};
+export {
+  type BlueprintInferenceProfile,
+  type BlueprintRouterConfig,
+  DEFAULT_MODEL_ROUTER_PORT,
+  loadBlueprintProfile,
+} from "../core/model-router-port";
 
 type ModelRouterProxyConfigResult = {
   status: number | null;
@@ -141,32 +138,6 @@ export type StartModelRouterDeps = {
   terminateProcess: (pid: number) => void;
   getProviderKey: () => string;
 };
-
-/**
- * Load a named inference profile and router config from blueprint.yaml.
- * Returns null if the blueprint or profile is missing.
- */
-export function loadBlueprintProfile(
-  profileName: string,
-  rootDir: string = ROOT,
-): BlueprintInferenceProfile | null {
-  try {
-    const YAML = require("yaml");
-    const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
-    if (!fs.existsSync(blueprintPath)) return null;
-    const raw = fs.readFileSync(blueprintPath, "utf8");
-    const parsed = YAML.parse(raw);
-    const profile = parsed?.components?.inference?.profiles?.[profileName];
-    if (!profile) return null;
-    const router = { ...(parsed?.components?.router || {}) };
-    if (typeof profile.credential_env === "string" && profile.credential_env.trim().length > 0) {
-      router.credential_env = profile.credential_env;
-    }
-    return { ...profile, router } as BlueprintInferenceProfile;
-  } catch {
-    return null;
-  }
-}
 
 function modelRouterPackageDir(): string {
   return path.join(ROOT, MODEL_ROUTER_RELATIVE_DIR);
@@ -591,8 +562,6 @@ function getRoutedProfile(): BlueprintInferenceProfile {
   return bp;
 }
 
-export const DEFAULT_MODEL_ROUTER_PORT = 4000;
-
 export function resolveModelRouterPort(): number {
   return getRoutedProfile().router?.port || DEFAULT_MODEL_ROUTER_PORT;
 }
@@ -636,6 +605,12 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
   const routerPort = resolveModelRouterPort();
+  const session = onboardSession.loadSession();
+  if (session?.routerPort != null && session.routerPort !== routerPort) {
+    throw new Error(
+      `The recorded Model Router port ${session.routerPort} differs from configured port ${routerPort}. Restore the recorded port and clean up the existing router before changing ports.`,
+    );
+  }
   const routerCredentialEnv =
     bp.router.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
   const routerCredential =
@@ -646,7 +621,6 @@ export async function reconcileModelRouter(): Promise<void> {
   }
   saveCredential(routerCredentialEnv, routerCredential);
   const routerCredentialHash = hashCredential(routerCredential);
-  const session = onboardSession.loadSession();
   const recordedPid = session?.routerPid ?? null;
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
 
@@ -667,6 +641,12 @@ export async function reconcileModelRouter(): Promise<void> {
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
       await verifyModelRouterSandboxReachability(routerPort);
+      if (session?.routerPort !== routerPort) {
+        onboardSession.updateSession((current: Session) => {
+          current.routerPort = routerPort;
+          return current;
+        });
+      }
       return;
     }
     if (recordedProcessOwnsRouter) {
@@ -699,6 +679,7 @@ export async function reconcileModelRouter(): Promise<void> {
   console.log(`  ✓ Model router started (PID ${routerPid}) on port ${routerPort}`);
   onboardSession.updateSession((current: Session) => {
     current.routerPid = routerPid;
+    current.routerPort = routerPort;
     current.routerCredentialHash = routerCredentialHash;
     return current;
   });

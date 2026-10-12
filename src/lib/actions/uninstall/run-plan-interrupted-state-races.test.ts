@@ -4,10 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { bindGatewayAuthorityToCheckpoint } from "../../onboard/gateway-authority-checkpoint";
-import { createSession } from "../../state/onboard-session";
+import { writePreGatewaySession } from "../../../../test/support/uninstall-pre-gateway-session";
 import {
   acquireOnboardStateLock,
   releaseOnboardStateLock,
@@ -20,39 +19,6 @@ const ADMISSION_MESSAGE =
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stderr: "", stdout };
-}
-
-function writeInterruptedSession(stateRoot: string, checkpointPort: number): void {
-  const now = new Date().toISOString();
-  const session = createSession({ agent: "openclaw", mode: "non-interactive" });
-  session.status = "failed";
-  session.lastStepStarted = "preflight";
-  session.failure = {
-    interrupted: true,
-    message: "Onboarding was interrupted during preflight.",
-    recordedAt: now,
-    step: "preflight",
-  };
-  session.steps.preflight = {
-    completedAt: null,
-    error: session.failure.message,
-    startedAt: now,
-    status: "failed",
-  };
-  session.machine = { revision: 1, state: "failed", stateEnteredAt: now, version: 1 };
-  bindGatewayAuthorityToCheckpoint(session, {
-    endpoint: null,
-    gatewayName: `nemoclaw-${String(checkpointPort)}`,
-    gatewayPort: checkpointPort,
-    mode: "nemoclaw-managed",
-    requiredCapabilities: [],
-    source: "standalone",
-    stateDir: null,
-    supervisor: null,
-  });
-  fs.writeFileSync(path.join(stateRoot, "onboard-session.json"), `${JSON.stringify(session)}\n`, {
-    mode: 0o600,
-  });
 }
 
 function writeLiveReplacementState(stateRoot: string): void {
@@ -90,7 +56,7 @@ async function runInterruptedUninstall(
   const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
   const initialStateRoot = options.initialStateRoot?.(stateRoot) ?? stateRoot;
   fs.mkdirSync(initialStateRoot, { mode: 0o700, recursive: true });
-  writeInterruptedSession(initialStateRoot, options.checkpointPort ?? port);
+  writePreGatewaySession(initialStateRoot, options.checkpointPort ?? port, "interrupted");
   const errors: string[] = [];
   const logs: string[] = [];
   const calls: string[][] = [];
@@ -150,6 +116,11 @@ function nonListOpenShellCalls(calls: readonly string[][]): string[][] {
       command === "openshell" && !(resource === "gateway" && action === "list"),
   );
 }
+
+beforeAll(async () => {
+  // Transform the cold module graph during setup; each case still reloads its gateway environment.
+  await import("./run-plan");
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

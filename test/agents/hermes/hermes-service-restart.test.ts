@@ -11,7 +11,12 @@ import { extractShellFunction } from "../../support/hermes-shell-harness";
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
 const source = fs.readFileSync(START_SCRIPT, "utf8");
 
-function runSupervisor(firstExit: number, finalExit: number, repeatedFirstExits = 1) {
+function runSupervisor(
+  firstExit: number,
+  finalExit: number,
+  repeatedFirstExits = 1,
+  options: { elapsedPerGateway?: number; cooldownFails?: boolean; prepareFails?: boolean } = {},
+) {
   const script = [
     "set -uo pipefail",
     "readonly HERMES_SERVICE_RESTART_STATUS=75",
@@ -23,16 +28,22 @@ function runSupervisor(firstExit: number, finalExit: number, repeatedFirstExits 
     "wait_count=0",
     "launch_count=0",
     "mark_count=0",
+    "prepare_count=0",
     "ready_count=0",
     "auxiliary_count=0",
     "finalize_count=0",
     "refresh_count=0",
     "recovery_count=0",
+    "SECONDS=0",
+    "sleep_count=0",
+    "sleep_seconds=0",
     `first_exit=${firstExit}`,
     `final_exit=${finalExit}`,
     `repeated_first_exits=${repeatedFirstExits}`,
-    'wait() { wait_count=$((wait_count + 1)); if [ "$wait_count" -le "$repeated_first_exits" ]; then return "$first_exit"; fi; return "$final_exit"; }',
+    `wait() { SECONDS=$((SECONDS + ${options.elapsedPerGateway ?? 0})); wait_count=$((wait_count + 1)); if [ "$wait_count" -le "$repeated_first_exits" ]; then return "$first_exit"; fi; return "$final_exit"; }`,
+    `sleep() { sleep_count=$((sleep_count + 1)); sleep_seconds=$((sleep_seconds + $1)); ${options.cooldownFails ? "return 1" : "SECONDS=$((SECONDS + $1))"}; }`,
     "mark_hermes_gateway_stopped() { mark_count=$((mark_count + 1)); }",
+    `prepare_hermes_nonroot_runtime() { prepare_count=$((prepare_count + 1)); ${options.prepareFails ? "return 1" : ":"}; }`,
     'launch_hermes_gateway_current_user() { launch_count=$((launch_count + 1)); GATEWAY_PID=$((GATEWAY_PID + 1)); GATEWAY_PID_START_IDENTITY="start-$GATEWAY_PID"; }',
     "wait_for_hermes_gateway_internal() { ready_count=$((ready_count + 1)); }",
     "ensure_hermes_supervised_auxiliaries() { auxiliary_count=$((auxiliary_count + 1)); }",
@@ -43,7 +54,8 @@ function runSupervisor(firstExit: number, finalExit: number, repeatedFirstExits 
     extractShellFunction(source, "supervise_hermes_service_restarts_current_user"),
     "status=0",
     "supervise_hermes_service_restarts_current_user || status=$?",
-    'printf "%s\\n" "status=$status waits=$wait_count launches=$launch_count marks=$mark_count ready=$ready_count auxiliaries=$auxiliary_count finalize=$finalize_count refresh=$refresh_count recoveries=$recovery_count gateway=$GATEWAY_PID"',
+    'printf "%s\\n" "status=$status waits=$wait_count launches=$launch_count marks=$mark_count prepares=$prepare_count ready=$ready_count auxiliaries=$auxiliary_count finalize=$finalize_count refresh=$refresh_count recoveries=$recovery_count gateway=$GATEWAY_PID"',
+    'printf "cooldown:sleeps=%s seconds=%s\\n" "$sleep_count" "$sleep_seconds" >&2',
   ].join("\n");
   return spawnSync("bash", ["-c", script], {
     encoding: "utf8",
@@ -278,23 +290,45 @@ describe("Hermes native service restart supervision", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(
-      "status=9 waits=2 launches=1 marks=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=0 gateway=101",
+      "status=9 waits=2 launches=1 marks=1 prepares=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=0 gateway=101",
     );
     expect(result.stderr).toContain("Hermes requested a service-managed restart");
   });
 
-  it("stops after five service-managed restart requests within 60 seconds without launching a sixth gateway", () => {
-    const result = runSupervisor(75, 9, 5);
+  it("preserves the supervisor and rate limit across repeated bursts of requested restarts", () => {
+    const result = runSupervisor(75, 9, 9);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(
-      "status=1 waits=5 launches=4 marks=4 ready=4 auxiliaries=4 finalize=4 refresh=4 recoveries=0 gateway=104",
+      "status=9 waits=10 launches=9 marks=9 prepares=9 ready=9 auxiliaries=9 finalize=9 refresh=9 recoveries=0 gateway=109",
     );
-    expect(result.stderr).toContain("Hermes gateway pid 104 start identity start-104");
-    expect(result.stderr).toContain("5 service-managed restarts within 60 seconds");
-    expect(result.stderr).toContain("nemoclaw <name> stop");
-    expect(result.stderr).toContain("nemoclaw <name> start");
-    expect(result.stderr).toContain("reset the supervisor");
+    expect(result.stderr).toContain("service-managed restart rate limit");
+    expect(result.stderr).toContain("cooldown:sleeps=2 seconds=122");
+  });
+
+  it("does not delay restart requests outside the rolling window", () => {
+    const result = runSupervisor(75, 9, 9, { elapsedPerGateway: 61 });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("status=9 waits=10 launches=9");
+    expect(result.stderr).toContain("cooldown:sleeps=0 seconds=0");
+  });
+
+  it("does not relaunch when the restart cooldown is interrupted", () => {
+    const result = runSupervisor(75, 9, 5, { cooldownFails: true });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("status=1 waits=5 launches=4");
+    expect(result.stderr).toContain("cooldown:sleeps=1 seconds=61");
+  });
+
+  it("does not relaunch before the restored Hermes runtime is prepared", () => {
+    const result = runSupervisor(75, 9, 1, { prepareFails: true });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "status=1 waits=1 launches=0 marks=1 prepares=1 ready=0 auxiliaries=0",
+    );
   });
 
   it("holds a clean exit until gated host recovery requests a relaunch", () => {
@@ -302,7 +336,7 @@ describe("Hermes native service restart supervision", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(
-      "status=9 waits=2 launches=1 marks=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=1 gateway=101",
+      "status=9 waits=2 launches=1 marks=1 prepares=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=1 gateway=101",
     );
     expect(result.stderr).not.toContain("service-managed restart");
   });
@@ -312,7 +346,7 @@ describe("Hermes native service restart supervision", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(
-      "status=9 waits=2 launches=1 marks=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=1 gateway=101",
+      "status=9 waits=2 launches=1 marks=1 prepares=1 ready=1 auxiliaries=1 finalize=1 refresh=1 recoveries=1 gateway=101",
     );
     expect(result.stderr).not.toContain("service-managed restart");
   });
@@ -322,7 +356,7 @@ describe("Hermes native service restart supervision", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(
-      `status=${exitCode} waits=1 launches=0 marks=0 ready=0 auxiliaries=0 finalize=0 refresh=0 recoveries=0 gateway=100`,
+      `status=${exitCode} waits=1 launches=0 marks=0 prepares=0 ready=0 auxiliaries=0 finalize=0 refresh=0 recoveries=0 gateway=100`,
     );
   });
 });

@@ -8,7 +8,7 @@ import type { ArtifactSink } from "../artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
-import { validateSandboxName } from "../clients/sandbox.ts";
+import { validateSandboxName, type SandboxClient } from "../clients/sandbox.ts";
 import { DCODE_BASE_IMAGE_ENV, requireDcodeBaseImageReference } from "../dcode-base-image.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_BASE_URL,
@@ -17,6 +17,8 @@ import {
   HOSTED_INFERENCE_PROVIDER,
 } from "../hosted-inference.ts";
 import { redactString } from "../redaction.ts";
+import { captureOpenClawOnboardFailure } from "../openclaw-onboard-diagnostics.ts";
+import type { RuntimeProviderPrerequisite } from "../runtime-provider.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
 import { execTimeout } from "../../../helpers/timeouts.ts";
 import type { EnvironmentReady } from "./environment.ts";
@@ -172,6 +174,10 @@ export class OnboardingPhaseFixture {
     private readonly secrets: OnboardingSecrets,
     private readonly cleanup?: OnboardingCleanup,
     private readonly artifacts?: ArtifactSink,
+    private readonly diagnostics?: {
+      sandbox: Pick<SandboxClient, "openshell" | "exec">;
+      runtime: Pick<RuntimeProviderPrerequisite, "resolveSandboxResourceHandle" | "command">;
+    },
   ) {}
 
   async from(
@@ -371,13 +377,14 @@ export class OnboardingPhaseFixture {
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
+    const env = commandEnv(sandboxName, {
+      NVIDIA_INFERENCE_API_KEY: apiKey,
+      NEMOCLAW_POLICY_MODE: "custom",
+      NEMOCLAW_POLICY_PRESETS: "",
+    });
     const result = await this.host.nemoclaw(ONBOARD_ARGS, {
       artifactName: "onboard-cloud-openclaw-policy-custom-missing-presets",
-      env: commandEnv(sandboxName, {
-        NVIDIA_INFERENCE_API_KEY: apiKey,
-        NEMOCLAW_POLICY_MODE: "custom",
-        NEMOCLAW_POLICY_PRESETS: "",
-      }),
+      env,
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
@@ -385,6 +392,18 @@ export class OnboardingPhaseFixture {
       throw new Error("cloud-openclaw-policy-custom-missing-presets unexpectedly succeeded.");
     }
     const output = resultText(result);
+    if (
+      this.diagnostics &&
+      (!POLICY_PRESETS_REQUIRED_PATTERN.test(output) || hasJavaScriptStackTrace(output))
+    ) {
+      await captureOpenClawOnboardFailure(result, this.diagnostics.sandbox, {
+        sandboxName,
+        artifactPrefix: "onboard-cloud-openclaw-policy-custom-missing-presets",
+        env,
+        redactionValues: [apiKey],
+        runtime: this.diagnostics.runtime,
+      });
+    }
     if (!POLICY_PRESETS_REQUIRED_PATTERN.test(output)) {
       throw new Error(
         `cloud-openclaw-policy-custom-missing-presets failed without the policy preset signature: ${output}`,

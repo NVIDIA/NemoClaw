@@ -11,6 +11,7 @@ export { hasValidDeferredN1xManagedVllmReplacementAuthority } from "../../domain
 export { prepareRebuildTargetConfig, type RebuildTargetConfig } from "./rebuild-target-config";
 export {
   preflightAuthoritativeOnboardRuntime,
+  preflightRebuildTargetHostCredential,
   preflightRebuildTargetRuntime,
 } from "./rebuild-target-runtime";
 export {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import { gatewayAdaptersForTest } from "../../../../test/helpers/openshell-gateway-adapters";
 import path from "node:path";
 
@@ -13,6 +14,10 @@ import {
 } from "../docker-driver-gateway-config";
 import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
 import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
+import * as dockerDriverGatewayEnv from "../docker-driver-gateway-env";
+import { createDockerDriverGatewayRuntimeHelpers } from "../docker-driver-gateway-runtime";
+import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import * as gatewayBinding from "../gateway-binding";
 import {
   createDockerDriverGatewayStart,
@@ -45,7 +50,10 @@ describe("gateway lifecycle late binding", () => {
     ).toBe("https://127.0.0.1:8080");
   });
 
-  async function captureFailedStartRecovery(ownsSelectedState: boolean) {
+  async function captureFailedStartRecovery(
+    ownsSelectedState: boolean,
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ) {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-port-recovery-"));
     const stateDir = path.join(root, "gateway");
     const adapters = gatewayAdaptersForTest();
@@ -156,6 +164,7 @@ describe("gateway lifecycle late binding", () => {
 
       await expect(
         start.startDockerDriverGateway({
+          runtimeSelection,
           exitOnFailure: false,
           output: {
             error: (message) => lines.push(message),
@@ -167,6 +176,7 @@ describe("gateway lifecycle late binding", () => {
       ).rejects.toThrow(/failed to start within/);
 
       return {
+        runtimeEnvironment: runtimeIdentitySpy.mock.calls[0]?.[0].env,
         output: lines.join("\n"),
         processEnvironmentCalls: readProcessEnvironment.mock.calls,
         serviceTargetCalls: serviceTarget.mock.calls.length,
@@ -180,6 +190,63 @@ describe("gateway lifecycle late binding", () => {
       fs.rmSync(root, { force: true, recursive: true });
     }
   }
+
+  it("preserves native Podman context through selected-target gateway startup", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    vi.stubEnv("OPENSHELL_PODMAN_SOCKET", "/run/user/1000/podman/podman.sock");
+    vi.stubEnv("CONTAINERS_CONF", "/tmp/containers.conf");
+    vi.stubEnv("CONTAINERS_STORAGE_CONF", "/tmp/storage.conf");
+    vi.stubEnv("XDG_RUNTIME_DIR", "/run/user/1000");
+    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "provider-secret");
+    const clientOnlyEnvironment = buildSelectedOpenShellSubprocessEnv({
+      gatewayName: "nemoclaw-9777",
+      workspace: "default",
+    });
+    const result = await captureFailedStartRecovery(true, {
+      gatewayName: "nemoclaw-9777",
+      workspace: "default",
+    });
+    expect(result.runtimeEnvironment).toMatchObject({
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      CONTAINERS_CONF: "/tmp/containers.conf",
+      CONTAINERS_STORAGE_CONF: "/tmp/storage.conf",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      OPENSHELL_GATEWAY: "nemoclaw-9777",
+      OPENSHELL_WORKSPACE: "default",
+    });
+    expect(result.runtimeEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(result.runtimeEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(() =>
+      dockerDriverGatewayEnv.assertDockerDriverGatewayBindAddressSafe(
+        {
+          OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+          OPENSHELL_GRPC_ENDPOINT: "https://169.254.2.2:8080",
+          OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+          OPENSHELL_SERVER_PORT: "8080",
+        },
+        clientOnlyEnvironment,
+        "linux",
+      ),
+    ).toThrow(/not supported for the OpenShell Docker-driver gateway/u);
+    expect(() =>
+      dockerDriverGatewayEnv.assertDockerDriverGatewayBindAddressSafe(
+        {
+          OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+          OPENSHELL_GRPC_ENDPOINT: "https://169.254.2.2:8080",
+          OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+          OPENSHELL_SERVER_PORT: "8080",
+        },
+        result.runtimeEnvironment,
+        "linux",
+      ),
+    ).not.toThrow();
+  });
 
   it("withholds a stop command when the active service uses another state (#11720)", async () => {
     const result = await captureFailedStartRecovery(false);
@@ -496,7 +563,10 @@ describe("gateway lifecycle late binding", () => {
       expect(
         gatewayStateLifecycleLock.tryAcquireManagedGatewayStateLifecycleLock(stateDir),
       ).toBeNull();
-      return { OPENSHELL_SERVER_PORT: String(port) };
+      return {
+        OPENSHELL_SERVER_PORT: String(port),
+        OPENSHELL_DOCKER_NETWORK_NAME: "custom-network",
+      };
     });
     const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
     const runtimeIdentitySpy = vi
@@ -556,6 +626,7 @@ describe("gateway lifecycle late binding", () => {
       verifySandboxBridgeGatewayReachableOrExit: verifyReachability,
     });
 
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(root);
     name = "resumed";
     port = 9777;
     const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
@@ -597,6 +668,39 @@ describe("gateway lifecycle late binding", () => {
       expect(managedStart).toHaveBeenCalledWith(
         expect.objectContaining({ gatewayName: "resumed" }),
       );
+      const receiptPath = path.join(
+        root,
+        ".local/state/nemoclaw/gateway-runtime-bindings/9777.json",
+      );
+      const savedBinding = fs.readFileSync(receiptPath, "utf8");
+      expect(JSON.parse(savedBinding)).toEqual({ stateDir, dockerNetworkName: "custom-network" });
+      const previousNetwork = process.env.OPENSHELL_DOCKER_NETWORK_NAME;
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", undefined);
+      vi.stubEnv("OPENSHELL_DOCKER_NETWORK_NAME", undefined);
+      const recovered = createDockerDriverGatewayRuntimeHelpers({
+        gatewayPort: 9777,
+        getCachedOpenshellBinary: () => null,
+        getBlueprintMaxOpenshellVersion: () => null,
+        getInstalledOpenshellVersion: () => "0.0.116",
+        isOpenshellDevVersion: () => false,
+        runCapture: () => "",
+        shouldUseOpenshellDevChannel: () => false,
+        supportedOpenshellFallbackVersion: "0.0.116",
+        loadDockerDriverGatewayEnv: gatewayBinding.createGatewayEnvLoader(
+          await vi.importActual<typeof import("../docker-driver-gateway-env")>(
+            "../docker-driver-gateway-env",
+          ),
+        ),
+      });
+      expect(recovered.getDockerDriverGatewayStateDir()).toBe(stateDir);
+      expect(recovered.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_NETWORK_NAME).toBe(
+        "custom-network",
+      );
+      expect(process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBeUndefined();
+      expect(process.env.OPENSHELL_DOCKER_NETWORK_NAME).toBeUndefined();
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
+      vi.stubEnv("OPENSHELL_DOCKER_NETWORK_NAME", previousNetwork);
+
       const runtimeIdentityOptions = runtimeIdentitySpy.mock.calls[0]?.[0];
       const managedOptions = managedStart.mock.calls[0]?.[0];
       expect(runtimeIdentityOptions?.env).toEqual(managedOptions?.env);
@@ -657,6 +761,7 @@ describe("gateway lifecycle late binding", () => {
 
       await expect(start.startDockerDriverGateway()).rejects.toThrow(/refusing to adopt/);
       expect(fs.readFileSync(path.join(unsafeStateDir, "keep.txt"), "utf8")).toBe("keep\n");
+      expect(fs.readFileSync(receiptPath, "utf8")).toBe(savedBinding);
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
 
@@ -678,6 +783,7 @@ describe("gateway lifecycle late binding", () => {
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
     } finally {
+      homeSpy.mockRestore();
       runtimeIdentitySpy.mockRestore();
       vi.unstubAllEnvs();
       fs.rmSync(root, { force: true, recursive: true });

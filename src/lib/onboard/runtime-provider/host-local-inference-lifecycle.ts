@@ -92,6 +92,7 @@ export type HostLocalInferenceRetirementResult =
 export interface HostLocalInferenceLifecycleOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly homeDir?: string;
+  readonly deadlineMs?: number;
   readonly createLlamaCppAdapter?: (
     options: ManagedLlamaCppLifecycleAdapterOptions,
   ) => ManagedLlamaCppLifecycleAdapter;
@@ -245,6 +246,7 @@ function requireRuntime(
     {
       env: options.environment ?? process.env,
       acceleration,
+      ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
     },
     publishedRecoveryOperation,
   );
@@ -304,7 +306,11 @@ function requireRuntime(
   ) {
     fail("provider returned an incomplete managed inference lifecycle");
   }
-  return Object.freeze({ operation, runtime, assertAuthority: operation.assertAuthority });
+  return Object.freeze({
+    operation,
+    runtime,
+    assertAuthority: operation.assertAuthority,
+  });
 }
 
 function requireExactReceipt(
@@ -763,7 +769,10 @@ export function retirePreparedHostLocalInferenceAuthority(
 ): HostLocalInferenceRetirementResult {
   const runtime = confirmHostLocalInferenceDestroyAuthority(provider, sandbox, prepared);
   if (sharedPeerStatus(provider, sandbox, prepared, peers) === "shared") {
-    return Object.freeze({ status: "shared" as const, receipt: prepared.receipt });
+    return Object.freeze({
+      status: "shared" as const,
+      receipt: prepared.receipt,
+    });
   }
   const result = runtime.destroy(prepared.receipt);
   requireExactReceipt(

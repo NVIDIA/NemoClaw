@@ -19,6 +19,7 @@ import {
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import {
+  decisionUnset,
   decisionValue,
   isDecisionSelected,
   isDecisionUnset,
@@ -50,6 +51,7 @@ import {
   recordCheckpointSandboxIdentity,
   recordCheckpointWebSearch,
 } from "../../checkpoint-record";
+
 import {
   checkpointProvesSandboxStepComplete,
   observeProviderEffectFingerprint,
@@ -83,6 +85,7 @@ import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../s
 import {
   advanceSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
+  createRegisteredSandboxIdentityRevalidation,
   fingerprintSandboxRecreateValue,
   ownSandboxRecreateTransaction,
   type ReplacedSandboxSourceEntry,
@@ -94,7 +97,11 @@ import {
   selectSandboxRecreateTargetIntentFingerprint,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
-import { sandboxCreateInferenceSelection } from "../../sandbox-registration";
+import {
+  nativeInferenceCreateIntentFields,
+  sandboxCreateInferenceSelection,
+  withSandboxImageRegistrationFence,
+} from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
@@ -114,6 +121,7 @@ import {
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
   hasMessagingChannelConfigDrift,
+  initialOpenClawToolDisclosure,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -204,7 +212,6 @@ export interface SandboxStateOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
-  rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
@@ -270,7 +277,10 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
-    getSandboxRecreateObservation(sandboxName: string | null): SandboxRecreateObservation;
+    getSandboxRecreateObservation(
+      sandboxName: string | null,
+      gatewayName?: string,
+    ): SandboxRecreateObservation;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
@@ -346,6 +356,8 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
+      nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
       hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
@@ -412,6 +424,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
+  revalidateSandboxIdentity?: (operation: string) => void;
   stateResult: OnboardStateResult;
 }
 
@@ -528,6 +541,37 @@ export function apfCreateIntentFields(
 
 export function apfCreateFingerprintFields(requested: boolean): readonly string[] {
   return requested ? ["apf-interceptor"] : [];
+}
+
+function sandboxGpuCreateInputs(config: unknown): unknown {
+  if (config === null || typeof config !== "object") return config ?? null;
+  const { sandboxGpuProof: _sandboxGpuProof, ...inputs } = config as { sandboxGpuProof?: unknown };
+  return inputs;
+}
+
+// Earlier releases also serialized sandboxGpuProof, a result that sandbox creation
+// writes onto the GPU settings. The GPU settings end at the first "}|" whose
+// preceding text parses as one JSON object.
+function withoutRecordedSandboxGpuProof(
+  recordedFingerprint: string,
+  gpuFieldPrefix: string,
+): string {
+  if (!recordedFingerprint.startsWith(`${gpuFieldPrefix}{`)) return recordedFingerprint;
+  for (
+    let end = recordedFingerprint.indexOf("}|", gpuFieldPrefix.length);
+    end !== -1;
+    end = recordedFingerprint.indexOf("}|", end + 1)
+  ) {
+    let gpuSettings: object;
+    try {
+      gpuSettings = JSON.parse(recordedFingerprint.slice(gpuFieldPrefix.length, end + 1)) as object;
+    } catch {
+      continue;
+    }
+    if (!Object.hasOwn(gpuSettings, "sandboxGpuProof")) return recordedFingerprint;
+    return `${gpuFieldPrefix}${JSON.stringify(sandboxGpuCreateInputs(gpuSettings))}${recordedFingerprint.slice(end + 1)}`;
+  }
+  return recordedFingerprint;
 }
 
 type SandboxRecreateRepairMetadata = {
@@ -852,7 +896,8 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxReuseState: string,
   ): Promise<SandboxResumeDecision> {
-    if (this.options.recreateSandbox(false)) return decision;
+    // A fresh run records the requested name before checking the existing sandbox's selection.
+    if (!this.options.resume || this.options.recreateSandbox(false)) return decision;
     return this.applyCheckpointCrashRecovery(decision, state, sandboxReuseState);
   }
 
@@ -876,7 +921,7 @@ class SandboxStateFlow<
       checkpoint && checkpointIdentityForResumeTarget(checkpoint, state.sandboxName, agentName);
     if (!checkpoint || !identity) return decision;
 
-    const recordedFingerprint = checkpoint.effectGroups.sandbox_create?.fingerprint;
+    const recordedFingerprint = this.recordedSandboxCreateFingerprint(checkpoint, identity.name);
     const currentLightFingerprint = this.currentSandboxCreateFingerprint(identity.name);
     if (
       recordedFingerprint &&
@@ -900,15 +945,12 @@ class SandboxStateFlow<
       : decision;
   }
 
-  private currentSandboxCreateFingerprint(
-    sandboxName: string,
-    createIntent?: ResolvedSandboxCreateIntent,
-  ): string {
+  private sandboxCreateFingerprintPrefix(sandboxName: string): string {
     const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
       this.options.agent,
       !this.options.fromDockerfile,
     );
-    const lightFingerprint = [
+    return [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       ...apfCreateFingerprintFields(this.options.apfInterceptorRequested === true),
       this.options.provider,
@@ -918,7 +960,16 @@ class SandboxStateFlow<
         compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       ),
       this.options.fromDockerfile ?? "",
-      JSON.stringify(this.options.sandboxGpuConfig ?? null),
+    ].join("|");
+  }
+
+  private currentSandboxCreateFingerprint(
+    sandboxName: string,
+    createIntent?: ResolvedSandboxCreateIntent,
+  ): string {
+    const lightFingerprint = [
+      this.sandboxCreateFingerprintPrefix(sandboxName),
+      JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
     if (!createIntent) return lightFingerprint;
@@ -935,13 +986,28 @@ class SandboxStateFlow<
     return `${lightFingerprint}|${JSON.stringify(durableCreateIntent)}`;
   }
 
+  private recordedSandboxCreateFingerprint(
+    checkpoint: OnboardCheckpoint | null | undefined,
+    sandboxName: string,
+  ): string | undefined {
+    const recordedFingerprint = checkpoint?.effectGroups.sandbox_create?.fingerprint;
+    if (!recordedFingerprint) return recordedFingerprint;
+    return withoutRecordedSandboxGpuProof(
+      recordedFingerprint,
+      `${this.sandboxCreateFingerprintPrefix(sandboxName)}|`,
+    );
+  }
+
   private assertCheckpointCreateInputsStillMatch(
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
     createIntent: ResolvedSandboxCreateIntent,
   ): void {
     if (this.options.recreateSandbox(false)) return;
-    const recordedFingerprint = state.session?.checkpoint?.effectGroups.sandbox_create?.fingerprint;
+    const recordedFingerprint = this.recordedSandboxCreateFingerprint(
+      state.session?.checkpoint,
+      sandboxName,
+    );
     if (!recordedFingerprint) return;
     // Older and reuse-backfilled receipts contain the stable create-input prefix.
     // Accept that reviewed compatibility form while requiring an exact match
@@ -1799,9 +1865,10 @@ class SandboxStateFlow<
     deferSandboxEffectsUntilIdentityVerification: boolean,
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
+    const registeredEntry = this.deps.getSandboxRegistryEntry(sandboxName);
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-      inferenceProvider: this.options.provider,
+      ...nativeInferenceCreateIntentFields(this.options.provider, registeredEntry),
       hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
@@ -1814,11 +1881,24 @@ class SandboxStateFlow<
       hostMounts: this.options.hostMounts,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     });
+    const recreate = requiresSandboxRecreation(decision, this.options.recreateSandbox(false));
     return {
       resolved,
-      recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
+      recreate,
       ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
-      toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      toolDisclosure:
+        initialOpenClawToolDisclosure({
+          fresh:
+            decision.kind === "create" &&
+            !this.options.resume &&
+            !recreate &&
+            !this.options.fromDockerfile,
+          agentName: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+          provider: this.options.provider,
+          entry: registeredEntry,
+          sessionId: state.session?.sessionId,
+          env: this.options.env,
+        }) ?? toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
@@ -1835,9 +1915,6 @@ class SandboxStateFlow<
         ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
         : {}),
       ...deferredSandboxEffectsIntent(deferSandboxEffectsUntilIdentityVerification),
-      ...(this.options.rebuildPreservedEnv
-        ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
-        : {}),
       recreateJournalTargetIntentFingerprint:
         this.options.recreateJournalTargetIntentFingerprint ?? undefined,
       ...(this.options.rebuildPolicySourcePath
@@ -1909,13 +1986,21 @@ class SandboxStateFlow<
     sandboxName: string,
     createIntent: CompleteSandboxCreateIntent,
     sourceEntry: SandboxEntry | null,
-  ): CheckpointSandboxRecreateTransaction | null {
+  ): ReturnType<typeof ownSandboxRecreateTransaction> | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
     const ownsPendingCreateReservation =
       sourceEntry?.pendingRouteReservation === true &&
       sourceEntry.reservationSessionId === state.session?.sessionId;
-    if (!this.options.resume && !existing && sourceEntry && !ownsPendingCreateReservation) {
-      return null;
+    if (!this.options.resume && !existing && sourceEntry) {
+      // A route reservation on a Ready sandbox does not decide whether it needs replacement.
+      // Let createSandbox check selection drift before opening its recreation journal.
+      if (
+        !ownsPendingCreateReservation ||
+        (!createIntent.recreate &&
+          this.deps.getSandboxRecreateObservation(sandboxName).state === "ready")
+      ) {
+        return null;
+      }
     }
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,
@@ -1965,7 +2050,7 @@ class SandboxStateFlow<
         }
         return checkpoint;
       },
-    }).transaction;
+    });
   }
 
   private sandboxRecreateTargetIntentFingerprint(
@@ -1996,6 +2081,16 @@ class SandboxStateFlow<
     });
   }
 
+  private freshSelectionReconciliationFields(
+    owned: ReturnType<typeof ownSandboxRecreateTransaction> | null,
+  ): { readonly freshNonForced?: true } {
+    return owned?.openedWithoutPriorTransaction &&
+      !this.options.resume &&
+      !this.options.recreateSandbox(false)
+      ? { freshNonForced: true }
+      : {};
+  }
+
   private async prepareSandboxRecreate(
     state: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
@@ -2005,9 +2100,10 @@ class SandboxStateFlow<
     const sourceEntry = this.deps.getSandboxRegistryEntry(requestedSandboxName);
     const continueHermesPortableLifecycle =
       decision.kind === "create" && decision.continueHermesPortableLifecycle === true;
-    const transaction = continueHermesPortableLifecycle
+    const owned = continueHermesPortableLifecycle
       ? null
       : this.beginSandboxRecreateJournal(state, requestedSandboxName, createIntent, sourceEntry);
+    const transaction = owned?.transaction ?? null;
     const repairMetadata: SandboxRecreateRepairMetadata | null =
       decision.kind === "repair-and-recreate"
         ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }
@@ -2030,6 +2126,7 @@ class SandboxStateFlow<
       ...createIntent,
       recreate: true,
       recreateTransaction: {
+        ...this.freshSelectionReconciliationFields(owned),
         id: transaction.id,
         targetGeneration: transaction.targetGeneration,
         targetIntentFingerprint: transaction.targetIntentFingerprint,
@@ -2211,6 +2308,14 @@ class SandboxStateFlow<
       });
       this.deps.updateSession((current) => {
         current.messagingPlan = messagingPlan;
+        const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+        if (messagingPlan === null && (agentName === "openclaw" || agentName === "hermes")) {
+          if (state.selectedMessagingChannels.length === 0)
+            recordCheckpointMessaging(current, null);
+          else if (current.checkpoint) {
+            current.checkpoint = { ...current.checkpoint, messaging: decisionUnset() };
+          }
+        }
         return current;
       });
       const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata } =
@@ -2246,6 +2351,7 @@ class SandboxStateFlow<
                     selection: sandboxCreateInferenceSelection({
                       provider: this.options.provider,
                       model: this.options.model,
+                      modelSelectionProvenance: this.options.session.modelSelectionProvenance,
                       endpointUrl: this.options.endpointUrl,
                       endpointSource: this.options.endpointSource,
                       credentialEnv: this.options.credentialEnv,
@@ -2325,19 +2431,22 @@ class SandboxStateFlow<
         sandboxName,
         createIntent,
       );
+      this.finalizeInferenceRouteReservation(state, sandboxName);
       return { ...state, sandboxName, session: recordedSession };
     };
-    const withGatewayLock = () =>
-      this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
-    const withDashboardPortLock =
-      this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
-    const withDashboardAndGatewayLocks = () =>
-      shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
-        ? withDashboardPortLock(withGatewayLock)
-        : withGatewayLock();
-    return this.deps.withSandboxMutationLock
-      ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
-      : withDashboardAndGatewayLocks();
+    return withSandboxImageRegistrationFence(async () => {
+      const withGatewayLock = () =>
+        this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
+      const withDashboardPortLock =
+        this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
+      const withDashboardAndGatewayLocks = () =>
+        shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
+          ? withDashboardPortLock(withGatewayLock)
+          : withGatewayLock();
+      return this.deps.withSandboxMutationLock
+        ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
+        : withDashboardAndGatewayLocks();
+    });
   }
 
   private resolveSandboxMessagingAuthority(
@@ -2545,6 +2654,13 @@ class SandboxStateFlow<
       sandboxName: state.sandboxName,
       agent: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
     };
+    const revalidateSandboxIdentity = createRegisteredSandboxIdentityRevalidation(
+      this.deps.getSandboxRegistryEntry(state.sandboxName),
+      {
+        readRegistration: this.deps.getSandboxRegistryEntry,
+        observe: this.deps.getSandboxRecreateObservation,
+      },
+    );
     return {
       sandboxName: state.sandboxName,
       webSearchConfig: state.webSearchConfig,
@@ -2553,6 +2669,7 @@ class SandboxStateFlow<
       selectedMessagingChannels: state.selectedMessagingChannels,
       webSearchSupported: state.webSearchSupported,
       session: state.session,
+      revalidateSandboxIdentity,
       stateResult:
         this.options.apfInterceptorRequested === true && !this.options.externalComponentRegistered
           ? completeOnboardMachine({}, metadata)

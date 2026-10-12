@@ -350,6 +350,7 @@ describe("OpenShell policy boundary package contract", () => {
         "ajv",
         "fast-deep-equal",
         "fast-uri",
+        "json5",
         "json-schema-traverse",
         "require-from-string",
         "yaml",

@@ -168,6 +168,12 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson(result.stdout);
 
+      assert.deepEqual(
+        payload.commands.filter((e: CommandEntry) => e.command.includes("sandbox provider detach")),
+        [],
+        "new sandbox creation should not detach providers",
+      );
+
       const providerCommands = payload.commands.filter((e: CommandEntry) =>
         e.command.includes("provider create"),
       );
@@ -273,14 +279,8 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       );
 
       const envString = JSON.stringify(createCommand.env);
-      assert.ok(
-        !envString.includes("test-discord-token-value"),
-        "Discord token value must not leak into sandbox env",
-      );
-      assert.ok(
-        !envString.includes("xoxb-test-slack-token-value"),
-        "Slack bot token value must not leak into sandbox spawn env",
-      );
+      assert.ok(!envString.includes("test-discord-token-value"), "Discord token in sandbox env");
+      assert.ok(!envString.includes("xoxb-test-slack-token-value"), "Slack bot token in env");
       assert.ok(
         !envString.includes("xapp-test-slack-app-token-value"),
         "Slack app token value must not leak into sandbox spawn env",

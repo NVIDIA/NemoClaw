@@ -2,9 +2,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Public rebuild facade. Phase orchestration lives in focused rebuild modules. */
-export {
-  buildRefreshMutableOpenClawConfigHashCommand,
-  rebuildSandbox,
-  stageMessagingManifestPlanForRebuild,
-} from "./rebuild-pipeline";
+export { rebuildSandbox, stageMessagingManifestPlanForRebuild } from "./rebuild-pipeline";
 export { retireRebuildRecoveryBackup } from "./rebuild-recreate-journal";

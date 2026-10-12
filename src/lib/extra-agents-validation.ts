@@ -63,8 +63,7 @@ export function assertNoPerAgentMaxSpawnDepthJson(raw: string | undefined): void
 // agents.entries, keyed by id; the entry itself therefore omits the id.
 //
 // The entry intentionally omits workspace/agentDir so OpenClaw applies its
-// built-in defaults (and so the host-side migration-state collector does not
-// register a phantom host root for the in-sandbox path).
+// built-in defaults.
 const MAIN_AGENT_ID = "main";
 const MAIN_AGENT_ENTRY: Readonly<JsonObject> = Object.freeze({
   id: MAIN_AGENT_ID,

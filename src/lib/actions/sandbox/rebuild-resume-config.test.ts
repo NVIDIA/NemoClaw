@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  HOSTED_NATIVE_PROVIDERS,
+  hostedNativeProvider,
+} from "../../inference/native-provider/hosted";
 import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,6 +44,8 @@ function snapshotEnv(names: readonly string[]): () => void {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 describe("isLocalInferenceProvider", () => {
@@ -79,6 +85,52 @@ describe("getRebuildCredentialEnvFromRegistry", () => {
     expect(getRebuildCredentialEnvFromRegistry("compatible-endpoint", "bad-name")).toBe(
       "COMPATIBLE_API_KEY",
     );
+  });
+
+  it("preserves the no-auth proxy credential only for a safe loopback route", () => {
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:11434/v1",
+      ),
+    ).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "https://inference.example.test/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:999/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+    expect(
+      getRebuildCredentialEnvFromRegistry(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:11435/v1",
+      ),
+    ).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("preserves a legacy port-11435 no-auth route when the proxy moved", async () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_PORT", "12435");
+    vi.resetModules();
+    const { getRebuildCredentialEnvFromRegistry: resolveCredential } =
+      await import("./rebuild-resume-preflight");
+
+    expect(
+      resolveCredential(
+        "compatible-endpoint",
+        "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        "http://localhost:11435/v1",
+      ),
+    ).toBe("NEMOCLAW_OLLAMA_PROXY_TOKEN");
   });
 
   it("returns null for local and unset providers", () => {
@@ -164,6 +216,68 @@ describe("getRebuildEndpointFromRegistry", () => {
 });
 
 describe("prepareRebuildResumeConfig", () => {
+  it("preserves a durable loopback no-auth route through rebuild configuration", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "http://localhost:11434/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      }),
+      "openclaw",
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      endpointUrl: "http://localhost:11434/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      registryInferenceRoute: {
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "http://localhost:11434/v1",
+        preferredInferenceApi: "openai-completions",
+        source: "registry",
+      },
+    });
+  });
+
+  it("resolves a legacy no-auth credential from the matching session endpoint", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      endpointUrl: "http://localhost:11434/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      }),
+      "openclaw",
+      noopLog,
+      throwingBail,
+    );
+
+    expect(config).toMatchObject({
+      endpointUrl: "http://localhost:11434/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      pinEndpoint: false,
+    });
+  });
+
   it("preserves a stale Hermes API marker so rebuild re-arms provider setup (#6289)", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
 
@@ -758,5 +872,134 @@ describe("prepareRebuildResumeConfig", () => {
       delete process.env.NEMOCLAW_AGENT;
       Object.assign(process.env, prior === undefined ? {} : { NEMOCLAW_AGENT: prior });
     }
+  });
+});
+
+describe("persisted native NVIDIA rebuild authority", () => {
+  const attachment = {
+    schemaVersion: 1,
+    profileId: "nemoclaw-nvidia-inference-v1",
+    providerName: "nemoclaw-nvidia-prod-v1",
+    providerId: "recorded-provider-id",
+  };
+  it.each([
+    null,
+    {},
+    { ...attachment, providerId: "" },
+    { ...attachment, schemaVersion: 2 },
+    { ...attachment, providerName: "nvidia-prod" },
+    { ...attachment, profileId: "openai" },
+  ])(
+    "rejects malformed persisted native authority before returning a rebuild plan (%j)",
+    (receipt) => {
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+      expect(() =>
+        prepareRebuildResumeConfig(
+          "alpha",
+          entry({
+            provider: "nvidia-prod",
+            model: "nvidia/nemotron",
+            nativeNvidiaProviderAttachment: receipt,
+          }),
+          "langchain-deepagents-code",
+          noopLog,
+          throwingBail,
+        ),
+      ).toThrow("Malformed native provider attachment");
+    },
+  );
+  it.each([attachment, undefined])(
+    "preserves valid native or absent legacy authority (%j)",
+    (receipt) => {
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+      const result = prepareRebuildResumeConfig(
+        "alpha",
+        entry({
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron",
+          nativeNvidiaProviderAttachment: receipt,
+        }),
+        "langchain-deepagents-code",
+        noopLog,
+        throwingBail,
+      );
+      expect(result).not.toBeNull();
+      expect(result.nativeNvidiaProviderAttachment).toEqual(receipt);
+    },
+  );
+});
+
+describe("fixed hosted rebuild authority", () => {
+  it.each([
+    ...HOSTED_NATIVE_PROVIDERS,
+    hostedNativeProvider("hermes-provider", "https://staging.nous.example/v1")!,
+  ])(
+    "preserves $providerName without borrowing another sandbox's endpoint or credential",
+    (definition) => {
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+        sandboxName: "other",
+        endpointUrl: "https://wrong.example/v1",
+        credentialEnv: "WRONG_KEY",
+      });
+      const receipt = {
+        schemaVersion: 1,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-id",
+        ...("endpointUrl" in definition
+          ? { endpointUrl: definition.endpointUrl, allowedIps: ["8.8.8.8"] }
+          : {}),
+      };
+      const result = prepareRebuildResumeConfig(
+        "alpha",
+        entry({
+          provider: definition.logicalProvider,
+          model: "supported-model",
+          endpointUrl: definition.endpoint,
+          credentialEnv: definition.credentialEnv,
+          nativeHostedProviderAttachment: receipt,
+        }),
+        "openclaw",
+        noopLog,
+        throwingBail,
+      );
+      expect(result).toMatchObject({
+        provider: definition.logicalProvider,
+        endpointUrl: definition.endpoint,
+        credentialEnv: definition.credentialEnv,
+        nativeHostedProviderAttachment: receipt,
+      });
+    },
+  );
+
+  it.each([
+    { nativeHostedProviderAttachment: {} },
+    { provider: "anthropic-prod" },
+    { credentialEnv: "FOREIGN_KEY" },
+    { endpointUrl: "https://different.example/v1" },
+  ])("rejects inconsistent native authority before destructive rebuild (%j)", (changes) => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+    const definition = hostedNativeProvider("openai-api")!;
+    expect(() =>
+      prepareRebuildResumeConfig(
+        "alpha",
+        entry({
+          provider: definition.logicalProvider,
+          model: "gpt-4.1",
+          endpointUrl: definition.endpoint,
+          credentialEnv: definition.credentialEnv,
+          nativeHostedProviderAttachment: {
+            schemaVersion: 1,
+            profileId: definition.profileId,
+            providerName: definition.providerName,
+            providerId: "owned-id",
+          },
+          ...changes,
+        }),
+        "openclaw",
+        noopLog,
+        throwingBail,
+      ),
+    ).toThrow(/native|Native/);
   });
 });

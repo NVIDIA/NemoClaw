@@ -1,133 +1,65 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NemoClawOnboardConfig } from "../onboard/config.js";
-
-vi.mock("../onboard/config.js", () => ({
-  loadOnboardConfig: vi.fn(),
-  describeOnboardEndpoint: vi.fn(),
-  describeOnboardProvider: vi.fn(),
-}));
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { loadOnboardConfig } from "../onboard/config.js";
 import { slashConfigShow } from "./config-show.js";
-import {
-  loadOnboardConfig,
-  describeOnboardEndpoint,
-  describeOnboardProvider,
-} from "../onboard/config.js";
 
-const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
-const mockedDescribeOnboardEndpoint = vi.mocked(describeOnboardEndpoint);
-const mockedDescribeOnboardProvider = vi.mocked(describeOnboardProvider);
+vi.mock("../onboard/config.js", () => ({ loadOnboardConfig: vi.fn() }));
 
 describe("commands/config-show", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockedLoadOnboardConfig.mockReturnValue(null);
+    vi.mocked(loadOnboardConfig).mockReturnValue(null);
   });
 
-  it("shows no config message when onboard config is missing", () => {
-    const result = slashConfigShow();
-    expect(result.text).toContain("No configuration found");
-    expect(result.text).toContain("nemoclaw onboard");
-  });
-
-  it("shows config with redacted credentials when config exists", () => {
-    const config: NemoClawOnboardConfig = {
-      endpointType: "build",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      ncpPartner: null,
-      model: "nvidia/nemotron-3-super-120b-a12b",
+  it("shows missing native fields without an onboarding fallback", () => {
+    vi.mocked(loadOnboardConfig).mockReturnValue({
       profile: "default",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      onboardedAt: "2026-04-10T14:22:00Z",
-    };
-    mockedLoadOnboardConfig.mockReturnValue(config);
-    mockedDescribeOnboardEndpoint.mockReturnValue("build (https://integrate.api.nvidia.com/v1)");
-    mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoint API");
-
-    const result = slashConfigShow();
-    expect(result.text).toContain("NemoClaw Config");
-    expect(result.text).toContain("build (https://integrate.api.nvidia.com/v1)");
-    expect(result.text).toContain("$NVIDIA_INFERENCE_API_KEY");
-    expect(result.text).toContain("NVIDIA Endpoint API");
-    expect(result.text).toContain("nvidia/nemotron-3-super-120b-a12b");
-    expect(result.text).toContain("2026-04-10T14:22:00Z");
+      onboardedAt: "2026-09-23",
+    });
+    const result = slashConfigShow({});
+    expect(result.text).toContain("Model:       (not configured)");
+    expect(result.text).toContain("Auth token:  (not configured)");
+    expect(result.text).toContain("Onboarded:   2026-09-23");
   });
 
-  it("does not expose raw credential values", () => {
-    const config: NemoClawOnboardConfig = {
-      endpointType: "build",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      ncpPartner: null,
-      model: "nvidia/nemotron-3-super-120b-a12b",
-      profile: "default",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      onboardedAt: "2026-04-10T14:22:00Z",
-    };
-    mockedLoadOnboardConfig.mockReturnValue(config);
-    mockedDescribeOnboardEndpoint.mockReturnValue("build");
-    mockedDescribeOnboardProvider.mockReturnValue("NVIDIA");
-
-    const result = slashConfigShow();
-    // Should show env var name, not the actual key value
-    expect(result.text).toContain("$NVIDIA_INFERENCE_API_KEY");
-    expect(result.text).not.toContain("nvapi-");
+  it("shows native route edits without requiring onboarding metadata", () => {
+    const result = slashConfigShow({
+      agents: { defaults: { model: "edited/model" } },
+      models: {
+        providers: {
+          edited: {
+            baseUrl: "https://edited.example/v1",
+            apiKey: { source: "env", id: "EDITED_KEY", provider: "default" },
+          },
+        },
+      },
+    });
+    expect(result.text).toContain("https://edited.example/v1");
+    expect(result.text).toContain("Inference:   edited");
+    expect(result.text).toContain("Model:       edited/model");
+    expect(result.text).toContain("$EDITED_KEY (set via env var)");
+    expect(result.text).toContain("Profile:     (not recorded)");
   });
 
-  it("includes NCP partner when set", () => {
-    const config: NemoClawOnboardConfig = {
-      endpointType: "ncp",
-      endpointUrl: "https://partner.example.com/v1",
-      ncpPartner: "PartnerCo",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-      profile: "default",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      onboardedAt: "2026-04-10T14:22:00Z",
-    };
-    mockedLoadOnboardConfig.mockReturnValue(config);
-    mockedDescribeOnboardEndpoint.mockReturnValue("ncp (https://partner.example.com/v1)");
-    mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Cloud Partner");
-
-    const result = slashConfigShow();
-    expect(result.text).toContain("NCP Partner: PartnerCo");
-  });
-
-  it("shows not configured when credentialEnv is empty", () => {
-    const config: NemoClawOnboardConfig = {
-      endpointType: "build",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      ncpPartner: null,
-      model: "nvidia/nemotron-3-super-120b-a12b",
-      profile: "default",
-      credentialEnv: "",
-      onboardedAt: "2026-04-10T14:22:00Z",
-    };
-    mockedLoadOnboardConfig.mockReturnValue(config);
-    mockedDescribeOnboardEndpoint.mockReturnValue("build");
-    mockedDescribeOnboardProvider.mockReturnValue("NVIDIA");
-
-    const result = slashConfigShow();
-    expect(result.text).toContain("not configured");
+  it("does not expose native literal credentials or URL secrets", () => {
+    const result = slashConfigShow({
+      agents: { defaults: { model: "inference/model" } },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://user:password@edited.example/v1?token=secret#fragment",
+            apiKey: "private-literal",
+          },
+        },
+      },
+    });
+    expect(result.text).toContain("Auth token:  (configured)");
+    expect(result.text).toContain("https://edited.example/v1");
+    expect(result.text).not.toMatch(/password|secret|fragment|private-literal/);
   });
 
   it("points to the sandbox-first host config command", () => {
-    const config: NemoClawOnboardConfig = {
-      endpointType: "build",
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      ncpPartner: null,
-      model: "nvidia/nemotron-3-super-120b-a12b",
-      profile: "default",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      onboardedAt: "2026-04-10T14:22:00Z",
-    };
-    mockedLoadOnboardConfig.mockReturnValue(config);
-    mockedDescribeOnboardEndpoint.mockReturnValue("build");
-    mockedDescribeOnboardProvider.mockReturnValue("NVIDIA");
-
-    const result = slashConfigShow();
-    expect(result.text).toContain("Use `nemoclaw <sandbox> config get`");
-    expect(result.text).not.toContain("only be modified");
+    expect(slashConfigShow({}).text).toContain("Use `nemoclaw <sandbox> config get`");
   });
 });

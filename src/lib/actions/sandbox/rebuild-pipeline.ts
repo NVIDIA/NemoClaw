@@ -26,7 +26,6 @@ import {
   captureRebuildPolicyDocument,
   bindRebuildSnapshotGpuAuthority,
   clearRebuildMcpHandoff,
-  clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
   readRebuildPolicyHandoff,
   readRebuildMcpHandoff,
@@ -36,16 +35,10 @@ import {
   retireRebuildSourceOpenClawWindowForDelete,
   runRebuildBackupPhase,
   writeRebuildMcpHandoff,
-  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
-import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
-import {
-  captureHermesOperatorConfigSnapshot,
-  REBUILD_HERMES_DASHBOARD_ENV_KEYS,
-  serializeHermesOperatorConfigSnapshot,
-} from "./rebuild-durable-config";
+import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,
@@ -61,6 +54,7 @@ import {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
   runRebuildPostRestorePhase,
+  recordRebuildCompletion,
 } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
@@ -69,7 +63,6 @@ import {
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
 import {
-  finalizePreparedRebuildImageMessagingPlan,
   runHermesCronRestoreBackupPreflight,
   runRebuildPreflightPhase,
 } from "./rebuild-preflight-phase";
@@ -83,6 +76,7 @@ import {
 } from "./rebuild-prepared-recovery";
 import {
   inspectRebuildGatewayProviderRegistration,
+  validateRebuildHostInferenceCredential,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
@@ -99,14 +93,16 @@ import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 
-export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
+export { stageMessagingManifestPlanForRebuild };
 
-function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): void {
+function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): boolean {
   try {
-    if (cleanup() === false) console.warn(warning);
+    if (cleanup() !== false) return true;
   } catch {
-    console.warn(warning);
+    // Retain the existing non-fatal cleanup behavior.
   }
+  console.warn(warning);
+  return false;
 }
 
 function rebuildFailureDetail(error: unknown): string {
@@ -158,6 +154,7 @@ export async function rebuildSandbox(
           TAVILY_API_KEY_ENV,
           MESSAGING_SETUP_APPLIER_ENV_KEY,
           DOCKER_GPU_PATCH_NETWORK_ENV,
+          "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
         ];
@@ -192,7 +189,7 @@ async function rebuildSandboxUnlocked(
 ): Promise<void> {
   let executionOptions = opts;
   if (!executionOptions.recoveryManifest) {
-    const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+    const transaction = onboardSession.loadRebuildSession(sandboxName)?.checkpoint?.sandboxRecreate;
     const registryEntry = registry.load().sandboxes[sandboxName];
     if (transaction?.sandboxName === sandboxName && registryEntry) {
       const retainedRecovery = findRebuildRecoveryBackup({
@@ -225,6 +222,7 @@ async function rebuildSandboxUnlocked(
     dcodePreflight,
     preparedImage: initiallyPreparedImage,
     routePreflightReceipt,
+    stoppedSource,
     releaseOnboardLock,
     log,
     bail,
@@ -241,6 +239,10 @@ async function rebuildSandboxUnlocked(
   } = targetConfig;
   let recreateOptions = stagedRecreateOptions;
   const { staleRecovery } = liveState;
+  let telemetryVerified = false;
+  let telemetryMutated = false;
+  let telemetryCleanupOnly = false;
+  let telemetryCleanupComplete = true;
   let preparedImage = initiallyPreparedImage;
   let recoveryManifest = validatedRecoveryManifest;
   let rebuildPolicySourcePath: string | null = null;
@@ -248,7 +250,13 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  // A stopped source has no live DCode route to probe. Keep the replacement,
+  // registry, image, and gateway-schema checks, but use the same route-probe
+  // exemption at every destructive-boundary revalidation that preflight used.
+  const skipLiveDcodeRouteProbe = recoveryRecreate || stoppedSource != null;
   try {
+    if (stoppedSource)
+      log("Captured the identified stopped agent source without starting its container.");
     let recoveryRegistrySnapshot = preparedBackupRecovery
       ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
@@ -288,8 +296,7 @@ async function rebuildSandboxUnlocked(
             backupManifest: recoveryManifest,
           }) ||
           recoveryManifest.rebuildPolicyHandoff?.retired === true ||
-          recoveryManifest.rebuildMcpHandoff?.retired === true ||
-          recoveryManifest.hermesOperatorConfigHandoff?.retired === true
+          recoveryManifest.rebuildMcpHandoff?.retired === true
         : false;
       const activeRecoverySession = onboardSession.loadSession();
       const activeRecoveryTransaction = activeRecoverySession?.checkpoint?.sandboxRecreate;
@@ -338,12 +345,23 @@ async function rebuildSandboxUnlocked(
       }
       const observedMcp =
         retainedMcpHandoff ??
-        (await observeMcpStateForRebuild(
-          sandboxEntry,
-          recreateOptions.runtimeSelection,
-          (recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName) ||
-            canRecapturePreparedRecoveryMcp,
-        ));
+        (stoppedSource
+          ? await observeMcpStateForRebuild(
+              sandboxEntry,
+              recreateOptions.runtimeSelection,
+              (recoveryManifest === null &&
+                activeRecoveryTransaction?.sandboxName !== sandboxName) ||
+                canRecapturePreparedRecoveryMcp,
+              undefined,
+              stoppedSource,
+            )
+          : await observeMcpStateForRebuild(
+              sandboxEntry,
+              recreateOptions.runtimeSelection,
+              (recoveryManifest === null &&
+                activeRecoveryTransaction?.sandboxName !== sandboxName) ||
+                canRecapturePreparedRecoveryMcp,
+            ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired
@@ -471,16 +489,6 @@ async function rebuildSandboxUnlocked(
             "A retired rebuild policy handoff cannot be cleaned up until the journaled replacement is accepted.",
           );
         }
-        if (
-          cleanupManifest.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(cleanupManifest)
-        ) {
-          reportIncompletePolicyHandoffCleanup(
-            cleanupManifest,
-            "The retired Hermes operator config handoff artifact or metadata could not be removed.",
-          );
-          return;
-        }
         if (!completePolicyHandoffCleanup(cleanupJournal.id, cleanupManifest)) return;
         if (!clearRecoveryMarker(cleanupJournal.id, cleanupManifest)) return;
         cleanupJournal.completeAcceptedTarget();
@@ -488,10 +496,13 @@ async function rebuildSandboxUnlocked(
         console.log(`  Completed retained recovery cleanup for '${sandboxName}'.`);
         console.log(`  Backup is preserved at: ${cleanupManifest.backupPath}`);
         log(`Completed retained recovery cleanup ${cleanupJournal.id} for '${sandboxName}'`);
+        telemetryVerified = true;
+        telemetryCleanupOnly = true;
         return;
       }
 
       const backup = await runRebuildBackupPhase({
+        ...(stoppedSource ? { stoppedNativeState: stoppedSource } : {}),
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
         gatewayPort: recreateOptions.targetGatewayPort,
@@ -560,66 +571,17 @@ async function rebuildSandboxUnlocked(
         );
       };
 
-      if (
-        rebuildAgent === "hermes" &&
-        backup.backupManifest?.agentType === "hermes" &&
-        !backup.backupManifest.hermesOperatorConfigHandoff &&
-        !preparedBackupRecovery &&
-        !staleRecovery
-      ) {
-        try {
-          const operatorConfig = captureHermesOperatorConfigSnapshot(sandboxName);
-          backup.backupManifest = writeHermesOperatorConfigHandoff(
-            backup.backupManifest,
-            serializeHermesOperatorConfigSnapshot(operatorConfig),
-            [...operatorConfig.entries.map((entry) => entry.key), ...operatorConfig.droppedKeys],
-          );
-          rebuildPolicyHandoffManifest = backup.backupManifest;
-          log(
-            `Captured Hermes operator config: restorable=${operatorConfig.entries.map((entry) => entry.key).join(",") || "none"}; managed=${operatorConfig.droppedKeys.join(",") || "none"}`,
-          );
-        } catch (error) {
-          return bail(
-            `Hermes operator configuration could not be captured before rebuild: ${rebuildFailureDetail(error)}`,
-          );
-        }
-      }
-
       // Validate the completed backup artifact produced above, not the mutable live
       // tree. This gate therefore follows backup creation and precedes every
       // destructive rebuild phase.
       const hermesCronRestorePreflight = runHermesCronRestoreBackupPreflight({
         rebuildAgent,
-        backupPath: backup.backupManifest?.backupPath ?? null,
-        backedUpDirs: backup.backupManifest?.backedUpDirs ?? [],
+        backupManifest: backup.backupManifest,
         log,
         bail,
       });
       if (!hermesCronRestorePreflight) return;
       const hermesCronRestorePlan = hermesCronRestorePreflight.plan;
-
-      const preservedEnv = backup.backupManifest?.preservedEnv ?? [];
-      if (preparedImage && messagingPlan?.agent === "hermes" && preservedEnv.length > 0) {
-        const finalizedImage = finalizePreparedRebuildImageMessagingPlan(
-          preparedImage,
-          messagingPlan,
-          preservedEnv,
-        );
-        if (!finalizedImage.ok) {
-          printRebuildPreflightFailure(
-            `the retained replacement image could not include preserved Hermes messaging state: ${finalizedImage.detail}`,
-            "The existing sandbox is untouched. Retry the rebuild after checking the replacement image inputs.",
-            "Replacement sandbox image finalization failed",
-            bail,
-          );
-          return;
-        }
-        preparedImage = finalizedImage.prepared;
-        recreateOptions.preparedImageRebuild = {
-          buildContext: preparedImage,
-          gatewayName: recreateOptions.targetGatewayName,
-        };
-      }
 
       // The post-delete create must consume the exact context that passed the
       // image preflight. Revalidate at the last safe point so mutation of the
@@ -642,7 +604,7 @@ async function rebuildSandboxUnlocked(
           resumeConfig,
           durableConfig.toolDisclosure,
           durableConfig.dcodeAutoApprovalMode,
-          recoveryRecreate,
+          skipLiveDcodeRouteProbe,
           recreateOptions.targetGatewayPort,
           recreateOptions.runtimeSelection,
         ))
@@ -695,15 +657,6 @@ async function rebuildSandboxUnlocked(
           );
         }
         if (
-          backup.backupManifest?.hermesOperatorConfigHandoff &&
-          backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
-          !clearHermesOperatorConfigHandoff(backup.backupManifest)
-        ) {
-          return bail(
-            "The unused current-run Hermes operator config handoff could not be retired during recovery.",
-          );
-        }
-        if (
           (backup.backupManifest?.rebuildPolicyHandoff ||
             backup.backupManifest?.rebuildMcpHandoff) &&
           backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
@@ -721,10 +674,10 @@ async function rebuildSandboxUnlocked(
             `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
           );
         }
+        telemetryMutated = true;
         const restored = await runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
-          targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: recoveryBackup,
           ...(recreateJournal.runtimeSelection
             ? { runtimeSelection: recreateJournal.runtimeSelection }
@@ -743,7 +696,6 @@ async function rebuildSandboxUnlocked(
             : {}),
           restoreSucceeded: restored.restoreSucceeded,
           openClawDoctorWindow: restored.openClawDoctorWindow,
-          hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
           preparedBackupRecovery: true,
           versionCheck,
           log,
@@ -785,12 +737,6 @@ async function rebuildSandboxUnlocked(
             );
           }
         }
-        if (
-          recoveryBackup.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(recoveryBackup)
-        ) {
-          return bail("The Hermes operator config handoff could not be retired after recovery.");
-        }
         if (retireRemovedImmutabilityState) {
           if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
             return bail(
@@ -808,12 +754,14 @@ async function rebuildSandboxUnlocked(
         log(
           `Recovered and restored journaled replacement ${recreateJournal.id} for '${sandboxName}'`,
         );
+        telemetryVerified = postRestoreVerification?.complete === true;
         return;
       }
 
       let preservedMcpPolicyHandoff = false;
       const sourceWindowForDelete = sourceOpenClawDoctorWindow;
       const mcpPreparation = await runRebuildDestroyPhase({
+        ...(stoppedSource ? { stoppedNativeState: stoppedSource } : {}),
         sandboxName,
         sandboxEntry,
         recheckMessagingConflicts,
@@ -887,15 +835,33 @@ async function rebuildSandboxUnlocked(
             resumeConfig,
             durableConfig.toolDisclosure,
             durableConfig.dcodeAutoApprovalMode,
-            recoveryRecreate,
+            skipLiveDcodeRouteProbe,
             recreateOptions.targetGatewayPort,
             preparation.runtimeSelection,
           );
         },
         validateAtDeleteEdge: async (runtimeSelection) => {
+          stoppedSource?.assertCurrent();
+          const hostCredential = resumeConfig.credentialEnv
+            ? hydrateCredentialEnv(resumeConfig.credentialEnv)
+            : null;
+          if (
+            hostCredential &&
+            !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
+          ) {
+            return {
+              ok: false,
+              message:
+                "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+            };
+          }
+          const nativeAttachment =
+            resumeConfig.nativeNvidiaProviderAttachment ??
+            resumeConfig.nativeHostedProviderAttachment;
           if (
             !recreateOptions.rebuildProviderReconfigure &&
-            shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
+            resumeConfig.provider &&
+            (nativeAttachment || shouldVerifyRebuildGatewayProvider(resumeConfig.provider))
           ) {
             const registration = await inspectRebuildGatewayProviderRegistration(
               resumeConfig.provider,
@@ -904,6 +870,7 @@ async function rebuildSandboxUnlocked(
               runtimeSelection,
               undefined,
               resumeConfig.credentialEnv,
+              nativeAttachment,
             );
             if (registration !== "registered") {
               return {
@@ -973,9 +940,11 @@ async function rebuildSandboxUnlocked(
         cleanupDockerOrphanAfterDelete: () =>
           removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
         onDeleteStateAmbiguous: () => {
+          telemetryMutated = true;
           retainPolicyHandoffForRecovery = true;
         },
       });
@@ -1026,7 +995,6 @@ async function rebuildSandboxUnlocked(
         runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
-          targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: backup.backupManifest,
           ...(mcpPreparation.runtimeSelection
             ? { runtimeSelection: mcpPreparation.runtimeSelection }
@@ -1071,7 +1039,6 @@ async function rebuildSandboxUnlocked(
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
         openClawDoctorWindow: restored.openClawDoctorWindow,
-        hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
         hermesCronRestoreIdentity,
         preparedBackupRecovery,
         versionCheck,
@@ -1087,24 +1054,14 @@ async function rebuildSandboxUnlocked(
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
       }
       if (backup.backupManifest) {
-        if (
-          backup.backupManifest.hermesOperatorConfigHandoff &&
-          !clearHermesOperatorConfigHandoff(backup.backupManifest)
-        ) {
-          return bail("The Hermes operator config handoff could not be retired after rebuild.");
-        }
         if (!completePolicyHandoffCleanup(recreateJournal.id, backup.backupManifest)) return;
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;
       }
       retainPolicyHandoffForRecovery = false;
+      telemetryVerified = postRestoreVerification?.complete === true;
     } finally {
       if (sourceOpenClawDoctorWindow) {
-        const finished = await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
-        if (!finished.ok) {
-          console.error(
-            `  Warning: OpenClaw source maintenance cleanup did not return the retained sandbox healthy (${finished.stage}: ${finished.detail}).`,
-          );
-        }
+        await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
         sourceOpenClawDoctorWindow = null;
       }
       const handoffManifest = rebuildPolicyHandoffManifest;
@@ -1113,35 +1070,53 @@ async function rebuildSandboxUnlocked(
         (handoffManifest.rebuildPolicyHandoff || handoffManifest.rebuildMcpHandoff) &&
         !retainPolicyHandoffForRecovery
       ) {
-        runBestEffortRebuildCleanup(
-          () =>
-            clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
-          "  Warning: bounded rebuild recovery handoff could not be removed.",
-        );
+        telemetryCleanupComplete =
+          runBestEffortRebuildCleanup(
+            () =>
+              clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
+            "  Warning: bounded rebuild recovery handoff could not be removed.",
+          ) && telemetryCleanupComplete;
       } else if (rebuildPolicySourcePath && rebuildPolicySourceIsEphemeral) {
         const retainedPolicySourcePath = rebuildPolicySourcePath;
-        runBestEffortRebuildCleanup(
-          () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
-          `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
-        );
+        telemetryCleanupComplete =
+          runBestEffortRebuildCleanup(
+            () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
+            `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
+          ) && telemetryCleanupComplete;
       }
     }
   } finally {
-    runBestEffortRebuildCleanup(
-      dcodePreflight.cleanup,
-      "  Warning: temporary DCode rebuild inputs could not be fully removed.",
-    );
-    runBestEffortRebuildCleanup(
-      () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
-      "  Warning: temporary rebuild base-image handoff could not be removed.",
-    );
+    if (stoppedSource)
+      telemetryCleanupComplete =
+        runBestEffortRebuildCleanup(
+          stoppedSource.dispose,
+          `  Warning: private stopped-state capture files could not be fully removed. Remove ${JSON.stringify(stoppedSource.cleanupDirectory)} before retrying.`,
+        ) && telemetryCleanupComplete;
+    telemetryCleanupComplete =
+      runBestEffortRebuildCleanup(
+        dcodePreflight.cleanup,
+        "  Warning: temporary DCode rebuild inputs could not be fully removed.",
+      ) && telemetryCleanupComplete;
+    telemetryCleanupComplete =
+      runBestEffortRebuildCleanup(
+        () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
+        "  Warning: temporary rebuild base-image handoff could not be removed.",
+      ) && telemetryCleanupComplete;
     if (preparedImage) {
       const retainedPreparedImage = preparedImage;
-      runBestEffortRebuildCleanup(
-        () => disposePreparedBuildContext(retainedPreparedImage),
-        "  Warning: temporary rebuild image inputs could not be fully removed.",
-      );
+      telemetryCleanupComplete =
+        runBestEffortRebuildCleanup(
+          () => disposePreparedBuildContext(retainedPreparedImage),
+          "  Warning: temporary rebuild image inputs could not be fully removed.",
+        ) && telemetryCleanupComplete;
     }
+    await recordRebuildCompletion(
+      sandboxName,
+      telemetryVerified && telemetryCleanupComplete,
+      telemetryCleanupOnly,
+      sandboxEntry,
+      telemetryMutated,
+    );
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();
   }

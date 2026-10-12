@@ -470,6 +470,87 @@ describe("platform readiness qualification (#7410)", () => {
     expect(qualification(result, "host.platform.n1x_wsl")).toBe("unqualified");
   });
 
+  it("qualifies Station GB300 WSL from the bounded product and GPU proof (#12476)", () => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        isWsl: true,
+        runtime: "docker-desktop",
+        hasNvidiaGpu: true,
+        stationGb300WslGpu: true,
+        stationGb300WslProduct: true,
+        containerGpuProof: { providerId: "docker", passed: true },
+      }),
+    );
+
+    expect(capability(result, "host.platform.station_gb300_wsl")).toBe("present");
+    expect(qualification(result, "host.platform.station_gb300_wsl")).toBe("qualified");
+    expect(result.evidence[0]?.details).toMatchObject({
+      stationGb300WslGpu: true,
+      stationGb300WslProduct: true,
+    });
+  });
+
+  it.each([
+    ["an unrecognized Windows product", false, true, true],
+    ["no proved GB300 GPU", true, false, true],
+    ["a failed provider proof", true, true, false],
+  ] as const)("rejects Station GB300 WSL with %s (#12476)", (_case, product, gpu, proof) => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        isWsl: true,
+        runtime: "docker-desktop",
+        hasNvidiaGpu: true,
+        stationGb300WslGpu: gpu,
+        stationGb300WslProduct: product,
+        containerGpuProof: { providerId: "docker", passed: proof },
+      }),
+    );
+
+    expect(capability(result, "host.platform.station_gb300_wsl")).toBe("absent");
+    expect(qualification(result, "host.platform.station_gb300_wsl")).toBe("unqualified");
+  });
+
+  it("does not attribute a Docker Station GB300 proof to selected Podman (#12476)", () => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        isWsl: true,
+        dockerInstalled: false,
+        dockerReachable: false,
+        runtime: "unknown",
+        hasNvidiaGpu: true,
+        runtimeProviderId: "podman",
+        runtimeProviderOwnsHostReadiness: true,
+        stationGb300WslGpu: true,
+        stationGb300WslProduct: true,
+        containerGpuProof: { providerId: "docker", passed: true },
+      }),
+    );
+
+    expect(capability(result, "host.platform.station_gb300_wsl")).toBe("absent");
+    expect(qualification(result, "host.platform.station_gb300_wsl")).toBe("unqualified");
+  });
+
+  it("reuses pre-collected WSL product observations without probing again (#12476)", () => {
+    const runCaptureImpl = vi.fn(() => {
+      throw new Error("product identity must not be recollected");
+    });
+
+    expect(
+      collectPlatformIdentity({
+        isWsl: true,
+        n1xWslProductObservation: false,
+        stationGb300WslProductObservation: true,
+        runCaptureImpl,
+        readFile: () => "Virtual Machine\n",
+        openFile: unexpectedFixturePath,
+      }),
+    ).toMatchObject({ n1xWslProduct: false, stationGb300WslProduct: true });
+    expect(runCaptureImpl).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["arm64", "docker-desktop", true],
     ["arm64", "colima", true],

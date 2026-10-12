@@ -130,6 +130,19 @@ describe("MCP CLI input validation", () => {
     ).toThrow(/not both/);
   });
 
+  it("accepts an explicit public-pin refresh without changing denied tools (#10464)", () => {
+    expect(parseMcpUpdateArgs(["github", "--refresh-public-pins"])).toEqual({
+      server: "github",
+      refreshPublicPins: true,
+    });
+    expect(() =>
+      parseMcpUpdateArgs(["github", "--refresh-public-pins", "--clear-deny-tools"]),
+    ).toThrow(/one update mode/);
+    expect(() =>
+      parseMcpUpdateArgs(["github", "--refresh-public-pins", "--deny-tool", "delete_*"]),
+    ).toThrow(/one update mode/);
+  });
+
   it("normalizes one exact trusted-private host from a repeated add option (#8267)", () => {
     expect(
       parseMcpAddArgs([

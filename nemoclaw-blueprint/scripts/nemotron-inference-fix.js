@@ -98,8 +98,8 @@
 //   field (the endpoint returns `reasoning_content` either way), so the field
 //   carries no behavior to preserve.
 //
-//   Scope: the `nvidia/nemotron-3-` model family when the managed
-//   `inference.local` route currently selects nvidia-prod. The image-baked
+//   Scope: the `nvidia/nemotron-3-` model family when the NemoClaw-managed
+//   route or attached OpenShell provider currently selects nvidia-prod. The image-baked
 //   NEMOCLAW_UPSTREAM_PROVIDER establishes the onboarding route; after an
 //   in-place provider switch, OpenClaw's private request marker is authoritative
 //   and this preload removes it before forwarding. Ultra, Super, and Nano all
@@ -167,7 +167,7 @@
   //
   // Scope boundary: this preload runs inside NemoClaw-managed sandboxes
   // where the chat-completions destination is the OpenShell-gateway
-  // `inference.local` route bound to NVIDIA Build. The path+model regex
+  // NVIDIA Build route. The path+model regex
   // is the intentional trust boundary; non-sandbox OpenAI-compatible
   // callers do not load this preload.
   var TOOL_LESS_SYSTEM_PROMPT_RULES = [
@@ -393,14 +393,17 @@
   function isManagedBuildHost(host, upstreamProvider) {
     return (
       isNvidiaBuildUpstream(upstreamProvider) &&
-      /^inference\.local(?::\d+)?$/i.test(String(host || ''))
+      /^(?:inference\.local(?::\d+)?|integrate\.api\.nvidia\.com(?::443)?)$/i.test(
+        String(host || ''),
+      )
     );
   }
 
   function isManagedBuildFetch(input, upstreamProvider) {
     if (!isNvidiaBuildUpstream(upstreamProvider)) return false;
     try {
-      return new URL(fetchUrl(input)).hostname.toLowerCase() === 'inference.local';
+      var hostname = new URL(fetchUrl(input)).hostname.toLowerCase();
+      return hostname === 'inference.local' || hostname === 'integrate.api.nvidia.com';
     } catch (_e) {
       return false;
     }

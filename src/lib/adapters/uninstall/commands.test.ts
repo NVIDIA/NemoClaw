@@ -57,6 +57,40 @@ it("binds provider deletion to the uninstall environment and preserves uncertain
   );
 });
 
+it("binds provider deletion to the authority-derived runtime selection (#11831)", async () => {
+  const run = vi.fn<typeof defaultRun>(() => ({ status: 0, stdout: "deleted", stderr: "" }));
+  const adapter = createUninstallProviderAdapter(
+    run,
+    {
+      HOME: "/home/uninstall",
+      NVIDIA_API_KEY: "must-not-reach-child",
+      OPENSHELL_GATEWAY: "foreign-gateway",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://foreign.invalid",
+      OPENSHELL_LOCAL_TLS_DIR: "/foreign/tls",
+      OPENSHELL_WORKSPACE: "foreign-workspace",
+    },
+    {
+      gatewayName: "nemoclaw-8080",
+      localTlsDir: "/owned/tls",
+      workspace: "default",
+    },
+  );
+
+  await expect(
+    adapter.deleteProvider({ target: { kind: "selected" }, providerName: "nvidia-nim" }),
+  ).resolves.toMatchObject({ ok: true });
+
+  expect(run).toHaveBeenCalledOnce();
+  expect(run.mock.calls[0]?.[2]?.env).toMatchObject({
+    HOME: "/home/uninstall",
+    OPENSHELL_GATEWAY: "nemoclaw-8080",
+    OPENSHELL_LOCAL_TLS_DIR: "/owned/tls",
+    OPENSHELL_WORKSPACE: "default",
+  });
+  expect(run.mock.calls[0]?.[2]?.env).not.toHaveProperty("NVIDIA_API_KEY");
+  expect(run.mock.calls[0]?.[2]?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+});
+
 it("filters the uninstall environment at the sandbox lifecycle boundary", async () => {
   const env = {
     HOME: "/home/uninstall",

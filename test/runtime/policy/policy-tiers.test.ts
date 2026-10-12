@@ -122,10 +122,10 @@ describe("tiers", () => {
   });
 
   describe("tier: balanced", () => {
-    it("includes exactly npm, pypi, huggingface, brew, and brave", () => {
+    it("includes exactly npm, pypi, huggingface, brew-balanced, and brave", () => {
       const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
       expect(names).toEqual(
-        expect.arrayContaining(["npm", "pypi", "huggingface", "brew", "brave"]),
+        expect.arrayContaining(["npm", "pypi", "huggingface", "brew-balanced", "brave"]),
       );
       expect(names).toHaveLength(5);
     });
@@ -135,7 +135,7 @@ describe("tiers", () => {
       expect(names).not.toContain("weather");
     });
 
-    it.each(["npm", "pypi", "huggingface", "brew", "brave"])(
+    it.each(["npm", "pypi", "huggingface", "brew-balanced", "brave"])(
       "keeps the %s preset read-write",
       (name) => {
         const accessByName = new Map(
@@ -205,12 +205,15 @@ describe("tiers", () => {
       expect(names).toContain("public-reference");
     });
 
-    it.each(mustGetTier("balanced").presets)("includes the balanced $name preset", ({ name }) => {
-      const openNames = new Set(
-        mustGetTier("open").presets.map((preset: TierPreset) => preset.name),
-      );
-      expect(openNames.has(name)).toBe(true);
-    });
+    it.each(mustGetTier("balanced").presets)(
+      "includes the Open equivalent of $name",
+      ({ name }) => {
+        const openNames = new Set(
+          mustGetTier("open").presets.map((preset: TierPreset) => preset.name),
+        );
+        expect(openNames.has(name === "brew-balanced" ? "brew" : name)).toBe(true);
+      },
+    );
   });
 
   describe("tier: personal", () => {
@@ -228,7 +231,7 @@ describe("tiers", () => {
   });
 
   describe("resolveTierPresets", () => {
-    it.each(["npm", "pypi", "huggingface", "brew", "brave"])(
+    it.each(["npm", "pypi", "huggingface", "brew-balanced", "brave"])(
       "returns the default %s preset for balanced",
       (name) => {
         const resolved: TierPreset[] = resolveTierPresets("balanced");

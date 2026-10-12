@@ -88,6 +88,7 @@ const PID_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.pid");
 const STATE_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.json");
 export const LOG_PATH = path.join(STATE_DIR, "bedrock-runtime-adapter.log");
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MODEL_CATALOG_HEALTH_PATH = "/health/model-catalog";
 
 const { defaultLogger: defaultAdapterLogger, logEvent: logAdapterEvent } = createLocalAdapterLogger(
   { logPath: LOG_PATH },
@@ -172,13 +173,19 @@ export function createBedrockRuntimeAdapterServer(options: {
   logger?: AdapterLogger;
 }): http.Server {
   const logger = options.logger || defaultAdapterLogger;
+  // Bedrock Runtime has no model-discovery operation. Advertise only model IDs
+  // this process has actually served, including the onboarding smoke request.
+  const servedModels = new Map<string, number>();
   return http.createServer(async (req, res) => {
     const started = Date.now();
     let model = "unknown";
     let operation = "unknown";
     try {
       const url = new URL(req.url || "/", "http://127.0.0.1");
-      if (req.method === "GET" && url.pathname === "/health") {
+      if (
+        req.method === "GET" &&
+        (url.pathname === "/health" || url.pathname === MODEL_CATALOG_HEALTH_PATH)
+      ) {
         // Only the host probe needs this route; the 0.0.0.0 bind exists so the
         // sandbox can reach the completions route, not to publish adapter config.
         if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
@@ -205,6 +212,15 @@ export function createBedrockRuntimeAdapterServer(options: {
           status: 401,
           reason: "unauthorized",
           durationMs: Date.now() - started,
+        });
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/v1/models") {
+        sendJson(res, 200, {
+          object: "list",
+          data: [...servedModels]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([id, created]) => ({ id, object: "model", created, owned_by: "amazon-bedrock" })),
         });
         return;
       }
@@ -235,6 +251,7 @@ export function createBedrockRuntimeAdapterServer(options: {
         for await (const chunk of chunks) {
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
         }
+        servedModels.set(model, servedModels.get(model) ?? Math.floor(Date.now() / 1000));
         res.write("data: [DONE]\n\n");
         res.end();
         logAdapterEvent(logger, "request_completed", {
@@ -249,6 +266,7 @@ export function createBedrockRuntimeAdapterServer(options: {
 
       operation = "converse";
       const response = await createOpenAiChatCompletion(body, options.client);
+      servedModels.set(model, servedModels.get(model) ?? Math.floor(Date.now() / 1000));
       sendJson(res, 200, response);
       logAdapterEvent(logger, "request_completed", {
         operation,
@@ -475,6 +493,7 @@ function probeAdapterHealth(
   return probeLocalAdapterHealth({
     host: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_HOST,
     port: options.port || BEDROCK_RUNTIME_ADAPTER_PORT,
+    path: MODEL_CATALOG_HEALTH_PATH,
     expectedTokenHash: options.tokenHash || null,
   });
 }
@@ -727,6 +746,7 @@ export function getCompatibleAnthropicCredentialForBedrock(): string | null {
 }
 
 export const __test = {
+  probeAdapterHealth,
   adapterCredentialHash,
   adapterProcessNeedle: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   getAdapterScriptPath,

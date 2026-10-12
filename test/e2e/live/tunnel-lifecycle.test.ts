@@ -16,16 +16,19 @@ import {
 } from "./tunnel-lifecycle-helpers.ts";
 
 test(
-  "tunnel-lifecycle: cloudflared quick tunnel starts, serves OpenClaw, and stops cleanly",
+  "tunnel-lifecycle: quick tunnel serves the registered non-default dashboard port and stops",
   {
     timeout: TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm Docker and cloudflared prerequisites",
         "onboard the OpenClaw tunnel sandbox",
+        "register the non-default dashboard port",
         "wait for the local dashboard origin",
         "start the quick tunnel and discover its URL",
+        "verify cloudflared targets the registered dashboard port",
         "probe public tunnel reachability",
+        "destroy the sandbox without stopping the host tunnel",
         "stop the tunnel and confirm status removal",
       ],
     },

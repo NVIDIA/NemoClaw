@@ -331,6 +331,49 @@ expect_blocked "arbitrary Python" "unapproved hosts" "https://example.com/"
 expect_fetch_reached \
   "raw GitHub" \
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md"
+# The repo-cloud Deep Agents scenario selects Balanced. Use curl, whose old
+# Homebrew grant could bypass the Python baseline's read-only raw GitHub route.
+RAW_METHOD_PROBE=$(
+  cat <<'NEMOCLAW_RAW_GITHUB_METHOD_PROBE'
+import json
+import os
+import subprocess
+
+url = 'https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md'
+proxy = os.environ.get('HTTPS_PROXY') or os.environ['HTTP_PROXY']
+ca = os.environ['SSL_CERT_FILE']
+
+def request(method):
+    command = [
+        '/usr/bin/curl', '--disable', '--silent', '--show-error', '--noproxy', '',
+        '--proxy', proxy, '--cacert', ca, '--connect-timeout', '10',
+        '--max-time', '30', '--write-out', '\n%{http_code}',
+    ]
+    command += ['--head'] if method == 'HEAD' else ['--request', method]
+    result = subprocess.run(command + [url], capture_output=True, text=True, check=True, timeout=35)
+    body, status = result.stdout.rsplit('\n', 1)
+    return int(status), body
+
+get_status, get_body = request('GET')
+assert get_status == 200 and 'NemoClaw' in get_body, f'raw GitHub GET failed: {get_status}'
+head_status, _ = request('HEAD')
+assert head_status == 200, f'raw GitHub HEAD failed: {head_status}'
+post_status, post_body = request('POST')
+assert post_status == 403, f'raw GitHub POST was not denied: {post_status}'
+payload = json.loads(post_body)
+assert payload.get('error') == 'policy_denied', 'POST denial did not identify local policy enforcement'
+assert '<html' not in post_body.lower(), 'POST reached upstream GitHub'
+print('RAW_GITHUB_GET_HEAD_ALLOWED_POST_DENIED_LOCALLY')
+NEMOCLAW_RAW_GITHUB_METHOD_PROBE
+)
+# shellcheck disable=SC2016 # Positional parameters expand in the sandbox.
+OUT="$(sandbox_exec_argv sh -c '. /tmp/nemoclaw-proxy-env.sh && exec /opt/venv/bin/python3 -c "$1"' nemoclaw-raw-github-methods "$RAW_METHOD_PROBE" || true)"
+if echo "$OUT" | grep -Fxq 'RAW_GITHUB_GET_HEAD_ALLOWED_POST_DENIED_LOCALLY'; then
+  pass "Balanced allows raw GitHub GET and HEAD and denies POST locally"
+else
+  fail_test "Balanced raw GitHub method probe did not confirm GET/HEAD access and local POST denial"
+fi
+
 expect_fetch_blocked "unapproved hosts" "https://example.com/"
 expect_fetch_blocked "instance metadata" "https://169.254.169.254/latest/meta-data/"
 expect_fetch_blocked "sandbox loopback" "https://127.0.0.1/"

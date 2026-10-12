@@ -14,6 +14,7 @@ import {
 } from "../gateway-registry";
 import { writeConfigFile } from "../config-io";
 import { removeSandboxFromRegistry } from "../registry-reversible-removal";
+import { isRouteOnlySandboxReservation } from "./route-reservation";
 import type { SandboxEntry } from "./types";
 
 export interface CrossPortSandboxHit {
@@ -106,6 +107,12 @@ export function getSandboxAcrossGatewayRoots(
   return findSandboxAcrossGatewayRoots(sandboxName, home)?.entry ?? null;
 }
 
+/** Report whether an unambiguous cross-port registry row owns sandbox lifecycle state. */
+export function hasSandboxLifecycleAuthority(sandboxName: string): boolean {
+  const entry = getSandboxAcrossGatewayRoots(sandboxName);
+  return entry !== null && !isRouteOnlySandboxReservation(entry);
+}
+
 /** Persist intentional-stop state in the registry root that owns the sandbox. */
 export function recordSandboxStopIntentInOwningGatewayRegistry(
   hit: CrossPortSandboxHit,
@@ -195,11 +202,28 @@ function listNamesAcrossGatewayRoots(published: boolean, home: string): string[]
   return names;
 }
 
+/** Registered sandbox names from one gateway-port state root. */
+export function listSandboxNamesInGatewayRoot(
+  gatewayPort: number,
+  home: string = resolveHome(),
+): string[] {
+  return listSandboxHitsAcrossGatewayRoots(home)
+    .filter(({ registryGatewayPort }) => registryGatewayPort === gatewayPort)
+    .map(({ entry }) => entry.name);
+}
+
 /** Published sandbox entries across every registry root, base root first, then ports ascending. */
 export function listPublishedSandboxesAcrossGatewayRoots(
   home: string = resolveHome(),
 ): SandboxEntry[] {
   return listEntriesAcrossGatewayRoots(true, home);
+}
+
+/** All route owners across registry roots, including unpublished reservations. */
+export function listInferenceRouteOwnersAcrossGatewayRoots(
+  home: string = resolveHome(),
+): SandboxEntry[] {
+  return listSandboxHitsAcrossGatewayRoots(home).map(({ entry }) => entry);
 }
 
 /** Published sandbox names across every registry root, base root first, then ports ascending. */

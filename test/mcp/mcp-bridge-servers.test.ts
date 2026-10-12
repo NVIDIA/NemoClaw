@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -23,7 +22,8 @@ import {
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "../e2e/live/mcp-bridge-servers";
-import { shouldRetryMcpDiscoveryAfterRestart } from "../e2e/live/mcp-bridge-tool-discovery";
+
+import { createMcpFixtureTls } from "../e2e/fixtures/mcp-fixture-tls.ts";
 
 const servers: StartedHttpServer[] = [];
 function progressProbe() {
@@ -60,33 +60,7 @@ async function postCompatibleChat(
   return response.json() as Promise<CompatibleToolCallResponse>;
 }
 
-const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-fixture-tls-"));
-execFileSync(
-  "openssl",
-  [
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-sha256",
-    "-nodes",
-    "-days",
-    "1",
-    "-subj",
-    "/CN=127.0.0.1",
-    "-addext",
-    "subjectAltName=IP:127.0.0.1",
-    "-keyout",
-    path.join(tlsDir, "server.key"),
-    "-out",
-    path.join(tlsDir, "server.crt"),
-  ],
-  { stdio: "ignore" },
-);
-const fixtureTls = {
-  cert: fs.readFileSync(path.join(tlsDir, "server.crt")),
-  key: fs.readFileSync(path.join(tlsDir, "server.key")),
-};
+const { tls: fixtureTls, close: closeFixtureTls } = createMcpFixtureTls();
 
 async function* readSseData(response: IncomingMessage): AsyncGenerator<string> {
   response.setEncoding("utf8");
@@ -109,7 +83,7 @@ async function* readSseData(response: IncomingMessage): AsyncGenerator<string> {
 }
 
 afterAll(() => {
-  fs.rmSync(tlsDir, { recursive: true, force: true });
+  closeFixtureTls();
 });
 
 afterEach(async () => {
@@ -117,67 +91,6 @@ afterEach(async () => {
 });
 
 describe("authenticated MCP live fixtures", () => {
-  it("records a slow POST arrival before its body completes", async () => {
-    const secret = "slow-request-secret";
-    const server = await startFakeMcpHttpsServer({ secret, tls: fixtureTls });
-    servers.push(server);
-    const body = JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: { protocolVersion: "2025-06-18" },
-    });
-    const observationOffset = server.observations.length;
-    let resolveResponse!: (status: number) => void;
-    let rejectResponse!: (error: Error) => void;
-    const responseStatus = new Promise<number>((resolve, reject) => {
-      resolveResponse = resolve;
-      rejectResponse = reject;
-    });
-    const observedStatus = responseStatus.then(
-      (status) => ({ ok: true, status }) as const,
-      (error: unknown) => ({ error, ok: false }) as const,
-    );
-    const slowRequest = https.request(
-      `https://127.0.0.1:${server.port}/mcp`,
-      {
-        method: "POST",
-        ca: fixtureTls.cert,
-        headers: {
-          authorization: `Bearer ${secret}`,
-          "content-type": "application/json",
-          "content-length": Buffer.byteLength(body),
-        },
-      },
-      (response) => {
-        response.resume();
-        response.on("end", () => resolveResponse(response.statusCode ?? 0));
-      },
-    );
-    slowRequest.on("error", rejectResponse);
-    slowRequest.write(body.slice(0, 1));
-
-    await expect.poll(() => server.observations.length).toBe(observationOffset + 1);
-    const arrival = server.observations[observationOffset];
-    expect(server.requests).toHaveLength(0);
-    expect(arrival).toMatchObject({
-      method: "POST",
-      path: "/mcp",
-      auth: `Bearer ${secret}`,
-      body: "",
-    });
-    expect(shouldRetryMcpDiscoveryAfterRestart(server.observations.slice(observationOffset))).toBe(
-      false,
-    );
-
-    slowRequest.end(body.slice(1));
-    expect(await observedStatus).toEqual({ ok: true, status: 200 });
-    expect(server.requests).toHaveLength(1);
-    expect(server.observations[observationOffset]).toBe(arrival);
-    expect(server.requests[0]).toBe(arrival);
-    expect(arrival).toMatchObject({ body, rpcMethod: "initialize" });
-  });
-
   it("builds a bounded public HTTPS quick-tunnel origin without embedding credentials", () => {
     expect(buildCloudflaredQuickTunnelArgs(43123)).toEqual([
       "tunnel",

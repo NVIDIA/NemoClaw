@@ -70,6 +70,17 @@ const PROXY_CMDLINE = "/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\
 const MODEL_ROUTER_CMDLINE =
   "/home/test/.nemoclaw/model-router-venv/bin/python /home/test/.nemoclaw/model-router-venv/bin/model-router proxy --port 4000\n";
 
+function writeRouterReceipt(name: string, routerPort = 4000): string {
+  const home = path.join(STATIC_TEST_HOME, name);
+  const stateDir = path.join(home, ".nemoclaw");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "onboard-session.json"),
+    JSON.stringify({ provider: "nvidia-router", routerPort }),
+  );
+  return home;
+}
+
 function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; owner?: string }) {
   return (args: readonly string[]): RunResult | null => {
     if (args[0] !== "-p" || args[1] !== pidStr || args[2] !== "-o") return null;
@@ -117,7 +128,7 @@ describe("uninstall run plan", () => {
     const dockerCalls: string[][] = [];
     const runDocker = vi.fn((args: string[]) => {
       dockerCalls.push(args);
-      if (args[0] === "ps") return ok("abc openclaw:latest openshell-cluster-nemoclaw\n");
+      if (args[0] === "ps") return ok("abc openclaw:latest my-openclaw\n");
       if (args[0] === "images") return ok("img1 ghcr.io/nvidia/nemoclaw:test\n");
       return ok();
     });
@@ -144,15 +155,11 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(logs).toContain("NemoClaw Uninstaller");
     expect(logs).toContain("This will remove all NemoClaw resources.");
-    expect(logs).toContain("[3/6] NemoClaw CLI");
+    expect(logs).toContain("[4/6] NemoClaw CLI");
     expect(logs).toContain("Removed global NemoClaw CLI package");
     expect(logs).toContain("Claws retracted. Until next time.");
-    expect(dockerCalls).toEqual(
-      expect.arrayContaining([
-        ["rm", "-f", "abc"],
-        ["rmi", "-f", "img1"],
-      ]),
-    );
+    expect(dockerCalls).not.toContainEqual(["rm", "-f", "abc"]);
+    expect(dockerCalls).toContainEqual(["rmi", "-f", "img1"]);
     expect(
       dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw"),
     ).toBe(true);
@@ -286,12 +293,12 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("This will remove all NemoHermes resources.");
     expect(logs).toContain("  · All OpenShell sandboxes, gateway, and NemoHermes providers");
     expect(logs).toContain("  · Global NemoHermes CLI (npm package: nemoclaw)");
-    expect(logs).toContain("[3/6] NemoHermes CLI");
+    expect(logs).toContain("[4/6] NemoHermes CLI");
     expect(warnings).toContain("npm not found; skipping NemoHermes CLI uninstall.");
     expect(logs).toContain("NemoHermes");
     expect(logs).toContain("Hermes has left the tidepool.");
     expect(logs).not.toContain("NemoClaw Uninstaller");
-    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("[4/6] NemoClaw CLI");
     expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 
@@ -639,7 +646,10 @@ describe("uninstall run plan", () => {
     const stateDir = path.join(tmpHome, ".nemoclaw");
     const sessionFile = path.join(stateDir, "onboard-session.json");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(sessionFile, JSON.stringify({ routerPid: 55432 }));
+    fs.writeFileSync(
+      sessionFile,
+      JSON.stringify({ provider: "nvidia-router", routerPid: 55432, routerPort: 4000 }),
+    );
 
     try {
       const stub = psStub("55432", { exited, cmdline: MODEL_ROUTER_CMDLINE });
@@ -679,17 +689,18 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("kills an orphan model router via lsof :4000 when onboard-session is gone", async () => {
+  it("kills an orphan model router via lsof on its recorded port", async () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
     const stub = psStub("55679", { exited, cmdline: MODEL_ROUTER_CMDLINE });
+    const home = writeRouterReceipt("router-lsof");
     const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
         env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-5169-lsof",
+          HOME: home,
           LOGNAME: "testuser",
         } as NodeJS.ProcessEnv,
         existsSync: () => false,
@@ -733,12 +744,13 @@ describe("uninstall run plan", () => {
       owner: "someone-else",
       cmdline: MODEL_ROUTER_CMDLINE,
     });
+    const home = writeRouterReceipt("router-foreign-owner");
     const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
         env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-5169-foreign-owner",
+          HOME: home,
           LOGNAME: "testuser",
         } as NodeJS.ProcessEnv,
         existsSync: () => false,
@@ -780,12 +792,13 @@ describe("uninstall run plan", () => {
       exited: new Set(),
       cmdline: "/usr/sbin/nginx -g daemon off;\n",
     });
+    const home = writeRouterReceipt("router-foreign-cmdline");
     const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
         env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-5169-foreign-cmdline",
+          HOME: home,
           LOGNAME: "testuser",
         } as NodeJS.ProcessEnv,
         existsSync: () => false,
@@ -1005,7 +1018,7 @@ describe("uninstall run plan", () => {
       } = {},
     ): UninstallRunDeps {
       return {
-        commandExists: (command) => command === "openshell",
+        commandExists: (command) => command === "openshell" || command === "docker",
         env: {
           HOME: tmpHome,
           NEMOCLAW_NON_INTERACTIVE: "",

@@ -127,10 +127,9 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
     });
-    ["diagnostics-otel", "brave"].forEach((pluginId) => {
+    ["diagnostics-otel", "brave", "tavily"].forEach((pluginId) => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     });
-    expect(config.plugins.entries.tavily).toBeUndefined();
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 

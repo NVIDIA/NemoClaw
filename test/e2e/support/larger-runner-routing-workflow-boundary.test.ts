@@ -193,7 +193,7 @@ describe("larger-runner workflow routing boundary", () => {
 
   it("rejects routing any lane outside the centralized eligible set (#7145)", () => {
     const workflow = readWorkflow() as RoutingWorkflow;
-    workflow.jobs["catalogue-brave-nvidia-inference"].with!.runner = "ubuntu-latest";
+    workflow.jobs["catalogue-nvidia-inference"].with!.runner = "ubuntu-latest";
     workflow.jobs["hermes-e2e"]["runs-on"] = "ubuntu-latest";
     workflow.jobs["mcp-bridge"]["runs-on"] = "ubuntu-latest";
     workflow.jobs["mcp-bridge-dev"]["runs-on"] =
@@ -206,7 +206,7 @@ describe("larger-runner workflow routing boundary", () => {
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "catalogue-brave-nvidia-inference job must route catalogue runners through the trusted runner map",
+        "catalogue-nvidia-inference job must route catalogue runners through the trusted runner map",
         "hermes-e2e job must use the trusted larger-runner routing map",
         "mcp-bridge job must route each matrix entry through the trusted runner map",
         "mcp-bridge-dev job must remain on ubuntu-latest",

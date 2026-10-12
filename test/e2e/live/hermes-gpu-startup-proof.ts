@@ -68,9 +68,13 @@ export function assertHermesGpuStartupOutputContract(
   runtimeProviderId: RuntimeProviderPrerequisite["id"],
   installText: string,
 ): void {
-  expect(installText).toContain(`Container runtime: ${runtimeProviderId}`);
+  const runtimeLine =
+    runtimeProviderId === "podman"
+      ? /(?:Container runtime: podman|Podman runtime: rootless server)/u
+      : /Container runtime: docker/u;
+  expect(stripAnsi(installText)).toMatch(runtimeLine);
   expect(installText).toMatch(OPENSHELL_GATEWAY_START_LINE);
-  expect(installText).toMatch(/gateway is healthy/u);
+  expect(stripAnsi(installText)).toMatch(/gateway(?: managed service)? is healthy/u);
   expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
   expect(installText).not.toMatch(/Reusing existing .*gateway/u);
   expect(installText).not.toContain("[reuse] Skipping gateway (running)");

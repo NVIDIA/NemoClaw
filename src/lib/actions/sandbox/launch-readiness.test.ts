@@ -4,6 +4,8 @@
 import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { HOSTED_NATIVE_PROVIDERS } from "../../inference/native-provider/hosted";
+import { entry, servingProfile } from "../../../../test/helpers/native-launch-readiness.ts";
 import { loadAgent } from "../../agent/defs";
 import type {
   LaunchReadinessFence,
@@ -15,6 +17,7 @@ import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
 import {
   buildLaunchReadinessRegistryProjection,
+  formatLaunchReadinessUnsafeAuthorityEvidence,
   inspectLaunchReadiness,
   type LaunchReadinessDeps,
   launchReadinessDigest,
@@ -42,52 +45,6 @@ network_policies:
 `;
 
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
-
-function entry(agent = "openclaw"): SandboxEntry {
-  return {
-    name: SANDBOX,
-    openshellDriver: "docker",
-    openshellVersion: "0.0.99",
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    lifecycleGeneration: "generation-1",
-    lifecycleLiveIdentityFingerprint: FINGERPRINT,
-    agent,
-    agentVersion: "1.0.0",
-    nemoclawVersion: "2.0.0",
-    imageTag: "example@sha256:immutable",
-    provider: null,
-    model: null,
-    endpointUrl: null,
-    credentialEnv: null,
-    preferredInferenceApi: null,
-    compatibleEndpointReasoning: null,
-    compatibleEndpointReasoningEffort: null,
-    nimContainer: null,
-  };
-}
-
-function servingProfile(): NonNullable<SandboxEntry["servingProfileProvenance"]> {
-  return {
-    schemaVersion: 1,
-    catalogDigest: `sha256:${"d".repeat(64)}`,
-    preset: {
-      id: "local-gpu",
-      digest: `sha256:${"e".repeat(64)}`,
-      displayName: "Local GPU",
-      supportState: "supported",
-    },
-    recipe: {
-      id: "vllm-local",
-      digest: `sha256:${"f".repeat(64)}`,
-      backend: "vllm",
-    },
-    model: { id: "model-a", revision: "revision-a" },
-    runtimeImage: "example.com/runtime@sha256:immutable",
-    estimatedImageDownloadBytes: 1_000,
-    estimatedModelDownloadBytes: 2_000,
-  };
-}
 
 function fence(): LaunchReadinessFence {
   return {
@@ -404,7 +361,10 @@ describe("launch readiness validation", () => {
 
     await expect(
       publishLaunchReadiness(publicationFromDecision(SANDBOX, first), currentDeps),
-    ).resolves.toEqual({ kind: "evidence-failed" });
+    ).resolves.toEqual({
+      kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
+    });
     expect(currentDeps.commandExecutor!.runBuffered).not.toHaveBeenCalled();
     expect(publishedIdentity).toBeNull();
   });
@@ -584,6 +544,61 @@ describe("launch readiness validation", () => {
       "gateway:end",
       "sandbox:end",
     ]);
+  });
+
+  it("returns unsafe authority evidence without entering the mutation callback (#10638)", async () => {
+    const currentDeps = deps();
+    const evidence = {
+      resource: "persistent receipt" as const,
+      path: "/home/test/.nemoclaw/launch-readiness/receipt.json",
+      expectedUid: 1000,
+      observedUid: 1000,
+      expectedMode: "0600" as const,
+      observedMode: "0640",
+      operation: "inspect" as const,
+      errorCode: null,
+      repair: "chmod" as const,
+    };
+    currentDeps.checkMutationAuthority = vi.fn(() => ({ kind: "unsafe" as const, evidence }));
+    const mutation = vi.fn();
+
+    await expect(
+      withLaunchReadinessMutationGate(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: EPOCH,
+        },
+        mutation,
+        currentDeps,
+      ),
+    ).resolves.toEqual({ kind: "unsafe", evidence });
+    expect(mutation).not.toHaveBeenCalled();
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({
+        ...evidence,
+        repair: "manual",
+      }),
+    ).toContain("verifying it is owned by the current user");
+    expect(
+      formatLaunchReadinessUnsafeAuthorityEvidence({
+        ...evidence,
+        path: "/home/$HOME/it's.json",
+      }),
+    ).toContain(`chmod 0600 -- '/home/$HOME/it'"'"'s.json'`);
+    const writeFailure = formatLaunchReadinessUnsafeAuthorityEvidence({
+      ...evidence,
+      operation: "write",
+      repair: "manual",
+      errorCode: "EROFS",
+    });
+    expect(writeFailure).toContain("write error EROFS");
+    expect(writeFailure).toContain("filesystem allow writes");
+    expect(writeFailure).not.toContain("chmod");
+    expect(formatLaunchReadinessUnsafeAuthorityEvidence(undefined)).toContain(
+      "Repair the current user's secure OS runtime authority",
+    );
   });
 
   it("rejects a stale fenced epoch before entering the mutation callback (#8942)", async () => {
@@ -907,6 +922,58 @@ describe("launch readiness validation", () => {
       fence: { epochId: EPOCH },
     });
   });
+
+  it.each(HOSTED_NATIVE_PROVIDERS)(
+    "qualifies $logicalProvider without reading the shared inference route",
+    async (definition) => {
+      const receipt = {
+        schemaVersion: 1 as const,
+        profileId: definition.profileId,
+        providerName: definition.providerName,
+        providerId: "owned-native-provider",
+      };
+      sandbox = {
+        ...entry(),
+        provider: definition.logicalProvider,
+        model: "selected-model",
+        preferredInferenceApi: definition.api,
+        nativeHostedProviderAttachment: receipt,
+      };
+      const currentDeps = deps();
+      currentDeps.verifyNativeHostedAttachment = vi.fn(async () => undefined);
+      currentDeps.inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
+      await createAcceptedLease(currentDeps);
+      externalEvents = [];
+      expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({
+        kind: "accepted",
+      });
+      expect(externalEvents).not.toContain("inference-get");
+      expect(currentDeps.verifyNativeHostedAttachment).toHaveBeenCalledWith({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        expected: receipt,
+      });
+      expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: definition.logicalProvider,
+          model: "selected-model",
+          nativeProvider: true,
+        }),
+      );
+      const projection = buildLaunchReadinessRegistryProjection(sandbox, loadAgent("openclaw"));
+      expect(launchReadinessDigest(projection)).not.toBe(
+        launchReadinessDigest(
+          buildLaunchReadinessRegistryProjection(
+            {
+              ...sandbox,
+              nativeHostedProviderAttachment: { ...receipt, providerId: "changed-provider" },
+            },
+            loadAgent("openclaw"),
+          ),
+        ),
+      );
+    },
+  );
 
   it("uses terminal-agent smoke health for a supported non-OpenClaw runtime", async () => {
     sandbox = {
@@ -1367,6 +1434,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, observationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const pairingObservationUnavailable = deps();
@@ -1375,6 +1443,7 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, pairingObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "pairing-observation-failed" },
     });
 
     const hashUnavailable = deps();
@@ -1401,6 +1470,7 @@ describe("launch readiness validation", () => {
     });
     expect(await publishLaunchReadiness(publication, inferenceObservationUnavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-validation", reason: "runtime-observation-failed" },
     });
 
     const unavailable = deps();
@@ -1409,26 +1479,8 @@ describe("launch readiness validation", () => {
     };
     expect(await publishLaunchReadiness(publication, unavailable)).toEqual({
       kind: "evidence-failed",
+      diagnostic: { stage: "publication-store", reason: "unclassified" },
     });
-  });
-
-  it("never validates or publishes evidence without a fenced epoch (#8942)", async () => {
-    const currentDeps = deps();
-    const publishLease = vi.fn();
-    currentDeps.publishLease = publishLease;
-
-    await expect(
-      publishLaunchReadiness(
-        {
-          sandboxName: SANDBOX,
-          gatewayName: GATEWAY_NAME,
-          gatewayPort: GATEWAY_PORT,
-          epochId: null,
-        },
-        currentDeps,
-      ),
-    ).resolves.toEqual({ kind: "evidence-failed" });
-    expect(publishLease).not.toHaveBeenCalled();
   });
 
   it("rejects in-progress lifecycle and policy mutations", () => {

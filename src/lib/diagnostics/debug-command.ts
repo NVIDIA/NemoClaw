@@ -11,7 +11,7 @@ export type DebugSandboxAvailability =
 export interface RunDebugCommandDeps {
   getDefaultSandbox: () => Promise<DebugSandboxSelection | null>;
   getSandboxAvailability: (name: string) => Promise<DebugSandboxAvailability>;
-  runDebug: (options: DebugOptions) => void;
+  runDebug: (options: DebugOptions) => void | Promise<void>;
   env?: NodeJS.ProcessEnv;
   errorLine?: (message: string) => void;
   exit?: (code: number) => never;
@@ -91,5 +91,5 @@ export async function runDebugCommandWithOptions(
     opts.gatewayName = defaultSandbox.gatewayName;
   }
 
-  deps.runDebug(opts);
+  await deps.runDebug(opts);
 }

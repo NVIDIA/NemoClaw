@@ -144,11 +144,6 @@ find_podman_socket() {
   return 1
 }
 
-is_loopback_ip() {
-  local ip="${1:-}"
-  [[ "$ip" == 127.* ]]
-}
-
 first_non_loopback_nameserver() {
   local resolv_conf="${1:-}"
 

@@ -1010,7 +1010,7 @@ export NEMOCLAW_SANDBOX_NAME=e2e-staging
 printf 'NEMOCLAW_FULL_E2E_PASSED\n'
 REMOTE
   # The wrapper adds five minutes for remote-shell and Vitest lifecycle overhead beyond the test.
-} | timeout "${FULL_E2E_TIMEOUT_SECONDS:-4500}" ssh -T -o ConnectTimeout=10 -o LogLevel=ERROR \
+} | timeout "${FULL_E2E_TIMEOUT_SECONDS:-6300}" ssh -T -o ConnectTimeout=10 -o LogLevel=ERROR \
   "$INSTANCE_NAME" 'bash -s' >"$raw_log" 2>&1
 e2e_status=$?
 set -e

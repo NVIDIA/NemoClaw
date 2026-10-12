@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hashCredential } from "../../../security/credential-hash";
 import {
@@ -45,7 +49,16 @@ function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
 
 describe("handleSandboxState", () => {
   beforeEach(() => {
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-handler-")),
+    );
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
+    vi.unstubAllEnvs();
   });
 
   it("creates a sandbox and records messaging/web search state", async () => {
@@ -120,7 +133,7 @@ describe("handleSandboxState", () => {
       metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
     });
     expect(result.session?.checkpoint?.webSearch).toEqual(decisionSelected({ fetchEnabled: true }));
-    expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
+    expect(result.session?.checkpoint?.messaging).toEqual(decisionUnset());
   });
 
   it("preserves a null endpoint source for fresh host-local inference-only creation (#9203)", async () => {

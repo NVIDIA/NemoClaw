@@ -52,7 +52,7 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 |----------|--------|---------------|
 | Brave Search | `brave` | OpenClaw |
 | Claude Code CLI | `claude-code` | OpenClaw and Hermes |
-| Homebrew packages | `brew` | OpenClaw and Hermes |
+| Homebrew packages | `brew-balanced` for Balanced; `brew` for Open or explicit broader access | OpenClaw and Hermes |
 | Discord messaging | `discord` | OpenClaw and Hermes |
 | GitHub and GitHub API | `github` | OpenClaw and Hermes |
 | Gmail IMAP and SMTP | `gmail` | OpenClaw and Hermes |
@@ -343,8 +343,13 @@ Use these presets when an agent workflow needs to install packages or download m
 |----------|--------|
 | npm or Yarn packages | `npm` |
 | Python packages from PyPI with `pip`, Python, or `uv` | `pypi` |
-| Homebrew packages | `brew` |
+| Homebrew packages | `brew-balanced` for Balanced; `brew` for Open or explicit broader access |
 | Hugging Face model or dataset access | `huggingface` |
+
+Balanced already includes `brew-balanced`, so it does not need the `brew` additions below.
+Those commands opt into unrestricted raw GitHub methods; Open uses that broader preset by default.
+Existing `brew` grants remain active when you reselect Balanced defaults.
+To narrow an existing grant, use the [Homebrew preset replacement procedure](#homebrew-specifics) below.
 
 Add only the preset required for the task:
 
@@ -369,7 +374,20 @@ If `uv` is installed somewhere else in the sandbox, add a custom preset for that
 
 ### Homebrew Specifics
 
-The sandbox base image includes Homebrew (Linuxbrew), so apply the `brew` preset before installing a formula.
+The sandbox base image includes Homebrew (Linuxbrew).
+Balanced supplies its network access through `brew-balanced`; Open supplies it through `brew`.
+Adding `brew-balanced` alone does not narrow an existing `brew` grant.
+Balanced defaults preserve existing grants. To explicitly narrow an older `brew` grant, remove it before adding the restricted preset:
+
+```bash
+$$nemoclaw my-assistant policy remove brew --yes &&
+  $$nemoclaw my-assistant policy add brew-balanced --yes
+```
+
+Verify that `policy list` shows `● brew-balanced` and `○ brew`.
+If the addition fails, resolve the reported error and rerun the add command.
+Keep `brew` on Open or when you intend its broader access.
+Use the broader `brew` command below only when you intend to allow unrestricted raw GitHub methods.
 A `/usr/local/bin/brew` wrapper puts the entry point on the sandbox `PATH` while delegating to the Linuxbrew prefix.
 Installed formula commands are available from the Linuxbrew bin directory in sandbox shell sessions:
 

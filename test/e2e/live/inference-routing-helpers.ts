@@ -12,7 +12,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   type RawRunOptions,
@@ -24,7 +24,6 @@ import {
 // probes, with local helpers only where raw in-memory output is required to
 // prove credential non-exposure before redacted artifacts are written.
 
-const DIST_ENTRYPOINT = CLI_DIST_ENTRYPOINT;
 const NEMOCLAW_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
 const ONBOARD_SESSION_FILE = path.join(NEMOCLAW_STATE_DIR, "onboard-session.json");
 const ONBOARD_LOCK_FILE = path.join(NEMOCLAW_STATE_DIR, "onboard.lock");
@@ -44,7 +43,9 @@ const CREDENTIAL_CLASSIFICATION_PATTERN =
 const TRANSPORT_CLASSIFICATION_PATTERN =
   /unreachable|timeout|connect|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENOTFOUND|EAI_AGAIN|No route to host|transport|network|endpoint|dns/i;
 
-function shouldRunProviderSmoke(provider: "openai" | "anthropic"): boolean {
+function shouldRunProviderSmoke(
+  provider: "openai" | "anthropic" | "gemini" | "openrouter" | "hermes",
+): boolean {
   // The former shell script auto-ran these smokes when provider secrets were
   // present. This live migration requires an explicit opt-in so PR-safe jobs
   // cannot spend third-party quota accidentally; any future secret-backed lane
@@ -120,11 +121,6 @@ async function requireLivePrerequisites(
   host: HostCliClient,
   runtimeProvider: RuntimeProviderPrerequisite,
 ): Promise<void> {
-  expect(
-    fs.existsSync(DIST_ENTRYPOINT),
-    "run `npm run build:cli` before live inference-routing targets",
-  ).toBe(true);
-
   await runtimeProvider.requireAvailable({
     artifactName: "prereq-docker-info-inference-routing",
     scenarioLabel: "inference routing",
@@ -439,9 +435,12 @@ async function expectAnthropicMessageThroughSandbox(
   );
 }
 
-export function requireProviderSmokeSelected(provider: "openai" | "anthropic", skip: SkipFn): void {
+export function requireProviderSmokeSelected(
+  provider: "openai" | "anthropic" | "gemini" | "openrouter" | "hermes",
+  skip: SkipFn,
+): void {
   if (!shouldRunProviderSmoke(provider)) {
-    const label = provider === "openai" ? "OpenAI" : "Anthropic";
+    const label = provider;
     skipLive(
       skip,
       `set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${provider} or all to run ${label} smoke`,

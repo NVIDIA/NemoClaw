@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect } from "vitest";
+import YAML from "yaml";
+import { inspectPolicyMutationContext, setPolicyDocument } from "../../../src/lib/policy";
+import { buildMcpBridgeExactMainEnv } from "./mcp-bridge-onboard-env.ts";
 import { MCP_MUTATION_TIMEOUT_MS, type McpAdapter } from "./mcp-bridge-cleanup.ts";
 import { applyMcpHostPolicyEdit } from "./mcp-bridge-sandbox.ts";
 import {
@@ -377,6 +380,50 @@ export async function runOpenClawDeniedToolUpdateProof(
   };
 }
 
+/** Reproduce stale public pins independently of Cloudflare's DNS rotation schedule. */
+export async function runOpenClawPublicPinRefreshProof(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  mcpUrl: string,
+): Promise<void> {
+  const context = await inspectPolicyMutationContext(
+    sandboxName,
+    "exercise public MCP pin refresh",
+  );
+  const policy = YAML.parseDocument(context.basePolicyDocument);
+  policy.setIn(["network_policies", "mcp_bridge_fake", "endpoints", 0, "allowed_ips"], ["8.8.8.8"]);
+  try {
+    expect(
+      await setPolicyDocument(sandboxName, policy.toString(), { context, nonFatal: true }),
+    ).toBe(true);
+    const denied = await runMcpProviderRewriteProbe(
+      sandbox,
+      sandboxName,
+      mcpUrl,
+      "tools/list",
+      "deny-strict",
+      "openclaw-stale-public-pins",
+    );
+    assertExitZero(denied, "stale public pins deny the MCP connection");
+    const refreshed = await host.nemoclaw(
+      [sandboxName, "mcp", "update", "fake", "--refresh-public-pins"],
+      {
+        artifactName: "openclaw-refresh-public-pins",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 90_000,
+      },
+    );
+    assertExitZero(refreshed, "refresh live public MCP pins");
+  } catch (error) {
+    // Restore only on failure; the caller must prove the refreshed policy works.
+    expect(
+      await setPolicyDocument(sandboxName, context.basePolicyDocument, { nonFatal: true }),
+    ).toBe(true);
+    throw error;
+  }
+}
+
 export async function runMcpProviderRewriteProbe(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -403,7 +450,7 @@ export async function runMcpProviderRewriteProbe(
 const OPENCLAW_BASELINE_SCOPE_CAUSE =
   "its canonical CLI device did not receive the required baseline scopes";
 const PORTABLE_HOST_LOCK_CONTENTION =
-  /^Error: Failed to acquire lock on \/[^\n]*\/\.nemoclaw-portable-host\.lock after 120 retries$/u;
+  /^Error: Failed to acquire lock on \/[^\n]*\/\.nemoclaw-portable-host\.lock after 120 retries(?:\. Recorded owner PID [1-9][0-9]* is still running\. Wait for it to finish\. Rerun this command to retry lock acquisition\.)?$/u;
 
 function normalizeHermesTransportDiagnostic(diagnostic: string): string {
   return diagnostic
@@ -826,4 +873,28 @@ export async function restartBridgeWithoutHostSecret(
     timeoutMs: 12 * 60_000,
   });
   assertExitZero(restart, `${artifactPrefix} mcp restart without host secret`);
+}
+
+export async function rebuildWithoutMcpHostSecret(
+  host: HostCliClient,
+  sandboxName: string,
+  artifactPrefix: string,
+  envOverlay: NodeJS.ProcessEnv = {},
+): Promise<void> {
+  const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
+    artifactName: `${artifactPrefix}-rebuild-with-provider-backed-mcp`,
+    env: {
+      ...buildMcpBridgeExactMainEnv({ envOverlay }),
+      COMPATIBLE_API_KEY: MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint,
+      NEMOCLAW_REBUILD_VERBOSE: "1",
+      NVIDIA_INFERENCE_API_KEY: MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint,
+    },
+    redactionValues: [
+      MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint,
+      MCP_BRIDGE_TEST_CREDENTIALS.host,
+      MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost,
+    ],
+    timeoutMs: 25 * 60_000,
+  });
+  assertExitZero(rebuild, `${artifactPrefix} rebuild without MCP host secret`);
 }

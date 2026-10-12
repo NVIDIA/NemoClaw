@@ -605,7 +605,9 @@ describe("vllm model registry", () => {
 
   it("builds the MTP-free NVFP4 serve command for DGX Spark (#7127)", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
-    const cmd = buildVllmServeCommand(qwen35b!);
+    const sparkProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const sparkModel = resolveVllmModelRuntime(sparkProfile, qwen35b!, "arm64").model;
+    const cmd = buildVllmServeCommand(sparkModel);
     // The current NVIDIA model card no longer needs Spark-specific env exports.
     expect(cmd).not.toContain("VLLM_USE_FLASHINFER_MOE_FP4");
     expect(cmd).not.toContain("VLLM_FP8_MOE_BACKEND");

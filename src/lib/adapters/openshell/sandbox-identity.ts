@@ -155,10 +155,15 @@ function assertCreateAttemptNonce(createAttemptNonce: string): void {
   }
 }
 
-function createdIdentityError(sandboxName: string, diagnostic = "settlement-incomplete"): Error {
-  return new Error(
-    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
-  );
+export class CreatedSandboxIdentityError extends Error {
+  readonly diagnostic: string;
+
+  constructor(sandboxName: string, diagnostic = "settlement-incomplete") {
+    super(
+      `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
+    );
+    this.diagnostic = diagnostic;
+  }
 }
 
 function hasIncompleteCreatedIdentityMetadata(row: Record<string, unknown>): boolean {
@@ -285,7 +290,7 @@ export function resolveCreatedOpenShellSandboxId(
     CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
   );
   if (observation.state !== "matched") {
-    throw createdIdentityError(
+    throw new CreatedSandboxIdentityError(
       input.sandboxName,
       observation.state === "invalid" ? observation.diagnostic : "settlement-pending",
     );
@@ -313,7 +318,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   assertCreateAttemptNonce(input.createAttemptNonce);
   if (input.priorSandboxId !== undefined && input.priorSandboxId !== null) {
     if (!isOpenShellSandboxId(input.priorSandboxId)) {
-      throw createdIdentityError(input.sandboxName);
+      throw new CreatedSandboxIdentityError(input.sandboxName);
     }
   }
   const now = input.now ?? (() => performance.now());
@@ -321,7 +326,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
 
   if (!Number.isFinite(startedAt) || !Number.isFinite(deadlineMs) || deadlineMs <= startedAt) {
-    throw createdIdentityError(input.sandboxName);
+    throw new CreatedSandboxIdentityError(input.sandboxName);
   }
 
   let previousNowMs = startedAt;
@@ -330,7 +335,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   const readNow = (): number => {
     const currentNowMs = now();
     if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
-      throw createdIdentityError(input.sandboxName);
+      throw new CreatedSandboxIdentityError(input.sandboxName);
     }
     previousNowMs = currentNowMs;
     return currentNowMs;
@@ -362,7 +367,7 @@ export function settleCreatedOpenShellSandboxId(input: {
     input.sleep(Math.min(CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS, remainingAfterReadMs));
   }
 
-  throw createdIdentityError(input.sandboxName, diagnostic);
+  throw new CreatedSandboxIdentityError(input.sandboxName, diagnostic);
 }
 
 /**

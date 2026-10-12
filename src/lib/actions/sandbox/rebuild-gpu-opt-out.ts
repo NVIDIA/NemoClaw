@@ -31,7 +31,6 @@ import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import type { ManagedWorkloadRebuildHandoff } from "../../onboard/workload/rebuild";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
-import type { PreservedEnvFile } from "../../state/preserved-env";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
 export type RebuildGpuOptOutEntry = {
@@ -116,6 +115,7 @@ export type RebuildRecreateOnboardOpts = {
   recreateModel: string | null;
   recreatePreferredInferenceApi: string | null;
   fromDockerfile: string | null;
+  fromImage?: string | null;
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
   controlUiPort: number | null;
@@ -140,7 +140,6 @@ export type RebuildRecreateOnboardOpts = {
   rebuildGatewayAuthority?: CheckpointGatewayAuthority;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   managedWorkloadRebuild?: ManagedWorkloadRebuildHandoff;
-  rebuildPreservedEnv?: readonly PreservedEnvFile[];
   rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   autoYes: boolean;
@@ -160,6 +159,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
   sb: RebuildGpuOptOutEntry | null | undefined;
   rebuildAgent: string | null | undefined;
   storedFromDockerfile: string | null;
+  storedFromImage?: string | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
   baseImageResolutionHint?: SandboxBaseImageResolutionMetadata | null;
@@ -205,6 +205,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     recreateModel: args.sb?.model ?? null,
     recreatePreferredInferenceApi: args.sb?.preferredInferenceApi ?? null,
     fromDockerfile: args.storedFromDockerfile,
+    fromImage: args.storedFromImage ?? null,
     sandboxGpu: gpuOverrides.sandboxGpu,
     sandboxGpuDevice: gpuOverrides.sandboxGpuDevice,
     controlUiPort: managesDashboard ? (dashboardPort ?? null) : null,

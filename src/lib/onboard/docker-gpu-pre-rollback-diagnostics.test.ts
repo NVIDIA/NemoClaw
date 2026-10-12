@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellGpuDiagnostics } from "../adapters/openshell/gpu-diagnostics";
 import { buildDockerGpuMode, type DockerGpuPatchResult } from "./docker-gpu-patch";
 import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
 
@@ -97,6 +98,18 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     const dockerLogs = vi.fn((target: string, _options?: { tail?: number; timeout?: number }) =>
       target === "new-container-id" ? `failed clone log ${secretCanary}\n` : "",
     );
+    const collectOpenShellGpuDiagnostics = vi.fn<OpenShellGpuDiagnostics["collect"]>(() => [
+      {
+        name: "openshell-sandbox-get.txt",
+        content: `Phase: Error\ndetail=${secretCanary} ${discoveredSecretCanary}\n`,
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+      {
+        name: "openshell-sandbox-list.txt",
+        content: `alpha  Error  ${secretCanary} ${discoveredSecretCanary}\n`,
+        outcome: { kind: "completed", exitCode: 0 },
+      },
+    ]);
 
     try {
       const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
@@ -104,6 +117,7 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
         dockerLogs,
         homedir: () => tmpDir,
         now: () => new Date("2026-07-01T23:00:00Z"),
+        openShellGpuDiagnostics: { collect: collectOpenShellGpuDiagnostics },
         runCaptureOpenshell,
       });
       const diagnostics = captured?.diagnostics;
@@ -168,6 +182,16 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
       expect(
         runCaptureOpenshell.mock.calls.every(([, options]) => Number(options?.timeout) <= 2_000),
       ).toBe(true);
+      expect(collectOpenShellGpuDiagnostics).toHaveBeenCalledOnce();
+      expect(collectOpenShellGpuDiagnostics).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deadlineMs: expect.any(Number),
+          timeoutMs: expect.any(Number),
+        }),
+      );
+      expect(
+        Number(collectOpenShellGpuDiagnostics.mock.calls[0]?.[0].timeoutMs),
+      ).toBeLessThanOrEqual(2_000);
       expect(dockerLogs.mock.calls.every(([, options]) => Number(options?.timeout) <= 2_000)).toBe(
         true,
       );

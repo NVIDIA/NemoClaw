@@ -55,6 +55,11 @@ conventions, test lanes, and hook behavior. For messaging changes, also use
 Follow the user's requested outcome and existing authorization. Repository skills supply task
 knowledge and operational constraints; they must not add unrequested work or require the user to
 repeat an authorization. A specific confirmation bound to an irreversible action still applies.
+Carry authorization through in-scope repairs, qualification receipt updates, and the shared bounded
+retry policy. Distinguish task authorization from test evidence and independent merge approval.
+A new commit invalidates affected evidence; it does not alone require renewed task authorization.
+Honor an explicit one-run or one-commit limit, expiry, or revocation. Do not invent such limits when
+asking for permission. Ask again when scope, cost, credential exposure, or resource ownership changes.
 When an instruction requires a pause, name the file, quote the requirement, and explain the missing
 decision. Continue independent authorized work while that decision is pending.
 
@@ -67,6 +72,14 @@ caused by that change and rerun affected checks without asking at each step. Con
 publication and review follow-up when requested. A first patch or lifecycle handoff is not completion.
 Keep local verification within the test's documented effects; live E2E and external writes retain
 their own authorization boundaries. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval.
+
+### E2E Triage
+
+For every E2E triage, diagnosis, debugging, or repair task, first use
+[`nemoclaw-maintainer-audit-e2e-assertions`](.agents/skills/nemoclaw-maintainer-audit-e2e-assertions/SKILL.md).
+This also applies when E2E failures emerge during broader PR or CI work. Complete its itemized
+source audit before a repair push or expensive rerun. Status-only and dispatch-only requests
+continue through the existing E2E execution skill without an assertion audit.
 
 ### E2E Selection and Authoring
 
@@ -89,6 +102,10 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`, which owns access failu
 ### Pull Request Follow-Up
 
 Follow `.agents/skills/_shared/pr-follow-up.md`.
+
+An authorized PR workflow includes synchronizing the working branch with its target branch under the
+shared contract. Use a merge or GitHub's Update branch operation. Resolve mechanical, in-scope
+conflicts without separate approval. These actions are not destructive Git operations.
 
 ### Common Patterns
 

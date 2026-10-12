@@ -42,12 +42,14 @@ const {
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
   REMOTE_PROVIDER_CONFIG,
+  getRemoteProviderConfigForName,
   getNonInteractiveProvider,
   getNonInteractiveModel,
   getRequestedModelHint,
   getRequestedProviderHint,
   isProviderKeyCredentialCandidate,
   providerExistsInGateway,
+  resolveInferenceProviderType,
   stageHostedInferenceSourceSecretEnv,
   upsertProvider,
 } = require("./providers") as {
@@ -64,6 +66,10 @@ const {
       defaultModel: string;
     }
   >;
+  getRemoteProviderConfigForName: (
+    providerName: string,
+    config?: typeof REMOTE_PROVIDER_CONFIG,
+  ) => (typeof REMOTE_PROVIDER_CONFIG)[string] | null;
   getNonInteractiveProvider: (allowHostedInferenceStaging?: boolean) => string | null;
   getNonInteractiveModel: (
     providerKey: string,
@@ -79,6 +85,11 @@ const {
   ) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => Promise<boolean>;
+  resolveInferenceProviderType: (
+    providerName: string,
+    preferredInferenceApi?: string | null,
+    config?: typeof REMOTE_PROVIDER_CONFIG,
+  ) => string;
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
     name: string,
@@ -139,6 +150,19 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it("owns concrete provider-type resolution in onboarding metadata", () => {
+    expect(getRemoteProviderConfigForName("nvidia-nim")).toBe(REMOTE_PROVIDER_CONFIG.build);
+    expect(resolveInferenceProviderType("nvidia-prod", "openai-completions")).toBe("nvidia");
+    expect(resolveInferenceProviderType("nvidia-nim", "openai-completions")).toBe("nvidia");
+    expect(resolveInferenceProviderType("nvidia-router", "openai-completions")).toBe("openai");
+    expect(
+      resolveInferenceProviderType("compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("anthropic");
+    expect(
+      resolveInferenceProviderType("compatible-anthropic-endpoint", "openai-completions"),
+    ).toBe("openai");
+  });
+
   it("uses Gemini 3.6 Flash as the onboarding default (#9298)", async () => {
     expect(REMOTE_PROVIDER_CONFIG.gemini.defaultModel).toBe("gemini-3.6-flash");
   });

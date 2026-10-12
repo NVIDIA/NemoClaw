@@ -8,10 +8,186 @@ import {
   createProviderlessComponentFlow,
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
-import { runFinalOnboardFlowSlice } from "./final-flow-phases";
+import {
+  runFinalOnboardFlowSlice,
+  shouldInitializeNativeOpenclawInferenceRoute,
+} from "./final-flow-phases";
 import { advanceTo } from "./result";
 
 describe("final onboard flow phases", () => {
+  it.each([
+    {
+      name: "fresh custom image",
+      sessionStatus: "pending" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "fresh external image",
+      sessionStatus: "pending" as const,
+      fromDockerfile: null,
+      fromImage: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "failed custom-image resume",
+      sessionStatus: "failed" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: false,
+      expected: true,
+    },
+    {
+      name: "completed custom-image reuse",
+      sessionStatus: "complete" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: false,
+      expected: false,
+    },
+    {
+      name: "custom-image rebuild",
+      sessionStatus: "pending" as const,
+      fromDockerfile: "/tmp/CustomDockerfile",
+      fromImage: null,
+      rebuild: true,
+      expected: false,
+    },
+    {
+      name: "standard image onboarding",
+      sessionStatus: "pending" as const,
+      fromDockerfile: null,
+      fromImage: null,
+      rebuild: false,
+      expected: false,
+    },
+  ])("initializes the native route only for $name (#12033)", (testCase) => {
+    const session = createSession();
+    session.steps.openclaw.status = testCase.sessionStatus;
+    session.metadata.fromImage = testCase.fromImage;
+
+    expect(
+      shouldInitializeNativeOpenclawInferenceRoute(
+        context({ session, fromDockerfile: testCase.fromDockerfile }),
+        testCase.rebuild,
+      ),
+    ).toBe(testCase.expected);
+  });
+
+  it("passes verified sandbox identity authority to custom-image route setup (#12033)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
+    });
+
+    await branchPhase.run(
+      context({ fromDockerfile: "/tmp/CustomDockerfile", revalidateSandboxIdentity }),
+    );
+
+    expect(setupOpenclaw).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      revalidateSandboxIdentity,
+      "chat",
+      true,
+      "nemoclaw-19090",
+      expect.any(Function),
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nemoclaw-19090",
+    );
+    expect(waitForStartedOpenclawGatewayProcess.mock.invocationCallOrder[0]).toBeLessThan(
+      setupOpenclaw.mock.invocationCallOrder[0],
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+    );
+  });
+
+  it.each([false, null])(
+    "refuses custom-image configuration when gateway startup returns %s",
+    async (startup) => {
+      const setupOpenclaw = vi.fn();
+      const [branchPhase] = createPhases("openclaw", [], {
+        setupOpenclaw,
+        waitForStartedOpenclawGatewayProcess: vi.fn(async () => startup),
+      });
+
+      await expect(
+        branchPhase.run(
+          context({
+            fromDockerfile: "/tmp/CustomDockerfile",
+            revalidateSandboxIdentity: vi.fn(),
+          }),
+        ),
+      ).rejects.toThrow(
+        /^OpenClaw startup did not settle before configuration for sandbox 'my-sandbox'\.$/u,
+      );
+      expect(setupOpenclaw).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const setupOpenclaw = vi.fn(async (...args) => {
+      await args[7]?.();
+    });
+    const waitForStartedOpenclawGatewayProcess = vi.fn(async () => true);
+    const settleStartedOpenclawGatewayForConfiguration = vi.fn(async () => true);
+    const [branchPhase] = createPhases("openclaw", [], {
+      setupOpenclaw,
+      waitForStartedOpenclawGatewayProcess,
+      settleStartedOpenclawGatewayForConfiguration,
+    });
+    const session = createSession();
+    session.metadata.fromImage = `registry.example.test/openclaw@sha256:${"a".repeat(64)}`;
+
+    await branchPhase.run(
+      context({
+        session,
+        revalidateSandboxIdentity,
+      }),
+    );
+
+    expect(setupOpenclaw).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "nim",
+      revalidateSandboxIdentity,
+      "chat",
+      true,
+      "nemoclaw-19090",
+      expect.any(Function),
+    );
+    expect(waitForStartedOpenclawGatewayProcess).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      "nemoclaw-19090",
+    );
+    expect(settleStartedOpenclawGatewayForConfiguration).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+    );
+  });
+
+  it("rejects custom-image route setup without verified sandbox identity (#12033)", async () => {
+    const [branchPhase] = createPhases("openclaw");
+
+    await expect(
+      branchPhase.run(context({ fromDockerfile: "/tmp/CustomDockerfile" })),
+    ).rejects.toThrow(/requires verified sandbox identity/u);
+  });
+
   describe.each(["openclaw", "hermes"])("%s providerless component lifecycle", (agentName) => {
     it("completes providerless onboarding only after verified component activation (#11486)", async () => {
       const flow = createProviderlessComponentFlow(agentName);

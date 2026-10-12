@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
 import type { PendingSandboxCreateIdentity } from "./types";
 
 const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const KEYS = new Set([
   "gatewayName",
   "gatewayPort",
+  "openshellGatewayStateDir",
   "lifecycleGeneration",
   "createAttemptNonce",
   "managedBootstrapIdentity",
@@ -46,6 +48,10 @@ export function normalizePendingSandboxCreateIdentity(
     !Number.isSafeInteger(value.gatewayPort) ||
     Number(value.gatewayPort) < 1 ||
     Number(value.gatewayPort) > 65_535 ||
+    (value.openshellGatewayStateDir !== undefined &&
+      (typeof value.openshellGatewayStateDir !== "string" ||
+        !path.isAbsolute(value.openshellGatewayStateDir) ||
+        path.resolve(value.openshellGatewayStateDir) !== value.openshellGatewayStateDir)) ||
     typeof value.sandboxName !== "string" ||
     value.sandboxName.length === 0 ||
     typeof value.lifecycleGeneration !== "string" ||
@@ -83,6 +89,9 @@ export function normalizePendingSandboxCreateIdentity(
     state: "verified-create",
     gatewayName: value.gatewayName,
     gatewayPort: Number(value.gatewayPort),
+    ...(typeof value.openshellGatewayStateDir === "string"
+      ? { openshellGatewayStateDir: value.openshellGatewayStateDir }
+      : {}),
     sandboxName: value.sandboxName,
     lifecycleGeneration: value.lifecycleGeneration,
     sandboxIdentityFingerprint: value.sandboxIdentityFingerprint,

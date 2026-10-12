@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,15 +12,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rebuildOwningRegistryDependencies } from "../../dist/lib/actions/sandbox/rebuild/owning-registry";
 import { withSandboxLifecycleLock } from "../../dist/lib/actions/sandbox/lifecycle/lock";
-import { testTimeout } from "../helpers/timeouts";
+import { execTimeout, testTimeout } from "../helpers/timeouts";
 
 const TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
 const TIMESTAMP = "2026-09-17T00-00-00-000Z";
+const WORKER_FIXTURE_TIMEOUT_MS = execTimeout(20_000);
+vi.setConfig({ testTimeout: testTimeout(WORKER_FIXTURE_TIMEOUT_MS + 5_000) });
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
+
+function startWorkerWithControlledDeadline(start: () => Promise<void>) {
+  const deadlines = vi.spyOn(globalThis, "setTimeout");
+  try {
+    const worker = start();
+    const deadline = deadlines.mock.calls.find(([, delay]) => delay === WORKER_FIXTURE_TIMEOUT_MS);
+    assert(deadline, "The worker fixture did not schedule its deadline.");
+    return { worker, expire: () => deadline[0]() };
+  } finally {
+    deadlines.mockRestore();
+  }
+}
 
 function writeRecoveryFixture(home: string) {
   const backupPath = path.join(
@@ -36,16 +51,22 @@ function writeRecoveryFixture(home: string) {
   const sha256 = createHash("sha256").update(policy).digest("hex");
   const handoffPath = path.join(backupPath, `rebuild-policy-handoff.${sha256}.yaml`);
   fs.writeFileSync(handoffPath, policy, { mode: 0o600 });
+  const archivePath = path.join(backupPath, "native-home.tar");
+  const tar = spawnSync("tar", ["-cf", archivePath, "--files-from", "/dev/null"]);
+  assert.equal(tar.status, 0, "Could not create native-state recovery fixture");
+  const archiveSha256 = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
   const manifest = {
-    version: 1,
+    version: 2,
     sandboxName: "alpha",
     timestamp: TIMESTAMP,
     agentType: "openclaw",
     agentVersion: null,
     expectedVersion: null,
-    stateDirs: [],
-    backupComplete: true,
-    dir: "/sandbox/.openclaw",
+    nativeState: {
+      root: "/sandbox",
+      archive: "native-home.tar" as const,
+      sha256: archiveSha256,
+    },
     backupPath,
     blueprintDigest: null,
     rebuildPolicyHandoff: { file: path.basename(handoffPath), sha256 },
@@ -200,7 +221,7 @@ describe("compiled rebuild owning-registry worker", () => {
     async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-credential-"));
       const marker = path.join(home, "credential-probe.json");
-      let worker: Promise<void> | undefined;
+      let started: ReturnType<typeof startWorkerWithControlledDeadline> | undefined;
       try {
         const recoveryManifest = writeRecoveryFixture(home);
         writeSiblingRegistry(home, {
@@ -214,25 +235,28 @@ describe("compiled rebuild owning-registry worker", () => {
         vi.stubEnv("OPENAI_API_KEY", "openai-unrelated-test-value");
         vi.stubEnv("UNRELATED_REBUILD_SECRET", "must-not-cross-worker-boundary");
 
-        worker = rebuildOwningRegistryDependencies.runWorker(
-          {
-            operation: "rebuild",
-            sandboxName: "alpha",
-            options: { yes: true },
-            executionOptions: {
-              recoveryManifest,
-              allowLegacyManagedImageRecovery: true,
+        started = startWorkerWithControlledDeadline(() =>
+          rebuildOwningRegistryDependencies.runWorker(
+            {
+              operation: "rebuild",
+              sandboxName: "alpha",
+              options: { yes: true },
+              executionOptions: {
+                recoveryManifest,
+                allowLegacyManagedImageRecovery: true,
+              },
             },
-          },
-          9000,
-          {
-            credentialEnvNames: ["NVIDIA_INFERENCE_API_KEY"],
-            timeoutMs: 3_000,
-            terminationGraceMs: 100,
-          },
+            9000,
+            {
+              credentialEnvNames: ["NVIDIA_INFERENCE_API_KEY"],
+              timeoutMs: WORKER_FIXTURE_TIMEOUT_MS,
+              terminationGraceMs: 100,
+            },
+          ),
         );
-
-        await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), { timeout: 2_000 });
+        await vi.waitFor(() => expect(fs.existsSync(marker)).toBe(true), {
+          timeout: WORKER_FIXTURE_TIMEOUT_MS,
+        });
         const workerPid = Number(fs.readFileSync(marker, "utf8"));
         const workerEnvironment = fs
           .readFileSync(`/proc/${String(workerPid)}/environ`, "utf8")
@@ -243,11 +267,13 @@ describe("compiled rebuild owning-registry worker", () => {
         expect(workerEnvironment).not.toContain(
           "UNRELATED_REBUILD_SECRET=must-not-cross-worker-boundary",
         );
-        await expect(worker).rejects.toThrow(
+        started.expire();
+        await expect(started.worker).rejects.toThrow(
           "The worker was terminated, but the operation outcome is unknown.",
         );
       } finally {
-        await worker?.catch(() => undefined);
+        started?.expire();
+        await started?.worker.catch(() => undefined);
         fs.rmSync(home, { recursive: true, force: true });
       }
     },
@@ -371,12 +397,13 @@ describe("compiled rebuild owning-registry worker", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-worker-process-group-"));
     const descendantMarker = path.join(home, "descendant.pid");
     let descendantPid: number | undefined;
+    let started: ReturnType<typeof startWorkerWithControlledDeadline> | undefined;
     try {
       writeRecoveryFixture(home);
       vi.stubEnv("HOME", home);
       vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", writeBlockingOpenShell(home, descendantMarker));
 
-      await expect(
+      started = startWorkerWithControlledDeadline(() =>
         rebuildOwningRegistryDependencies.runWorker(
           {
             operation: "retire-recovery",
@@ -385,15 +412,23 @@ describe("compiled rebuild owning-registry worker", () => {
             confirmDataRecovered: true,
           },
           9000,
-          { timeoutMs: 3_000, terminationGraceMs: 100 },
+          { timeoutMs: WORKER_FIXTURE_TIMEOUT_MS, terminationGraceMs: 100 },
         ),
-      ).rejects.toThrow("The worker was terminated, but the operation outcome is unknown.");
-
+      );
+      await vi.waitFor(() => expect(fs.existsSync(descendantMarker)).toBe(true), {
+        timeout: WORKER_FIXTURE_TIMEOUT_MS,
+      });
       descendantPid = Number(fs.readFileSync(descendantMarker, "utf8"));
+      started.expire();
+      await expect(started.worker).rejects.toThrow(
+        "The worker was terminated, but the operation outcome is unknown.",
+      );
       expect(() => process.kill(descendantPid!, 0)).toThrow(
         expect.objectContaining({ code: "ESRCH" }),
       );
     } finally {
+      started?.expire();
+      await started?.worker.catch(() => undefined);
       try {
         process.kill(descendantPid as number, "SIGKILL");
       } catch {

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fullE2eGateway } from "../fixtures/full-e2e-gateway.ts";
+import { captureNativePluginFailureReadiness } from "../fixtures/native-plugin-failure-diagnostics.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 const directories: string[] = [];
@@ -160,7 +161,10 @@ describe("full E2E gateway ownership", () => {
         OPENSHELL_GATEWAY: preinstalled ? "nemoclaw-18080" : "nemoclaw",
         NEMOCLAW_GATEWAY_PORT: preinstalled ? "18080" : "8080",
         ...(preinstalled
-          ? { NEMOCLAW_GATEWAY_MANAGEMENT: process.env.NEMOCLAW_GATEWAY_MANAGEMENT }
+          ? {
+              NEMOCLAW_GATEWAY_MANAGEMENT: process.env.NEMOCLAW_GATEWAY_MANAGEMENT,
+              NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/var/lib/brev/openshell-gateway",
+            }
           : {}),
       });
       expect(cleanup.trackGateway).toHaveBeenCalledTimes(preinstalled ? 0 : 1);
@@ -196,11 +200,21 @@ describe("full E2E gateway ownership", () => {
         env: {
           ...env,
           NEMOCLAW_GATEWAY_PORT: "18080",
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/var/lib/brev/openshell-gateway",
           OPENSHELL_GATEWAY: "nemoclaw-18080",
         },
       });
     },
   );
+  it("uses the declared state root even when the shell has a different override (#12389)", () => {
+    const configured = fullE2eGateway(true, {
+      ...declaration(),
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/home/ubuntu/.local/state/nemoclaw",
+    });
+    expect(configured.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe(
+      "/var/lib/brev/openshell-gateway",
+    );
+  });
   it.each(["https://127.0.0.1", "http://127.0.0.1", "https://127.0.0.1:1023"])(
     "preserves the CLI port restriction for the declared endpoint %s (#9851)",
     (endpoint) => {
@@ -252,4 +266,34 @@ describe("full E2E gateway ownership", () => {
       fullE2eGateway(true, declaration({ version: 1, mode: "nemoclaw-managed" })),
     ).toThrow("externally supervised gateway");
   });
+});
+
+it("captures bounded readiness status after a failed plugin invocation without retrying it", async () => {
+  const execShell = vi.fn().mockResolvedValue({ exitCode: 0 });
+  await captureNativePluginFailureReadiness(
+    { execShell },
+    { exitCode: 22 },
+    {
+      sandboxName: "owned-sandbox",
+      artifactName: "plugin",
+      env: {},
+    },
+  );
+  expect(execShell).toHaveBeenCalledExactlyOnceWith("owned-sandbox", expect.anything(), {
+    artifactName: "plugin-readiness-after-failure",
+    env: {},
+    captureLimitBytes: 1024,
+    timeoutMs: 10_000,
+  });
+});
+
+it("skips successful plugin calls and preserves a failed result when diagnostics are unavailable", async () => {
+  const execShell = vi.fn().mockRejectedValue(new Error("sandbox unavailable"));
+  const options = { sandboxName: "owned-sandbox", artifactName: "plugin", env: {} };
+  await captureNativePluginFailureReadiness({ execShell }, { exitCode: 0 }, options);
+  expect(execShell).not.toHaveBeenCalled();
+  await expect(
+    captureNativePluginFailureReadiness({ execShell }, { exitCode: 22 }, options),
+  ).resolves.toBeUndefined();
+  expect(execShell).toHaveBeenCalledTimes(1);
 });

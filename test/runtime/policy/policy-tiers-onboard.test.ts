@@ -343,12 +343,12 @@ describe("policy tier selection", () => {
     const names = presets.map((preset) => preset.name);
     assert.deepEqual(
       [...names].sort(),
-      ["brave", "brew", "huggingface", "npm", "pypi"],
-      "balanced tier must resolve exactly brave, brew, huggingface, npm, pypi",
+      ["brave", "brew-balanced", "huggingface", "npm", "pypi"],
+      "balanced tier must resolve exactly brave, brew-balanced, huggingface, npm, pypi",
     );
   });
 
-  it.each(["npm", "pypi", "huggingface", "brew", "brave"])(
+  it.each(["npm", "pypi", "huggingface", "brew-balanced", "brave"])(
     "gives the balanced %s preset read-write access",
     (name) => {
       const accessByName = new Map(
@@ -1033,7 +1033,7 @@ describe("selectTierPresetsAndAccess", () => {
   });
 
   it("returns tier presets before non-tier presets", async () => {
-    const tierNames = ["npm", "pypi", "huggingface", "brew", "brave"];
+    const tierNames = ["npm", "pypi", "huggingface", "brew-balanced", "brave"];
     const names = (await resolve("balanced", [...tierNames, "slack"])).map((preset) => preset.name);
     const lastTierIdx = Math.max(...tierNames.map((name) => names.indexOf(name)));
     const slackIdx = names.indexOf("slack");

@@ -16,6 +16,7 @@
  * surface in those e2e jobs before merge.
  */
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import {
   buildPolicyContext,
   type PolicyContext,
@@ -50,7 +51,7 @@ export interface WritePolicyContextResult {
   reason?: string;
   /**
    * Set to `unexpected-loader` when the executor loader caught an
-   * import/resolve error (cycle, missing module, process-recovery
+   * import/resolve error (cycle, missing module, command-transport
    * regression). Callers use this to distinguish a legitimate
    * `sandbox unreachable` from a code regression that needs surfacing.
    */
@@ -85,14 +86,13 @@ type ExecutorLoad =
  *   OpenShell; treat as `sandbox unreachable` and warn at most once per
  *   call site at the caller's discretion.
  * - `crashed`: require/resolve threw. Either an import cycle, a missing
- *   module, or a process-recovery regression. Callers must route this
+ *   module, or a command-transport regression. Callers must route this
  *   through the refresh helper's `unexpected` sink so a code regression
  *   is not silently treated as `sandbox unreachable`.
  *
  * Once the loader returns `ok`, ownership of the actual subprocess call
- * lives in `process-recovery`'s {@link executeSandboxCommand}, which is
- * the single source of truth for sandbox SSH spawning. This function
- * does not invent a parallel spawn pipeline.
+ * lives in `command-transport`'s {@link executeSandboxExecCommand}, which is
+ * the single native OpenShell command path.
  */
 function loadExecutor(): ExecutorLoad {
   if (process.env.VITEST === "true") return { kind: "vitest" };
@@ -102,10 +102,10 @@ function loadExecutor(): ExecutorLoad {
     };
     const resolved = resolve.resolveOpenshell ? resolve.resolveOpenshell() : null;
     if (!resolved) return { kind: "no-runtime" };
-    const recovery = require("./process-recovery") as {
-      executeSandboxCommand: SandboxExec;
+    const transport = require("../../adapters/sandbox/command-transport") as {
+      executeSandboxExecCommand: SandboxExec;
     };
-    return { kind: "ok", exec: recovery.executeSandboxCommand };
+    return { kind: "ok", exec: transport.executeSandboxExecCommand };
   } catch (error: unknown) {
     return {
       kind: "crashed",
@@ -180,7 +180,13 @@ export async function writePolicyContextToSandbox(
   const ctx = await build(sandboxName);
   const markdown = render(ctx);
   const command = buildWriteCommand(markdown, POLICY_CONTEXT_SANDBOX_PATH);
-  const result = await exec(sandboxName, command);
+  let result: Awaited<ReturnType<SandboxExec>>;
+  try {
+    result = await exec(sandboxName, command);
+  } catch (error) {
+    if (!(error instanceof SandboxCommandTransportError)) throw error;
+    result = null;
+  }
   if (result === null) {
     return { written: false, reason: "sandbox unreachable", failure: "sandbox-unreachable" };
   }

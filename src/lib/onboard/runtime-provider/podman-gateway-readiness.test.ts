@@ -1,17 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockGatewayProcFiles } from "../../../../test/helpers/mock-gateway-proc-files";
+import { mockGatewayProcTaskDir } from "../../../../test/helpers/mock-gateway-proc-task-dir";
 
+import { classifyManagedGatewayPortConflict } from "../../readiness/gateway-production";
 import {
   buildDockerDriverGatewayRuntimeMarker,
   getDockerDriverGatewayRuntimeMarkerPath,
   resolveDockerDriverGatewayStateDir,
 } from "../docker-driver-gateway-runtime-marker";
+import { gatewayIdForStateDir } from "../gateway/process-environment";
 import {
   observeNativePodmanGatewayReadiness,
+  podmanGatewayDefaultProcessReaders,
   type PodmanGatewayReadinessDeps,
 } from "./podman-gateway-readiness";
 
@@ -24,6 +30,9 @@ const ENVIRONMENT = { HOME: "/home/nemoclaw", PATH: "/usr/bin:/bin" };
 const STATE_DIR = resolveDockerDriverGatewayStateDir(ENVIRONMENT, ENVIRONMENT.HOME, GATEWAY_PORT);
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const MARKER_FILE = getDockerDriverGatewayRuntimeMarkerPath(STATE_DIR);
+const PODMAN_SOCKET = "/run/user/1000/podman/podman.sock";
+
+afterEach(() => vi.restoreAllMocks());
 
 function input() {
   return {
@@ -34,12 +43,13 @@ function input() {
     gatewayPort: GATEWAY_PORT,
     expectedEndpoint: `https://169.254.2.2:${String(GATEWAY_PORT)}`,
     managedGatewayEndpoints: [
-      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
-      `https://169.254.2.2:${String(GATEWAY_PORT)}`,
+      `https://127.0.0.1:${String(GATEWAY_PORT)}`,
+      `https://127.0.0.1:${String(GATEWAY_PORT)}`,
     ],
     portAvailable: false,
     installedOpenShellVersion: "0.0.116",
     trustedGatewayBin: GATEWAY_BIN,
+    runtimeSocketPath: PODMAN_SOCKET,
   };
 }
 
@@ -74,7 +84,7 @@ function readinessDeps(
       { status: 0, stdout: `${String(UID)}\n`, stderr: "" },
     ],
     [
-      ["ps", "-p", String(PID), "-o", "stat="].join("\0"),
+      ["ps", "-p", String(PID), "-o", "stat=", "-L"].join("\0"),
       { status: 0, stdout: `${processState}\n`, stderr: "" },
     ],
   ]);
@@ -85,6 +95,9 @@ function readinessDeps(
       () => `${GATEWAY_BIN} --name ${GATEWAY_NAME} --port ${String(GATEWAY_PORT)}`,
     ),
     readProcessExecutable: vi.fn(() => GATEWAY_BIN),
+    readProcessEnvironment: vi.fn(() => null),
+    readManagedService: vi.fn(() => null),
+    runtimeFileMissing: vi.fn(() => false),
     runHost: vi.fn(
       (command, args) =>
         commands.get([command, ...args].join("\0")) ?? {
@@ -96,7 +109,192 @@ function readinessDeps(
   };
 }
 
+function managedServiceDeps() {
+  const deps = readinessDeps();
+  return {
+    ...deps,
+    readOwnedFile: vi.fn(() => null),
+    runtimeFileMissing: vi.fn(() => true),
+    readProcessArguments: vi.fn(() => GATEWAY_BIN),
+    readManagedService: vi.fn(() => ({ pid: PID, executablePath: GATEWAY_BIN })),
+    readProcessEnvironment: vi.fn(() => ({
+      OPENSHELL_DB_URL: `sqlite:${path.join(STATE_DIR, "openshell.db")}`,
+      OPENSHELL_DRIVERS: "podman",
+      OPENSHELL_PODMAN_SOCKET: PODMAN_SOCKET,
+      OPENSHELL_GRPC_ENDPOINT: input().expectedEndpoint,
+      OPENSHELL_SERVER_PORT: String(GATEWAY_PORT),
+    })),
+    runHost: vi.fn((command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+      command === GATEWAY_BIN && args.join(" ") === "--version"
+        ? { status: 0, stdout: "openshell-gateway 0.0.116\n", stderr: "" }
+        : deps.runHost(command, args, env),
+    ),
+  };
+}
+
+function mockZombieServiceProcess(environment: Record<string, string>) {
+  const proc = `/proc/${String(PID)}`;
+  const sibling = `${proc}/task/${String(PID + 1)}`;
+  const files = new Map([
+    [`${proc}/cmdline`, ""],
+    [`${proc}/environ`, ""],
+    [`${proc}/status`, "State:\tZ (zombie)\n"],
+    [`${sibling}/cmdline`, `${GATEWAY_BIN}\0`],
+    [
+      `${sibling}/environ`,
+      `${Object.entries(environment)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\0")}\0`,
+    ],
+  ]);
+  const readFile = fs.readFileSync;
+  vi.spyOn(fs, "readFileSync").mockImplementation(
+    (file, options) => files.get(String(file)) ?? readFile(file, options),
+  );
+  const procFiles = mockGatewayProcFiles(files);
+  mockGatewayProcTaskDir(`${proc}/task`, [String(PID), String(PID + 1)]);
+  const realpath = fs.realpathSync.native;
+  vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) =>
+    String(file) === `${sibling}/exe` ? GATEWAY_BIN : realpath(file, options),
+  );
+  return { files, sibling, procFiles };
+}
+
 describe("native Podman gateway readiness", () => {
+  it("reuses the managed service after startup clears standalone ownership files", () => {
+    const deps = managedServiceDeps();
+    const observed = observeNativePodmanGatewayReadiness(input(), deps);
+    expect(observed.listenerScan).toEqual({ pids: [PID], unverifiedPids: [], complete: true });
+    expect(observed.targetBoundListenerPids).toEqual([PID]);
+    expect(observed.versionCompatibility).toBe("compatible");
+    expect(
+      classifyManagedGatewayPortConflict(
+        false,
+        observed.listenerScan,
+        "healthy",
+        false,
+        observed.endpointBinding,
+        observed.targetBoundListenerPids.includes(PID),
+      ),
+    ).toBe("none");
+    expect(
+      deps.runHost.mock.calls.every(([command]) => ["lsof", "ps", GATEWAY_BIN].includes(command)),
+    ).toBe(true);
+  });
+
+  it.runIf(process.platform === "linux")(
+    "reads a zombie leader's live sibling through the default Podman readiness readers",
+    () => {
+      const base = managedServiceDeps();
+      const environment = {
+        ...base.readProcessEnvironment(),
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(STATE_DIR),
+      };
+      const { files, sibling, procFiles } = mockZombieServiceProcess(environment);
+      const run = base.runHost;
+      const deps = {
+        ...base,
+        ...podmanGatewayDefaultProcessReaders,
+        runHost: (command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+          args.includes("stat=")
+            ? { status: 0, stdout: "Z\nS\n", stderr: "" }
+            : run(command, args, env),
+      };
+
+      const observed = observeNativePodmanGatewayReadiness(input(), deps);
+      expect(observed.listenerScan).toEqual({ pids: [PID], unverifiedPids: [], complete: true });
+      expect(observed.targetBoundListenerPids).toEqual([PID]);
+      expect(observed.versionCompatibility).toBe("compatible");
+      expect(procFiles.openedPaths).toContain(`${sibling}/cmdline`);
+      expect(procFiles.openedPaths).toContain(`${sibling}/environ`);
+      expect(fs.realpathSync.native).toHaveBeenCalledWith(`${sibling}/exe`);
+
+      files.set(
+        `${sibling}/environ`,
+        `${Object.entries({ ...environment, OPENSHELL_DB_URL: "sqlite:/foreign/openshell.db" })
+          .map(([key, value]) => `${key}=${value}`)
+          .join("\0")}\0`,
+      );
+      expect(observeNativePodmanGatewayReadiness(input(), deps).listenerScan).toEqual({
+        pids: [],
+        unverifiedPids: [PID],
+        complete: true,
+      });
+    },
+  );
+
+  it.each([
+    ["OPENSHELL_DRIVERS", "docker"],
+    ["OPENSHELL_PODMAN_SOCKET", "/run/foreign/podman.sock"],
+    ["OPENSHELL_SERVER_PORT", "8990"],
+    ["OPENSHELL_GRPC_ENDPOINT", "https://127.0.0.1:8080"],
+    ["OPENSHELL_DB_URL", "sqlite:/foreign/openshell.db"],
+    ["NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE", "foreign"],
+  ])("rejects a managed service with mismatched %s", (key, value) => {
+    const deps = managedServiceDeps();
+    const env = { ...deps.readProcessEnvironment(), [key]: value };
+    deps.readProcessEnvironment.mockReturnValue(env);
+    expect(observeNativePodmanGatewayReadiness(input(), deps).listenerScan.unverifiedPids).toEqual([
+      PID,
+    ]);
+    expect(deps.runHost.mock.calls.some(([command]) => command === GATEWAY_BIN)).toBe(false);
+  });
+
+  const invalidServices: Record<string, Partial<PodmanGatewayReadinessDeps>> = {
+    "no trusted service": { readManagedService: () => null },
+    "another service PID": {
+      readManagedService: () => ({ pid: 5252, executablePath: GATEWAY_BIN }),
+    },
+    "another service executable": {
+      readManagedService: () => ({ pid: PID, executablePath: "/foreign" }),
+    },
+    "another process executable": { readProcessExecutable: () => "/foreign" },
+    "CLI overrides": { readProcessArguments: () => `${GATEWAY_BIN} --port 8990` },
+    "unreadable process environment": { readProcessEnvironment: () => null },
+    "an unreadable standalone record": { runtimeFileMissing: () => false },
+    "a partial standalone record": {
+      readOwnedFile: (file) => (file === PID_FILE ? String(PID) : null),
+    },
+    "a service restart during observation": {
+      readManagedService: vi
+        .fn()
+        .mockReturnValueOnce({ pid: PID, executablePath: GATEWAY_BIN })
+        .mockReturnValue(null),
+    },
+    "an executable change during observation": {
+      readProcessExecutable: vi.fn().mockReturnValueOnce(GATEWAY_BIN).mockReturnValue("/foreign"),
+    },
+  };
+  it.each(Object.entries(invalidServices))(
+    "rejects managed ownership with %s",
+    (_label, overrides) => {
+      const observed = observeNativePodmanGatewayReadiness(input(), {
+        ...managedServiceDeps(),
+        ...overrides,
+      });
+      expect(observed.listenerScan.unverifiedPids).toEqual([PID]);
+      expect(observed.versionCompatibility).toBe("unknown");
+    },
+  );
+
+  it.each([
+    [0, "openshell-gateway 0.0.115", "drift"],
+    [null, "", "unknown"],
+  ] as const)(
+    "keeps the managed gateway version independent of the CLI (%s, %s)",
+    (status, stdout, expected) => {
+      const deps = managedServiceDeps();
+      const run = deps.runHost;
+      const observation = observeNativePodmanGatewayReadiness(input(), {
+        ...deps,
+        runHost: (command, args, env) =>
+          command === GATEWAY_BIN ? { status, stdout, stderr: "" } : run(command, args, env),
+      });
+      expect(observation.listenerScan.pids).toEqual([PID]);
+      expect(observation.versionCompatibility).toBe(expected);
+    },
+  );
+
   it("recognizes one target-bound listener and its recorded OpenShell version (#10984)", () => {
     expect(observeNativePodmanGatewayReadiness(input(), readinessDeps())).toEqual({
       endpointBinding: "match",
@@ -104,6 +302,35 @@ describe("native Podman gateway readiness", () => {
       targetBoundListenerPids: [PID],
       versionCompatibility: "compatible",
     });
+  });
+
+  it("admits the host registration while retaining sandbox-facing marker authority", () => {
+    const observed = observeNativePodmanGatewayReadiness(input(), readinessDeps());
+    expect(
+      classifyManagedGatewayPortConflict(
+        false,
+        observed.listenerScan,
+        "healthy",
+        false,
+        observed.endpointBinding,
+        observed.targetBoundListenerPids.includes(PID),
+      ),
+    ).toBe("none");
+    const wrongMarker = observeNativePodmanGatewayReadiness(
+      input(),
+      readinessDeps({ endpoint: "https://127.0.0.1:8080" }),
+    );
+    expect(wrongMarker.endpointBinding).toBe("match");
+    expect(
+      classifyManagedGatewayPortConflict(
+        false,
+        wrongMarker.listenerScan,
+        "healthy",
+        false,
+        wrongMarker.endpointBinding,
+        wrongMarker.targetBoundListenerPids.includes(PID),
+      ),
+    ).toBe("owner-mismatch");
   });
 
   it.each([
@@ -127,6 +354,34 @@ describe("native Podman gateway readiness", () => {
     ).toBe("drift");
   });
 
+  it("retains a target-bound listener when the leader exits and a sibling thread runs", () => {
+    const deps = readinessDeps({}, "Z\nS");
+    expect(observeNativePodmanGatewayReadiness(input(), deps).targetBoundListenerPids).toEqual([
+      PID,
+    ]);
+  });
+
+  it.each(["Z\nX", "S\n?", "", "Z\nT"])("rejects an unverified thread scan %j", (processState) => {
+    const deps = readinessDeps({}, processState);
+    expect(observeNativePodmanGatewayReadiness(input(), deps).targetBoundListenerPids).toEqual([]);
+  });
+
+  it("rejects a failed thread scan even when its partial output contains a running thread", () => {
+    const deps = readinessDeps();
+    const run = deps.runHost;
+    const failed = {
+      ...deps,
+      runHost: vi.fn((command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+        args.includes("stat=")
+          ? { status: 1, stdout: "S\n", stderr: "scan failed" }
+          : run(command, args, env),
+      ),
+    };
+    expect(observeNativePodmanGatewayReadiness(input(), failed).targetBoundListenerPids).toEqual(
+      [],
+    );
+  });
+
   it.each(["T", "t"])("rejects a stopped process in state %s (#10984)", (processState) => {
     expect(observeNativePodmanGatewayReadiness(input(), readinessDeps({}, processState))).toEqual({
       endpointBinding: "match",
@@ -136,16 +391,28 @@ describe("native Podman gateway readiness", () => {
     });
   });
 
-  it("rejects managed endpoint output outside the provider endpoint (#10984)", () => {
+  it.each([
+    ["sandbox-facing address", ["https://169.254.2.2:8080"]],
+    ["wrong port", ["https://127.0.0.1:8990"]],
+    ["wrong scheme", ["http://127.0.0.1:8080"]],
+    ["foreign host", ["https://foreign.example:8080"]],
+    ["unverified endpoint", [null]],
+    ["mixed origins", ["https://127.0.0.1:8080", "https://foreign.example:8080"]],
+  ] as const)("rejects host registration with %s", (_label, endpoints) => {
     const observation = observeNativePodmanGatewayReadiness(
-      {
-        ...input(),
-        managedGatewayEndpoints: [`https://169.254.2.2:8990`],
-      },
+      { ...input(), managedGatewayEndpoints: endpoints },
       readinessDeps(),
     );
-
     expect(observation.endpointBinding).toBe("mismatch");
+    expect(observation.listenerScan.pids).toEqual([PID]);
+  });
+
+  it("keeps missing host registration unknown even with a verified listener", () => {
+    const observation = observeNativePodmanGatewayReadiness(
+      { ...input(), managedGatewayEndpoints: [] },
+      readinessDeps(),
+    );
+    expect(observation.endpointBinding).toBe("unknown");
     expect(observation.listenerScan.pids).toEqual([PID]);
   });
 

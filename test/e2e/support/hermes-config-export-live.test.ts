@@ -135,7 +135,7 @@ function pinnedConsumerEvidence(
   environment: NodeJS.ProcessEnv,
 ): PinnedV1ConsumerEvidence {
   return {
-    revision: "88c6600c06b0937907290362eef86912052c4ad0",
+    revision: "42a26d90f1f6207cc35b5053556db67c86ce759f",
     compiledSandboxes: 1,
     hermesNativeSettings: {
       hermes: expectedPinnedV1HermesNativeSettings({
@@ -297,6 +297,196 @@ describe("Hermes config export live evidence", () => {
       refusalCategory: "unsupported",
       refusalDiagnosticMatches: true,
     });
+    expect(mocks.writeText).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it.each(["https", "http"])(
+    "accepts the exact messaging and %s export refusals from both aliases",
+    async (scheme) => {
+      mocks.load.mockReturnValue({
+        sandboxes: {
+          hermes: {
+            credentialEnv: "NVIDIA_API_KEY",
+            endpointUrl: `${scheme}://host.openshell.internal:35271/v1`,
+            gatewayName: "nemoclaw",
+            messaging: { schemaVersion: 1, plan: { channels: [] } },
+            workload: { kind: "managed-image", reference: IMAGE_REF },
+          },
+        },
+      });
+      const diagnostics = [
+        "Config export failed (unsupported).",
+        "V1 export does not support messaging.",
+        ...(scheme === "http"
+          ? ["V1alpha1 requires HTTPS when an inference provider declares a credential."]
+          : []),
+      ].join("\n");
+      mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
+      mocks.readSandboxPolicy.mockRejectedValue(new Error("policy unavailable"));
+
+      await expect(runEnabledFixture(["secret-value"])).resolves.toEqual({
+        checked: true,
+        passed: true,
+      });
+      expect(mocks.readSandboxPolicy).not.toHaveBeenCalled();
+      expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+        outcome: "expected-refusal",
+        aliasesEquivalent: true,
+        checked: true,
+        credentialValuesOmitted: true,
+        outputFilesAbsent: true,
+        refusalCategory: "unsupported",
+        refusalDiagnosticMatches: true,
+      });
+      expect(mocks.writeText).not.toHaveBeenCalled();
+      expect(mocks.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts messaging refusal alongside other unsupported export findings", async () => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          gatewayName: "nemoclaw",
+          messaging: { schemaVersion: 1, plan: { channels: [] } },
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    mocks.command.mockResolvedValue({
+      exitCode: 2,
+      stdout: "",
+      stderr: [
+        "Config export failed (unsupported).",
+        "V1 export does not support messaging.",
+        "The sandbox provider attachments do not match its supported configuration.",
+        "The managed startup profile is not the canonical profile supported by v1 export.",
+      ].join("\n"),
+    });
+
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+    expect(mocks.writeJson).toHaveBeenCalledWith(
+      "hermes-config-export-live-evidence.json",
+      expect.objectContaining({
+        refusalCategory: "unsupported",
+        refusalDiagnosticMatches: true,
+      }),
+    );
+  });
+
+  it("rejects other unsupported findings without the messaging refusal", async () => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          gatewayName: "nemoclaw",
+          messaging: { schemaVersion: 1, plan: { channels: [] } },
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    mocks.command.mockResolvedValue({
+      exitCode: 2,
+      stdout: "",
+      stderr: [
+        "Config export failed (unsupported).",
+        "The sandbox provider attachments do not match its supported configuration.",
+      ].join("\n"),
+    });
+
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+  });
+
+  it.each(["http", "https"])("accepts the exact Podman %s export refusal", async (scheme) => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          openshellDriver: "podman",
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: `${scheme}://host.openshell.internal:35271/v1`,
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    const diagnostics = [
+      "Config export failed (unsupported).",
+      "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.",
+      ...(scheme === "http"
+        ? ["V1alpha1 requires HTTPS when an inference provider declares a credential."]
+        : []),
+    ].join("\n");
+    mocks.command.mockResolvedValue({ exitCode: 2, stdout: "", stderr: diagnostics });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: true });
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.writeJson).toHaveBeenCalledWith("hermes-config-export-live-evidence.json", {
+      outcome: "expected-refusal",
+      aliasesEquivalent: true,
+      checked: true,
+      credentialValuesOmitted: true,
+      outputFilesAbsent: true,
+      refusalCategory: "unsupported",
+      refusalDiagnosticMatches: true,
+    });
+  });
+
+  it.each([
+    {
+      label: "unrelated failure",
+      exitCode: 2,
+      extra: "\nunrelated failure",
+      writeOutput: (_args: string[]) => undefined,
+    },
+    { label: "wrong exit", exitCode: 1, extra: "", writeOutput: (_args: string[]) => undefined },
+    {
+      label: "published file",
+      exitCode: 2,
+      extra: "",
+      writeOutput: (args: string[]) =>
+        fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, "{}"),
+    },
+  ])("rejects Podman refusal with $label", async ({ exitCode, extra, writeOutput }) => {
+    mocks.load.mockReturnValue({
+      sandboxes: {
+        hermes: {
+          openshellDriver: "podman",
+          credentialEnv: "NVIDIA_API_KEY",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          gatewayName: "nemoclaw",
+          workload: { kind: "managed-image", reference: IMAGE_REF },
+        },
+      },
+    });
+    mocks.command.mockImplementation(async (_command: string, args: string[]) => {
+      writeOutput(args);
+      return {
+        exitCode,
+        stdout: "",
+        stderr:
+          "Config export failed (unsupported).\nV1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred." +
+          extra,
+      };
+    });
+    await expect(runEnabledFixture()).resolves.toEqual({ checked: true, passed: false });
+  });
+
+  it("rejects successful exports from both aliases for a Podman source", async () => {
+    mocks.load().sandboxes.hermes.openshellDriver = "podman";
+    const writeExport = async (_command: string, args: string[]) => {
+      fs.writeFileSync(args.at(args.indexOf("--output") + 1)!, exportedHermesYaml());
+      return { exitCode: 0, stderr: "", stdout: "" };
+    };
+    mocks.command
+      .mockImplementationOnce(writeExport)
+      .mockImplementationOnce(writeExport)
+      .mockResolvedValue({ exitCode: 1, stderr: "sandbox identity drifted", stdout: "" });
+    await expect(
+      runEnabledFixture([], false, { NEMOCLAW_HERMES_API_PORT: "8642" }),
+    ).resolves.toEqual({ checked: true, passed: false });
     expect(mocks.writeText).not.toHaveBeenCalled();
     expect(mocks.save).not.toHaveBeenCalled();
   });

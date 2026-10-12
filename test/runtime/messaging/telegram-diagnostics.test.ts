@@ -31,11 +31,19 @@ const DIAGNOSTICS_PATH = path.join(
   "runtime",
   "telegram-diagnostics.ts",
 );
+const JSON5_MODULE = path.join(import.meta.dirname, "../../..", "node_modules", "json5");
 
 function runDriver(driverBody: string, env: Record<string, string> = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-diag-"));
   const driverPath = path.join(tmpDir, "driver.js");
+  const diagnosticsPath = path.join(tmpDir, "telegram-diagnostics.ts");
   const configPath = path.join(tmpDir, "openclaw.json");
+  fs.writeFileSync(
+    diagnosticsPath,
+    fs
+      .readFileSync(DIAGNOSTICS_PATH, "utf-8")
+      .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE),
+  );
   fs.writeFileSync(driverPath, driverBody);
   try {
     return {
@@ -44,7 +52,7 @@ function runDriver(driverBody: string, env: Record<string, string> = {}) {
         env: {
           PATH: process.env.PATH || "/usr/bin:/bin",
           NODE_OPTIONS: process.env.NODE_OPTIONS,
-          DIAGNOSTICS_PATH,
+          DIAGNOSTICS_PATH: diagnosticsPath,
           OPENCLAW_CONFIG_PATH: configPath,
           ...env,
         },
@@ -69,9 +77,10 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const driver = `
       ${GATEWAY_TITLE_SETUP}
       const fs = require("fs");
-      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
-        channels: { telegram: { enabled: true, accounts: { default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" } } } },
-      }));
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, ${JSON.stringify(`{
+        // Native OpenClaw configuration accepts JSON5.
+        channels: { telegram: { enabled: true, accounts: { default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN", }, }, }, },
+      }`)});
       process.env.TELEGRAM_BOT_TOKEN = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
       require(process.env.DIAGNOSTICS_PATH);
       setTimeout(() => process.exit(0), 250);
@@ -79,6 +88,74 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "50" });
     expect(result.status).toBe(0);
     expect(result.stderr).toMatch(/bridge did not start within \d+s/);
+  });
+
+  it("reports a missing runtime credential when config relies on the process environment (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      delete process.env.TELEGRAM_BOT_TOKEN;
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("TELEGRAM_BOT_TOKEN is missing from runtime env");
+  });
+
+  it("reports a revision-scoped runtime credential without exposing its revision (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      process.env.TELEGRAM_BOT_TOKEN = "openshell:resolve:env:v4242_TELEGRAM_BOT_TOKEN";
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("runtime credential is ready (revision-scoped)");
+    expect(result.stderr).not.toContain("v4242");
+  });
+
+  it("rejects the identityless canonical runtime placeholder (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      process.env.TELEGRAM_BOT_TOKEN = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("identityless canonical placeholder");
+    expect(result.stderr).not.toContain("runtime credential is ready (revision-scoped)");
+  });
+
+  it("rejects a runtime credential outside the revision-scoped placeholder boundary (#10847)", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { enabled: true } } } },
+      }));
+      process.env.TELEGRAM_BOT_TOKEN = "123456:RAW_SECRET";
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("runtime credential available from a non-placeholder source");
+    expect(result.stderr).not.toContain("123456:RAW_SECRET");
+    expect(result.stderr).not.toContain("runtime credential is ready (revision-scoped)");
   });
 
   it("does NOT emit the startup-grace breadcrumb after the bridge logs 'starting provider'", () => {
@@ -111,6 +188,7 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "50" });
     expect(result.status).toBe(0);
     expect(result.stderr).not.toMatch(/bridge did not start within/);
+    expect(result.stderr).not.toContain("TELEGRAM_BOT_TOKEN");
   });
 
   it("stays silent in non-gateway processes that inherit NODE_OPTIONS=--require", () => {
@@ -130,6 +208,7 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "50" });
     expect(result.status).toBe(0);
     expect(result.stderr).not.toMatch(/bridge did not start within/);
+    expect(result.stderr).not.toContain("TELEGRAM_BOT_TOKEN");
   });
 
   it("logs Telegram DM allowlist state without exposing IDs", () => {

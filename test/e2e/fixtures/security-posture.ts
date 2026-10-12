@@ -55,7 +55,7 @@ export interface SecurityPostureSummary {
     entrypoint: CapabilitySurfaceReport;
     exec: CapabilitySurfaceReport;
   };
-  configureGuard: true;
+  configurationBoundary: true;
   hostNonRoot: true;
   rcFilesMutable: true;
   runtimeProxyEnvLocked: true;
@@ -1023,7 +1023,6 @@ exit "$bad"
   requireSuccess("agent-owned editable sandbox rc files", rcFiles);
 
   const functionName = agent === "hermes" ? "hermes" : "openclaw";
-  const guardArg = agent === "hermes" ? "setup" : "configure";
   // Security-posture mode is fail-closed on the non-root host invariant. The
   // runtime proxy file may therefore be owned by that current sandbox user.
   const allowNonRootOwner = "1";
@@ -1057,11 +1056,13 @@ exit "$bad"
   );
   requireSuccess("locked runtime proxy environment", proxyEnv);
 
-  const configureGuard = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(String.raw`
+  const configurationBoundary =
+    agent === "hermes"
+      ? await sandbox.execShell(
+          sandboxName,
+          trustedSandboxShellScript(String.raw`
 . /tmp/nemoclaw-proxy-env.sh
-if ${functionName} ${guardArg} >/tmp/nemoclaw-security-guard-probe.out 2>&1; then
+if hermes setup >/tmp/nemoclaw-security-guard-probe.out 2>&1; then
   echo GUARD_DID_NOT_BLOCK
   cat /tmp/nemoclaw-security-guard-probe.out
   exit 1
@@ -1069,13 +1070,29 @@ fi
 cat /tmp/nemoclaw-security-guard-probe.out
 grep -q 'cannot modify config inside the sandbox' /tmp/nemoclaw-security-guard-probe.out
 `),
-    {
-      artifactName: "security-posture-configure-guard",
-      env: probeEnv(),
-      timeoutMs: 30_000,
-    },
+          {
+            artifactName: "security-posture-configure-guard",
+            env: probeEnv(),
+            timeoutMs: 30_000,
+          },
+        )
+      : await sandbox.execShell(
+          sandboxName,
+          trustedSandboxShellScript(String.raw`
+. /tmp/nemoclaw-proxy-env.sh
+openclaw config validate
+test "$(openclaw config get gateway.mode)" = local
+`),
+          {
+            artifactName: "security-posture-native-config",
+            env: probeEnv(),
+            timeoutMs: 30_000,
+          },
+        );
+  requireSuccess(
+    agent === "hermes" ? "hermes setup runtime guard" : "OpenClaw native configuration access",
+    configurationBoundary,
   );
-  requireSuccess(`${functionName} ${guardArg} runtime guard`, configureGuard);
 
   const launchPattern =
     agent === "hermes" ? "hermes gateway launched" : "openclaw gateway launched";
@@ -1105,7 +1122,7 @@ tail -n 20 "$log"
       entrypoint: entrypointCapabilitySurface,
       exec: execCapabilitySurface,
     },
-    configureGuard: true,
+    configurationBoundary: true,
     hostNonRoot: true,
     rcFilesMutable: true,
     runtimeProxyEnvLocked: true,

@@ -11,6 +11,7 @@ const N1X_PCI_FIELD_MAX_BYTES = 64;
 const N1X_WSL_GPU_NAME_MAX_BYTES = 256;
 const N1X_WSL_GPU_NAMES = new Set([
   "NVIDIA RTX Spark N1X",
+  "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)",
   "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)",
 ]);
 

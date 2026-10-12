@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { SandboxCommandTransportError } from "../../adapters/sandbox/command-transport";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../policy/context", () => ({
@@ -177,6 +178,38 @@ describe("writePolicyContextToSandbox", () => {
     // form would write through a pre-existing symlink and is the failure
     // mode this contract guards against.
     expect(command).not.toMatch(/> \/sandbox\/\.openclaw\/workspace\/POLICY\.md/);
+  });
+
+  it.each(["cancelled", "timeout", "capture", "invocation", "unavailable", "malformed"] as const)(
+    "classifies %s as unreachable without retrying the write",
+    async (kind) => {
+      const exec = vi.fn().mockRejectedValue(new SandboxCommandTransportError(kind));
+      await expect(
+        writePolicyContextToSandbox("alpha", {
+          build: fakeContext,
+          render: () => "policy",
+          exec,
+        }),
+      ).resolves.toEqual({
+        written: false,
+        reason: "sandbox unreachable",
+        failure: "sandbox-unreachable",
+      });
+      expect(exec).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("propagates unexpected policy writer errors", async () => {
+    const error = new Error("policy authority refused");
+    const exec = vi.fn().mockRejectedValue(error);
+    await expect(
+      writePolicyContextToSandbox("alpha", {
+        build: fakeContext,
+        render: () => "policy",
+        exec,
+      }),
+    ).rejects.toBe(error);
+    expect(exec).toHaveBeenCalledOnce();
   });
 
   it("returns sandbox-unreachable when exec yields null", async () => {

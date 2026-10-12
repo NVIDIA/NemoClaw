@@ -4,8 +4,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -33,7 +36,116 @@ const (
 	maximumTimeoutSeconds = 24 * 60 * 60
 )
 
+// Docker exec reaches this process through the daemon when an internal network
+// cannot publish a host port. The caller supplies its forwarding deadline from
+// its launch contract; the HTTP request guard still owns authentication.
+func forwardStdio(input io.Reader, output io.Writer, address string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	connection, err := net.DialTimeout("tcp", address, min(5*time.Second, timeout))
+	if err != nil {
+		return errors.New("request guard is unavailable")
+	}
+	defer connection.Close()
+	if err := connection.SetDeadline(deadline); err != nil {
+		return errors.New("request guard forwarding deadline failed")
+	}
+	completed := make(chan error, 1)
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	go func() { completed <- forwardStdioConnection(input, output, connection) }()
+	select {
+	case err := <-completed:
+		return err
+	case <-timer.C:
+		// This one-request CLI exits even if stdin or stdout remains blocked.
+		return errors.New("request guard response forwarding timed out")
+	}
+}
+
+func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Conn) error {
+	// Parse the request boundary before forwarding so pipelined stdin cannot
+	// submit another request whose response this one-shot command will discard.
+	request, readError := http.ReadRequest(bufio.NewReader(input))
+	if readError != nil {
+		return errors.New("request guard request forwarding failed")
+	}
+
+	inputDone := make(chan error, 1)
+	go func() {
+		inputDone <- request.Write(connection)
+	}()
+	responseDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(connection)
+		for {
+			response, readError := http.ReadResponse(reader, request)
+			if readError != nil {
+				responseDone <- readError
+				return
+			}
+			writeError := response.Write(output)
+			_ = response.Body.Close()
+			if writeError != nil {
+				responseDone <- writeError
+				return
+			}
+			if response.StatusCode >= 200 || response.StatusCode == http.StatusSwitchingProtocols {
+				responseDone <- nil
+				return
+			}
+		}
+	}()
+	var outputError error
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			_ = connection.Close()
+			<-responseDone
+			return errors.New("request guard request forwarding failed")
+		}
+		outputError = <-responseDone
+	case outputError = <-responseDone:
+	}
+	if outputError != nil {
+		if os.IsTimeout(outputError) {
+			return errors.New("request guard response forwarding timed out")
+		}
+		return errors.New("request guard response forwarding failed")
+	}
+	// The guard can finish a response before Docker closes stdin. The command
+	// exits with the response rather than waiting for more client input.
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			return errors.New("request guard request forwarding failed")
+		}
+	default:
+		// A rejected streaming request can finish before its body arrives. Close
+		// stdin to stop the request writer without waiting for the remaining body.
+		if closer, ok := input.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	}
+	return nil
+}
+
+func stdioForwardArguments(args []string) (string, time.Duration, error) {
+	if len(args) != 5 || args[0] != "--stdio-forward" || args[1] != "--listen-port" || args[3] != "--forward-timeout-seconds" {
+		return "", 0, errors.New("stdio forwarding requires --listen-port and --forward-timeout-seconds")
+	}
+	port, err := strconv.Atoi(args[2])
+	if err != nil || port < 1 || port > 65535 {
+		return "", 0, errors.New("stdio forwarding listen port is invalid")
+	}
+	timeoutSeconds, err := strconv.ParseInt(args[4], 10, 64)
+	if err != nil || positiveBounded(timeoutSeconds, maximumTimeoutSeconds, "forward timeout seconds") != nil {
+		return "", 0, errors.New("stdio forwarding timeout is invalid")
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Duration(timeoutSeconds) * time.Second, nil
+}
+
 type guardConfig struct {
+	apiKey                string
 	listenHost            string
 	listenPort            int
 	upstreamHost          string
@@ -288,6 +400,10 @@ func parseConfig(args []string) (guardConfig, []string, error) {
 }
 
 func writeGuardError(writer http.ResponseWriter, failure *guardError) {
+	errorType := "invalid_request_error"
+	if failure.status == http.StatusUnauthorized {
+		errorType = "authentication_error"
+	}
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
@@ -296,7 +412,7 @@ func writeGuardError(writer http.ResponseWriter, failure *guardError) {
 		"error": map[string]string{
 			"code":    failure.code,
 			"message": failure.message,
-			"type":    "invalid_request_error",
+			"type":    errorType,
 		},
 	})
 }
@@ -465,6 +581,9 @@ func routeAllowed(request *http.Request) bool {
 }
 
 func newGuardHandler(config guardConfig) (http.Handler, error) {
+	if config.apiKey == "" {
+		return nil, errors.New("request guard credential is unavailable")
+	}
 	upstream, err := url.Parse(
 		fmt.Sprintf("http://%s:%d", config.upstreamHost, config.upstreamPort),
 	)
@@ -491,6 +610,17 @@ func newGuardHandler(config guardConfig) (http.Handler, error) {
 	}
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		healthProbe := request.Method == http.MethodGet && request.RequestURI == "/health"
+		if !healthProbe && !authorizedBearer(request, config.apiKey) {
+			writer.Header().Set("WWW-Authenticate", "Bearer")
+			writeGuardError(writer, &guardError{
+				status: http.StatusUnauthorized, code: "unauthorized", message: "Authentication is required.",
+			})
+			return
+		}
+		if !healthProbe {
+			request.Header.Set("Authorization", "Bearer "+config.apiKey)
+		}
 		if !routeAllowed(request) {
 			writeGuardError(writer, &guardError{
 				status:  http.StatusNotFound,
@@ -526,6 +656,14 @@ func newGuardHandler(config guardConfig) (http.Handler, error) {
 		request.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		proxy.ServeHTTP(writer, request)
 	}), nil
+}
+
+func authorizedBearer(request *http.Request, apiKey string) bool {
+	values := request.Header.Values("Authorization")
+	if len(values) != 1 || len(values[0]) != 7+len(apiKey) || !strings.EqualFold(values[0][:7], "Bearer ") {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(values[0][7:]), []byte(apiKey)) == 1
 }
 
 func childExitCode(state *os.ProcessState) int {
@@ -576,28 +714,32 @@ func newHTTPServer(config guardConfig, handler http.Handler) *http.Server {
 	}
 }
 
-func validateAPIKeyFile(path string) error {
+func loadAPIKeyFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return errors.New("request guard API-key file is unavailable")
+		return "", errors.New("request guard API-key file is unavailable")
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("request guard API-key file is not a regular file")
+		return "", errors.New("request guard API-key file is not a regular file")
 	}
-	var firstByte [1]byte
-	if count, err := file.Read(firstByte[:]); count != 1 || err != nil {
-		return errors.New("request guard API-key file is empty or unreadable")
+	keyBytes, keyError := io.ReadAll(io.LimitReader(file, 66))
+	key := strings.TrimSpace(string(keyBytes))
+	_, decodeError := hex.DecodeString(key)
+	if keyError != nil || decodeError != nil || len(key) != 64 || len(keyBytes) > 65 || key != strings.ToLower(key) {
+		return "", errors.New("request guard credential is invalid")
 	}
-	return nil
+	return key, nil
 }
 
 func run(config guardConfig, command []string) int {
-	if err := validateAPIKeyFile(llamaServerAPIKeyPath); err != nil {
+	key, err := loadAPIKeyFile(llamaServerAPIKeyPath)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
+	config.apiKey = key
 	listener, err := net.Listen("tcp", net.JoinHostPort(config.listenHost, strconv.Itoa(config.listenPort)))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "request guard could not bind its declared listener")
@@ -656,6 +798,18 @@ func run(config guardConfig, command []string) int {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--stdio-forward" {
+		address, timeout, err := stdioForwardArguments(os.Args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(2)
+		}
+		if err := forwardStdio(os.Stdin, os.Stdout, address, timeout); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	config, command, err := parseConfig(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

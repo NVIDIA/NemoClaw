@@ -94,7 +94,9 @@ export type HermesConfigExportLiveEvidence =
 
 const CREDENTIAL_HTTP_REFUSAL =
   "V1alpha1 requires HTTPS when an inference provider declares a credential.";
-const CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC = `Config export failed (unsupported).\n${CREDENTIAL_HTTP_REFUSAL}`;
+const PODMAN_REFUSAL =
+  "V1alpha1 export currently supports the Docker runtime; Podman compatibility is deferred.";
+const MESSAGING_REFUSAL = "V1 export does not support messaging.";
 
 function normalizeCommandDiagnostics(stdout: string, stderr: string): string {
   return [stdout, stderr]
@@ -297,11 +299,6 @@ export async function verifyHermesConfigExportLive(
 
   const registry = load();
   const entry = registry.sandboxes[input.sandboxName]!;
-  const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
-    target: namedOpenShellGateway(entry.gatewayName ?? ""),
-    sandboxName: input.sandboxName,
-    scope: "effective",
-  });
   const nemoclawPath = path.join(exportDirectory, "nemoclaw.yaml");
   const nemohermesPath = path.join(exportDirectory, "nemohermes.yaml");
   const commonOptions = {
@@ -339,21 +336,36 @@ export async function verifyHermesConfigExportLive(
         output.includes(value),
       ),
   );
-  if (!launchersSucceeded) {
-    const expectsCredentialHttpRefusal =
-      typeof entry.credentialEnv === "string" &&
-      entry.credentialEnv.length > 0 &&
-      entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
-    if (expectsCredentialHttpRefusal) {
+  const expectsCredentialHttpRefusal =
+    typeof entry.credentialEnv === "string" &&
+    entry.credentialEnv.length > 0 &&
+    entry.endpointUrl?.toLowerCase().startsWith("http:") === true;
+  const expectedRefusals = [
+    ...(entry.messaging != null ? [MESSAGING_REFUSAL] : []),
+    ...(entry.openshellDriver === "podman" ? [PODMAN_REFUSAL] : []),
+    ...(expectsCredentialHttpRefusal ? [CREDENTIAL_HTTP_REFUSAL] : []),
+  ];
+  if (expectedRefusals.length > 0 || !launchersSucceeded) {
+    if (expectedRefusals.length > 0) {
+      const expectedDiagnostic = ["Config export failed (unsupported).", ...expectedRefusals].join(
+        "\n",
+      );
       const refusalDiagnosticMatches = [nemoclawDiagnostics, nemohermesDiagnostics].every(
-        (diagnostic) => diagnostic === CREDENTIAL_HTTP_REFUSAL_DIAGNOSTIC,
+        (diagnostic) => {
+          if (entry.messaging == null) return diagnostic === expectedDiagnostic;
+          const lines = diagnostic.split("\n");
+          return (
+            lines[0] === "Config export failed (unsupported)." &&
+            expectedRefusals.every((refusal) => lines.includes(refusal))
+          );
+        },
       );
       const refusalCategory = refusalDiagnosticMatches ? "unsupported" : null;
       const evidence: HermesConfigExportExpectedRefusalEvidence = {
         outcome: "expected-refusal",
         aliasesEquivalent:
-          nemoclaw.exitCode !== 0 &&
-          nemohermes.exitCode !== 0 &&
+          nemoclaw.exitCode === 2 &&
+          nemohermes.exitCode === 2 &&
           nemoclawDiagnostics === nemohermesDiagnostics,
         checked: true,
         credentialValuesOmitted: !containsCredential,
@@ -400,6 +412,11 @@ export async function verifyHermesConfigExportLive(
   });
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const hostedProvider = nemoclawDocument.spec.inferenceProviders[0];
+  const policy = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
+    target: namedOpenShellGateway(entry.gatewayName ?? ""),
+    sandboxName: input.sandboxName,
+    scope: "effective",
+  });
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
   const consumer = validateHermesConsumers(input, nemoclawRaw, nemohermesRaw);
 

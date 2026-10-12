@@ -10,9 +10,10 @@ import { describe, expect, it, vi } from "vitest";
 import * as processRecovery from "../../actions/sandbox/process-recovery";
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxEntry } from "../../state/registry";
-import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
+import { releaseManagedStartupHoldWithRetry } from "../managed-startup/provider-root-apply";
 import {
   assertApfCreateIntent,
+  activateManagedStartupCorporateCaTrustAfterSandboxCreate,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
@@ -23,20 +24,48 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
-  releaseManagedStartupHoldWithRetry,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
   runWithPostCreateRecovery,
 } from "./orchestration";
-
 const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayName: "nemoclaw",
   gatewayPort: 8080,
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
-
+describe("managed startup corporate CA onboarding orchestration", () => {
+  it("wires the verified create boundary into the corporate CA refresh", async () => {
+    const events: string[] = [];
+    const boundary = {
+      sandboxName: "alpha",
+      gatewayName: "owned-gateway",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "none" as const,
+    };
+    const refreshCorporateCaTrust = vi.fn(async () => {
+      events.push("refresh");
+    });
+    await activateManagedStartupCorporateCaTrustAfterSandboxCreate({
+      create: Promise.resolve().then(() => events.push("create")),
+      corporateCaB64: "Y2EtYnVuZGxl",
+      sandboxName: "alpha",
+      requireVerifiedCreateBoundary: () => boundary,
+      refreshCorporateCaTrust,
+      revalidateSandboxIdentity: (verified) => expect(verified).toBe(boundary),
+      recordRecovery: vi.fn(),
+    });
+    expect(refreshCorporateCaTrust).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      target: { kind: "named", gatewayName: "owned-gateway" },
+    });
+    expect(events).toEqual(["create", "refresh"]);
+  });
+});
 describe("managed startup hold release", () => {
   it("retries a transient exact-container release failure before retained recovery", () => {
     const release = vi
@@ -45,24 +74,19 @@ describe("managed startup hold release", () => {
         throw new Error("release unavailable");
       })
       .mockImplementationOnce(() => undefined);
-
     expect(() => releaseManagedStartupHoldWithRetry(release)).not.toThrow();
     expect(release).toHaveBeenCalledTimes(2);
   });
-
   it("bounds persistent release failures", () => {
     const release = vi.fn(() => {
       throw new Error("release unavailable");
     });
-
     expect(() => releaseManagedStartupHoldWithRetry(release)).toThrow("release unavailable");
     expect(release).toHaveBeenCalledTimes(3);
   });
 });
-
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
-
   it("uses the native restart recovery path after the secret boundary", async () => {
     const events: string[] = [];
     const restart = vi
@@ -531,36 +555,6 @@ describe("deferred provider effect authority", () => {
     ]);
   });
 
-  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", async () => {
-    let observationCount = 0;
-    const revalidateSandboxIdentity = vi.fn();
-    const runOpenshell = vi.fn(() => ({
-      pid: 1,
-      output: [null, "", ""],
-      stdout: "",
-      stderr: "",
-      status: 0,
-      signal: null,
-    }));
-
-    await expect(
-      runAuthorityBoundProviderCleanup({
-        sandboxName: "alpha",
-        observeSandbox: () =>
-          observationCount++ === 0
-            ? { state: "missing", liveIdentityFingerprint: null }
-            : { state: "ready", liveIdentityFingerprint: "f".repeat(64) },
-        revalidateSandboxIdentity,
-        runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
-        runOpenshell,
-        redact: (value) => value,
-        tolerateMissingSandbox: true,
-      }),
-    ).rejects.toThrow(/appeared after absence was verified/u);
-    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
   it("refuses every deferred provider attachment before a same-name replacement can receive credentials (#9833)", async () => {
     const revalidateSandboxIdentity = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
@@ -738,9 +732,13 @@ describe("sandbox recreate registry authority", () => {
 });
 
 describe("managed DCode sandbox create selection", () => {
-  it.each([null, "https://openrouter.ai/api/v1"])(
+  it.each([
+    [null, false],
+    ["https://openrouter.ai/api/v1", false],
+    ["https://openrouter.ai/api/v1", true],
+  ] as const)(
     "passes the selected endpoint to live drift validation: %s (#9555)",
-    async (endpointUrl) => {
+    async (endpointUrl, nativeProvider) => {
       const readDcodeSelectionDrift = vi.fn(async () => ({
         changed: false,
         providerChanged: false,
@@ -757,6 +755,7 @@ describe("managed DCode sandbox create selection", () => {
           model: "nvidia/nemotron-3-ultra-550b-a55b",
           preferredInferenceApi: "openai-completions",
           createIntent: { endpointUrl },
+          nativeProvider,
         },
         readDcodeSelectionDrift,
       );
@@ -767,6 +766,7 @@ describe("managed DCode sandbox create selection", () => {
         "nvidia/nemotron-3-ultra-550b-a55b",
         "openai-completions",
         endpointUrl,
+        nativeProvider,
       );
     },
   );

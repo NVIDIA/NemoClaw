@@ -9,6 +9,7 @@ import {
   parseGatewayBindAddress,
 } from "../../core/gateway-address";
 import { parseDockerDaemonObservation } from "../../domain/docker-host";
+import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   parseDockerNetworkIpamEntries,
@@ -16,6 +17,7 @@ import {
 } from "../experimental/docker-network-authority";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
+import { EXTERNAL_IMAGE_AGENTS } from "../workload/source";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -134,6 +136,37 @@ function captureDockerContainerEngineOperation(
     throw new Error(`Docker provider does not register the '${operation}' engine operation.`);
   }
   return deps.captureHostCommand("docker", [...args], timeoutMs);
+}
+
+function createDockerExternalImagePreparation(
+  deps: DockerRuntimeProviderDependencies,
+  supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
+) {
+  const capture = (args: readonly string[], timeoutMs: number) =>
+    captureDockerContainerEngineOperation(
+      deps,
+      supportedOperations,
+      "external-image-preparation",
+      args,
+      timeoutMs,
+    );
+  return Object.freeze({
+    displayName: "Docker",
+    inspectLocal: (reference: string, timeoutMs: number) => {
+      const inspection = capture(["image", "inspect", reference], timeoutMs);
+      if (inspection.error) return { status: "failed" as const, error: inspection.error };
+      if (inspection.status === 0) return { status: "present" as const, inspection };
+      if (/(?:No such image|No such object)(?::|$)/iu.test(inspection.stderr)) {
+        return { status: "absent" as const };
+      }
+      return { status: "failed" as const };
+    },
+    pull: (reference: string, timeoutMs: number) => capture(["pull", reference], timeoutMs),
+    inspectPulled: (reference: string, timeoutMs: number) =>
+      capture(["image", "inspect", reference], timeoutMs),
+    normalizeContentId: (value: unknown) =>
+      typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value) ? value : null,
+  });
 }
 
 function captureDockerNvidiaContainer(
@@ -269,6 +302,11 @@ const COMPLETE_MANAGED_IMAGE_V1_PROFILE = {
     startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
     capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
   },
+  externalImageSupport: {
+    exactDigestReferences: true,
+    platforms: MANAGED_IMAGE_PLATFORMS,
+    agents: EXTERNAL_IMAGE_AGENTS,
+  },
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: true,
@@ -277,10 +315,14 @@ const COMPLETE_MANAGED_IMAGE_V1_PROFILE = {
 function acceptsReceipt(
   profile: RuntimeProviderWorkloadProfile,
   receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
+  externalImages: boolean,
 ): boolean {
   if (!receipt) return true;
   if (receipt.kind === "legacy-dockerfile") return profile.legacyDockerfileBuilds;
   if (receipt.kind === "native-artifact") return false;
+  if (receipt.kind === "external-image") {
+    return externalImages && cloneSandboxWorkloadReceipt(receipt)?.kind === "external-image";
+  }
   if (receipt.platform === undefined) return false;
   return (
     profile.support !== null &&
@@ -301,6 +343,7 @@ export function createDockerRuntimeProviderBundle(
   const deps = resolveDependencies(overrides);
   const containerEngineOperations = new Set<RuntimeProviderContainerEngineOperation>([
     "host-doctor",
+    "external-image-preparation",
     "gateway-inspection",
     "host-local-inference",
     "sandbox-lifecycle",
@@ -389,13 +432,14 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
       managedStateMountDriverId: "docker",
-      acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
+      acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt, true),
     },
     hostLocalInference: {
       providerId,
       supported: true,
       services: ["llama-cpp"],
-      createOperation: ({ env }) => createDockerLlamaCppHostLocalOperation(env),
+      createOperation: ({ env, deadlineMs }) =>
+        createDockerLlamaCppHostLocalOperation(env, undefined, undefined, undefined, deadlineMs),
     },
     lifecycle: {
       providerId,
@@ -420,7 +464,8 @@ export function createDockerRuntimeProviderBundle(
     bootstrap: unsupported(providerId, "OpenShell owns managed-image sandbox creation."),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
-      queryRuntimeSnapshot: deps.queryRuntimeSnapshot,
+      queryRuntimeSnapshot: (sandboxName, timeoutMs) =>
+        deps.queryRuntimeSnapshot(sandboxName, {}, timeoutMs === undefined ? {} : { timeoutMs }),
     }),
     recovery: unsupported(providerId, futureReason),
     cleanup: {
@@ -435,10 +480,31 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
-        { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
-        { operation: "host-local-inference", engineId: "docker", displayName: "Docker" },
-        { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
-        { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
+        {
+          operation: "external-image-preparation",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "gateway-inspection",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "host-local-inference",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "sandbox-lifecycle",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "workload-cleanup",
+          engineId: "docker",
+          displayName: "Docker",
+        },
       ],
       capture: (operation, args, timeoutMs) =>
         captureDockerContainerEngineOperation(
@@ -448,6 +514,10 @@ export function createDockerRuntimeProviderBundle(
           args,
           timeoutMs,
         ),
+      externalImagePreparation: createDockerExternalImagePreparation(
+        deps,
+        containerEngineOperations,
+      ),
       nvidiaContainer: {
         capture: (operation, input, timeoutMs) =>
           captureDockerNvidiaContainer(
@@ -532,7 +602,7 @@ export function createKubernetesRuntimeProviderBundle(
       providerId,
       supported: true,
       profile,
-      acceptsReceipt: (receipt) => acceptsReceipt(profile, receipt),
+      acceptsReceipt: (receipt) => acceptsReceipt(profile, receipt, false),
     },
     hostLocalInference: unsupported(
       providerId,
@@ -572,8 +642,16 @@ export function createKubernetesRuntimeProviderBundle(
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
-        { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
-        { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
+        {
+          operation: "gateway-inspection",
+          engineId: "docker",
+          displayName: "Docker",
+        },
+        {
+          operation: "workload-cleanup",
+          engineId: "docker",
+          displayName: "Docker",
+        },
       ],
       capture: (operation, args, timeoutMs) =>
         captureDockerContainerEngineOperation(

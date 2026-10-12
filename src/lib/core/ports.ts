@@ -2,7 +2,50 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
+import { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT } from "./ollama-proxy-port";
+import {
+  AUTOMATIC_GATEWAY_PORT_RANGE_END,
+  AUTOMATIC_GATEWAY_PORT_RANGE_START,
+  BEDROCK_RUNTIME_ADAPTER_PORT,
+  DASHBOARD_PORT,
+  DASHBOARD_PORT_RANGE_END,
+  DASHBOARD_PORT_RANGE_START,
+  DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
+  DEFAULT_GATEWAY_PORT,
+  DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  DEFAULT_MODEL_ROUTER_PORT,
+  DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
+  HERMES_API_PORT_RANGE_END,
+  HERMES_API_PORT_RANGE_START,
+  HERMES_OPENAI_API_PORT,
+  HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  isHermesApiPort,
+  OPENROUTER_RUNTIME_ADAPTER_PORT,
+  resolveConfiguredModelRouterPort,
+  SANDBOX_DASHBOARD_PORT,
+} from "./protected-host-ports";
 import { parseServicePortOverride } from "./service-port-boundary";
+
+export {
+  AUTOMATIC_GATEWAY_PORT_RANGE_END,
+  AUTOMATIC_GATEWAY_PORT_RANGE_START,
+  BEDROCK_RUNTIME_ADAPTER_PORT,
+  DASHBOARD_PORT,
+  DASHBOARD_PORT_RANGE_END,
+  DASHBOARD_PORT_RANGE_START,
+  DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
+  DEFAULT_GATEWAY_PORT,
+  DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  DEFAULT_MODEL_ROUTER_PORT,
+  DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
+  HERMES_API_PORT_RANGE_END,
+  HERMES_API_PORT_RANGE_START,
+  HERMES_OPENAI_API_PORT,
+  HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  isHermesApiPort,
+  OPENROUTER_RUNTIME_ADAPTER_PORT,
+  resolveConfiguredModelRouterPort,
+};
 
 /**
  * Central port configuration — override any port via environment variables.
@@ -39,23 +82,6 @@ export interface RuntimeAdapterPortValidationOptions extends GatewayPortValidati
 
 type PortValidationOptions = GatewayPortValidationOptions | RuntimeAdapterPortValidationOptions;
 
-/** Default OpenShell gateway port when NEMOCLAW_GATEWAY_PORT is unset. */
-export const DEFAULT_GATEWAY_PORT = 8080;
-
-/**
- * The default port the OpenClaw dashboard listens on inside the sandbox.
- * The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:SANDBOX_DASHBOARD_PORT
- * (patched by patchStagedDockerfile), so the gateway starts on whichever port was
- * configured via NEMOCLAW_DASHBOARD_PORT at onboard time. This constant represents
- * the hardcoded default when no override is set.
- */
-const SANDBOX_DASHBOARD_PORT = 18789;
-/** Dashboard UI port (default SANDBOX_DASHBOARD_PORT, override via NEMOCLAW_DASHBOARD_PORT). This is the host-side port. */
-export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHBOARD_PORT);
-/** Start of the auto-allocation range for dashboard ports (inclusive). */
-export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
-/** End of the auto-allocation range for dashboard ports (inclusive). */
-export const DASHBOARD_PORT_RANGE_END = 18799;
 export const VLLM_PORT_ENV = "NEMOCLAW_VLLM_PORT";
 export const DEFAULT_VLLM_PORT = 8000;
 /** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
@@ -63,42 +89,9 @@ export const VLLM_PORT = parsePort(VLLM_PORT_ENV, DEFAULT_VLLM_PORT);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 /** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
-export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
+export { DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT };
 /** llama.cpp existing-server attachment port; fixed by the declarative serving contract. */
 export { LLAMA_CPP_PORT };
-/** Default Hermes OpenAI-compatible API port (manifest `forward_ports[1]`; the default for start.sh `PUBLIC_PORT`). */
-export const HERMES_OPENAI_API_PORT = 8642;
-/** Start of the auto-allocation range for Hermes API ports (inclusive). */
-export const HERMES_API_PORT_RANGE_START = HERMES_OPENAI_API_PORT;
-/** End of the auto-allocation range for Hermes API ports (inclusive). */
-export const HERMES_API_PORT_RANGE_END = 8652;
-
-/**
- * The API port is a per-sandbox host resource: each Hermes sandbox exposes its
- * OpenAI-compatible API on its own port allocated from
- * `HERMES_API_PORT_RANGE_START` through `HERMES_API_PORT_RANGE_END`, so two
- * sandboxes can serve inference on one host. Every port in that range is
- * therefore unavailable as a dashboard port, for any agent.
- */
-export function isHermesApiPort(port: number): boolean {
-  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
-}
-/** Bedrock Runtime adapter port (default 11436, override via NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT). */
-export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
-  "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
-  11436,
-);
-/** OpenRouter header-injection adapter port (default 11437, override via NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT). */
-export const OPENROUTER_RUNTIME_ADAPTER_PORT = parsePort(
-  "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
-  11437,
-);
-/** HTTPS DNS-pinning reverse-proxy adapter port (default 11438, override via NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT). */
-export const HTTPS_PIN_RUNTIME_ADAPTER_PORT = parsePort(
-  "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
-  11438,
-);
-
 interface ServicePortDefinition {
   readonly envVar: string | null;
   readonly label: string;
@@ -158,21 +151,21 @@ const SERVICE_PORT_CATALOG: readonly ServicePortDefinition[] = [
   {
     envVar: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
     label: "Bedrock Runtime adapter",
-    defaultPort: 11436,
+    defaultPort: DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
     reserveDefault: true,
     configuredPort: (options) => options.bedrockRuntimeAdapterPort,
   },
   {
     envVar: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
     label: "OpenRouter Runtime adapter",
-    defaultPort: 11437,
+    defaultPort: DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
     reserveDefault: true,
     configuredPort: (options) => options.openrouterRuntimeAdapterPort,
   },
   {
     envVar: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
     label: "HTTPS Pin Runtime adapter",
-    defaultPort: 11438,
+    defaultPort: DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
     reserveDefault: true,
     configuredPort: (options) => options.httpsPinRuntimeAdapterPort,
   },

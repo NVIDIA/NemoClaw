@@ -20,6 +20,17 @@ const COMPATIBLE_ENDPOINT_CONFIG: RemoteProviderConfigEntry = {
   defaultModel: "test-model",
 };
 
+const NVIDIA_ENDPOINT_CONFIG: RemoteProviderConfigEntry = {
+  label: "NVIDIA Endpoints",
+  providerName: "nvidia-prod",
+  providerType: "nvidia",
+  credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+  endpointUrl: "https://integrate.api.nvidia.com/v1",
+  helpUrl: "https://build.nvidia.com/settings/api-keys",
+  modelMode: "catalog",
+  defaultModel: "test-model",
+};
+
 type DepsRecorder = {
   log: string[];
   warn: string[];
@@ -65,6 +76,27 @@ function makeDeps(overrides: {
 }
 
 describe("ensureResumeProviderReady", () => {
+  it.each([
+    ["openai-api", "OPENAI_API_KEY"],
+    ["anthropic-prod", "ANTHROPIC_API_KEY"],
+    ["gemini-api", "GEMINI_API_KEY"],
+    ["openrouter-api", "OPENROUTER_API_KEY"],
+  ])(
+    "revalidates native ownership for %s during resume (#12589)",
+    async (provider, credentialEnv) => {
+      const { deps, replaceCalls, exitCalls } = makeDeps({ nonInteractive: true });
+      deps.providerExistsInGateway = () => {
+        throw new Error("A logical provider lookup cannot verify native ownership");
+      };
+      expect(await ensureResumeProviderReady(provider, null, deps)).toEqual({
+        forceInferenceSetup: true,
+        credentialEnv,
+      });
+      expect(replaceCalls).toEqual([]);
+      expect(exitCalls).toEqual([]);
+    },
+  );
+
   it("returns false-forced when no provider is set (nothing to recover)", async () => {
     const { deps } = makeDeps({ providerExists: false });
     const result = await ensureResumeProviderReady(null, null, deps);
@@ -114,6 +146,20 @@ describe("ensureResumeProviderReady", () => {
     const result = await ensureResumeProviderReady("compatible-endpoint", null, recorder.deps);
     expect(result.forceInferenceSetup).toBe(true);
     expect(result.credentialEnv).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("uses the shared legacy NVIDIA NIM alias when recovering a missing provider", async () => {
+    const recorder = makeDeps({
+      providerExists: false,
+      credentialValue: "already-hydrated-key",
+      remoteProviderConfig: { build: NVIDIA_ENDPOINT_CONFIG },
+    });
+    const result = await ensureResumeProviderReady("nvidia-nim", null, recorder.deps);
+    expect(result).toEqual({
+      forceInferenceSetup: true,
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    expect(recorder.note.join("\n")).toContain("Provider 'nvidia-nim' is missing");
   });
 
   it("re-prompts for credentials when the provider was reset and credential is missing (#3278)", async () => {

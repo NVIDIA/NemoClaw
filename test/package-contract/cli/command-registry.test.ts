@@ -53,16 +53,16 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("returns exactly 62 entries", () => {
-      // 57 visible + 5 hidden (config get/set/rotate-token + inference get/set).
-      // 57 visible includes the skill list command, the sessions group (root + list + reset + delete +
+    it("returns exactly 59 entries", () => {
+      // 54 visible + 5 hidden (config get/set/rotate-token + inference get/set).
+      // 54 visible includes the skill list command, the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, the
       // download + upload host-side openshell wrappers, the stop + start
       // container lifecycle pair (#6026), the policy baseline exclude + restore
       // pair, plus seven MCP bridge display entries under the `mcp` parent and
       // the gateway restart command under the `gateway` parent.
-      expect(sandboxCommands()).toHaveLength(62);
+      expect(sandboxCommands()).toHaveLength(59);
     });
 
     it.each(sandboxCommands())("$usage has sandbox scope", (cmd) => {
@@ -210,9 +210,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 30 unique action tokens including empty string", () => {
+    it("returns exactly 29 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(30);
+      expect(tokens).toHaveLength(29);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -236,7 +236,6 @@ describe("command-registry", () => {
         "skill",
         "rebuild",
         "recover",
-        "snapshot",
         "share",
         "config",
         "channels",

@@ -1140,22 +1140,27 @@ describe("onboarding command failures", () => {
     ).rejects.toThrow("unexpected boom");
   });
 
-  it("returns without rethrowing when a prompt rejects with SIGINT (#7439)", async () => {
+  it("preserves interrupt status without rethrowing a SIGINT prompt error (#7439, #11039)", async () => {
     const exit = vi.fn<(code: number) => never>();
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw Object.assign(new Error("Prompt interrupted"), {
-            code: "SIGINT",
-          });
-        },
-        error: () => {},
-        exit,
-      }),
-    ).resolves.toBeUndefined();
-    expect(exit).not.toHaveBeenCalled();
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = undefined;
+      await expect(
+        runOnboardCommand({
+          flags: {},
+          env: {},
+          runOnboard: async () => {
+            throw Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+          },
+          error: () => {},
+          exit,
+        }),
+      ).resolves.toBeUndefined();
+      expect(exit).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(130);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {

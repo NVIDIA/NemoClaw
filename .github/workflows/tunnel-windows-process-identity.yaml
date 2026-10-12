@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI / Windows Tunnel Process Identity
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/tunnel-windows-process-identity.yaml"
+      - ".github/actions/setup-reviewed-npm/**"
+      - "ci/reviewed-npm-audit.json"
+      - "scripts/lib/reviewed-npm-audit.mts"
+      - "package.json"
+      - "package-lock.json"
+      - "vitest.config.ts"
+      - "src/lib/tunnel/services.ts"
+      - "src/lib/tunnel/services.identity-signal.test.ts"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/tunnel-windows-process-identity.yaml"
+      - ".github/actions/setup-reviewed-npm/**"
+      - "ci/reviewed-npm-audit.json"
+      - "scripts/lib/reviewed-npm-audit.mts"
+      - "package.json"
+      - "package-lock.json"
+      - "vitest.config.ts"
+      - "src/lib/tunnel/services.ts"
+      - "src/lib/tunnel/services.identity-signal.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-tunnel-process-identity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-process-identity:
+    name: Native Windows tunnel stop test
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Prepare managed inference catalog for source imports
+        run: npm run catalog:compile
+
+      - name: Compile shared OpenShell boundaries for source imports
+        run: npm run build:policy-boundary
+
+      - name: Verify Windows process identity and stop behavior
+        run: npx vitest run --project cli src/lib/tunnel/services.identity-signal.test.ts

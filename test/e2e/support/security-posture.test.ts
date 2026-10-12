@@ -1110,7 +1110,7 @@ describe("security posture fixture", () => {
             capAmb: ZERO_CAPABILITIES,
           },
         },
-        configureGuard: true,
+        configurationBoundary: true,
         hostNonRoot: true,
         rcFilesMutable: true,
         runtimeProxyEnvLocked: true,
@@ -1137,6 +1137,13 @@ describe("security posture fixture", () => {
         },
       );
       expect(execShell).toHaveBeenCalledTimes(5);
+      const sandboxScripts = execShell.mock.calls.map((call) => String(call[1]));
+      expect(sandboxScripts.some((script) => script.includes("openclaw config validate"))).toBe(
+        true,
+      );
+      expect(
+        sandboxScripts.some((script) => script.includes("cannot modify config inside the sandbox")),
+      ).toBe(false);
     },
   );
 

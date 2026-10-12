@@ -9,6 +9,8 @@
  *   cancellation.
  * - #7439: Ctrl+C at a hidden credential prompt printed resume guidance and
  *   then leaked the rejected prompt error as a raw Node.js stack trace.
+ * - #11039: Ctrl+C at agent selection drained the process before signal
+ *   delivery and returned success instead of the interrupt status.
  *
  * The tests use compiled artifacts (`dist/lib/...js`) to exercise the shipped
  * CLI path on the minimum supported Node.js runtime. They drive EOF through
@@ -130,6 +132,115 @@ runOnboardCommand({
         expect(output).not.toMatch(/store\.js:\d+/u);
       } finally {
         child.kill("SIGKILL");
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32").each(["key", "signal"] as const)(
+    "preserves %s interruption at agent selection in a real terminal (#11039)",
+    { timeout: 30000 },
+    (mode) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-interrupt-"));
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { mode: 0o700 });
+      // No Docker or OpenShell operation can reach the host during this prompt test.
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+      fs.writeFileSync(path.join(localBin, "openshell"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+      const env = {
+        HOME: home,
+        XDG_CONFIG_HOME: path.join(home, "config"),
+        TMPDIR: home,
+        PATH: `${localBin}${path.delimiter}${process.env.PATH ?? ""}`,
+        TERM: "xterm-256color",
+        NEMOCLAW_GATEWAY_PORT: "18808",
+        NODE_NO_WARNINGS: "1",
+      };
+      const noticePath = path.join(REPO_ROOT, "dist/lib/onboard/usage-notice.js");
+      const ptyRunner = `
+import os, pty, select, signal, sys, termios, time
+
+def interrupted(signum, frame):
+    raise TimeoutError("PTY supervisor interrupted")
+
+signal.signal(signal.SIGTERM, interrupted)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execve(sys.argv[2], [sys.argv[2], sys.argv[3], "onboard", "--name", "cancel-probe"], os.environ)
+
+output = bytearray()
+sent = False
+raw_mode = None
+status = None
+deadline = time.monotonic() + 15
+os.set_blocking(fd, False)
+try:
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if ready:
+            try:
+                output.extend(os.read(fd, 8192))
+            except (BlockingIOError, OSError):
+                pass
+        if not sent and b"Choose [1]:" in output:
+            raw_mode = not bool(termios.tcgetattr(fd)[3] & termios.ISIG)
+            if sys.argv[1] == "key":
+                os.write(fd, b"\\x03")
+            else:
+                os.kill(pid, signal.SIGINT)
+            sent = True
+        waited, child_status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            status = child_status
+            break
+finally:
+    if status is None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.waitpid(pid, 0)
+    try:
+        while True:
+            chunk = os.read(fd, 8192)
+            if not chunk:
+                break
+            output.extend(chunk)
+    except (BlockingIOError, OSError):
+        pass
+    os.close(fd)
+
+sys.stdout.buffer.write(output)
+print("\\nPTY_CHILD_REAPED")
+print("PTY_INTERRUPT_SENT=" + str(sent))
+print("PTY_RAW_MODE=" + str(raw_mode))
+code = os.waitstatus_to_exitcode(status) if status is not None else 124
+sys.exit(128 - code if code < 0 else code)
+`;
+      try {
+        const consent = spawnSync(
+          process.execPath,
+          [
+            "-e",
+            `const notice = require(${JSON.stringify(noticePath)}); notice.saveUsageNoticeAcceptance(notice.loadUsageNoticeConfig().version);`,
+          ],
+          { env, encoding: "utf8", timeout: 10000 },
+        );
+        expect(consent.status, consent.stderr).toBe(0);
+        const result = spawnSync(
+          "python3",
+          ["-c", ptyRunner, mode, process.execPath, path.join(REPO_ROOT, "bin/nemoclaw.js")],
+          { env, encoding: "utf8", timeout: 20000 },
+        );
+        const output = `${result.stdout}${result.stderr}`;
+        expect(result.status, output).toBe(130);
+        expect(output).toContain("Select your agent:");
+        expect(output).toContain("PTY_INTERRUPT_SENT=True");
+        expect(output).toContain("PTY_RAW_MODE=True");
+        expect(output).toContain("PTY_CHILD_REAPED");
+        expect(output).not.toContain("Error: Prompt interrupted");
+        expect(output).not.toMatch(/store\.js:\d+/u);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
       }
     },
   );

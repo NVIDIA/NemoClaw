@@ -813,6 +813,7 @@ export function createProductionGatewayReadinessDependencies(
           gatewayName,
           gatewayPort,
           expectedEndpoint: `https://${observeGatewayHostRuntime().grpcHost}:${String(gatewayPort)}`,
+          runtimeSocketPath: observeGatewayHostRuntime().socketPath,
           managedGatewayEndpoints,
           portAvailable: portCheck.ok,
           installedOpenShellVersion: getInstalledOpenShellVersion(),

@@ -11,7 +11,6 @@ export {
   captureOpenshellCommandAsyncResult,
   captureSandboxSshConfigCommand,
   classifyManagedGatewayEndpointBinding,
-  getInstalledOpenshellVersion,
   runOpenshellCommand,
 } from "./client";
 export {

@@ -9,7 +9,7 @@ import {
   type OpenShellCommandSpawner,
 } from "../../adapters/openshell/sandbox-command-cli";
 import type { OpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command";
-import { execSandbox, type SandboxExecCleanupDeps } from "./exec";
+import { execSandbox } from "./exec";
 
 function commandExecutor(options: {
   run?: OpenShellSandboxCommandExecutor["runStreaming"];
@@ -25,16 +25,6 @@ function commandExecutor(options: {
       })),
   };
 }
-
-const cleanupSkipped: SandboxExecCleanupDeps = {
-  getSandbox: () => null,
-  inspectMutableConfigPerms: (() => {
-    throw new Error("cleanup should be skipped");
-  }) as unknown as SandboxExecCleanupDeps["inspectMutableConfigPerms"],
-  repairMutableConfigPerms: (() => {
-    throw new Error("cleanup should be skipped");
-  }) as unknown as SandboxExecCleanupDeps["repairMutableConfigPerms"],
-};
 
 describe("execSandbox gateway targeting", () => {
   afterEach(() => {
@@ -65,7 +55,6 @@ describe("execSandbox gateway targeting", () => {
         {
           selectGateway,
           commandExecutor: commandExecutor({ run }),
-          cleanupDeps: cleanupSkipped,
           policyHint: {
             now: () => 0,
             env: {},
@@ -120,7 +109,6 @@ describe("execSandbox gateway targeting", () => {
         {
           selectGateway,
           commandExecutor: commandExecutor({ probe: probeWorkdir, run }),
-          cleanupDeps: cleanupSkipped,
           policyHint: {
             now: () => 0,
             env: {},
@@ -187,7 +175,6 @@ describe("execSandbox gateway targeting", () => {
             gatewayName: "nemoclaw-8091",
           }),
           commandExecutor: executor,
-          cleanupDeps: cleanupSkipped,
           policyHint: {
             now: () => 0,
             env: {},
@@ -251,7 +238,6 @@ describe("execSandbox gateway targeting", () => {
         {
           selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
           commandExecutor: executor,
-          cleanupDeps: cleanupSkipped,
         },
       ),
     ).rejects.toThrow("__exit_1__");
@@ -318,7 +304,6 @@ describe("execSandbox gateway targeting", () => {
               release: () => {},
             }),
           }),
-          cleanupDeps: cleanupSkipped,
           policyHint: {
             now: () => 0,
             env: {},
@@ -364,7 +349,6 @@ describe("execSandbox gateway targeting", () => {
         {
           selectGateway,
           commandExecutor: commandExecutor({ probe: probeWorkdir, run }),
-          cleanupDeps: cleanupSkipped,
         },
       ),
     ).rejects.toThrow("__exit_1__");

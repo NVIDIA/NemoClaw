@@ -17,12 +17,12 @@
   },
   "provider": {
     "handleNimLocalSelection": 36,
-    "handleRemoteProviderSelection": 82,
+    "handleRemoteProviderSelection": 81,
     "handleRemoteProviderSelection.providerExistsInGateway": 1,
     "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
     "handleVllmSelection.queryVllmModels": 1,
     "preflightAuthoritativeRebuildTarget": 1,
-    "runOnboard": 8,
+    "runOnboard": 7,
     "runOnboard.providerInference.deps.needsBedrockRuntimeAdapter": 1,
     "selectAndValidateOllamaModel": 19
   }

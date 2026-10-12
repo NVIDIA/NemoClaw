@@ -54,12 +54,17 @@ type MessagingHostForwardModule = typeof import("../../onboard/messaging-host-fo
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  resolveConfigRuntimeSelection(sandboxName: string) {
+    const runtime =
+      require("./mcp-bridge-provider-inspection") as typeof import("./mcp-bridge-provider-inspection");
+    return runtime.resolveSandboxConfigRuntimeSelection(sandboxName);
+  },
   createMessagingHostForwardPreEnableHookRegistry() {
     const messagingHostForward =
       require("../../onboard/messaging-host-forward") as MessagingHostForwardModule;
     return messagingHostForward.createMessagingHostForwardPreEnableHookRegistry();
   },
-  /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
+  /** Select provider-owned stopped-state cleanup before native command execution. */
   clearStoppedSandboxStateRoots(
     sandboxName: string,
     paths: readonly string[],

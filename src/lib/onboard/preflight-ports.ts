@@ -6,6 +6,32 @@ import {
   HERMES_API_PORT_RANGE_START,
   isHermesApiPort,
 } from "../core/ports";
+import type { OpenShellForwardPortObserver } from "./dashboard-port";
+
+/** Admit only the requested sandbox's registered, currently owned dashboard forward. */
+export async function isRegisteredDashboardForwardOwned(
+  sandboxName: string | null,
+  port: number,
+  deps: {
+    getSandbox(name: string): { dashboardPort?: number | null } | null;
+    createForwardPortObserver(name: string): OpenShellForwardPortObserver;
+  },
+): Promise<boolean> {
+  if (!sandboxName || deps.getSandbox(sandboxName)?.dashboardPort !== port) return false;
+  try {
+    const observations = await deps.createForwardPortObserver(sandboxName)([port]);
+    const observation = observations[0];
+    return (
+      observations.length === 1 &&
+      observation?.state === "owned" &&
+      observation.forward.sandboxName === sandboxName &&
+      observation.forward.port === port &&
+      deps.getSandbox(sandboxName)?.dashboardPort === port
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** Agent-neutral rejection when a Hermes API port is requested as a dashboard port; shared by both #4984 guards. */
 export function reservedHermesDashboardPortMessage(port: number): string {

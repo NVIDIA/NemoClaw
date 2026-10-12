@@ -54,7 +54,7 @@ function createFixture(): {
   const logs: string[] = [];
   return {
     deps: {
-      commandExists: (command) => command === "openshell",
+      commandExists: (command) => command === "openshell" || command === "docker",
       env: { HOME: home } as NodeJS.ProcessEnv,
       error: (line) => errors.push(line),
       existsSync: (target) => target.startsWith(home) && fs.existsSync(target),

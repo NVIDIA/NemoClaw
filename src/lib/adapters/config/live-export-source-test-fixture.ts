@@ -6,6 +6,11 @@ import { vi } from "vitest";
 
 import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
+import {
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+  NVIDIA_HOSTED_NATIVE_PROVIDER,
+} from "../../inference/native-nvidia/contract";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -22,11 +27,11 @@ export const startupInput = {
     routeProvider: "inference",
     upstreamProvider: "nvidia-prod",
     model: "model-a",
-    routedBaseUrl: "https://inference.local/v1",
+    routedBaseUrl: endpoint,
     upstreamEndpointUrl: null,
     api: "openai-completions",
     primaryModelRef: "inference/model-a",
-    compatibility: {},
+    compatibility: { supportsStore: false },
   },
   dashboard: {
     agent: "openclaw",
@@ -244,8 +249,124 @@ export function openAiProviderProfile() {
   };
 }
 
-export function nativeNvidiaProvider() {
-  return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
+type NativeNvidiaProviderFixture = Record<string, unknown> & {
+  metadata: Record<string, unknown>;
+  type: string;
+  profileWorkspace: string;
+  credentials: Record<string, unknown>;
+  config: Record<string, unknown>;
+};
+
+export function nativeNvidiaProvider(): NativeNvidiaProviderFixture {
+  return {
+    ...provider().provider,
+    metadata: {
+      ...provider().provider.metadata,
+      id: "native-provider-id",
+      name: NVIDIA_HOSTED_NATIVE_PROVIDER,
+    },
+    type: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+    profileWorkspace: "default",
+    credentials: { [NVIDIA_HOSTED_CREDENTIAL_ENV]: readFailureCanary },
+    config: {},
+  };
+}
+
+export function legacySharedNvidiaProvider(): NativeNvidiaProviderFixture {
+  return {
+    ...provider().provider,
+    type: "nvidia",
+    profileWorkspace: "",
+    config: {},
+  };
+}
+
+export function nativeNvidiaEntry(): SandboxEntry {
+  return {
+    ...entry,
+    nativeNvidiaProviderAttachment: {
+      schemaVersion: 1,
+      profileId: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+      providerName: NVIDIA_HOSTED_NATIVE_PROVIDER,
+      providerId: "native-provider-id",
+    },
+  };
+}
+
+const emptyNativeAllow: Readonly<Record<string, unknown>> = {
+  command: "",
+  query: {},
+  operationType: "",
+  operationName: "",
+  fields: [],
+  params: {},
+};
+
+function nativeNvidiaEndpoint(): Record<string, unknown> {
+  return {
+    host: "integrate.api.nvidia.com",
+    port: 443,
+    ports: [],
+    protocol: "rest",
+    tls: "",
+    enforcement: "enforce",
+    access: "",
+    rules: [
+      { allow: { ...emptyNativeAllow, method: "GET", path: "/v1/models" } },
+      {
+        allow: {
+          ...emptyNativeAllow,
+          method: "POST",
+          path: "/v1/chat/completions",
+        },
+      },
+    ],
+    allowedIps: [],
+    denyRules: [],
+    allowEncodedSlash: false,
+    persistedQueries: "",
+    graphqlPersistedQueries: {},
+    graphqlMaxBodyBytes: 0,
+    path: "",
+    websocketCredentialRewrite: false,
+    requestBodyCredentialRewrite: false,
+    advisorProposed: false,
+    credentialSigning: "",
+    signingService: "",
+    signingRegion: "",
+    jsonRpcMaxBodyBytes: 0,
+  };
+}
+
+export function nativeNvidiaProfile(): Record<string, unknown> {
+  return {
+    id: NVIDIA_HOSTED_NATIVE_PROFILE_ID,
+    source: "user",
+    scope: "workspace",
+    resourceVersion: 5n,
+    inferenceCapable: true,
+    credentials: [
+      {
+        name: "api_key",
+        envVars: [NVIDIA_HOSTED_CREDENTIAL_ENV],
+        required: true,
+        authStyle: "bearer",
+        headerName: "authorization",
+        queryParam: "",
+        pathTemplate: "",
+      },
+    ],
+    endpoints: [nativeNvidiaEndpoint()],
+    binaries: [
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/opt/hermes/.venv/bin/python",
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/venv/bin/python3",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ].map((path) => ({ path })),
+  };
 }
 
 export function braveProvider() {

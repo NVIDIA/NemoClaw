@@ -12,11 +12,65 @@ import {
   mode,
   overwriteThroughOldFd,
   readTextFileSnapshot,
+  RUNTIME_CONFIG_GUARD,
   runGuard,
   strictHashIsValid,
 } from "../../helpers/hermes-restart-config-seal-fixture";
 
 describe.skipIf(process.platform === "win32")("Hermes restart config recovery", () => {
+  it("retires the orphan marker before returning directory ownership without DAC_OVERRIDE", () => {
+    const fixture = createRestartFixture();
+    try {
+      const sealed = runGuard("seal-restart", fixture);
+      expect(sealed.status, sealed.stderr).toBe(0);
+      // Emulate Podman's missing DAC_OVERRIDE at the unlink boundary. All
+      // path, inode, hash, marker, and rollback operations use the real guard.
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          String.raw`
+import errno, json, os, runpy, stat, sys
+guard = runpy.run_path(sys.argv[1])
+state_file = sys.argv[2]
+with open(state_file) as stream:
+    state = json.load(stream)
+state["hermes"]["uid"] = os.geteuid() + 1
+with open(state_file, "w") as stream:
+    json.dump(state, stream)
+owners = {}
+real_chown, real_unlink = os.fchown, os.unlink
+def restricted_chown(fd, uid, gid):
+    owners[os.fstat(fd).st_ino] = uid
+    if uid == os.geteuid():
+        real_chown(fd, uid, gid)
+def restricted_unlink(name, *, dir_fd=None):
+    if name == guard["RESTART_ORPHAN_MARKER_NAME"]:
+        metadata = os.fstat(dir_fd)
+        if owners.get(metadata.st_ino, metadata.st_uid) != os.geteuid():
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), name)
+        assert stat.S_IMODE(os.stat(state["hermes_dir"] + "/..").st_mode) == 0o755
+    return real_unlink(name, dir_fd=dir_fd)
+os.fchown, os.unlink = restricted_chown, restricted_unlink
+guard["_restore_restart_seal"](state_file, verify_hash=True)
+`,
+          RUNTIME_CONFIG_GUARD,
+          fixture.statePath,
+        ],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(fixture.statePath)).toBe(false);
+      expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
+        false,
+      );
+      expect(strictHashIsValid(fixture)).toBe(true);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("restores parent traversal permissions when peer setup fails", () => {
     const fixture = createRestartFixture();
     const isolatedParent = fs.mkdtempSync(path.join(path.dirname(fixture.root), "peer-setup-"));

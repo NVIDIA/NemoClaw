@@ -52,7 +52,7 @@ describe("portable lifecycle timing recorder", () => {
 
     expect(lines).toEqual([
       "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=reused gatewayAction=reused ollamaAction=not-applicable ollamaAttempts=0 execAttempts=0 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=0 gatewayNotReady=0 gatewayTimeouts=0 gatewayErrors=0 result=already-running",
-      "  Portable OpenClaw gateway startup timing: launchToEntry=0ms entrySetup=0ms configIntegrity=0ms providerModelCors=0ms tokenPlaceholderHash=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=not-applicable",
+      "  Portable OpenClaw gateway startup timing: launchToEntry=0ms entrySetup=0ms providerModelCors=0ms providerPlaceholdersGatewayToken=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=not-applicable",
     ]);
   });
 
@@ -100,7 +100,7 @@ describe("portable lifecycle timing recorder", () => {
       "  Portable lifecycle timing: authority=7ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=20ms containerAction=started gatewayAction=started ollamaAction=started ollamaAttempts=2 execAttempts=4 execNotReady=1 execTimeouts=1 execErrors=1 gatewayAttempts=4 gatewayNotReady=1 gatewayTimeouts=1 gatewayErrors=1 result=recovered",
     );
     expect(lines[1]).toBe(
-      "  Portable OpenClaw gateway startup timing: launchToEntry=0ms entrySetup=0ms configIntegrity=0ms providerModelCors=0ms tokenPlaceholderHash=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=not-applicable",
+      "  Portable OpenClaw gateway startup timing: launchToEntry=0ms entrySetup=0ms providerModelCors=0ms providerPlaceholdersGatewayToken=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=not-applicable",
     );
   });
 
@@ -135,15 +135,14 @@ describe("portable lifecycle timing recorder", () => {
 
     const line = gatewayTimingLines(lines)[0];
     expect(line).toBe(
-      "  Portable OpenClaw gateway startup timing: launchToEntry=10ms entrySetup=10ms configIntegrity=15ms providerModelCors=11ms tokenPlaceholderHash=13ms messagingChannelsPreloadsScan=21ms workspaceAuthTemp=20ms gatewaySpawn=10ms spawnToFirstHealth=2000ms launchToFirstHealth=2110ms probe=60ms sleep=1000ms firstReadyAttempt=1 lastFailure=none diagnosticRead=20ms diagnosticReadOutcome=recorded",
+      "  Portable OpenClaw gateway startup timing: launchToEntry=10ms entrySetup=10ms providerModelCors=26ms providerPlaceholdersGatewayToken=13ms messagingChannelsPreloadsScan=21ms workspaceAuthTemp=20ms gatewaySpawn=10ms spawnToFirstHealth=2000ms launchToFirstHealth=2110ms probe=60ms sleep=1000ms firstReadyAttempt=1 lastFailure=none diagnosticRead=20ms diagnosticReadOutcome=recorded",
     );
 
     const nonOverlappingPhases = [
       "launchToEntry",
       "entrySetup",
-      "configIntegrity",
       "providerModelCors",
-      "tokenPlaceholderHash",
+      "providerPlaceholdersGatewayToken",
       "messagingChannelsPreloadsScan",
       "workspaceAuthTemp",
       "gatewaySpawn",

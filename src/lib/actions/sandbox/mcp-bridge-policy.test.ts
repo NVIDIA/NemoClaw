@@ -14,6 +14,7 @@ import {
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
   removeGeneratedPolicy,
+  refreshMcpPublicPolicyPins,
 } from "./mcp-bridge-policy";
 import { buildCredentialResolutionProbeCommand } from "./mcp-bridge-resolution-probe";
 import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
@@ -36,6 +37,146 @@ const runtimeSelection = {
 beforeEach(() => vi.restoreAllMocks());
 
 describe("generated MCP policy", () => {
+  it("refreshes only live public pins and preserves operator policy with its concurrency context (#10464)", async () => {
+    const policy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "github",
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        ["delete_*"],
+      ),
+    );
+    policy.filesystem_policy = { read_only: ["/usr"], read_write: ["/sandbox"] };
+    policy.network_policies.metrics = { endpoints: [{ host: "metrics.example", port: 443 }] };
+    policy.network_policies.mcp_bridge_github.endpoints[0].rules = [{ method: "tools/list" }];
+    const context = {
+      gatewayName: runtimeSelection.gatewayName,
+      basePolicyDocument: YAML.stringify(policy),
+      runtimeSelection,
+    } as policies.PolicyMutationContext;
+    vi.spyOn(policies, "inspectPolicyMutationContext").mockResolvedValue(context);
+    const set = vi.spyOn(policies, "setPolicyDocument").mockResolvedValue(true);
+
+    await refreshMcpPublicPolicyPins("alpha", entry, { addresses: ["1.1.1.1"] }, runtimeSelection);
+
+    const expected = structuredClone(policy);
+    expected.network_policies.mcp_bridge_github.endpoints[0].allowed_ips = ["1.1.1.1"];
+    expect(YAML.parse(set.mock.calls[0][1])).toEqual(expected);
+    expect(set.mock.calls[0][2]?.context).toBe(context);
+    expect(YAML.parse(context.basePolicyDocument)).toEqual(policy);
+  });
+
+  it.each([
+    ["URL", { host: "changed.example" }],
+    ["pins", { allowed_ips: ["9.9.9.9"] }],
+    ["credential binding", { credential_binding: { provider: "other-provider" } }],
+  ])("refuses a changed live %s before public-pin writes (#10464)", async (_name, changed) => {
+    const policy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "github",
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    );
+    Object.assign(policy.network_policies.mcp_bridge_github.endpoints[0], changed);
+    vi.spyOn(policies, "inspectPolicyMutationContext").mockResolvedValue({
+      basePolicyDocument: YAML.stringify(policy),
+      gatewayName: runtimeSelection.gatewayName,
+    } as policies.PolicyMutationContext);
+    const set = vi.spyOn(policies, "setPolicyDocument").mockResolvedValue(true);
+    await expect(
+      refreshMcpPublicPolicyPins("alpha", entry, { addresses: ["1.1.1.1"] }, runtimeSelection),
+    ).rejects.toThrow(/changed during public-pin refresh/);
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("reports an unconfirmed public-pin write without claiming rollback (#10464)", async () => {
+    vi.spyOn(policies, "inspectPolicyMutationContext").mockResolvedValue({
+      gatewayName: runtimeSelection.gatewayName,
+      basePolicyDocument: buildMcpBridgePolicyYaml(
+        "github",
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    } as policies.PolicyMutationContext);
+    const set = vi.spyOn(policies, "setPolicyDocument").mockResolvedValue(false);
+    await expect(
+      refreshMcpPublicPolicyPins("alpha", entry, { addresses: ["1.1.1.1"] }, runtimeSelection),
+    ).rejects.toThrow(/not confirmed.*Inspect mcp status/);
+    expect(set).toHaveBeenCalledOnce();
+  });
+
+  it("keeps equivalent operator-ordered public pins without a policy write (#10464)", async () => {
+    const pins = ["8.8.8.8", "1.1.1.1"];
+    const policy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "github",
+        entry.url,
+        "openclaw-config",
+        { addresses: [...pins].sort() },
+        "mcp-github",
+      ),
+    );
+    policy.network_policies.mcp_bridge_github.endpoints[0].allowed_ips = pins;
+    vi.spyOn(policies, "inspectPolicyMutationContext").mockResolvedValue({
+      gatewayName: runtimeSelection.gatewayName,
+      basePolicyDocument: YAML.stringify(policy),
+    } as policies.PolicyMutationContext);
+    const set = vi.spyOn(policies, "setPolicyDocument").mockResolvedValue(true);
+    await refreshMcpPublicPolicyPins(
+      "alpha",
+      { ...entry, allowedIps: pins },
+      { addresses: ["1.1.1.1", "8.8.8.8"] },
+      runtimeSelection,
+    );
+    expect(set).not.toHaveBeenCalled();
+    expect(pins).toEqual(["8.8.8.8", "1.1.1.1"]);
+  });
+
+  it.each([{ pins: [] }, { pins: ["8.8.8.0/24"] }, { pins: ["10.20.30.40"] }])(
+    "refuses non-public or non-exact existing pins $pins (#10464)",
+    async ({ pins }) => {
+      const inspect = vi.spyOn(policies, "inspectPolicyMutationContext");
+      await expect(
+        refreshMcpPublicPolicyPins(
+          "alpha",
+          { ...entry, allowedIps: pins },
+          { addresses: ["1.1.1.1"] },
+          runtimeSelection,
+        ),
+      ).rejects.toThrow();
+      expect(inspect).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([0, 2])("refuses %i live MCP endpoints before pin writes (#10464)", async (count) => {
+    const policy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "github",
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    );
+    const route = policy.network_policies.mcp_bridge_github;
+    route.endpoints = Array.from({ length: count }, () => structuredClone(route.endpoints[0]));
+    vi.spyOn(policies, "inspectPolicyMutationContext").mockResolvedValue({
+      basePolicyDocument: YAML.stringify(policy),
+    } as policies.PolicyMutationContext);
+    const set = vi.spyOn(policies, "setPolicyDocument");
+    await expect(
+      refreshMcpPublicPolicyPins("alpha", entry, { addresses: ["1.1.1.1"] }, runtimeSelection),
+    ).rejects.toThrow(/one unambiguous live MCP policy endpoint/);
+    expect(set).not.toHaveBeenCalled();
+  });
+
   it("renders denied tool names and globs as tools/call deny rules (#11115)", () => {
     const parsed = YAML.parse(
       buildMcpBridgePolicyYaml(

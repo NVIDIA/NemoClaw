@@ -720,7 +720,7 @@ function normalizeSortedUniqueTrimmedStringList(values) {
   return [...new Set((values ?? []).map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean))].sort();
 }
 function resolvePairedAccessScopes(device) { return device?.scopes ?? []; }
-function shouldAttemptInlineApproval(input) {
+function resolvePairingOutcome(input) {
   const {
     authMethod,
     connectParams,
@@ -734,7 +734,7 @@ function shouldAttemptInlineApproval(input) {
     trustedProxyApprovalScopes,
   } = input;
       const inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;
-  return inlineApprovalAttempted;
+  return inlineApprovalAttempted ? "approved" : "pending";
 }
 `);
 }

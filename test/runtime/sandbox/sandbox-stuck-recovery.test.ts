@@ -70,6 +70,9 @@ if (args[0] === "sandbox" && args[1] === "list") {
 }
 
 if (args[0] === "sandbox" && args[1] === "exec") {
+  if (args.some((arg) => arg.includes("__NEMOCLAW_SANDBOX_EXEC_STARTED__"))) {
+    process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n");
+  }
   process.stdout.write("OK 200\\n");
   process.exit(0);
 }

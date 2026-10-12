@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  MIN_PROBE_REPLY_TOKENS,
-  resolveMaxTokensField,
-  resolveProbeReplyTokens,
-} from "./max-tokens-field";
+import { resolveMaxTokensField, resolveProbeReplyTokens } from "./max-tokens-field";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 
 export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY = "nvidia.endpoint-validation.standard/v1";
@@ -72,7 +68,9 @@ export function getChatCompletionsProbePayload(
   options: { useNvidiaEndpointProbePayload?: boolean; replyBudget?: number } = {},
 ): Record<string, unknown> {
   const maxTokensField = resolveMaxTokensField(model);
-  const defaultReplyBudget = options.replyBudget ?? MIN_PROBE_REPLY_TOKENS;
+  const defaultReplyBudget =
+    options.replyBudget ??
+    resolveProbeReplyTokens(options.useNvidiaEndpointProbePayload ? "nvidia-prod" : null, model);
   const payload = {
     model,
     messages: [{ role: "user", content: "Reply with exactly: OK" }],

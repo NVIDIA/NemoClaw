@@ -8,7 +8,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { validateHermesGpuStartupWorkflowBoundary } from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
+import {
+  validateHermesGpuStartupWorkflow,
+  validateHermesGpuStartupWorkflowBoundary,
+} from "../../../tools/e2e/hermes-gpu-startup-workflow-boundary.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
@@ -131,6 +134,43 @@ function withRestore(
 describe("Hermes GPU boundary", () => {
   it("accepts baseline", () => {
     expect(validateHermesGpuStartupWorkflowBoundary()).toEqual([]);
+  });
+
+  it.each([
+    [
+      "unconditional installation",
+      (job: Doc) => {
+        delete job.steps[0].if;
+      },
+    ],
+    [
+      "missing Podman configuration package",
+      (job: Doc) => {
+        job.steps[0].with.packages = job.steps[0].with.packages.replace(
+          "golang-github-containers-common ",
+          "",
+        );
+      },
+    ],
+    [
+      "unreviewed packages",
+      (job: Doc) => {
+        job.steps[0].with.packages = "curl";
+      },
+    ],
+    [
+      "installation after checkout",
+      (job: Doc) => {
+        job.steps.splice(1, 0, job.steps.shift());
+      },
+    ],
+  ] as const)("rejects %s of Podman host dependencies", (_label, mutate) => {
+    const workflow: Doc = readWorkflow();
+    mutate(workflow.jobs[GPU]);
+    const errors = validateHermesGpuStartupWorkflow(workflow);
+    expect(errors).toContain(
+      "hermes-gpu-startup must install reviewed Podman host dependencies before candidate checkout",
+    );
   });
 
   it("requires each GPU scenario to identify its evidence shard", () => {

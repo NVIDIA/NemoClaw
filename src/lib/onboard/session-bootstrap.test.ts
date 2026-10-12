@@ -643,6 +643,36 @@ describe("prepareOnboardSession", () => {
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
   });
 
+  it("explains how to recover when resume newly requests an external image", async () => {
+    const conflict: ResumeConfigConflict = {
+      field: "fromImage",
+      requested: `ghcr.io/example/openclaw@sha256:${"a".repeat(64)}`,
+      recorded: null,
+    };
+    const { deps } = createDeps(createSession(), {
+      getResumeConfigConflicts: vi.fn(() => [conflict]),
+    });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedFromImage: conflict.requested,
+          requestedSandboxName: null,
+          cannotPrompt: false,
+          nonInteractive: false,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Session was started without --from-image; resume without that flag or start a fresh onboarding session.",
+    );
+  });
+
   it("checks requested host mounts for resume conflict without overwriting recorded state", async () => {
     const recordedMount = {
       source: "/srv/project",

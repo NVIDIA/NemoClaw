@@ -40,6 +40,13 @@ describe("sandbox config formats", () => {
     });
   });
 
+  it("parses native OpenClaw JSON5 without weakening strict JSON parsing", () => {
+    const source = "{ // native comment\n model: { id: 'nemotron', }, }";
+
+    expect(parseConfig(source, "json5")).toEqual({ model: { id: "nemotron" } });
+    expect(() => parseConfig(source, "json")).toThrow("Invalid JSON configuration syntax.");
+  });
+
   it.each(["values = [1 #", "value = { nested = 1 #"])(
     "rejects an unfinished TOML structure ending in a comment: %s",
     (source) => {
