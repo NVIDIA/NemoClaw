@@ -162,13 +162,14 @@ fn remove_retained(docker: impl Fn() -> Command, uids: &[String]) -> Result<()> 
     }
 }
 
-/// Pull pinned images, build the agent and proxy images, write owned gateway
-/// documents, and return the environment the live-docker profile reads.
+/// Pull pinned images, build or load the agent and proxy images, write owned
+/// gateway documents, and return the environment the live-docker profile reads.
 fn prepare(
     pins: &Pins,
     platform: &str,
     bundle: &Path,
     inputs: &Path,
+    images: Option<&Path>,
     owned: &mut Owned,
 ) -> Result<Vec<(String, String)>> {
     if !platform.starts_with("linux_") {
@@ -193,34 +194,20 @@ fn prepare(
     let mut nonce = [0u8; 6];
     getrandom::fill(&mut nonce).map_err(|_| "cannot name the live-test images")?;
     let prefix = format!("nc-live-{}", nemoclaw_build::hex(&nonce));
-    let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
-    // Every test needs python3, sha256sum and node. Pi has them and is the
-    // smaller image, but is built only for ARM64; OpenClaw is built for both.
-    let (target, harness) = if platform == "linux_arm64" {
-        ("pi", "nvidia.fabric.pi")
-    } else {
-        ("openclaw", "nvidia.fabric.openclaw")
-    };
-    owned.images.push(format!("{prefix}:{target}"));
-    let status = Command::new(std::env::current_exe()?)
-        .args(["images", "build", "--platform", &docker_platform, target])
-        .env("IMAGE_PREFIX", &prefix)
-        .stdin(Stdio::null())
-        .status()?;
-    if !status.success() {
-        return Err(format!("cannot build the {target} agent image").into());
+    // Every test needs python3, sha256sum and node, which both agent images have.
+    let (target, harness) = live_images::agent(platform);
+    let names = live_images::names(platform);
+    match images {
+        Some(archive) => live_images::load(archive, &prefix, &names, &mut owned.images)?,
+        None => {
+            owned
+                .images
+                .extend(names.map(|name| format!("{prefix}:{name}")));
+            live_images::build_agent(platform, &prefix)?;
+            live_images::build_proxies(&prefix)?;
+        }
     }
     let agent = by_digest(&prefix, target)?;
-    // Two proxy images with distinct digests, for the image-change check.
-    for variant in ["a", "b"] {
-        let tag = format!("{prefix}:proxy-{variant}");
-        owned.images.push(tag.clone());
-        run(docker()
-            .args(["buildx", "build", "--load", "--quiet"])
-            .args(["-f", "image/ollama-proxy/Dockerfile", "--target", "runtime"])
-            .args(["--label", &format!("org.nemoclaw.test=proxy-{variant}")])
-            .args(["--tag", &tag, "."]))?;
-    }
 
     let used: Vec<String> = docker_output(&["network", "ls", "--quiet"])?
         .lines()
@@ -315,6 +302,8 @@ pub(super) fn run_live_docker(
     pins: &Pins,
     platform: &str,
     configure: &dyn Fn(&mut Command),
+    archive: Option<&Path>,
+    images: Option<&Path>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
@@ -327,7 +316,7 @@ pub(super) fn run_live_docker(
         images: Vec::new(),
         uids: Vec::new(),
     };
-    let environment = prepare(pins, platform, &bundle, inputs.path(), &mut owned)?;
+    let environment = prepare(pins, platform, &bundle, inputs.path(), images, &mut owned)?;
     let documents: Vec<String> = environment
         .iter()
         .find(|(key, _)| key == GATEWAY_DOCUMENTS)
@@ -348,10 +337,16 @@ pub(super) fn run_live_docker(
     let junit = Path::new("target").join("nextest").join(profile).join(file);
     let mut reports = Vec::new();
     let mut nextest = |filter: &str, document: Option<&str>| -> Result<()> {
-        let mut command = cargo();
-        configure(&mut command);
+        let mut command = match archive {
+            Some(archive) => archived(Step::LiveDocker, archive, configure)?,
+            None => {
+                let mut command = cargo();
+                configure(&mut command);
+                command.args(*args);
+                command
+            }
+        };
         command
-            .args(*args)
             .args(["-E", filter])
             .envs(shared.iter().map(|(key, value)| (key, value)));
         if let Some(document) = document {

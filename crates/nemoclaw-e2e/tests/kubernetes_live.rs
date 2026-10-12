@@ -341,8 +341,10 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
         .local_addr()
         .unwrap()
         .port();
-    let original =
-        Document::parse(include_bytes!("fixtures/config/local.yaml").as_slice()).unwrap();
+    let original = Document::parse(
+        include_bytes!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_slice(),
+    )
+    .unwrap();
     let mut value = serde_json::to_value(original).unwrap();
     value["metadata"]["uid"] = json!(owner);
     value["spec"]["gateway"] = json!({

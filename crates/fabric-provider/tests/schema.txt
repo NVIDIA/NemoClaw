@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The fabric provider's schema, rendered by nemoclaw-test-fixtures.
+# Regenerate it after an intended change:
+#   NEMOCLAW_REGENERATE_FIXTURES=1 cargo test -p fabric-provider --test schema
+# Lines starting with > quote descriptions; tf-provider's placeholder
+# description `empty` is omitted. Blocks are version 1 unless shown.
+
+provider fabric (version 0)
+  credential_env: string, optional
+    > Environment variable holding the bearer credential.
+  destroy: bool, optional
+    > Permit removing this provider's objects during explicit teardown.
+  endpoint: string, optional
+    > Gateway HTTP(S) origin.
+  tls_ca_env: string, optional
+    > Environment variable naming the CA certificate file.
+  tls_certificate_env: string, optional
+    > Environment variable naming the client certificate file.
+  tls_key_env: string, optional
+    > Environment variable naming the client key file.
+
+resource fabric_agent_configuration (version 0)
+  config_json: string, required
+  generation: string, required
+  id: string, computed
+  name: string, required
+  owner: string, required
+  running: string, computed
+  sandbox_id: string, required
+  workspace: string, required
+
+data fabric_capabilities (version 0)
+  architecture: string, optional
+  available: bool, computed
+  binaries_json: string, computed
+  compatibility_status: string, computed
+  config_json: string, optional
+  engine: string, required
+  filesystem_read: list(string), optional
+  image: string, required
+  metadata_env: string, optional
+  observation_json: string, computed
+  operating_system: string, optional
+  runtime_json: string, computed
+  status: string, computed
+
+data fabric_sandbox_readiness (version 0)
+  agent_name: string, required
+  agent_runtime: string, required
+  config_json: string, required
+  error_message: string, computed
+  generation: string, required
+  health_json: string, computed
+  id: string, required
+  name: string, required
+  owner: string, required
+  read_trigger: string, optional
+  ready: bool, computed
+  runtime_json: string, required
+  workspace: string, required

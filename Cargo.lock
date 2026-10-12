@@ -1058,6 +1058,7 @@ dependencies = [
  "nemoclaw-openshell",
  "nemoclaw-test-fixtures",
  "nemoclaw-tofu",
+ "openshell-core",
  "openshell-provider",
  "regex",
  "rustls",
@@ -1068,6 +1069,7 @@ dependencies = [
  "tf-provider",
  "tokio",
  "tokio-util",
+ "tonic",
 ]
 
 [[package]]
@@ -2524,6 +2526,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "toml 1.1.5+spec-1.1.0",
  "url",
  "zip",
 ]
@@ -2595,9 +2598,13 @@ name = "nemoclaw-e2e"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "bollard",
  "fabric-provider",
  "getrandom 0.4.3",
  "http",
+ "k8s-openapi",
+ "kube",
  "nemoclaw-openshell",
  "nemoclaw-provider",
  "nemoclaw-runtime",
@@ -2615,11 +2622,13 @@ dependencies = [
  "tar",
  "tempfile",
  "tf-provider",
+ "time",
  "tokio",
  "tokio-stream",
  "tonic",
  "tonic-prost",
  "tower",
+ "url",
 ]
 
 [[package]]
@@ -2780,7 +2789,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
- "bollard",
  "bollard-stubs",
  "getrandom 0.4.3",
  "interprocess",
@@ -2823,12 +2831,15 @@ name = "nemoclaw-test-fixtures"
 version = "0.1.0"
 dependencies = [
  "http",
+ "nemoclaw-openshell",
  "openshell-core",
  "prost",
  "rustls",
  "serde_json",
+ "similar",
  "tar",
  "tempfile",
+ "tf-provider",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -4608,6 +4619,15 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f66ca1f7aca2474dc10c942eb22feffc897735f54cd1db90138c2fddb490987"
+dependencies = [
+ "bstr",
+]
 
 [[package]]
 name = "slab"

@@ -13,9 +13,25 @@ pub struct Budget {
     pub test_seconds: u64,
 }
 
-/// Budgets by test step name, as `.config/test-budgets.yaml` records them.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-pub struct Budgets(BTreeMap<String, Budget>);
+/// A test binary's summed test time across a suite, which may run it in
+/// several partitions, and the limit for any one test in it.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryBudget {
+    pub summed_seconds: u64,
+    pub test_seconds: u64,
+}
+
+/// Budgets by test step name, and by test binary under `binaries`, as
+/// `.config/test-budgets.yaml` records them.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct Budgets {
+    /// Test binaries by nextest name, such as `openshell-provider::contract`.
+    #[serde(default)]
+    binaries: BTreeMap<String, BinaryBudget>,
+    #[serde(flatten)]
+    steps: BTreeMap<String, Budget>,
+}
 
 impl Budgets {
     /// Read budgets from YAML.
@@ -29,8 +45,36 @@ impl Budgets {
     /// The budget of the step named `step`.
     #[must_use]
     pub fn get(&self, step: &str) -> Option<Budget> {
-        self.0.get(step).copied()
+        self.steps.get(step).copied()
     }
+
+    /// The budget of the test binary named `binary`.
+    #[must_use]
+    pub fn binary(&self, binary: &str) -> Option<BinaryBudget> {
+        self.binaries.get(binary).copied()
+    }
+
+    /// Each budgeted test binary and its budget, by name.
+    pub fn binaries(&self) -> impl Iterator<Item = (&str, BinaryBudget)> {
+        self.binaries
+            .iter()
+            .map(|(binary, budget)| (binary.as_str(), *budget))
+    }
+
+    /// Whether any test binary has a budget.
+    #[must_use]
+    pub fn has_binaries(&self) -> bool {
+        !self.binaries.is_empty()
+    }
+}
+
+/// A timing report, and what in it exceeds its budgets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Timing {
+    /// Markdown.
+    pub report: String,
+    /// One line for each budget exceeded.
+    pub over: Vec<String>,
 }
 
 /// One test's result.
@@ -121,6 +165,58 @@ impl Run {
         report
     }
 
+    /// Each budgeted binary against its budget, as a Markdown table, and what
+    /// exceeds them: a binary's summed time, then each of its tests over the
+    /// limit, slowest first. Both are empty without binary budgets.
+    #[must_use]
+    pub fn binary_budgets(&self, budgets: &Budgets) -> Timing {
+        let mut timing = Timing::default();
+        if !budgets.has_binaries() {
+            return timing;
+        }
+        timing.report.push_str(
+            "| Binary | Tests | Summed | Budget | Slowest | Limit |\n|---|---|---|---|---|---|\n",
+        );
+        for (binary, budget) in &budgets.binaries {
+            let mut tests: Vec<_> = self
+                .tests
+                .iter()
+                .filter(|test| test.binary == *binary)
+                .collect();
+            tests.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
+            // An empty f64 sum is -0.0.
+            let summed = tests.iter().fold(0.0, |summed, test| summed + test.seconds);
+            let slowest = tests
+                .first()
+                .map_or_else(|| " ".to_owned(), |test| format!(" {:.1} s ", test.seconds));
+            let _ = writeln!(
+                timing.report,
+                "| {binary} | {} | {summed:.1} s | {} s |{slowest}| {} s |",
+                tests.len(),
+                budget.summed_seconds,
+                budget.test_seconds
+            );
+            if summed > budget.summed_seconds as f64 {
+                timing.over.push(format!(
+                    "{binary}: {summed:.1} s summed exceeds the {} s budget",
+                    budget.summed_seconds
+                ));
+            }
+            timing.over.extend(
+                tests
+                    .into_iter()
+                    .filter(|test| test.seconds > budget.test_seconds as f64)
+                    .map(|test| {
+                        format!(
+                            "{binary} {} took {:.1} s; the limit is {} s",
+                            test.name, test.seconds, budget.test_seconds
+                        )
+                    }),
+            );
+        }
+        timing
+    }
+
     fn summed_seconds(&self) -> f64 {
         self.tests.iter().map(|test| test.seconds).sum()
     }
@@ -205,7 +301,8 @@ pub fn join_consecutive(reports: &[String]) -> Result<String, String> {
 /// `lifecycle-PLATFORM-SHARD-ATTEMPT`, downloaded as subdirectories of
 /// `directory`. Each shard's latest attempt counts, and each of `shards` without
 /// a report is named. Partitions run in parallel on separate runners, so the
-/// suite's wall time is its slowest partition's.
+/// suite's wall time is its slowest partition's. Each binary with a budget in
+/// `budgets` is reported against it, with its tests from every partition.
 ///
 /// # Errors
 /// Returns an error when `directory` cannot be read or a partition's report
@@ -215,7 +312,8 @@ pub fn partitioned_report(
     platform: &str,
     shards: &[u32],
     rows: usize,
-) -> Result<String, String> {
+    budgets: &Budgets,
+) -> Result<Timing, String> {
     let step = super::Step::Lifecycle;
     let (_, file) = step
         .junit()
@@ -284,7 +382,15 @@ pub fn partitioned_report(
     ));
     report.push_str("\nPartitions run in parallel; the wall time is the slowest partition's.\n\n");
     report.push_str(&table);
+    let binaries = whole.binary_budgets(budgets);
+    if !binaries.report.is_empty() {
+        report.push_str("\nBudgeted binaries, with their tests from every partition:\n\n");
+        report.push_str(&binaries.report);
+    }
     report.push('\n');
     report.push_str(&whole.tables(rows));
-    Ok(report)
+    Ok(Timing {
+        report,
+        over: binaries.over,
+    })
 }

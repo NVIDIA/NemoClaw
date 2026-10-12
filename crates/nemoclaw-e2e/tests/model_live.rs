@@ -3,9 +3,7 @@
 #![cfg(target_os = "linux")]
 use nemoclaw_provider::docker::Engine;
 use nemoclaw_runtime::vllm::recipes::huggingface;
-use nemoclaw_sdk::{
-    CancellationToken, Deployment, config::Document, config::ServiceDefinition, managed::Spec,
-};
+use nemoclaw_sdk::{CancellationToken, Deployment, config::Document, config::ServiceDefinition};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -42,18 +40,24 @@ fn bindings(directory: &Path) -> BTreeMap<String, String> {
     }
     result
 }
-fn service(directory: &Path) -> (Spec, String) {
-    let intent: Value =
-        serde_json::from_slice(&fs::read(directory.join("intent.json")).unwrap()).unwrap();
-    let document: Document = serde_json::from_value(intent["document"].clone()).unwrap();
-    let generations = serde_json::from_value(intent["generations"].clone()).unwrap();
-    let targets = nemoclaw_sdk::compile::runtime_targets(&document, &generations).unwrap();
-    let target = targets
-        .iter()
-        .find(|target| target.kind == "inference_service")
-        .unwrap();
-    let spec = serde_json::from_str(&target.values["spec"]).unwrap();
-    (spec, bindings(directory)[&target.address].clone())
+/// The model service's container, as OpenTofu state records it.
+fn service_container(directory: &Path) -> String {
+    let containers: Vec<_> = bindings(directory)
+        .into_iter()
+        .filter(|(address, _)| address.starts_with("docker_container.inference_service_"))
+        .collect();
+    assert_eq!(containers.len(), 1, "one model service container");
+    containers[0].1.clone()
+}
+/// Whether the container runs, or None when it is gone.
+async fn running(engine: &Engine, container: &str) -> Option<bool> {
+    let observed = engine.container(container).await.unwrap()?;
+    Some(
+        observed
+            .state
+            .and_then(|state| state.running)
+            .unwrap_or(false),
+    )
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_LIVE_MODEL_CONFIG, NEMOCLAW_LIVE_MODEL_STATE, NEMOCLAW_TEST_BUNDLE; owns and destroys this experiment only"]
@@ -106,19 +110,24 @@ async fn exercise(fresh: bool) {
             .count(),
         1
     );
-    let (spec, id) = service(&directory);
-    let engine = Engine::connect(spec.engine()).unwrap();
-    let observed = engine.observe_service(&spec, &id).await.unwrap().unwrap();
+    // The service runs on its explicit placement, or on the managed gateway's engine.
+    let endpoint = desired.placement.as_ref().map_or_else(
+        || document.spec.gateway.as_managed().unwrap().engine.clone(),
+        |placement| placement.engine.clone(),
+    );
+    let engine = Engine::connect(&endpoint).unwrap();
+    let container = service_container(&directory);
+    assert_eq!(running(&engine, &container).await, Some(true));
     let model = format!("/data/{}", huggingface::directory(desired));
     let manifest_path = format!("{model}/.nemoclaw-manifest.json");
     let manifest = engine
-        .read_file(&observed.container_id, &manifest_path, 4 << 20)
+        .read_file(&container, &manifest_path, 4 << 20)
         .await
         .unwrap()
         .unwrap();
     assert!(
         engine
-            .stat_file(&observed.container_id, "/data/prepared")
+            .stat_file(&container, "/data/prepared")
             .await
             .unwrap()
             .is_none(),
@@ -153,7 +162,7 @@ async fn exercise(fresh: bool) {
     assert_eq!(bindings(&directory), before);
     assert_eq!(
         engine
-            .read_file(&observed.container_id, &manifest_path, 4 << 20)
+            .read_file(&container, &manifest_path, 4 << 20)
             .await
             .unwrap()
             .unwrap(),
@@ -162,20 +171,14 @@ async fn exercise(fresh: bool) {
     // Safe operator trip exercises the resident guard without exhausting memory.
     assert!(
         std::process::Command::new("docker")
-            .args(["kill", "--signal=USR1", &observed.container_id])
+            .args(["kill", "--signal=USR1", &container])
             .status()
             .unwrap()
             .success()
     );
     tokio::time::timeout(Duration::from_secs(45), async {
         loop {
-            if !engine
-                .observe_service(&spec, &id)
-                .await
-                .unwrap()
-                .unwrap()
-                .running
-            {
+            if running(&engine, &container).await != Some(true) {
                 break;
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -184,13 +187,9 @@ async fn exercise(fresh: bool) {
     .await
     .unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
-    assert!(
-        !engine
-            .observe_service(&spec, &id)
-            .await
-            .unwrap()
-            .unwrap()
-            .running,
+    assert_eq!(
+        running(&engine, &container).await,
+        Some(false),
         "automatic restart loop"
     );
     deployment.apply(&document, &cancel).await.unwrap();
@@ -204,11 +203,11 @@ async fn exercise(fresh: bool) {
             "durable identity changed: {address}"
         );
     }
-    let (spec, id) = service(&directory);
-    let observed = engine.observe_service(&spec, &id).await.unwrap().unwrap();
+    let container = service_container(&directory);
+    assert_eq!(running(&engine, &container).await, Some(true));
     assert_eq!(
         engine
-            .read_file(&observed.container_id, &manifest_path, 4 << 20)
+            .read_file(&container, &manifest_path, 4 << 20)
             .await
             .unwrap()
             .unwrap(),
@@ -216,13 +215,7 @@ async fn exercise(fresh: bool) {
     );
     deployment.destroy(&cancel).await.unwrap();
     // Destroy removes disposable compute while retaining durable storage bindings.
-    assert!(
-        engine
-            .container(&observed.container_id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(engine.container(&container).await.unwrap().is_none());
     let retained = bindings(&directory);
     assert_eq!(retained.len(), 3);
     for address in [

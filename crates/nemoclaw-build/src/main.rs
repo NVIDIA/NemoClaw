@@ -56,7 +56,7 @@ enum Action {
     Runtime {
         manifest: PathBuf,
     },
-    /// Run this platform's `CI / Native` steps, or one named step.
+    /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
     /// Build this command without default features (`cargo ci`), so it can
     /// install the pinned Protocol Buffers compiler before anything needs it.
@@ -64,12 +64,16 @@ enum Action {
         /// One step: tools, fmt, clippy, build, test, schema, bundle, or lifecycle;
         /// archive, live-docker, and live-kind run only when named.
         step: Option<String>,
-        /// Nextest partition for an explicitly selected lifecycle run (for example hash:1/2).
+        /// Nextest partition for an explicitly selected lifecycle run (for example slice:1/2).
         #[arg(long)]
         partition: Option<String>,
         /// Run lifecycle tests from a nextest archive instead of compiling them.
         #[arg(long)]
         archive_file: Option<PathBuf>,
+        /// Load the live suites' images from this `ci live-images` archive
+        /// instead of building them.
+        #[arg(long)]
+        images: Option<PathBuf>,
     },
     /// Build agent images with their installed Fabric metadata, or qualify them.
     Images {
@@ -87,7 +91,8 @@ enum Action {
         base: String,
     },
     /// Report a platform's whole lifecycle suite from its partitions' JUnit
-    /// artifacts, and add the report to the GitHub job summary.
+    /// artifacts, and add the report to the GitHub job summary. On the Linux
+    /// CI runners, fail when a test binary exceeds its budget.
     LifecycleTiming {
         /// Directory holding the downloaded lifecycle-PLATFORM-SHARD-ATTEMPT
         /// artifacts, one subdirectory each.
@@ -497,10 +502,7 @@ async fn main() -> Result<()> {
     {
         let shards: Vec<u32> = serde_json::from_str(shards)
             .map_err(|error| format!("--shards must be a JSON list of numbers: {error}"))?;
-        let report =
-            nemoclaw_build::ci::timing::partitioned_report(directory, platform, &shards, 15)?;
-        run_ci::publish(&report);
-        return Ok(());
+        return run_ci::report_lifecycle_suite(directory, platform, &shards);
     }
     if let Action::Changes { workflow, base } = &cli.command {
         let (workflow, name) = match workflow {
@@ -517,6 +519,7 @@ async fn main() -> Result<()> {
         step,
         partition,
         archive_file,
+        images,
     } = cli.command
     {
         return run_ci::run_steps(
@@ -524,6 +527,7 @@ async fn main() -> Result<()> {
             step.as_deref(),
             partition.as_deref(),
             archive_file.as_deref(),
+            images.as_deref(),
         )
         .await;
     }

@@ -163,6 +163,61 @@ fn fixture_bundle(directory: &Path) {
 }
 
 #[test]
+fn every_listed_file_is_verified_and_the_first_listed_failure_is_reported() {
+    let names: Vec<String> = {
+        let directory = tempfile::tempdir().unwrap();
+        fixture_bundle(directory.path());
+        Bundle::open(directory.path())
+            .unwrap()
+            .manifest
+            .files
+            .into_keys()
+            .collect()
+    };
+    assert!(names.len() > 2);
+    let failure = |directory: &Path| match Bundle::open(directory) {
+        Err(Error::Bundle(message)) => message,
+        other => panic!("expected a bundle error, got {other:?}"),
+    };
+    for name in &names {
+        let directory = tempfile::tempdir().unwrap();
+        fixture_bundle(directory.path());
+        fs::write(directory.path().join(name), b"tampered binary").unwrap();
+        assert_eq!(
+            failure(directory.path()),
+            "bundle file integrity check failed",
+            "{name}"
+        );
+        fs::remove_file(directory.path().join(name)).unwrap();
+        assert_eq!(
+            failure(directory.path()),
+            "bundle file is unavailable",
+            "{name}"
+        );
+        fs::create_dir(directory.path().join(name)).unwrap();
+        assert_eq!(
+            failure(directory.path()),
+            "bundle file integrity check failed",
+            "{name}"
+        );
+    }
+    // With several failures, the first file in manifest order decides the error.
+    let directory = tempfile::tempdir().unwrap();
+    fixture_bundle(directory.path());
+    fs::remove_file(directory.path().join(&names[0])).unwrap();
+    fs::write(directory.path().join(names.last().unwrap()), b"tampered").unwrap();
+    assert_eq!(failure(directory.path()), "bundle file is unavailable");
+    let directory = tempfile::tempdir().unwrap();
+    fixture_bundle(directory.path());
+    fs::write(directory.path().join(&names[0]), b"tampered").unwrap();
+    fs::remove_file(directory.path().join(names.last().unwrap())).unwrap();
+    assert_eq!(
+        failure(directory.path()),
+        "bundle file integrity check failed"
+    );
+}
+
+#[test]
 fn an_unchanged_bundle_is_hashed_once_and_any_written_file_is_hashed_again() {
     let directory = tempfile::tempdir().unwrap();
     fixture_bundle(directory.path());

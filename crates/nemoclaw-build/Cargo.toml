@@ -34,6 +34,8 @@ url.workspace = true
 determinator.workspace = true
 guppy.workspace = true
 quick-junit.workspace = true
+[dev-dependencies]
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 [build-dependencies]
 sha2.workspace = true
 [lints]

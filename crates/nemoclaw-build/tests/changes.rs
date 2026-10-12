@@ -86,7 +86,7 @@ impl Repo {
             (".config/determinator-live.toml", LIVE_RULES.to_owned()),
             (".config/nextest.toml", "\n".into()),
             (
-                ".github/workflows/native-platform.yml",
+                ".github/workflows/bundle-platform.yml",
                 "name: native\n".into(),
             ),
             ("examples/local.yaml", "kind: Deployment\n".into()),
@@ -302,7 +302,7 @@ fn live_build_packages_and_their_inputs_run_live_suites() {
         "examples/local.yaml",
         "versions.json",
         ".config/nextest.toml",
-        ".github/workflows/native-platform.yml",
+        ".github/workflows/bundle-platform.yml",
         ".github/workflows/rust.yml",
         "Makefile",
     ] {

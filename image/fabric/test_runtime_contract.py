@@ -12,7 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from fabric import RuntimeHost, client, parse_command
+from bridge_protocol import parse_command
+from fabric import RuntimeHost, client
 from nemo_fabric import Fabric, FabricConfigError, FabricRuntimeError
 
 CONFIG = {

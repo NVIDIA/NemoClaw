@@ -5,8 +5,9 @@
 
 NemoClaw projects deployment intent once into public Fabric configuration.
 Fabric discovers adapters, validates their settings and constraints, maps native configuration, and starts their runtimes.
-The shared [sandbox host](../../image/fabric/fabric.py) owns command parsing, transport, generation checks, and response envelopes.
+The shared [sandbox host](../../image/fabric/fabric.py) owns transport, generation checks, and the runtime lifecycle.
 Its image-installed [Fabric backend](../../image/fabric/backend.py) calls Fabric's public planner and runtime API; the host contains no adapter registry or native settings translation.
+Its [bridge protocol](../../image/fabric/bridge_protocol.py) owns command parsing, size limits, response envelopes, and response validation without importing Fabric.
 
 ## Responsibility Boundary
 
@@ -149,7 +150,8 @@ Deployment ownership, missing bindings, route drift and observation failures con
 
 ## Validation
 
-[Protocol tests](../../image/fabric/test_protocol.py) cover flags, response limits, generation conflicts, socket ownership, and bounded shutdown.
+[Protocol tests](../../image/fabric/test_protocol.py) cover flags and request limits without Fabric, so they also run in the dummy image.
+[Host tests](../../image/fabric/test_host.py) cover response limits, generation conflicts, socket ownership, and bounded shutdown.
 [Runtime contract tests](../../image/fabric/test_runtime_contract.py) cover configuration readback and installed Fabric invocation.
 [Reference tests](../../image/fabric/test_reference.py) exercise positive and failed health, lifecycle failures, validation, and concurrent observations.
 The [image command suite](../../image/test_agent_contract.py) exercises the same executable interface in the dummy and every production image.

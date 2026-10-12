@@ -615,7 +615,7 @@ Follow [bundle building](build.md) for matched CLI, SDK contract, provider, sche
 The NemoClaw, OpenShell, and Fabric providers use the same source-derived version to prevent stale reuse.
 The Docker and Helm providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
 
-[Schema tests](../crates/nemoclaw-provider/tests/schema.rs), [OpenShell provider schema tests](../crates/openshell-provider/tests/schema.rs), [Fabric provider schema tests](../crates/fabric-provider/tests/schema.rs), [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
+[Schema snapshots](contributing/testing.md#provider-schema-snapshots) of the NemoClaw, OpenShell, and Fabric providers, [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
 [Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.
 
 ## Direct OpenTofu Usage

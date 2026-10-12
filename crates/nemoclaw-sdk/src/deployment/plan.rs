@@ -565,6 +565,85 @@ mod native_helm_tests {
 }
 
 #[cfg(test)]
+mod kubernetes_replacement_tests {
+    use super::*;
+
+    /// A create that reported a later failure leaves a tainted object, so the
+    /// next OpenTofu plan proposes replacing it. `check_plan` must reject that
+    /// plan so that apply cannot delete the platform. The test calls the check
+    /// through the runtime stage's entry point, not the stage, and destroy
+    /// plans use `check_destroy_plan` instead.
+    #[test]
+    fn a_saved_plan_that_replaces_a_bound_kubernetes_platform_resource_is_rejected() {
+        let (document, generations) = super::super::tests::kubernetes_context();
+        let targets: Vec<_> = crate::compile::runtime_targets(&document, &generations)
+            .unwrap()
+            .into_iter()
+            .filter(|target| !target.address.starts_with("data."))
+            .collect();
+        for platform in [
+            "nemoclaw_kubernetes_storage.runtime",
+            "nemoclaw_kubernetes_auth.runtime",
+            "nemoclaw_kubernetes_gateway.runtime",
+        ] {
+            assert!(
+                targets.iter().any(|target| target.address == platform),
+                "{platform} is not a runtime target: {targets:?}"
+            );
+        }
+        let expected = allowed(&targets);
+        let before = |target: &Target| {
+            let mut values = serde_json::to_value(&target.values).unwrap();
+            values["id"] = json!(format!("physical-{}", target.kind));
+            values
+        };
+        let bindings: BTreeMap<String, StateBinding> = targets
+            .iter()
+            .map(|target| {
+                let binding = serde_json::from_value(before(target)).unwrap();
+                (target.address.clone(), binding)
+            })
+            .collect();
+        let planned = |replaced: Option<(&str, [&str; 2])>| -> Plan {
+            let changes: Vec<_> = targets
+                .iter()
+                .map(|target| {
+                    let actions = match replaced {
+                        Some((address, actions)) if address == target.address => actions.to_vec(),
+                        _ => vec!["no-op"],
+                    };
+                    json!({"mode":"managed", "address":target.address, "change":{
+                        "actions":actions, "before":before(target), "after":before(target)
+                    }})
+                })
+                .collect();
+            serde_json::from_value(json!({"resource_changes": changes})).unwrap()
+        };
+        let accepted = runtime::check_runtime_plan(&planned(None), &expected, &bindings);
+        assert!(
+            accepted.as_ref().is_ok_and(Vec::is_empty),
+            "a plan with no changes must be accepted: {accepted:?}"
+        );
+        for target in &targets {
+            for actions in [["delete", "create"], ["create", "delete"]] {
+                let plan = planned(Some((&target.address, actions)));
+                let result = runtime::check_runtime_plan(&plan, &expected, &bindings);
+                assert!(
+                    matches!(
+                        result,
+                        Err(Error::Conflict(
+                            "plan would remove, replace, or duplicate a resource"
+                        ))
+                    ),
+                    "{} {actions:?} must be rejected, got {result:?}",
+                    target.address
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) mod discovery_tests {
     use super::*;
     use crate::discovery::{
