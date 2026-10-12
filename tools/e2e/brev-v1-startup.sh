@@ -33,8 +33,8 @@ retry() {
 
 wait_for_apt() {
   local waited=0
-  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
-    || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+  while as_root fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+    || as_root fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
     if test "${waited}" -ge 180; then
       echo "apt locks remained busy for 180 seconds" >&2
       return 1
@@ -52,19 +52,19 @@ test -n "${login_user}"
 
 wait_for_apt
 retry 3 as_root apt-get update -qq
-retry 3 as_root apt-get install -y -qq \
+retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq \
   ca-certificates curl git jq rsync tar
 if ! command -v docker >/dev/null 2>&1; then
-  retry 3 as_root apt-get install -y -qq docker.io
+  retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq docker.io
 fi
 as_root systemctl enable --now docker
 as_root usermod -aG docker "${login_user}"
 
 if ! as_root docker buildx version >/dev/null 2>&1; then
   if apt-cache show docker-buildx-plugin >/dev/null 2>&1; then
-    retry 3 as_root apt-get install -y -qq docker-buildx-plugin
+    retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq docker-buildx-plugin
   elif apt-cache show docker-buildx >/dev/null 2>&1; then
-    retry 3 as_root apt-get install -y -qq docker-buildx
+    retry 3 as_root apt-get -o DPkg::Lock::Timeout=180 install -y -qq docker-buildx
   else
     echo "the Brev package repositories do not provide Docker Buildx" >&2
     exit 1
