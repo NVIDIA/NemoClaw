@@ -296,7 +296,7 @@ prepare_candidate_base() {
     verified_base="$(CHECKOUT_SHA="$revision" \
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT="$cohort" \
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM="$platform" \
-      node "$receipt_helper" verify "$prepared_base_layout" "$cache_from/${cache_name}-base-receipt.json" "$agent")"
+      node "$receipt_helper" verify-reusable "$prepared_base_layout" "$cache_from/${cache_name}-base-receipt.json" "$agent")"
     [[ "$verified_base" == "$prepared_base" ]] || {
       echo "ERROR: candidate base artifact does not match the prepared base reference" >&2
       exit 1
