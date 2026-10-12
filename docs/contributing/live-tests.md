@@ -297,7 +297,7 @@ The test checks managed runtime bindings as well as the hosted agent identity ac
 
 ## Docker Live Suite
 
-`cargo ci live-docker` builds the images and writes the owned inputs for the Ollama cache, runtime image, Docker provider, standalone cache, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
+`cargo ci live-docker` builds the images and writes the owned inputs for the Ollama cache, runtime image, Docker provider, standalone cache, dummy agent, and Docker gateway tests below, then runs them; see [Run each layer](testing.md#run-each-layer).
 To run one of them by hand, supply its inputs as its section describes.
 
 ## Model Cache Compatibility
@@ -384,6 +384,24 @@ Teardown sets the container count to zero while keeping both volume declarations
 The test removes only its labelled resources afterward and retains logs and state under its printed temporary path for diagnosis.
 The container's Python process simulates model reconstruction and a credential; it does not qualify the vLLM supervisor, GPU execution, model preparation, inference, or OpenShell deployment.
 
+
+## Dummy Agent Lifecycle
+
+nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
+The dummy reports native health without Fabric, a model, or credentials, so apply completes its readiness check.
+The test checks plan, a successful bundled-CLI apply with supported health, an invocation through the image's bridge, unchanged apply, export/reapply with the same runtime identity, and destroy retaining the workspace and gateway storage.
+It requests no inference and does not qualify a production adapter's health.
+
+Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, and `harness.kind: org.nemoclaw.dummy`:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+NEMOCLAW_TEST_DUMMY_DOCUMENT=/absolute/path/to/dummy.yaml \
+cargo test -p nemoclaw-e2e --test integration \
+  dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle -- --ignored --exact
+```
+
+It uses a private temporary state directory and retains gateway storage after destroy; `cargo ci live-docker` removes it with the run's other owned resources.
 
 ## Docker Gateway Recovery
 

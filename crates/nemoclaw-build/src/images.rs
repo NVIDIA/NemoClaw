@@ -228,25 +228,21 @@ fn read_metadata(image: &str, args: &[&str]) -> Result<Value> {
     serde_json::from_slice(&bytes).map_err(|_| "image metadata is not JSON".into())
 }
 
-/// Labels that publish the image's bridge capabilities and, for real
-/// harnesses, its installed Fabric discovery catalog.
+/// Labels that publish the image's bridge capabilities and its catalog: the
+/// installed Fabric discovery for harnesses, the explicit descriptor for the
+/// reference dummy.
 pub fn labels(name: &str, bridge: Value, catalog: Option<Value>) -> Result<Vec<(String, String)>> {
     let compact = |value: &Value| {
         serde_json::to_string(value).map_err(|_| "unserializable metadata".to_owned())
     };
-    let mut labels = vec![(BRIDGE_LABEL.to_owned(), compact(&bridge)?)];
-    match (name, catalog) {
-        ("dummy", None) => {}
-        ("dummy", Some(_)) => return Err("the reference image carries no catalog".into()),
-        (_, None) => return Err(format!("{name} has no installed catalog")),
-        (_, Some(catalog)) => {
-            if catalog["bridge"] != bridge {
-                return Err("catalog and executable bridge capabilities disagree".into());
-            }
-            labels.push((CATALOG_LABEL.to_owned(), compact(&catalog)?));
-        }
+    let catalog = catalog.ok_or_else(|| format!("{name} has no installed catalog"))?;
+    if catalog["bridge"] != bridge {
+        return Err("catalog and executable bridge capabilities disagree".into());
     }
-    Ok(labels)
+    Ok(vec![
+        (BRIDGE_LABEL.to_owned(), compact(&bridge)?),
+        (CATALOG_LABEL.to_owned(), compact(&catalog)?),
+    ])
 }
 
 /// Build each target under a temporary tag, read its metadata, then publish
@@ -272,19 +268,21 @@ pub fn build(root: &Path, platform: &str, selection: &[String]) -> Result<()> {
                     "from pathlib import Path; print(Path('/opt/nemoclaw/bridge.json').read_text())",
                 ],
             )?;
-            let catalog = (name != "dummy")
-                .then(|| {
-                    read_metadata(
-                        &temporary,
-                        &[
-                            "/opt/nemoclaw/catalog.py",
-                            "--installed",
-                            "--provenance",
-                            "/opt/nemoclaw/provenance.json",
-                        ],
-                    )
-                })
-                .transpose()?;
+            // The reference image has no Fabric to discover with, so it
+            // publishes its one explicit descriptor in the same catalog form.
+            let catalog = Some(read_metadata(
+                &temporary,
+                if name == "dummy" {
+                    &["/opt/nemoclaw/dummy_catalog.py"]
+                } else {
+                    &[
+                        "/opt/nemoclaw/catalog.py",
+                        "--installed",
+                        "--provenance",
+                        "/opt/nemoclaw/provenance.json",
+                    ]
+                },
+            )?);
             let labels = labels(&name, bridge, catalog)?;
             let context = tempfile::tempdir().map_err(|_| "cannot create a label context")?;
             fs::write(

@@ -348,3 +348,65 @@ fn explicit_filesystem_grants_reject_nul_in_required_paths_and_grants() {
         }));
     }
 }
+
+/// The reference dummy image publishes this descriptor, so a deployment that
+/// selects it must plan through the canonical planner like any adapter.
+#[test]
+fn the_reference_dummy_descriptor_plans_a_deployment_configuration() {
+    use nemoclaw_sdk::config::Document;
+    let document = Document::parse(
+        br#"apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: dummy
+  uid: 7c6f0a52-3a3f-4c3e-9a51-2b7de1c0a9f1
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: docker
+    engine: unix:///var/run/docker.sock
+    endpoint: http://127.0.0.1:18080
+    networkCIDR: 10.231.200.0/24
+  inferenceProviders:
+    - name: hosted
+      provider: openai
+      endpoint: https://inference.example.test/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-dummy@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      harness:
+        kind: org.nemoclaw.dummy
+        settings:
+          reply: dummy-ok
+      agent:
+        name: main
+        inference:
+          routes:
+            - name: primary
+              providerRef: hosted
+              overrides:
+                model: fixture-model
+"#
+        .as_slice(),
+    )
+    .unwrap();
+    let mut catalog = catalog();
+    catalog.adapters = vec![FabricAdapter {
+        provenance: json!([{"source":"explicit_local","path":"/opt/nemoclaw/dummy.fabric-adapter.json","root":"/opt/nemoclaw"}]),
+        descriptor: serde_json::from_str(include_str!(
+            "../../../image/fabric/dummy.fabric-adapter.json"
+        ))
+        .unwrap(),
+    }];
+    let configuration =
+        nemoclaw_sdk::fabric_config::for_sandbox(&document, &document.spec.sandboxes[0]).unwrap();
+    let plan = plan_configuration(&catalog, configuration.clone()).unwrap();
+    assert_eq!(plan.config.harness.unwrap().settings["reply"], "dummy-ok");
+    let mut unknown = configuration;
+    unknown["harness"]["settings"]["unknown"] = true.into();
+    assert!(plan_configuration(&catalog, unknown).is_err());
+}

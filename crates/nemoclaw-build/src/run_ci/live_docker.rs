@@ -135,10 +135,12 @@ fn prepare(
                 .images
                 .extend(names.map(|name| format!("{prefix}:{name}")));
             live_images::build_agent(platform, &prefix)?;
+            live_images::build_dummy(platform, &prefix)?;
             live_images::build_proxies(&prefix)?;
         }
     }
     let agent = by_digest(&prefix, target)?;
+    let dummy = by_digest(&prefix, live_images::DUMMY)?;
 
     let used: Vec<String> = docker_output(&["network", "ls", "--quiet"])?
         .lines()
@@ -160,7 +162,7 @@ fn prepare(
         })
         .collect();
     let mut subnets = Vec::new();
-    let mut document = |name: &str| -> Result<PathBuf> {
+    let mut document_for = |name: &str, image: &str, harness: &str| -> Result<PathBuf> {
         let uid = live::uuid()?;
         let subnet = live::free_subnet(&used, &subnets)?;
         subnets.push(subnet.clone());
@@ -172,13 +174,16 @@ fn prepare(
                 uid: &uid,
                 port: live::free_port()?,
                 subnet: &subnet,
-                image: &agent,
+                image,
                 harness,
             }),
         )?;
         owned.uids.push(uid);
         Ok(path)
     };
+    // The dummy reports native health, so its whole lifecycle completes.
+    let lifecycle = document_for("live-dummy", &dummy, "org.nemoclaw.dummy")?;
+    let mut document = |name: &str| document_for(name, &agent, harness);
     // Each gateway test refuses resources from an earlier run, so each gets
     // fresh documents: recovery, an isolation pair, and profile revisions.
     let recovery = document("live-recovery")?;
@@ -209,6 +214,7 @@ fn prepare(
             "NEMOCLAW_TEST_SECOND_GATEWAY_DOCUMENT".into(),
             path(&second),
         ),
+        ("NEMOCLAW_TEST_DUMMY_DOCUMENT".into(), path(&lifecycle)),
     ]
     .into_iter()
     .chain([(

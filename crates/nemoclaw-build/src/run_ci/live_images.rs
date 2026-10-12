@@ -27,14 +27,25 @@ pub(super) fn agent(platform: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// The platform's agent image, then the two proxy images.
-pub(super) fn names(platform: &str) -> [&'static str; 3] {
-    [agent(platform).0, "proxy-a", "proxy-b"]
+/// The platform's agent image, the reference dummy, then the two proxy images.
+pub(super) fn names(platform: &str) -> [&'static str; 4] {
+    [agent(platform).0, DUMMY, "proxy-a", "proxy-b"]
 }
+
+/// The reference agent image, which reports native health without Fabric.
+pub(super) const DUMMY: &str = "dummy";
 
 /// Build the platform's agent image as `PREFIX:TARGET`.
 pub(super) fn build_agent(platform: &str, prefix: &str) -> Result<()> {
-    let target = agent(platform).0;
+    build_image(platform, prefix, agent(platform).0)
+}
+
+/// Build the reference dummy agent image as `PREFIX:dummy`.
+pub(super) fn build_dummy(platform: &str, prefix: &str) -> Result<()> {
+    build_image(platform, prefix, DUMMY)
+}
+
+fn build_image(platform: &str, prefix: &str, target: &str) -> Result<()> {
     let docker_platform = format!("linux/{}", platform.trim_start_matches("linux_"));
     let status = Command::new(std::env::current_exe()?)
         .args(["images", "build", "--platform", &docker_platform, target])
@@ -66,6 +77,7 @@ pub(super) fn build(platform: &str) -> Result<()> {
         return Err("the live images are built on Linux only".into());
     }
     build_agent(platform, SHARED)?;
+    build_dummy(platform, SHARED)?;
     build_proxies(SHARED)?;
     let tags = names(platform).map(|name| format!("{SHARED}:{name}"));
     fs::create_dir_all(".build/ci")?;

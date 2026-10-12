@@ -5,6 +5,10 @@ ARG NODE_IMAGE=node:24.21.0-trixie-slim@sha256:db3ae80f5d8df06e04dabdf7b44cbf008
 ARG PYTHON_IMAGE=python:3.13.15-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285
 ARG RUST_IMAGE=rust@sha256:ce84a5edd80c5f91e05c5533b1e53eb1da54028f33734dc06aa6b49fa190462d
 ARG UV_IMAGE=ghcr.io/astral-sh/uv@sha256:3d868e555f8f1dbc324afa005066cd11e1053fc4743b9808ca8025283e65efa5
+# The Fabric source every harness installs; the reference dummy's descriptor
+# follows the adapter contract at the same revision.
+ARG FABRIC_REVISION=24f068c895e5cbc30286bc743498be4e5014d658
+ARG FABRIC_SHA256=77f78f66a24a8cd8e6f33f9cf49f3db8c5de39e12e095f5599cb63909a05865f
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
 FROM ${RUST_IMAGE} AS rust
 FROM ${UV_IMAGE} AS uv
@@ -38,8 +42,8 @@ COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=uv /uv /usr/local/bin/uv
 ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:$PATH
 ARG SOURCE_DATE_EPOCH=1789516800
-ARG FABRIC_REVISION=24f068c895e5cbc30286bc743498be4e5014d658
-ARG FABRIC_SHA256=77f78f66a24a8cd8e6f33f9cf49f3db8c5de39e12e095f5599cb63909a05865f
+ARG FABRIC_REVISION
+ARG FABRIC_SHA256
 ADD --checksum=sha256:${FABRIC_SHA256} https://codeload.github.com/NVIDIA/NeMo-Fabric/tar.gz/${FABRIC_REVISION} /sources/fabric.tar.gz
 COPY image/fabric/fabric-error-codes.patch /build-patches/fabric-error-codes.patch
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev patch \
@@ -201,11 +205,14 @@ FROM ${PYTHON_IMAGE} AS dummy
 RUN groupadd --gid 10001 node && useradd --uid 10001 --gid node --create-home node \
     && python3 -m venv --without-pip /opt/fabric \
     && install -d -m 0755 -o 10001 -g 10001 /sandbox /sandbox/tmp
-COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/runtime.json /opt/nemoclaw/
+ARG FABRIC_REVISION
+ARG FABRIC_SHA256
+COPY image/fabric/fabric.py image/fabric/bridge_contract.py image/fabric/bridge_protocol.py image/fabric/runtime.json image/fabric/runtime_metadata.py image/fabric/dummy_catalog.py image/fabric/dummy.fabric-adapter.json /opt/nemoclaw/
 COPY image/fabric/dummy_backend.py /opt/nemoclaw/backend.py
 COPY --chmod=0755 image/fabric/fabric-agent /usr/local/bin/fabric-agent
 ENV PYTHONPATH=/opt/nemoclaw ADAPTER_PYTHON=/opt/fabric/bin/python PYTHONDONTWRITEBYTECODE=1 HOME=/sandbox
-RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json
+RUN /opt/fabric/bin/python /opt/nemoclaw/bridge_contract.py > /opt/nemoclaw/bridge.json \
+    && /opt/fabric/bin/python -c 'import json, os; print(json.dumps({"fabric_revision": os.environ["FABRIC_REVISION"], "source_sha256": os.environ["FABRIC_SHA256"]}))' > /opt/nemoclaw/provenance.json
 LABEL io.nemoclaw.fabric.reference="dummy"
 USER node
 HEALTHCHECK NONE
@@ -213,5 +220,5 @@ ENTRYPOINT ["/usr/local/bin/fabric-agent"]
 CMD ["serve", "--agent", "main"]
 
 FROM dummy AS reference-tests
-COPY image/fabric/test_reference.py image/fabric/test_protocol.py image/fabric/dummy_backend.py /tests/
+COPY image/fabric/test_reference.py image/fabric/test_protocol.py image/fabric/test_dummy_catalog.py image/fabric/dummy_backend.py /tests/
 RUN --network=none /opt/fabric/bin/python -B -m unittest discover -s /tests -p 'test_*.py'

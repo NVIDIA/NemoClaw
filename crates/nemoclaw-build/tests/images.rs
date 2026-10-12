@@ -24,10 +24,17 @@ fn harness_images_carry_a_catalog_that_agrees_with_their_bridge() {
 }
 
 #[test]
-fn the_reference_image_carries_only_its_bridge() {
+fn the_reference_image_carries_a_catalog_so_deployments_can_select_it() {
     let bridge = json!({"interface_version": 1});
-    assert_eq!(labels("dummy", bridge.clone(), None).unwrap().len(), 1);
-    assert!(labels("dummy", bridge.clone(), Some(json!({"bridge": bridge}))).is_err());
+    let catalog = json!({"bridge": bridge, "adapters": []});
+    assert_eq!(
+        labels("dummy", bridge.clone(), Some(catalog.clone())).unwrap(),
+        [
+            ("io.nemoclaw.fabric.bridge".to_owned(), bridge.to_string()),
+            ("io.nemoclaw.fabric.catalog".to_owned(), catalog.to_string()),
+        ]
+    );
+    assert!(labels("dummy", bridge, None).is_err());
 }
 
 #[test]
