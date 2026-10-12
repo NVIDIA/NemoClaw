@@ -93,7 +93,9 @@ PY
 fi
 if test "${phase}" = prepare; then exit 0; fi
 if test "${phase}" = load-image; then
-  python3 "${repo}/tools/ci/brev_image.py" load "${root}/image-candidate" "$(cat "${root}/source-revision")"
+  chmod 700 "${root}/image-candidate/image-tool"
+  "${root}/image-candidate/image-tool" images candidate load \
+    "${root}/image-candidate" "$(cat "${root}/source-revision")"
   exit 0
 fi
 image_ref="$(cat "${root}/image-candidate/image-ref")"

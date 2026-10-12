@@ -6,6 +6,10 @@ use nemoclaw_build::images::{PLATFORMS, labels, plan};
 use serde_json::json;
 use std::path::Path;
 
+#[cfg(unix)]
+#[path = "image_commands.rs"]
+mod commands;
+
 #[test]
 fn harness_images_carry_a_catalog_that_agrees_with_their_bridge() {
     let bridge = json!({"interface_version": 1});

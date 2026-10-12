@@ -156,6 +156,19 @@ enum ImageAction {
         platform: String,
         #[arg(required = true)]
         targets: Vec<String>,
+        /// Export one labeled image to a Buildx output, such as type=oci,dest=image.tar.
+        #[arg(long)]
+        output: Option<String>,
+        /// Write Buildx metadata for the exported image here.
+        #[arg(long, requires = "output")]
+        metadata_file: Option<PathBuf>,
+    },
+    /// Record or load the revision-bound OpenClaw candidate for Brev.
+    Candidate {
+        #[arg(value_enum)]
+        action: CandidateAction,
+        directory: PathBuf,
+        revision: String,
     },
     /// Run the command contract inside each labeled local image.
     Qualify {
@@ -179,6 +192,11 @@ enum ImageAction {
         #[arg(long)]
         output: PathBuf,
     },
+}
+#[derive(Clone, clap::ValueEnum)]
+enum CandidateAction {
+    Record,
+    Load,
 }
 #[derive(Deserialize)]
 struct Artifact {
@@ -475,8 +493,34 @@ async fn main() -> Result<()> {
     if let Action::Images { action } = cli.command {
         let root = Path::new(".");
         return match action {
-            ImageAction::Build { platform, targets } => {
-                nemoclaw_build::images::build(root, &platform, &targets)
+            ImageAction::Build {
+                platform,
+                targets,
+                output,
+                metadata_file,
+            } => {
+                use nemoclaw_build::images::Destination;
+                let destination = match &output {
+                    Some(output) => Destination::Export {
+                        output,
+                        metadata_file: metadata_file.as_deref(),
+                    },
+                    None => Destination::Local,
+                };
+                nemoclaw_build::images::build_to(root, &platform, &targets, &destination)
+            }
+            ImageAction::Candidate {
+                action,
+                directory,
+                revision,
+            } => {
+                use nemoclaw_build::images::candidate;
+                match action {
+                    CandidateAction::Record => candidate::record(&directory, &revision),
+                    CandidateAction::Load => {
+                        candidate::load(&directory, &revision).map(|image| println!("{image}"))
+                    }
+                }
             }
             ImageAction::Qualify {
                 images,

@@ -141,6 +141,44 @@ Pinned archives and wheels do not make the whole image bit-reproducible: Debian 
 
 Run [image checks](contributing/testing.md#image-source-checks) before changing or using an image recipe, and follow the [native fixture procedures](contributing/integration-tests.md#inference-api-fixtures) for behavior qualification.
 
+### Export and Verify a Brev Candidate Image
+
+Use `--output` to export one resolved image target instead of loading the final image locally.
+The builder reads installed metadata from a temporary local image, then rebuilds from cache with both bridge and catalog labels in the exported image configuration.
+The exported digest therefore covers both labels.
+`--metadata-file` requires `--output` and records the final Buildx export, not the temporary image.
+Select a Buildx builder that supports OCI export, such as a `docker-container` builder, through `BUILDX_BUILDER`.
+
+The Brev candidate helper supports only `nc-fabric:openclaw` on `linux/amd64`.
+From the repository root on a native AMD64 build host, with the default `IMAGE_PREFIX=nc-fabric`, run:
+
+```sh
+mkdir candidate-image
+revision="$(git rev-parse HEAD)"
+cargo images build --platform linux/amd64 \
+  --output type=oci,dest=candidate-image/image.tar \
+  --metadata-file candidate-image/metadata.json openclaw
+cargo images candidate record candidate-image "$revision"
+```
+
+`record` writes `candidate.json` with the source revision, archive SHA-256 and immutable repository digest.
+Transfer `image.tar` and `candidate.json` to the target host.
+On that host, set `revision` to the expected source commit, independently of `candidate.json`, then run from the matching repository checkout:
+
+```sh
+cargo images candidate load candidate-image "$revision"
+```
+
+`load` checks the revision, archive checksum and digest syntax before invoking Docker.
+After loading, it requires Linux AMD64, the recorded repository digest, and installed OpenClaw runtime command and binary metadata.
+Only then does it write `candidate-image/image-ref`.
+A rejected candidate does not write that file; a failure after Docker load can leave the loaded image present.
+These checks do not run an adapter or establish native readiness.
+
+The [Brev workflow](../.github/workflows/brev.yml) transfers the compiled Rust helper as `image-tool`, so the guest needs no Rust toolchain.
+It invokes `image-tool images candidate load DIRECTORY REVISION` after restoring the executable permission lost during artifact transfer.
+The workflow builds that helper on Ubuntu 22.04 to match the native bundle's compatibility baseline.
+
 ### Regenerate the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.
