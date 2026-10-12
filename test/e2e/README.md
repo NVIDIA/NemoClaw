@@ -101,6 +101,11 @@ Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
 uses a published base with v1 activation and a candidate base with v2 activation.
 The receipt command retains its Deep Agents default for existing callers; an
 explicit agent selects the OpenClaw or Hermes contract.
+
+OpenClaw HTTP liveness can precede heartbeat activation. The protected startup check polls only
+missing heartbeat evidence within the shared 240-second startup deadline. It still requires the
+configured interval and rejects malformed or conflicting records without retrying them.
+
 The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
 for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
@@ -848,8 +853,15 @@ The report also groups repeated observable outcomes. Those rows are retained onl
 
 ## Full E2E inference availability
 
-`live/full-e2e.test.ts` owns the live sandbox `inference.local` arithmetic probe.
-It requires a successful response containing the expected answer.
+`live/full-e2e.test.ts` owns the live sandbox arithmetic probe.
+Source installs use `inference.local`; the Brev Launchable uses the native NVIDIA endpoint
+with its supervisor-issued credential handle. The test verifies the native provider attachment
+on the declared gateway and retains that route across its temporary native model edit.
+The live boundary proves attachment, credential resolution, and a real inference response.
+The support tests own route selection, command encoding, credential rejection, and model-edit configuration.
+The deterministic public-key format precondition lives in `fixtures/hosted-inference.ts`;
+`support/public-nvidia-switch-provider.test.ts` retains its acceptance and rejection cases.
+The probe requires a successful response containing the expected answer.
 `live/full-e2e-inference-probe.ts` owns parsing and retry behavior;
 `support/full-e2e-inference-probe.test.ts` verifies that behavior.
 The stateless request has no tools or conversation persistence, so repeating it

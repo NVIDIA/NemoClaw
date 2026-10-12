@@ -154,7 +154,8 @@ When the missing-custom-presets target fails before its expected policy rejectio
 The probes also capture unexpected JavaScript failures; they do not change the onboarding result or the required policy rejection.
 Container probes use a resolved full container ID and never delete resources or retry onboarding.
 
-The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model through `inference.local`.
+The `full-e2e` restart probe selects a UUID-scoped native OpenClaw provider using the already-tested model and route.
+Source installs use `inference.local`; the Brev Launchable uses the native NVIDIA endpoint with its supervisor-issued credential handle.
 After NemoClaw stop/start, a gateway-only turn must report that provider and model before the probe restores the original selection.
 The probe removes its temporary native entries before the launch checks.
 The fixture contains no provider credentials. It sends a JSON patch to native OpenClaw through stdin.
