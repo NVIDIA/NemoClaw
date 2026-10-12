@@ -40,8 +40,9 @@ It also makes policy removal, provider verification, and configuration export mo
 - Native Linux ARM64 can recognize a qualified N1x PCI identity without the FastOS marker.
   Physical qualification remains pending.
   Related change: [PR #12768](https://github.com/NVIDIA/NemoClaw/pull/12768).
-- QA runs can select the fixed TEST receiver with `NEMOCLAW_TELEMETRY_TEST_LABEL` to send one completion record for a covered installer or CLI operation.
-  Collection and delivery have a five-second limit, and `NEMOCLAW_DISABLE_TELEMETRY=1` suppresses them.
+- QA runs can select the fixed TEST receiver with `NEMOCLAW_TELEMETRY_TEST_LABEL`.
+  NemoClaw attempts one completion record for each covered installer or CLI operation.
+  Collection and delivery share a five-second total limit, and `NEMOCLAW_DISABLE_TELEMETRY=1` suppresses both.
   Production delivery is not enabled.
   Related change: [PR #12859](https://github.com/NVIDIA/NemoClaw/pull/12859).
   Refer to [QA Operation Telemetry](/user-guide/openclaw/security/best-practices#qa-operation-telemetry).
