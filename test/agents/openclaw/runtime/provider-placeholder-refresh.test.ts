@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import JSON5 from "json5";
+import { hostedNativeProvider } from "../../../../src/lib/inference/native-provider/hosted.ts";
 import { describe, expect, it, vi } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
@@ -34,6 +35,7 @@ describe.concurrent("native provider handle refresh", () => {
     env: Record<string, string> = {},
     rootMode = false,
     runtimePlan: unknown = { credentialBindings: [] },
+    options: { readOnlyDirectory?: boolean; provider?: unknown } = {},
   ) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-placeholders-"));
     try {
@@ -48,11 +50,27 @@ describe.concurrent("native provider handle refresh", () => {
         `// Native OpenClaw JSON5\n${JSON.stringify(config, null, 2)}\n`,
       );
       fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
+      const providerPath = path.join(tmpDir, "providers.cjs");
+      fs.writeFileSync(
+        providerPath,
+        `exports.HOSTED_NATIVE_PROVIDERS = ${JSON.stringify([options.provider ?? hostedNativeProvider("openrouter-api")])};`,
+      );
+      fs.chmodSync(configPath, 0o640);
+      fs.chmodSync(openclawDir, options.readOnlyDirectory ? 0o500 : 0o700);
       const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
         .replaceAll("/sandbox/.openclaw", openclawDir)
         .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
         .replaceAll("/usr/local/lib/node_modules/openclaw/node_modules/json5", JSON5_MODULE)
-        .replaceAll("/usr/local/bin/node", process.execPath);
+        .replaceAll("/usr/local/bin/node", process.execPath)
+        .replaceAll(
+          "/src/lib/inference/native-provider/hosted.ts",
+          options.provider
+            ? providerPath
+            : path.resolve(
+                import.meta.dirname,
+                "../../../../src/lib/inference/native-provider/hosted.ts",
+              ),
+        );
       fs.writeFileSync(
         scriptPath,
         [
@@ -79,8 +97,15 @@ describe.concurrent("native provider handle refresh", () => {
       const handoffEnv = fs.existsSync(handoffEnvPath)
         ? fs.readFileSync(handoffEnvPath, "utf-8")
         : "";
-      return { config: updatedConfig, handoffEnv, result };
+      return {
+        config: updatedConfig,
+        handoffEnv,
+        result,
+        mode: fs.statSync(configPath).mode & 0o777,
+        files: fs.readdirSync(openclawDir),
+      };
     } finally {
+      fs.chmodSync(path.join(tmpDir, ".openclaw"), 0o700);
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }
@@ -114,6 +139,59 @@ describe.concurrent("native provider handle refresh", () => {
       );
     },
   );
+
+  it("preserves valid configuration when atomic publication cannot create a file (#13043)", async () => {
+    const config = {
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://openrouter.ai/api/v1",
+            apiKey: "openshell:resolve:env:v42_OPENROUTER_API_KEY",
+          },
+        },
+      },
+    };
+    const run = await runRefresh(
+      config,
+      { OPENROUTER_API_KEY: "openshell:resolve:env:v43_OPENROUTER_API_KEY" },
+      false,
+      undefined,
+      { readOnlyDirectory: true },
+    );
+    expect(run.result.status).not.toBe(0);
+    expect(run.config).toEqual(config);
+    expect(run.mode).toBe(0o640);
+    expect(run.files).toEqual(["openclaw.json"]);
+  });
+
+  it("uses the canonical OpenRouter endpoint and credential definition (#13043)", async () => {
+    const provider = {
+      ...hostedNativeProvider("openrouter-api"),
+      endpoint: "https://new.example.test/v1",
+      credentialEnv: "NEW_ROUTER_KEY",
+    };
+    const current = "openshell:resolve:env:v43_NEW_ROUTER_KEY";
+    const run = await runRefresh(
+      {
+        models: {
+          providers: {
+            inference: {
+              baseUrl: provider.endpoint,
+              apiKey: "openshell:resolve:env:v42_NEW_ROUTER_KEY",
+            },
+          },
+        },
+      },
+      { NEW_ROUTER_KEY: current },
+      false,
+      undefined,
+      { provider },
+    );
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.models.providers.inference.apiKey).toBe(current);
+    expect(run.mode).toBe(0o640);
+    expect(run.files).toEqual(["openclaw.json"]);
+  });
 
   describe.each([false, true])("OpenRouter refresh (root=%s)", (rootMode) => {
     it.each(["v43", `s${"a".repeat(64)}`])(

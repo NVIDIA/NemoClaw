@@ -826,6 +826,8 @@ import os
 import re
 import subprocess
 import sys
+import stat
+import tempfile
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
@@ -866,7 +868,10 @@ parsed = subprocess.run(
         "/usr/local/bin/node",
         "-e",
         'const JSON5=require("/usr/local/lib/node_modules/openclaw/node_modules/json5");'
-        'process.stdout.write(JSON.stringify(JSON5.parse(require("node:fs").readFileSync(0,"utf8"))));',
+        'const {HOSTED_NATIVE_PROVIDERS}=require("/src/lib/inference/native-provider/hosted.ts");'
+        'process.stdout.write(JSON.stringify({'
+        'config:JSON5.parse(require("node:fs").readFileSync(0,"utf8")),'
+        'openrouter:HOSTED_NATIVE_PROVIDERS.find(p=>p.logicalProvider==="openrouter-api")}));',
     ],
     input=source,
     text=True,
@@ -874,7 +879,9 @@ parsed = subprocess.run(
     stderr=subprocess.DEVNULL,
     check=True,
 )
-config = json.loads(parsed.stdout)
+inputs = json.loads(parsed.stdout)
+config = inputs["config"]
+openrouter = inputs["openrouter"]
 
 refreshed = set()
 native_refreshed = False
@@ -888,7 +895,7 @@ providers = models.get("providers") if isinstance(models, dict) else None
 native = providers.get("inference") if isinstance(providers, dict) else None
 native_keys = {
     "https://integrate.api.nvidia.com/v1": "NVIDIA_INFERENCE_API_KEY",
-    "https://openrouter.ai/api/v1": "OPENROUTER_API_KEY",
+    openrouter["endpoint"]: openrouter["credentialEnv"],
 }
 endpoint = native.get("baseUrl") if isinstance(native, dict) else None
 key = native_keys.get(endpoint) if isinstance(endpoint, str) else None
@@ -1037,9 +1044,24 @@ def walk_for_warnings(value, path):
 walk_for_warnings(updated, [])
 
 if updated != config or native_refreshed:
-    with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(updated, f, indent=2)
-        f.write("\n")
+    # The old configuration stays intact until the complete replacement is durable.
+    mode = stat.S_IMODE(os.stat(config_file).st_mode)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=os.path.dirname(config_file),
+            prefix=".provider-refresh-", delete=False,
+        ) as f:
+            temporary = f.name
+            os.fchmod(f.fileno(), mode)
+            json.dump(updated, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, config_file)
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
 
 if refreshed:
     print("refreshed=" + ",".join(sorted(refreshed)))
