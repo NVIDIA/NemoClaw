@@ -67,24 +67,6 @@ function canonicalEndpoint(value: unknown): string | null {
   return typeof value === "string" ? new URL(value).toString() : null;
 }
 
-export function expectedHermesRegistryMetadata(switchEndpointUrl: string | null) {
-  // Native installation already uses nvidia-prod; a model switch retains its metadata.
-  const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
-  const durableEndpointUrl = publicSwitch
-    ? expectedBaseUrl()
-    : (switchEndpointUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL);
-  const durableCredentialEnv = publicSwitch
-    ? "NVIDIA_INFERENCE_API_KEY"
-    : switchEndpointUrl
-      ? "COMPATIBLE_ANTHROPIC_API_KEY"
-      : "COMPATIBLE_API_KEY";
-  return {
-    endpointUrl: durableEndpointUrl,
-    credentialEnv: durableCredentialEnv,
-    preferredInferenceApi: RUNTIME_SWITCH_API,
-  };
-}
-
 test(
   "Hermes inference set updates route/config and preserves live runtime",
   {
@@ -204,7 +186,9 @@ test(
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
       model: hostedInstallModel(env(apiKey, installEnv)),
     });
-    const baselineSession = structuredClone(registryState().session);
+    const baselineState = registryState();
+    const baselineSession = structuredClone(baselineState.session);
+    const baselineRegistry = structuredClone(baselineState.registry.sandboxes?.[SANDBOX_NAME]);
     const switchBinding = await prepareCompatibleAnthropicSwitchBinding(host, cleanup);
     const switchEndpointUrl = switchBinding?.endpointUrl ?? null;
     switchBinding && redactionValues.push(switchBinding.credentialValue);
@@ -354,15 +338,23 @@ test(
         .join("\n"),
     );
     expect(state.session).toEqual(baselineSession);
-    const expectedMetadata = expectedHermesRegistryMetadata(switchEndpointUrl);
+    const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
+    const durableEndpointUrl = publicSwitch
+      ? baselineRegistry?.endpointUrl
+      : (switchEndpointUrl ??
+        process.env.NEMOCLAW_ENDPOINT_URL ??
+        DEFAULT_HOSTED_INFERENCE_BASE_URL);
+    const durableCredentialEnv = publicSwitch
+      ? baselineRegistry?.credentialEnv
+      : switchEndpointUrl
+        ? "COMPATIBLE_ANTHROPIC_API_KEY"
+        : "COMPATIBLE_API_KEY";
     expect(canonicalEndpoint(state.registry.sandboxes?.[SANDBOX_NAME]?.endpointUrl)).toBe(
-      canonicalEndpoint(expectedMetadata.endpointUrl),
+      canonicalEndpoint(durableEndpointUrl),
     );
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(
-      expectedMetadata.credentialEnv,
-    );
+    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      expectedMetadata.preferredInferenceApi,
+      publicSwitch ? baselineRegistry?.preferredInferenceApi : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");

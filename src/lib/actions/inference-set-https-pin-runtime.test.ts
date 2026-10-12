@@ -11,7 +11,7 @@ import {
   createDeps,
   HERMES_TARGET,
   type CaptureOpenshell,
-} from "./inference-set.test-support";
+} from "../../../test/helpers/inference-set";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
 const ADAPTER_TOKEN = "test-route-token";

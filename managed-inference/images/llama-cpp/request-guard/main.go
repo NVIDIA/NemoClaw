@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/subtle"
@@ -34,6 +35,114 @@ const (
 	maximumOutputTokens   = 1024 * 1024
 	maximumTimeoutSeconds = 24 * 60 * 60
 )
+
+// Docker exec reaches this process through the daemon when an internal network
+// cannot publish a host port. The caller supplies its forwarding deadline from
+// its launch contract; the HTTP request guard still owns authentication.
+func forwardStdio(input io.Reader, output io.Writer, address string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	connection, err := net.DialTimeout("tcp", address, min(5*time.Second, timeout))
+	if err != nil {
+		return errors.New("request guard is unavailable")
+	}
+	defer connection.Close()
+	if err := connection.SetDeadline(deadline); err != nil {
+		return errors.New("request guard forwarding deadline failed")
+	}
+	completed := make(chan error, 1)
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	go func() { completed <- forwardStdioConnection(input, output, connection) }()
+	select {
+	case err := <-completed:
+		return err
+	case <-timer.C:
+		// This one-request CLI exits even if stdin or stdout remains blocked.
+		return errors.New("request guard response forwarding timed out")
+	}
+}
+
+func forwardStdioConnection(input io.Reader, output io.Writer, connection net.Conn) error {
+	// Parse the request boundary before forwarding so pipelined stdin cannot
+	// submit another request whose response this one-shot command will discard.
+	request, readError := http.ReadRequest(bufio.NewReader(input))
+	if readError != nil {
+		return errors.New("request guard request forwarding failed")
+	}
+
+	inputDone := make(chan error, 1)
+	go func() {
+		inputDone <- request.Write(connection)
+	}()
+	responseDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(connection)
+		for {
+			response, readError := http.ReadResponse(reader, request)
+			if readError != nil {
+				responseDone <- readError
+				return
+			}
+			writeError := response.Write(output)
+			_ = response.Body.Close()
+			if writeError != nil {
+				responseDone <- writeError
+				return
+			}
+			if response.StatusCode >= 200 || response.StatusCode == http.StatusSwitchingProtocols {
+				responseDone <- nil
+				return
+			}
+		}
+	}()
+	var outputError error
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			_ = connection.Close()
+			<-responseDone
+			return errors.New("request guard request forwarding failed")
+		}
+		outputError = <-responseDone
+	case outputError = <-responseDone:
+	}
+	if outputError != nil {
+		if os.IsTimeout(outputError) {
+			return errors.New("request guard response forwarding timed out")
+		}
+		return errors.New("request guard response forwarding failed")
+	}
+	// The guard can finish a response before Docker closes stdin. The command
+	// exits with the response rather than waiting for more client input.
+	select {
+	case inputError := <-inputDone:
+		if inputError != nil {
+			return errors.New("request guard request forwarding failed")
+		}
+	default:
+		// A rejected streaming request can finish before its body arrives. Close
+		// stdin to stop the request writer without waiting for the remaining body.
+		if closer, ok := input.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	}
+	return nil
+}
+
+func stdioForwardArguments(args []string) (string, time.Duration, error) {
+	if len(args) != 5 || args[0] != "--stdio-forward" || args[1] != "--listen-port" || args[3] != "--forward-timeout-seconds" {
+		return "", 0, errors.New("stdio forwarding requires --listen-port and --forward-timeout-seconds")
+	}
+	port, err := strconv.Atoi(args[2])
+	if err != nil || port < 1 || port > 65535 {
+		return "", 0, errors.New("stdio forwarding listen port is invalid")
+	}
+	timeoutSeconds, err := strconv.ParseInt(args[4], 10, 64)
+	if err != nil || positiveBounded(timeoutSeconds, maximumTimeoutSeconds, "forward timeout seconds") != nil {
+		return "", 0, errors.New("stdio forwarding timeout is invalid")
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Duration(timeoutSeconds) * time.Second, nil
+}
 
 type guardConfig struct {
 	apiKey                string
@@ -689,6 +798,18 @@ func run(config guardConfig, command []string) int {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--stdio-forward" {
+		address, timeout, err := stdioForwardArguments(os.Args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(2)
+		}
+		if err := forwardStdio(os.Stdin, os.Stdout, address, timeout); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	config, command, err := parseConfig(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

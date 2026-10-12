@@ -877,6 +877,32 @@ parsed = subprocess.run(
 config = json.loads(parsed.stdout)
 
 refreshed = set()
+native_refreshed = False
+
+# A native NVIDIA handle persisted by the host-side config batch belongs to
+# the provider revision that issued it. After a supervisor restart, only the
+# current revision is available, so replace that exact config field before
+# OpenClaw starts. Never copy a raw value or rewrite config for other providers.
+models = config.get("models") if isinstance(config, dict) else None
+providers = models.get("providers") if isinstance(models, dict) else None
+native = providers.get("inference") if isinstance(providers, dict) else None
+if isinstance(native, dict) and native.get("baseUrl") == "https://integrate.api.nvidia.com/v1":
+    key = "NVIDIA_INFERENCE_API_KEY"
+    scoped = re.compile(rf"^{re.escape(prefix)}(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{key}$")
+    saved = native.get("apiKey")
+    state = runtime_state(key)
+    current = state.get("value", "")
+    if (
+        isinstance(saved, str)
+        and scoped.fullmatch(saved)
+        and state.get("kind") == "placeholder"
+        and isinstance(current, str)
+        and scoped.fullmatch(current)
+        and saved != current
+    ):
+        native["apiKey"] = current
+        refreshed.add(key)
+        native_refreshed = True
 
 # Match each canonical placeholder only as an exact token. The OpenShell
 # placeholder grammar is "openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*",
@@ -1005,7 +1031,7 @@ def walk_for_warnings(value, path):
 
 walk_for_warnings(updated, [])
 
-if updated != config:
+if updated != config or native_refreshed:
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(updated, f, indent=2)
         f.write("\n")

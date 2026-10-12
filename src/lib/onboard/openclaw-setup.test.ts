@@ -335,6 +335,8 @@ describe("initial OpenClaw inference route", () => {
       "compatible-endpoint",
       { effort: null, explicit: false },
       false,
+      undefined,
+      true,
     );
   });
 
@@ -453,4 +455,66 @@ describe("restored native OpenClaw inference fields", () => {
     );
     expect(identity).toHaveBeenCalledTimes(2);
   });
+});
+
+describe("initial Hermes provider selection", () => {
+  it.each([
+    {
+      nativeProvider: false,
+      endpointUrl: "https://custom.example/v1",
+      expected: "https://inference.local/v1",
+    },
+    {
+      nativeProvider: true,
+      endpointUrl: "https://authenticated.example/v1",
+      expected: "https://authenticated.example/v1",
+    },
+    {
+      nativeProvider: true,
+      endpointUrl: "https://inference-api.nousresearch.com/v1",
+      expected: "https://inference-api.nousresearch.com/v1",
+    },
+  ])(
+    "preserves $endpointUrl with nativeProvider=$nativeProvider",
+    async ({ expected, ...selection }) => {
+      const config = {};
+      const writeConfig = vi.fn();
+      const readInferenceSelection = vi.fn(() => selection);
+      const write = createOpenclawInferenceRouteWriter({
+        readInferenceSelection,
+        readOpenclawConfig: () => config,
+        patchOpenclawInferenceConfig: patchOpenClawInferenceConfig,
+        writeOpenclawInferenceConfigNatively: writeConfig,
+      });
+      await write("alpha", "fixture-model", "hermes-provider", null, "selected-gateway");
+      expect(readInferenceSelection).toHaveBeenCalledExactlyOnceWith(
+        "alpha",
+        "selected-gateway",
+        "hermes-provider",
+      );
+      expect(writeConfig).toHaveBeenCalledWith(
+        "alpha",
+        config,
+        expect.objectContaining({ inferenceBaseUrl: expected }),
+        "selected-gateway",
+      );
+      readInferenceSelection.mockClear();
+      await write(
+        "alpha",
+        "fixture-model",
+        "hermes-provider",
+        null,
+        "selected-gateway",
+        undefined,
+        selection,
+      );
+      expect(readInferenceSelection).not.toHaveBeenCalled();
+      expect(writeConfig).toHaveBeenLastCalledWith(
+        "alpha",
+        config,
+        expect.objectContaining({ inferenceBaseUrl: expected }),
+        "selected-gateway",
+      );
+    },
+  );
 });

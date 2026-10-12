@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Both agents expand this reference from the supervisor-issued, scoped
-// OpenShell handle at config load. A static resolver alias has no provider
-// identity and is rejected by the endpoint-bound native provider.
+// The initial agent config expands this reference from the supervisor-issued,
+// scoped OpenShell handle. An OpenClaw inference switch materializes that handle
+// in its fresh sandbox exec before restarting the older gateway process. A
+// static resolver alias has no provider identity and is rejected by the
+// endpoint-bound native provider.
 export const NVIDIA_INFERENCE_PLACEHOLDER = "${NVIDIA_INFERENCE_API_KEY}";
 
 export function managedInferenceApiKey<T extends string>(
