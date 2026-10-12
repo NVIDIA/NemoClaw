@@ -270,11 +270,11 @@ describe("protected managed-image runtime contract", () => {
         .replace('"/tmp/openclaw"', JSON.stringify(root))
         .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
       const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
-      expect(result.status).toBe(1);
+      expect(result.status).toBe(subsystem === "gateway/other" ? 2 : 1);
       expect(result.stdout).toBe("");
       expect(result.stderr).toBe(
         subsystem === "gateway/other"
-          ? "heartbeat-evidence-unavailable:parse:invalid"
+          ? "heartbeat-not-started"
           : "heartbeat-evidence-unavailable:open:ELOOP",
       );
     } finally {
@@ -316,7 +316,7 @@ describe("protected managed-image runtime contract", () => {
     },
   );
 
-  it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", () => {
+  it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", async () => {
     const containerId = "a".repeat(64);
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
       status: 0,
@@ -324,7 +324,9 @@ describe("protected managed-image runtime contract", () => {
       stdout: "heartbeat-interval-ms=120000",
     }));
 
-    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow();
+    await expect(
+      assertOpenClawHeartbeatStart(containerId, {}, runCommand, Date.now() + 30_000),
+    ).resolves.toBeUndefined();
     expect(runCommand).toHaveBeenCalledWith(
       [
         "docker",
@@ -345,12 +347,66 @@ describe("protected managed-image runtime contract", () => {
       stdout: "heartbeat-interval-ms=1800000",
       stderr: "",
     });
-    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+    await expect(assertOpenClawHeartbeatStart(containerId, {}, runCommand)).rejects.toThrow(
       "managed OpenClaw did not start with the requested 120000 ms heartbeat",
     );
   });
 
-  it("does not expose JSON credentials when managed OpenClaw startup logs cannot be read", () => {
+  it("waits for heartbeat after HTTP health within the original startup deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const runCommand = vi
+        .fn<ManagedImageCommandRunner>()
+        .mockReturnValueOnce({ status: 2, stdout: "", stderr: "heartbeat-not-started" })
+        .mockReturnValue({ status: 0, stdout: "heartbeat-interval-ms=120000", stderr: "" });
+      const started = assertOpenClawHeartbeatStart(
+        "a".repeat(64),
+        {},
+        runCommand,
+        Date.now() + 3_000,
+      );
+      const checked = expect(started).resolves.toBeUndefined();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await checked;
+      expect(runCommand.mock.calls.map((call) => call[2])).toEqual([3_000, 1_000]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails missing heartbeat when the shared startup deadline expires", async () => {
+    vi.useFakeTimers();
+    try {
+      const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
+        status: 2,
+        stdout: "",
+        stderr: "heartbeat-not-started",
+      }));
+      const checked = expect(
+        assertOpenClawHeartbeatStart("a".repeat(64), {}, runCommand, Date.now() + 500),
+      ).rejects.toThrow("heartbeat did not start within the managed-startup deadline");
+      await vi.advanceTimersByTimeAsync(500);
+      await checked;
+      expect(runCommand).toHaveBeenCalledTimes(1);
+      expect(runCommand.mock.calls[0][2]).toBe(500);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { status: 1, stdout: "", stderr: "heartbeat-evidence-unavailable:parse:invalid" },
+    { status: 2, stdout: "untrusted output", stderr: "heartbeat-not-started" },
+    { status: 2, stdout: "", stderr: "untrusted error" },
+  ])("rejects invalid heartbeat evidence without polling: $stderr", async (result) => {
+    const runCommand = vi.fn<ManagedImageCommandRunner>(() => result);
+    await expect(assertOpenClawHeartbeatStart("a".repeat(64), {}, runCommand)).rejects.toThrow(
+      "structured heartbeat evidence unavailable",
+    );
+    expect(runCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not expose JSON credentials when managed OpenClaw startup logs cannot be read", async () => {
     const containerId = "a".repeat(64);
     const secret = "json-api-key-secret";
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
@@ -359,16 +415,18 @@ describe("protected managed-image runtime contract", () => {
       stderr: JSON.stringify({ nested: { apiKey: secret } }),
     }));
 
-    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+    await expect(assertOpenClawHeartbeatStart(containerId, {}, runCommand)).rejects.toThrow(
       "managed OpenClaw structured heartbeat evidence unavailable",
     );
-    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
+    await expect(assertOpenClawHeartbeatStart(containerId, {}, runCommand)).rejects.not.toThrow(
+      secret,
+    );
     runCommand.mockReturnValue({
       status: 1,
       stdout: "",
       stderr: "heartbeat-evidence-unavailable:list:EACCES",
     });
-    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+    await expect(assertOpenClawHeartbeatStart(containerId, {}, runCommand)).rejects.toThrow(
       "(list: EACCES)",
     );
     const diagnostic = managedImageFailureDetail(
