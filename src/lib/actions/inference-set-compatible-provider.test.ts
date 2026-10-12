@@ -9,7 +9,7 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
-} from "./inference-set.test-support";
+} from "../../../test/helpers/inference-set";
 
 type ProbeSandboxRoute = NonNullable<Parameters<typeof createDeps>[0]["probeSandboxRoute"]>;
 
@@ -1484,7 +1484,10 @@ describe("runInferenceSet compatible providers", () => {
       inferenceRouteMutator: { setInferenceRoute: noBindingSet },
     });
     await expect(
-      runInferenceSet({ provider: "openai-api", model: "gpt-test", noVerify: true }, noBindingDeps),
+      runInferenceSet(
+        { provider: "nvidia-router", model: "gpt-test", noVerify: true },
+        noBindingDeps,
+      ),
     ).rejects.toThrow("provider not found");
     expect(noBindingSet).toHaveBeenCalledOnce();
   });

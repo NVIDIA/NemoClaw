@@ -883,13 +883,18 @@ describe("complete managed-image publication workflow", () => {
       path.join(fakeBin, "docker"),
       `#!/bin/bash
 set -euo pipefail
-if [ "\${1:-} \${2:-} \${3:-}" != "buildx imagetools inspect" ]; then
-  exit 90
-fi
-if [[ "\${4:-}" == *":latest" ]]; then
-  cat "$ALIAS_RAW"
+if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools inspect" ]; then
+  if [[ "\${4:-}" == *":latest" ]]; then
+    cat "$ALIAS_RAW"
+  else
+    cat "$EXACT_RAW"
+  fi
+elif [ "$*" = "pull --platform linux/amd64 $EXACT_REFERENCE" ]; then
+  exit 0
+elif [ "$*" = "image inspect $EXACT_REFERENCE" ]; then
+  printf '[{"Config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}]' "$CANDIDATE_SHA"
 else
-  cat "$EXACT_RAW"
+  exit 90
 fi
 `,
       { mode: 0o755 },
@@ -910,10 +915,12 @@ fi
           }).stdout.trim(),
           DISPLAY_NAME: "OpenClaw",
           EXACT_RAW: exactRaw,
+          EXACT_REFERENCE: `ghcr.io/nvidia/nemoclaw/sandbox-base@${digest}`,
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          PLATFORM: "linux/amd64",
           RUNNER_TEMP: temporaryRoot,
         },
       });

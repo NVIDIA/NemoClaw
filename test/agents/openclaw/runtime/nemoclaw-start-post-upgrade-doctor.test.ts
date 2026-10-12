@@ -674,6 +674,140 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     },
   );
 
+  it.each([
+    { gate: "doctor", replacement: "trusted", expectedStatus: 0 },
+    { gate: "backup", replacement: "trusted", expectedStatus: 0 },
+    { gate: "doctor", replacement: "wrong mode", expectedStatus: 1 },
+    { gate: "backup", replacement: "wrong mode", expectedStatus: 1 },
+    { gate: "doctor", replacement: "hardlink", expectedStatus: 1 },
+    { gate: "backup", replacement: "hardlink", expectedStatus: 1 },
+    { gate: "doctor", replacement: "symlink", expectedStatus: 1 },
+    { gate: "backup", replacement: "symlink", expectedStatus: 1 },
+  ])(
+    "rechecks a $replacement replacement when the $gate gate observes an unlinked marker",
+    ({ gate, replacement, expectedStatus }) => {
+      const source = fs.readFileSync(START_SCRIPT, "utf8");
+      const f = fixture();
+      try {
+        fs.writeFileSync(
+          f.marker,
+          gate === "doctor"
+            ? "nemoclaw-openclaw-post-upgrade-doctor-v2\n"
+            : "nemoclaw-openclaw-backup-quiesce-v1\n",
+          { mode: 0o600 },
+        );
+        const staged = `${f.marker}.replacement`;
+        fs.writeFileSync(staged, "nemoclaw-openclaw-post-upgrade-doctor-release-v1\n", {
+          mode: replacement === "wrong mode" ? 0o644 : 0o600,
+        });
+        const prepareReplacement: Record<string, () => void> = {
+          trusted: () => {},
+          "wrong mode": () => {},
+          hardlink: () => fs.linkSync(staged, `${staged}.link`),
+          symlink: () => {
+            fs.renameSync(staged, `${staged}.target`);
+            fs.symlinkSync(`${staged}.target`, staged);
+          },
+        };
+        prepareReplacement[replacement]();
+        const statPath = path.join(f.fakeBin, "stat");
+        // Linux path stat can retain the old inode across an atomic rename.
+        // Hold that inode open to reproduce its zero-link metadata deterministically.
+        fs.writeFileSync(
+          statPath,
+          fs
+            .readFileSync(statPath, "utf8")
+            .replace(
+              "s = os.stat(sys.argv[2], follow_symlinks=False)",
+              [
+                "marker = os.environ['RACE_MARKER']",
+                "staged = marker + '.replacement'",
+                "if sys.argv[2] == marker and os.path.exists(os.environ['RACE_READY']) and os.path.lexists(staged):",
+                "    with open(marker) as old:",
+                "        os.replace(staged, marker)",
+                "        s = os.fstat(old.fileno())",
+                "else:",
+                "    s = os.stat(sys.argv[2], follow_symlinks=False)",
+              ].join("\n"),
+            ),
+        );
+        const functions =
+          gate === "doctor"
+            ? doctorFunction(source, f.configDir, f.ready)
+            : backupQuiesceFunction(source, f.configDir, f.ready);
+        const command =
+          gate === "doctor" ? finishDoctorBeforeGateway : "run_requested_openclaw_backup_quiesce";
+        const result = spawnSync("bash", ["-c", `${functions}\n${command}`], {
+          encoding: "utf8",
+          env: fixtureEnv(f, { RACE_MARKER: f.marker, RACE_READY: f.ready }),
+          timeout: 10_000,
+        });
+
+        expect(result.status, result.stderr).toBe(expectedStatus);
+        expect(fs.existsSync(staged)).toBe(false);
+        expect(fs.existsSync(f.marker)).toBe(expectedStatus !== 0);
+        expect(fs.existsSync(f.calls)).toBe(gate === "doctor");
+      } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["doctor", "backup"])(
+    "cleans the %s gate when every metadata snapshot is unlinked",
+    (gate) => {
+      const source = fs.readFileSync(START_SCRIPT, "utf8");
+      const f = fixture();
+      try {
+        fs.writeFileSync(
+          f.marker,
+          gate === "doctor"
+            ? "nemoclaw-openclaw-post-upgrade-doctor-v2\n"
+            : "nemoclaw-openclaw-backup-quiesce-v1\n",
+          { mode: 0o600 },
+        );
+        const statPath = path.join(f.fakeBin, "stat");
+        fs.writeFileSync(
+          statPath,
+          fs
+            .readFileSync(statPath, "utf8")
+            .replace(
+              "print(values[sys.argv[1]])",
+              [
+                "if sys.argv[2] == os.environ['RACE_MARKER'] and os.path.exists(os.environ['RACE_READY']):",
+                '    print(f"{s.st_uid} 600 0")',
+                "else:",
+                "    print(values[sys.argv[1]])",
+              ].join("\n"),
+            ),
+        );
+        const functions = (
+          gate === "doctor"
+            ? doctorFunction(source, f.configDir, f.ready)
+            : backupQuiesceFunction(source, f.configDir, f.ready)
+        ).replace('[ "$gate_attempt" -lt 600 ]', '[ "$gate_attempt" -lt 2 ]');
+        const command =
+          gate === "doctor" ? finishDoctorBeforeGateway : "run_requested_openclaw_backup_quiesce";
+        const result = spawnSync(
+          "bash",
+          ["-c", `${functions}\nsleep() { return 0; }\n${command}`],
+          {
+            encoding: "utf8",
+            env: fixtureEnv(f, { RACE_MARKER: f.marker, RACE_READY: f.ready }),
+            timeout: 10_000,
+          },
+        );
+
+        expect(result.status, result.stderr).toBe(1);
+        expect(result.stderr).toContain("Timed out waiting");
+        expect(fs.existsSync(f.marker)).toBe(false);
+        expect(fs.existsSync(f.ready)).toBe(false);
+      } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("consumes an exact trusted marker only after doctor succeeds", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();

@@ -106,16 +106,20 @@ function hookOutputsFromBuildSteps(
   return { outputs };
 }
 
-/** Restore manifest-derived OpenClaw files before the final native start. */
-export async function reapplyMessagingManifestBeforeOpenClawStart(
+/** Reapply manifest configuration before OpenClaw starts or Hermes restarts. */
+export async function reapplyMessagingManifestBeforeAgentStart(
   sandboxName: string,
+  targetAgentName: string,
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<void> {
-  if (!plan || plan.agent !== "openclaw") {
-    log("Messaging manifest reapply skipped: no OpenClaw messaging plan");
+  if (!plan || (targetAgentName !== "openclaw" && targetAgentName !== "hermes")) {
+    log("Messaging manifest reapply skipped: no supported messaging plan");
     return;
+  }
+  if (plan.sandboxName !== sandboxName || plan.agent !== targetAgentName) {
+    throw new Error("Messaging manifest does not match the rebuilt sandbox and agent.");
   }
 
   log("Reapplying messaging manifest render and post-agent-install hooks before gateway start");

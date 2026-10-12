@@ -12,7 +12,8 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { runBuffered } = vi.hoisted(() => ({ runBuffered: vi.fn() }));
-vi.mock("../adapters/openshell/sandbox-command-cli.js", () => ({
+vi.mock("../adapters/openshell/sandbox-command-cli.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/sandbox-command-cli.js")>()),
   createCliOpenShellSandboxCommandExecutor: () => ({ runBuffered }),
 }));
 

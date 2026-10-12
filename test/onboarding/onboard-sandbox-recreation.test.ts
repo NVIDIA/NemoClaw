@@ -296,12 +296,26 @@ const { createSandbox } = require(${onboardPath});
       );
     },
   );
-  it(
-    "recreate-sandbox flag backs up and restores workspace state",
+  it.for([
+    { scenario: "forced recreation", force: true, marked: false, primary: "openai/gpt-4o" },
+    {
+      scenario: "marked recreation resume",
+      force: false,
+      marked: true,
+      primary: "inference/gpt-5.4",
+    },
+    {
+      scenario: "unmarked recreation resume",
+      force: false,
+      marked: false,
+      primary: "openai/gpt-4o",
+    },
+  ])(
+    "$scenario restores native state with its recorded selection authority (#12667)",
     {
       timeout: 60_000,
     },
-    async (context) => {
+    async ({ force, marked, primary }, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -333,8 +347,24 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
+let nativeConfig = { agents: { defaults: { model: { primary: "openai/gpt-4o" } } }, models: { providers: {} }, custom: { retained: true } };
+let registered = null;
+const sandboxConfig = require(${JSON.stringify(path.join(repoRoot, "src/lib/sandbox/config.ts"))});
+sandboxConfig.readSandboxConfig = () => structuredClone(nativeConfig);
+sandboxConfig.setOpenClawConfigValues = (_name, updates) => {
+  for (const { dotpath, value } of updates) {
+    const keys = dotpath.split(".");
+    const leaf = keys.pop();
+    let current = nativeConfig;
+    for (const key of keys) current = current[key] ??= {};
+    current[leaf] = structuredClone(value);
+  }
+};
 processRecovery.beginUnregisteredOpenClawBackupQuiesce = async (sandboxName) => ({ ok: true, window: { sandboxName, kind: "backup" } });
-processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
+processRecovery.finishUnregisteredOpenClawPostRestoreDoctor = async () => {
+  events.push({ kind: "restart", primary: nativeConfig.agents.defaults.model.primary });
+  return { ok: true };
+};
 processRecovery.abortUnregisteredOpenClawPostRestoreDoctor = async () => ({ ok: true });
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 runner.run = (command) => {
@@ -370,6 +400,7 @@ runner.run = (command) => {
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
 	  getSandbox: registry.getSandbox,
+      registerSandbox: (entry) => { registered = entry; },
 	});
 
 let latestBackup = null;
@@ -388,6 +419,7 @@ sandboxState.backupSandboxState = (name) => {
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
   events.push({ kind: "restore", name, backupPath, options });
+  nativeConfig.agents.defaults.model.primary = "openai/gpt-4o";
   return {
     success: true,
     restoredDirs: ["workspace", "skills"],
@@ -420,12 +452,19 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
-	  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
-	    createFixture,
-	  ));
-  console.log(JSON.stringify({ sandboxName, events }));
+  process.env.NEMOCLAW_RECREATE_SANDBOX = ${JSON.stringify(force ? "1" : "0")};
+  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    createFixture,
+  );
+  // Seed the durable checkpoint left by the interrupted invocation. The resumed
+  // request carries only its existing transaction identity, never fresh authority.
+  const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+  const interrupted = sessions.loadSession();
+  if (${JSON.stringify(marked)}) interrupted.checkpoint.sandboxRecreate.reconcileOpenClawInference = true;
+  sessions.saveSession(interrupted);
+  const sandboxName = await createSandbox(...createArgs);
+  console.log(JSON.stringify({ sandboxName, events, nativeConfig, registered, sourceId: sourceSandbox.lifecycleLiveIdentityFingerprint, replacementId: createdSandbox.state.sandboxId }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -463,6 +502,7 @@ const { createSandbox } = require(${onboardPath});
         name?: string;
         backupPath?: string;
         options?: { targetAgentType?: string };
+        primary?: string;
       }>;
       const backupIndex = events.findIndex((e) => e.kind === "backup");
       const deleteIndex = events.findIndex(
@@ -482,6 +522,15 @@ const { createSandbox } = require(${onboardPath});
         "restore must use backup path",
       );
       assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
+      assert.equal(payload.nativeConfig.agents.defaults.model.primary, primary);
+      assert.equal(events.find((event) => event.kind === "restart")?.primary, primary);
+      assert.deepEqual(payload.nativeConfig.custom, { retained: true });
+      assert.equal(payload.registered.model, "gpt-5.4");
+      assert.equal(
+        payload.registered.lifecycleLiveIdentityFingerprint,
+        createHash("sha256").update(payload.replacementId).digest("hex"),
+      );
+      assert.notEqual(payload.registered.lifecycleLiveIdentityFingerprint, payload.sourceId);
     },
   );
 
@@ -980,18 +1029,76 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it(
-    "interactive mode deletes and recreates sandbox when user confirms drift recreate",
+  it.for([
+    { mode: "interactive", answer: "y", recreate: true, reconciliation: null },
+    { mode: "interactive", answer: "n", recreate: false, reconciliation: null },
+    { mode: "non-interactive", answer: "", recreate: true, reconciliation: null },
+    {
+      mode: "planned recreation",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      forced: false,
+      reconciliation: true,
+    },
+    {
+      mode: "fresh preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: true,
+      reconciliation: true,
+    },
+    {
+      mode: "legacy preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: false,
+      reconciliation: false,
+    },
+    {
+      mode: "forced preopened journal",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      preopened: true,
+      fresh: true,
+      forced: true,
+      reconciliation: false,
+    },
+    {
+      mode: "forced recreation",
+      answer: "",
+      recreate: true,
+      journalOnly: true,
+      forced: true,
+      reconciliation: false,
+    },
+  ])(
+    "$mode drift recreation with answer '$answer' preserves confirmation and reconciliation authority (#12667)",
     {
       timeout: 60_000,
     },
-    async (context) => {
+    async (
+      {
+        mode,
+        answer,
+        recreate,
+        reconciliation,
+        journalOnly = false,
+        forced = false,
+        preopened = false,
+        fresh = false,
+      },
+      context,
+    ) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-interactive-decline-"),
-      );
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-drift-"));
       const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "interactive-decline.js");
+      const scriptPath = path.join(tmpDir, "selection-drift.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
@@ -1019,10 +1126,18 @@ const path = require("node:path");
 
 const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const sourceSandboxId = createdSandbox.state.sandboxId;
+const prompts = [];
+let reconciliationRecorded = null;
+process.on("exit", () => console.log(JSON.stringify({ commands, prompts, reconciliationRecorded, sourceSandboxId, sandboxId: createdSandbox.state.sandboxId })));
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
+  if (cmd.includes("sandbox delete") && ${journalOnly}) {
+    reconciliationRecorded = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))}).loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference === true;
+    throw new Error("fixture: stop after journal persistence before deletion");
+  }
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("sandbox download")) {
@@ -1078,8 +1193,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
-// Mock prompt to return "y" (confirm recreate)
-credentials.prompt = async () => "y";
+credentials.prompt = async (question) => {
+  prompts.push(question);
+  return ${JSON.stringify(answer)};
+};
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
@@ -1101,10 +1218,23 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-	  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
 	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
 	    createFixture,
-	  ));
+	  );
+  if (${preopened}) {
+    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshNonForced: true } : {}) };
+  }
+  if (${journalOnly} && !${preopened}) {
+    // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.
+    createArgs[15] = { ...createArgs[15], recreate: true, recreateTransaction: undefined };
+    const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
+    sessions.updateSession((session) => {
+      delete session.checkpoint.sandboxRecreate;
+      return session;
+    });
+  }
+  const sandboxName = await createSandbox(...createArgs);
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1113,7 +1243,6 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
         ...ONBOARD_TEST_ENV,
@@ -1122,8 +1251,8 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
-      delete env["NEMOCLAW_NON_INTERACTIVE"];
-      delete env["NEMOCLAW_RECREATE_SANDBOX"];
+      env["NEMOCLAW_NON_INTERACTIVE"] = mode !== "interactive" ? "1" : undefined;
+      env["NEMOCLAW_RECREATE_SANDBOX"] = forced ? "1" : undefined;
       const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
         env,
@@ -1131,7 +1260,7 @@ const { createSandbox } = require(${onboardPath});
         context,
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, journalOnly ? 1 : recreate ? 0 : 1, result.stderr);
       const payloadLine = result.stdout
         .trim()
         .split("\n")
@@ -1140,22 +1269,31 @@ const { createSandbox } = require(${onboardPath});
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
+      assert.equal(payload.reconciliationRecorded, reconciliation);
+      const completedRecreation = recreate && !journalOnly;
 
-      assert.ok(
+      assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*delete/.test(String(entry.command)),
         ),
-        "should delete existing sandbox when user confirms recreate",
+        completedRecreation,
+        "sandbox delete must match the confirmation decision",
       );
-      assert.ok(
+      assert.equal(
         payload.commands.some((entry: CommandEntry) =>
           /sandbox.*create/.test(String(entry.command)),
         ),
-        "should create a new sandbox when user confirms recreate",
+        completedRecreation,
+        "sandbox create must match the confirmation decision",
       );
-      assert.ok(
+      assert.equal(payload.sandboxId !== payload.sourceSandboxId, completedRecreation);
+      assert.equal(
         result.stdout.includes("requested inference selection changed"),
-        "should show drift warning before prompting",
+        mode === "interactive",
+      );
+      assert.equal(
+        payload.prompts.some((question: string) => question.includes("Recreate sandbox")),
+        mode === "interactive",
       );
     },
   );

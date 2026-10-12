@@ -27,6 +27,7 @@ import {
   preflightMcpEntryTargets,
   waitForAttachedMcpCredential,
 } from "./mcp-bridge-provider";
+import { createMcpProviderAdapterBoundary } from "./mcp-bridge-provider-inspection";
 import {
   assertMcpAdapterMutationRuntimeCapabilities,
   assertMcpAdapterTeardownRuntimeCapabilities,
@@ -260,7 +261,8 @@ export async function restoreExistingMcpBridgeRuntime(
         [entry],
         providerRuntimeSelection,
       );
-      await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
+      const providerAdapter = createMcpProviderAdapterBoundary(providerRuntimeSelection).adapter;
+      await ensureMcpBridgeProviderProfile(providerRuntimeSelection, providerAdapter);
       if (options.applyPolicy !== false) {
         await applyGeneratedPolicy(
           sandboxName,
@@ -272,7 +274,7 @@ export async function restoreExistingMcpBridgeRuntime(
           },
         );
       }
-      await attachProvider(sandboxName, entry, providerRuntimeSelection);
+      await attachProvider(sandboxName, entry, providerRuntimeSelection, providerAdapter);
       if (options.applyPolicy !== false) {
         await applyGeneratedPolicy(
           sandboxName,

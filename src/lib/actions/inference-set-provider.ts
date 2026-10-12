@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  selectedModelProvenance,
+  type ModelSelectionProvenance,
+} from "../domain/telemetry/provenance";
+import { getTelemetryTarget, recordTelemetryTarget } from "./telemetry/operation";
+import type { TelemetryOutcome, TelemetryState } from "../domain/telemetry/event";
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
@@ -526,3 +532,64 @@ export const __test = {
   inspectProvider,
   providerSurface,
 };
+
+/** inference:set receives an explicit model selection through the supported provider adapter. */
+export function inferenceSetModelProvenance(
+  route: Parameters<typeof selectedModelProvenance>[0],
+): ModelSelectionProvenance | undefined {
+  return selectedModelProvenance({
+    ...route,
+    modelSource: ["ollama-local", "vllm-local", "llama-cpp-local", "nvidia-nim"].includes(
+      route.provider ?? "",
+    )
+      ? "local"
+      : "custom",
+  });
+}
+
+export function recordInferenceSetResult(
+  sandboxName: string,
+  outcome: TelemetryOutcome,
+  state: TelemetryState,
+  gatewayName: string,
+): void {
+  recordTelemetryTarget({ scope: "configuration", sandboxName, gatewayName, outcome, state });
+}
+
+export function recordInferenceSetChange(
+  sandboxName: string,
+  changes: readonly boolean[],
+  gatewayName: string,
+): void {
+  const changed = changes.some(Boolean);
+  recordInferenceSetResult(
+    sandboxName,
+    changed ? "completed" : "no_change",
+    changed ? "applied" : "unchanged",
+    gatewayName,
+  );
+}
+
+export function completeInferenceSetTelemetry(sandboxName: string, gatewayName: string): void {
+  const unchanged = getTelemetryTarget(sandboxName, gatewayName)?.outcome === "no_change";
+  recordInferenceSetResult(
+    sandboxName,
+    unchanged ? "no_change" : "completed",
+    unchanged ? "unchanged" : "applied",
+    gatewayName,
+  );
+}
+
+export function recordInferenceSetFailure(
+  sandboxName: string,
+  committed: boolean,
+  uncertain: boolean,
+  gatewayName: string,
+): void {
+  recordInferenceSetResult(
+    sandboxName,
+    "failed",
+    committed ? "partial" : uncertain ? "unavailable" : "unchanged",
+    gatewayName,
+  );
+}

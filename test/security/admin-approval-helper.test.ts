@@ -517,12 +517,12 @@ describe("prepared connect-shell administrative approval", () => {
   });
 
   it.each([
-    [EXPECTED_REQUEST_ID, 0],
-    [VERSION_ONE_REQUEST_ID, 26],
+    [EXPECTED_REQUEST_ID, 0, []],
+    [VERSION_ONE_REQUEST_ID, 26, ["ADMIN_DIAGNOSTIC=selection-pending-count"]],
   ] as const)(
     "binds feature approval to request %s without running cron",
-    (expectedRequestId, status) => {
-      const { commands, openshellArgs, result } = runAdminApprovalScript(
+    (expectedRequestId, status, diagnostics) => {
+      const { commands, openshellArgs, result, stagedScriptRetained } = runAdminApprovalScript(
         "cron:add",
         0,
         EXPECTED_REQUEST_ID,
@@ -540,6 +540,14 @@ describe("prepared connect-shell administrative approval", () => {
         ...(status === 0 ? [`devices approve ${EXPECTED_REQUEST_ID}`] : []),
       ]);
       expect(result.stdout.includes("ISSUE_5324_ADMIN_APPROVAL_OK")).toBe(status === 0);
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(output.match(/ADMIN_DIAGNOSTIC=[a-z-]+/g) ?? []).toEqual(diagnostics);
+      expect(output).not.toContain(EXPECTED_REQUEST_ID);
+      expect(output).not.toContain(VERSION_ONE_REQUEST_ID);
+      expect(output).not.toContain(EXPECTED_DEVICE_ID);
+      expect(output).not.toContain(EXPECTED_PUBLIC_KEY);
+      expect(output).not.toContain("test-gateway-token");
+      expect(stagedScriptRetained).toBe(false);
     },
   );
 
