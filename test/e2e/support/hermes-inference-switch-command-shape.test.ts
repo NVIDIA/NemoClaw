@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import YAML from "yaml";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import {
+  DEFAULT_CLOUD_MODEL,
+  resolveAgentInferenceApi,
+} from "../../../src/lib/inference/config.ts";
+import { applyHermesManagedRoute } from "../../../src/lib/hermes-managed-route.ts";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { compatibleAnthropicSwitchBinding } from "../fixtures/compatible-anthropic-switch.ts";
@@ -20,6 +26,8 @@ import {
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
   hostedInstallModel,
+  initialInstallModel,
+  NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicSwitchEnabled,
@@ -43,9 +51,9 @@ import {
 describe("Hermes inference switch command shape", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  function matchesApiKeyShape(line: string): boolean {
+  function matchesApiKeyShape(line: string, pattern = API_KEY_SHAPE_PATTERN): boolean {
     return (
-      spawnSync("grep", ["-Eq", API_KEY_SHAPE_PATTERN], {
+      spawnSync("grep", ["-Eq", pattern], {
         encoding: "utf8",
         input: `${line}\n`,
       }).status === 0
@@ -156,16 +164,44 @@ describe("Hermes inference switch command shape", () => {
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
-    const command = apiKeyShapeCommand();
+    const command = apiKeyShapeCommand("compatible-anthropic-endpoint");
 
     expect(command).toEqual(["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"]);
     expect(command.every((argument) => !/[\r\n]/u.test(argument))).toBe(true);
   });
 
+  it("accepts the native NVIDIA config writer's environment handle", () => {
+    const config: Record<string, unknown> = {};
+    applyHermesManagedRoute(config, {
+      baseUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
+      inferenceApi: "openai-completions",
+      model: DEFAULT_CLOUD_MODEL,
+      upstreamProvider: PUBLIC_NVIDIA_SWITCH_PROVIDER,
+    });
+    const command = apiKeyShapeCommand(PUBLIC_NVIDIA_SWITCH_PROVIDER);
+    expect(command).toEqual([
+      "grep",
+      "-Eq",
+      NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN,
+      "/sandbox/.hermes/config.yaml",
+    ]);
+    expect(matchesApiKeyShape(YAML.stringify(config), command[2])).toBe(true);
+  });
+
+  it.each([
+    "  api_key: nvapi-test-raw-key",
+    "  api_key: sk-OPENSHELL-PROXY-REWRITE",
+    "  api_key: ${OPENAI_API_KEY}",
+    "  api_key: ${NVIDIA_INFERENCE_API_KEY} trailing",
+    '  api_key: "${NVIDIA_INFERENCE_API_KEY}',
+  ])("rejects an invalid native NVIDIA config credential: %s", (line) => {
+    expect(matchesApiKeyShape(line, NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN)).toBe(false);
+  });
+
   it("accepts only complete sk-prefixed YAML scalars", () => {
     expect(
-      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every(
-        matchesApiKeyShape,
+      ["  api_key: sk-value", '  api_key: "sk-value"', "  api_key: 'sk-value'"].every((line) =>
+        matchesApiKeyShape(line),
       ),
     ).toBe(true);
     expect(
@@ -174,7 +210,7 @@ describe("Hermes inference switch command shape", () => {
         "  api_key: sk-value trailing",
         '  api_key: "sk-value',
         '  api_key: sk-value"',
-      ].some(matchesApiKeyShape),
+      ].some((line) => matchesApiKeyShape(line)),
     ).toBe(false);
   });
 
@@ -189,6 +225,30 @@ describe("Hermes inference switch command shape", () => {
       }),
     ).toBe("initial-hosted-model");
   });
+
+  it.each([
+    { installEnv: {}, model: DEFAULT_CLOUD_MODEL },
+    { installEnv: { NEMOCLAW_SWITCH_MODEL: "switch-model" }, model: DEFAULT_CLOUD_MODEL },
+    {
+      installEnv: { NEMOCLAW_MODEL: DEFAULT_HOSTED_INFERENCE_MODEL, NEMOCLAW_PROVIDER: "custom" },
+      model: DEFAULT_HOSTED_INFERENCE_MODEL,
+    },
+    {
+      installEnv: { NEMOCLAW_MODEL: "mock-baseline", NEMOCLAW_SWITCH_MODEL: "switch-model" },
+      model: "mock-baseline",
+    },
+  ])(
+    "reads the baseline model from the environment passed to installation",
+    async ({ installEnv, model }) => {
+      vi.stubEnv("NEMOCLAW_MODEL", "");
+      const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "installed" });
+      await installHermes({ command } as unknown as HostCliClient, "test-key", installEnv);
+
+      const actualEnv = command.mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+      expect(initialInstallModel(actualEnv)).toBe(model);
+      expect(initialInstallModel(installEnv)).toBe(model);
+    },
+  );
 
   it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
     const command = vi

@@ -16,7 +16,11 @@ import {
   hermesSlackCredentialFingerprints,
   hermesSlackCredentialScanScript,
 } from "./hermes-slack-credential-transport.ts";
-import { assertHermesSlackApiProof } from "./hermes-slack-proof.ts";
+import {
+  assertHermesSlackApiProof,
+  HERMES_SLACK_ENV_PROBE,
+  HERMES_SLACK_INJECTED_TOKEN_PATTERN,
+} from "./hermes-slack-proof.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   CLI,
@@ -503,30 +507,8 @@ PY`,
   const envProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
-    String.raw`python3 - <<'PY'
-from pathlib import Path
-text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-lines = set(text.splitlines())
-required = {"API_SERVER_PORT=18642"}
-missing = sorted(required - lines)
-# Slack tokens must not be rendered here. OpenShell binds SLACK_* to the policy
-# endpoint and injects revision-scoped placeholders into the process
-# environment; a rendered line would shadow them, because Hermes loads this file
-# with override=True.
-def assignment_key(line):
-    stripped = line.strip()
-    if stripped.startswith("export "):
-        stripped = stripped[len("export ") :].lstrip()
-    return stripped.split("=", 1)[0].strip() if "=" in stripped else ""
-
-assigned = {assignment_key(line) for line in lines}
-leaked = sorted(key for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN") if key in assigned)
-if missing:
-    print("FAIL missing " + ", ".join(missing))
-elif leaked:
-    print("FAIL rendered " + ", ".join(leaked))
-else:
-    print("OK")
+    String.raw`python3 - /sandbox/.hermes/.env <<'PY'
+${HERMES_SLACK_ENV_PROBE}
 PY`,
     [],
     {
@@ -684,7 +666,7 @@ import urllib.request
 # provider egress. Upstream authentication responses prove reachability; the
 # messaging-providers target owns capture-based credential-rewrite proof.
 TLS_CONTEXT = ssl.create_default_context()
-INJECTED_RE = re.compile(r"^openshell:resolve:env:(v[0-9]+_)?(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
+INJECTED_RE = re.compile(${JSON.stringify(HERMES_SLACK_INJECTED_TOKEN_PATTERN)})
 
 def injected_token(env_key):
     """Read the value OpenShell injected, never a fabricated alias.
@@ -709,7 +691,8 @@ def injected_token(env_key):
 
 def call(label, path, env_key, allowed_errors):
     token = injected_token(env_key)
-    if not INJECTED_RE.fullmatch(token):
+    match = INJECTED_RE.fullmatch(token)
+    if not match or match.group(1) != env_key:
         print(f"FAIL {label}: {env_key} is not a revision-scoped injected placeholder")
         return False
     req = urllib.request.Request(

@@ -1074,6 +1074,19 @@ completed onboarding session remains unchanged as historical onboarding
 evidence. Deterministic startup and action tests own the corresponding launch
 environment and session non-rewrite checks.
 
+The switch baseline uses the environment passed to installation: native NVIDIA
+uses the CLI cloud default, while compatible hosted and mock baselines retain
+their explicit models. Support tests own this deterministic model selection.
+The live lane still proves the installed route and all later switch behavior.
+Its credential probe checks the native NVIDIA environment handle or the
+compatible route's proxy sentinel according to the selected provider.
+
+The Hermes Slack lane accepts only correctly scoped OpenShell resolver
+placeholders for Slack assignments in `.env` and for the API egress probes.
+Support tests execute the file probe against absent, valid, raw, mismatched,
+and malformed values. The live lane retains startup, policy, raw credential
+scans, both Slack API calls, and resource cleanup as required evidence.
+
 ## Native plugin and package lifecycle
 
 Issue #11766 retired the dedicated `openclaw-plugin-runtime-exdev` workflow job

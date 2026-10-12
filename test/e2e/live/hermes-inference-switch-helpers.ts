@@ -7,7 +7,10 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
+import {
+  DEFAULT_CLOUD_MODEL,
+  resolveAgentInferenceApi,
+} from "../../../src/lib/inference/config.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
@@ -166,6 +169,10 @@ export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env):
   return (
     runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
   );
+}
+
+export function initialInstallModel(installEnv: NodeJS.ProcessEnv): string {
+  return installEnv.NEMOCLAW_MODEL || DEFAULT_CLOUD_MODEL;
 }
 
 export function openshellGatewayName(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
@@ -755,8 +762,15 @@ export function expectedApiMode(): string | undefined {
 // POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
 
-export function apiKeyShapeCommand(): string[] {
-  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+const NATIVE_NVIDIA_API_KEY_VALUE = "[$][{]NVIDIA_INFERENCE_API_KEY[}]";
+export const NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("${NATIVE_NVIDIA_API_KEY_VALUE}"|'${NATIVE_NVIDIA_API_KEY_VALUE}'|${NATIVE_NVIDIA_API_KEY_VALUE})[[:space:]]*$`;
+
+export function apiKeyShapeCommand(provider: string = SWITCH_PROVIDER): string[] {
+  const pattern =
+    provider === PUBLIC_NVIDIA_SWITCH_PROVIDER
+      ? NATIVE_NVIDIA_API_KEY_SHAPE_PATTERN
+      : API_KEY_SHAPE_PATTERN;
+  return ["grep", "-Eq", pattern, "/sandbox/.hermes/config.yaml"];
 }
 
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {
